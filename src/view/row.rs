@@ -239,7 +239,10 @@ mod tests {
         let row = cells(&odd, ROOT);
 
         assert_eq!(row.glyph, '?');
-        assert!(row.notes.iter().any(|note| note.contains("triage")), "{row:?}");
+        assert!(
+            row.notes.iter().any(|note| note.contains("triage")),
+            "{row:?}"
+        );
     }
 
     #[test]
