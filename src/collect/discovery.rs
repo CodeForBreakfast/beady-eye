@@ -566,6 +566,43 @@ credential_command = "secret-tool lookup tracker harbour"
         std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");
     }
 
+    /// git answers with the real directory, so a config naming the same
+    /// checkout through a symlink is in none of the working trees git listed.
+    /// Nothing of git's answer is taken for it, and the project is left
+    /// holding the path it was configured with — the seats working through
+    /// that spelling still join, and no other repository's trees are annexed.
+    #[test]
+    fn a_path_in_none_of_the_working_trees_git_listed_holds_only_itself() {
+        let scratch = a_scratch_directory("symlinked-path");
+        let checkout = scratch.join("checkout");
+        std::fs::create_dir_all(&checkout).expect("the directory is ours to make");
+        git_in(&checkout, &["init"]);
+        git_in(&checkout, &["commit", "--allow-empty", "-m", "root"]);
+        let spelled = scratch.join("orbital");
+        std::os::unix::fs::symlink(&checkout, &spelled).expect("the link is ours to make");
+
+        let cfg = with_the_working_trees_git_lists(
+            Config::from_toml(&format!(
+                "[[projects]]\nname = \"orbital\"\npath = \"{}\"\n",
+                spelled.display()
+            ))
+            .expect("the config parses"),
+            &RealRunner,
+        );
+
+        assert!(
+            cfg.projects[0].worktrees.is_empty(),
+            "a listing holding none of the project's paths was taken for it: {:?}",
+            cfg.projects[0].worktrees
+        );
+        assert!(
+            cfg.projects[0].holds(&spelled.join("src")).is_some(),
+            "the project stopped holding the path it was configured with"
+        );
+
+        std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");
+    }
+
     /// The listing is asked for where bdi was run, because a worktree only
     /// knows its siblings from inside the repository.
     #[test]
