@@ -17,6 +17,28 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+
+        beady-eye = pkgs.rustPlatform.buildRustPackage {
+          pname = "beady-eye";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+
+          # The package is named for the crate, the binary for the command.
+          meta.mainProgram = "bdi";
+        };
+
+        # A lint runs against the same source and the same vendored crates as
+        # the build, so the two cannot drift apart.
+        lintOf = name: tool: command:
+          beady-eye.overrideAttrs (build: {
+            pname = "${build.pname}-${name}";
+            nativeBuildInputs = build.nativeBuildInputs ++ [ tool ];
+            buildPhase = command;
+            doCheck = false;
+            installPhase = "touch $out";
+            dontFixup = true;
+          });
       in
       {
         devShells.default = pkgs.mkShell {
@@ -47,28 +69,34 @@
             # is shared.
             export BD_SMART_GATE=0
 
-            echo "👁  beady-eye Development Shell"
+            # The banner is diagnostic, so it goes where nix puts its own
+            # diagnostics. On stdout it corrupts every `nix develop -c … --json`
+            # a caller pipes into a parser.
+            echo "👁  beady-eye Development Shell" >&2
             # Print where bd resolved from, not just what it claims to be — a
             # version alone cannot distinguish this shell's bd from PATH's.
-            echo "beads: $(bd --version) ($(command -v bd))"
+            echo "beads: $(bd --version) ($(command -v bd))" >&2
 
             # BEADS_DOLT_PASSWORD lives here; the file is gitignored and 0600.
             if [ -f .env.local ]; then
               set -a
               source .env.local
               set +a
-              echo "✅ Loaded environment from .env.local"
+              echo "✅ Loaded environment from .env.local" >&2
             else
-              echo "⚠️  no .env.local — bd cannot authenticate to tracker.example.invalid"
+              echo "⚠️  no .env.local — bd cannot authenticate to tracker.example.invalid" >&2
             fi
           '';
         };
 
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "beady-eye";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
+        packages.default = beady-eye;
+
+        # `nix flake check` is the whole of CI. Anything CI should run belongs
+        # here, not in the workflow that calls it.
+        checks = {
+          build-and-test = beady-eye;
+          clippy = lintOf "clippy" pkgs.clippy "cargo clippy --all-targets -- -D warnings";
+          fmt = lintOf "fmt" pkgs.rustfmt "cargo fmt --check";
         };
       }
     );
