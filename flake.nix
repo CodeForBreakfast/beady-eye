@@ -50,12 +50,12 @@
 
         beady-eye = beadyEyeFor pkgs;
 
-        # A lint runs against the same source and the same vendored crates as
+        # A check runs against the same source and the same vendored crates as
         # the build, so the two cannot drift apart.
-        lintOf = name: tool: command:
+        checkOf = name: tools: command:
           beady-eye.overrideAttrs (build: {
             pname = "${build.pname}-${name}";
-            nativeBuildInputs = build.nativeBuildInputs ++ [ tool ];
+            nativeBuildInputs = build.nativeBuildInputs ++ tools;
             buildPhase = command;
             doCheck = false;
             installPhase = "touch $out";
@@ -118,8 +118,22 @@
         # here, not in the workflow that calls it.
         checks = {
           build-and-test = beady-eye;
-          clippy = lintOf "clippy" pkgs.clippy "cargo clippy --all-targets -- -D warnings";
-          fmt = lintOf "fmt" pkgs.rustfmt "cargo fmt --check";
+          clippy = checkOf "clippy" [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
+          fmt = checkOf "fmt" [ pkgs.rustfmt ] "cargo fmt --check";
+
+          # cargo publish uploads only what Cargo.toml's include list selects,
+          # and builds that tarball rather than the working tree. A crate that
+          # compiles here and not from the tarball is otherwise found by
+          # whoever depends on it first, and the version cannot be withdrawn.
+          #
+          # The verify build catches anything the compiler would miss having.
+          # It cannot catch a dropped crate root: cargo drops that with a
+          # warning and an exit code of zero, then verifies an empty tarball.
+          package = checkOf "package" [ ] ''
+            set -o pipefail
+            cargo package --offline --locked 2>&1 | tee package.log
+            ! grep -q "is not included in the published package" package.log
+          '';
         };
       }
     ) // {
