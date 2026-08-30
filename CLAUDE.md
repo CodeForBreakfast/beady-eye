@@ -45,14 +45,18 @@ through that project's commy channel instead.
 
 ## Tracker and packaging
 
-This repo has **no beads tracker yet**. A provisioning bead on homelab provisions the
-`beady-eye` database and user; it is deliberately queued, because adding a tenant
-restarts bd for every tenant on the server. Homelab replies in the
-`homelab` / `beady-eye-tracker-provisioning` topic when it lands. Until then,
-the plan's checkboxes are the task list.
+The tracker is live: prefix `bdi`, database `beady-eye` on
+`tracker.example.invalid:3306`, a tenant on a shared Dolt
+server. Schema v53.
 
-`.envrc` loads `.env.local` for `BEADS_DOLT_PASSWORD`; that file appears when the
-tracker does.
+Use the dev shell — `nix develop`, or direnv. It pins bd 1.2.2 and scopes
+`BEADS_DIR` to this repo, so a bare `bd` from an ambient shell may resolve a
+different binary or another project's tracker. `.envrc` loads `.env.local` for
+`BEADS_DOLT_PASSWORD` (0600, gitignored); recover it from the cluster with
+`kubectl --context admin@cluster -n dolt get secret tracker-sql-users -o jsonpath='{.data.beady-eye}' | base64 -d`.
+
+bd's auto-backup is off: the tenant SQL user is DB-scoped and cannot register a
+server-side backup remote. Recovery is the cluster DB's own nightly backup.
 
 Packaging `bdi` into the NixOS config is tracked separately, in that project, as
 `nix-b8et4`.
