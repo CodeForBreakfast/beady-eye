@@ -335,7 +335,6 @@ pub fn half_screen(forest: Rect) -> usize {
 /// — so keeping the glyph after it leaves one order to read down the screen,
 /// and leaves the marker where a reader already looks to see what is folded.
 pub fn header(head: &Header, prefix: &str) -> Fitted {
-    let tree = &head.tree;
     let mut identity = vec![Span::raw(prefix.to_string())];
     if let Some(status) = &head.status {
         identity.push(Span::styled(
@@ -344,14 +343,14 @@ pub fn header(head: &Header, prefix: &str) -> Fitted {
         ));
         identity.push(Span::raw(" "));
     }
-    identity.push(Span::raw(format!("{} · {}", tree.project, tree.root)));
+    identity.push(Span::raw(format!("{} · {}", head.project, head.root)));
 
-    let state = match tree.tracker {
-        TrackerState::Ok => summary(&tree.counts),
+    let state = match head.tracker {
+        TrackerState::Ok => summary(&head.counts),
         TrackerState::Unreachable(failure) => unreadable(failure, &head.panes, head.panes_complete),
     };
 
-    Fitted::new(identity, vec![Span::raw(tree.title.clone())], state)
+    Fitted::new(identity, vec![Span::raw(head.title.clone())], state)
 }
 
 /// How far along something is. A tree and one epic inside it ask the same
@@ -690,7 +689,11 @@ mod tests {
     /// the test does not care about.
     fn head(tree: Tree) -> Header {
         Header {
-            tree,
+            project: tree.project,
+            root: tree.root,
+            title: tree.title,
+            counts: tree.counts,
+            tracker: tree.tracker,
             status: None,
             panes: Vec::new(),
             panes_complete: true,
@@ -1971,7 +1974,7 @@ mod tests {
             let at = forest.selected_line();
             let said = match &forest.lines()[at].content {
                 Content::Bead(row) => row.title.clone(),
-                Content::Tree(header) => header.tree.title.clone(),
+                Content::Tree(header) => header.title.clone(),
                 other => panic!("unexpected line under the selection: {other:?}"),
             };
             let frame = frame_of(&forest, 60, 10);

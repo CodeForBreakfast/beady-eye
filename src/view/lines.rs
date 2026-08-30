@@ -7,7 +7,9 @@
 //! else.
 
 use crate::model::join::{BeadKey, Conflict};
-use crate::model::snapshot::{FailedProject, HiddenTree, LoosePane, Node, Tree, UnconfiguredPane};
+use crate::model::snapshot::{
+    Counts, FailedProject, HiddenTree, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
+};
 use crate::model::types::Status;
 use crate::view::row::{Progress, Row};
 
@@ -129,9 +131,17 @@ pub enum Content {
 
 /// A tree's own line, with the panes `bdi` could recover for it where its
 /// tracker could not be read at all.
+///
+/// It holds the tree's own facts rather than the tree itself: a line is
+/// compared whole on every keystroke, and none of a tree's nodes are drawn on
+/// its header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
-    pub tree: Tree,
+    pub project: String,
+    pub root: String,
+    pub title: String,
+    pub counts: Counts,
+    pub tracker: TrackerState,
     /// The root's own status. A root is a bead like any other and a reader
     /// asks the same question of it, but it is the one bead whose line is a
     /// header, so its status has to be carried here to be drawn at all.

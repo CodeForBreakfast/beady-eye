@@ -244,7 +244,7 @@ impl Forest {
     /// Focusing a pane, showing the key bindings, re-collecting and quitting
     /// are the loop's to do, and none of them changes what is on screen here.
     pub fn apply(&mut self, action: Action) -> bool {
-        let was = (self.lines.clone(), self.selected);
+        let selected = self.selected;
         match action {
             Action::Move(motion) => self.move_to(motion),
             Action::CollapseOrParent => self.collapse_or_parent(),
@@ -253,8 +253,8 @@ impl Forest {
             Action::ToggleFilter => self.toggle_filter(),
             Action::Focus | Action::ShowBindings | Action::Refresh | Action::Quit => return false,
         }
-        self.lay_out();
-        (self.lines.clone(), self.selected) != was
+        let was = self.lay_out();
+        self.selected != selected || self.lines != was
     }
 
     fn toggle_filter(&mut self) {
@@ -369,10 +369,16 @@ impl Forest {
         handle_of(self.lines.get(at)?)
     }
 
-    /// Redraw, and put the selection back on whatever it was holding.
-    fn lay_out(&mut self) {
+    /// Redraw, and put the selection back on whatever it was holding, handing
+    /// back the lines the redraw displaced.
+    ///
+    /// They are moved out rather than copied. This runs on every keystroke,
+    /// and a caller asking whether the screen moved can compare the two sets
+    /// without duplicating either.
+    fn lay_out(&mut self) -> Vec<Line> {
         self.settle_cursor();
-        self.lines = self.draw();
+        let drawn = self.draw();
+        let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
             // over it, or the tracker stopped reporting it. Take the nearest
@@ -384,6 +390,7 @@ impl Forest {
                 .and_then(|at| self.handle_at(at));
         }
         self.selected = self.find_cursor().unwrap_or(0);
+        was
     }
 
     fn settle_cursor(&mut self) {
@@ -538,8 +545,12 @@ impl Forest {
             folded: Some(open),
             place: Some(root.clone()),
             content: Content::Tree(Header {
+                project: tree.project.clone(),
+                root: tree.root.clone(),
+                title: tree.title.clone(),
+                counts: tree.counts.clone(),
+                tracker: tree.tracker,
                 status: tree.nodes.first().map(|root| root.status.clone()),
-                tree: tree.clone(),
                 panes,
                 panes_complete: complete,
             }),
@@ -1146,7 +1157,7 @@ credential_command = "secret harbour"
 
     fn said(content: &Content) -> String {
         match content {
-            Content::Tree(header) => format!("{} · {}", header.tree.project, header.tree.root),
+            Content::Tree(header) => format!("{} · {}", header.project, header.root),
             Content::Bead(row) => format!("{} {} {}", row.glyph, row.id, row.title),
             Content::Elided { count, .. } => format!("… {count} more"),
             Content::Note(note) => format!("! {note:?}"),
@@ -1230,9 +1241,9 @@ credential_command = "secret harbour"
         let header = forest
             .lines()
             .iter()
-            .position(|line| {
-                matches!(&line.content, Content::Tree(header) if header.tree.root == "fer-2")
-            })
+            .position(
+                |line| matches!(&line.content, Content::Tree(header) if header.root == "fer-2"),
+            )
             .expect("the shared snapshot draws a tree whose tracker refused");
 
         step_onto(&mut forest, header);
@@ -2495,6 +2506,40 @@ credential_command = "secret harbour"
         assert_eq!(forest.selected_line(), 0);
     }
 
+    /// A keystroke asks whether the screen moved by comparing the lines, so a
+    /// line that carries anything the screen does not show makes that question
+    /// answerable by data no reader can see. Retitling a node no line draws
+    /// must leave the lines identical.
+    #[test]
+    fn a_line_carries_nothing_the_screen_does_not_show() {
+        let drawn: BTreeSet<BeadKey> = flatten(&snapshot())
+            .lines()
+            .iter()
+            .filter_map(|line| line.bead().cloned())
+            .collect();
+
+        let mut altered = snapshot();
+        let mut retitled = 0;
+        for tree in &mut altered.trees {
+            for node in &mut tree.nodes {
+                let key = BeadKey {
+                    project: tree.project.clone(),
+                    id: node.id.clone(),
+                };
+                if !drawn.contains(&key) {
+                    node.title = format!("{} (retitled)", node.title);
+                    retitled += 1;
+                }
+            }
+        }
+        assert!(
+            retitled > 0,
+            "every node in the fixture is drawn, so nothing here is undrawn to hide"
+        );
+
+        assert_eq!(flatten(&snapshot()).lines(), flatten(&altered).lines());
+    }
+
     /// The forest cannot focus a pane, re-collect or quit; the loop does all
     /// three, and none of them changes what is on screen.
     #[test]
@@ -2532,14 +2577,14 @@ credential_command = "secret harbour"
         let forest = flatten(&snapshot());
 
         assert_eq!(
-            header_of(&forest, "ferry").tree.tracker,
+            header_of(&forest, "ferry").tracker,
             TrackerState::Unreachable(TrackerFailure::Auth)
         );
         let header = forest
             .lines()
             .iter()
             .position(
-                |line| matches!(&line.content, Content::Tree(tree) if tree.tree.project == "ferry"),
+                |line| matches!(&line.content, Content::Tree(header) if header.project == "ferry"),
             )
             .expect("ferry has a header");
 
@@ -2564,7 +2609,7 @@ credential_command = "secret harbour"
             .lines()
             .iter()
             .find_map(|line| match &line.content {
-                Content::Tree(header) if header.tree.project == project => Some(header),
+                Content::Tree(header) if header.project == project => Some(header),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("{project} has a header"))
