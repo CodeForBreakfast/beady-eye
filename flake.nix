@@ -127,12 +127,14 @@
           # whoever depends on it first, and the version cannot be withdrawn.
           #
           # The verify build catches anything the compiler would miss having.
-          # It cannot catch a dropped crate root: cargo drops that with a
-          # warning and an exit code of zero, then verifies an empty tarball.
+          # It cannot catch a dropped library or binary: cargo drops those with
+          # a warning and an exit code of zero, then verifies a tarball with
+          # nothing in it. The tests are left out on purpose, so only the two
+          # targets the crate exists to ship are fatal here.
           package = checkOf "package" [ ] ''
             set -o pipefail
             cargo package --offline --locked 2>&1 | tee package.log
-            ! grep -q "is not included in the published package" package.log
+            ! grep -qE "ignoring (library|binary) .* is not included" package.log
           '';
         };
       }

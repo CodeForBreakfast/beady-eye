@@ -17,7 +17,6 @@ categories = ["command-line-utilities", "development-tools"]
 # unanchored "README.md" also selects .beads/README.md.
 include = [
     "/src/**",
-    "/tests/**",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",
