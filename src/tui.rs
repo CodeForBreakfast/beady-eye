@@ -766,9 +766,9 @@ fn paint(
 impl Drop for Screen {
     fn drop(&mut self) {
         // Ahead of the restore, mirroring the order they were turned on in.
-        // A session that ended with the mouse still captured would leave the
-        // reader a window whose pointer does nothing and no program left to
-        // ask for it back.
+        // A terminal left reporting the mouse writes an escape sequence into
+        // whatever runs next for every cell the pointer crosses, and there
+        // is nothing left running to ask it to stop.
         let _ = execute!(io::stdout(), DisableMouseCapture);
         ratatui::restore();
     }
