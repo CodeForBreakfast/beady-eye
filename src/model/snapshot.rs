@@ -171,6 +171,38 @@ pub struct Snapshot {
     pub collected: Vec<Tree>,
 }
 
+impl Snapshot {
+    /// Where a key sits: the tree holding it and its place among that tree's
+    /// nodes. Bead ids are unique only within a tracker, so both halves of
+    /// the key are matched together here and neither is ever matched alone
+    /// anywhere else.
+    pub fn locate(&self, key: &BeadKey) -> Option<(&Tree, usize)> {
+        self.trees
+            .iter()
+            .filter(|tree| tree.project == key.project)
+            .find_map(|tree| {
+                let at = tree.nodes.iter().position(|node| node.id == key.id)?;
+                Some((tree, at))
+            })
+    }
+
+    /// The bead a key names.
+    pub fn node(&self, key: &BeadKey) -> Option<&Node> {
+        self.locate(key).map(|(tree, at)| &tree.nodes[at])
+    }
+
+    /// Whether the snapshot still holds what a key names, as a node or as a
+    /// tree's root. A tracker that could not be read keeps its root and has
+    /// no nodes, so the root is the only place its key can be found.
+    pub fn holds(&self, key: &BeadKey) -> bool {
+        self.locate(key).is_some()
+            || self
+                .trees
+                .iter()
+                .any(|tree| tree.project == key.project && tree.root == key.id)
+    }
+}
+
 impl Tree {
     /// A root whose tracker refused to answer: known by project and id, with
     /// nothing to show beneath it.
@@ -1106,5 +1138,79 @@ render = "⏸ waiting"
         );
         assert_eq!(json["trees"][0]["root"], "orb-7");
         assert_eq!(json["hidden_trees"][0]["root"], "orb-2");
+    }
+    // ---- finding a bead across trackers -------------------------------
+
+    /// A second tracker whose ids collide with `orbital`'s, because bead
+    /// prefixes are per-tracker and uncoordinated. The titles are what tells
+    /// two beads of one id apart, and `frr-1` belongs to this project alone.
+    fn ferry() -> Tree {
+        let json = r#"[
+          {"id":"orb-7","title":"berth the ferry","status":"open","parent_id":""},
+          {"id":"orb-7.1","title":"paint the hull","status":"open","parent_id":"orb-7"},
+          {"id":"frr-1","title":"lift the ramp","status":"open","parent_id":"orb-7"}
+        ]"#;
+        build_tree(
+            "ferry",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &cfg(),
+            now(),
+        )
+    }
+
+    fn key(project: &str, id: &str) -> BeadKey {
+        BeadKey {
+            project: project.to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn one_id_in_two_trackers_answers_for_each_project_separately() {
+        let snap = built(vec![tree(), ferry()], Filter::All);
+
+        assert_eq!(
+            snap.node(&key("orbital", "orb-7.1"))
+                .map(|n| n.title.as_str()),
+            Some("re-point the dish")
+        );
+        assert_eq!(
+            snap.node(&key("ferry", "orb-7.1"))
+                .map(|n| n.title.as_str()),
+            Some("paint the hull")
+        );
+        assert_eq!(
+            snap.locate(&key("ferry", "orb-7.1"))
+                .map(|(t, _)| t.project.as_str()),
+            Some("ferry")
+        );
+    }
+
+    #[test]
+    fn a_bead_in_one_project_is_not_found_through_another_projects_key() {
+        let snap = built(vec![tree(), ferry()], Filter::All);
+
+        assert_eq!(snap.node(&key("ferry", "orb-7.4")), None);
+        assert!(!snap.holds(&key("ferry", "orb-7.4")));
+        assert_eq!(snap.node(&key("orbital", "frr-1")), None);
+        assert!(!snap.holds(&key("orbital", "frr-1")));
+    }
+
+    #[test]
+    fn a_root_is_held_by_its_own_project_even_with_no_nodes_beneath_it() {
+        let snap = built(
+            vec![Tree::tracker_unreachable(
+                "ferry",
+                "orb-7",
+                TrackerFailure::Auth,
+            )],
+            Filter::All,
+        );
+
+        assert!(snap.holds(&key("ferry", "orb-7")));
+        assert_eq!(snap.node(&key("ferry", "orb-7")), None);
+        assert!(!snap.holds(&key("orbital", "orb-7")));
     }
 }

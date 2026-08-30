@@ -95,14 +95,7 @@ fn named_pane(item: &Item) -> Option<&str> {
 
 /// One bead's agent, found the only way a bead can be found across trackers.
 fn agent<'a>(snapshot: &'a Snapshot, key: &BeadKey) -> Option<&'a AgentRef> {
-    snapshot
-        .trees
-        .iter()
-        .filter(|tree| tree.project == key.project)
-        .flat_map(|tree| &tree.nodes)
-        .find(|node| node.id == key.id)?
-        .agent
-        .as_ref()
+    snapshot.node(key)?.agent.as_ref()
 }
 
 /// Read the tail for whatever the selection points at.

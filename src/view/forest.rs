@@ -174,25 +174,18 @@ impl Forest {
         let Handle::Bead(key) = handle else {
             return BTreeSet::new();
         };
-        self.snapshot
-            .trees
-            .iter()
-            .filter(|tree| tree.project == key.project)
-            .find_map(|tree| {
-                let at = tree.nodes.iter().position(|node| node.id == key.id)?;
-                let children = children_of(&tree.nodes);
-                Some(
-                    beneath(&children, at)
-                        .into_iter()
-                        .filter(|node| !quiet(&tree.nodes[*node]))
-                        .map(|node| BeadKey {
-                            project: tree.project.clone(),
-                            id: tree.nodes[node].id.clone(),
-                        })
-                        .collect(),
-                )
+        let Some((tree, at)) = self.snapshot.locate(key) else {
+            return BTreeSet::new();
+        };
+        let children = children_of(&tree.nodes);
+        beneath(&children, at)
+            .into_iter()
+            .filter(|node| !quiet(&tree.nodes[*node]))
+            .map(|node| BeadKey {
+                project: tree.project.clone(),
+                id: tree.nodes[node].id.clone(),
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     /// What the cursor is on, then everything above it in its tree, nearest
@@ -217,15 +210,7 @@ impl Forest {
             _ => return chain,
         };
 
-        for tree in self
-            .snapshot
-            .trees
-            .iter()
-            .filter(|t| t.project == key.project)
-        {
-            let Some(at) = tree.nodes.iter().position(|node| node.id == key.id) else {
-                continue;
-            };
+        if let Some((tree, at)) = self.snapshot.locate(&key) {
             let mut above = tree.nodes[at].depth;
             for node in tree.nodes[..at].iter().rev() {
                 if node.depth < above {
@@ -236,7 +221,6 @@ impl Forest {
                     }));
                 }
             }
-            break;
         }
         chain
     }
@@ -422,10 +406,7 @@ impl Forest {
     /// Whether the snapshot still holds what a handle names.
     fn present(&self, handle: &Handle) -> bool {
         match handle {
-            Handle::Bead(key) | Handle::Elided(key) => self.snapshot.trees.iter().any(|tree| {
-                tree.project == key.project
-                    && (tree.root == key.id || tree.nodes.iter().any(|node| node.id == key.id))
-            }),
+            Handle::Bead(key) | Handle::Elided(key) => self.snapshot.holds(key),
             Handle::Group(kind) => {
                 let (_, loose) = self.recovery();
                 !self.group_items(*kind, &loose).is_empty()
