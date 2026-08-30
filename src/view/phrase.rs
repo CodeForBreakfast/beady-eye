@@ -69,10 +69,11 @@ fn orphan_claim(refused: Option<&Conflict>) -> String {
         Some(Conflict::SeveralBeadsNameOnePane { beads, .. }) => {
             format!("claimed · {} beads name its pane", beads.len())
         }
-        Some(Conflict::SeveralPanesNameOneBead { panes, .. }) => {
-            format!("claimed · {} panes name it", panes.len())
-        }
-        Some(Conflict::BeadAndPaneDisagree { .. }) | None => "claimed · no pane".to_string(),
+        // Neither of these ever gets here. A refusal sends the reader to the
+        // disagreement's row to find the pane the claim was for, and these two
+        // name no one pane, so `join::resolve` refuses no claim with either.
+        Some(Conflict::BeadAndPaneDisagree { .. } | Conflict::SeveralPanesNameOneBead { .. })
+        | None => "claimed · no pane".to_string(),
     }
 }
 
@@ -361,12 +362,6 @@ mod tests {
                 refused: Some(Conflict::SeveralBeadsNameOnePane {
                     pane: "wCM:p9".into(),
                     beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
-                }),
-            },
-            Anomaly::OrphanClaim {
-                refused: Some(Conflict::SeveralPanesNameOneBead {
-                    bead: key("nix-9670s.20"),
-                    panes: vec!["wCM:p9".into(), "wCM:p6".into()],
                 }),
             },
             Anomaly::StalePane,
