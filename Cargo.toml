@@ -5,6 +5,23 @@ edition = "2021"
 rust-version = "1.88"
 description = "A tree of work in flight: bead graphs annotated with the live agents working them"
 repository = "https://github.com/CodeForBreakfast/beady-eye"
+readme = "README.md"
+keywords = ["beads", "herdr", "agents", "tui"]
+categories = ["command-line-utilities", "development-tools"]
+
+# An allowlist, not an exclude list. A published version cannot be withdrawn —
+# a yank still serves the files — so a file that reaches the tarball is public
+# for good. Anything a consumer of the crate does not need stays out.
+#
+# Every pattern is anchored. Cargo matches these the way gitignore does, so an
+# unanchored "README.md" also selects .beads/README.md.
+include = [
+    "/src/**",
+    "/tests/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+]
 
 [lib]
 name = "beady_eye"
