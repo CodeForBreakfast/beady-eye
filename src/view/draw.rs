@@ -148,11 +148,12 @@ fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
 /// holds. It goes through `status_glyph` and `status_style` exactly as a
 /// bead's does, so a run cannot drift away from the beads it stands for.
 fn elided_run(prefix: &str, count: usize) -> Fitted {
-    let glyph = row::status_glyph(&Status::Closed);
+    let status = Status::Closed;
+    let glyph = row::status_glyph(&status);
     Fitted::new(
         vec![
             structure(prefix),
-            Span::styled(glyph.to_string(), status_style(glyph)),
+            Span::styled(glyph.to_string(), status_style(&status)),
             Span::raw(format!(" {}", phrase::elided(count))),
         ],
         Vec::new(),
@@ -424,8 +425,10 @@ pub fn header(head: &Header, prefix: &str) -> Fitted {
     let tree = &head.tree;
     let mut identity = vec![Span::raw(prefix.to_string())];
     if let Some(status) = &head.status {
-        let glyph = row::status_glyph(status);
-        identity.push(Span::styled(glyph.to_string(), status_style(glyph)));
+        identity.push(Span::styled(
+            row::status_glyph(status).to_string(),
+            status_style(status),
+        ));
         identity.push(Span::raw(" "));
     }
     identity.push(Span::raw(format!("{} · {}", tree.project, tree.root)));
@@ -507,7 +510,7 @@ fn pane_marker(pane: &str, status: &PaneStatus) -> String {
 pub fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     let identity = vec![
         structure(prefix),
-        Span::styled(row.glyph.to_string(), status_style(row.glyph)),
+        Span::styled(row.glyph.to_string(), status_style(&row.status)),
         Span::raw(format!(" {:id_width$}", row.id)),
     ];
 
@@ -564,29 +567,17 @@ fn tone(row: &Row) -> Style {
     if row.agent.is_some() {
         return Style::new().fg(STAFFED);
     }
-    let finished = status_of(row.glyph) == Some(Status::Closed) && row.anomalies.is_none();
+    let finished = row.status.is_closed() && row.agent.is_none() && row.anomalies.is_none();
 
     fg(finished.then_some(DIM))
 }
 
 /// The colour a bead's status is drawn in.
 ///
-/// Keyed by the glyph, because a `Row` carries the glyph and not the status it
-/// came from, and resolved through `row::status_glyph` so the glyphs
-/// themselves are written down in one place only. Colour is the second channel
-/// and never the only one: the glyph already says the status, so a terminal
-/// with no colour loses nothing.
-fn status_style(glyph: char) -> Style {
-    fg(status_of(glyph).and_then(|status| status_colour(&status)))
-}
-
-/// The status a glyph stands for. A `Row` carries the glyph and not the status
-/// it came from, and `row::status_glyph` gives each status its own, so the
-/// glyph is enough to get back.
-fn status_of(glyph: char) -> Option<Status> {
-    every_status()
-        .into_iter()
-        .find(|status| row::status_glyph(status) == glyph)
+/// Colour is the second channel and never the only one: the glyph already says
+/// the status, so a terminal with no colour loses nothing.
+fn status_style(status: &Status) -> Style {
+    fg(status_colour(status))
 }
 
 /// `bd`'s colour for a status, or none where `bd` sends no escape and the
@@ -608,18 +599,6 @@ fn status_colour(status: &Status) -> Option<Color> {
 /// own reach the span.
 fn fg(colour: Option<Color>) -> Style {
     colour.map_or_else(Style::new, |colour| Style::new().fg(colour))
-}
-
-/// One of each status, which is what makes the glyph-to-colour lookup total.
-fn every_status() -> [Status; 6] {
-    [
-        Status::InProgress,
-        Status::Blocked,
-        Status::Open,
-        Status::Deferred,
-        Status::Closed,
-        Status::Other(String::new()),
-    ]
 }
 
 /// The lines of its pane the tail shows where the screen can spare them. The
@@ -1486,6 +1465,19 @@ mod tests {
 
     // ---- styling ---------------------------------------------------------
 
+    /// One of each status, so a loop over them covers the set. The compiler
+    /// holds `status_colour` total; this list is only what a test walks.
+    fn every_status() -> [Status; 6] {
+        [
+            Status::InProgress,
+            Status::Blocked,
+            Status::Open,
+            Status::Deferred,
+            Status::Closed,
+            Status::Other(String::new()),
+        ]
+    }
+
     /// Colour is the second channel and never the only one: the glyph already
     /// says the status, so a terminal that drops colour must lose nothing.
     #[test]
@@ -1497,17 +1489,6 @@ mod tests {
             assert!(
                 drawn[0].contains(row::status_glyph(&status)),
                 "{status:?} lost its glyph: {drawn:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_status_reaches_its_colour_through_the_glyph_it_is_drawn_with() {
-        for status in every_status() {
-            assert_eq!(
-                status_style(row::status_glyph(&status)),
-                fg(status_colour(&status)),
-                "{status:?}"
             );
         }
     }
@@ -1525,7 +1506,11 @@ mod tests {
                 "{colour:?} is drawn for two statuses"
             );
         }
-        assert_eq!(coloured.len(), every_status().len() - 1);
+        assert_eq!(
+            coloured.len(),
+            every_status().len() - 1,
+            "one status goes without a colour and it is open"
+        );
         assert_eq!(status_colour(&Status::Open), None);
     }
 

@@ -27,6 +27,8 @@ pub struct Progress {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
+    pub status: Status,
+    /// What the reader sees for `status`.
     pub glyph: char,
     pub id: String,
     pub title: String,
@@ -50,6 +52,7 @@ pub fn cells(node: &Node, root: &str, progress: Option<Progress>) -> Row {
     notes.extend(phrase::unrecognised_status(&node.status));
 
     Row {
+        status: node.status.clone(),
         glyph: status_glyph(&node.status),
         id: abbreviate(&node.id, root).to_string(),
         title: node.title.clone(),
@@ -364,6 +367,7 @@ mod tests {
     fn a_row_says_what_the_bead_says() {
         let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT, None);
 
+        assert_eq!(row.status, Status::Blocked);
         assert_eq!(row.glyph, '●');
         assert_eq!(row.id, ".20");
         assert_eq!(row.title, "wallpaper timer calls dms");
