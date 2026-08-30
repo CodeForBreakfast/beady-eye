@@ -25,6 +25,55 @@ closed bead whose agent never exited, a claim whose agent died) is invisible.
   └── … 13 more
 ```
 
+## Install
+
+Two channels, both first class. Either gives you the `bdi` command, built from
+the same commit at the same version — a release tag produces both or neither.
+
+Nothing is published yet, so these are what the first tag makes work.
+
+**crates.io**
+
+```console
+$ cargo install beady-eye
+```
+
+The crate is `beady-eye`, after the repository; the command it installs is
+`bdi`.
+
+**Nix**
+
+Run it without installing anything:
+
+```console
+$ nix run github:CodeForBreakfast/beady-eye
+```
+
+Or keep it:
+
+```console
+$ nix profile install github:CodeForBreakfast/beady-eye
+```
+
+To build it into your own flake, take it as an input pinned to a release tag:
+
+```nix
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.1.0";
+```
+
+That gives you two ways in. Reach the package directly:
+
+```nix
+beady-eye.packages.${system}.default
+```
+
+or add the overlay, after which `pkgs.beady-eye` is the package anywhere you
+have a `pkgs`:
+
+```nix
+nixpkgs.overlays = [ beady-eye.overlays.default ];
+```
+
 ## What it assumes
 
 **bd, and nothing else.** herdr is optional: without it you still get the tree,
