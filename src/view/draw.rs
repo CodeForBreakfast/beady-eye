@@ -7,9 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui::Frame;
 
-use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState, Tree};
+use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState};
 use crate::model::types::Status;
-use crate::view::forest::{self, Content, Forest, Group, GroupKind, Item, Note};
+use crate::view::forest::{self, Content, Forest, Group, GroupKind, Header, Item, Note};
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 use crate::view::tail::Tail;
@@ -87,7 +87,7 @@ fn id_width(lines: &[forest::Line]) -> usize {
 /// One line of the forest, whatever kind it is.
 fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
     match &line.content {
-        Content::Tree(head) => header(&head.tree, &line.prefix, &head.panes, head.panes_complete),
+        Content::Tree(head) => header(head, &line.prefix),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Note(note) => sentence(&line.prefix, finding(*note), LOOK_AT_THIS),
@@ -353,7 +353,8 @@ impl Widget for Fitted {
 /// phrase in place of the title: the reason beside it is already the reason
 /// the title is missing, and saying it twice would cost the columns the panes
 /// need.
-pub fn header(tree: &Tree, prefix: &str, panes: &[LoosePane], panes_complete: bool) -> Fitted {
+pub fn header(head: &Header, prefix: &str) -> Fitted {
+    let tree = &head.tree;
     let identity = vec![Span::raw(format!(
         "{prefix}{} · {}",
         tree.project.clone(),
@@ -361,7 +362,7 @@ pub fn header(tree: &Tree, prefix: &str, panes: &[LoosePane], panes_complete: bo
     ))];
     let state = match tree.tracker {
         TrackerState::Ok => summary(&tree.counts),
-        TrackerState::Unreachable(failure) => unreadable(failure, panes, panes_complete),
+        TrackerState::Unreachable(failure) => unreadable(failure, &head.panes, head.panes_complete),
     };
 
     Fitted::new(identity, vec![Span::raw(tree.title.clone())], state)
@@ -723,7 +724,7 @@ mod tests {
     use crate::collect::herdr::PaneStatus;
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{AgentRef, Badged, BeadKey, JoinSource};
-    use crate::model::snapshot::{FailedProject, Filter, Node, Snapshot, TrackerFailure};
+    use crate::model::snapshot::{FailedProject, Filter, Node, Snapshot, TrackerFailure, Tree};
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
     use chrono::{TimeZone, Utc};
@@ -800,6 +801,27 @@ mod tests {
         }
     }
 
+    /// A tree's header as `flatten` would build it, for a root whose status
+    /// the test does not care about.
+    fn head(tree: Tree) -> Header {
+        Header {
+            tree,
+            status: None,
+            panes: Vec::new(),
+            panes_complete: true,
+        }
+    }
+
+    /// The same, for a tree whose tracker refused and whose panes had to be
+    /// recovered from herdr instead.
+    fn recovered(tree: Tree, panes: &[LoosePane], panes_complete: bool) -> Header {
+        Header {
+            panes: panes.to_vec(),
+            panes_complete,
+            ..head(tree)
+        }
+    }
+
     fn tree(project: &str, root: &str, title: &str, counts: Counts) -> Tree {
         Tree {
             project: project.into(),
@@ -859,7 +881,7 @@ mod tests {
         );
 
         assert_eq!(
-            drawn(header(&tree, OPEN, &[], true), 78, 1),
+            drawn(header(&head(tree), OPEN), 78, 1),
             vec!["▾ summit-works · nix-9670s  DMS → noctalia v5              8/21  3 agents  ⚠ 3"]
         );
     }
@@ -877,7 +899,7 @@ mod tests {
         );
 
         assert_eq!(
-            drawn(header(&tree, SHUT, &[], true), 60, 1),
+            drawn(header(&head(tree), SHUT), 60, 1),
             vec!["▸ homelab · hl-sgqyv  heartbeat cadence                  2/7"]
         );
     }
@@ -892,7 +914,7 @@ mod tests {
         );
 
         assert_eq!(
-            drawn(header(&tree, SHUT, &[], true), 60, 1),
+            drawn(header(&head(tree), SHUT), 60, 1),
             vec!["▸ homelab · hl-sgqyv  heartbeat cadence         2/7  1 agent"]
         );
     }
@@ -909,7 +931,7 @@ mod tests {
         );
 
         assert_eq!(
-            drawn(header(&tree, OPEN, &[], true), 60, 2),
+            drawn(header(&head(tree), OPEN), 60, 2),
             vec![
                 "▾ summit-works · nix-9670s  Switch the…  8/21  3 agents  ⚠ 3",
                 "                                                            ",
@@ -929,7 +951,7 @@ mod tests {
         );
 
         assert_eq!(
-            drawn(header(&tree, OPEN, &[], true), 12, 1),
+            drawn(header(&head(tree), OPEN), 12, 1),
             vec!["▾ nixos-con…"]
         );
     }
@@ -945,7 +967,7 @@ mod tests {
             "→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→",
             counts(0, 1, 0, 0),
         );
-        let drawn = drawn(header(&tree, OPEN, &[], true), 40, 1);
+        let drawn = drawn(header(&head(tree), OPEN), 40, 1);
 
         assert_eq!(drawn[0].chars().count(), 40);
         assert!(!drawn[0].contains('\u{fffd}'), "{drawn:?}");
@@ -967,7 +989,7 @@ mod tests {
         ];
 
         assert_eq!(
-            drawn(header(&tree, OPEN, &panes, true), 100, 1),
+            drawn(header(&recovered(tree, &panes, true), OPEN), 100, 1),
             vec!["▾ summit-works · nix-9670s           ⚠ the tracker did not answer · ◍ wCM:p9 working · ◍ wCM:p6 idle"
                 .to_string()]
         );
@@ -978,7 +1000,7 @@ mod tests {
     #[test]
     fn an_unreachable_tree_never_shows_a_count_it_could_not_read() {
         let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
-        let drawn = drawn(header(&tree, OPEN, &[], true), 120, 1);
+        let drawn = drawn(header(&head(tree), OPEN), 120, 1);
 
         assert!(!drawn[0].contains("0/0"), "{drawn:?}");
     }
@@ -986,7 +1008,7 @@ mod tests {
     #[test]
     fn an_unreachable_tree_with_no_pane_to_show_says_that_rather_than_nothing() {
         let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
-        let drawn = drawn(header(&tree, OPEN, &[], true), 120, 1);
+        let drawn = drawn(header(&head(tree), OPEN), 120, 1);
 
         assert!(drawn[0].contains(phrase::no_live_panes()), "{drawn:?}");
     }
@@ -1000,8 +1022,8 @@ mod tests {
             Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
         let panes = [pane("wCM:p9", PaneStatus::Working)];
 
-        let whole = drawn(header(&tree, OPEN, &panes, true), 200, 1);
-        let partial = drawn(header(&tree, OPEN, &panes, false), 200, 1);
+        let whole = drawn(header(&recovered(tree.clone(), &panes, true), OPEN), 200, 1);
+        let partial = drawn(header(&recovered(tree, &panes, false), OPEN), 200, 1);
 
         assert!(
             !whole[0].contains(phrase::panes_may_be_incomplete()),
@@ -1020,7 +1042,7 @@ mod tests {
     fn a_narrow_unreachable_header_keeps_the_tree_and_the_reason_over_the_panes() {
         let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
         let panes = [pane("wCM:p9", PaneStatus::Working)];
-        let drawn = drawn(header(&tree, OPEN, &panes, false), 80, 1);
+        let drawn = drawn(header(&recovered(tree, &panes, false), OPEN), 80, 1);
 
         assert!(
             drawn[0].starts_with("▾ summit-works · nix-9670s"),

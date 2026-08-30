@@ -6,6 +6,7 @@ use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     self, FailedProject, Filter, HiddenTree, LoosePane, Node, Snapshot, TrackerState, Tree,
 };
+use crate::model::types::Status;
 use crate::view::row::{self, Row};
 use crate::view::{Action, Motion};
 
@@ -72,6 +73,13 @@ pub enum Content {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
     pub tree: Tree,
+    /// The root's own status. A root is a bead like any other and a reader
+    /// asks the same question of it, but it is the one bead whose line is a
+    /// header, so its status has to be carried here to be drawn at all.
+    ///
+    /// Absent on a tree whose tracker never answered: there are no nodes, so
+    /// there is no status to show, and the header says why instead.
+    pub status: Option<Status>,
     /// Live panes working in this project, where no bead could be read to
     /// attribute them to. Empty on a tree that was read.
     pub panes: Vec<LoosePane>,
@@ -571,6 +579,7 @@ impl Forest {
             folded: Some(open),
             bead: Some(root),
             content: Content::Tree(Header {
+                status: tree.nodes.first().map(|root| root.status.clone()),
                 tree: tree.clone(),
                 panes,
                 panes_complete: complete,
