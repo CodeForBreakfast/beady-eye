@@ -177,17 +177,23 @@ fn refusals(snapshot: &Snapshot) -> Vec<(BeadKey, Conflict)> {
 /// in the conflicts group. The conflict → pane direction, read the same way.
 fn pane_the_tail_points_at(snapshot: &Snapshot, conflict: &Conflict) -> Option<String> {
     let mut forest = forest::flatten(snapshot);
+    let at = forest
+        .lines()
+        .iter()
+        .position(|line| matches!(&line.content, Content::Item(Item::Conflict(c)) if c == conflict))
+        .unwrap_or_else(|| panic!("{conflict:?} has a row of its own in the conflicts group"));
+
     forest.apply(Action::Move(Motion::FirstRow));
-    // Moving the selection can open folds beneath it, so the row is looked for
-    // where the selection is now rather than at an index worked out up front.
-    for _ in 0..=forest.lines().len() {
-        let on = &forest.lines()[forest.selected_line()].content;
-        if matches!(on, Content::Item(Item::Conflict(c)) if c == conflict) {
-            return tail::target(&forest).pane().map(str::to_string);
-        }
+    for _ in 0..at {
         forest.apply(Action::Move(Motion::NextRow));
     }
-    panic!("the selection never reached the row for {conflict:?}");
+    assert_eq!(
+        forest.selected_line(),
+        at,
+        "the selection reached the disagreement's row"
+    );
+
+    tail::target(&forest).pane().map(str::to_string)
 }
 
 fn arm(conflict: &Conflict) -> &'static str {
