@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::config::Anomalies;
-use crate::model::join::AgentRef;
+use crate::model::join::{AgentRef, Conflict};
 use crate::model::types::{Bead, Status};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -11,7 +11,14 @@ pub enum Anomaly {
     /// `in_progress` and untouched for longer than the configured window.
     StaleClaim { days: i64 },
     /// `in_progress` with no pane behind it.
-    OrphanClaim,
+    ///
+    /// Where the bead named a live pane the join would not award it, that
+    /// refusal is the reason and travels with the rule; where it named
+    /// nothing, or nothing live, there is no reason to carry.
+    OrphanClaim {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refused: Option<Conflict>,
+    },
     /// Closed, but its pane is still there.
     StalePane,
 }
@@ -24,6 +31,7 @@ pub enum Anomaly {
 pub fn detect(
     bead: &Bead,
     agent: Option<&AgentRef>,
+    refused: Option<&Conflict>,
     cfg: &Anomalies,
     now: DateTime<Utc>,
 ) -> Vec<Anomaly> {
@@ -39,7 +47,9 @@ pub fn detect(
     let mut fired = Vec::new();
 
     if agent.is_none() {
-        fired.push(Anomaly::OrphanClaim);
+        fired.push(Anomaly::OrphanClaim {
+            refused: refused.cloned(),
+        });
     }
 
     let untouched_for = bead.updated_at.map(|updated| (now - updated).num_days());
@@ -92,6 +102,11 @@ mod tests {
         NOW.parse().expect("the clock parses")
     }
 
+    /// A claim with nothing behind it and no refusal to explain it.
+    fn orphan() -> Anomaly {
+        Anomaly::OrphanClaim { refused: None }
+    }
+
     // ---- closed beads: stale-pane ---------------------------------------
 
     #[test]
@@ -99,6 +114,7 @@ mod tests {
         let got = detect(
             &bead("closed", YESTERDAY),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -110,6 +126,7 @@ mod tests {
         let got = detect(
             &bead("closed", YESTERDAY),
             Some(&pane(PaneStatus::Done)),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -125,6 +142,7 @@ mod tests {
         let got = detect(
             &bead("closed", YESTERDAY),
             None,
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -136,6 +154,7 @@ mod tests {
         let got = detect(
             &bead("closed", SIXTY_DAYS_AGO),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -153,10 +172,11 @@ mod tests {
         let got = detect(
             &bead("in_progress", YESTERDAY),
             None,
+            None,
             &Anomalies::default(),
             now(),
         );
-        assert_eq!(got, vec![Anomaly::OrphanClaim]);
+        assert_eq!(got, vec![orphan()]);
     }
 
     #[test]
@@ -164,6 +184,7 @@ mod tests {
         let got = detect(
             &bead("in_progress", SIXTY_DAYS_AGO),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -175,12 +196,13 @@ mod tests {
         let got = detect(
             &bead("in_progress", SIXTY_DAYS_AGO),
             None,
+            None,
             &Anomalies::default(),
             now(),
         );
         assert_eq!(
             got,
-            vec![Anomaly::OrphanClaim, Anomaly::StaleClaim { days: 60 }],
+            vec![orphan(), Anomaly::StaleClaim { days: 60 }],
             "reporting only the orphan throws away how long it has sat there"
         );
     }
@@ -190,6 +212,7 @@ mod tests {
         let got = detect(
             &bead("in_progress", YESTERDAY),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -201,6 +224,7 @@ mod tests {
         let inside = detect(
             &bead("in_progress", TWENTY_NINE_DAYS_AGO),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -209,6 +233,7 @@ mod tests {
         let reached = detect(
             &bead("in_progress", THIRTY_DAYS_AGO),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -223,6 +248,7 @@ mod tests {
         let got = detect(
             &bead("in_progress", SIXTY_DAYS_AGO),
             Some(&live()),
+            None,
             &wide,
             now(),
         );
@@ -234,6 +260,7 @@ mod tests {
         let got = detect(
             &bead("in_progress", SIXTY_DAYS_AGO),
             Some(&live()),
+            None,
             &narrow,
             now(),
         );
@@ -245,7 +272,7 @@ mod tests {
         let mut b = bead("in_progress", SIXTY_DAYS_AGO);
         b.updated_at = None;
 
-        let got = detect(&b, Some(&live()), &Anomalies::default(), now());
+        let got = detect(&b, Some(&live()), None, &Anomalies::default(), now());
         assert_eq!(got, Vec::new());
     }
 
@@ -256,6 +283,7 @@ mod tests {
         let got = detect(
             &bead("blocked", SIXTY_DAYS_AGO),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -266,6 +294,7 @@ mod tests {
     fn a_blocked_bead_with_no_pane_is_never_flagged() {
         let got = detect(
             &bead("blocked", SIXTY_DAYS_AGO),
+            None,
             None,
             &Anomalies::default(),
             now(),
@@ -278,6 +307,7 @@ mod tests {
         let got = detect(
             &bead("open", SIXTY_DAYS_AGO),
             None,
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -289,6 +319,7 @@ mod tests {
         let got = detect(
             &bead("deferred", SIXTY_DAYS_AGO),
             Some(&live()),
+            None,
             &Anomalies::default(),
             now(),
         );
@@ -301,7 +332,7 @@ mod tests {
     fn the_rules_serialise_under_the_names_the_contract_publishes() {
         let json = serde_json::to_string(&vec![
             Anomaly::StalePane,
-            Anomaly::OrphanClaim,
+            orphan(),
             Anomaly::StaleClaim { days: 60 },
         ])
         .expect("the anomalies serialise");

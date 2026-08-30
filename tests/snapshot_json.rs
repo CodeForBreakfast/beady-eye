@@ -581,3 +581,38 @@ fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
         "the pane in the failed project is still reported"
     );
 }
+
+/// bdi-9vm. Run from a git worktree, `bdi` has no config file to read and
+/// synthesises one whose project path is the worktree, while every live pane
+/// is in the checkout the worktree was cut from. Not one pane is under the
+/// configured path, so nothing joins — and a claimed bead saying only that it
+/// has no pane sends the reader looking for a dead agent that is sitting
+/// right there.
+#[test]
+fn a_claim_whose_pane_is_under_no_configured_path_says_that_on_the_bead() {
+    let elsewhere = Config::from_toml(&CONFIG.replace("/srv/work/orbital", "/srv/wt/orbital"))
+        .expect("the config parses");
+
+    let emitted = emit_over(&elsewhere, &canned(), Filter::All);
+
+    let tree = &emitted["trees"][0];
+    assert_eq!(node(tree, "orb-7")["agent"], json!(null));
+    assert_eq!(
+        node(tree, "orb-7")["anomalies"],
+        json!([{
+            "rule": "orphan-claim",
+            "refused": {
+                "conflict": "pane-in-another-project",
+                "bead": {"project": "orbital", "id": "orb-7"},
+                "pane": "w:p1",
+                "pane_project": null,
+            },
+        }]),
+        "the bead named a live pane, so the reason it has none is the refusal"
+    );
+    assert_eq!(
+        node(tree, "orb-7.3")["anomalies"][0],
+        json!({"rule": "orphan-claim"}),
+        "a claim that named no pane has no refusal to carry"
+    );
+}

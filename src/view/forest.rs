@@ -2434,6 +2434,7 @@ credential_command = "secret harbour"
             &[],
             &Joined {
                 agents: joined.agents,
+                refused: BTreeMap::new(),
                 conflicts: Vec::new(),
             },
             &cfg(),

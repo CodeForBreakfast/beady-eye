@@ -45,12 +45,35 @@ pub fn failed_project(failed: &FailedProject) -> String {
 
 pub fn anomaly(anomaly: &Anomaly) -> String {
     match anomaly {
-        Anomaly::OrphanClaim => "claimed · no pane".to_string(),
+        Anomaly::OrphanClaim { refused } => orphan_claim(refused.as_ref()),
         Anomaly::StalePane => "closed · its pane is still alive".to_string(),
         Anomaly::StaleClaim { days } => {
             let day = if *days == 1 { "day" } else { "days" };
             format!("claimed · untouched for {days} {day}")
         }
+    }
+}
+
+/// Why a claim has no pane, in the words of the disagreement that refused it.
+///
+/// The bead's own row is the first place a reader looks, so the reason belongs
+/// on it rather than only in the conflicts group at the foot of the forest.
+/// Each phrase says what to change: a directory no project covers is a config
+/// entry, and a pane several beads name is a key one of them should have
+/// cleared.
+fn orphan_claim(refused: Option<&Conflict>) -> String {
+    match refused {
+        Some(Conflict::PaneInAnotherProject { pane_project, .. }) => format!(
+            "claimed · its pane is in {}",
+            pane_project.as_deref().unwrap_or("no configured project")
+        ),
+        Some(Conflict::SeveralBeadsNameOnePane { beads, .. }) => {
+            format!("claimed · {} beads name its pane", beads.len())
+        }
+        Some(Conflict::SeveralPanesNameOneBead { panes, .. }) => {
+            format!("claimed · {} panes name it", panes.len())
+        }
+        Some(Conflict::BeadAndPaneDisagree { .. }) | None => "claimed · no pane".to_string(),
     }
 }
 
@@ -299,7 +322,33 @@ mod tests {
         }
 
         for rule in [
-            Anomaly::OrphanClaim,
+            Anomaly::OrphanClaim { refused: None },
+            Anomaly::OrphanClaim {
+                refused: Some(Conflict::PaneInAnotherProject {
+                    bead: key("nix-9670s.20"),
+                    pane: "wCM:pD".into(),
+                    pane_project: None,
+                }),
+            },
+            Anomaly::OrphanClaim {
+                refused: Some(Conflict::PaneInAnotherProject {
+                    bead: key("nix-9670s.20"),
+                    pane: "wCM:p9".into(),
+                    pane_project: Some("homelab".into()),
+                }),
+            },
+            Anomaly::OrphanClaim {
+                refused: Some(Conflict::SeveralBeadsNameOnePane {
+                    pane: "wCM:p9".into(),
+                    beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+                }),
+            },
+            Anomaly::OrphanClaim {
+                refused: Some(Conflict::SeveralPanesNameOneBead {
+                    bead: key("nix-9670s.20"),
+                    panes: vec!["wCM:p9".into(), "wCM:p6".into()],
+                }),
+            },
             Anomaly::StalePane,
             Anomaly::StaleClaim { days: 1 },
             Anomaly::StaleClaim { days: 58 },
@@ -495,6 +544,42 @@ mod tests {
 
         assert!(said.contains("summit-works"));
         assert!(said.contains(tracker_failure(TrackerFailure::Auth)));
+    }
+
+    /// bdi-9vm: every claimed bead on a live screen read `claimed · no pane`
+    /// while the panes it named were alive and working. Where the join refused
+    /// a claim, the row says which refusal rather than reporting a dead agent.
+    #[test]
+    fn a_refused_claim_says_why_rather_than_that_there_is_no_pane() {
+        let bare = anomaly(&Anomaly::OrphanClaim { refused: None });
+
+        let outside = anomaly(&Anomaly::OrphanClaim {
+            refused: Some(Conflict::PaneInAnotherProject {
+                bead: key("nix-9670s.20"),
+                pane: "wCM:pD".into(),
+                pane_project: None,
+            }),
+        });
+        assert_ne!(outside, bare);
+        assert!(outside.contains("no configured project"), "{outside}");
+
+        let elsewhere = anomaly(&Anomaly::OrphanClaim {
+            refused: Some(Conflict::PaneInAnotherProject {
+                bead: key("nix-9670s.20"),
+                pane: "wCM:p9".into(),
+                pane_project: Some("homelab".into()),
+            }),
+        });
+        assert!(elsewhere.contains("homelab"), "{elsewhere}");
+
+        let shared = anomaly(&Anomaly::OrphanClaim {
+            refused: Some(Conflict::SeveralBeadsNameOnePane {
+                pane: "wCM:p9".into(),
+                beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+            }),
+        });
+        assert!(shared.contains('2'), "{shared}");
+        assert_ne!(shared, bare);
     }
 
     #[test]

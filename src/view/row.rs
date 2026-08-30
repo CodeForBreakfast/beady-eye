@@ -299,8 +299,11 @@ mod tests {
 
     #[test]
     fn a_row_carries_every_anomaly_that_fired_rather_than_the_first() {
-        let said = anomaly_marker(&[Anomaly::OrphanClaim, Anomaly::StaleClaim { days: 58 }])
-            .expect("two rules fired");
+        let said = anomaly_marker(&[
+            Anomaly::OrphanClaim { refused: None },
+            Anomaly::StaleClaim { days: 58 },
+        ])
+        .expect("two rules fired");
 
         assert!(said.contains("no pane"), "{said}");
         assert!(said.contains("58"), "{said}");

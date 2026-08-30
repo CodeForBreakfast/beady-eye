@@ -214,13 +214,12 @@ pub fn build_tree(
         .iter()
         .map(|placed| {
             let bead = &placed.bead;
-            let agent = joined
-                .agents
-                .get(&BeadKey {
-                    project: project.to_string(),
-                    id: bead.id.clone(),
-                })
-                .cloned();
+            let key = BeadKey {
+                project: project.to_string(),
+                id: bead.id.clone(),
+            };
+            let agent = joined.agents.get(&key).cloned();
+            let refused = joined.refused.get(&key);
             Node {
                 id: bead.id.clone(),
                 title: bead.title.clone(),
@@ -238,7 +237,7 @@ pub fn build_tree(
                 started_at: bead.started_at,
                 closed_at: bead.closed_at,
                 badges: join::badges_for(bead, &cfg.badges),
-                anomalies: anomaly::detect(bead, agent.as_ref(), &cfg.anomalies, now),
+                anomalies: anomaly::detect(bead, agent.as_ref(), refused, &cfg.anomalies, now),
                 agent,
                 truncated: bead.truncated,
             }
@@ -564,7 +563,10 @@ render = "⏸ waiting"
         let t = tree();
         assert_eq!(
             node(&t, "orb-7.3").anomalies,
-            vec![Anomaly::OrphanClaim, Anomaly::StaleClaim { days: 60 }],
+            vec![
+                Anomaly::OrphanClaim { refused: None },
+                Anomaly::StaleClaim { days: 60 }
+            ],
             "an old claim whose agent died is both"
         );
         assert_eq!(node(&t, "orb-7.2").anomalies, vec![Anomaly::StalePane]);

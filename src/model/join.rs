@@ -75,6 +75,12 @@ pub struct ProjectRows<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Joined {
     pub agents: BTreeMap<BeadKey, AgentRef>,
+    /// Beads whose own key named a live pane the join would not award them,
+    /// and the disagreement that refused it. Only the exact direction is here:
+    /// a bead that named nothing has no claim to refuse, and a pane naming an
+    /// id another tracker happens to reuse says nothing about that tracker's
+    /// bead.
+    pub refused: BTreeMap<BeadKey, Conflict>,
     pub conflicts: Vec<Conflict>,
 }
 
@@ -128,6 +134,7 @@ pub fn resolve(
     }
 
     let mut conflicts: Vec<Conflict> = Vec::new();
+    let mut refused: BTreeMap<BeadKey, Conflict> = BTreeMap::new();
 
     // The exact direction: the bead names its pane.
     let mut claims: BTreeMap<&str, BTreeSet<BeadKey>> = BTreeMap::new();
@@ -148,11 +155,13 @@ pub fn resolve(
             };
             let holds = pane_project[pane.pane_id.as_str()];
             if holds != Some(tree.project) {
-                conflicts.push(Conflict::PaneInAnotherProject {
-                    bead,
+                let elsewhere = Conflict::PaneInAnotherProject {
+                    bead: bead.clone(),
                     pane: pane.pane_id.clone(),
                     pane_project: holds.map(str::to_string),
-                });
+                };
+                conflicts.push(elsewhere.clone());
+                refused.insert(bead, elsewhere);
                 continue;
             }
             claimed_pane.insert(bead.clone(), pane.pane_id.clone());
@@ -170,10 +179,14 @@ pub fn resolve(
         if named.len() == 1 {
             agents.insert(named.remove(0), agent_ref(pane, JoinSource::AgentPane));
         } else {
-            conflicts.push(Conflict::SeveralBeadsNameOnePane {
+            let shared = Conflict::SeveralBeadsNameOnePane {
                 pane: pane.pane_id.clone(),
-                beads: named,
-            });
+                beads: named.clone(),
+            };
+            conflicts.push(shared.clone());
+            for bead in named {
+                refused.insert(bead, shared.clone());
+            }
         }
     }
 
@@ -243,7 +256,11 @@ pub fn resolve(
     conflicts.sort();
     conflicts.dedup();
 
-    Joined { agents, conflicts }
+    Joined {
+        agents,
+        refused,
+        conflicts,
+    }
 }
 
 fn agent_ref(pane: &Pane, source: JoinSource) -> AgentRef {
@@ -289,6 +306,13 @@ mod tests {
 
     const BEADS: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
     const PANES: &str = include_str!("../../tests/fixtures/herdr_agent_list.json");
+
+    /// A tracker and a herdr session captured from the same live moment, so
+    /// the pane a bead names is a pane the list reports. The pair the other
+    /// fixtures cannot make: `bd_dep_tree.json` was captured before any seat
+    /// wrote `agent_pane`, so nothing in it exercises the exact direction.
+    const JOINED_BEADS: &str = include_str!("../../tests/fixtures/joined_bd_dep_tree.json");
+    const JOINED_PANES: &str = include_str!("../../tests/fixtures/joined_herdr_agent_list.json");
 
     const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/beady-eye";
 
@@ -339,6 +363,31 @@ mod tests {
     }
 
     // ---- the two directions -------------------------------------------
+
+    /// The whole point of the tool, against the shapes a real tracker and a
+    /// real herdr session actually emit rather than the ones a test writes.
+    #[test]
+    fn a_captured_bead_takes_the_captured_pane_it_names() {
+        let beads = rows(JOINED_BEADS);
+        let live = parse_agent_list(JOINED_PANES).expect("the fixture parses");
+        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "beady-eye",
+                rows: &beads,
+            }],
+            &live,
+            &cfg,
+            &Join::default(),
+        );
+
+        let a = pane_of(&joined, "beady-eye", "bdi-2bb.18");
+        assert_eq!(a.pane, "wCW:p1Q");
+        assert_eq!(a.source, JoinSource::AgentPane);
+        assert_eq!(joined.conflicts, vec![]);
+        assert_eq!(joined.refused, BTreeMap::new());
+    }
 
     #[test]
     fn the_bead_naming_its_pane_resolves_exactly() {
@@ -652,6 +701,17 @@ mod tests {
                 pane_project: Some("one".to_string()),
             }]
         );
+        assert_eq!(
+            joined.refused,
+            BTreeMap::from([(
+                key("two", "x-1"),
+                Conflict::PaneInAnotherProject {
+                    bead: key("two", "x-1"),
+                    pane: "w:p1".to_string(),
+                    pane_project: Some("one".to_string()),
+                }
+            )])
+        );
     }
 
     /// A pane naming a bead that exists only in another project is the same
@@ -694,6 +754,12 @@ mod tests {
                 pane_project: Some("two".to_string()),
             }]
         );
+        assert_eq!(
+            joined.refused,
+            BTreeMap::new(),
+            "project one's bead named no pane, so it is owed no reason it has none: \
+             what a pane in another project calls itself is not its claim"
+        );
     }
 
     #[test]
@@ -716,13 +782,15 @@ mod tests {
         );
 
         assert_eq!(joined.agents, BTreeMap::new());
+        let outside = Conflict::PaneInAnotherProject {
+            bead: key("proj", "p-1"),
+            pane: "w:p1".to_string(),
+            pane_project: None,
+        };
+        assert_eq!(joined.conflicts, vec![outside.clone()]);
         assert_eq!(
-            joined.conflicts,
-            vec![Conflict::PaneInAnotherProject {
-                bead: key("proj", "p-1"),
-                pane: "w:p1".to_string(),
-                pane_project: None,
-            }]
+            joined.refused,
+            BTreeMap::from([(key("proj", "p-1"), outside)])
         );
     }
 
@@ -853,12 +921,18 @@ mod tests {
         );
 
         assert_eq!(joined.agents, BTreeMap::new(), "neither bead gets the pane");
+        let contested = Conflict::SeveralBeadsNameOnePane {
+            pane: "w:p1".to_string(),
+            beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
+        };
+        assert_eq!(joined.conflicts, vec![contested.clone()]);
         assert_eq!(
-            joined.conflicts,
-            vec![Conflict::SeveralBeadsNameOnePane {
-                pane: "w:p1".to_string(),
-                beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
-            }]
+            joined.refused,
+            BTreeMap::from([
+                (key("proj", "p-1.1"), contested.clone()),
+                (key("proj", "p-1.2"), contested),
+            ]),
+            "each of them claimed the pane, so each is owed the reason it has none"
         );
     }
 
