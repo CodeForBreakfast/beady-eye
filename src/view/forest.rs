@@ -549,9 +549,16 @@ impl Forest {
         self.cursor = self.first_handle();
     }
 
+    /// Which line the cursor is on. A bead reachable from two roots is drawn
+    /// under each of them, so more than one line can carry the handle, and
+    /// the one meant is the one nearest where the selection already sat —
+    /// otherwise stepping onto the lower copy is undone by the redraw that
+    /// follows it, and the list below that copy cannot be reached.
     fn find_cursor(&self) -> Option<usize> {
         let cursor = self.cursor.as_ref()?;
-        (0..self.lines.len()).find(|at| self.handle_at(*at).as_ref() == Some(cursor))
+        (0..self.lines.len())
+            .filter(|at| self.handle_at(*at).as_ref() == Some(cursor))
+            .min_by_key(|at| at.abs_diff(self.selected))
     }
 
     fn first_handle(&self) -> Option<Handle> {
@@ -1164,6 +1171,33 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// Two of one project's roots whose trees overlap. `qua-1.2` blocks both
+    /// epics, and `bd dep tree --direction=up` walks dependents, so it comes
+    /// back under each of them. Roots are found by climbing the parent chain
+    /// and trees by walking dependents, so a bead standing in two trees is
+    /// the ordinary shape of shared work, not a malformed tracker.
+    const QUARRY: &str = r#"[
+      {"id":"qua-1","title":"re-open the quarry","status":"in_progress","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"qua-1.2","title":"cut the haul road","status":"in_progress","parent_id":"qua-1",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// The second of the pair, drawn below Quarry, so the shared bead's lower
+    /// copy sits here with two more rows under it. Those two are the bottom
+    /// of the whole list, and are what a selection sprung back up to the
+    /// upper copy never reaches.
+    const WHARF: &str = r#"[
+      {"id":"wha-2","title":"re-face the wharf","status":"in_progress","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"wha-2.1","title":"drive the piles","status":"in_progress","parent_id":"wha-2",
+       "priority":2,"issue_type":"task"},
+      {"id":"qua-1.2","title":"cut the haul road","status":"in_progress","parent_id":"wha-2",
+       "priority":2,"issue_type":"task"},
+      {"id":"wha-2.3","title":"bed the fenders","status":"in_progress","parent_id":"wha-2",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// `w:p3` and `w:p4` both name `orb-7.1`, so neither holds it; `w:p9` is
     /// working in the project whose tracker refused; `w:pF` is under no
     /// configured project at all.
@@ -1329,6 +1363,84 @@ credential_command = "secret harbour"
                 _ => None,
             })
             .unwrap_or_else(|| panic!("{id} is not drawn"))
+    }
+
+    /// Every line drawn for one bead, by index. A bead reachable from two
+    /// roots is drawn under each, so this answers with more than one.
+    fn lines_of(forest: &Forest, id: &str) -> Vec<usize> {
+        forest
+            .lines()
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.bead.as_ref().is_some_and(|bead| bead.id == id))
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// Step down from the top until the selection stops moving, reporting
+    /// where it sat at each step.
+    fn walk_down(forest: &mut Forest) -> Vec<usize> {
+        forest.apply(Action::Move(Motion::FirstRow));
+        let mut visited = vec![forest.selected_line()];
+        for _ in 0..forest.lines().len() {
+            forest.apply(Action::Move(Motion::NextRow));
+            let at = forest.selected_line();
+            if visited.last() == Some(&at) {
+                break;
+            }
+            visited.push(at);
+        }
+        visited
+    }
+
+    /// A bead reachable from two roots is drawn in both their trees, and the
+    /// selection has to be able to sit on either copy. `find_cursor` took the
+    /// first line carrying the handle, so the redraw that follows every
+    /// action pulled a step onto the lower copy back up to the upper one, and
+    /// the list below it could not be walked into at all.
+    #[test]
+    fn stepping_down_past_a_bead_drawn_twice_reaches_the_bottom_of_the_list() {
+        let mut forest = flatten(&overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
+        assert_eq!(
+            lines_of(&forest, "qua-1.2").len(),
+            2,
+            "{:#?}",
+            sketch(&forest)
+        );
+        let drawn = forest.lines().len();
+
+        assert_eq!(
+            walk_down(&mut forest),
+            (0..drawn).collect::<Vec<usize>>(),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The tracker is written while the list is being read, so a refresh can
+    /// land between any two keystrokes. It re-derives the selection from the
+    /// handle it holds, and must settle on the copy the selection was on
+    /// rather than on that copy's twin higher up the list.
+    #[test]
+    fn a_refresh_between_steps_does_not_pull_the_selection_back_to_a_twin() {
+        let panes = panes_on(&["qua-1.2", "wha-2.1"]);
+        let mut forest = flatten(&overlapping(&panes));
+        let drawn = forest.lines().len();
+
+        forest.apply(Action::Move(Motion::FirstRow));
+        let mut visited = vec![forest.selected_line()];
+        for _ in 1..drawn {
+            forest.apply(Action::Move(Motion::NextRow));
+            forest.refresh(&overlapping(&panes));
+            visited.push(forest.selected_line());
+        }
+
+        assert_eq!(
+            visited,
+            (0..drawn).collect::<Vec<usize>>(),
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 
     /// Where the cursor is, by the bead its line carries. A tree's header
@@ -1544,6 +1656,41 @@ credential_command = "secret harbour"
 
     fn tower_staffed(on: &[&str]) -> Snapshot {
         alone("orbital", TOWER, &panes_on(on))
+    }
+
+    /// Two of one project's trees in one snapshot, joined against both so a
+    /// pane naming a bead reaches it whichever tree draws it. `alone` takes a
+    /// single tree, and the overlap these tests are about needs two.
+    fn overlapping(panes: &[Pane]) -> Snapshot {
+        let cfg = cfg();
+        let quarry = assembled(QUARRY);
+        let wharf = assembled(WHARF);
+        let mut rows = quarry.rows.clone();
+        rows.extend(wharf.rows.clone());
+        let joined = join::resolve(
+            &[ProjectRows {
+                project: "orbital",
+                rows: &rows,
+            }],
+            panes,
+            &cfg.projects,
+            &cfg.join,
+        );
+        let tree = |rows: &Assembled| {
+            build_tree("orbital", rows, &joined, &Readiness::default(), &cfg, now())
+        };
+        snapshot::build(
+            Collected {
+                trees: vec![tree(&quarry), tree(&wharf)],
+                failed_projects: Vec::new(),
+            },
+            panes,
+            &joined,
+            &cfg,
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        )
     }
 
     /// Open one node by hand, the way a user reaching past the default does.
