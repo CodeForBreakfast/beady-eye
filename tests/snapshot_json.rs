@@ -119,6 +119,10 @@ fn canned() -> Canned {
             "bd show orb-7.1 --json",
             r#"[{"id":"orb-7.1","parent":"orb-7"}]"#,
         )
+        .answering(
+            "bd show orb-7.2 --json",
+            r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
+        )
         .answering("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#)
         .answering("bd dep tree orb-7 --direction=up --json", TREE)
 }

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 
+use crate::collect::herdr::Pane;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::collect::{bd, herdr};
 use crate::config::{Config, Project};
@@ -31,7 +32,7 @@ pub fn run(cfg: &Config, runner: &dyn Runner, filter: Filter, now: DateTime<Utc>
     let mut read: Vec<ProjectWork> = Vec::new();
     let mut failed_projects: Vec<FailedProject> = Vec::new();
     for project in &cfg.projects {
-        match read_project(runner, project, cfg) {
+        match read_project(runner, project, cfg, &panes) {
             Ok(work) => read.push(work),
             Err(failure) => failed_projects.push(FailedProject {
                 project: project.name.clone(),
@@ -93,6 +94,7 @@ fn read_project(
     runner: &dyn Runner,
     project: &Project,
     cfg: &Config,
+    panes: &[Pane],
 ) -> Result<ProjectWork, RunFailure> {
     let env = bd::credential_env(runner, project)?;
     let discovered = bd::discover_roots(runner, &project.path, &env, &cfg.roots.metadata_keys)?;
@@ -109,6 +111,16 @@ fn read_project(
     for bead in &discovered {
         roots.insert(root_of(runner, project, &env, &bead.id, &mut ancestors)?);
     }
+    for named in panes_naming_a_bead_here(panes, project, cfg) {
+        // Swallowed, and it has to be. `display_agent` is free text, and
+        // bd exits non-zero on an id it does not hold with nothing to tell
+        // that apart from a tracker that has stopped answering — so there
+        // is no failure kind to discriminate on. Propagating would cost a
+        // whole tracker every time a pane was labelled with a sentence.
+        if let Ok(root) = root_of(runner, project, &env, named, &mut ancestors) {
+            roots.insert(root);
+        }
+    }
 
     Ok(ProjectWork {
         project: project.name.clone(),
@@ -123,6 +135,22 @@ fn read_project(
             })
             .collect(),
     })
+}
+
+/// What the live panes in this project's directory name. A pane placed in no
+/// configured project has no tracker to ask, and one placed in another
+/// project names an id in that tracker's namespace, not this one's.
+fn panes_naming_a_bead_here<'a>(
+    panes: &'a [Pane],
+    project: &'a Project,
+    cfg: &'a Config,
+) -> impl Iterator<Item = &'a str> {
+    panes
+        .iter()
+        .filter(|pane| {
+            join::project_of(&pane.cwd, &cfg.projects).is_some_and(|p| p.name == project.name)
+        })
+        .filter_map(|pane| pane.display_agent.as_deref())
 }
 
 /// The top of a bead's parent-child chain, asked of bd one level at a time.
@@ -397,6 +425,172 @@ explicit = ["orb-7", "orb-4"]
             vec!["orb-4", "orb-7"],
             "the root config and discovery both name is drawn once"
         );
+    }
+
+    // ---- discovery rule 4: a root only a live pane names ----------------
+
+    /// The only root herdr contributes, and the reason it exists: an agent
+    /// working off-tree still appears, on a bead no bd status and no
+    /// configured key reached. Such a tree has a live agent by construction,
+    /// so the live-agent filter can never be what hides it.
+    #[test]
+    fn a_bead_named_only_by_a_live_pane_becomes_a_root() {
+        let runner = orbital()
+            .with(
+                "herdr agent list",
+                r#"{"result":{"agents":[
+                  {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
+                  {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
+                   "display_agent":"orb-4"}
+                ]}}"#,
+            )
+            .with("bd show orb-4 --json", r#"[{"id":"orb-4","parent":null}]"#)
+            .with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+
+        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-4", "orb-7"],
+            "the pane's bead joins the roots bd's own statuses found"
+        );
+        assert!(snap.hidden_trees.is_empty());
+        assert!(node(tree_of(&snap, "orbital"), "orb-4").agent.is_some());
+    }
+
+    /// `display_agent` is free text, so reading it as a bead id is a guess.
+    /// bd exits non-zero on an id it does not hold, saying nothing that tells
+    /// it apart from a tracker that has stopped answering — so rule 4 cannot
+    /// discriminate on the kind and swallows the lookup's failure whole. A
+    /// pane labelled with a sentence belongs in `unattributed`, and taking
+    /// the whole tracker down for one is the opposite of degrading.
+    #[test]
+    fn a_pane_labelled_with_something_that_is_not_a_bead_costs_the_project_nothing() {
+        let runner = orbital()
+            .with(
+                "herdr agent list",
+                r#"{"result":{"agents":[
+                  {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
+                   "display_agent":"reviewing the docs"}
+                ]}}"#,
+            )
+            .failing(
+                "bd show reviewing the docs --json",
+                failing(FailureKind::Unavailable),
+            );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        assert!(
+            snap.failed_projects.is_empty(),
+            "a mislabelled pane is not a tracker outage"
+        );
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7"], "rules 1 to 3 are untouched");
+        let loose: Vec<&str> = snap.unattributed.iter().map(|p| p.pane.as_str()).collect();
+        assert_eq!(loose, vec!["w:p4"], "the pane is reported, not dropped");
+    }
+
+    #[test]
+    fn a_pane_naming_a_bead_discovery_already_walked_costs_no_second_climb() {
+        let runner = orbital().with(
+            "herdr agent list",
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
+               "display_agent":"orb-7.1"}
+            ]}}"#,
+        );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        assert_eq!(snap.trees.len(), 1);
+        // `call` panics on a second invocation, which is the assertion.
+        runner.call("bd show orb-7.1 --json");
+    }
+
+    /// The pane names a bead, not a root. What joins the root set is the top
+    /// of that bead's parent-child chain, so a pane sitting on a task deep in
+    /// a tree draws the tree rather than a stray one-node root beside it.
+    #[test]
+    fn a_pane_naming_a_bead_inside_a_tree_contributes_that_tree_not_the_bead() {
+        let runner = orbital()
+            .with(
+                "herdr agent list",
+                r#"{"result":{"agents":[
+                  {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
+                   "display_agent":"orb-7.2"}
+                ]}}"#,
+            )
+            .with(
+                "bd show orb-7.2 --json",
+                r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
+            );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        // The fake panics on a call it has no response for, so no `bd dep
+        // tree orb-7.2` is half of this assertion.
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7"],
+            "climbed to its root, and deduped there"
+        );
+    }
+
+    /// A pane names its bead by id alone, and prefixes are uncoordinated
+    /// across trackers — so the root it contributes belongs to the project
+    /// its directory sits in, and no other tracker is asked about the id.
+    #[test]
+    fn a_pane_contributes_its_root_only_to_the_project_it_sits_in() {
+        let runner = colliding_trackers(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
+               "display_agent":"orb-4"}
+            ]}}"#,
+        )
+        .with("bd show orb-4 --json", r#"[{"id":"orb-4","parent":null}]"#)
+        .with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+
+        let snap = run(&two_projects(), &runner, Filter::All, now());
+
+        let roots: Vec<(&str, &str)> = snap
+            .trees
+            .iter()
+            .map(|t| (t.project.as_str(), t.root.as_str()))
+            .collect();
+        assert_eq!(
+            roots,
+            vec![("orbital", "orb-4"), ("orbital", "x-1"), ("ferry", "x-1")]
+        );
+
+        // `call` panics on a second invocation, so this is also the assertion
+        // that ferry was never asked about an id no pane of its own named.
+        assert_eq!(
+            runner.call("bd show orb-4 --json").cwd,
+            Some(PathBuf::from(ORBITAL))
+        );
+    }
+
+    /// A pane has to resolve to a project before the id it names means
+    /// anything, because there is no tracker to ask otherwise.
+    #[test]
+    fn a_pane_under_no_configured_project_contributes_no_root() {
+        let runner = orbital().with(
+            "herdr agent list",
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p4","cwd":"/srv/elsewhere","agent_status":"working",
+               "display_agent":"orb-4"}
+            ]}}"#,
+        );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        // The fake panics on a call it has no response for, so `bd show
+        // orb-4` never being made is what lets this reach its assertions.
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7"]);
     }
 
     // ---- what bd knows that the tree does not --------------------------
