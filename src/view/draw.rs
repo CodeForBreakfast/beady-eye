@@ -1646,7 +1646,11 @@ mod tests {
         let (selected, lines) = (0, 100);
 
         for row in [bands.tail.y, bands.tail.y + 3, bands.keys.y] {
-            assert_eq!(line_at(bands.forest, selected, lines, row), None, "row {row}");
+            assert_eq!(
+                line_at(bands.forest, selected, lines, row),
+                None,
+                "row {row}"
+            );
         }
     }
 

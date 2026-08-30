@@ -7,8 +7,8 @@ use std::thread;
 use std::time::Duration;
 
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::{DefaultTerminal, Frame};
@@ -2231,7 +2231,11 @@ mod tests {
     /// selection changes which pane the tail is reading.
     fn a_staffed_grove(beads: usize) -> Snapshot {
         let mut snapshot = a_grove(beads);
-        for tree in snapshot.trees.iter_mut().chain(snapshot.collected.iter_mut()) {
+        for tree in snapshot
+            .trees
+            .iter_mut()
+            .chain(snapshot.collected.iter_mut())
+        {
             for (at, node) in tree.nodes.iter_mut().enumerate() {
                 node.agent = Some(AgentRef {
                     pane: format!("w:p{at}"),
