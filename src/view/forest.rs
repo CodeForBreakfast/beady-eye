@@ -55,6 +55,9 @@ pub enum Content {
     /// A run of closed siblings nobody is working, said as a count.
     Elided {
         count: usize,
+        /// The bead whose children the run stands for. A run is not a bead,
+        /// so this is not `Line::bead`; it is what the fold is known by.
+        under: BeadKey,
     },
     /// Something true of the tree above rather than of any one bead in it.
     Note(Note),
@@ -141,6 +144,9 @@ pub enum Item {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Handle {
     Bead(BeadKey),
+    /// The run of quiet closed children under one bead. A bead has at most
+    /// one run, so the bead names it.
+    Elided(BeadKey),
     Group(GroupKind),
 }
 
@@ -150,7 +156,11 @@ enum Handle {
 enum Child {
     Note(Note),
     Node(usize),
-    Elided(usize),
+    /// The children of `under` that a run stands for, in render order.
+    Elided {
+        under: usize,
+        members: Vec<usize>,
+    },
 }
 
 /// One snapshot's lines in render order, with the fold state and the selection
@@ -222,8 +232,15 @@ impl Forest {
     /// first.
     fn ancestry(&self) -> Vec<Handle> {
         let mut chain: Vec<Handle> = self.cursor.iter().cloned().collect();
-        let Some(Handle::Bead(key)) = &self.cursor else {
-            return chain;
+        let key = match &self.cursor {
+            Some(Handle::Bead(key)) => key.clone(),
+            // A run is only ever seen from the bead it hangs under, so that
+            // bead is the first forebear a lost run falls back to.
+            Some(Handle::Elided(key)) => {
+                chain.push(Handle::Bead(key.clone()));
+                key.clone()
+            }
+            _ => return chain,
         };
 
         for tree in self
@@ -380,6 +397,7 @@ impl Forest {
         let line = self.lines.get(at)?;
         match &line.content {
             Content::Group(group) => Some(Handle::Group(group.kind)),
+            Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
             _ => line.bead.clone().map(Handle::Bead),
         }
     }
@@ -429,7 +447,7 @@ impl Forest {
     /// Whether the snapshot still holds what a handle names.
     fn present(&self, handle: &Handle) -> bool {
         match handle {
-            Handle::Bead(key) => self.snapshot.trees.iter().any(|tree| {
+            Handle::Bead(key) | Handle::Elided(key) => self.snapshot.trees.iter().any(|tree| {
                 tree.project == key.project
                     && (tree.root == key.id || tree.nodes.iter().any(|node| node.id == key.id))
             }),
@@ -449,7 +467,8 @@ impl Forest {
             // to its header when it is not; anything below a root that is open
             // is open with it.
             Handle::Bead(key) => !self.is_root(key) || self.holds_cursor(key),
-            Handle::Group(_) => false,
+            // A run rests as the count it was drawn to be.
+            Handle::Elided(_) | Handle::Group(_) => false,
         }
     }
 
@@ -461,7 +480,9 @@ impl Forest {
     }
 
     fn holds_cursor(&self, root: &BeadKey) -> bool {
-        let Some(Handle::Bead(cursor)) = &self.cursor else {
+        // A run hangs under a bead, so the cursor on one is in that bead's
+        // tree exactly as a cursor on the bead itself is.
+        let Some(Handle::Bead(cursor) | Handle::Elided(cursor)) = &self.cursor else {
             return false;
         };
         cursor.project == root.project
@@ -569,8 +590,11 @@ impl Forest {
     fn children_entries(&self, tree: &Tree, children: &[Vec<usize>], at: usize) -> Vec<Child> {
         let (drawn, elided) = split(tree, children, at);
         let mut entries: Vec<Child> = drawn.into_iter().map(Child::Node).collect();
-        if elided > 0 {
-            entries.push(Child::Elided(elided));
+        if !elided.is_empty() {
+            entries.push(Child::Elided {
+                under: at,
+                members: elided,
+            });
         }
         entries
     }
@@ -596,14 +620,35 @@ impl Forest {
                     bead: None,
                     content: Content::Note(note),
                 }),
-                Child::Elided(count) => lines.push(Line {
-                    prefix: prefix(trunk, last, false),
-                    depth,
-                    last_child: last,
-                    folded: None,
-                    bead: None,
-                    content: Content::Elided { count },
-                }),
+                Child::Elided { under, members } => {
+                    let key = BeadKey {
+                        project: tree.project.clone(),
+                        id: tree.nodes[under].id.clone(),
+                    };
+                    let open = self.expanded(&Handle::Elided(key.clone()));
+                    lines.push(Line {
+                        prefix: prefix(trunk, last, !open),
+                        depth,
+                        last_child: last,
+                        folded: Some(open),
+                        bead: None,
+                        content: Content::Elided {
+                            count: run_size(children, &members),
+                            under: key,
+                        },
+                    });
+                    if open {
+                        // A run is always the last of its parent's entries, so
+                        // its beads hang under it rather than beside the
+                        // siblings they belong to: anything drawn after it at
+                        // that depth would follow an elbow that had already
+                        // said it was the last.
+                        trunk.push(!last);
+                        let entries = members.into_iter().map(Child::Node).collect();
+                        self.draw_children(tree, children, entries, trunk, lines);
+                        trunk.pop();
+                    }
+                }
                 Child::Node(at) => {
                     let node = &tree.nodes[at];
                     let key = BeadKey {
@@ -706,7 +751,7 @@ fn marker(open: bool) -> &'static str {
 fn selectable(line: &Line) -> bool {
     matches!(
         line.content,
-        Content::Tree(_) | Content::Bead(_) | Content::Group(_)
+        Content::Tree(_) | Content::Bead(_) | Content::Elided { .. } | Content::Group(_)
     )
 }
 
@@ -753,14 +798,13 @@ fn children_of(nodes: &[Node]) -> Vec<Vec<usize>> {
     children
 }
 
-/// A node's children split into the ones drawn and the size of the run that
-/// is not.
+/// A node's children split into the ones drawn and the run that is not.
 ///
-/// A closed sibling nobody is working collapses into the count; one carrying
-/// an agent or an anomaly does not, because that is the stale-pane case and
+/// A closed sibling nobody is working collapses into the run; one carrying an
+/// agent or an anomaly does not, because that is the stale-pane case and
 /// eliding it would hide a live agent. A run of one is drawn: `… 1 more`
 /// costs a line and saves none.
-fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, usize) {
+fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, Vec<usize>) {
     let quiet: Vec<usize> = children[at]
         .iter()
         .copied()
@@ -771,19 +815,24 @@ fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, usize)
         .collect();
 
     if quiet.len() < 2 {
-        return (children[at].clone(), 0);
+        return (children[at].clone(), Vec::new());
     }
 
-    let elided = quiet
-        .iter()
-        .map(|kid| subtree_size(children, *kid))
-        .sum::<usize>();
     let drawn = children[at]
         .iter()
         .copied()
         .filter(|kid| !quiet.contains(kid))
         .collect();
-    (drawn, elided)
+    (drawn, quiet)
+}
+
+/// What a run stands for: its own beads and everything beneath them.
+///
+/// Opening it draws those beads and leaves their descendants to the same rules,
+/// which for a quiet closed run of their own is another count one level down.
+/// Nothing goes missing either way, so the number holds at every depth.
+fn run_size(children: &[Vec<usize>], members: &[usize]) -> usize {
+    members.iter().map(|kid| subtree_size(children, *kid)).sum()
 }
 
 fn subtree_size(children: &[Vec<usize>], at: usize) -> usize {
@@ -837,6 +886,23 @@ mod tests {
        "priority":2,"issue_type":"epic"},
       {"id":"hbr-3.1","title":"survey the silt","status":"open","parent_id":"hbr-3",
        "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A tree whose run of quiet closed siblings has a quiet closed run of
+    /// its own, so an opened run still has something left to elide inside it.
+    const DEPOT: &str = r#"[
+      {"id":"dep-1","title":"re-lay the sidings","status":"in_progress","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"dep-1.1","title":"grade the bed","status":"open","parent_id":"dep-1",
+       "priority":2,"issue_type":"task"},
+      {"id":"dep-1.2","title":"lift the old rail","status":"closed","parent_id":"dep-1",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
+      {"id":"dep-1.2.1","title":"cut the fishplates","status":"closed","parent_id":"dep-1.2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"dep-1.2.2","title":"stack the chairs","status":"closed","parent_id":"dep-1.2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"dep-1.3","title":"clear the ballast","status":"closed","parent_id":"dep-1",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"}
     ]"#;
 
     /// `w:p3` and `w:p4` both name `orb-7.1`, so neither holds it; `w:p9` is
@@ -974,7 +1040,7 @@ credential_command = "secret harbour"
         match content {
             Content::Tree(header) => format!("{} · {}", header.tree.project, header.tree.root),
             Content::Bead(row) => format!("{} {} {}", row.glyph, row.id, row.title),
-            Content::Elided { count } => format!("… {count} more"),
+            Content::Elided { count, .. } => format!("… {count} more"),
             Content::Note(note) => format!("! {note:?}"),
             Content::Group(group) => format!("[{:?}] {}", group.kind, group.count),
             Content::Item(item) => format!("- {item:?}"),
@@ -986,6 +1052,24 @@ credential_command = "secret harbour"
             project: project.into(),
             id: id.into(),
         }
+    }
+
+    fn depot() -> Snapshot {
+        gather(vec![tree_of("orbital", DEPOT)], Vec::new(), Filter::All)
+    }
+
+    /// Put the selection on the first elided run, by moving down to it. It
+    /// carries no bead, so `select` cannot reach it.
+    fn select_run(forest: &mut Forest) {
+        forest.apply(Action::Move(Motion::FirstRow));
+        for _ in 0..=forest.lines().len() {
+            let line = &forest.lines()[forest.selected_line()];
+            if matches!(line.content, Content::Elided { .. }) {
+                return;
+            }
+            forest.apply(Action::Move(Motion::NextRow));
+        }
+        panic!("no elided run is reachable by moving down");
     }
 
     fn select(forest: &mut Forest, bead: &BeadKey) {
@@ -1014,7 +1098,7 @@ credential_command = "secret harbour"
                 "  │   └── ○ .1.2 seal the feed horn",
                 "  ├── ○ .7 log the survey marks",
                 "  ├── ✓ .4 clear the access road",
-                "  └── … 2 more",
+                "  └── ▸ … 2 more",
                 "▸ ferry · fer-2",
                 "▸ [FailedProjects] 1",
                 "▸ [Conflicts] 1",
@@ -1113,7 +1197,110 @@ credential_command = "secret harbour"
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
         let forest = flatten(&snapshot());
 
-        assert!(sketch(&forest).contains(&"  └── … 2 more".to_string()));
+        assert!(sketch(&forest).contains(&"  └── ▸ … 2 more".to_string()));
+    }
+
+    /// The count is the only account the screen gives of the beads it stands
+    /// for, so the line has to be reachable to be worth anything.
+    #[test]
+    fn an_elided_run_can_hold_the_selection() {
+        let mut forest = flatten(&snapshot());
+
+        select_run(&mut forest);
+
+        assert_eq!(sketch(&forest)[forest.selected_line()], "  └── ▸ … 2 more");
+    }
+
+    #[test]
+    fn opening_an_elided_run_draws_the_beads_it_counted() {
+        let mut forest = flatten(&snapshot());
+        select_run(&mut forest);
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(
+            sketch(&forest)[7..],
+            [
+                "  ├── ✓ .4 clear the access road",
+                "  └── … 2 more",
+                "      ├── ✓ .2 survey the mast",
+                "      └── ✓ .3 pour the pad",
+                "▸ ferry · fer-2",
+                "▸ [FailedProjects] 1",
+                "▸ [Conflicts] 1",
+                "▸ [HiddenTrees] 1",
+                "▸ [Unattributed] 3",
+            ]
+        );
+    }
+
+    #[test]
+    fn shutting_an_open_elided_run_puts_the_count_back() {
+        let mut forest = flatten(&snapshot());
+        let was = sketch(&forest);
+        select_run(&mut forest);
+
+        forest.apply(Action::ExpandOrChild);
+        forest.apply(Action::CollapseOrParent);
+
+        assert_eq!(sketch(&forest), was);
+    }
+
+    /// The two-or-more rule is a property of the forest, not of a place in
+    /// it, so it holds inside an open run as it does everywhere else. Nothing
+    /// disappears; it is counted one level down.
+    #[test]
+    fn an_open_run_elides_again_inside_itself() {
+        let mut forest = flatten(&depot());
+        select_run(&mut forest);
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(
+            sketch(&forest)[..6],
+            [
+                "▾ orbital · dep-1",
+                "  ├── ○ .1 grade the bed",
+                "  └── … 4 more",
+                "      ├── ✓ .2 lift the old rail",
+                "      │   └── ▸ … 2 more",
+                "      └── ✓ .3 clear the ballast",
+            ]
+        );
+    }
+
+    /// A run is a fold like any other, so a collection that lands under an
+    /// open one leaves it open and leaves the cursor on it.
+    #[test]
+    fn an_open_elided_run_survives_a_refresh() {
+        let mut forest = flatten(&snapshot());
+        select_run(&mut forest);
+        forest.apply(Action::ToggleFold);
+
+        let reordered = ORBITAL.replace(r#""priority":3"#, r#""priority":1"#);
+        forest.refresh(&gather(
+            vec![tree_of("orbital", &reordered)],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+
+        let drawn = sketch(&forest);
+        assert!(
+            drawn.contains(&"      └── ✓ .3 pour the pad".to_string()),
+            "{drawn:#?}"
+        );
+        assert_eq!(drawn[forest.selected_line()], "  └── … 2 more");
+    }
+
+    /// A run has no bead of its own, so a line the cursor is holding must not
+    /// report one: the loop picks the tail's pane from that field.
+    #[test]
+    fn a_selected_elided_run_stands_for_no_bead_of_its_own() {
+        let mut forest = flatten(&snapshot());
+
+        select_run(&mut forest);
+
+        assert_eq!(forest.selected(), None);
     }
 
     /// A closed bead with a pane still on it is the stale-pane anomaly, and

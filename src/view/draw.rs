@@ -89,7 +89,7 @@ fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
     match &line.content {
         Content::Tree(head) => header(&head.tree, &line.prefix, &head.panes, head.panes_complete),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
-        Content::Elided { count } => {
+        Content::Elided { count, .. } => {
             sentence(&line.prefix, phrase::elided(*count), Color::DarkGray)
         }
         Content::Note(note) => sentence(&line.prefix, finding(*note), LOOK_AT_THIS),
@@ -701,7 +701,7 @@ mod tests {
 
     use crate::collect::herdr::PaneStatus;
     use crate::model::anomaly::Anomaly;
-    use crate::model::join::{AgentRef, Badged, JoinSource};
+    use crate::model::join::{AgentRef, Badged, BeadKey, JoinSource};
     use crate::model::snapshot::{FailedProject, Filter, Node, Snapshot, TrackerFailure};
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
@@ -743,6 +743,18 @@ mod tests {
             }
         }
         runs
+    }
+
+    /// A run of closed siblings, under whichever bead the test likes: the
+    /// drawing says the count and nothing about the bead it hangs under.
+    fn elided(count: usize) -> Content {
+        Content::Elided {
+            count,
+            under: BeadKey {
+                project: "orbital".into(),
+                id: "orb-7".into(),
+            },
+        }
     }
 
     /// One forest line, behind the box-drawing a flatten would have put in
@@ -1441,7 +1453,7 @@ mod tests {
     /// the words beside it are coloured.
     #[test]
     fn an_elided_run_leaves_its_box_drawing_in_the_terminals_own_colour() {
-        let painted = painted(fitted(&under(BRANCH, Content::Elided { count: 3 }), 0), 72);
+        let painted = painted(fitted(&under(BRANCH, elided(3)), 0), 72);
 
         assert_eq!(painted[0], (BRANCH.to_string(), Color::Reset));
         assert_eq!(painted[1].1, Color::DarkGray);
