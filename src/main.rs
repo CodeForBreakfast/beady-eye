@@ -73,8 +73,14 @@ fn main() -> anyhow::Result<ExitCode> {
     let refresh = cfg.tui.refresh();
     // RealRunner is a unit struct, so the collection builds its own rather
     // than borrowing one across the thread it runs on.
+    let projects = cfg
+        .projects
+        .iter()
+        .map(|project| project.name.clone())
+        .collect();
     beady_eye::tui::run(
         refresh,
+        projects,
         Box::new(move || beady_eye::app::run(&cfg, &RealRunner, filter, Utc::now())),
     )?;
 

@@ -7,6 +7,7 @@ use std::time::Duration;
 use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{DefaultTerminal, Frame};
 
+use crate::collect::changes::{self, Reported, Socket};
 use crate::collect::run::RealRunner;
 use crate::model::snapshot::{self, Filter, Snapshot};
 use crate::view::forest::{self, Forest};
@@ -18,9 +19,15 @@ use crate::view::{draw, Action, Motion};
 /// The first collection is made before the alternate screen opens, so the
 /// wait happens where the user can still see their own terminal; every one
 /// after it runs on a worker thread.
-pub fn run(refresh: Duration, collect: Box<dyn Fn() -> Snapshot + Send>) -> anyhow::Result<()> {
+pub fn run(
+    refresh: Duration,
+    projects: Vec<String>,
+    collect: Box<dyn Fn() -> Snapshot + Send>,
+) -> anyhow::Result<()> {
     let first = collect();
-    let (events, ask) = wire(refresh, collect);
+    // Held, not discarded: the socket comes off the filesystem when this
+    // returns, so the run that made it is the run that clears it away.
+    let (events, ask, _socket) = wire(refresh, Reported::watching(projects), collect);
     let mut screen = Screen::showing(first, Box::new(Herdr::new(RealRunner)))?;
 
     drive(&mut screen, &events, &ask)
@@ -129,11 +136,13 @@ fn action(key: KeyEvent) -> Option<Action> {
 }
 
 /// Start everything that produces events, and hand back the loop's ends: the
-/// events themselves, and the channel a collection is asked for on.
+/// events themselves, the channel a collection is asked for on, and the
+/// inbound socket for as long as there is a view to keep live.
 fn wire(
     refresh: Duration,
+    reported: Reported,
     collect: Box<dyn Fn() -> Snapshot + Send>,
-) -> (Receiver<Event>, Sender<()>) {
+) -> (Receiver<Event>, Sender<()>, Option<Socket>) {
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
 
@@ -143,9 +152,43 @@ fn wire(
     let typing = to_the_loop.clone();
     thread::spawn(move || keys(&typing));
 
-    thread::spawn(move || report(&mut Timer { every: refresh }, &to_the_loop));
+    let (changed, changes) = mpsc::channel();
+    // Opened before the alternate screen, so anything that stopped it is said
+    // where the user's own terminal still has it when the view closes.
+    let socket = match changes::listen(
+        changes::where_writers_find_bdi(),
+        &reported,
+        changed.clone(),
+    ) {
+        Ok(socket) => Some(socket),
+        Err(refused) => {
+            eprintln!("bdi: {refused}");
+            None
+        }
+    };
 
-    (events, ask)
+    let told = to_the_loop.clone();
+    thread::spawn(move || {
+        report(
+            &mut Inbound {
+                changes,
+                _open: changed,
+            },
+            &told,
+        );
+    });
+
+    thread::spawn(move || {
+        report(
+            &mut Timer {
+                every: refresh,
+                reported,
+            },
+            &to_the_loop,
+        );
+    });
+
+    (events, ask, socket)
 }
 
 /// What tells `bdi` that a project's work has moved on.
@@ -159,16 +202,44 @@ trait Changes: Send {
     fn next(&mut self);
 }
 
-/// The source for a project nothing else reports for: it says the work has
+/// The source for the projects nothing else reports for: it says the work has
 /// moved every interval, whether or not it has.
-#[derive(Clone, Copy)]
+///
+/// It stays quiet for as long as every project is being reported for over the
+/// inbound channel, because a poll then has nothing to find that a message
+/// has not already said. A project the channel stops covering is polled again
+/// from the next interval, so a producer going away costs the view its speed
+/// rather than its truth. The window is the interval itself: a project
+/// reported for more recently than that is one the poll would have found
+/// nothing on.
 struct Timer {
     every: Duration,
+    reported: Reported,
 }
 
 impl Changes for Timer {
     fn next(&mut self) {
-        thread::sleep(self.every);
+        loop {
+            thread::sleep(self.every);
+            if !self.reported.covered(self.every) {
+                return;
+            }
+        }
+    }
+}
+
+/// The source for the projects something else reports for: it says the work
+/// has moved when a writer has said which project it moved in.
+struct Inbound {
+    changes: Receiver<()>,
+    /// Held so the channel never runs out of writers. A source whose last
+    /// writer has gone must go quiet, not report as fast as it can.
+    _open: Sender<()>,
+}
+
+impl Changes for Inbound {
+    fn next(&mut self) {
+        let _ = self.changes.recv();
     }
 }
 
@@ -607,13 +678,83 @@ mod tests {
         assert!(matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed)));
     }
 
+    /// A project something is reporting for does not need asking: the poll
+    /// would find only what the message has already said.
     #[test]
-    fn a_timed_project_is_reported_every_interval() {
+    fn a_polled_project_goes_quiet_while_something_reports_it() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reported = Reported::watching(["atlas".to_string()]);
+
+        let producing = reported.clone();
+        thread::spawn(move || loop {
+            producing.take("atlas");
+            thread::sleep(Duration::from_millis(20));
+        });
+        thread::spawn(move || {
+            report(
+                &mut Timer {
+                    every: Duration::from_secs(1),
+                    reported,
+                },
+                &to_the_loop,
+            );
+        });
+
+        assert!(
+            events.recv_timeout(Duration::from_millis(1500)).is_err(),
+            "the writer had said everything a poll would have found"
+        );
+    }
+
+    /// The signal that a live source has gone quiet: the project is polled
+    /// again, so the view degrades to slow rather than to stale.
+    #[test]
+    fn a_project_the_channel_stops_covering_is_polled_again() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reported = Reported::watching(["atlas".to_string()]);
+        reported.take("atlas");
+
+        thread::spawn(move || {
+            report(
+                &mut Timer {
+                    every: Duration::from_millis(20),
+                    reported,
+                },
+                &to_the_loop,
+            );
+        });
+
+        assert!(matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed)));
+    }
+
+    /// A channel whose writers have all gone must go quiet. A source that
+    /// returned from `next` the moment it had nothing left would report in a
+    /// loop and collect without pause.
+    #[test]
+    fn an_inbound_channel_with_no_writers_left_goes_quiet() {
+        let (to_the_loop, events) = mpsc::channel();
+        let (changed, changes) = mpsc::channel();
+        thread::spawn(move || {
+            report(
+                &mut Inbound {
+                    changes,
+                    _open: changed,
+                },
+                &to_the_loop,
+            );
+        });
+
+        assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn a_polled_project_is_reported_every_interval() {
         let (to_the_loop, events) = mpsc::channel();
         thread::spawn(move || {
             report(
                 &mut Timer {
                     every: Duration::from_millis(20),
+                    reported: Reported::default(),
                 },
                 &to_the_loop,
             );
@@ -636,6 +777,7 @@ mod tests {
             report(
                 &mut Timer {
                     every: Duration::from_millis(1),
+                    reported: Reported::default(),
                 },
                 &to_the_loop,
             );
