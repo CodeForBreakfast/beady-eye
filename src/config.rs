@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -106,6 +106,14 @@ impl Config {
         let cfg: Config = toml::from_str(s)?;
         if cfg.projects.is_empty() {
             anyhow::bail!("config names no projects; bdi has nothing to read");
+        }
+        let repeated = cfg.names_borne_by_more_than_one_project();
+        if !repeated.is_empty() {
+            anyhow::bail!(
+                "a project's name is how bdi tells its beads from another tracker's, so \
+                 two projects cannot answer to one; repeated: {}",
+                repeated.join(", ")
+            );
         }
         if cfg.projects.len() > 1 {
             let ambient = cfg.projects_on_the_ambient_credential();
@@ -217,6 +225,17 @@ impl Config {
             join: Join::default(),
             tui: Tui::default(),
         })
+    }
+
+    fn names_borne_by_more_than_one_project(&self) -> Vec<&str> {
+        let mut seen = BTreeSet::new();
+        let mut repeated = BTreeSet::new();
+        for name in self.projects.iter().map(|p| p.name.as_str()) {
+            if !seen.insert(name) {
+                repeated.insert(name);
+            }
+        }
+        repeated.into_iter().collect()
     }
 
     fn projects_on_the_ambient_credential(&self) -> Vec<&str> {
@@ -490,6 +509,49 @@ cinder = ["c-1"]
         assert!(err.contains("cinder"), "got: {err}");
         assert!(err.contains("atlas"), "got: {err}");
         assert!(err.contains("beacon"), "got: {err}");
+    }
+
+    const ONE_NAME_ON_TWO_PROJECTS: &str = r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
+
+[[projects]]
+name = "atlas"
+path = "/home/user/dev/atlas-fork"
+credential_command = "cat /home/user/dev/atlas-fork/.beads-password"
+"#;
+
+    #[test]
+    fn two_projects_of_one_name_are_rejected() {
+        let err = Config::from_toml(ONE_NAME_ON_TWO_PROJECTS)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("atlas"), "got: {err}");
+    }
+
+    const ONE_NAME_ON_TWO_AMBIENT_PROJECTS: &str = r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+
+[[projects]]
+name = "atlas"
+path = "/home/user/dev/atlas-fork"
+"#;
+
+    /// Both guards have something to say about this config, and only one of
+    /// them says the thing that is actually wrong with it.
+    #[test]
+    fn a_repeated_name_is_reported_before_a_missing_credential() {
+        let err = Config::from_toml(ONE_NAME_ON_TWO_AMBIENT_PROJECTS)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("atlas"), "got: {err}");
+        assert!(!err.contains("credential_command"), "got: {err}");
     }
 
     fn two_projects() -> Config {
