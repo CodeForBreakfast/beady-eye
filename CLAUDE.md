@@ -14,8 +14,19 @@ root, annotated with the live agent on each node. Read-only.
 - The TUI gets its own plan, written against the real types once the core
   compiles. The Noctalia widget waits behind the JSON contract.
 
-No code exists yet. The crate, the flake and `cargo` arrive with Task 1 of the
-plan.
+## CI
+
+`nix flake check` is the whole of CI, and it runs on homelab's own ARC runners.
+Everything it runs comes from the flake's `checks` output, so a check added
+there is a check CI runs.
+
+Four of its seven minutes compile `bd`, because `tests/no_config.rs` runs the
+binary as a fresh machine would and has to tell "bd present, no tracker here"
+apart from "bd not installed". The workflow seeds that build into the shared
+attic cache so the next run substitutes it instead of compiling it again.
+Retention there is 30 days, so a month of quiet drops the seed and the next run
+pays the four minutes and re-seeds. That is the first thing to check if CI is
+suddenly slow again.
 
 ## Rules this project was designed under
 
