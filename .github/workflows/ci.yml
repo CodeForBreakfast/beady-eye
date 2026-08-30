@@ -23,6 +23,17 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
+      # Temporary. The runner mounts a credential for the shared binary cache,
+      # and seeding the Go module closure into it needs to know its shape. Names
+      # only: a value printed here is a value in the log.
+      - name: report what the runner offers attic
+        run: |
+          echo "attic-shaped variables, names only:"
+          env | cut -d= -f1 | grep -i attic || echo "  none"
+          echo "attic on PATH: $(command -v attic || echo no)"
+          echo "netrc: $(nix config show netrc-file 2>/dev/null || echo unknown)"
+          echo "substituters: $(nix config show substituters 2>/dev/null || echo unknown)"
+
       # Every check comes from the flake's `checks` output, so a check added
       # there is a check this runs. Naming one here is the drift to avoid.
       - run: nix flake check -L
