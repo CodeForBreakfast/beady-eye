@@ -9,3 +9,8 @@ result-*
 # beads: credentials never leave the machine
 .env.local
 .beads-credential-key
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads/proxieddb/
