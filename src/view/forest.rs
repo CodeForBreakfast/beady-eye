@@ -7,6 +7,7 @@ use crate::model::snapshot::{self, Filter, LoosePane, Snapshot, TrackerState, Tr
 use crate::view::lines::{
     beneath, children_of, marker, notes_of, opens_a_fold, prefix, progress_of, quiet, root_key,
     run_size, split, unfinished_beneath, Content, Group, GroupKind, Header, Item, Line, Note,
+    Place,
 };
 use crate::view::row;
 use crate::view::{Action, Motion};
@@ -16,12 +17,15 @@ const HALF_SCREEN: usize = 10;
 
 /// What a line that folds is known by, so both the fold and the selection
 /// survive a refresh that reorders or drops lines.
+///
+/// A bead can be drawn on more than one line, so a handle names the line and
+/// not the bead standing on it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Handle {
-    Bead(BeadKey),
-    /// The run of quiet closed children under one bead. A bead has at most
-    /// one run, so the bead names it.
-    Elided(BeadKey),
+    Bead(Place),
+    /// The run of quiet closed children under one drawn bead. A bead has at
+    /// most one run per copy of it, so the copy names it.
+    Elided(Place),
     Group(GroupKind),
     Item(ItemKey),
 }
@@ -29,8 +33,8 @@ enum Handle {
 /// What one thing in a group is known by.
 ///
 /// A handle has to be an identity the thing still has after the next collect,
-/// never where it sat, or a group re-read in another order would move the
-/// selection to a neighbour with nothing on screen to say so.
+/// never its place in the group, or a group re-read in another order would
+/// move the selection to a neighbour with nothing on screen to say so.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum ItemKey {
     /// A pane, by its id, which is unique in a herdr session. It serves both
@@ -70,11 +74,9 @@ fn item_key(item: &Item) -> Option<ItemKey> {
 enum Child {
     Note(Note),
     Node(usize),
-    /// The children of `under` that a run stands for, in render order.
-    Elided {
-        under: usize,
-        members: Vec<usize>,
-    },
+    /// The children a run stands for, in render order. Whose they are is the
+    /// parent the entries were drawn under, so it is not repeated here.
+    Elided(Vec<usize>),
 }
 
 /// One snapshot's lines in render order, with the fold state and the selection
@@ -171,10 +173,10 @@ impl Forest {
     /// a bead: a run holds only finished branches, and a group's items are
     /// not beads at all.
     fn live_under(&self, handle: &Handle) -> BTreeSet<BeadKey> {
-        let Handle::Bead(key) = handle else {
+        let Handle::Bead(place) = handle else {
             return BTreeSet::new();
         };
-        let Some((tree, at)) = self.snapshot.locate(key) else {
+        let Some((tree, at)) = self.locate(place) else {
             return BTreeSet::new();
         };
         let children = children_of(&tree.nodes);
@@ -192,13 +194,13 @@ impl Forest {
     /// first.
     fn ancestry(&self) -> Vec<Handle> {
         let mut chain: Vec<Handle> = self.cursor.iter().cloned().collect();
-        let key = match &self.cursor {
-            Some(Handle::Bead(key)) => key.clone(),
+        let place = match &self.cursor {
+            Some(Handle::Bead(place)) => place,
             // A run is only ever seen from the bead it hangs under, so that
             // bead is the first forebear a lost run falls back to.
-            Some(Handle::Elided(key)) => {
-                chain.push(Handle::Bead(key.clone()));
-                key.clone()
+            Some(Handle::Elided(place)) => {
+                chain.push(Handle::Bead(place.clone()));
+                place
             }
             // Only the snapshot a pane was found in still knows which group
             // held it, so a pane that goes away falls back to that group
@@ -209,20 +211,32 @@ impl Forest {
             }
             _ => return chain,
         };
-
-        if let Some((tree, at)) = self.snapshot.locate(&key) {
-            let mut above = tree.nodes[at].depth;
-            for node in tree.nodes[..at].iter().rev() {
-                if node.depth < above {
-                    above = node.depth;
-                    chain.push(Handle::Bead(BeadKey {
-                        project: tree.project.clone(),
-                        id: node.id.clone(),
-                    }));
-                }
-            }
-        }
+        chain.extend(place.forebears().map(Handle::Bead));
         chain
+    }
+
+    /// The tree a place was drawn in and the node its last step lands on.
+    ///
+    /// The steps are walked rather than the last of them looked up, because a
+    /// bead reachable more than once stands in the nodes more than once and
+    /// only the way down to a copy tells it from its twins.
+    fn locate(&self, place: &Place) -> Option<(&Tree, usize)> {
+        let tree = self.tree_of(place)?;
+        let children = children_of(&tree.nodes);
+        let mut at = (!tree.nodes.is_empty()).then_some(0)?;
+        for step in &place.steps {
+            at = *children[at]
+                .iter()
+                .find(|child| tree.nodes[**child].id == step.id)?;
+        }
+        Some((tree, at))
+    }
+
+    fn tree_of(&self, place: &Place) -> Option<&Tree> {
+        self.snapshot
+            .trees
+            .iter()
+            .find(|tree| root_key(tree) == place.tree)
     }
 
     /// Apply one action, reporting whether it changed anything.
@@ -379,21 +393,18 @@ impl Forest {
         self.cursor = self.first_handle();
     }
 
-    /// Which line the cursor is on. A bead reachable from two roots is drawn
-    /// under each of them, so more than one line can carry the handle, and
-    /// the one meant is the one nearest where the selection already sat —
-    /// otherwise stepping onto the lower copy is undone by the redraw that
-    /// follows it, and the list below that copy cannot be reached.
+    /// Which line the cursor is on. A bead reachable more than once is drawn
+    /// once per way down to it, and the handle names the way down, so exactly
+    /// one line carries it — which is what lets a step onto the lower copy
+    /// survive the redraw that follows it.
     fn find_cursor(&self) -> Option<usize> {
         let cursor = self.cursor.as_ref()?;
-        (0..self.lines.len())
-            .filter(|at| self.handle_at(*at).as_ref() == Some(cursor))
-            .min_by_key(|at| at.abs_diff(self.selected))
+        (0..self.lines.len()).find(|at| self.handle_at(*at).as_ref() == Some(cursor))
     }
 
     fn first_handle(&self) -> Option<Handle> {
         if let Some(tree) = self.snapshot.trees.first() {
-            return Some(Handle::Bead(root_key(tree)));
+            return Some(Handle::Bead(Place::root(root_key(tree))));
         }
         let (_, loose) = self.recovery();
         GroupKind::ALL
@@ -406,13 +417,23 @@ impl Forest {
     /// Whether the snapshot still holds what a handle names.
     fn present(&self, handle: &Handle) -> bool {
         match handle {
-            Handle::Bead(key) | Handle::Elided(key) => self.snapshot.holds(key),
+            Handle::Bead(place) | Handle::Elided(place) => self.drawn(place),
             Handle::Group(kind) => {
                 let (_, loose) = self.recovery();
                 !self.group_items(*kind, &loose).is_empty()
             }
             Handle::Item(key) => self.group_holding(key).is_some(),
         }
+    }
+
+    /// Whether the snapshot still draws the line a place names.
+    fn drawn(&self, place: &Place) -> bool {
+        // A tracker that could not be read keeps its root and has no nodes,
+        // so its header is drawn with nothing beneath it to walk to.
+        if place.steps.is_empty() {
+            return self.tree_of(place).is_some();
+        }
+        self.locate(place).is_some()
     }
 
     /// The group one thing sits in, where the snapshot still holds it.
@@ -502,7 +523,7 @@ impl Forest {
     }
 
     fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
-        let root = root_key(tree);
+        let root = Place::root(root_key(tree));
         let children = children_of(&tree.nodes);
         // A tree opens because of what is in it, not because the selection
         // is in it: the first screen is meant to be the answer to what is
@@ -516,7 +537,7 @@ impl Forest {
             depth: 0,
             last_child: false,
             folded: Some(open),
-            bead: Some(root),
+            place: Some(root.clone()),
             content: Content::Tree(Header {
                 status: tree.nodes.first().map(|root| root.status.clone()),
                 tree: tree.clone(),
@@ -529,7 +550,7 @@ impl Forest {
         if open && !tree.nodes.is_empty() {
             entries.extend(self.children_entries(tree, &children, 0));
         }
-        self.draw_children(tree, &children, entries, &mut Vec::new(), lines);
+        self.draw_children(tree, &children, entries, &root, &mut Vec::new(), lines);
     }
 
     /// A node's children as they are drawn: the ones worth a line each, then
@@ -538,10 +559,7 @@ impl Forest {
         let (drawn, elided) = split(tree, children, at);
         let mut entries: Vec<Child> = drawn.into_iter().map(Child::Node).collect();
         if !elided.is_empty() {
-            entries.push(Child::Elided {
-                under: at,
-                members: elided,
-            });
+            entries.push(Child::Elided(elided));
         }
         entries
     }
@@ -551,6 +569,7 @@ impl Forest {
         tree: &Tree,
         children: &[Vec<usize>],
         entries: Vec<Child>,
+        parent: &Place,
         trunk: &mut Vec<bool>,
         lines: &mut Vec<Line>,
     ) {
@@ -564,25 +583,21 @@ impl Forest {
                     depth,
                     last_child: last,
                     folded: None,
-                    bead: None,
+                    place: None,
                     content: Content::Note(note),
                 }),
-                Child::Elided { under, members } => {
-                    let key = BeadKey {
-                        project: tree.project.clone(),
-                        id: tree.nodes[under].id.clone(),
-                    };
+                Child::Elided(members) => {
                     // A run rests as the count it was drawn to be.
-                    let open = self.expanded(&Handle::Elided(key.clone()), false);
+                    let open = self.expanded(&Handle::Elided(parent.clone()), false);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !open),
                         depth,
                         last_child: last,
                         folded: Some(open),
-                        bead: None,
+                        place: None,
                         content: Content::Elided {
                             count: run_size(children, &members),
-                            under: key,
+                            under: parent.clone(),
                         },
                     });
                     if open {
@@ -593,23 +608,25 @@ impl Forest {
                         // said it was the last.
                         trunk.push(!last);
                         let entries = members.into_iter().map(Child::Node).collect();
-                        self.draw_children(tree, children, entries, trunk, lines);
+                        self.draw_children(tree, children, entries, parent, trunk, lines);
                         trunk.pop();
                     }
                 }
                 Child::Node(at) => {
                     let node = &tree.nodes[at];
-                    let key = BeadKey {
+                    let place = parent.step_to(BeadKey {
                         project: tree.project.clone(),
                         id: node.id.clone(),
-                    };
+                    });
                     let kids = self.children_entries(tree, children, at);
                     // Open the spine to the work a reader needs next and
                     // nothing else. A branch with none rests as one line, its
                     // glyph, its fraction and its marker saying what it holds.
                     let open = !kids.is_empty()
-                        && self
-                            .expanded(&Handle::Bead(key.clone()), opens_a_fold(tree, children, at));
+                        && self.expanded(
+                            &Handle::Bead(place.clone()),
+                            opens_a_fold(tree, children, at),
+                        );
                     let holding = (node.status.is_closed() && !open)
                         .then(|| unfinished_beneath(tree, children, at))
                         .filter(|unfinished| *unfinished > 0);
@@ -618,7 +635,7 @@ impl Forest {
                         depth,
                         last_child: last,
                         folded: (!kids.is_empty()).then_some(open),
-                        bead: Some(key),
+                        place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
                             &tree.root,
@@ -628,7 +645,7 @@ impl Forest {
                     });
                     if open {
                         trunk.push(!last);
-                        self.draw_children(tree, children, kids, trunk, lines);
+                        self.draw_children(tree, children, kids, &place, trunk, lines);
                         trunk.pop();
                     }
                 }
@@ -666,7 +683,7 @@ impl Forest {
                 depth: 0,
                 last_child: false,
                 folded: Some(open),
-                bead: None,
+                place: None,
                 content: Content::Group(Group {
                     kind,
                     count: items.len(),
@@ -684,7 +701,7 @@ impl Forest {
                     depth: 1,
                     last_child: last,
                     folded: None,
-                    bead: None,
+                    place: None,
                     content: Content::Item(item),
                 });
             }
@@ -700,7 +717,7 @@ fn nothing_to_draw() -> Line {
         depth: 0,
         last_child: false,
         folded: None,
-        bead: None,
+        place: None,
         content: Content::Note(Note::NoRoots),
     }
 }
@@ -712,7 +729,7 @@ fn nothing_to_draw() -> Line {
 /// is why this is the same question as whether the selection may sit there.
 fn handle_of(line: &Line) -> Option<Handle> {
     match &line.content {
-        Content::Tree(_) | Content::Bead(_) => line.bead.clone().map(Handle::Bead),
+        Content::Tree(_) | Content::Bead(_) => line.place.clone().map(Handle::Bead),
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
         Content::Group(group) => Some(Handle::Group(group.kind)),
         Content::Item(item) => item_key(item).map(Handle::Item),
@@ -884,6 +901,79 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// One epic whose two halves are each held up by the same survey. Under
+    /// the rule that a bead's descendants are what must finish before it,
+    /// `orb-9` is drawn beneath both of them.
+    const TWICE: &str = r#"[
+      {"id":"orb-8","title":"lift the gantry","status":"in_progress","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-8.1","title":"pour the pad","status":"in_progress","parent_id":"orb-8",
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-8.2","title":"rail the crane","status":"in_progress","parent_id":"orb-8",
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-9","title":"survey the ground","status":"in_progress","parent_id":"orb-8.1",
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-9.1","title":"drill the cores","status":"in_progress","parent_id":"orb-9",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// One tree drawing one bead twice, which is the shape a blocker nested
+    /// under each bead it holds up gives: same root, same key, two lines.
+    ///
+    /// `assemble` gives every bead one parent, so the second copy is put into
+    /// the nodes here rather than read from a tracker. Everything else is
+    /// built the way every other fixture is, and `children_of` reads the
+    /// shape back out of the depths without caring who wrote them.
+    fn drawn_twice_in_one_tree() -> Snapshot {
+        let rows = assembled(TWICE);
+        let cfg = cfg();
+        let panes = panes_on(&["orb-9.1"]);
+        let joined = join::resolve(
+            &[ProjectRows {
+                project: "orbital",
+                rows: &rows.rows,
+            }],
+            &panes,
+            &cfg.projects,
+            &cfg.join,
+        );
+        let mut tree = build_tree(
+            "orbital",
+            &rows,
+            &joined,
+            &Readiness::default(),
+            &cfg,
+            now(),
+        );
+
+        let at = tree
+            .nodes
+            .iter()
+            .position(|node| node.id == "orb-9")
+            .expect("the fixture draws orb-9 under the first half");
+        let subtree = tree.nodes[at + 1..]
+            .iter()
+            .take_while(|node| node.depth > tree.nodes[at].depth)
+            .count();
+        // The last node at the depth above is the other half, so the copy
+        // lands under it by sitting at the end.
+        let copy = tree.nodes[at..=at + subtree].to_vec();
+        tree.nodes.extend(copy);
+
+        snapshot::build(
+            Collected {
+                trees: vec![tree],
+                failed_projects: Vec::new(),
+            },
+            &panes,
+            &joined,
+            &cfg,
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        )
+    }
+
     /// Two of one project's roots whose trees overlap. `qua-1.2` blocks both
     /// epics, and `bd dep tree --direction=up` walks dependents, so it comes
     /// back under each of them. Roots are found by climbing the parent chain
@@ -893,19 +983,26 @@ mod tests {
       {"id":"qua-1","title":"re-open the quarry","status":"in_progress","parent_id":"",
        "priority":1,"issue_type":"epic"},
       {"id":"qua-1.2","title":"cut the haul road","status":"in_progress","parent_id":"qua-1",
-       "priority":2,"issue_type":"task"}
+       "priority":2,"issue_type":"task"},
+      {"id":"qua-1.2.1","title":"strip the overburden","status":"in_progress",
+       "parent_id":"qua-1.2","priority":2,"issue_type":"task"}
     ]"#;
 
     /// The second of the pair, drawn below Quarry, so the shared bead's lower
-    /// copy sits here with two more rows under it. Those two are the bottom
-    /// of the whole list, and are what a selection sprung back up to the
-    /// upper copy never reaches.
+    /// copy sits here with more rows under it. Those are the bottom of the
+    /// whole list, and are what a selection sprung back up to the upper copy
+    /// never reaches.
+    ///
+    /// The shared bead has a child in each tree, and not the same one, so
+    /// each copy is a line that folds over a list of its own.
     const WHARF: &str = r#"[
       {"id":"wha-2","title":"re-face the wharf","status":"in_progress","parent_id":"",
        "priority":1,"issue_type":"epic"},
       {"id":"wha-2.1","title":"drive the piles","status":"in_progress","parent_id":"wha-2",
        "priority":2,"issue_type":"task"},
       {"id":"qua-1.2","title":"cut the haul road","status":"in_progress","parent_id":"wha-2",
+       "priority":2,"issue_type":"task"},
+      {"id":"wha-2.2","title":"grout the cope","status":"in_progress","parent_id":"qua-1.2",
        "priority":2,"issue_type":"task"},
       {"id":"wha-2.3","title":"bed the fenders","status":"in_progress","parent_id":"wha-2",
        "priority":2,"issue_type":"task"}
@@ -1071,7 +1168,7 @@ credential_command = "secret harbour"
         forest
             .lines()
             .iter()
-            .find_map(|line| match (&line.bead, &line.content) {
+            .find_map(|line| match (line.bead(), &line.content) {
                 (Some(bead), Content::Bead(row)) if bead.id == id => Some(row),
                 _ => None,
             })
@@ -1085,7 +1182,7 @@ credential_command = "secret harbour"
             .lines()
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.bead.as_ref().is_some_and(|bead| bead.id == id))
+            .filter(|(_, line)| line.bead().is_some_and(|bead| bead.id == id))
             .map(|(at, _)| at)
             .collect()
     }
@@ -1130,6 +1227,96 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A tracker that refused keeps its root and reports no nodes, so there
+    /// is no way down from its header to walk. The header is a line all the
+    /// same, and holding the selection on it across a refresh is what says
+    /// the forest knows a tree by its root rather than by a node.
+    #[test]
+    fn the_selection_holds_the_header_of_a_tree_whose_tracker_refused() {
+        let mut forest = flatten(&snapshot());
+        let header = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Tree(header) if header.tree.root == "fer-2")
+            })
+            .expect("the shared snapshot draws a tree whose tracker refused");
+
+        step_onto(&mut forest, header);
+        forest.refresh(&snapshot());
+
+        assert_eq!(forest.selected_line(), header, "{:#?}", sketch(&forest));
+    }
+
+    /// Each copy of a bead drawn twice folds over a list of its own, so
+    /// shutting one says nothing about the other. Both carried the same
+    /// handle, so one keystroke shut them both and the reader lost a list
+    /// they had never been looking at.
+    #[test]
+    fn folding_one_copy_of_a_bead_drawn_twice_leaves_the_other_open() {
+        let mut forest = flatten(&overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
+        let [upper, lower] = copies_of(&forest, "qua-1.2");
+
+        step_onto(&mut forest, lower);
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(
+            forest.lines()[upper].folded,
+            Some(true),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The same bead under two parents in one tree, which is what a `blocks`
+    /// edge drawn as nesting gives: the copies share a root as well as a key,
+    /// so nothing but the way down to them tells them apart.
+    #[test]
+    fn folding_one_copy_of_a_bead_drawn_twice_in_one_tree_leaves_the_other_open() {
+        let mut forest = flatten(&drawn_twice_in_one_tree());
+        let [upper, lower] = copies_of(&forest, "orb-9");
+
+        step_onto(&mut forest, lower);
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(
+            forest.lines()[upper].folded,
+            Some(true),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The two lines a bead is drawn on, asserted to be exactly two so a
+    /// fixture that stopped overlapping fails here rather than further down.
+    fn copies_of(forest: &Forest, id: &str) -> [usize; 2] {
+        let copies = lines_of(forest, id);
+        let [upper, lower] = copies[..] else {
+            panic!(
+                "{id} is drawn {} times: {:#?}",
+                copies.len(),
+                sketch(forest)
+            );
+        };
+        [upper, lower]
+    }
+
+    /// Put the selection on a line by stepping down onto it, which is the
+    /// only road a reader has to it.
+    fn step_onto(forest: &mut Forest, at: usize) {
+        forest.apply(Action::Move(Motion::FirstRow));
+        for _ in 0..forest.lines().len() {
+            if forest.selected_line() == at {
+                return;
+            }
+            forest.apply(Action::Move(Motion::NextRow));
+        }
+        panic!(
+            "the selection never reached line {at}: {:#?}",
+            sketch(forest)
+        );
+    }
+
     /// The tracker is written while the list is being read, so a refresh can
     /// land between any two keystrokes. It re-derives the selection from the
     /// handle it holds, and must settle on the copy the selection was on
@@ -1162,7 +1349,7 @@ credential_command = "secret harbour"
     /// production may ask it this way: `tail::target` has to tell a header
     /// from a bead before it reads the key.
     fn cursor(forest: &Forest) -> Option<&BeadKey> {
-        forest.lines()[forest.selected_line()].bead.as_ref()
+        forest.lines()[forest.selected_line()].bead()
     }
 
     fn key(project: &str, id: &str) -> BeadKey {
@@ -1437,7 +1624,7 @@ credential_command = "secret harbour"
         forest
             .lines()
             .iter()
-            .find(|line| line.bead.as_ref().is_some_and(|key| key.id == id))
+            .find(|line| line.bead().is_some_and(|key| key.id == id))
             .unwrap_or_else(|| panic!("{id} is not drawn"))
             .folded
     }
@@ -1767,7 +1954,7 @@ credential_command = "secret harbour"
 
         let line = &forest.lines()[forest.selected_line()];
         assert!(matches!(line.content, Content::Elided { .. }));
-        assert_eq!(line.bead, None);
+        assert_eq!(line.bead(), None);
     }
 
     /// A closed bead with a pane still on it is the stale-pane anomaly, and
@@ -1818,7 +2005,7 @@ credential_command = "secret harbour"
             let drawn: Vec<&str> = forest
                 .lines()
                 .iter()
-                .filter_map(|line| line.bead.as_ref().map(|key| key.id.as_str()))
+                .filter_map(|line| line.bead().map(|key| key.id.as_str()))
                 .collect();
 
             for node in &snapshot.trees[0].nodes {
@@ -1865,7 +2052,7 @@ credential_command = "secret harbour"
                 let drawn: Vec<&str> = forest
                     .lines()
                     .iter()
-                    .filter_map(|line| line.bead.as_ref().map(|key| key.id.as_str()))
+                    .filter_map(|line| line.bead().map(|key| key.id.as_str()))
                     .collect();
 
                 assert!(
@@ -2663,9 +2850,9 @@ credential_command = "secret harbour"
     fn nothing_reported_disappears_under_any_fold_state() {
         let snapshot = snapshot();
         let handles = [
-            Handle::Bead(key("orbital", "orb-7")),
-            Handle::Bead(key("ferry", "fer-2")),
-            Handle::Bead(key("orbital", "orb-7.1")),
+            Handle::Bead(Place::root(key("orbital", "orb-7"))),
+            Handle::Bead(Place::root(key("ferry", "fer-2"))),
+            Handle::Bead(Place::root(key("orbital", "orb-7")).step_to(key("orbital", "orb-7.1"))),
             Handle::Group(GroupKind::FailedProjects),
             Handle::Group(GroupKind::Unconfigured),
             Handle::Group(GroupKind::Conflicts),

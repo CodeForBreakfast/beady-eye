@@ -663,10 +663,10 @@ mod tests {
     fn elided(count: usize) -> Content {
         Content::Elided {
             count,
-            under: BeadKey {
+            under: lines::Place::root(BeadKey {
                 project: "orbital".into(),
                 id: "orb-7".into(),
-            },
+            }),
         }
     }
 
@@ -678,7 +678,7 @@ mod tests {
             depth: 1,
             last_child: false,
             folded: None,
-            bead: None,
+            place: None,
             content,
         }
     }

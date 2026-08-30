@@ -190,17 +190,6 @@ impl Snapshot {
     pub fn node(&self, key: &BeadKey) -> Option<&Node> {
         self.locate(key).map(|(tree, at)| &tree.nodes[at])
     }
-
-    /// Whether the snapshot still holds what a key names, as a node or as a
-    /// tree's root. A tracker that could not be read keeps its root and has
-    /// no nodes, so the root is the only place its key can be found.
-    pub fn holds(&self, key: &BeadKey) -> bool {
-        self.locate(key).is_some()
-            || self
-                .trees
-                .iter()
-                .any(|tree| tree.project == key.project && tree.root == key.id)
-    }
 }
 
 impl Tree {
@@ -1193,24 +1182,6 @@ render = "⏸ waiting"
         let snap = built(vec![tree(), ferry()], Filter::All);
 
         assert_eq!(snap.node(&key("ferry", "orb-7.4")), None);
-        assert!(!snap.holds(&key("ferry", "orb-7.4")));
         assert_eq!(snap.node(&key("orbital", "frr-1")), None);
-        assert!(!snap.holds(&key("orbital", "frr-1")));
-    }
-
-    #[test]
-    fn a_root_is_held_by_its_own_project_even_with_no_nodes_beneath_it() {
-        let snap = built(
-            vec![Tree::tracker_unreachable(
-                "ferry",
-                "orb-7",
-                TrackerFailure::Auth,
-            )],
-            Filter::All,
-        );
-
-        assert!(snap.holds(&key("ferry", "orb-7")));
-        assert_eq!(snap.node(&key("ferry", "orb-7")), None);
-        assert!(!snap.holds(&key("orbital", "orb-7")));
     }
 }

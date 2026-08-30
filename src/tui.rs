@@ -1852,7 +1852,7 @@ mod tests {
     /// of whatever tree the cursor's header stands for.
     fn cursor(shown: &Shown) -> Option<&BeadKey> {
         let forest = &shown.forest;
-        forest.lines()[forest.selected_line()].bead.as_ref()
+        forest.lines()[forest.selected_line()].bead()
     }
 
     fn bead(project: &str, id: &str) -> BeadKey {

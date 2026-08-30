@@ -25,6 +25,54 @@ const LAST: &str = "└── ";
 const TRUNK: &str = "│   ";
 const GAP: &str = "    ";
 
+/// Where a line sits in the walk that drew it: the tree it was drawn in, and
+/// the beads stepped through below that tree's root to reach it.
+///
+/// A bead reachable more than once is drawn once for each way down to it, and
+/// every copy carries the same key. Only the way down tells them apart, which
+/// is why a fold and a selection are held by this rather than by the bead the
+/// line sits on.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Place {
+    /// The tree, by its root.
+    pub tree: BeadKey,
+    /// The beads stepped through below that root to reach the line, the last
+    /// of which is the bead the line stands for. Empty on the tree's own
+    /// header, which is the root itself.
+    pub steps: Vec<BeadKey>,
+}
+
+impl Place {
+    /// A tree's header, where every walk down it starts.
+    pub(crate) fn root(tree: BeadKey) -> Self {
+        Self {
+            tree,
+            steps: Vec::new(),
+        }
+    }
+
+    /// One step further down, onto a child of the bead this place names.
+    pub(crate) fn step_to(&self, key: BeadKey) -> Self {
+        let mut stepped = self.clone();
+        stepped.steps.push(key);
+        stepped
+    }
+
+    /// The bead this place names.
+    pub(crate) fn key(&self) -> &BeadKey {
+        self.steps.last().unwrap_or(&self.tree)
+    }
+
+    /// Every place above this one in its tree, nearest first, ending at the
+    /// tree's own header.
+    pub(crate) fn forebears(&self) -> impl Iterator<Item = Place> + '_ {
+        (0..self.steps.len()).rev().map(|kept| Self {
+            tree: self.tree.clone(),
+            steps: self.steps[..kept].to_vec(),
+        })
+    }
+}
+
 /// One line of the forest, in the order the screen draws them.
 ///
 /// A line is exactly one screen row. `selected_line` is an index into these,
@@ -45,10 +93,19 @@ pub struct Line {
     pub last_child: bool,
     /// Whether this line's fold is open, where it has one at all.
     pub folded: Option<bool>,
-    /// The bead this line stands for, where it stands for one: a bead's own
-    /// row, and a tree header's root.
-    pub bead: Option<BeadKey>,
+    /// Where this line was drawn, where it stands for a bead at all: a bead's
+    /// own row, and a tree header's root. One field rather than a key beside
+    /// a position, so the two can never disagree about which copy this is.
+    pub place: Option<Place>,
     pub content: Content,
+}
+
+impl Line {
+    /// The bead this line stands for, for a caller that wants the bead and
+    /// not the copy.
+    pub fn bead(&self) -> Option<&BeadKey> {
+        self.place.as_ref().map(Place::key)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,9 +116,10 @@ pub enum Content {
     /// A run of closed siblings nobody is working, said as a count.
     Elided {
         count: usize,
-        /// The bead whose children the run stands for. A run is not a bead,
-        /// so this is not `Line::bead`; it is what the fold is known by.
-        under: BeadKey,
+        /// Where the bead whose children the run stands for was drawn. A run
+        /// is not a bead, so it has no `Line::place` of its own; this is what
+        /// the fold is known by.
+        under: Place,
     },
     /// Something true of the tree above rather than of any one bead in it.
     Note(Note),
