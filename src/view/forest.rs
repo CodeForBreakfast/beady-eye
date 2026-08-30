@@ -675,7 +675,7 @@ impl Forest {
         // A tree opens because someone is working in it, not because the
         // selection is in it: the first screen is meant to be the answer to
         // who is working on what.
-        let resting = !tree.nodes.is_empty() && live_beneath(tree, &children, 0);
+        let resting = !tree.nodes.is_empty() && opens_a_fold(tree, &children, 0);
         let open = self.expanded(&Handle::Bead(root.clone()), resting);
         let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
 
@@ -772,12 +772,12 @@ impl Forest {
                         id: node.id.clone(),
                     };
                     let kids = self.children_entries(tree, children, at);
-                    // Open the spine to the live work and nothing else. A
-                    // branch with none rests as one line, its glyph, its
-                    // fraction and its marker saying what it still holds.
+                    // Open the spine to the work a reader needs next and
+                    // nothing else. A branch with none rests as one line, its
+                    // glyph, its fraction and its marker saying what it holds.
                     let open = !kids.is_empty()
                         && self
-                            .expanded(&Handle::Bead(key.clone()), live_beneath(tree, children, at));
+                            .expanded(&Handle::Bead(key.clone()), opens_a_fold(tree, children, at));
                     let holding = (node.status.is_closed() && !open)
                         .then(|| unfinished_beneath(tree, children, at))
                         .filter(|unfinished| *unfinished > 0);
@@ -956,17 +956,41 @@ fn beneath(children: &[Vec<usize>], at: usize) -> Vec<usize> {
     found
 }
 
+/// Whether the line at `at` rests open: whether anything beneath it is work
+/// a reader needs on the first screen.
+///
+/// This is the whole of the fold default. A line rests open exactly when it
+/// stands on the spine to such work, so the first screen is that work and the
+/// path to it and nothing else.
+///
+/// Two things count, and the disjunction is here rather than inside either
+/// term because each term is asked elsewhere in its own right and neither
+/// means the other.
+fn opens_a_fold(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
+    live_beneath(tree, children, at) || ready_beneath(tree, children, at)
+}
+
 /// Whether any bead beneath `at` carries live work: an agent on it, or an
 /// anomaly against it.
 ///
-/// This is the whole of the fold default. A line rests open exactly when it
-/// stands on the spine to something live, so the first screen is that work
-/// and the path to it, and no fold `bdi` chose for itself has ever closed
-/// over an agent or an anomaly.
+/// No fold `bdi` chose for itself has ever closed over an agent or an
+/// anomaly, and this is what holds that.
 fn live_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
     beneath(children, at)
         .into_iter()
         .any(|node| !quiet(&tree.nodes[node]))
+}
+
+/// Whether any bead beneath `at` is one `bd` would start today.
+///
+/// Readiness is `bd`'s answer and not a status test: open, blocked and
+/// deferred beads are all unfinished, and only `bd` knows which of them has
+/// every dependency behind it. Work it will not start is still unfinished
+/// work a reader is not looking for, so it earns no fold.
+fn ready_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
+    beneath(children, at)
+        .into_iter()
+        .any(|node| tree.nodes[node].ready)
 }
 
 /// How many beads beneath `at` are not closed.
@@ -1523,6 +1547,14 @@ credential_command = "secret harbour"
     /// fixture against Orbital's rows, which is what the shared snapshot
     /// needs and what leaves any other fixture's beads unstaffed.
     fn alone(project: &str, json: &str, panes: &[Pane]) -> Snapshot {
+        ready_alone(project, json, panes, &[])
+    }
+
+    /// The same tree, with the beads `bd` answers `ready` with named. Every
+    /// other fixture is built with an empty ready set, so a default that
+    /// opens on readiness draws exactly the same screen under all of them and
+    /// a green suite would say nothing about it.
+    fn ready_alone(project: &str, json: &str, panes: &[Pane], ready: &[&str]) -> Snapshot {
         let rows = assembled(json);
         let cfg = cfg();
         let joined = join::resolve(
@@ -1534,7 +1566,11 @@ credential_command = "secret harbour"
             &cfg.projects,
             &cfg.join,
         );
-        let tree = build_tree(project, &rows, &joined, &Readiness::default(), &cfg, now());
+        let readiness = Readiness {
+            ready: ready.iter().map(|id| (*id).to_string()).collect(),
+            ..Readiness::default()
+        };
+        let tree = build_tree(project, &rows, &joined, &readiness, &cfg, now());
         snapshot::build(
             Collected {
                 trees: vec![tree],
@@ -1710,6 +1746,12 @@ credential_command = "secret harbour"
         alone("orbital", TOWER, &panes_on(on))
     }
 
+    /// The same tree with nobody on it and the named beads ready, so the two
+    /// halves of the fold default can be asked the same question.
+    fn tower_ready(on: &[&str]) -> Snapshot {
+        ready_alone("orbital", TOWER, &[], on)
+    }
+
     /// Two of one project's trees in one snapshot, joined against both so a
     /// pane naming a bead reaches it whichever tree draws it. `alone` takes a
     /// single tree, and the overlap these tests are about needs two.
@@ -1763,27 +1805,38 @@ credential_command = "secret harbour"
             .folded
     }
 
-    /// The default the bead is about: the first screen is the live work and
-    /// the path down to it. Four quiet forebears open because one bead at the
-    /// bottom is being worked; the quiet branch beside them stays shut.
+    /// The default the bead is about: the first screen is the work a reader
+    /// needs next and the path down to it. Four quiet forebears open because
+    /// of one bead at the bottom; the branch beside them, holding neither an
+    /// agent nor ready work, stays shut.
+    ///
+    /// Two kinds of bead earn that opening and no third does. An agent on one
+    /// says the work is happening; `bd` calling one ready says it can start.
+    /// Both are asked of the same tree here, because the claim is that the
+    /// screen cannot tell them apart — and either way the bead that earned
+    /// the fold does not open its own, and the unfinished work `bd` will not
+    /// start is still folded away.
     #[test]
-    fn the_default_opens_every_forebear_of_a_live_agent_and_nothing_else() {
-        let forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+    fn the_default_opens_every_forebear_of_a_live_agent_or_of_ready_work_and_nothing_else() {
+        let opened = vec![
+            "▾ orbital · tow-1",
+            "  ├── ○ .1 stand the mast",
+            "  │   └── ○ .1.1 bolt the sections",
+            "  │       └── ○ .1.1.1 dress the cables",
+            "  └── ▸ ○ .2 pour the base",
+        ];
 
-        assert_eq!(
-            sketch(&forest),
-            vec![
-                "▾ orbital · tow-1",
-                "  ├── ○ .1 stand the mast",
-                "  │   └── ○ .1.1 bolt the sections",
-                "  │       └── ○ .1.1.1 dress the cables",
-                "  └── ▸ ○ .2 pour the base",
-            ]
-        );
-        for forebear in ["tow-1", "tow-1.1", "tow-1.1.1"] {
-            assert_eq!(fold_of(&forest, forebear), Some(true), "{forebear} is shut");
+        let staffed = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let ready = flatten(&tower_ready(&["tow-1.1.1.1"]));
+
+        assert_eq!(sketch(&staffed), opened);
+        assert_eq!(sketch(&ready), opened);
+        for forest in [&staffed, &ready] {
+            for forebear in ["tow-1", "tow-1.1", "tow-1.1.1"] {
+                assert_eq!(fold_of(forest, forebear), Some(true), "{forebear} is shut");
+            }
+            assert_eq!(fold_of(forest, "tow-1.2"), Some(false));
         }
-        assert_eq!(fold_of(&forest, "tow-1.2"), Some(false));
     }
 
     /// The other half of the same rule. A tree nobody is working holds no
@@ -2240,9 +2293,9 @@ credential_command = "secret harbour"
     /// `bdi` reads `bd dep tree --direction=up`, so a bead's children are the
     /// work closing it unblocked. A closed bead standing over open ones is
     /// therefore the healthy shape of this tree, and where nobody is on them
-    /// the branch rests shut under a row whose glyph says done. Ready and
-    /// unstaffed is the queue a reader most needs to see next, so the line
-    /// that hides it says how much it hides.
+    /// and `bd` will start none of them the branch rests shut under a row
+    /// whose glyph says done. What it holds is out of sight either way, so
+    /// the line says how much.
     #[test]
     fn a_closed_branch_resting_over_unfinished_work_says_how_much_it_holds() {
         let forest = flatten(&siding());
@@ -2348,6 +2401,66 @@ credential_command = "secret harbour"
 
     fn siding() -> Snapshot {
         alone("orbital", SIDING, &panes_on(&["sdg-4.3"]))
+    }
+
+    /// The case Graeme chose this default for. `sdg-4.1` is closed and its
+    /// glyph says so, but `bd` will start `sdg-4.1.2` today, and a reader
+    /// looking for what to pick up should not have to press a key to find it.
+    ///
+    /// Down the spine and no wider: `sdg-4.1` opens because the ready bead is
+    /// under it, `sdg-4.1.1` stays shut because none is under that, and the
+    /// count moves down to the line that is now the one doing the hiding.
+    #[test]
+    fn a_closed_branch_over_ready_work_rests_open_down_the_spine_to_it() {
+        let forest = flatten(&ready_alone(
+            "orbital",
+            SIDING,
+            &panes_on(&["sdg-4.3"]),
+            &["sdg-4.1.2"],
+        ));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital · sdg-4",
+                "  ├── ▸ ◐ .3 re-signal the box",
+                "  ├── ✓ .1 slew the up line",
+                "  │   ├── ○ .1.2 weld the closure rail",
+                "  │   ├── ▸ ✓ .1.1 key the switch",
+                "  │   └── ✓ .1.3 lift the old chairs",
+                "  └── ▸ ✓ .2 clip the down line",
+            ]
+        );
+        assert_eq!(row_of(&forest, "sdg-4.1").notes, Vec::<String>::new());
+        assert_eq!(
+            row_of(&forest, "sdg-4.1.1").notes,
+            vec![phrase::unfinished_beneath(2)]
+        );
+    }
+
+    /// The other half of the widened rule, and the reason it is `bd ready`
+    /// and not a status test: work that is unfinished but blocked or deferred
+    /// is not what a reader needs next, so it earns no fold. The statuses
+    /// here are the ones that most look like work in hand, and the branch
+    /// rests shut over all three exactly as it does over open ones.
+    #[test]
+    fn a_closed_branch_over_work_bd_will_not_start_rests_shut_and_says_how_much() {
+        let waiting = SIDING
+            .replace(
+                r#""status":"open","parent_id":"sdg-4.1.1""#,
+                r#""status":"blocked","parent_id":"sdg-4.1.1""#,
+            )
+            .replace(
+                r#""status":"open","parent_id":"sdg-4.1""#,
+                r#""status":"deferred","parent_id":"sdg-4.1""#,
+            );
+        let forest = flatten(&alone("orbital", &waiting, &panes_on(&["sdg-4.3"])));
+
+        assert_eq!(fold_of(&forest, "sdg-4.1"), Some(false));
+        assert_eq!(
+            row_of(&forest, "sdg-4.1").notes,
+            vec![phrase::unfinished_beneath(3)]
+        );
     }
 
     /// Collapsed, not dropped: it is the existing fold, and opening it draws

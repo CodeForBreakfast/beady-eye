@@ -1801,9 +1801,17 @@ mod tests {
     /// The grove with its root opened by hand. Nobody is working in it and
     /// nothing is wrong with it, so the fold default rests it as its header,
     /// and what these tests are about is the rows under it.
+    /// The grove with its tree open, which is how it rests: every bead in it
+    /// is ready and the fold opens down to ready work. Asserted rather than
+    /// toggled, because a toggle over a tree already open shuts it and takes
+    /// every row under the header with it.
     fn an_open_grove(beads: usize) -> forest::Forest {
-        let mut forest = forest::flatten(&a_grove(beads));
-        forest.apply(Action::ToggleFold);
+        let forest = forest::flatten(&a_grove(beads));
+        assert_eq!(
+            forest.lines()[0].folded,
+            Some(true),
+            "the grove's beads are ready, so its tree rests open"
+        );
         forest
     }
 
