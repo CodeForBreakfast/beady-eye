@@ -1387,6 +1387,28 @@ credential_command = "secret harbour"
         assert_eq!(group.with_findings, 0);
     }
 
+    /// Only a hidden tree takes findings out of the forest with it. Every
+    /// other group holds its own subject in full, so none of them has
+    /// anything undrawn to admit to.
+    #[test]
+    fn no_other_group_claims_to_be_hiding_findings() {
+        let forest = flatten(&snapshot());
+        let others: Vec<Group> = forest
+            .lines()
+            .iter()
+            .filter_map(|line| match line.content {
+                Content::Group(group) if group.kind != GroupKind::HiddenTrees => Some(group),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(others.len(), 3);
+        assert!(
+            others.iter().all(|group| group.with_findings == 0),
+            "{others:#?}"
+        );
+    }
+
     /// Every fold state over every root, every group and one interior node:
     /// 128 of them, which is small enough to visit rather than sample.
     #[test]
