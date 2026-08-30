@@ -104,17 +104,27 @@ impl Reported {
         }
     }
 
-    /// Whether a poll now would find nothing a message has not already said:
-    /// every project `bdi` watches has been reported for inside `within`.
+    /// What a poll now would still have to find: the projects nothing has
+    /// reported for inside `within`.
     ///
-    /// Watching nothing is not covered. There is no poll to stand down, and a
-    /// window nothing has to fall inside is one that says nothing.
-    pub fn covered(&self, within: Duration) -> bool {
+    /// Watching nothing leaves everything to be found. There is no poll to
+    /// stand down, and a window nothing has to fall inside is one that says
+    /// nothing.
+    pub fn uncovered(&self, within: Duration) -> Uncovered {
         let projects = self.projects();
-        !projects.is_empty()
-            && projects
-                .values()
-                .all(|last| last.is_some_and(|at| at.elapsed() < within))
+        let uncovered: Vec<String> = projects
+            .iter()
+            .filter(|(_, last)| !last.is_some_and(|at| at.elapsed() < within))
+            .map(|(project, _)| project.clone())
+            .collect();
+
+        if uncovered.len() == projects.len() {
+            Uncovered::Everything
+        } else if uncovered.is_empty() {
+            Uncovered::Nothing
+        } else {
+            Uncovered::These(uncovered)
+        }
     }
 
     /// A thread that panicked mid-message poisons the lock. The messages it
@@ -124,6 +134,20 @@ impl Reported {
     fn projects(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Option<Instant>>> {
         self.projects.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// What a poll has left to find.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Uncovered {
+    /// Every project. Nothing is being reported for, so a poll reading them
+    /// all at once costs one collection where naming them would cost one
+    /// each.
+    Everything,
+    /// Only these. The rest are being reported for, and a poll would find in
+    /// them only what their messages have already said.
+    These(Vec<String>),
+    /// None of them: every project is covered, so there is nothing to poll.
+    Nothing,
 }
 
 /// Why `bdi` has no inbound channel.
@@ -197,7 +221,7 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
 pub fn listen(
     at: Option<PathBuf>,
     reported: &Reported,
-    changed: Sender<()>,
+    changed: Sender<String>,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
     let listener = bind(&at)?;
@@ -243,7 +267,7 @@ fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
 /// An accept that fails ends the channel rather than being retried: there is
 /// no error here a retry would clear, and the poll is what the view falls
 /// back to.
-fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<()>) {
+fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<String>) {
     for writer in listener.incoming() {
         let Ok(writer) = writer else { return };
 
@@ -257,7 +281,7 @@ fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<()>) {
 /// A thread of its own because a producer that connects once and speaks
 /// whenever it has something to say is the shape this channel is for, and a
 /// long quiet stretch on such a connection is not a wedge to be timed out.
-fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<()>) {
+fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<String>) {
     let Ok(mut answering) = writer.try_clone() else {
         return;
     };
@@ -280,8 +304,12 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<()>) {
             _ => Answer::Malformed,
         };
 
-        if matches!(answer, Answer::Watched(_)) && changed.send(()).is_err() {
-            return;
+        // The name goes with the signal: what a writer said changed is
+        // what the collection it triggers has to read, and no more.
+        if let Answer::Watched(project) = &answer {
+            if changed.send(project.clone()).is_err() {
+                return;
+            }
         }
         if writeln!(answering, "{answer}").is_err() || unended {
             return;
@@ -318,7 +346,7 @@ mod tests {
     }
 
     /// An open channel, and the end of it the loop would be reading.
-    fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<()>) {
+    fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<String>) {
         let (changed, changes) = mpsc::channel();
         let socket = listen(Some(at.to_path_buf()), reported, changed).expect("the socket opens");
         (socket, changes)
@@ -367,8 +395,9 @@ mod tests {
             reported.take("ghost"),
             Answer::Unwatched("ghost".to_string())
         );
-        assert!(
-            !reported.covered(A_WHILE),
+        assert_eq!(
+            reported.uncovered(A_WHILE),
+            Uncovered::Everything,
             "a name bdi does not watch stands no poll down"
         );
     }
@@ -397,24 +426,28 @@ mod tests {
     fn a_project_something_reports_for_stands_its_poll_down() {
         let reported = watching(["atlas"]);
 
-        assert!(
-            !reported.covered(A_WHILE),
+        assert_eq!(
+            reported.uncovered(A_WHILE),
+            Uncovered::Everything,
             "nothing has reported for it yet, so it is still polled"
         );
         reported.take("atlas");
 
-        assert!(reported.covered(A_WHILE));
+        assert_eq!(reported.uncovered(A_WHILE), Uncovered::Nothing);
     }
 
+    /// The saving a mixed setup gets: the project with a producer is left out
+    /// of the poll its neighbour still needs, rather than swept up with it.
     #[test]
-    fn a_project_nothing_reports_for_keeps_the_poll_alive() {
+    fn a_project_nothing_reports_for_is_polled_without_the_ones_that_are() {
         let reported = watching(["atlas", "ferry"]);
 
         reported.take("atlas");
 
-        assert!(
-            !reported.covered(A_WHILE),
-            "ferry has no writer, so the poll still has something to find"
+        assert_eq!(
+            reported.uncovered(A_WHILE),
+            Uncovered::These(vec!["ferry".to_string()]),
+            "ferry has no writer, so the poll still has it to find"
         );
     }
 
@@ -426,8 +459,9 @@ mod tests {
 
         reported.take("atlas");
 
-        assert!(
-            !reported.covered(Duration::ZERO),
+        assert_eq!(
+            reported.uncovered(Duration::ZERO),
+            Uncovered::Everything,
             "a window that has already closed leaves the project uncovered"
         );
     }
@@ -436,8 +470,9 @@ mod tests {
     fn nothing_watched_is_never_covered() {
         let reported = watching([]);
 
-        assert!(
-            !reported.covered(A_WHILE),
+        assert_eq!(
+            reported.uncovered(A_WHILE),
+            Uncovered::Everything,
             "there is nothing here for a message to stand down"
         );
     }
@@ -459,11 +494,16 @@ mod tests {
 
         assert_eq!(say(&at, &["atlas\n"]), ["ok atlas"]);
 
-        assert!(
-            changes.recv_timeout(A_MOMENT).is_ok(),
-            "the loop was told to collect"
+        assert_eq!(
+            changes.recv_timeout(A_MOMENT).ok(),
+            Some("atlas".to_string()),
+            "the loop was told which project to collect"
         );
-        assert!(reported.covered(A_WHILE), "and atlas's poll stood down");
+        assert_eq!(
+            reported.uncovered(A_WHILE),
+            Uncovered::Nothing,
+            "and atlas's poll stood down"
+        );
     }
 
     #[test]
@@ -503,10 +543,11 @@ mod tests {
 
         assert_eq!(say(&at, &["atlas\n", "ferry\n"]), ["ok atlas", "ok ferry"]);
 
-        for said in 1..=2 {
-            assert!(
-                changes.recv_timeout(A_MOMENT).is_ok(),
-                "the channel went quiet after {said} message(s)"
+        for said in ["atlas", "ferry"] {
+            assert_eq!(
+                changes.recv_timeout(A_MOMENT).ok(),
+                Some(said.to_string()),
+                "the channel did not carry {said} on"
             );
         }
     }
@@ -519,10 +560,11 @@ mod tests {
         assert_eq!(say(&at, &["atlas\n"]), ["ok atlas"]);
         assert_eq!(say(&at, &["ferry\n"]), ["ok ferry"]);
 
-        for said in 1..=2 {
-            assert!(
-                changes.recv_timeout(A_MOMENT).is_ok(),
-                "the channel went quiet after {said} writer(s)"
+        for said in ["atlas", "ferry"] {
+            assert_eq!(
+                changes.recv_timeout(A_MOMENT).ok(),
+                Some(said.to_string()),
+                "the channel did not carry {said} on"
             );
         }
     }

@@ -56,7 +56,7 @@ line ending in `\n`. `bdi` answers each line with one line of its own:
 
 | Answer | Meaning |
 | --- | --- |
-| `ok <project>` | A project `bdi` watches. It refreshes. |
+| `ok <project>` | A project `bdi` watches. That project is read again; no other is. |
 | `unknown <project>` | Not a project this `bdi` was configured with. Nothing happens. |
 | `malformed` | Blank, or longer than 512 bytes. Nothing happens. |
 
@@ -72,9 +72,11 @@ watching a forest, not a log. A writer that does not care can ignore it.
 **What a message does to the poll.** Nothing tells `bdi` in advance which
 projects have a producer, so it works it out from what arrives. Every project
 starts polled. A project something reports for stops being polled for as long as
-messages keep arriving inside the refresh interval. If the producer goes away,
-the next interval finds the project uncovered and the poll resumes — the view
-degrades to slow, never to stale. Nothing needs configuring for any of this, and
+messages keep arriving inside the refresh interval. A poll reads only the
+projects it still has to find, so a project with no producer costs nothing to
+the projects that have one. If the producer goes away, the next interval finds
+the project uncovered and the poll resumes — the view degrades to slow, never
+to stale. Nothing needs configuring for any of this, and
 a project nobody wires up simply carries on being polled.
 
 If the socket cannot be opened at all — no `XDG_RUNTIME_DIR`, another `bdi`
