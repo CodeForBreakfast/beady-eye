@@ -5,10 +5,12 @@ use std::thread;
 use std::time::Duration;
 
 use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::DefaultTerminal;
+use ratatui::{DefaultTerminal, Frame};
 
+use crate::collect::run::RealRunner;
 use crate::model::snapshot::{self, Filter, Snapshot};
 use crate::view::forest::{self, Forest};
+use crate::view::tail::{self, Herdr, Panes, Tail};
 use crate::view::{draw, Action, Motion};
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
@@ -19,7 +21,7 @@ use crate::view::{draw, Action, Motion};
 pub fn run(refresh: Duration, collect: Box<dyn Fn() -> Snapshot + Send>) -> anyhow::Result<()> {
     let first = collect();
     let (events, ask) = wire(refresh, collect);
-    let mut screen = Screen::showing(first)?;
+    let mut screen = Screen::showing(first, Box::new(Herdr::new(RealRunner)))?;
 
     drive(&mut screen, &events, &ask)
 }
@@ -221,20 +223,70 @@ struct Screen {
     snapshot: Snapshot,
     forest: Forest,
     filter: Filter,
+    panes: Box<dyn Panes>,
+    tail: Tail,
+    /// The pane the tail on screen was read from, so a selection moving
+    /// within it does not spend a herdr call on the answer already drawn.
+    tailing: Option<String>,
 }
 
 impl Screen {
-    fn showing(snapshot: Snapshot) -> anyhow::Result<Self> {
+    fn showing(snapshot: Snapshot, panes: Box<dyn Panes>) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
         let forest = forest::flatten(&snapshot);
+        let tail = tail::tail(&forest, panes.as_ref(), tail::LINES);
+        let tailing = tail::target(&forest).pane().map(str::to_string);
 
         Ok(Self {
             terminal,
             filter: snapshot.filter,
             snapshot,
             forest,
+            panes,
+            tail,
+            tailing,
         })
     }
+
+    /// Read the tail for whatever the selection is on now.
+    fn retail(&mut self) {
+        self.tailing = tail::target(&self.forest).pane().map(str::to_string);
+        self.tail = tail::tail(&self.forest, self.panes.as_ref(), tail::LINES);
+    }
+
+    /// Follow the selection, where it has left the pane the tail is showing.
+    fn follow(&mut self) {
+        if tail::moved_on(&self.forest, self.tailing.as_deref()) {
+            self.retail();
+        }
+    }
+
+    /// Bring the selected bead's pane to the front, reporting whether that
+    /// changed the screen. A row with no pane is a no-op: there is nothing to
+    /// focus and nothing has gone wrong.
+    fn focus(&mut self) -> bool {
+        match tail::focus(&self.forest, self.panes.as_ref()) {
+            None => false,
+            Some(said) => {
+                self.tail = said;
+                true
+            }
+        }
+    }
+}
+
+/// One frame: the forest, the tail beneath it, and the height the forest is
+/// told it has.
+///
+/// Outside the `terminal.draw` closure so a test backend can drive the whole
+/// frame. This is the only place the three bands are agreed on, and `^D` and
+/// `^U` are the part of that agreement nothing on screen would show was
+/// broken.
+fn paint(frame: &mut Frame, forest: &mut Forest, tail: &Tail) {
+    let bands = draw::regions(frame.area());
+    forest.set_half_screen(draw::half_screen(bands.forest));
+    draw::draw(frame, frame.area(), forest);
+    draw::draw_tail(frame, bands.tail, tail);
 }
 
 impl Drop for Screen {
@@ -247,9 +299,16 @@ impl View for Screen {
     fn collected(&mut self, snapshot: Snapshot) {
         self.snapshot = snapshot;
         self.forest = forest::flatten(&self.snapshot);
+        // The refresh tick is when the pane is re-read: the rows it has drawn
+        // since the last one are exactly what has moved on.
+        self.retail();
     }
 
     fn apply(&mut self, action: Action) -> bool {
+        if action == Action::Focus {
+            return self.focus();
+        }
+
         // Which trees show is a display choice over what was collected, so
         // the filter re-reads the snapshot in hand rather than the trackers.
         if action == Action::ToggleFilter {
@@ -259,16 +318,20 @@ impl View for Screen {
             };
             self.snapshot = snapshot::refilter(&self.snapshot, self.filter);
             self.forest = forest::flatten(&self.snapshot);
+            self.follow();
             return true;
         }
 
-        self.forest.apply(action)
+        let changed = self.forest.apply(action);
+        if changed {
+            self.follow();
+        }
+        changed
     }
 
     fn draw(&mut self) -> anyhow::Result<()> {
-        let forest = &self.forest;
-        self.terminal
-            .draw(|frame| draw::draw(frame, frame.area(), forest))?;
+        let (forest, tail) = (&mut self.forest, &self.tail);
+        self.terminal.draw(|frame| paint(frame, forest, tail))?;
         Ok(())
     }
 }
@@ -276,8 +339,13 @@ impl View for Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::snapshot::{HerdrState, TrackerFailure, Tree};
+    use crate::model::snapshot::{Counts, HerdrState, Node, TrackerFailure, TrackerState, Tree};
+    use crate::model::types::Status;
+    use crate::view::Motion;
     use chrono::Utc;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    use ratatui::Terminal;
 
     /// Long enough that a thread which was going to report has, and short
     /// enough that a test waiting in vain is not a hang.
@@ -615,5 +683,125 @@ mod tests {
         .expect("the loop runs");
 
         assert_eq!(view.drawn, 1, "the first draw and no other");
+    }
+
+    /// A tree with enough beads under it that a half-screen motion has room
+    /// to land somewhere that says how far it moved.
+    fn a_grove(beads: usize) -> Snapshot {
+        let bead = |id: String, depth: u16| Node {
+            id,
+            title: "a bead in the grove".to_string(),
+            status: Status::InProgress,
+            issue_type: "task".to_string(),
+            priority: 2,
+            depth,
+            edge: None,
+            ready: true,
+            blocked_by: Vec::new(),
+            started_at: None,
+            closed_at: None,
+            badges: Vec::new(),
+            agent: None,
+            anomalies: Vec::new(),
+            truncated: false,
+        };
+
+        let mut nodes = vec![bead("grv-1".to_string(), 0)];
+        nodes.extend((1..=beads).map(|n| bead(format!("grv-1.{n}"), 1)));
+
+        let tree = Tree {
+            project: "grove".to_string(),
+            root: "grv-1".to_string(),
+            title: "a tree with a great many beads".to_string(),
+            counts: Counts {
+                total: beads,
+                closed: 0,
+                live_agents: 0,
+                anomalies: 0,
+            },
+            tracker: TrackerState::Ok,
+            nodes,
+            dangling: Vec::new(),
+            unreachable: Vec::new(),
+        };
+
+        Snapshot {
+            filter: Filter::All,
+            trees: vec![tree.clone()],
+            collected: vec![tree],
+            ..a_snapshot_of(Vec::new())
+        }
+    }
+
+    fn a_snapshot_of(trees: Vec<Tree>) -> Snapshot {
+        Snapshot {
+            generated_at: Utc::now(),
+            herdr: HerdrState::Ok,
+            filter: Filter::LiveAgents,
+            trees: trees.clone(),
+            hidden_trees: Vec::new(),
+            failed_projects: Vec::new(),
+            unattributed: Vec::new(),
+            conflicts: Vec::new(),
+            collected: trees,
+        }
+    }
+
+    fn painted(forest: &mut Forest, tail: &Tail, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
+        terminal
+            .draw(|frame| paint(frame, forest, tail))
+            .expect("a draw into memory");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// Nothing on screen shows that `^D` moved by the wrong amount, so the
+    /// frame is what says the forest was told how tall it is.
+    #[test]
+    fn a_frame_tells_the_forest_how_far_a_half_screen_is() {
+        let mut forest = forest::flatten(&a_grove(30));
+
+        forest.apply(Action::Move(Motion::HalfScreenDown));
+        assert_eq!(
+            forest.selected_line(),
+            10,
+            "the forest's own default, until a frame has been drawn"
+        );
+
+        let mut forest = forest::flatten(&a_grove(30));
+        painted(&mut forest, &Tail::Silent("nothing to tail"), 60, 24);
+        forest.apply(Action::Move(Motion::HalfScreenDown));
+
+        assert_eq!(
+            forest.selected_line(),
+            8,
+            "half of the sixteen rows the forest was given, not half the frame"
+        );
+    }
+
+    #[test]
+    fn a_frame_puts_the_tail_in_the_band_reserved_for_it() {
+        let mut forest = forest::flatten(&a_grove(30));
+        let tail = Tail::Pane {
+            pane: "w:p1".to_string(),
+            lines: vec!["rebuilt .#thinkpad".to_string()],
+        };
+
+        let rows = painted(&mut forest, &tail, 40, 12);
+        let bands = draw::regions(Rect::new(0, 0, 40, 12));
+
+        assert!(
+            rows[bands.tail.y as usize].contains("w:p1"),
+            "the rule naming the pane opens the tail's band: {rows:?}"
+        );
+        assert!(rows[bands.tail.y as usize + 1].starts_with("  rebuilt .#thinkpad"));
+        assert!(
+            rows[bands.tail.y as usize - 1].contains("a bead in the grove"),
+            "the row above the tail is still the forest's"
+        );
+        assert!(rows[bands.keys.y as usize].contains("q quit"));
     }
 }

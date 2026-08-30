@@ -229,6 +229,15 @@ pub fn tail(forest: &Forest, panes: &dyn Panes, lines: u16) -> Tail {
     }
 }
 
+/// Whether the tail must be read again for what the selection is on now.
+///
+/// Scrolling within one pane's rows, and folding, leave the tail where it is:
+/// the pane on screen is still the pane the selection names, and its rows are
+/// re-read on the refresh tick like everything else.
+pub fn moved_on(forest: &Forest, showing: Option<&str>) -> bool {
+    target(forest).pane() != showing
+}
+
 /// Focus the pane the selection points at, saying nothing where it points at
 /// none.
 ///
@@ -548,6 +557,17 @@ mod tests {
     /// `--source visible` is the only source that answers for a pane in the
     /// alternate screen and working, which every agent worth tailing is:
     /// asked for `recent` herdr refuses with `agent_not_idle`.
+    #[test]
+    fn the_tail_is_read_again_only_where_the_selection_has_left_the_pane() {
+        assert!(
+            !moved_on(&selecting(1, HerdrState::Ok), Some("w:p1")),
+            "the selection is still on the pane the tail is showing"
+        );
+        assert!(moved_on(&selecting(2, HerdrState::Ok), Some("w:p1")));
+        assert!(moved_on(&selecting(1, HerdrState::Ok), None));
+        assert!(!moved_on(&selecting(0, HerdrState::Ok), None));
+    }
+
     #[test]
     fn a_read_asks_herdr_for_what_is_on_the_pane_now() {
         let (echo, ran) = Echo::saying("one line\nand another\n");
