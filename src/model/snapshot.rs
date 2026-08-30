@@ -247,7 +247,7 @@ pub fn build_tree(
                 issue_type: bead.issue_type.clone(),
                 priority: bead.priority,
                 depth: placed.depth,
-                edge: bead.edge_from_parent.clone(),
+                edge: placed.edge.clone(),
                 ready: readiness.ready.contains(&bead.id),
                 blocked_by: readiness
                     .blocked_by
@@ -744,6 +744,46 @@ render = "⏸ waiting"
         assert_eq!(t.dangling, ["orb-4.2"]);
         assert_eq!(t.counts.total, 2, "a reported bead is still drawn");
         assert_eq!(node(&t, "orb-4.2").depth, 1);
+    }
+
+    /// The nesting is the whole of what this tree says, so each row has to
+    /// carry which kind of edge put it where it is. A copy reached because a
+    /// bead blocks its forebear and a copy reached because it is that
+    /// forebear's child are drawn the same way and mean different things.
+    #[test]
+    fn a_node_carries_the_kind_of_edge_its_copy_was_reached_by() {
+        let json = r#"[
+          {"id":"orb-9","title":"root","status":"open","parent_id":""},
+          {"id":"orb-9.1","title":"waiting","status":"open",
+           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"},
+                           {"depends_on_id":"orb-9.2","type":"blocks"}]},
+          {"id":"orb-9.2","title":"what it waits on","status":"closed",
+           "parent_id":"orb-9"}
+        ]"#;
+        let t = build_tree(
+            "orbital",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &cfg(),
+            now(),
+        );
+
+        let edges: Vec<(&str, Option<&Edge>)> = t
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node.edge.as_ref()))
+            .collect();
+
+        assert_eq!(
+            edges,
+            vec![
+                ("orb-9", None),
+                ("orb-9.1", Some(&Edge::ParentChild)),
+                ("orb-9.2", Some(&Edge::Blocks)),
+                ("orb-9.2", Some(&Edge::ParentChild)),
+            ]
+        );
     }
 
     #[test]
