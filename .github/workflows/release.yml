@@ -1,0 +1,80 @@
+name: Release
+
+# A tag is a candidate, not a release. This decides whether it becomes one.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: publish ${{ github.ref_name }}
+    runs-on: homelab-runners
+    timeout-minutes: 60
+    steps:
+      # Actions are pinned by commit because a tag is mutable and an action
+      # runs with this repository's token.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      # The flake reads its version from Cargo.toml, so this one comparison
+      # covers both artefacts: a tag that passes it names the version the crate
+      # declares and the version the flake output carries.
+      - name: the tag must name the version the tree declares
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(nix eval --raw .#packages.x86_64-linux.default.version)
+          echo "tag $tagged, tree $declared"
+          test "$tagged" = "$declared"
+
+      # Both of these fail the publish anyway, seven minutes later, with the
+      # tag already pushed. Saying so first costs nothing.
+      - name: the publish preconditions
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN" || {
+            echo "::error::CARGO_REGISTRY_TOKEN is not set; nothing can be published"
+            exit 1
+          }
+          grep -q '^license' Cargo.toml || {
+            echo "::error::Cargo.toml sets no license; crates.io refuses a crate without one"
+            exit 1
+          }
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # crates.io cannot take a version back — a yank still serves the files —
+      # so the tested-commit gate is re-run here rather than assumed from the
+      # push build. Every check comes from the flake's `checks` output.
+      - run: nix flake check -L
+
+      # The one irreversible step, and the last thing that can fail without
+      # leaving a mess. cargo verifies the packaged tree builds before it
+      # uploads, so a packaging fault stops here having published nothing.
+      #
+      # The dev shell is the toolchain the checks above ran against; a cargo
+      # from anywhere else is a second, unpinned Rust.
+      - name: cargo publish
+        run: nix develop -c cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # The announcement, deliberately after the irreversible step. A release
+      # exists when this has run: the crate is up, and the tag it names gives
+      # the flake output at the same version from the same commit. A tag with
+      # no release is the half-release, and re-running this step is the whole
+      # of the repair.
+      #
+      # gh comes from this flake's locked nixpkgs. A bare nixpkgs# resolves
+      # through the installer's registry to a weekly channel, which is an
+      # unpinned dependency of every release.
+      - name: announce the release
+        run: |
+          nix run --inputs-from . nixpkgs#gh -- release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
