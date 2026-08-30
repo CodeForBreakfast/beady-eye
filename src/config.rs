@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -17,6 +18,8 @@ pub struct Config {
     pub anomalies: Anomalies,
     #[serde(default)]
     pub join: Join,
+    #[serde(default)]
+    pub tui: Tui,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -59,6 +62,15 @@ pub struct Join {
     pub pane_key: String,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Tui {
+    /// How long the fallback timer waits between collections, for the
+    /// projects nothing else reports changes for. A collection is dozens of
+    /// remote round trips per project, so this is measured in seconds.
+    pub refresh_seconds: u64,
+}
+
 impl Default for Anomalies {
     fn default() -> Self {
         Self {
@@ -72,6 +84,20 @@ impl Default for Join {
         Self {
             pane_key: "agent_pane".to_string(),
         }
+    }
+}
+
+impl Default for Tui {
+    fn default() -> Self {
+        Self {
+            refresh_seconds: 30,
+        }
+    }
+}
+
+impl Tui {
+    pub fn refresh(&self) -> Duration {
+        Duration::from_secs(self.refresh_seconds)
     }
 }
 
@@ -189,6 +215,7 @@ impl Config {
             badges: Vec::new(),
             anomalies: Anomalies::default(),
             join: Join::default(),
+            tui: Tui::default(),
         })
     }
 
@@ -280,6 +307,9 @@ stale_claim_days = 7
 
 [join]
 pane_key = "herdr_pane"
+
+[tui]
+refresh_seconds = 5
 "#;
 
     const ONE_PROJECT: &str = r#"
@@ -365,6 +395,7 @@ path = "/home/user/dev/cinder"
         );
         assert_eq!(cfg.anomalies.stale_claim_days, 7);
         assert_eq!(cfg.join.pane_key, "herdr_pane");
+        assert_eq!(cfg.tui.refresh_seconds, 5);
     }
 
     #[test]
@@ -376,6 +407,17 @@ path = "/home/user/dev/cinder"
         assert!(cfg.badges.is_empty());
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
+        assert_eq!(cfg.tui.refresh_seconds, 30);
+    }
+
+    /// The interval is written in seconds and read as a duration; nothing
+    /// downstream should be doing that arithmetic.
+    #[test]
+    fn the_refresh_interval_is_read_as_a_duration() {
+        let cfg = Config::from_toml(EVERY_SECTION).expect("parses");
+
+        assert_eq!(cfg.tui.refresh(), Duration::from_secs(5));
+        assert_eq!(Tui::default().refresh(), Duration::from_secs(30));
     }
 
     #[test]
@@ -607,6 +649,7 @@ cinder = ["c-1"]
         assert!(cfg.badges.is_empty());
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
+        assert_eq!(cfg.tui, Tui::default());
     }
 
     #[test]
