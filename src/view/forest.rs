@@ -1320,6 +1320,28 @@ credential_command = "secret harbour"
         );
     }
 
+    /// Both halves of the fraction have to count. `dep-1.2` is closed with two
+    /// closed beads under it, so a subtree that is finished says so — an epic
+    /// stuck at `0/3` whatever its children did would be worse than no count.
+    #[test]
+    fn a_finished_subtree_counts_its_closed_beads_and_not_only_its_size() {
+        let tree = tree_of("orbital", DEPOT);
+        let children = children_of(&tree.nodes);
+        let at = tree
+            .nodes
+            .iter()
+            .position(|node| node.id == "dep-1.2")
+            .expect("dep-1.2 is in the tree");
+
+        assert_eq!(
+            progress_of(&tree, &children, at),
+            Some(Progress {
+                closed: 3,
+                total: 3
+            })
+        );
+    }
+
     /// A leaf stands for itself alone, so there is nothing to be part-way
     /// through and a fraction over one bead would only repeat its glyph.
     #[test]
