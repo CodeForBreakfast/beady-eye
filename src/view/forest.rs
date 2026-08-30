@@ -17,7 +17,7 @@ const HALF_SCREEN: usize = 10;
 /// How many finished siblings it takes before a count reads better than their
 /// names. Under it they are drawn, and a finished branch is one line whatever
 /// it holds, so the run saves one row per member past the first.
-const MANY: usize = 2;
+const MANY: usize = 3;
 
 const OPEN: &str = "▾ ";
 const SHUT: &str = "▸ ";
@@ -915,7 +915,7 @@ mod tests {
     /// Orbital's tree as bd writes it. `orb-7.7` declares a parent no row
     /// holds, so it is re-parented onto the root; `orb-7.1.2` is a node bd
     /// stopped at; `orb-7.4` is closed with a pane still on it, and the other
-    /// two closed siblings are quiet.
+    /// three closed siblings are finished.
     const ORBITAL: &str = r#"[
       {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent_id":"",
        "priority":1,"issue_type":"epic","updated_at":"2026-08-29T12:00:00Z",
@@ -933,6 +933,8 @@ mod tests {
       {"id":"orb-7.4","title":"clear the access road","status":"closed","parent_id":"orb-7",
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z",
        "metadata":{"agent_pane":"w:p2"}},
+      {"id":"orb-7.5","title":"set the guard rail","status":"closed","parent_id":"orb-7",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
       {"id":"orb-7.7","title":"log the survey marks","status":"open","parent_id":"orb-6",
        "priority":2,"issue_type":"task"}
     ]"#;
@@ -946,8 +948,9 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
-    /// A tree whose run of quiet closed siblings has a quiet closed run of
-    /// its own, so an opened run still has something left to elide inside it.
+    /// A tree whose run of finished siblings has a finished run of its own, so
+    /// an opened run still has something left to count inside it. Three at each
+    /// level, which is what it takes to make a run.
     const DEPOT: &str = r#"[
       {"id":"dep-1","title":"re-lay the sidings","status":"in_progress","parent_id":"",
        "priority":1,"issue_type":"epic"},
@@ -959,8 +962,12 @@ mod tests {
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
       {"id":"dep-1.2.2","title":"stack the chairs","status":"closed","parent_id":"dep-1.2",
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"dep-1.2.3","title":"draw the spikes","status":"closed","parent_id":"dep-1.2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
       {"id":"dep-1.3","title":"clear the ballast","status":"closed","parent_id":"dep-1",
-       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"}
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"dep-1.4","title":"burn the sleepers","status":"closed","parent_id":"dep-1",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"}
     ]"#;
 
     /// The shape `bdi-4av` was raised on, with the stale-pane case beside it.
@@ -1245,7 +1252,7 @@ credential_command = "secret harbour"
                 "  │   └── ○ .1.2 seal the feed horn",
                 "  ├── ○ .7 log the survey marks",
                 "  ├── ✓ .4 clear the access road",
-                "  └── ▸ … 2 more",
+                "  └── ▸ … 3 more",
                 "▸ ferry · fer-2",
                 "▸ [FailedProjects] 1",
                 "▸ [Unconfigured] 1",
@@ -1297,7 +1304,7 @@ credential_command = "secret harbour"
                 "○ .1.2 seal the feed horn",
                 "○ .7 log the survey marks",
                 "✓ .4 clear the access road",
-                "… 2 more",
+                "… 3 more",
             ]
         );
     }
@@ -1345,7 +1352,7 @@ credential_command = "secret harbour"
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
         let forest = flatten(&snapshot());
 
-        assert!(sketch(&forest).contains(&"  └── ▸ … 2 more".to_string()));
+        assert!(sketch(&forest).contains(&"  └── ▸ … 3 more".to_string()));
     }
 
     /// The count is the only account the screen gives of the beads it stands
@@ -1356,7 +1363,7 @@ credential_command = "secret harbour"
 
         select_run(&mut forest);
 
-        assert_eq!(sketch(&forest)[forest.selected_line()], "  └── ▸ … 2 more");
+        assert_eq!(sketch(&forest)[forest.selected_line()], "  └── ▸ … 3 more");
     }
 
     #[test]
@@ -1370,9 +1377,10 @@ credential_command = "secret harbour"
             sketch(&forest)[7..],
             [
                 "  ├── ✓ .4 clear the access road",
-                "  └── … 2 more",
+                "  └── … 3 more",
                 "      ├── ✓ .2 survey the mast",
-                "      └── ✓ .3 pour the pad",
+                "      ├── ✓ .3 pour the pad",
+                "      └── ✓ .5 set the guard rail",
                 "▸ ferry · fer-2",
                 "▸ [FailedProjects] 1",
                 "▸ [Unconfigured] 1",
@@ -1432,8 +1440,8 @@ credential_command = "secret harbour"
         assert_eq!(
             progress_of(&tree, &children, at),
             Some(Progress {
-                closed: 3,
-                total: 3
+                closed: 4,
+                total: 4
             })
         );
     }
@@ -1489,14 +1497,15 @@ credential_command = "secret harbour"
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
-            sketch(&forest)[..6],
+            sketch(&forest)[..7],
             [
                 "▾ orbital · dep-1",
                 "  ├── ○ .1 grade the bed",
-                "  └── … 4 more",
+                "  └── … 6 more",
                 "      ├── ✓ .2 lift the old rail",
-                "      │   └── ▸ … 2 more",
-                "      └── ✓ .3 clear the ballast",
+                "      │   └── ▸ … 3 more",
+                "      ├── ✓ .3 clear the ballast",
+                "      └── ✓ .4 burn the sleepers",
             ]
         );
     }
@@ -1518,10 +1527,10 @@ credential_command = "secret harbour"
 
         let drawn = sketch(&forest);
         assert!(
-            drawn.contains(&"      └── ✓ .3 pour the pad".to_string()),
+            drawn.contains(&"      └── ✓ .5 set the guard rail".to_string()),
             "{drawn:#?}"
         );
-        assert_eq!(drawn[forest.selected_line()], "  └── … 2 more");
+        assert_eq!(drawn[forest.selected_line()], "  └── … 3 more");
     }
 
     /// A run has no bead of its own, so a line the cursor is holding must not
@@ -1671,7 +1680,7 @@ credential_command = "secret harbour"
     /// is closed too, and the shut marker says it still holds them.
     #[test]
     fn a_wholly_finished_subtree_rests_as_one_line_that_says_it_is_finished() {
-        let forest = flatten(&one_finished_branch());
+        let forest = flatten(&finished_branches());
 
         assert_eq!(
             sketch(&forest),
@@ -1679,14 +1688,15 @@ credential_command = "secret harbour"
                 "▾ orbital · dep-1",
                 "  ├── ○ .1 grade the bed",
                 "  ├── ○ .3 clear the ballast",
-                "  └── ▸ ✓ .2 lift the old rail",
+                "  ├── ▸ ✓ .2 lift the old rail",
+                "  └── ✓ .4 burn the sleepers",
             ]
         );
         assert_eq!(
             row_of(&forest, "dep-1.2").progress,
             Some(Progress {
-                closed: 3,
-                total: 3
+                closed: 4,
+                total: 4
             })
         );
     }
@@ -1695,7 +1705,7 @@ credential_command = "secret harbour"
     /// what it held under the same rules as anywhere else.
     #[test]
     fn opening_a_finished_subtree_draws_what_it_holds() {
-        let mut forest = flatten(&one_finished_branch());
+        let mut forest = flatten(&finished_branches());
         select(&mut forest, &key("orbital", "dep-1.2"));
 
         forest.apply(Action::ToggleFold);
@@ -1706,15 +1716,17 @@ credential_command = "secret harbour"
                 "▾ orbital · dep-1",
                 "  ├── ○ .1 grade the bed",
                 "  ├── ○ .3 clear the ballast",
-                "  └── ✓ .2 lift the old rail",
-                "      └── ▸ … 2 more",
+                "  ├── ✓ .2 lift the old rail",
+                "  │   └── ▸ … 3 more",
+                "  └── ✓ .4 burn the sleepers",
             ]
         );
     }
 
-    /// Depot with its second closed sibling re-opened, so the one finished
-    /// branch left stands on its own line rather than in a run.
-    fn one_finished_branch() -> Snapshot {
+    /// Depot with one of its closed siblings re-opened, leaving two finished
+    /// branches — under the threshold, so each keeps its own name rather than
+    /// becoming a share of a count.
+    fn finished_branches() -> Snapshot {
         let json = DEPOT.replace(
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"closed"#,
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"open"#,
