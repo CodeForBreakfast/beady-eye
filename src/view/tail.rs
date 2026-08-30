@@ -231,11 +231,19 @@ pub fn tail(forest: &Forest, panes: &dyn Panes, lines: u16) -> Tail {
 
 /// Whether the tail must be read again for what the selection is on now.
 ///
-/// Scrolling within one pane's rows, and folding, leave the tail where it is:
-/// the pane on screen is still the pane the selection names, and its rows are
-/// re-read on the refresh tick like everything else.
+/// A pane's rows are the one part of the tail worth keeping, because they are
+/// the one part that costs a herdr call. Everything else the tail can say it
+/// works out from the selected row alone, so a row that names no pane is
+/// always read again and the reading is free.
+///
+/// So the tail stands only while the selection still names the pane it was
+/// read from: scrolling within that pane's rows leaves it where it is, and
+/// its rows are re-read on the refresh tick like everything else.
 pub fn moved_on(forest: &Forest, showing: Option<&str>) -> bool {
-    target(forest).pane() != showing
+    match target(forest).pane() {
+        Some(pane) => showing != Some(pane),
+        None => true,
+    }
 }
 
 /// Focus the pane the selection points at, saying nothing where it points at
@@ -391,16 +399,18 @@ mod tests {
         }
     }
 
-    /// One tree: a root, a bead an agent is on, and a bead nobody is on.
+    /// One tree: a root, two beads one agent is on, and two beads nobody is
+    /// on. The pairs are what tell a tail that stands apart from one that
+    /// must be read again.
     fn snapshot(herdr: HerdrState) -> Snapshot {
         let tree = Tree {
             project: "orbital".to_string(),
             root: "orb-7".to_string(),
             title: "lift the ground station".to_string(),
             counts: Counts {
-                total: 3,
+                total: 5,
                 closed: 0,
-                live_agents: 1,
+                live_agents: 2,
                 anomalies: 0,
             },
             tracker: TrackerState::Ok,
@@ -408,6 +418,8 @@ mod tests {
                 node("orb-7", 0, None),
                 node("orb-7.1", 1, Some(agent_on("w:p1"))),
                 node("orb-7.2", 1, None),
+                node("orb-7.3", 1, None),
+                node("orb-7.4", 1, Some(agent_on("w:p1"))),
             ],
             dangling: Vec::new(),
             unreachable: Vec::new(),
@@ -554,9 +566,6 @@ mod tests {
         );
     }
 
-    /// `--source visible` is the only source that answers for a pane in the
-    /// alternate screen and working, which every agent worth tailing is:
-    /// asked for `recent` herdr refuses with `agent_not_idle`.
     #[test]
     fn the_tail_is_read_again_only_where_the_selection_has_left_the_pane() {
         assert!(
@@ -565,7 +574,51 @@ mod tests {
         );
         assert!(moved_on(&selecting(2, HerdrState::Ok), Some("w:p1")));
         assert!(moved_on(&selecting(1, HerdrState::Ok), None));
-        assert!(!moved_on(&selecting(0, HerdrState::Ok), None));
+    }
+
+    /// A header and a bead nobody is working name no pane between them, and
+    /// say different things. The tail read for the one is the wrong tail for
+    /// the other.
+    #[test]
+    fn leaving_a_header_for_a_bead_nobody_is_working_is_a_move() {
+        assert!(moved_on(&selecting(2, HerdrState::Ok), None));
+    }
+
+    #[test]
+    fn moving_between_two_beads_nobody_is_working_is_a_move() {
+        assert!(moved_on(&selecting(3, HerdrState::Ok), None));
+    }
+
+    /// One agent can be on more than one bead, and the pane its rows share is
+    /// already on screen. This is what the comparison exists for.
+    #[test]
+    fn two_beads_on_one_pane_do_not_read_it_twice() {
+        assert!(!moved_on(&selecting(4, HerdrState::Ok), Some("w:p1")));
+    }
+
+    /// The property stated rather than sampled: wherever `moved_on` says the
+    /// tail stands, the tail the new row calls for *is* the tail on screen.
+    /// So no phrase can outlive the row it was said for.
+    #[test]
+    fn a_tail_that_stands_is_the_tail_the_new_row_calls_for() {
+        let panes = Fake::reading(&["rebuilt .#thinkpad, generation 541"]);
+
+        for from in 0..5 {
+            let was = selecting(from, HerdrState::Ok);
+            let showing = target(&was).pane().map(str::to_string);
+            let on_screen = tail(&was, &panes, LINES);
+
+            for onto in 0..5 {
+                let now = selecting(onto, HerdrState::Ok);
+                if !moved_on(&now, showing.as_deref()) {
+                    assert_eq!(
+                        tail(&now, &panes, LINES),
+                        on_screen,
+                        "the tail read on row {from} was left standing on row {onto}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
