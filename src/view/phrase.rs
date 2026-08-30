@@ -10,6 +10,7 @@
 //! which is quoted so it reads as a foreign word rather than as `bdi`'s.
 
 use crate::collect::herdr::PaneStatus;
+use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, HerdrState, TrackerFailure};
@@ -161,6 +162,36 @@ pub fn unreachable(count: usize) -> String {
     format!("{count} {bead} hanging off the root · a parent chain that loops")
 }
 
+/// Why the tail is showing no pane, where the selection points at none.
+///
+/// The band under the forest is reserved whether or not there is a pane to
+/// fill it, and a band left blank reads as a pane with nothing to say rather
+/// than as no pane at all. So each of these is said out loud.
+pub fn no_bead_to_tail() -> &'static str {
+    "no pane · select a bead to see what is on it"
+}
+
+pub fn no_agent_to_tail() -> &'static str {
+    "no pane · nobody is working this bead"
+}
+
+pub fn no_herdr_to_tail() -> &'static str {
+    "no herdr session · there is no pane to read"
+}
+
+/// Why the pane the selection points at could not be read. A pane that went
+/// away between one poll and the next is the ordinary one of these: an agent
+/// finishing is not a fault.
+pub fn pane_unreadable(kind: FailureKind) -> &'static str {
+    match kind {
+        FailureKind::Gone => "that pane has gone",
+        FailureKind::Busy => "that pane is too busy to be read",
+        FailureKind::Auth | FailureKind::Unavailable | FailureKind::Exec | FailureKind::Parse => {
+            "that pane could not be read"
+        }
+    }
+}
+
 /// What an agent was resolved by, where that is worth saying: an agent the
 /// bead named is confirmed, one a pane's free text named is not.
 pub fn join_caveat(source: JoinSource) -> Option<&'static str> {
@@ -288,6 +319,19 @@ mod tests {
             said.push(conflict(&clash));
         }
 
+        said.push(no_bead_to_tail().to_string());
+        said.push(no_agent_to_tail().to_string());
+        said.push(no_herdr_to_tail().to_string());
+        for kind in [
+            FailureKind::Auth,
+            FailureKind::Unavailable,
+            FailureKind::Gone,
+            FailureKind::Busy,
+            FailureKind::Exec,
+            FailureKind::Parse,
+        ] {
+            said.push(pane_unreadable(kind).to_string());
+        }
         said.push(no_live_panes().to_string());
         said.push(panes_may_be_incomplete().to_string());
         said.push(truncated().to_string());
@@ -368,6 +412,10 @@ mod tests {
         let _: fn() -> &'static str = no_live_panes;
         let _: fn() -> &'static str = panes_may_be_incomplete;
         let _: fn(JoinSource) -> Option<&'static str> = join_caveat;
+        let _: fn() -> &'static str = no_bead_to_tail;
+        let _: fn() -> &'static str = no_agent_to_tail;
+        let _: fn() -> &'static str = no_herdr_to_tail;
+        let _: fn(FailureKind) -> &'static str = pane_unreadable;
     }
 
     #[test]
