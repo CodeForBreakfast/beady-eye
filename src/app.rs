@@ -192,14 +192,19 @@ fn root_of(
     Ok(root)
 }
 
-/// The four kinds bd's collector classifies, in the model's own vocabulary.
+/// The kinds bd's collector can produce, in the model's own vocabulary.
 /// `RunFailure.detail` stops here: bd names the database and the SQL user
 /// when it refuses a credential, and the words for a failure belong to
 /// whatever draws it.
+///
+/// `Gone` and `Busy` are herdr's, and a tracker cannot answer with either.
+/// `TrackerFailure` stays as it is rather than learning a word for a pane.
 fn tracker_failure(kind: FailureKind) -> TrackerFailure {
     match kind {
         FailureKind::Auth => TrackerFailure::Auth,
-        FailureKind::Unavailable => TrackerFailure::Unavailable,
+        FailureKind::Unavailable | FailureKind::Gone | FailureKind::Busy => {
+            TrackerFailure::Unavailable
+        }
         FailureKind::Exec => TrackerFailure::Exec,
         FailureKind::Parse => TrackerFailure::Parse,
     }

@@ -19,6 +19,10 @@ pub enum FailureKind {
     Auth,
     /// The tracker did not answer, or answered in a way we cannot place.
     Unavailable,
+    /// What the command was asked about is not there.
+    Gone,
+    /// It is there, but too busy to answer; the same command may work later.
+    Busy,
     /// The command never ran: not installed, not executable, no such directory.
     Exec,
     /// The command ran and returned something we cannot read.
@@ -51,6 +55,14 @@ const NO_ANSWER: [&str; 4] = [
     "i/o timeout",
 ];
 
+/// What herdr says when the pane a command names is not there, and when a
+/// pane is in the alternate screen and working so its history cannot be
+/// scrolled. Measured against herdr 0.8.2 on 2026-08-30. One phrase each,
+/// where bd takes several: herdr answers with a machine-readable code and bd
+/// with prose.
+const NO_SUCH_PANE: &str = "agent_not_found";
+const PANE_BUSY: &str = "agent_not_idle";
+
 impl RunFailure {
     pub fn exec(program: &str, cause: impl fmt::Display) -> Self {
         Self {
@@ -81,6 +93,16 @@ impl RunFailure {
             (
                 FailureKind::Unavailable,
                 format!("{program} could not reach the tracker"),
+            )
+        } else if said.contains(NO_SUCH_PANE) {
+            (
+                FailureKind::Gone,
+                format!("{program} no longer has that pane"),
+            )
+        } else if said.contains(PANE_BUSY) {
+            (
+                FailureKind::Busy,
+                format!("{program} cannot read that pane while it is busy"),
             )
         } else {
             let detail = match code {
@@ -236,6 +258,12 @@ mod tests {
     const REFUSED: &str = r#"Error: failed to open database: failed to check if database "atlas" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'atlas'"#;
     const UNREACHABLE: &str = "Error: failed to open database: Dolt server unreachable at nosuchhost.invalid:3306: dial tcp: lookup nosuchhost.invalid: no such host";
 
+    /// The two shapes herdr writes when it cannot read a pane, measured
+    /// against herdr 0.8.2 on 2026-08-30. Both name the pane and the command,
+    /// and `focus` answers the first of them the same way bar its `id`.
+    const NO_SUCH_PANE: &str = r#"{"error":{"code":"agent_not_found","message":"agent target wCW:nosuchpane not found"},"id":"cli:agent:read"}"#;
+    const PANE_BUSY: &str = r#"{"error":{"code":"agent_not_idle","message":"cannot read 8 lines while wCW:pM is working: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible"},"id":"cli:agent:read"}"#;
+
     /// A real subprocess writing `stderr` and exiting non-zero.
     fn failing_command(stderr: &str) -> RunFailure {
         RealRunner
@@ -311,6 +339,30 @@ mod tests {
         let failure = failing_command("Error: unknown flag: --whatever");
 
         assert_eq!(failure.kind, FailureKind::Unavailable);
+    }
+
+    /// The tail's two everyday failures against the one that ends the join.
+    /// A closed pane is one row to stop tailing and a busy pane is a retry,
+    /// where an unreachable herdr drops the whole live tier.
+    #[test]
+    fn herdrs_own_failures_are_told_apart_from_an_unreachable_herdr() {
+        assert_eq!(failing_command(NO_SUCH_PANE).kind, FailureKind::Gone);
+        assert_eq!(failing_command(PANE_BUSY).kind, FailureKind::Busy);
+        assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
+    }
+
+    /// herdr's failures name the pane, its workspace and the command asked of
+    /// it, so its JSON is classified and then dropped like bd's text.
+    #[test]
+    fn herdrs_error_json_never_survives_into_the_failure() {
+        for said in [NO_SUCH_PANE, PANE_BUSY] {
+            let failure = failing_command(said);
+            let shown = format!("{failure} {failure:?}");
+
+            for leaked in ["agent_not", "wCW", "cli:agent", "\"error\""] {
+                assert!(!shown.contains(leaked), "{leaked:?} survived into: {shown}");
+            }
+        }
     }
 
     #[test]
