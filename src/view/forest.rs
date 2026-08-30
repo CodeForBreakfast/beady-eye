@@ -14,6 +14,11 @@ use crate::view::{Action, Motion};
 /// How far a half-screen motion moves until the renderer says otherwise.
 const HALF_SCREEN: usize = 10;
 
+/// How many finished siblings it takes before a count reads better than their
+/// names. Under it they are drawn, and a finished branch is one line whatever
+/// it holds, so the run saves one row per member past the first.
+const MANY: usize = 2;
+
 const OPEN: &str = "▾ ";
 const SHUT: &str = "▸ ";
 /// A tree's children start under its header's marker, not under its project.
@@ -470,25 +475,12 @@ impl Forest {
         }
     }
 
-    fn expanded(&self, handle: &Handle) -> bool {
-        if let Some(open) = self.folds.get(handle) {
-            return *open;
-        }
-        match handle {
-            // A root shows its work while the selection is in it and collapses
-            // to its header when it is not; anything below a root that is open
-            // is open with it.
-            Handle::Bead(key) => !self.is_root(key) || self.holds_cursor(key),
-            // A run rests as the count it was drawn to be.
-            Handle::Elided(_) | Handle::Group(_) => false,
-        }
-    }
-
-    fn is_root(&self, key: &BeadKey) -> bool {
-        self.snapshot
-            .trees
-            .iter()
-            .any(|tree| tree.project == key.project && tree.root == key.id)
+    /// Whether a fold is open: what the user set it to, or how it rests when
+    /// they have not touched it. Only the caller knows the tree a line came
+    /// from, so it says where the line rests rather than being asked to
+    /// re-derive it here.
+    fn expanded(&self, handle: &Handle, resting: bool) -> bool {
+        self.folds.get(handle).copied().unwrap_or(resting)
     }
 
     fn holds_cursor(&self, root: &BeadKey) -> bool {
@@ -573,7 +565,9 @@ impl Forest {
 
     fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
         let root = root_key(tree);
-        let open = self.expanded(&Handle::Bead(root.clone()));
+        // A root shows its work while the selection is in it and collapses to
+        // its header when it is not.
+        let open = self.expanded(&Handle::Bead(root.clone()), self.holds_cursor(&root));
         let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
 
         lines.push(Line {
@@ -638,7 +632,8 @@ impl Forest {
                         project: tree.project.clone(),
                         id: tree.nodes[under].id.clone(),
                     };
-                    let open = self.expanded(&Handle::Elided(key.clone()));
+                    // A run rests as the count it was drawn to be.
+                    let open = self.expanded(&Handle::Elided(key.clone()), false);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !open),
                         depth,
@@ -669,7 +664,11 @@ impl Forest {
                         id: node.id.clone(),
                     };
                     let kids = self.children_entries(tree, children, at);
-                    let open = !kids.is_empty() && self.expanded(&Handle::Bead(key.clone()));
+                    // A finished branch rests shut, said in one line by its
+                    // own glyph, its whole fraction and the marker. Anything
+                    // still being worked rests open, down to the work.
+                    let open = !kids.is_empty()
+                        && self.expanded(&Handle::Bead(key.clone()), !finished(tree, children, at));
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open),
                         depth,
@@ -716,7 +715,7 @@ impl Forest {
             if items.is_empty() {
                 continue;
             }
-            let open = self.expanded(&Handle::Group(kind));
+            let open = self.expanded(&Handle::Group(kind), false);
             lines.push(Line {
                 prefix: marker(open).to_string(),
                 depth: 0,
@@ -815,32 +814,47 @@ fn children_of(nodes: &[Node]) -> Vec<Vec<usize>> {
     children
 }
 
+/// Whether the branch at `at` is finished: every bead in it closed, no agent
+/// anywhere in it, no anomaly anywhere in it.
+///
+/// Asked of the whole branch rather than of its top bead, because that is the
+/// set every use of the answer stands for. A bead can be closed and unmanned
+/// and still hold a working agent three levels down, and the two mechanisms
+/// this feeds — a branch drawn as one finished line, a run drawn as a count —
+/// each hide everything beneath it.
+fn finished(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
+    let node = &tree.nodes[at];
+    node.status.is_closed()
+        && node.agent.is_none()
+        && node.anomalies.is_empty()
+        && children[at]
+            .iter()
+            .all(|kid| finished(tree, children, *kid))
+}
+
 /// A node's children split into the ones drawn and the run that is not.
 ///
-/// A closed sibling nobody is working collapses into the run; one carrying an
-/// agent or an anomaly does not, because that is the stale-pane case and
-/// eliding it would hide a live agent. A run of one is drawn: `… 1 more`
+/// A finished sibling collapses into the run; one holding an agent or an
+/// anomaly at any depth does not, because eliding it would hide live work
+/// behind a line saying there is none. A run of one is drawn: `… 1 more`
 /// costs a line and saves none.
 fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, Vec<usize>) {
-    let quiet: Vec<usize> = children[at]
+    let done: Vec<usize> = children[at]
         .iter()
         .copied()
-        .filter(|kid| {
-            let node = &tree.nodes[*kid];
-            node.status.is_closed() && node.agent.is_none() && node.anomalies.is_empty()
-        })
+        .filter(|kid| finished(tree, children, *kid))
         .collect();
 
-    if quiet.len() < 2 {
+    if done.len() < MANY {
         return (children[at].clone(), Vec::new());
     }
 
     let drawn = children[at]
         .iter()
         .copied()
-        .filter(|kid| !quiet.contains(kid))
+        .filter(|kid| !done.contains(kid))
         .collect();
-    (drawn, quiet)
+    (drawn, done)
 }
 
 /// How far along the subtree at `at` is, where it is more than the one bead.
@@ -949,6 +963,39 @@ mod tests {
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"}
     ]"#;
 
+    /// The shape `bdi-4av` was raised on, with the stale-pane case beside it.
+    /// `rly-2.2` and `rly-2.4` are both closed and unmanned, so a rule that
+    /// asks its question of the sibling alone sweeps both into the run —
+    /// burying a working agent two levels under one of them and a stale-pane
+    /// warning under the other. `rly-2.3`, `rly-2.5` and `rly-2.6` are
+    /// finished all the way down, and are what a run may honestly hold.
+    const RELAY: &str = r#"[
+      {"id":"rly-2","title":"re-site the relay","status":"in_progress","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"rly-2.1","title":"trench the run","status":"open","parent_id":"rly-2",
+       "priority":2,"issue_type":"task"},
+      {"id":"rly-2.2","title":"strike the old mast","status":"closed","parent_id":"rly-2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
+      {"id":"rly-2.2.1","title":"drop the guys","status":"closed","parent_id":"rly-2.2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"rly-2.2.1.1","title":"cut the stays","status":"in_progress","parent_id":"rly-2.2.1",
+       "priority":2,"issue_type":"task","updated_at":"2026-08-29T12:00:00Z",
+       "metadata":{"agent_pane":"w:p1"}},
+      {"id":"rly-2.3","title":"back-fill the pad","status":"closed","parent_id":"rly-2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"rly-2.4","title":"lift the feeder","status":"closed","parent_id":"rly-2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"rly-2.4.1","title":"coil the heliax","status":"closed","parent_id":"rly-2.4",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z",
+       "metadata":{"agent_pane":"w:p2"}},
+      {"id":"rly-2.5","title":"seed the spoil","status":"closed","parent_id":"rly-2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
+      {"id":"rly-2.5.1","title":"rake the batter","status":"closed","parent_id":"rly-2.5",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"},
+      {"id":"rly-2.6","title":"sign the handover","status":"closed","parent_id":"rly-2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
+    ]"#;
+
     /// `w:p3` and `w:p4` both name `orb-7.1`, so neither holds it; `w:p9` is
     /// working in the project whose tracker refused; `w:pF` is under no
     /// configured project at all.
@@ -995,6 +1042,18 @@ credential_command = "secret harbour"
 
     fn panes() -> Vec<Pane> {
         parse_agent_list(PANES).expect("the panes parse")
+    }
+
+    /// One working pane and one idle one, both in Orbital's tree. Enough to
+    /// staff a fixture without the conflicting and unconfigured panes the
+    /// shared snapshot carries to exercise its groups.
+    const TWO_PANES: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
+      {"pane_id":"w:p2","cwd":"/srv/work/orbital","agent_status":"idle"}
+    ]}}"#;
+
+    fn two_panes() -> Vec<Pane> {
+        parse_agent_list(TWO_PANES).expect("the panes parse")
     }
 
     fn joined(orbital: &Assembled, harbour: &Assembled, panes: &[Pane]) -> Joined {
@@ -1113,6 +1172,37 @@ credential_command = "secret harbour"
 
     fn depot() -> Snapshot {
         gather(vec![tree_of("orbital", DEPOT)], Vec::new(), Filter::All)
+    }
+
+    /// One project's tree, joined against its own rows so that a pane the
+    /// fixture names lands on the bead that names it. `tree_of` joins every
+    /// fixture against Orbital's rows, which is what the shared snapshot
+    /// needs and what leaves any other fixture's beads unstaffed.
+    fn alone(project: &str, json: &str, panes: &[Pane]) -> Snapshot {
+        let rows = assembled(json);
+        let cfg = cfg();
+        let joined = join::resolve(
+            &[ProjectRows {
+                project,
+                rows: &rows.rows,
+            }],
+            panes,
+            &cfg.projects,
+            &cfg.join,
+        );
+        let tree = build_tree(project, &rows, &joined, &Readiness::default(), &cfg, now());
+        snapshot::build(
+            Collected {
+                trees: vec![tree],
+                failed_projects: Vec::new(),
+            },
+            panes,
+            &joined,
+            &cfg,
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        )
     }
 
     /// Put the selection on the first elided run, by moving down to it. It
@@ -1385,14 +1475,17 @@ credential_command = "secret harbour"
         assert!(runs > 0, "the fixture built no run to check");
     }
 
-    /// The two-or-more rule is a property of the forest, not of a place in
-    /// it, so it holds inside an open run as it does everywhere else. Nothing
-    /// disappears; it is counted one level down.
+    /// The run rule is a property of the forest, not of a place in it, so it
+    /// holds inside an open run as it does everywhere else. Nothing
+    /// disappears; it is counted one level down. Two folds to reach it now:
+    /// the run, and then the finished branch that rests shut inside it.
     #[test]
     fn an_open_run_elides_again_inside_itself() {
         let mut forest = flatten(&depot());
         select_run(&mut forest);
+        forest.apply(Action::ToggleFold);
 
+        select(&mut forest, &key("orbital", "dep-1.2"));
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
@@ -1475,6 +1568,158 @@ credential_command = "secret harbour"
             !drawn.iter().any(|line| line.contains("more")),
             "{drawn:#?}"
         );
+    }
+
+    /// The invariant this bead exists to restore: nothing `bdi` folds of its
+    /// own accord closes over a live agent or over an anomaly. Asked of the
+    /// forest at rest, before any fold is set by hand, because that is the
+    /// only state `bdi` chooses for itself.
+    #[test]
+    fn nothing_the_forest_folds_by_itself_hides_a_live_agent_or_an_anomaly() {
+        let mut worth_drawing = 0;
+        for json in [ORBITAL, DEPOT, RELAY] {
+            let snapshot = alone("orbital", json, &two_panes());
+            let forest = flatten(&snapshot);
+            let drawn: Vec<&str> = forest
+                .lines()
+                .iter()
+                .filter_map(|line| line.bead.as_ref().map(|key| key.id.as_str()))
+                .collect();
+
+            for node in &snapshot.trees[0].nodes {
+                if node.agent.is_none() && node.anomalies.is_empty() {
+                    continue;
+                }
+                worth_drawing += 1;
+                assert!(
+                    drawn.contains(&node.id.as_str()),
+                    "{} carries an agent or an anomaly and is not on screen: {:#?}",
+                    node.id,
+                    sketch(&forest)
+                );
+            }
+        }
+
+        assert!(worth_drawing > 0, "the fixtures staffed nothing to check");
+    }
+
+    /// The shape `bdi-4av` was raised on: a closed parent, a closed child, and
+    /// a live agent under both of them. The run asked its question of the
+    /// child alone, swept it in, and printed a sentence saying nobody was on
+    /// the beads it had just hidden the agent among.
+    #[test]
+    fn a_run_never_closes_over_a_subtree_with_a_live_agent_in_it() {
+        let forest = flatten(&alone("orbital", RELAY, &two_panes()));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital · rly-2",
+                "  ├── ○ .1 trench the run",
+                "  ├── ✓ .2 strike the old mast",
+                "  │   └── ✓ .2.1 drop the guys",
+                "  │       └── ● .2.1.1 cut the stays",
+                "  ├── ✓ .4 lift the feeder",
+                "  │   └── ✓ .4.1 coil the heliax",
+                "  └── ▸ … 4 more",
+            ]
+        );
+    }
+
+    /// A run's phrase says nobody is on the beads it counts, so it has to be
+    /// true of every bead it counts — not merely of the siblings it names.
+    /// The count and the set it describes are checked together, because it was
+    /// their disagreement that let the sentence lie.
+    #[test]
+    fn a_run_counts_exactly_the_beads_its_phrase_is_true_of() {
+        let mut runs = 0;
+        for json in [ORBITAL, DEPOT, RELAY] {
+            let tree = alone("orbital", json, &two_panes()).trees.remove(0);
+            let children = children_of(&tree.nodes);
+
+            for at in 0..tree.nodes.len() {
+                let (_, run) = split(&tree, &children, at);
+                if run.is_empty() {
+                    continue;
+                }
+                runs += 1;
+
+                let mut behind = 0;
+                let mut walking = run.clone();
+                while let Some(node) = walking.pop() {
+                    behind += 1;
+                    let bead = &tree.nodes[node];
+                    assert!(
+                        bead.status.is_closed()
+                            && bead.agent.is_none()
+                            && bead.anomalies.is_empty(),
+                        "{} is behind a run that says nobody is on it",
+                        bead.id
+                    );
+                    walking.extend(children[node].iter().copied());
+                }
+
+                assert_eq!(run_size(&children, &run), behind);
+            }
+        }
+
+        assert!(runs > 0, "the fixtures built no run to check");
+    }
+
+    /// A branch that is finished all the way down is one line saying so: the
+    /// glyph is its own closed status, the fraction says every bead beneath it
+    /// is closed too, and the shut marker says it still holds them.
+    #[test]
+    fn a_wholly_finished_subtree_rests_as_one_line_that_says_it_is_finished() {
+        let forest = flatten(&one_finished_branch());
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital · dep-1",
+                "  ├── ○ .1 grade the bed",
+                "  ├── ○ .3 clear the ballast",
+                "  └── ▸ ✓ .2 lift the old rail",
+            ]
+        );
+        assert_eq!(
+            row_of(&forest, "dep-1.2").progress,
+            Some(Progress {
+                closed: 3,
+                total: 3
+            })
+        );
+    }
+
+    /// Collapsed, not dropped: it is the existing fold, and opening it draws
+    /// what it held under the same rules as anywhere else.
+    #[test]
+    fn opening_a_finished_subtree_draws_what_it_holds() {
+        let mut forest = flatten(&one_finished_branch());
+        select(&mut forest, &key("orbital", "dep-1.2"));
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital · dep-1",
+                "  ├── ○ .1 grade the bed",
+                "  ├── ○ .3 clear the ballast",
+                "  └── ✓ .2 lift the old rail",
+                "      └── ▸ … 2 more",
+            ]
+        );
+    }
+
+    /// Depot with its second closed sibling re-opened, so the one finished
+    /// branch left stands on its own line rather than in a run.
+    fn one_finished_branch() -> Snapshot {
+        let json = DEPOT.replace(
+            r#"{"id":"dep-1.3","title":"clear the ballast","status":"closed"#,
+            r#"{"id":"dep-1.3","title":"clear the ballast","status":"open"#,
+        );
+        alone("orbital", &json, &[])
     }
 
     #[test]
