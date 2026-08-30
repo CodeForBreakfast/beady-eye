@@ -84,6 +84,23 @@ pub struct Tui {
     /// How long the fallback timer waits between collections, for the
     /// projects nothing else reports changes for. A collection is dozens of
     /// remote round trips per project, so this is measured in seconds.
+    ///
+    /// The default is roughly three times what a collection costs, so a
+    /// `bdi` nothing reports to spends about a third of its time collecting:
+    /// dozens of queries against each tracker's server, for as long as it is
+    /// open, per instance running. Measured against one Dolt-backed tracker
+    /// of a hundred open beads, a whole collection took 9.4 to 11.2 seconds,
+    /// of which 5.2 to 6.3 was the one `bd dep tree` over the largest tree.
+    /// The cost follows the size of the biggest tree rather than the number
+    /// of them, so a config drawing two efforts that size collects most of
+    /// the time and wants a longer interval than this one.
+    ///
+    /// Setting it below a collection is allowed and is bounded. Collections
+    /// never overlap: one runs, at most one waits behind it, and every
+    /// interval that passes meanwhile collapses into that one. So an interval
+    /// shorter than a collection buys back-to-back collections with no idle
+    /// gap — one per collection, never one per interval — and a view as fresh
+    /// as the collection allows rather than as the interval promised.
     pub refresh_seconds: u64,
 }
 

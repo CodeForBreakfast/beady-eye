@@ -1384,6 +1384,32 @@ mod tests {
         );
     }
 
+    /// What an interval shorter than a collection costs, which is what the
+    /// refresh interval is set against: the ticks that pass while a
+    /// collection runs collapse into the one waiting behind it, so the work
+    /// is one collection per collection rather than one per tick, and a
+    /// timer set faster than the tracker can answer cannot pile up.
+    #[test]
+    fn the_intervals_passing_during_a_collection_cost_one_collection_between_them() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Changed(Wanted::Everything),
+            Event::Changed(Wanted::Everything),
+            Event::Changed(Wanted::Everything),
+            Event::Collected(Box::new(a_snapshot())),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(
+            asked.try_iter().collect::<Vec<_>>(),
+            [Wanted::Everything, Wanted::Everything],
+            "three ticks over one collection asked for one more, not two"
+        );
+    }
+
     #[test]
     fn a_collection_that_comes_back_reaches_the_view() {
         let mut view = Recorder::default();
