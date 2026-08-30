@@ -2105,7 +2105,7 @@ mod tests {
             tracker: TrackerState::Ok,
             nodes,
             dangling: Vec::new(),
-            unreachable: Vec::new(),
+            cycles: Vec::new(),
         };
 
         Snapshot {

@@ -207,16 +207,22 @@ pub fn unconfigured(count: usize) -> String {
     format!("{count} panes in directories no configured project covers")
 }
 
-/// Beads whose declared parent was absent, now hanging off the root.
+/// Beads naming something they depend on that this tree does not hold. One
+/// left with nowhere else to sit hangs off the root.
 pub fn dangling(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
-    format!("{count} {bead} re-parented onto the root · no parent by the id each declares is in this tree")
+    format!(
+        "{count} {bead} waiting on work outside this tree · no bead by the id each names is in it"
+    )
 }
 
-/// Beads no walk down from the root reaches, because their parent chain loops.
-pub fn unreachable(count: usize) -> String {
+/// Beads whose own descendants lead back to them, each drawn where the loop
+/// was cut.
+pub fn cycle(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
-    format!("{count} {bead} hanging off the root · a parent chain that loops")
+    format!(
+        "{count} {bead} that must finish before themselves · a chain of dependencies that loops"
+    )
 }
 
 /// Why the whole forest is empty. `bd` is asked for unfinished work and
@@ -452,8 +458,8 @@ mod tests {
         }
         said.push(dangling(1));
         said.push(dangling(3));
-        said.push(unreachable(1));
-        said.push(unreachable(3));
+        said.push(cycle(1));
+        said.push(cycle(3));
 
         for source in [JoinSource::AgentPane, JoinSource::DisplayAgent] {
             said.extend(join_caveat(source).map(str::to_string));
@@ -638,7 +644,7 @@ mod tests {
     fn one_of_a_thing_is_not_described_in_the_plural() {
         for said in [
             dangling(1),
-            unreachable(1),
+            cycle(1),
             elided(1),
             unfinished_beneath(1),
             truncated_nodes(1),

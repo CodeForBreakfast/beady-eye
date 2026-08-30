@@ -277,7 +277,7 @@ mod tests {
                 node("orb-7.4", 1, Some(agent_on("w:p1"))),
             ],
             dangling: Vec::new(),
-            unreachable: Vec::new(),
+            cycles: Vec::new(),
         };
 
         Snapshot {

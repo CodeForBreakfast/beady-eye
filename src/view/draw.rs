@@ -175,7 +175,7 @@ fn sentence(prefix: &str, said: String, colour: Color) -> Fitted {
 fn finding(note: Note) -> (String, Color) {
     let said = match note {
         Note::Dangling(count) => phrase::dangling(count),
-        Note::Unreachable(count) => phrase::unreachable(count),
+        Note::Cycle(count) => phrase::cycle(count),
         Note::Truncated(count) => phrase::truncated_nodes(count),
         Note::NoRoots => return (phrase::no_roots().to_string(), Color::Reset),
     };
@@ -745,7 +745,7 @@ mod tests {
             tracker: TrackerState::Ok,
             nodes: Vec::new(),
             dangling: Vec::new(),
-            unreachable: Vec::new(),
+            cycles: Vec::new(),
         }
     }
 

@@ -1111,8 +1111,21 @@ credential_command = "secret harbour"
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
 
+    /// The root of a hand-written tree: the one row naming no parent, which
+    /// is how `bd dep tree` marks it.
+    fn root_row(beads: &[crate::model::types::Bead]) -> String {
+        beads
+            .iter()
+            .find(|b| b.parent_id.is_none())
+            .expect("a root row")
+            .id
+            .clone()
+    }
+
     fn assembled(json: &str) -> Assembled {
-        assemble(parse_dep_tree(json).expect("the rows parse")).expect("the rows assemble")
+        let beads = parse_dep_tree(json).expect("the rows parse");
+        let root = root_row(&beads);
+        assemble(beads, &root).expect("the rows assemble")
     }
 
     fn panes() -> Vec<Pane> {
@@ -2976,7 +2989,7 @@ credential_command = "secret harbour"
     #[derive(Debug, Default, PartialEq, Eq)]
     struct Reported {
         dangling: usize,
-        unreachable: usize,
+        cycles: usize,
         truncated: usize,
         conflicts: usize,
         failed_projects: usize,
@@ -2987,7 +3000,7 @@ credential_command = "secret harbour"
     fn in_the_snapshot(snapshot: &Snapshot) -> Reported {
         Reported {
             dangling: snapshot.trees.iter().map(|t| t.dangling.len()).sum(),
-            unreachable: snapshot.trees.iter().map(|t| t.unreachable.len()).sum(),
+            cycles: snapshot.trees.iter().map(|t| t.cycles.len()).sum(),
             truncated: snapshot
                 .trees
                 .iter()
@@ -3009,7 +3022,7 @@ credential_command = "secret harbour"
                 // be decided here rather than fall through as nothing.
                 Content::Note(note) => match note {
                     Note::Dangling(n) => found.dangling += n,
-                    Note::Unreachable(n) => found.unreachable += n,
+                    Note::Cycle(n) => found.cycles += n,
                     Note::Truncated(n) => found.truncated += n,
                     // A property of the drawing rather than a finding in the
                     // snapshot, so there is no count for it to reach.

@@ -89,7 +89,13 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
         .into_iter()
         .map(|(project, rows)| {
             let beads = parse_dep_tree(rows).expect("the rows parse");
-            (project, assemble(beads).expect("the rows assemble"))
+            let root = beads
+                .iter()
+                .find(|b| b.parent_id.is_none())
+                .expect("a root row")
+                .id
+                .clone();
+            (project, assemble(beads, &root).expect("the rows assemble"))
         })
         .collect();
 

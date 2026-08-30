@@ -1,0 +1,239 @@
+[
+  {
+    "id": "bdi-2bb.9",
+    "title": "Let the live-agent filter be re-applied without re-collecting",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Graeme Foster",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T12:42:55Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T12:56:10Z",
+    "started_at": "2026-08-30T12:50:59Z",
+    "closed_at": "2026-08-30T12:56:10Z",
+    "metadata": {
+      "working_topic": "beady-eye/v1-bdi-2bb.9"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bdi-2bb.9",
+        "depends_on_id": "bdi-2bb",
+        "type": "parent-child",
+        "created_at": "2026-08-30T12:42:54Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdi-2bb"
+  },
+  {
+    "id": "bdi-2bb.4",
+    "title": "Flatten a snapshot into a navigable forest",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Graeme Foster",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T12:33:43Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T13:28:35Z",
+    "started_at": "2026-08-30T13:04:39Z",
+    "closed_at": "2026-08-30T13:23:55Z",
+    "metadata": {
+      "working_topic": "beady-eye/v1-bdi-2bb.4"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bdi-2bb.4",
+        "depends_on_id": "bdi-2bb",
+        "type": "parent-child",
+        "created_at": "2026-08-30T12:33:42Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdi-2bb.4",
+        "depends_on_id": "bdi-2bb.3",
+        "type": "blocks",
+        "created_at": "2026-08-30T12:34:12Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdi-2bb.4",
+        "depends_on_id": "bdi-2bb.9",
+        "type": "blocks",
+        "created_at": "2026-08-30T12:42:56Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "bdi-2bb"
+  },
+  {
+    "id": "bdi-2bb.5",
+    "title": "Draw the forest with ratatui",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Graeme Foster",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T12:33:43Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T13:31:14Z",
+    "started_at": "2026-08-30T13:05:30Z",
+    "closed_at": "2026-08-30T13:31:14Z",
+    "metadata": {
+      "working_topic": "beady-eye/v1-bdi-2bb.5"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bdi-2bb.5",
+        "depends_on_id": "bdi-2bb",
+        "type": "parent-child",
+        "created_at": "2026-08-30T12:33:43Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdi-2bb.5",
+        "depends_on_id": "bdi-2bb.3",
+        "type": "blocks",
+        "created_at": "2026-08-30T12:34:13Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdi-2bb"
+  },
+  {
+    "id": "bdi-2bb.3",
+    "title": "Give every failure and finding its words, and stand up the view module",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Graeme Foster",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T12:33:06Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T13:00:00Z",
+    "started_at": "2026-08-30T12:48:36Z",
+    "closed_at": "2026-08-30T12:59:59Z",
+    "dependencies": [
+      {
+        "issue_id": "bdi-2bb.3",
+        "depends_on_id": "bdi-2bb",
+        "type": "parent-child",
+        "created_at": "2026-08-30T12:33:06Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 3,
+    "comment_count": 0,
+    "parent": "bdi-2bb"
+  },
+  {
+    "id": "bdi-2bb",
+    "title": "The TUI: one scrollable forest over the snapshot",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T12:21:33Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T12:21:33Z",
+    "dependencies": [
+      {
+        "issue_id": "bdi-2bb",
+        "depends_on_id": "bdi-7ao",
+        "type": "parent-child",
+        "created_at": "2026-08-30T12:21:38Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdi-2bb",
+        "depends_on_id": "bdi-3um",
+        "type": "blocks",
+        "created_at": "2026-08-30T12:21:39Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "bdi-7ao"
+  },
+  {
+    "id": "bdi-2bb.17",
+    "title": "Select a line by clicking it",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Graeme Foster",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T15:37:54Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T21:19:41Z",
+    "started_at": "2026-08-30T20:35:30Z",
+    "closed_at": "2026-08-30T21:19:41Z",
+    "dependencies": [
+      {
+        "issue_id": "bdi-2bb.17",
+        "depends_on_id": "bdi-2bb",
+        "type": "parent-child",
+        "created_at": "2026-08-30T15:37:54Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdi-2bb"
+  },
+  {
+    "id": "bdi-r5l",
+    "title": "A shut node's marker pushes its line two columns right of its siblings",
+    "status": "in_progress",
+    "priority": 3,
+    "issue_type": "task",
+    "assignee": "Graeme Foster",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-30T16:02:20Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-30T21:18:32Z",
+    "started_at": "2026-08-30T20:59:39Z",
+    "metadata": {
+      "agent_pane": "wCW:p2M",
+      "working_topic": "beady-eye/v1-bdi-r5l"
+    },
+    "dependencies": [
+      {
+        "issue_id": "bdi-r5l",
+        "depends_on_id": "bdi-2bb",
+        "type": "parent-child",
+        "created_at": "2026-08-30T16:02:24Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdi-2bb"
+  }
+]

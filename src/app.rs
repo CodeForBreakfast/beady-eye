@@ -226,7 +226,7 @@ fn read_project(
             .map(|root| {
                 let read = bd::dep_tree(runner, &project.path, &env, &root)
                     .map_err(|failure| tracker_failure(failure.kind))
-                    .and_then(|rows| assemble(rows).map_err(|_| TrackerFailure::Parse));
+                    .and_then(|rows| assemble(rows, &root).map_err(|_| TrackerFailure::Parse));
                 (root, read)
             })
             .collect(),

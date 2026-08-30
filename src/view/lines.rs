@@ -177,7 +177,7 @@ pub struct Header {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
     Dangling(usize),
-    Unreachable(usize),
+    Cycle(usize),
     Truncated(usize),
     /// Every tracker answered and none of them had a root to draw, so the
     /// forest is empty. Under no tree, because there is none: it is the only
@@ -192,7 +192,7 @@ pub struct Group {
     /// How many of the things this group holds carry findings the screen is
     /// not drawing, because the group holds them rather than showing them.
     ///
-    /// Only a hidden tree has any: the filter took its dangling, unreachable
+    /// Only a hidden tree has any: the filter took its dangling, looping
     /// and truncated counts out of the forest with it, and that choice should
     /// hold — but a group that says only how many trees it hides reads like
     /// "nothing to see" when some of them are broken.
@@ -285,8 +285,8 @@ pub(crate) fn notes_of(tree: &Tree) -> Vec<Note> {
     if !tree.dangling.is_empty() {
         notes.push(Note::Dangling(tree.dangling.len()));
     }
-    if !tree.unreachable.is_empty() {
-        notes.push(Note::Unreachable(tree.unreachable.len()));
+    if !tree.cycles.is_empty() {
+        notes.push(Note::Cycle(tree.cycles.len()));
     }
     let truncated = tree.nodes.iter().filter(|node| node.truncated).count();
     if truncated > 0 {

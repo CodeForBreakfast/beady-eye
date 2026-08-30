@@ -100,9 +100,9 @@ pub struct Tree {
     /// Ids whose declared parent was absent from the tracker's answer. Each is
     /// still in `nodes`, re-parented onto the root.
     pub dangling: Vec<String>,
-    /// Ids no walk down from the root reaches, because their parent chain
-    /// loops. Each is still in `nodes`, hanging off the root.
-    pub unreachable: Vec<String>,
+    /// Ids whose own descendants lead back to them. Each is still in
+    /// `nodes`, drawn where the loop was cut.
+    pub cycles: Vec<String>,
 }
 
 /// A project whose tracker could not be read at all. It has no root and no
@@ -204,7 +204,7 @@ impl Tree {
             tracker: TrackerState::Unreachable(failure),
             nodes: Vec::new(),
             dangling: Vec::new(),
-            unreachable: Vec::new(),
+            cycles: Vec::new(),
         }
     }
 
@@ -280,7 +280,7 @@ pub fn build_tree(
         tracker: TrackerState::Ok,
         nodes,
         dangling: assembled.dangling.clone(),
-        unreachable: assembled.unreachable.clone(),
+        cycles: assembled.cycles.clone(),
     }
 }
 
@@ -434,8 +434,21 @@ render = "⏸ waiting"
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
 
+    /// The root of a hand-written tree: the one row naming no parent, which
+    /// is how `bd dep tree` marks it.
+    fn root_row(beads: &[crate::model::types::Bead]) -> String {
+        beads
+            .iter()
+            .find(|b| b.parent_id.is_none())
+            .expect("a root row")
+            .id
+            .clone()
+    }
+
     fn assembled(json: &str) -> Assembled {
-        assemble(parse_dep_tree(json).expect("the rows parse")).expect("the rows assemble")
+        let beads = parse_dep_tree(json).expect("the rows parse");
+        let root = root_row(&beads);
+        assemble(beads, &root).expect("the rows assemble")
     }
 
     fn panes(json: &str) -> Vec<Pane> {
@@ -514,13 +527,16 @@ render = "⏸ waiting"
     }
 
     /// A quiet tree that has something to report: a bead whose parent bd never
-    /// returned, a parent cycle, and a subtree bd cut short.
+    /// returned, a bead blocked by its own forebear, and a subtree bd cut
+    /// short.
     fn quiet_with_reports() -> Tree {
         let json = r#"[
           {"id":"orb-6","title":"the far side","status":"open","parent_id":""},
           {"id":"orb-6.2","title":"child of a bead bd did not return","status":"open",
            "parent_id":"orb-6.1"},
-          {"id":"orb-6.3","title":"one","status":"open","parent_id":"orb-6.4"},
+          {"id":"orb-6.3","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
+                           {"depends_on_id":"orb-6","type":"blocks"}]},
           {"id":"orb-6.4","title":"two","status":"open","parent_id":"orb-6.3"},
           {"id":"orb-6.5","title":"cut short","status":"open","parent_id":"orb-6",
            "truncated":true}
@@ -723,10 +739,14 @@ render = "⏸ waiting"
     }
 
     #[test]
-    fn a_parent_cycle_is_reported_and_its_beads_kept() {
+    fn a_cycle_is_reported_and_its_beads_kept() {
+        // `orb-5.1` hangs under `orb-5` and is blocked by it, so each must
+        // finish before the other.
         let json = r#"[
           {"id":"orb-5","title":"root","status":"open","parent_id":""},
-          {"id":"orb-5.1","title":"one","status":"open","parent_id":"orb-5.2"},
+          {"id":"orb-5.1","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"},
+                           {"depends_on_id":"orb-5","type":"blocks"}]},
           {"id":"orb-5.2","title":"two","status":"open","parent_id":"orb-5.1"}
         ]"#;
         let a = assembled(json);
@@ -739,7 +759,7 @@ render = "⏸ waiting"
             now(),
         );
 
-        assert_eq!(t.unreachable, ["orb-5.1", "orb-5.2"]);
+        assert_eq!(t.cycles, ["orb-5"]);
         assert_eq!(t.counts.total, 3);
     }
 
@@ -1046,7 +1066,7 @@ render = "⏸ waiting"
             "what a filter hid it must be able to show again"
         );
         assert_eq!(back.dangling, ["orb-6.2"]);
-        assert_eq!(back.unreachable, ["orb-6.3", "orb-6.4"]);
+        assert_eq!(back.cycles, ["orb-6"]);
         assert!(back.nodes.iter().any(|n| n.truncated));
     }
 

@@ -342,10 +342,21 @@ mod tests {
         }
     }
 
+    /// The root of a hand-written tree: the one row naming no parent, which
+    /// is how `bd dep tree` marks it.
+    fn root_row(beads: &[Bead]) -> String {
+        beads
+            .iter()
+            .find(|b| b.parent_id.is_none())
+            .expect("a root row")
+            .id
+            .clone()
+    }
+
     fn rows(json: &str) -> Vec<Placed> {
-        assemble(parse_dep_tree(json).expect("the rows parse"))
-            .expect("the rows assemble")
-            .rows
+        let beads = parse_dep_tree(json).expect("the rows parse");
+        let root = root_row(&beads);
+        assemble(beads, &root).expect("the rows assemble").rows
     }
 
     /// The bodies of `herdr agent list`'s `agents` array, wrapped in its
