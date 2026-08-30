@@ -27,18 +27,23 @@ jobs:
       # there is a check this runs. Naming one here is the drift to avoid.
       - run: nix flake check -L
 
-      # beads-1.2.2-go-modules fetches the whole Go module closure over the
-      # network, and that is more than half of this job. It is fixed-output, so
-      # any cache can serve it, and nothing had ever pushed it to one.
+      # Building bd is most of this job — four minutes of seven, to give
+      # tests/no_config.rs a real bd to run against. Nothing about it depends on
+      # our source, so every commit rebuilt a binary the last commit had already
+      # built and discarded.
       #
-      # The path comes out of the derivation graph rather than a match against
+      # The paths come out of the derivation graph rather than a match against
       # the store, so moving the beads pin moves what this seeds instead of
       # quietly seeding the version the pin used to name.
-      - name: seed the beads module closure into the shared cache
+      - name: seed the beads build into the shared cache
         run: |
           check=$(nix path-info --derivation .#checks.x86_64-linux.build-and-test)
-          modules=$(nix-store -qR --include-outputs "$check" | grep -E 'beads-[^/]*-go-modules\.drv$')
-          test "$(printf '%s' "$modules" | grep -c .)" -eq 1
+          mapfile -t drvs < <(nix-store -qR --include-outputs "$check" |
+            grep -E '/[a-z0-9]+-beads-[^/]*\.drv$')
+          test "${#drvs[@]}" -gt 0
+
+          mapfile -t paths < <(nix-store -q --outputs "${drvs[@]}")
+          printf 'seeding %s\n' "${paths[@]}"
 
           # --inputs-from takes attic from this flake's locked nixpkgs. A bare
           # nixpkgs# resolves through the installer's registry to a weekly
@@ -46,4 +51,4 @@ jobs:
           attic() { nix run --inputs-from . nixpkgs#attic-client -- "$@"; }
 
           attic login homelab https://cache.example.invalid "$ATTIC_TOKEN"
-          attic push homelab "$(nix-store -q --outputs "$modules")"
+          attic push homelab "${paths[@]}"
