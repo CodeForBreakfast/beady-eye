@@ -567,6 +567,24 @@ pub fn scroll_offset(selected: usize, lines: usize, height: usize) -> usize {
     selected.saturating_sub(height / 2).min(lines - height)
 }
 
+/// Which line the forest draws on one row of the screen, where it draws one.
+///
+/// The inverse of the skip-and-take in `draw`, and here beside it rather than
+/// beside the click that asks the question: the two are one agreement about
+/// where a line goes, and the failure they can have is drifting apart.
+///
+/// The column is not asked for. Every band spans the width of the screen, so
+/// a row is the whole of what a pointer names.
+pub fn line_at(forest: Rect, selected: usize, lines: usize, row: u16) -> Option<usize> {
+    let within = row.checked_sub(forest.y)? as usize;
+    if within >= forest.height as usize {
+        return None;
+    }
+
+    let at = scroll_offset(selected, lines, forest.height as usize) + within;
+    (at < lines).then_some(at)
+}
+
 /// The row at the foot of the screen: the keys, and every notice the view
 /// carries.
 ///
@@ -1572,6 +1590,78 @@ mod tests {
     #[test]
     fn a_viewport_with_no_room_asks_for_no_offset() {
         assert_eq!(scroll_offset(40, 100, 0), 0);
+    }
+
+    // ---- the line a screen row shows --------------------------------------
+
+    /// The inverse held against the drawing rather than against itself. The
+    /// fixture's rows are the header and then `bead number 1` upward, so what
+    /// is on a row says which line was drawn there, and a forest taller than
+    /// its band is scrolled far enough that an off-by-one in either direction
+    /// shows.
+    #[test]
+    fn every_row_of_the_forest_names_the_line_drawn_on_it() {
+        let (width, height) = (60, 24);
+        let band = regions(Rect::new(0, 0, width, height)).forest;
+        let mut forest = opened(&snapshot(vec![grove(40)], Vec::new(), HerdrState::Ok));
+        forest.set_half_screen(half_screen(band));
+        forest.apply(Action::Move(Motion::HalfScreenDown));
+
+        let frame = frame_of(&forest, width, height);
+        let selected = forest.selected_line();
+        let lines = forest.lines().len();
+
+        for row in band.y..band.y + band.height {
+            let at = line_at(band, selected, lines, row).expect("the band is full of lines");
+            let shown = if at == 0 {
+                "lift the ground station".to_string()
+            } else {
+                format!("bead number {at}")
+            };
+            assert!(
+                frame[row as usize].contains(&shown),
+                "row {row} shows {:?}, not line {at}",
+                frame[row as usize]
+            );
+        }
+    }
+
+    /// The rows under the last line of a short forest are blank, and a click
+    /// on blank is a click on nothing.
+    #[test]
+    fn a_row_past_the_last_line_names_none() {
+        let band = Rect::new(0, 0, 60, 16);
+
+        assert_eq!(line_at(band, 0, 3, 2), Some(2));
+        for row in 3..16 {
+            assert_eq!(line_at(band, 0, 3, row), None, "row {row}");
+        }
+    }
+
+    /// The tail and the key row are drawn by someone else and hold nothing
+    /// the selection can sit on.
+    #[test]
+    fn a_row_outside_the_forest_band_names_none() {
+        let bands = regions(Rect::new(0, 0, 60, 24));
+        let (selected, lines) = (0, 100);
+
+        for row in [bands.tail.y, bands.tail.y + 3, bands.keys.y] {
+            assert_eq!(line_at(bands.forest, selected, lines, row), None, "row {row}");
+        }
+    }
+
+    /// A band that starts partway down the screen is the only kind the forest
+    /// ever gets when something is drawn above it, and a row measured from
+    /// the top of the screen rather than the top of the band would be wrong
+    /// by exactly that offset.
+    #[test]
+    fn a_row_above_the_forest_band_names_none() {
+        let band = Rect::new(0, 4, 60, 8);
+
+        assert_eq!(line_at(band, 0, 100, 4), Some(0));
+        for row in 0..4 {
+            assert_eq!(line_at(band, 0, 100, row), None, "row {row}");
+        }
     }
 
     // ---- the key bar -----------------------------------------------------
