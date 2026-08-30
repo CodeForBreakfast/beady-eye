@@ -769,6 +769,11 @@ impl Drop for Screen {
         // A terminal left reporting the mouse writes an escape sequence into
         // whatever runs next for every cell the pointer crosses, and there
         // is nothing left running to ask it to stop.
+        //
+        // A crash has to hand the terminal back too, and this is what does
+        // it — but only while the build unwinds. A profile that sets
+        // `panic = "abort"` runs no `Drop` at all and would take this with
+        // it, leaving exactly the terminal described above.
         let _ = execute!(io::stdout(), DisableMouseCapture);
         ratatui::restore();
     }
