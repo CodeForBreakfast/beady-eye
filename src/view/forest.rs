@@ -535,7 +535,6 @@ impl Forest {
         lines.push(Line {
             prefix: marker(open).to_string(),
             depth: 0,
-            last_child: false,
             folded: Some(open),
             place: Some(root.clone()),
             content: Content::Tree(Header {
@@ -581,7 +580,6 @@ impl Forest {
                 Child::Note(note) => lines.push(Line {
                     prefix: prefix(trunk, last, false),
                     depth,
-                    last_child: last,
                     folded: None,
                     place: None,
                     content: Content::Note(note),
@@ -592,7 +590,6 @@ impl Forest {
                     lines.push(Line {
                         prefix: prefix(trunk, last, !open),
                         depth,
-                        last_child: last,
                         folded: Some(open),
                         place: None,
                         content: Content::Elided {
@@ -633,7 +630,6 @@ impl Forest {
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open),
                         depth,
-                        last_child: last,
                         folded: (!kids.is_empty()).then_some(open),
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
@@ -681,7 +677,6 @@ impl Forest {
             lines.push(Line {
                 prefix: marker(open).to_string(),
                 depth: 0,
-                last_child: false,
                 folded: Some(open),
                 place: None,
                 content: Content::Group(Group {
@@ -699,7 +694,6 @@ impl Forest {
                 lines.push(Line {
                     prefix: prefix(&[], last, false),
                     depth: 1,
-                    last_child: last,
                     folded: None,
                     place: None,
                     content: Content::Item(item),
@@ -715,7 +709,6 @@ fn nothing_to_draw() -> Line {
     Line {
         prefix: String::new(),
         depth: 0,
-        last_child: false,
         folded: None,
         place: None,
         content: Content::Note(Note::NoRoots),

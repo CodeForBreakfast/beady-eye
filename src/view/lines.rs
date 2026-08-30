@@ -89,8 +89,6 @@ pub struct Line {
     /// How far under its tree's header this line sits. Zero for a header, for
     /// a group, and for the lines beneath a group.
     pub depth: u16,
-    /// Whether this is the last line drawn at its depth under its parent.
-    pub last_child: bool,
     /// Whether this line's fold is open, where it has one at all.
     pub folded: Option<bool>,
     /// Where this line was drawn, where it stands for a bead at all: a bead's

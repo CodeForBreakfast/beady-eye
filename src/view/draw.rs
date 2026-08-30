@@ -671,7 +671,6 @@ mod tests {
         lines::Line {
             prefix: prefix.into(),
             depth: 1,
-            last_child: false,
             folded: None,
             place: None,
             content,
