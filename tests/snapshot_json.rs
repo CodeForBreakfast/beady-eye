@@ -1,14 +1,15 @@
 //! `bdi --json` emits the contract in `docs/design.md`. These drive the whole
 //! binary's model through the one public entry point a consumer sees.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-
-use beady_eye::collect::run::{Env, FailureKind, RunFailure, Runner};
+use beady_eye::collect::run::FailureKind;
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+
+mod canned;
+
+use canned::Canned;
 
 /// One project's tracker: an epic with a pane on it, a claimed task with
 /// none, a claim nothing has touched in weeks, a task bd calls ready, and a
@@ -57,64 +58,8 @@ render = "⏸ waiting"
 stale_claim_days = 7
 "#;
 
-/// A runner that replays one canned answer per command line, either wherever
-/// that line is run or only in one project's directory. Two trackers answer
-/// the same argv with beads of their own, so the directory a call carries is
-/// part of what identifies it; the environment is the unit tests' business.
-struct Canned(HashMap<(Option<PathBuf>, String), Result<String, RunFailure>>);
-
-impl Runner for Canned {
-    fn run(
-        &self,
-        program: &str,
-        args: &[&str],
-        cwd: Option<&Path>,
-        _env: &Env,
-    ) -> Result<String, RunFailure> {
-        let argv = format!("{program} {}", args.join(" "));
-        self.0
-            .get(&(cwd.map(Path::to_path_buf), argv.clone()))
-            .or_else(|| self.0.get(&(None, argv.clone())))
-            .cloned()
-            .unwrap_or_else(|| panic!("no canned response for `{argv}` in {cwd:?}"))
-    }
-}
-
-impl Canned {
-    fn answering(mut self, argv: &str, out: &str) -> Self {
-        self.0.insert((None, argv.to_string()), Ok(out.to_string()));
-        self
-    }
-
-    fn answering_in(mut self, cwd: &str, argv: &str, out: &str) -> Self {
-        self.0
-            .insert((Some(cwd.into()), argv.to_string()), Ok(out.to_string()));
-        self
-    }
-
-    fn failing(mut self, argv: &str, kind: FailureKind) -> Self {
-        self.0.insert((None, argv.to_string()), Err(refused(kind)));
-        self
-    }
-
-    fn failing_in(mut self, cwd: &str, argv: &str, kind: FailureKind) -> Self {
-        self.0
-            .insert((Some(cwd.into()), argv.to_string()), Err(refused(kind)));
-        self
-    }
-}
-
-/// bd names the database and the SQL user when it turns a call away.
-fn refused(kind: FailureKind) -> RunFailure {
-    RunFailure {
-        kind,
-        program: "bd".to_string(),
-        detail: "Access denied for user 'orbital' at db.example.invalid:3306".to_string(),
-    }
-}
-
 fn canned() -> Canned {
-    Canned(HashMap::new())
+    Canned::default()
         .answering("herdr agent list", PANES)
         .answering(
             "bd list --status in_progress --limit 0 --json",
