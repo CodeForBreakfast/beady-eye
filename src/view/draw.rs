@@ -353,13 +353,23 @@ impl Widget for Fitted {
 /// phrase in place of the title: the reason beside it is already the reason
 /// the title is missing, and saying it twice would cost the columns the panes
 /// need.
+///
+/// The root's own glyph sits between the fold marker and the tree, which is
+/// where every other line puts one: box-drawing, then glyph, then who it is.
+/// The marker is the header's box-drawing — it holds the same column and says
+/// the same kind of thing, how the tree is shaped rather than how it is going
+/// — so keeping the glyph after it leaves one order to read down the screen,
+/// and leaves the marker where a reader already looks to see what is folded.
 pub fn header(head: &Header, prefix: &str) -> Fitted {
     let tree = &head.tree;
-    let identity = vec![Span::raw(format!(
-        "{prefix}{} · {}",
-        tree.project.clone(),
-        tree.root.clone()
-    ))];
+    let mut identity = vec![Span::raw(prefix.to_string())];
+    if let Some(status) = &head.status {
+        let glyph = row::status_glyph(status);
+        identity.push(Span::styled(glyph.to_string(), status_style(glyph)));
+        identity.push(Span::raw(" "));
+    }
+    identity.push(Span::raw(format!("{} · {}", tree.project, tree.root)));
+
     let state = match tree.tracker {
         TrackerState::Ok => summary(&tree.counts),
         TrackerState::Unreachable(failure) => unreadable(failure, &head.panes, head.panes_complete),
@@ -883,6 +893,76 @@ mod tests {
         assert_eq!(
             drawn(header(&head(tree), OPEN), 78, 1),
             vec!["▾ summit-works · nix-9670s  DMS → noctalia v5              8/21  3 agents  ⚠ 3"]
+        );
+    }
+
+    /// Every other line on screen reads box-drawing, then glyph, then who it
+    /// is. A header's fold marker is its box-drawing: the same column, and
+    /// structure rather than status. So the glyph goes after it, and one
+    /// order holds down the whole screen.
+    ///
+    /// Asked through `status_glyph` rather than written out, so the mapping
+    /// stays in the one place that owns it.
+    #[test]
+    fn a_tree_header_shows_its_roots_own_status_after_the_fold_marker() {
+        let blocked = Header {
+            status: Some(Status::Blocked),
+            ..head(tree(
+                "homelab",
+                "hl-sgqyv",
+                "heartbeat cadence",
+                counts(2, 7, 0, 0),
+            ))
+        };
+
+        let drawn = drawn(header(&blocked, OPEN), 60, 1);
+
+        assert!(
+            drawn[0].starts_with(&format!(
+                "▾ {} homelab · hl-sgqyv",
+                row::status_glyph(&Status::Blocked)
+            )),
+            "{drawn:?}"
+        );
+    }
+
+    /// A root is a bead, so its status reaches the screen through the same two
+    /// channels every other bead's does — glyph first, colour second.
+    #[test]
+    fn a_tree_headers_glyph_is_painted_the_colour_its_status_is_drawn_in() {
+        let blocked = Header {
+            status: Some(Status::Blocked),
+            ..head(tree(
+                "homelab",
+                "hl-sgqyv",
+                "heartbeat cadence",
+                counts(2, 7, 0, 0),
+            ))
+        };
+
+        let painted = painted(header(&blocked, OPEN), 60);
+
+        assert_eq!(painted[0], (OPEN.to_string(), Color::Reset));
+        assert_eq!(
+            painted[1],
+            (
+                row::status_glyph(&Status::Blocked).to_string(),
+                status_colour(&Status::Blocked)
+            )
+        );
+    }
+
+    /// A tracker that never answered reported no root, so there is no status
+    /// to show. A glyph drawn there would be a status `bd` never gave.
+    #[test]
+    fn a_tree_whose_tracker_never_answered_shows_no_status_it_was_never_told() {
+        let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
+
+        let drawn = drawn(header(&head(tree), OPEN), 120, 1);
+
+        assert!(
+            drawn[0].starts_with("▾ summit-works · nix-9670s"),
+            "{drawn:?}"
         );
     }
 
@@ -1629,7 +1709,7 @@ mod tests {
         assert_eq!(
             frame_of(&forest, 60, 10),
             vec![
-                "▾ summit-works · nix-9670s  lift the ground station      0/3",
+                "▾ ● summit-works · nix-9670s  lift the ground station    0/3",
                 "  ├── ○ .1  bead number 1                                   ",
                 "  └── ○ .2  bead number 2                                   ",
                 "                                                            ",
@@ -1654,7 +1734,7 @@ mod tests {
         assert_eq!(
             frame[..3].to_vec(),
             vec![
-                "▾ summit-works · nix-96…",
+                "▾ ● summit-works · nix-…",
                 "  ├── ○ .1  bead number…",
                 "  └── ○ .2  bead number…",
             ]
