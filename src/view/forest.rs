@@ -3097,12 +3097,17 @@ credential_command = "secret harbour"
         );
     }
 
-    /// Four columns a level, every line, whatever it is doing.
+    /// Four columns a level, every line in a forest with trees in it,
+    /// whatever that line is doing.
     ///
     /// Stated once over whole screens rather than shape by shape. What went
     /// wrong was a span appended to the prefix of one kind of line, and the
     /// next such span will be appended by someone reading a rule about the
     /// kind of line they happen to be drawing.
+    ///
+    /// The one line outside the rule is the forest with nothing in it, which
+    /// stands for the whole screen rather than for a place in a tree and has
+    /// no prefix at all.
     #[test]
     fn every_prefix_is_four_columns_a_level() {
         for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
