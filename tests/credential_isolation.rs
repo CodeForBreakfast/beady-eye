@@ -51,16 +51,19 @@ name = "solo"
 path = "/srv/work/solo"
 "#;
 
-/// One in-flight bead, which is its own root. What each tracker holds does
-/// not matter here; that every call to it carries the right credential does.
+/// One in-flight bead under a closed epic, so the climb to a root is made as
+/// well as discovered — every call bd is asked for is one this checks. What
+/// each tracker holds does not matter here; that every call to it carries the
+/// right credential does.
 fn tracker(runner: Canned, cwd: &str, id: &str) -> Canned {
     runner
         .answering_in(
             cwd,
-            "bd list --status in_progress --limit 0 --json",
-            &format!(r#"[{{"id":"{id}","title":"the work","status":"in_progress"}}]"#),
+            "bd list --status open,in_progress,blocked,deferred --limit 0 --json",
+            &format!(
+                r#"[{{"id":"{id}.1","title":"the work","status":"in_progress","parent":"{id}"}}]"#
+            ),
         )
-        .answering_in(cwd, "bd list --status blocked --limit 0 --json", "[]")
         .answering_in(cwd, "bd ready --limit 0 --json", "[]")
         .answering_in(cwd, "bd blocked --json", "[]")
         .answering_in(

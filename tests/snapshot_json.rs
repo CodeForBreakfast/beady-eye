@@ -58,14 +58,20 @@ render = "⏸ waiting"
 stale_claim_days = 7
 "#;
 
+/// The one call discovery makes for statuses, and what this tracker answers
+/// it with: every bead of `TREE` bar the closed one.
+const UNFINISHED_CALL: &str = "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
+const UNFINISHED_ROWS: &str = r#"[
+  {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent":""},
+  {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
+  {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress","parent":"orb-7"},
+  {"id":"orb-7.4","title":"file the licence","status":"open","parent":"orb-7"}
+]"#;
+
 fn canned() -> Canned {
     Canned::default()
         .answering("herdr agent list", PANES)
-        .answering(
-            "bd list --status in_progress --limit 0 --json",
-            r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress"}]"#,
-        )
-        .answering("bd list --status blocked --limit 0 --json", "[]")
+        .answering(UNFINISHED_CALL, UNFINISHED_ROWS)
         .answering(
             "bd list --has-metadata-key working_topic --limit 0 --json",
             "[]",
@@ -78,15 +84,11 @@ fn canned() -> Canned {
             "bd blocked --json",
             r#"[{"id":"orb-7.1","blocked_by":["orb-9"],"blocked_by_count":1}]"#,
         )
-        .answering(
-            "bd show orb-7.1 --json",
-            r#"[{"id":"orb-7.1","parent":"orb-7"}]"#,
-        )
+        // Closed, so discovery never saw it, and a pane names it.
         .answering(
             "bd show orb-7.2 --json",
             r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
         )
-        .answering("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#)
         .answering("bd dep tree orb-7 --direction=up --json", TREE)
 }
 
@@ -328,10 +330,7 @@ fn a_root_whose_tracker_cannot_be_read_is_named_in_the_json() {
 
 #[test]
 fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
-    let runner = canned().failing(
-        "bd list --status in_progress --limit 0 --json",
-        FailureKind::Auth,
-    );
+    let runner = canned().failing(UNFINISHED_CALL, FailureKind::Auth);
 
     let emitted = emit(&runner, Filter::LiveAgents);
 
@@ -348,10 +347,7 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
 /// the whole of the split.
 #[test]
 fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
-    let runner = canned().failing(
-        "bd list --status in_progress --limit 0 --json",
-        FailureKind::Auth,
-    );
+    let runner = canned().failing(UNFINISHED_CALL, FailureKind::Auth);
 
     let emitted = emit(&runner, Filter::LiveAgents);
 
@@ -374,10 +370,7 @@ fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
 /// bd names the database and the SQL user when it refuses a credential.
 #[test]
 fn bds_own_words_never_reach_the_json() {
-    let runner = canned().failing(
-        "bd list --status in_progress --limit 0 --json",
-        FailureKind::Auth,
-    );
+    let runner = canned().failing(UNFINISHED_CALL, FailureKind::Auth);
 
     let emitted = emit(&runner, Filter::All).to_string();
 
@@ -477,13 +470,8 @@ fn across_two_projects() -> Canned {
         .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
         .answering_in(
             HARBOUR_DIR,
-            "bd list --status in_progress --limit 0 --json",
-            r#"[{"id":"orb-7.1","title":"hire the dredger","status":"in_progress"}]"#,
-        )
-        .answering_in(
-            HARBOUR_DIR,
-            "bd list --status blocked --limit 0 --json",
-            "[]",
+            UNFINISHED_CALL,
+            r#"[{"id":"orb-7.1","title":"hire the dredger","status":"in_progress","parent":"orb-7"}]"#,
         )
         .answering_in(
             HARBOUR_DIR,
@@ -492,11 +480,6 @@ fn across_two_projects() -> Canned {
         )
         .answering_in(HARBOUR_DIR, "bd ready --limit 0 --json", "[]")
         .answering_in(HARBOUR_DIR, "bd blocked --json", "[]")
-        .answering_in(
-            HARBOUR_DIR,
-            "bd show orb-7.1 --json",
-            r#"[{"id":"orb-7.1","parent":"orb-7"}]"#,
-        )
         .answering_in(
             HARBOUR_DIR,
             "bd show orb-7 --json",
@@ -555,11 +538,7 @@ fn a_bare_id_in_two_trackers_names_two_beads() {
 /// refusing the credential costs harbour's trees and nothing else.
 #[test]
 fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
-    let runner = across_two_projects().failing_in(
-        HARBOUR_DIR,
-        "bd list --status in_progress --limit 0 --json",
-        FailureKind::Auth,
-    );
+    let runner = across_two_projects().failing_in(HARBOUR_DIR, UNFINISHED_CALL, FailureKind::Auth);
 
     let emitted = emit_over(&two_projects(), &runner, Filter::LiveAgents);
 

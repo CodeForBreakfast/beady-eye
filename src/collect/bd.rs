@@ -77,25 +77,33 @@ pub fn dep_tree(
     rows(&out)
 }
 
-/// Beads that mark live work: bd's own in-flight statuses, plus any bead
-/// carrying one of the configured metadata keys.
+/// The statuses bd stores for work that is not finished. `closed` is the only
+/// one of its five this leaves out, and that is the whole of the rule.
+const UNFINISHED: &str = "open,in_progress,blocked,deferred";
+
+/// Every bead that marks unfinished work, and the bead each one hangs under.
+///
+/// Unfinished rather than claimed: an effort holds the work it has left after
+/// its last seat stands down, and a rule that noticed only a claim lost the
+/// whole tree at that moment.
+///
+/// The rows carry a bead's own `parent`, so discovery answers most of the walk
+/// to a root by itself; `app::root_of` climbs only past what it did not see.
 pub fn discover_roots(
     runner: &dyn Runner,
     cwd: &Path,
     env: &Env,
     metadata_keys: &[String],
-) -> Result<Vec<Bead>, RunFailure> {
-    let mut found: Vec<Bead> = Vec::new();
+) -> Result<BTreeMap<String, Option<String>>, RunFailure> {
+    let mut found = BTreeMap::new();
 
-    for status in ["in_progress", "blocked"] {
-        let out = runner.run(
-            "bd",
-            &["list", "--status", status, "--limit", "0", "--json"],
-            Some(cwd),
-            env,
-        )?;
-        found.extend(rows(&out)?);
-    }
+    let out = runner.run(
+        "bd",
+        &["list", "--status", UNFINISHED, "--limit", "0", "--json"],
+        Some(cwd),
+        env,
+    )?;
+    note_parents(&out, &mut found)?;
 
     for key in metadata_keys {
         let out = runner.run(
@@ -104,12 +112,17 @@ pub fn discover_roots(
             Some(cwd),
             env,
         )?;
-        found.extend(rows(&out)?);
+        note_parents(&out, &mut found)?;
     }
 
-    found.sort_by(|a, b| a.id.cmp(&b.id));
-    found.dedup_by(|a, b| a.id == b.id);
     Ok(found)
+}
+
+fn note_parents(out: &str, into: &mut BTreeMap<String, Option<String>>) -> Result<(), RunFailure> {
+    for row in parent_rows(out)? {
+        into.insert(row.id, row.parent.filter(|parent| !parent.is_empty()));
+    }
+    Ok(())
 }
 
 /// Ids beads considers ready to start. bd computes readiness itself and
@@ -145,10 +158,17 @@ pub fn blocked_by(
 
 /// One row of `bd show <id> --json`, which is the only call carrying a bead's
 /// real parent.
+/// One row of `bd show --json` or `bd list --json`. Both carry `parent`,
+/// which is the bead's own — the field a dep-tree row does not have.
 #[derive(Deserialize)]
-struct ShownRow {
+struct ParentRow {
+    id: String,
     #[serde(default)]
     parent: Option<String>,
+}
+
+fn parent_rows(out: &str) -> Result<Vec<ParentRow>, RunFailure> {
+    serde_json::from_str(out).map_err(|e| RunFailure::parse("bd", e))
 }
 
 /// The bead a bead hangs under, or `None` at the top of a parent-child chain.
@@ -164,9 +184,7 @@ pub fn parent_of(
     id: &str,
 ) -> Result<Option<String>, RunFailure> {
     let out = runner.run("bd", &["show", id, "--json"], Some(cwd), env)?;
-    let shown: Vec<ShownRow> =
-        serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
-    let row = shown
+    let row = parent_rows(&out)?
         .into_iter()
         .next()
         .ok_or_else(|| RunFailure::parse("bd", "bd show named no bead"))?;
@@ -359,16 +377,18 @@ mod tests {
         assert_eq!(call.env, credentialled());
     }
 
+    const UNFINISHED_CALL: &str =
+        "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
+
     #[test]
-    fn discovery_unions_statuses_and_metadata_keys_without_duplicates() {
-        let in_flight = r#"[{"id":"p-1.16","title":"a","status":"in_progress"}]"#;
-        let stuck = r#"[{"id":"p-1.1","title":"b","status":"blocked"}]"#;
+    fn discovery_unions_the_unfinished_statuses_and_metadata_keys_without_duplicates() {
+        let unfinished = r#"[{"id":"p-1.16","title":"a","status":"in_progress"},
+                             {"id":"p-1.1","title":"b","status":"open"}]"#;
         // The metadata query returns a bead the status query already found.
         let carrying_the_key = r#"[{"id":"p-1.16","title":"a","status":"in_progress"}]"#;
 
         let runner = FakeRunner::default()
-            .with("bd list --status in_progress --limit 0 --json", in_flight)
-            .with("bd list --status blocked --limit 0 --json", stuck)
+            .with(UNFINISHED_CALL, unfinished)
             .with(
                 "bd list --has-metadata-key working_topic --limit 0 --json",
                 carrying_the_key,
@@ -382,12 +402,79 @@ mod tests {
         )
         .unwrap();
 
-        let ids: Vec<&str> = got.iter().map(|b| b.id.as_str()).collect();
+        let ids: Vec<&str> = got.keys().map(String::as_str).collect();
         assert_eq!(ids, vec!["p-1.1", "p-1.16"]);
 
-        let call = runner.call("bd list --status blocked --limit 0 --json");
+        let call = runner.call(UNFINISHED_CALL);
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
         assert_eq!(call.env, credentialled());
+    }
+
+    /// The defect this rule replaces. Asking only for the statuses a seat
+    /// leaves behind found nothing the moment every seat stood down, so there
+    /// was no root, so the effort was not drawn at all.
+    #[test]
+    fn a_bead_nobody_has_started_is_discovered() {
+        let runner = FakeRunner::default().with(
+            UNFINISHED_CALL,
+            r#"[{"id":"p-1.1","title":"the work that is left","status":"open"}]"#,
+        );
+
+        let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
+
+        assert!(got.contains_key("p-1.1"));
+    }
+
+    /// A dep-tree row's `parent_id` is the traversal's parent. `bd list`
+    /// carries the bead's own, and that is the one the walk to a root needs.
+    #[test]
+    fn discovery_keeps_each_beads_own_parent() {
+        let runner = FakeRunner::default().with(
+            UNFINISHED_CALL,
+            r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1"},
+                {"id":"p-1","title":"b","status":"open","parent":""}]"#,
+        );
+
+        let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
+
+        assert_eq!(got["p-1.16"], Some("p-1".to_string()));
+        assert_eq!(
+            got["p-1"], None,
+            "bd writes the top of a chain as an empty parent"
+        );
+    }
+
+    /// The rule is *not finished*, so the query names every status bd stores
+    /// bar `closed`. A status this missed would take its trees off the screen
+    /// with it, which is the defect all over again.
+    #[test]
+    fn the_unfinished_statuses_are_every_status_bd_stores_but_closed() {
+        let named: Vec<Status> = UNFINISHED
+            .split(',')
+            .map(|status| {
+                let json = format!(r#"[{{"id":"x","title":"t","status":"{status}"}}]"#);
+                parse_dep_tree(&json).unwrap()[0].status.clone()
+            })
+            .collect();
+
+        // A variant added to the enum fails this match, which is the point.
+        let every = match Status::Open {
+            Status::Open
+            | Status::InProgress
+            | Status::Blocked
+            | Status::Closed
+            | Status::Deferred
+            | Status::Other(_) => [
+                Status::Open,
+                Status::InProgress,
+                Status::Blocked,
+                Status::Deferred,
+                Status::Closed,
+            ],
+        };
+        let want: Vec<Status> = every.into_iter().filter(|s| !s.is_closed()).collect();
+
+        assert_eq!(named, want);
     }
 
     #[test]

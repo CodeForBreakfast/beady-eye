@@ -198,8 +198,15 @@ fn read_project(
         .flatten()
         .cloned()
         .collect();
-    for bead in &discovered {
-        roots.insert(root_of(runner, project, &env, &bead.id, &mut ancestors)?);
+    for bead in discovered.keys() {
+        roots.insert(root_of(
+            runner,
+            project,
+            &env,
+            bead,
+            &discovered,
+            &mut ancestors,
+        )?);
     }
     for named in panes_naming_a_bead_here(panes, project, cfg) {
         // Swallowed, and it has to be. `display_agent` is free text, and
@@ -207,7 +214,7 @@ fn read_project(
         // that apart from a tracker that has stopped answering — so there
         // is no failure kind to discriminate on. Propagating would cost a
         // whole tracker every time a pane was labelled with a sentence.
-        if let Ok(root) = root_of(runner, project, &env, named, &mut ancestors) {
+        if let Ok(root) = root_of(runner, project, &env, named, &discovered, &mut ancestors) {
             roots.insert(root);
         }
     }
@@ -242,17 +249,21 @@ fn panes_naming_a_bead_here<'a>(
         .filter_map(|pane| pane.display_agent.as_deref())
 }
 
-/// The top of a bead's parent-child chain, asked of bd one level at a time.
+/// The top of a bead's parent-child chain.
 ///
 /// `bd dep tree` cannot answer this: `--direction=up` walks dependents, so
-/// whatever bead it is asked about comes back as its own root. `ancestors`
-/// carries what earlier walks found, so an epic's beads cost one call each
-/// rather than one per level each.
+/// whatever bead it is asked about comes back as its own root. Discovery can,
+/// for everything it saw — `parents` is what it brought back. What it did not
+/// see costs a `bd show` each: a closed bead above open children, which is the
+/// normal healthy shape of this tracker, and a bead a pane named. `ancestors`
+/// carries what earlier walks found, so those cost one call each rather than
+/// one per level each.
 fn root_of(
     runner: &dyn Runner,
     project: &Project,
     env: &Env,
     id: &str,
+    parents: &BTreeMap<String, Option<String>>,
     ancestors: &mut BTreeMap<String, String>,
 ) -> Result<String, RunFailure> {
     let mut climbed: Vec<String> = Vec::new();
@@ -269,7 +280,11 @@ fn root_of(
             break current;
         }
         climbed.push(current.clone());
-        match bd::parent_of(runner, &project.path, env, &current)? {
+        let parent = match parents.get(&current) {
+            Some(known) => known.clone(),
+            None => bd::parent_of(runner, &project.path, env, &current)?,
+        };
+        match parent {
             Some(parent) => current = parent,
             None => break current,
         }
@@ -425,15 +440,21 @@ credential_command = "secret ferry"
         .expect("the config parses")
     }
 
-    /// Every call a healthy single-project run makes.
+    /// The one call discovery makes for statuses, spelled as bd takes it.
+    const UNFINISHED_CALL: &str =
+        "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
+
+    /// Every call a healthy single-project run makes. Discovery names each
+    /// bead's own parent, so a healthy run climbs nothing.
     fn orbital() -> FakeRunner {
         FakeRunner::default()
             .with("herdr agent list", PANES)
             .with(
-                "bd list --status in_progress --limit 0 --json",
-                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress"}]"#,
+                UNFINISHED_CALL,
+                r#"[{"id":"orb-7","title":"lift the ground station","status":"in_progress","parent":""},
+                    {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
+                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
             )
-            .with("bd list --status blocked --limit 0 --json", "[]")
             .with(
                 "bd list --has-metadata-key working_topic --limit 0 --json",
                 "[]",
@@ -446,11 +467,6 @@ credential_command = "secret ferry"
                 "bd blocked --json",
                 r#"[{"id":"orb-7.1","blocked_by":["orb-9"]}]"#,
             )
-            .with(
-                "bd show orb-7.1 --json",
-                r#"[{"id":"orb-7.1","parent":"orb-7"}]"#,
-            )
-            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#)
             .with("bd dep tree orb-7 --direction=up --json", ORBITAL_TREE)
     }
 
@@ -493,11 +509,12 @@ credential_command = "secret ferry"
     #[test]
     fn a_configured_metadata_key_discovers_a_root_bds_statuses_would_miss() {
         let runner = orbital()
-            .with("bd list --status in_progress --limit 0 --json", "[]")
+            .with(UNFINISHED_CALL, "[]")
             .with(
                 "bd list --has-metadata-key working_topic --limit 0 --json",
-                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"open"}]"#,
-            );
+                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7"}]"#,
+            )
+            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -505,22 +522,62 @@ credential_command = "secret ferry"
         assert_eq!(snap.trees[0].root, "orb-7");
     }
 
+    /// Discovery brings each bead's own parent back with it, so the walk to a
+    /// root is answered from rows already in hand.
     #[test]
-    fn one_ancestor_is_walked_once_however_many_beads_share_it() {
-        let runner = orbital()
-            .with(
-                "bd list --status blocked --limit 0 --json",
-                r#"[{"id":"orb-7.2","title":"lay the feeder cable","status":"blocked"}]"#,
-            )
-            .with(
-                "bd show orb-7.2 --json",
-                r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
-            );
+    fn a_run_whose_ancestors_discovery_saw_climbs_nothing() {
+        let runner = orbital();
 
         run(&one_project(), &runner, Filter::All, now());
 
+        // Every `bd show` is a level someone had to climb.
+        let climbed: Vec<String> = runner
+            .calls()
+            .into_iter()
+            .map(|call| call.argv)
+            .filter(|argv| argv.starts_with("bd show "))
+            .collect();
+        assert!(climbed.is_empty(), "climbed {climbed:?}");
+    }
+
+    /// A closed bead above unfinished children is the normal healthy shape of
+    /// this tree, and discovery never sees one — so `bd show` still has to
+    /// reach it, once however many beads share it.
+    #[test]
+    fn a_closed_ancestor_is_climbed_to_once_however_many_beads_share_it() {
+        let runner = orbital()
+            .with(
+                UNFINISHED_CALL,
+                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
+                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
+            )
+            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        assert_eq!(snap.trees[0].root, "orb-7");
         // `call` panics on a second invocation, which is the assertion.
         runner.call("bd show orb-7 --json");
+    }
+
+    /// The defect this rule replaces. Every seat stood down, so nothing was
+    /// `in_progress` or `blocked`, so discovery found no bead, so no root, so
+    /// the effort was not drawn at all — and whichever epic held the one bead
+    /// still claimed was drawn in its place.
+    #[test]
+    fn an_effort_is_drawn_from_the_open_work_under_it_with_nobody_on_it() {
+        let runner = orbital()
+            .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
+            .with(
+                UNFINISHED_CALL,
+                r#"[{"id":"orb-7","title":"lift the ground station","status":"open","parent":""},
+                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
+            );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7"]);
     }
 
     /// A parent chain that loops has no top. Stopping where it repeats keeps
@@ -528,6 +585,10 @@ credential_command = "secret ferry"
     #[test]
     fn a_parent_chain_that_loops_stops_where_it_repeats() {
         let runner = orbital()
+            .with(
+                UNFINISHED_CALL,
+                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"}]"#,
+            )
             .with(
                 "bd show orb-7 --json",
                 r#"[{"id":"orb-7","parent":"orb-7.1"}]"#,
@@ -683,19 +744,25 @@ orbital = ["orb-4"]
 
     #[test]
     fn a_pane_naming_a_bead_discovery_already_walked_costs_no_second_climb() {
-        let runner = orbital().with(
-            "herdr agent list",
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
-               "display_agent":"orb-7.1"}
-            ]}}"#,
-        );
+        let runner = orbital()
+            .with(
+                "herdr agent list",
+                r#"{"result":{"agents":[
+                  {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
+                   "display_agent":"orb-7.1"}
+                ]}}"#,
+            )
+            .with(
+                UNFINISHED_CALL,
+                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"}]"#,
+            )
+            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
         assert_eq!(snap.trees.len(), 1);
         // `call` panics on a second invocation, which is the assertion.
-        runner.call("bd show orb-7.1 --json");
+        runner.call("bd show orb-7 --json");
     }
 
     /// The pane names a bead, not a root. What joins the root set is the top
@@ -708,12 +775,14 @@ orbital = ["orb-4"]
                 "herdr agent list",
                 r#"{"result":{"agents":[
                   {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-                   "display_agent":"orb-7.2"}
+                   "display_agent":"orb-7.3"}
                 ]}}"#,
             )
+            // Closed, so discovery never saw it — a seat writing up the bead
+            // it has just finished still sits on one.
             .with(
-                "bd show orb-7.2 --json",
-                r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
+                "bd show orb-7.3 --json",
+                r#"[{"id":"orb-7.3","parent":"orb-7"}]"#,
             );
 
         let snap = run(&one_project(), &runner, Filter::All, now());
@@ -803,10 +872,7 @@ orbital = ["orb-4"]
 
     #[test]
     fn a_project_whose_discovery_fails_is_named_not_dropped() {
-        let runner = orbital().failing(
-            "bd list --status in_progress --limit 0 --json",
-            failing(FailureKind::Auth),
-        );
+        let runner = orbital().failing(UNFINISHED_CALL, failing(FailureKind::Auth));
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -830,10 +896,7 @@ orbital = ["orb-4"]
         ];
 
         for (kind, expected) in kinds {
-            let runner = orbital().failing(
-                "bd list --status in_progress --limit 0 --json",
-                failing(kind),
-            );
+            let runner = orbital().failing(UNFINISHED_CALL, failing(kind));
 
             let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -880,7 +943,7 @@ orbital = ["orb-4"]
     #[test]
     fn bds_own_words_never_reach_the_snapshot() {
         let runner = orbital().failing(
-            "bd list --status in_progress --limit 0 --json",
+            UNFINISHED_CALL,
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
@@ -1086,10 +1149,8 @@ orbital = ["orb-4"]
             &Wanted::Everything,
         );
 
-        let refused = colliding_trackers(PANES_IN_BOTH).failing(
-            "bd list --status in_progress --limit 0 --json",
-            failing(FailureKind::Auth),
-        );
+        let refused =
+            colliding_trackers(PANES_IN_BOTH).failing(UNFINISHED_CALL, failing(FailureKind::Auth));
         let after = collect(&mut standing, &refused, &orbital_alone());
 
         assert_eq!(
@@ -1145,14 +1206,12 @@ orbital = ["orb-4"]
             .with("sh -c secret orbital", "orbital-password")
             .with("sh -c secret ferry", "ferry-password")
             .with(
-                "bd list --status in_progress --limit 0 --json",
-                r#"[{"id":"x-1.1","title":"the colliding id","status":"in_progress"}]"#,
+                UNFINISHED_CALL,
+                r#"[{"id":"x-1","title":"the shared prefix","status":"in_progress","parent":""},
+                    {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent":"x-1"}]"#,
             )
-            .with("bd list --status blocked --limit 0 --json", "[]")
             .with("bd ready --limit 0 --json", "[]")
             .with("bd blocked --json", "[]")
-            .with("bd show x-1.1 --json", r#"[{"id":"x-1.1","parent":"x-1"}]"#)
-            .with("bd show x-1 --json", r#"[{"id":"x-1","parent":null}]"#)
             .with("bd dep tree x-1 --direction=up --json", COLLIDING_TREE)
     }
 }
