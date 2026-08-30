@@ -10,11 +10,12 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Wanted;
 use crate::collect::changes::{self, Reported, Socket, Uncovered};
+use crate::collect::panes::{Herdr, Panes};
 use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
-use crate::view::tail::{self, Herdr, Panes, Tail};
+use crate::view::tail::{self, Tail};
 use crate::view::{draw, Action, Motion, Notice};
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
