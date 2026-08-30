@@ -1246,6 +1246,34 @@ credential_command = "secret harbour"
         assert_eq!(sketch(&forest), was);
     }
 
+    /// A run is drawn with one status glyph standing for every bead it hides,
+    /// which is only honest while a run is closed beads and nothing else.
+    /// `dep-1.1` is open beside the two closed siblings that make the run, so
+    /// widening the predicate sweeps it in and fails here — rather than
+    /// leaving the glyph to say `closed` over a bead that is not.
+    #[test]
+    fn a_run_holds_closed_beads_and_nothing_else_which_is_what_lets_one_glyph_stand_for_it() {
+        let tree = tree_of("orbital", DEPOT);
+        let children = children_of(&tree.nodes);
+
+        let mut runs = 0;
+        for at in 0..tree.nodes.len() {
+            let (_, run) = split(&tree, &children, at);
+            runs += usize::from(!run.is_empty());
+            for member in run {
+                let bead = &tree.nodes[member];
+                assert!(
+                    bead.status.is_closed(),
+                    "{} is in a run and is {:?}",
+                    bead.id,
+                    bead.status
+                );
+            }
+        }
+
+        assert!(runs > 0, "the fixture built no run to check");
+    }
+
     /// The two-or-more rule is a property of the forest, not of a place in
     /// it, so it holds inside an open run as it does everywhere else. Nothing
     /// disappears; it is counted one level down.

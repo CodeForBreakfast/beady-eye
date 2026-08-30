@@ -89,13 +89,34 @@ fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
     match &line.content {
         Content::Tree(head) => header(&head.tree, &line.prefix, &head.panes, head.panes_complete),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
-        Content::Elided { count, .. } => {
-            sentence(&line.prefix, phrase::elided(*count), Color::DarkGray)
-        }
+        Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Note(note) => sentence(&line.prefix, finding(*note), LOOK_AT_THIS),
         Content::Group(group) => group_line(&line.prefix, *group),
         Content::Item(item) => item_line(&line.prefix, item),
     }
+}
+
+/// A run of closed siblings said as a count, carrying the glyph each of them
+/// would carry on a line of its own.
+///
+/// `forest::split` builds a run out of closed beads and nothing else, so this
+/// is not a summary over mixed states — it is the one state every member
+/// holds. It goes through `status_glyph` and `status_style` exactly as a
+/// bead's does, so a run cannot drift away from the beads it stands for.
+fn elided_run(prefix: &str, count: usize) -> Fitted {
+    let glyph = row::status_glyph(&Status::Closed);
+    Fitted::new(
+        vec![
+            Span::raw(prefix.to_string()),
+            Span::styled(glyph.to_string(), status_style(glyph)),
+            Span::styled(
+                format!(" {}", phrase::elided(count)),
+                Style::new().fg(Color::DarkGray),
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 /// A line that is one sentence and nothing else.
@@ -1447,6 +1468,24 @@ mod tests {
         }
     }
 
+    /// A run stands for closed beads and nothing else — `split` selects on
+    /// exactly that — so its glyph is not a summary over mixed states but the
+    /// one state every member holds. Resolved through `status_glyph` and
+    /// `status_style`, the same two the beads themselves go through, so a run
+    /// and the beads it stands for cannot drift apart.
+    #[test]
+    fn an_elided_run_carries_the_closed_glyph_each_bead_it_stands_for_would() {
+        let painted = painted(fitted(&under(BRANCH, elided(15)), 0), 72);
+
+        assert_eq!(
+            painted[1],
+            (
+                row::status_glyph(&Status::Closed).to_string(),
+                status_colour(&Status::Closed)
+            )
+        );
+    }
+
     /// A reader follows the vertical rules down a tree. A sentence that took
     /// its box-drawing into its own colour would break that run wherever it
     /// fell, so the drawing stays in the terminal's own foreground and only
@@ -1456,7 +1495,7 @@ mod tests {
         let painted = painted(fitted(&under(BRANCH, elided(3)), 0), 72);
 
         assert_eq!(painted[0], (BRANCH.to_string(), Color::Reset));
-        assert_eq!(painted[1].1, Color::DarkGray);
+        assert_eq!(painted[2].1, Color::DarkGray);
     }
 
     #[test]
