@@ -151,6 +151,12 @@ pub struct Snapshot {
     pub failed_projects: Vec<FailedProject>,
     pub unattributed: Vec<LoosePane>,
     pub conflicts: Vec<Conflict>,
+    /// Every tree that was read, in the order it was read, shown or hidden.
+    /// `trees` and `hidden_trees` are how the current filter divides this, and
+    /// keeping it is what lets `refilter` change the filter without asking the
+    /// trackers again. Not part of the JSON contract.
+    #[serde(skip)]
+    pub collected: Vec<Tree>,
 }
 
 impl Tree {
@@ -246,6 +252,44 @@ pub fn build_tree(
     }
 }
 
+/// Divide the collected trees into the ones the filter shows and the ones it
+/// hides. With no herdr there are no panes, so there is no agent to filter on
+/// and every tree renders.
+fn partition(trees: &[Tree], herdr: HerdrState, filter: Filter) -> (Vec<Tree>, Vec<HiddenTree>) {
+    let filter = match herdr {
+        HerdrState::Ok => filter,
+        HerdrState::Unavailable => Filter::All,
+    };
+    let (shown, hidden): (Vec<&Tree>, Vec<&Tree>) = trees.iter().partition(|t| t.survives(filter));
+
+    (
+        shown.into_iter().cloned().collect(),
+        hidden
+            .into_iter()
+            .map(|t| HiddenTree {
+                project: t.project.clone(),
+                root: t.root.clone(),
+                title: t.title.clone(),
+                reason: "no-live-agent",
+            })
+            .collect(),
+    )
+}
+
+/// Re-apply the filter to a snapshot already in hand. Which trees show is a
+/// display choice over what was collected, so nothing is read again and the
+/// answer is the one `build` would have given for that filter.
+pub fn refilter(snapshot: &Snapshot, filter: Filter) -> Snapshot {
+    let (trees, hidden_trees) = partition(&snapshot.collected, snapshot.herdr, filter);
+
+    Snapshot {
+        filter,
+        trees,
+        hidden_trees,
+        ..snapshot.clone()
+    }
+}
+
 /// Gather the trees into one snapshot, hiding what the filter hides and
 /// reporting everything that belongs to no tree.
 pub fn build(
@@ -257,16 +301,11 @@ pub fn build(
     filter: Filter,
     now: DateTime<Utc>,
 ) -> Snapshot {
-    // With no herdr there are no panes, so there is no agent to filter on and
-    // every discovered tree renders.
     let Collected {
         trees,
         failed_projects,
     } = collected;
-    let (shown, hidden): (Vec<Tree>, Vec<Tree>) = match herdr {
-        HerdrState::Ok => trees.into_iter().partition(|t| t.survives(filter)),
-        HerdrState::Unavailable => (trees, Vec::new()),
-    };
+    let (shown, hidden) = partition(&trees, herdr, filter);
 
     let unattributed = join::unattributed(panes, joined)
         .into_iter()
@@ -283,18 +322,11 @@ pub fn build(
         herdr,
         filter,
         trees: shown,
-        hidden_trees: hidden
-            .into_iter()
-            .map(|t| HiddenTree {
-                project: t.project,
-                root: t.root,
-                title: t.title,
-                reason: "no-live-agent",
-            })
-            .collect(),
+        hidden_trees: hidden,
         failed_projects,
         unattributed,
         conflicts: joined.conflicts.clone(),
+        collected: trees,
     }
 }
 
@@ -409,7 +441,7 @@ render = "⏸ waiting"
             .unwrap_or_else(|| panic!("{id} is among the nodes"))
     }
 
-    fn snapshot(trees: Vec<Tree>) -> Snapshot {
+    fn built(trees: Vec<Tree>, filter: Filter) -> Snapshot {
         let panes = panes(PANES);
         let joined = joined(&assembled(BEADS).rows, &panes);
         build(
@@ -421,9 +453,51 @@ render = "⏸ waiting"
             &joined,
             &cfg(),
             HerdrState::Ok,
-            Filter::LiveAgents,
+            filter,
             now(),
         )
+    }
+
+    fn snapshot(trees: Vec<Tree>) -> Snapshot {
+        built(trees, Filter::LiveAgents)
+    }
+
+    /// A tree nobody is working in, told apart from its neighbours by its root.
+    fn quiet(root: &str, title: &str) -> Tree {
+        let mut t = tree();
+        t.root = root.to_string();
+        t.title = title.to_string();
+        t.counts.live_agents = 0;
+        t.nodes.iter_mut().for_each(|n| n.agent = None);
+        t
+    }
+
+    /// A quiet tree that has something to report: a bead whose parent bd never
+    /// returned, a parent cycle, and a subtree bd cut short.
+    fn quiet_with_reports() -> Tree {
+        let json = r#"[
+          {"id":"orb-6","title":"the far side","status":"open","parent_id":""},
+          {"id":"orb-6.2","title":"child of a bead bd did not return","status":"open",
+           "parent_id":"orb-6.1"},
+          {"id":"orb-6.3","title":"one","status":"open","parent_id":"orb-6.4"},
+          {"id":"orb-6.4","title":"two","status":"open","parent_id":"orb-6.3"},
+          {"id":"orb-6.5","title":"cut short","status":"open","parent_id":"orb-6",
+           "truncated":true}
+        ]"#;
+        build_tree(
+            "orbital",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &cfg(),
+            now(),
+        )
+    }
+
+    /// A quiet tree, a live one, and another quiet one: the interleaving a
+    /// lifted filter has to put back.
+    fn interleaved() -> Vec<Tree> {
+        vec![quiet("orb-2", "quiet work"), tree(), quiet_with_reports()]
     }
 
     #[test]
@@ -854,5 +928,148 @@ render = "⏸ waiting"
         assert_eq!(json["trees"][0]["tracker"]["unreachable"], "auth");
         assert_eq!(json["failed_projects"][0]["tracker"], "parse");
         assert_eq!(json["trees"][0]["counts"]["total"], 0);
+    }
+
+    #[test]
+    fn lifting_the_filter_gives_what_a_fresh_collection_would_have() {
+        let filtered = built(interleaved(), Filter::LiveAgents);
+
+        assert_eq!(
+            refilter(&filtered, Filter::All),
+            built(interleaved(), Filter::All),
+            "a display change must not read differently from a collection"
+        );
+    }
+
+    #[test]
+    fn re_applying_the_filter_gives_what_a_fresh_collection_would_have() {
+        let all = built(interleaved(), Filter::All);
+
+        assert_eq!(
+            refilter(&all, Filter::LiveAgents),
+            built(interleaved(), Filter::LiveAgents)
+        );
+    }
+
+    #[test]
+    fn a_lifted_filter_puts_the_hidden_trees_back_where_they_were_read() {
+        let lifted = refilter(&built(interleaved(), Filter::LiveAgents), Filter::All);
+
+        let roots: Vec<&str> = lifted.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            ["orb-2", "orb-7", "orb-6"],
+            "the order the trackers were read in, not the shown ones first"
+        );
+        assert!(lifted.hidden_trees.is_empty());
+        assert_eq!(lifted.filter, Filter::All);
+    }
+
+    #[test]
+    fn the_filter_goes_off_and_on_again_without_drift() {
+        let filtered = built(interleaved(), Filter::LiveAgents);
+
+        assert_eq!(
+            refilter(&refilter(&filtered, Filter::All), Filter::LiveAgents),
+            filtered
+        );
+    }
+
+    #[test]
+    fn a_hidden_tree_comes_back_whole() {
+        let lifted = refilter(&built(interleaved(), Filter::LiveAgents), Filter::All);
+        let back = lifted
+            .trees
+            .iter()
+            .find(|t| t.root == "orb-6")
+            .expect("the hidden tree is back");
+
+        assert_eq!(
+            back,
+            &quiet_with_reports(),
+            "what a filter hid it must be able to show again"
+        );
+        assert_eq!(back.dangling, ["orb-6.2"]);
+        assert_eq!(back.unreachable, ["orb-6.3", "orb-6.4"]);
+        assert!(back.nodes.iter().any(|n| n.truncated));
+    }
+
+    #[test]
+    fn what_belongs_to_no_tree_survives_a_refilter() {
+        let mut before = built(interleaved(), Filter::LiveAgents);
+        before.failed_projects = vec![FailedProject {
+            project: "ferry".to_string(),
+            tracker: TrackerFailure::Auth,
+        }];
+        before.conflicts = vec![Conflict::BeadAndPaneDisagree {
+            bead: BeadKey {
+                project: "orbital".to_string(),
+                id: "orb-7".to_string(),
+            },
+            named_by_bead: "w:p1".to_string(),
+            named_by_pane: "w:p2".to_string(),
+        }];
+        assert!(!before.unattributed.is_empty(), "there are panes to lose");
+
+        let after = refilter(&refilter(&before, Filter::All), Filter::LiveAgents);
+
+        assert_eq!(after.failed_projects, before.failed_projects);
+        assert_eq!(after.unattributed, before.unattributed);
+        assert_eq!(after.conflicts, before.conflicts);
+        assert_eq!(
+            after.generated_at, before.generated_at,
+            "a refilter is not a new reading"
+        );
+    }
+
+    #[test]
+    fn a_tracker_that_could_not_be_read_is_never_hidden_by_a_refilter() {
+        let broken = Tree::tracker_unreachable("ferry", "fry-3", TrackerFailure::Auth);
+
+        let filtered = refilter(
+            &built(vec![broken.clone()], Filter::All),
+            Filter::LiveAgents,
+        );
+
+        assert_eq!(filtered.trees, vec![broken]);
+        assert!(filtered.hidden_trees.is_empty());
+    }
+
+    #[test]
+    fn without_herdr_a_refilter_hides_nothing() {
+        let blind = build(
+            Collected {
+                trees: vec![quiet("orb-2", "quiet work")],
+                ..Collected::default()
+            },
+            &[],
+            &Joined::default(),
+            &cfg(),
+            HerdrState::Unavailable,
+            Filter::All,
+            now(),
+        );
+
+        let filtered = refilter(&blind, Filter::LiveAgents);
+
+        assert_eq!(
+            filtered.trees.len(),
+            1,
+            "with no panes there is no filter to apply"
+        );
+        assert!(filtered.hidden_trees.is_empty());
+    }
+
+    #[test]
+    fn what_a_refilter_needs_is_not_part_of_the_contract() {
+        let json: serde_json::Value =
+            serde_json::to_value(snapshot(interleaved())).expect("the snapshot serialises");
+
+        assert!(
+            json.get("collected").is_none(),
+            "the trees kept for a refilter are not emitted"
+        );
+        assert_eq!(json["trees"][0]["root"], "orb-7");
+        assert_eq!(json["hidden_trees"][0]["root"], "orb-2");
     }
 }
