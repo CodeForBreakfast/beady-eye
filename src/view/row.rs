@@ -10,10 +10,10 @@ use crate::model::types::Status;
 use crate::view::phrase;
 
 /// A live agent. The mock's marker, kept in the role the mock gave it.
-const AGENT: char = '◍';
+pub const AGENT: char = '◍';
 
 /// Something the reader should look at.
-const WARNING: char = '⚠';
+pub const WARNING: char = '⚠';
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {

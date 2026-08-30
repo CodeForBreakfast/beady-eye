@@ -80,6 +80,19 @@ pub fn conflict(conflict: &Conflict) -> String {
     }
 }
 
+/// A tree whose tracker could not be read, and no live pane naming its
+/// project to show in place of the beads.
+pub fn no_live_panes() -> &'static str {
+    "no live pane names this project"
+}
+
+/// The live panes shown for a tree whose tracker could not be read are the
+/// ones naming its project. A pane working outside every configured project
+/// names none, so it could belong to this tree and there is no way to tell.
+pub fn panes_may_be_incomplete() -> &'static str {
+    "and possibly more · a live pane under no configured project could belong here"
+}
+
 /// A node bd stopped at, so what hangs beneath it is not in this tree.
 pub fn truncated() -> &'static str {
     "more beneath this · the tracker stopped at its depth limit"
@@ -224,6 +237,8 @@ mod tests {
             said.push(conflict(&clash));
         }
 
+        said.push(no_live_panes().to_string());
+        said.push(panes_may_be_incomplete().to_string());
         said.push(truncated().to_string());
         said.push(dangling(1));
         said.push(dangling(3));
@@ -289,6 +304,8 @@ mod tests {
         let _: fn(TrackerFailure) -> &'static str = tracker_failure;
         let _: fn(HerdrState) -> Option<&'static str> = herdr_state;
         let _: fn() -> &'static str = truncated;
+        let _: fn() -> &'static str = no_live_panes;
+        let _: fn() -> &'static str = panes_may_be_incomplete;
         let _: fn(JoinSource) -> Option<&'static str> = join_caveat;
     }
 
