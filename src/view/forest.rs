@@ -99,6 +99,14 @@ pub enum Note {
 pub struct Group {
     pub kind: GroupKind,
     pub count: usize,
+    /// How many of the things this group holds carry findings the screen is
+    /// not drawing, because the group holds them rather than showing them.
+    ///
+    /// Only a hidden tree has any: the filter took its dangling, unreachable
+    /// and truncated counts out of the forest with it, and that choice should
+    /// hold — but a group that says only how many trees it hides reads like
+    /// "nothing to see" when some of them are broken.
+    pub with_findings: usize,
 }
 
 /// The groups below the trees, in the order they are drawn: what could not be
@@ -585,6 +593,24 @@ impl Forest {
         }
     }
 
+    /// The hidden trees whose findings went with them. `collected` still holds
+    /// every tree that was read, shown or hidden, so what the filter took out
+    /// of the forest is still countable here.
+    fn with_findings(&self, items: &[Item]) -> usize {
+        items
+            .iter()
+            .filter(|item| match item {
+                Item::Hidden(hidden) => self
+                    .snapshot
+                    .collected
+                    .iter()
+                    .filter(|tree| tree.project == hidden.project && tree.root == hidden.root)
+                    .any(|tree| !notes_of(tree).is_empty()),
+                _ => false,
+            })
+            .count()
+    }
+
     fn draw_groups(&self, loose: &[LoosePane], lines: &mut Vec<Line>) {
         for kind in GroupKind::ALL {
             let items = self.group_items(kind, loose);
@@ -601,6 +627,7 @@ impl Forest {
                 content: Content::Group(Group {
                     kind,
                     count: items.len(),
+                    with_findings: self.with_findings(&items),
                 }),
             });
             if !open {
@@ -1318,6 +1345,48 @@ credential_command = "secret harbour"
         assert_eq!(items, 3, "{drawn:#?}");
     }
 
+    /// The filter's choice holds — a hidden tree is not drawn — but a group
+    /// that says only how many trees it hides reads like "nothing to see"
+    /// when one of them has a broken parent chain.
+    #[test]
+    fn the_hidden_trees_group_says_how_many_of_them_have_findings() {
+        let broken = HARBOUR.replace(r#""parent_id":"hbr-3""#, r#""parent_id":"hbr-9""#);
+        let snapshot = gather(
+            vec![tree_of("orbital", ORBITAL), tree_of("harbour", &broken)],
+            Vec::new(),
+            Filter::LiveAgents,
+        );
+
+        let forest = flatten(&snapshot);
+        let group = forest
+            .lines()
+            .iter()
+            .find_map(|line| match line.content {
+                Content::Group(group) if group.kind == GroupKind::HiddenTrees => Some(group),
+                _ => None,
+            })
+            .expect("harbour is hidden");
+
+        assert_eq!(group.count, 1);
+        assert_eq!(group.with_findings, 1);
+    }
+
+    #[test]
+    fn a_hidden_tree_with_nothing_wrong_in_it_is_only_counted_as_hidden() {
+        let forest = flatten(&snapshot());
+        let group = forest
+            .lines()
+            .iter()
+            .find_map(|line| match line.content {
+                Content::Group(group) if group.kind == GroupKind::HiddenTrees => Some(group),
+                _ => None,
+            })
+            .expect("harbour is hidden");
+
+        assert_eq!(group.count, 1);
+        assert_eq!(group.with_findings, 0);
+    }
+
     /// Every fold state over every root, every group and one interior node:
     /// 128 of them, which is small enough to visit rather than sample.
     #[test]
@@ -1382,7 +1451,7 @@ credential_command = "secret harbour"
                 Content::Note(Note::Unreachable(n)) => found.unreachable += n,
                 Content::Note(Note::Truncated(n)) => found.truncated += n,
                 Content::Tree(header) => found.loose_panes += header.panes.len(),
-                Content::Group(Group { kind, count }) => match kind {
+                Content::Group(Group { kind, count, .. }) => match kind {
                     GroupKind::Conflicts => found.conflicts += count,
                     GroupKind::FailedProjects => found.failed_projects += count,
                     GroupKind::Unattributed => found.loose_panes += count,
