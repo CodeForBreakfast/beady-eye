@@ -40,6 +40,8 @@ pub enum Action {
     ToggleFilter,
     /// Focus the selected bead's pane in herdr.
     Focus,
+    /// Show every binding the view answers to.
+    ShowBindings,
     Refresh,
     Quit,
 }

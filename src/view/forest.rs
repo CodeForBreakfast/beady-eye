@@ -252,8 +252,8 @@ impl Forest {
 
     /// Apply one action, reporting whether it changed anything.
     ///
-    /// Focusing a pane, re-collecting and quitting are the loop's to do, and
-    /// none of them changes what is on screen here.
+    /// Focusing a pane, showing the key bindings, re-collecting and quitting
+    /// are the loop's to do, and none of them changes what is on screen here.
     pub fn apply(&mut self, action: Action) -> bool {
         let was = (self.lines.clone(), self.selected);
         match action {
@@ -262,7 +262,7 @@ impl Forest {
             Action::ExpandOrChild => self.expand_or_child(),
             Action::ToggleFold => self.toggle_fold(),
             Action::ToggleFilter => self.toggle_filter(),
-            Action::Focus | Action::Refresh | Action::Quit => return false,
+            Action::Focus | Action::ShowBindings | Action::Refresh | Action::Quit => return false,
         }
         self.lay_out();
         (self.lines.clone(), self.selected) != was

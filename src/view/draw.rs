@@ -24,8 +24,8 @@ const RULE: char = '─';
 /// The blank columns that keep two blocks from reading as one.
 const GAP: usize = 2;
 
-/// The keys the view answers to, in the order the design lists them.
-const KEYS: &str = "⏎ focus   a all   ^R refresh   q quit";
+/// The first line of the key bindings view, and the way back out of it.
+const CLOSE_BINDINGS: &str = "Key bindings · press any key to close";
 
 /// What lifts the live-agent filter, said beside the trees it is holding back.
 const SHOW_ALL: &str = "a to show all";
@@ -35,7 +35,10 @@ const LOOK_AT_THIS: Color = Color::Yellow;
 
 /// Draw the forest and the key bar, leaving the tail's band to whoever holds
 /// a tail.
-pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest) {
+///
+/// `keys` arrives already named. What a key is called belongs with the
+/// mapping that answers it, and this file has never known one.
+pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest, keys: &str) {
     let bands = regions(area);
     let lines = forest.lines();
     let selected = forest.selected_line();
@@ -65,7 +68,7 @@ pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest) {
         );
     }
 
-    frame.render_widget(status_bar(forest.snapshot().herdr), bands.keys);
+    frame.render_widget(status_bar(forest.snapshot().herdr, keys), bands.keys);
 }
 
 /// The widest abbreviated id on screen, so every title starts in the same
@@ -538,6 +541,83 @@ pub fn scroll_offset(selected: usize, lines: usize, height: usize) -> usize {
     selected.saturating_sub(height / 2).min(lines - height)
 }
 
+/// Draw every binding over the whole screen, in place of the forest.
+///
+/// Each pair is the keys to press, already named, and what pressing them
+/// does. The way out is drawn first so that a screen too short for the
+/// bindings still holds it: a reader who cannot see how to leave is stuck in
+/// a view they may have opened by accident. Where the bindings do not all
+/// fit, the last row counts the ones left off, because a list that simply
+/// stopped would read as the whole of what the view answers to.
+pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) {
+    if area.height == 0 {
+        return;
+    }
+    let row = |n: usize| Rect {
+        y: area.y + n as u16,
+        height: 1,
+        ..area
+    };
+    frame.render_widget(
+        Fitted::new(
+            vec![Span::styled(
+                CLOSE_BINDINGS,
+                Style::new().add_modifier(Modifier::BOLD),
+            )],
+            Vec::new(),
+            Vec::new(),
+        ),
+        row(0),
+    );
+
+    let room = area.height as usize - 1;
+    // A last row spent saying that one binding is missing would be better
+    // spent on the binding, so the count is never drawn over fewer than two.
+    let shown = if bindings.len() <= room {
+        bindings.len()
+    } else {
+        room.saturating_sub(1)
+    };
+    let width = bindings
+        .iter()
+        .map(|(keys, _)| columns(&[Span::raw(keys.clone())]))
+        .max()
+        .unwrap_or(0);
+
+    for (n, (keys, does)) in bindings.iter().take(shown).enumerate() {
+        frame.render_widget(
+            Fitted::new(
+                vec![Span::raw(format!("{}{keys:<width$}", indent()))],
+                vec![Span::raw((*does).to_string())],
+                Vec::new(),
+            ),
+            row(n + 1),
+        );
+    }
+
+    if shown < bindings.len() && room > 0 {
+        frame.render_widget(
+            Fitted::new(
+                vec![Span::raw(format!(
+                    "{}{}",
+                    indent(),
+                    left_off(bindings.len() - shown)
+                ))],
+                Vec::new(),
+                Vec::new(),
+            ),
+            row(shown + 1),
+        );
+    }
+}
+
+/// The bindings a screen this short had no room for, counted rather than
+/// dropped.
+fn left_off(count: usize) -> String {
+    let binding = if count == 1 { "binding" } else { "bindings" };
+    format!("{CUT} {count} more {binding} · no room on a screen this short")
+}
+
 /// The row at the foot of the screen: the keys, and anything true of the
 /// whole session rather than of any row above.
 ///
@@ -546,16 +626,17 @@ pub fn scroll_offset(selected: usize, lines: usize, height: usize) -> usize {
 /// the one row a reader can neither fold nor scroll away from. It is drawn
 /// first and yields last: keys can be rediscovered, and a herdr that is
 /// silently absent reads as a fleet with nobody working in it.
-pub fn status_bar(herdr: HerdrState) -> Fitted {
+pub fn status_bar(herdr: HerdrState, keys: &str) -> Fitted {
+    let keys = Span::raw(keys.to_string());
     match phrase::herdr_state(herdr) {
-        None => Fitted::new(vec![Span::raw(KEYS)], Vec::new(), Vec::new()),
+        None => Fitted::new(vec![keys], Vec::new(), Vec::new()),
         Some(said) => Fitted::new(
             vec![Span::styled(
                 format!("{WARNING} {said}"),
                 Style::new().fg(LOOK_AT_THIS),
             )],
             Vec::new(),
-            vec![Span::raw(KEYS)],
+            vec![keys],
         ),
     }
 }
@@ -1159,13 +1240,16 @@ mod tests {
 
     // ---- the key bar -----------------------------------------------------
 
-    #[test]
-    fn the_foot_of_the_screen_names_every_key_the_view_answers_to() {
-        let drawn = drawn(status_bar(HerdrState::Ok), 60, 1);
+    /// A key row shaped like the real one, without importing the loop's.
+    const A_KEY_ROW: &str = "Enter focus   a all   ? keys   ^R refresh   q quit";
 
-        for key in ["⏎", "a", "^R", "q"] {
-            assert!(drawn[0].contains(key), "{key} missing from {drawn:?}");
-        }
+    /// What the row says is the loop's to decide; the foot's job is to put it
+    /// on screen whole where there is room for it.
+    #[test]
+    fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
+        let drawn = drawn(status_bar(HerdrState::Ok, A_KEY_ROW), 60, 1);
+
+        assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
 
     /// With no herdr there is no agent on any row, and a screen that only
@@ -1174,7 +1258,7 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = drawn(status_bar(HerdrState::Unavailable), 90, 1);
+        let drawn = drawn(status_bar(HerdrState::Unavailable, A_KEY_ROW), 90, 1);
 
         assert!(
             drawn[0].contains(phrase::herdr_state(HerdrState::Unavailable).expect("a notice")),
@@ -1186,10 +1270,121 @@ mod tests {
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = drawn(status_bar(HerdrState::Unavailable), 60, 1);
+        let drawn = drawn(status_bar(HerdrState::Unavailable, A_KEY_ROW), 60, 1);
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);
+    }
+
+    // ---- the key bindings view -------------------------------------------
+
+    /// Three bindings shaped like the real ones: several keys onto one action,
+    /// a single key, and a control key alongside a plain one.
+    fn a_few_bindings() -> Vec<(String, &'static str)> {
+        vec![
+            ("Down, j".to_string(), "move down one row"),
+            (
+                "Enter".to_string(),
+                "focus the selected bead's pane in herdr",
+            ),
+            ("q, ^C".to_string(), "quit"),
+        ]
+    }
+
+    fn bindings_frame(bindings: &[(String, &str)], width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
+        terminal
+            .draw(|frame| key_bindings(frame, frame.area(), bindings))
+            .expect("a draw into memory");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// The whole view, character for character. The keys share a column so a
+    /// reader's eye runs down one edge to find the one they want.
+    #[test]
+    fn the_key_bindings_view_names_the_keys_and_what_pressing_them_does() {
+        assert_eq!(
+            bindings_frame(&a_few_bindings(), 60, 5),
+            vec![
+                "Key bindings · press any key to close                       ",
+                "  Down, j  move down one row                                ",
+                "  Enter    focus the selected bead's pane in herdr          ",
+                "  q, ^C    quit                                             ",
+                "                                                            ",
+            ]
+        );
+    }
+
+    /// A reader who cannot see how to leave is stuck in a view they may have
+    /// opened by accident, so the way out is the line that survives every cut.
+    #[test]
+    fn the_way_out_is_drawn_before_any_binding_is() {
+        let drawn = bindings_frame(&a_few_bindings(), 60, 1);
+
+        assert!(drawn[0].contains("press any key to close"), "{drawn:?}");
+    }
+
+    /// Degrade, never disappear: a list that simply stopped would read as the
+    /// whole of what the view answers to.
+    #[test]
+    fn a_screen_too_short_for_every_binding_counts_the_ones_it_left_off() {
+        assert_eq!(
+            bindings_frame(&a_few_bindings(), 60, 3),
+            vec![
+                "Key bindings · press any key to close                       ",
+                "  Down, j  move down one row                                ",
+                "  … 2 more bindings · no room on a screen this short        ",
+            ]
+        );
+    }
+
+    #[test]
+    fn one_binding_left_off_is_not_counted_in_the_plural() {
+        assert!(left_off(1).contains("1 more binding ·"), "{}", left_off(1));
+        assert!(left_off(2).contains("2 more bindings ·"), "{}", left_off(2));
+    }
+
+    /// Which is why the count is always in the plural on screen: the row it
+    /// costs is a row a binding could have had.
+    #[test]
+    fn the_count_is_never_spent_to_hide_fewer_bindings_than_it_displaces() {
+        let bindings = a_few_bindings();
+
+        for height in 2..=(bindings.len() as u16 + 2) {
+            let drawn = bindings_frame(&bindings, 60, height);
+            let counted = drawn.iter().filter(|row| row.contains("more binding"));
+
+            for row in counted {
+                assert!(!row.contains("1 more binding"), "at {height} rows: {row}");
+            }
+        }
+    }
+
+    /// One row is room for the way out and nothing else. It still says what
+    /// was opened and how to leave it, which is the most a single row can do.
+    #[test]
+    fn a_screen_with_one_row_spends_it_on_the_way_out() {
+        assert_eq!(
+            bindings_frame(&a_few_bindings(), 60, 1),
+            vec!["Key bindings · press any key to close                       "]
+        );
+    }
+
+    /// The band can be nothing at all, and asking for a row inside it would
+    /// draw outside the frame.
+    #[test]
+    fn a_band_with_no_rows_in_it_draws_nothing() {
+        let mut terminal = Terminal::new(TestBackend::new(20, 1)).expect("a test backend");
+        terminal
+            .draw(|frame| {
+                key_bindings(frame, Rect::new(0, 0, 20, 0), &a_few_bindings());
+            })
+            .expect("a draw into memory");
+
+        assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), " ");
     }
 
     // ---- the groups below the trees --------------------------------------
@@ -1340,7 +1535,7 @@ mod tests {
     fn frame_of(forest: &Forest, width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| draw(frame, frame.area(), forest))
+            .draw(|frame| draw(frame, frame.area(), forest, A_KEY_ROW))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -1370,7 +1565,7 @@ mod tests {
                 "                                                            ",
                 "                                                            ",
                 "                                                            ",
-                "⚠ no herdr session · which agents are alive is unknown  ⏎ f…",
+                "⚠ no herdr session · which agents are alive is unknown  Ent…",
             ]
         );
     }
