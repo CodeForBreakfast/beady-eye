@@ -410,6 +410,11 @@ credential_command = "op read op://Private/beads-tracker/password"
 - **No error text reaches the output verbatim.** bd's failures name the database
   and user; the reason is reported, the raw stderr is not.
 
+A single read-only user across every tracker would retire the per-project
+credential entirely, and the shape it would take has been measured — see *Open,
+for Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does
+not depend on it.
+
 `direnv exec <path> bd …` is the alternative and needs no config at all. It costs
 a direnv evaluation per call and requires every tracker to be a direnv-managed
 checkout. Worth measuring before choosing; the config field above is the fallback
