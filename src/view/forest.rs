@@ -1,6 +1,6 @@
 //! The snapshot, flattened into the lines the screen shows.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
@@ -145,6 +145,18 @@ impl GroupKind {
         GroupKind::HiddenTrees,
         GroupKind::Unattributed,
     ];
+
+    /// Whether what a group holds is live, which is what rests it open. A
+    /// count is not a view: a shut group over live panes says they exist and
+    /// nothing about which they are or what is on them. What collection and
+    /// the filter did is a report about the reading rather than work in
+    /// flight, and rests as the report it is.
+    fn live(self) -> bool {
+        match self {
+            GroupKind::Unconfigured | GroupKind::Conflicts | GroupKind::Unattributed => true,
+            GroupKind::FailedProjects | GroupKind::HiddenTrees => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,9 +252,67 @@ impl Forest {
         // it, so where the new one has dropped the bead the cursor falls to
         // the nearest of its forebears that survived.
         let ancestry = self.ancestry();
+        let folded_over = self.folded_over();
         self.snapshot = snapshot.clone();
+        self.spend_folds(&folded_over);
         self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
         self.lay_out();
+    }
+
+    /// The live work each fold the user shut is currently shut over.
+    fn folded_over(&self) -> BTreeMap<Handle, BTreeSet<BeadKey>> {
+        self.folds
+            .iter()
+            .filter(|(_, open)| !**open)
+            .map(|(handle, _)| (handle.clone(), self.live_under(handle)))
+            .collect()
+    }
+
+    /// Let go of a fold the user set once live work has arrived beneath it
+    /// that was not there when they set it.
+    ///
+    /// A fold says *I have seen what is under here and do not want it*, and
+    /// that stops being true the moment something new is under it. So what
+    /// they folded away stays folded for as long as it lives, work that dies
+    /// down re-opens nothing, and an agent arriving on a bead they never saw
+    /// hands the node back to the default.
+    fn spend_folds(&mut self, folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>) {
+        let spent: Vec<Handle> = folded_over
+            .iter()
+            .filter(|(handle, over)| !self.live_under(handle).is_subset(over))
+            .map(|(handle, _)| handle.clone())
+            .collect();
+        for handle in spent {
+            self.folds.remove(&handle);
+        }
+    }
+
+    /// The beads beneath `handle` carrying live work. Empty for anything but
+    /// a bead: a run holds only finished branches, and a group's items are
+    /// not beads at all.
+    fn live_under(&self, handle: &Handle) -> BTreeSet<BeadKey> {
+        let Handle::Bead(key) = handle else {
+            return BTreeSet::new();
+        };
+        self.snapshot
+            .trees
+            .iter()
+            .filter(|tree| tree.project == key.project)
+            .find_map(|tree| {
+                let at = tree.nodes.iter().position(|node| node.id == key.id)?;
+                let children = children_of(&tree.nodes);
+                Some(
+                    beneath(&children, at)
+                        .into_iter()
+                        .filter(|node| !quiet(&tree.nodes[*node]))
+                        .map(|node| BeadKey {
+                            project: tree.project.clone(),
+                            id: tree.nodes[node].id.clone(),
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// What the cursor is on, then everything above it in its tree, nearest
@@ -424,15 +494,14 @@ impl Forest {
         self.settle_cursor();
         self.lines = self.draw();
         if self.find_cursor().is_none() {
-            // The line the cursor named is no longer drawn — an ancestor was
-            // folded over it, or the tracker stopped reporting it. Take the
-            // nearest line that is, and redraw: whichever tree that lands in
-            // is the one the default now expands.
+            // The line the cursor named is not drawn — an ancestor is folded
+            // over it, or the tracker stopped reporting it. Take the nearest
+            // line that is. Nothing needs drawing again for it: the fold
+            // state no longer turns on where the selection sits.
             self.cursor = self
                 .scan(self.selected, false)
                 .or_else(|| self.scan(self.selected, true))
                 .and_then(|at| self.handle_at(at));
-            self.lines = self.draw();
         }
         self.selected = self.find_cursor().unwrap_or(0);
     }
@@ -481,23 +550,6 @@ impl Forest {
     /// re-derive it here.
     fn expanded(&self, handle: &Handle, resting: bool) -> bool {
         self.folds.get(handle).copied().unwrap_or(resting)
-    }
-
-    fn holds_cursor(&self, root: &BeadKey) -> bool {
-        // A run hangs under a bead, so the cursor on one is in that bead's
-        // tree exactly as a cursor on the bead itself is.
-        let Some(Handle::Bead(cursor) | Handle::Elided(cursor)) = &self.cursor else {
-            return false;
-        };
-        cursor.project == root.project
-            && self
-                .snapshot
-                .trees
-                .iter()
-                .filter(|tree| tree.project == root.project && tree.root == root.id)
-                .any(|tree| {
-                    tree.root == cursor.id || tree.nodes.iter().any(|node| node.id == cursor.id)
-                })
     }
 
     /// Give each unreadable tree the live panes working in its project, and
@@ -565,9 +617,12 @@ impl Forest {
 
     fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
         let root = root_key(tree);
-        // A root shows its work while the selection is in it and collapses to
-        // its header when it is not.
-        let open = self.expanded(&Handle::Bead(root.clone()), self.holds_cursor(&root));
+        let children = children_of(&tree.nodes);
+        // A tree opens because someone is working in it, not because the
+        // selection is in it: the first screen is meant to be the answer to
+        // who is working on what.
+        let resting = !tree.nodes.is_empty() && live_beneath(tree, &children, 0);
+        let open = self.expanded(&Handle::Bead(root.clone()), resting);
         let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
 
         lines.push(Line {
@@ -584,7 +639,6 @@ impl Forest {
             }),
         });
 
-        let children = children_of(&tree.nodes);
         let mut entries: Vec<Child> = notes_of(tree).into_iter().map(Child::Note).collect();
         if open && !tree.nodes.is_empty() {
             entries.extend(self.children_entries(tree, &children, 0));
@@ -664,11 +718,12 @@ impl Forest {
                         id: node.id.clone(),
                     };
                     let kids = self.children_entries(tree, children, at);
-                    // A finished branch rests shut, said in one line by its
-                    // own glyph, its whole fraction and the marker. Anything
-                    // still being worked rests open, down to the work.
+                    // Open the spine to the live work and nothing else. A
+                    // branch with none rests as one line, its glyph, its
+                    // fraction and its marker saying what it still holds.
                     let open = !kids.is_empty()
-                        && self.expanded(&Handle::Bead(key.clone()), !finished(tree, children, at));
+                        && self
+                            .expanded(&Handle::Bead(key.clone()), live_beneath(tree, children, at));
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open),
                         depth,
@@ -715,7 +770,7 @@ impl Forest {
             if items.is_empty() {
                 continue;
             }
-            let open = self.expanded(&Handle::Group(kind), false);
+            let open = self.expanded(&Handle::Group(kind), kind.live());
             lines.push(Line {
                 prefix: marker(open).to_string(),
                 depth: 0,
@@ -814,6 +869,36 @@ fn children_of(nodes: &[Node]) -> Vec<Vec<usize>> {
     children
 }
 
+/// Whether nothing is happening on this bead: nobody working it, and nothing
+/// wrong with it. Says nothing about its children.
+fn quiet(node: &Node) -> bool {
+    node.agent.is_none() && node.anomalies.is_empty()
+}
+
+/// The nodes strictly beneath `at`, in no order worth relying on.
+fn beneath(children: &[Vec<usize>], at: usize) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut walking = children[at].clone();
+    while let Some(node) = walking.pop() {
+        found.push(node);
+        walking.extend(children[node].iter().copied());
+    }
+    found
+}
+
+/// Whether any bead beneath `at` carries live work: an agent on it, or an
+/// anomaly against it.
+///
+/// This is the whole of the fold default. A line rests open exactly when it
+/// stands on the spine to something live, so the first screen is that work
+/// and the path to it, and no fold `bdi` chose for itself has ever closed
+/// over an agent or an anomaly.
+fn live_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
+    beneath(children, at)
+        .into_iter()
+        .any(|node| !quiet(&tree.nodes[node]))
+}
+
 /// Whether the branch at `at` is finished: every bead in it closed, no agent
 /// anywhere in it, no anomaly anywhere in it.
 ///
@@ -825,8 +910,7 @@ fn children_of(nodes: &[Node]) -> Vec<Vec<usize>> {
 fn finished(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
     let node = &tree.nodes[at];
     node.status.is_closed()
-        && node.agent.is_none()
-        && node.anomalies.is_empty()
+        && quiet(node)
         && children[at]
             .iter()
             .all(|kid| finished(tree, children, *kid))
@@ -1003,6 +1087,24 @@ mod tests {
        "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
     ]"#;
 
+    /// A spine four beads deep, with a quiet branch of its own beside it.
+    /// Nothing in it is closed, in progress or staffed, so the only thing
+    /// that can open a fold in it is a pane the test puts on a bead.
+    const TOWER: &str = r#"[
+      {"id":"tow-1","title":"raise the tower","status":"open","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"tow-1.1","title":"stand the mast","status":"open","parent_id":"tow-1",
+       "priority":2,"issue_type":"task"},
+      {"id":"tow-1.1.1","title":"bolt the sections","status":"open","parent_id":"tow-1.1",
+       "priority":2,"issue_type":"task"},
+      {"id":"tow-1.1.1.1","title":"dress the cables","status":"open","parent_id":"tow-1.1.1",
+       "priority":2,"issue_type":"task"},
+      {"id":"tow-1.2","title":"pour the base","status":"open","parent_id":"tow-1",
+       "priority":2,"issue_type":"task"},
+      {"id":"tow-1.2.1","title":"tie the rebar","status":"open","parent_id":"tow-1.2",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// `w:p3` and `w:p4` both name `orb-7.1`, so neither holds it; `w:p9` is
     /// working in the project whose tracker refused; `w:pF` is under no
     /// configured project at all.
@@ -1177,8 +1279,11 @@ credential_command = "secret harbour"
         }
     }
 
+    /// Depot with someone on `dep-1.1`, which is what opens its root: every
+    /// other bead in it is finished, and a tree with nothing live in it rests
+    /// as its header.
     fn depot() -> Snapshot {
-        gather(vec![tree_of("orbital", DEPOT)], Vec::new(), Filter::All)
+        alone("orbital", DEPOT, &panes_on(&["dep-1.1"]))
     }
 
     /// One project's tree, joined against its own rows so that a pane the
@@ -1247,18 +1352,20 @@ credential_command = "secret harbour"
                 "▾ orbital · orb-7",
                 "  ├── ! Dangling(1)",
                 "  ├── ! Truncated(1)",
-                "  ├── ○ .1 re-point the dish",
-                "  │   ├── ○ .1.1 true the mount",
-                "  │   └── ○ .1.2 seal the feed horn",
+                "  ├── ▸ ○ .1 re-point the dish",
                 "  ├── ○ .7 log the survey marks",
                 "  ├── ✓ .4 clear the access road",
                 "  └── ▸ … 3 more",
                 "▸ ferry · fer-2",
                 "▸ [FailedProjects] 1",
-                "▸ [Unconfigured] 1",
-                "▸ [Conflicts] 1",
+                "▾ [Unconfigured] 1",
+                "  └── - Unconfigured(UnconfiguredPane { pane: \"w:pF\", cwd: \"/srv/spike\", pane_status: Idle })",
+                "▾ [Conflicts] 1",
+                "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"orbital\", id: \"orb-7.1\" }, panes: [\"w:p3\", \"w:p4\"] })",
                 "▸ [HiddenTrees] 1",
-                "▸ [Unattributed] 2",
+                "▾ [Unattributed] 2",
+                "  ├── - Loose(LoosePane { pane: \"w:p3\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working })",
+                "  └── - Loose(LoosePane { pane: \"w:p4\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle })",
             ]
         );
     }
@@ -1272,15 +1379,16 @@ credential_command = "secret harbour"
         assert_eq!(forest.selected(), Some(&key("orbital", "orb-7")));
     }
 
+    /// The fold state is the user's and the live work's, and moving is
+    /// neither: walking out of a tree leaves it exactly as it was drawn.
     #[test]
-    fn a_root_is_expanded_only_while_the_selection_is_inside_it() {
+    fn a_root_stays_as_it_was_when_the_selection_walks_out_of_it() {
         let mut forest = flatten(&snapshot());
-        let opened = forest.lines().len();
+        let was = sketch(&forest);
 
         forest.apply(Action::Move(Motion::LastRow));
 
-        assert!(forest.lines().len() < opened, "{:#?}", sketch(&forest));
-        assert!(!sketch(&forest).iter().any(|line| line.contains(".1.1")));
+        assert_eq!(sketch(&forest), was);
     }
 
     /// Compared on content alone: folding also redraws the header's marker
@@ -1300,8 +1408,6 @@ credential_command = "secret harbour"
             gone,
             vec![
                 "○ .1 re-point the dish",
-                "○ .1.1 true the mount",
-                "○ .1.2 seal the feed horn",
                 "○ .7 log the survey marks",
                 "✓ .4 clear the access road",
                 "… 3 more",
@@ -1348,6 +1454,168 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A working pane in Orbital on each of `on`. Each pane names its bead,
+    /// which is how a bead carrying no configured key gets its agent, so a
+    /// fixture is staffed by naming the beads someone is on.
+    fn panes_on(on: &[&str]) -> Vec<Pane> {
+        let agents: Vec<String> = on
+            .iter()
+            .map(|id| {
+                format!(
+                    r#"{{"pane_id":"w:{id}","cwd":"/srv/work/orbital",
+                       "agent_status":"working","display_agent":"{id}"}}"#
+                )
+            })
+            .collect();
+        parse_agent_list(&format!(
+            r#"{{"result":{{"agents":[{}]}}}}"#,
+            agents.join(",")
+        ))
+        .expect("the panes parse")
+    }
+
+    fn tower_staffed(on: &[&str]) -> Snapshot {
+        alone("orbital", TOWER, &panes_on(on))
+    }
+
+    /// Open one node by hand, the way a user reaching past the default does.
+    fn open(forest: &mut Forest, bead: &BeadKey) {
+        select(forest, bead);
+        if fold_of(forest, &bead.id) == Some(false) {
+            forest.apply(Action::ToggleFold);
+        }
+    }
+
+    /// Whether the line for one bead is open, shut, or has no fold at all.
+    fn fold_of(forest: &Forest, id: &str) -> Option<bool> {
+        forest
+            .lines()
+            .iter()
+            .find(|line| line.bead.as_ref().is_some_and(|key| key.id == id))
+            .unwrap_or_else(|| panic!("{id} is not drawn"))
+            .folded
+    }
+
+    /// The default the bead is about: the first screen is the live work and
+    /// the path down to it. Four quiet forebears open because one bead at the
+    /// bottom is being worked; the quiet branch beside them stays shut.
+    #[test]
+    fn the_default_opens_every_forebear_of_a_live_agent_and_nothing_else() {
+        let forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital · tow-1",
+                "  ├── ○ .1 stand the mast",
+                "  │   └── ○ .1.1 bolt the sections",
+                "  │       └── ○ .1.1.1 dress the cables",
+                "  └── ▸ ○ .2 pour the base",
+            ]
+        );
+        for forebear in ["tow-1", "tow-1.1", "tow-1.1.1"] {
+            assert_eq!(fold_of(&forest, forebear), Some(true), "{forebear} is shut");
+        }
+        assert_eq!(fold_of(&forest, "tow-1.2"), Some(false));
+    }
+
+    /// The other half of the same rule. A tree nobody is working holds no
+    /// spine to open, so it rests as the one line saying it is there.
+    #[test]
+    fn a_tree_with_nothing_live_in_it_rests_as_its_header() {
+        let forest = flatten(&tower_staffed(&[]));
+
+        assert_eq!(sketch(&forest), vec!["▸ orbital · tow-1"]);
+    }
+
+    /// A default, not a lock: the user shuts a node holding an agent and it
+    /// stays shut, refresh after refresh, for as long as what is under there
+    /// is what they folded away.
+    #[test]
+    fn a_fold_set_by_hand_survives_a_refresh_that_brings_nothing_new_under_it() {
+        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        select(&mut forest, &key("orbital", "tow-1.1"));
+        forest.apply(Action::ToggleFold);
+
+        forest.refresh(&tower_staffed(&["tow-1.1.1.1"]));
+
+        assert_eq!(fold_of(&forest, "tow-1.1"), Some(false));
+        assert!(
+            !sketch(&forest).iter().any(|line| line.contains(".1.1")),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Work dying down is not news, so it re-opens nothing the user shut.
+    /// The agent moves to the other branch, which is what keeps the tree
+    /// open for the shut one to still be drawn under.
+    #[test]
+    fn a_fold_set_by_hand_outlives_the_work_it_was_shut_over_going_away() {
+        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        select(&mut forest, &key("orbital", "tow-1.1"));
+        forest.apply(Action::ToggleFold);
+
+        forest.refresh(&tower_staffed(&["tow-1.2.1"]));
+
+        assert_eq!(fold_of(&forest, "tow-1.1"), Some(false));
+    }
+
+    /// The hard half. A fold says *I have seen what is under here and do not
+    /// want it*, which stops being true the moment something new is under it,
+    /// so an agent arriving on a bead the user never folded away hands the
+    /// node back to the default.
+    #[test]
+    fn a_fold_set_by_hand_is_spent_when_live_work_arrives_beneath_it() {
+        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        select(&mut forest, &key("orbital", "tow-1.1"));
+        forest.apply(Action::ToggleFold);
+
+        forest.refresh(&tower_staffed(&["tow-1.1.1.1", "tow-1.1.1"]));
+
+        assert_eq!(fold_of(&forest, "tow-1.1"), Some(true));
+        assert!(
+            sketch(&forest)
+                .iter()
+                .any(|line| line.contains(".1.1.1 dress the cables")),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The default reads the agents, not which trees are drawn, so dropping
+    /// the filter adds trees below and changes no fold above.
+    #[test]
+    fn dropping_the_filter_leaves_the_default_fold_state_alone() {
+        let mut forest = flatten(&snapshot());
+        let staffed: Vec<String> = sketch(&forest)
+            .into_iter()
+            .take_while(|line| !line.contains("ferry"))
+            .collect();
+
+        forest.apply(Action::ToggleFilter);
+
+        assert_eq!(sketch(&forest)[..staffed.len()], staffed[..]);
+    }
+
+    /// A group over live panes is a fold `bdi` chose, and a count is not a
+    /// view of what it holds: it says they exist and nothing about which they
+    /// are. What collection and the filter did is a report, and rests shut.
+    #[test]
+    fn a_group_rests_open_when_what_it_holds_is_live() {
+        let forest = flatten(&snapshot());
+        let markers: Vec<&str> = forest
+            .lines()
+            .iter()
+            .filter_map(|line| match &line.content {
+                Content::Group(_) => Some(marker(line.folded == Some(true))),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(markers, vec![SHUT, OPEN, OPEN, SHUT, OPEN]);
+    }
+
     #[test]
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
         let forest = flatten(&snapshot());
@@ -1373,20 +1641,19 @@ credential_command = "secret harbour"
 
         forest.apply(Action::ToggleFold);
 
+        let drawn = sketch(&forest);
+        let from_the_run: Vec<&String> = drawn
+            .iter()
+            .skip_while(|line| !line.contains("… 3 more"))
+            .collect();
+
         assert_eq!(
-            sketch(&forest)[7..],
+            from_the_run[..4],
             [
-                "  ├── ✓ .4 clear the access road",
                 "  └── … 3 more",
                 "      ├── ✓ .2 survey the mast",
                 "      ├── ✓ .3 pour the pad",
                 "      └── ✓ .5 set the guard rail",
-                "▸ ferry · fer-2",
-                "▸ [FailedProjects] 1",
-                "▸ [Unconfigured] 1",
-                "▸ [Conflicts] 1",
-                "▸ [HiddenTrees] 1",
-                "▸ [Unattributed] 2",
             ]
         );
     }
@@ -1452,7 +1719,7 @@ credential_command = "secret harbour"
     fn a_bead_with_no_children_has_no_progress_to_report() {
         let forest = flatten(&snapshot());
 
-        assert_eq!(row_of(&forest, "orb-7.1.1").progress, None);
+        assert_eq!(row_of(&forest, "orb-7.7").progress, None);
     }
 
     /// A run is drawn with one status glyph standing for every bead it hides,
@@ -1731,12 +1998,13 @@ credential_command = "secret harbour"
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"closed"#,
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"open"#,
         );
-        alone("orbital", &json, &[])
+        alone("orbital", &json, &panes_on(&["dep-1.1"]))
     }
 
     #[test]
     fn the_selection_survives_a_refresh_that_reorders_the_nodes() {
         let mut forest = flatten(&snapshot());
+        open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
         let was = forest.selected_line();
 
@@ -1757,6 +2025,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_refresh_that_drops_the_selected_bead_falls_back_to_its_parent() {
         let mut forest = flatten(&snapshot());
+        open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
 
         let without = ORBITAL.replace(
@@ -1776,6 +2045,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_refresh_that_drops_the_selected_bead_leaves_the_selection_somewhere_real() {
         let mut forest = flatten(&snapshot());
+        open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
 
         forest.refresh(&gather(
@@ -1810,7 +2080,7 @@ credential_command = "secret harbour"
     #[test]
     fn collapsing_an_expanded_node_and_then_collapsing_again_moves_to_its_parent() {
         let mut forest = flatten(&snapshot());
-        select(&mut forest, &key("orbital", "orb-7.1"));
+        open(&mut forest, &key("orbital", "orb-7.1"));
 
         assert!(forest.apply(Action::CollapseOrParent));
         assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1")));
@@ -1823,7 +2093,7 @@ credential_command = "secret harbour"
     #[test]
     fn expanding_a_collapsed_node_and_then_expanding_again_moves_to_its_first_child() {
         let mut forest = flatten(&snapshot());
-        select(&mut forest, &key("orbital", "orb-7.1"));
+        open(&mut forest, &key("orbital", "orb-7.1"));
         forest.apply(Action::CollapseOrParent);
 
         assert!(forest.apply(Action::ExpandOrChild));
@@ -1836,6 +2106,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_leaf_has_no_child_to_move_to_and_no_fold_to_collapse() {
         let mut forest = flatten(&snapshot());
+        open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.1"));
 
         assert!(!forest.apply(Action::ExpandOrChild));
@@ -1975,16 +2246,19 @@ credential_command = "secret harbour"
     #[test]
     fn a_group_draws_one_line_for_each_thing_it_holds_when_it_is_opened() {
         let mut forest = flatten(&snapshot());
-        select(&mut forest, &key("orbital", "orb-7"));
-        forest.apply(Action::ToggleFold);
+        let loose = |forest: &Forest| {
+            sketch(forest)
+                .iter()
+                .filter(|line| line.contains("Loose"))
+                .count()
+        };
         forest.apply(Action::Move(Motion::LastRow));
 
         assert!(forest.apply(Action::ToggleFold));
+        assert_eq!(loose(&forest), 0, "{:#?}", sketch(&forest));
 
-        let drawn = sketch(&forest);
-        let items = drawn.iter().filter(|line| line.contains("Loose")).count();
-
-        assert_eq!(items, 2, "{drawn:#?}");
+        assert!(forest.apply(Action::ToggleFold));
+        assert_eq!(loose(&forest), 2, "{:#?}", sketch(&forest));
     }
 
     /// The panes under no configured project open into their own directories,

@@ -1758,7 +1758,7 @@ mod tests {
     /// frame is what says the forest was told how tall it is.
     #[test]
     fn a_frame_tells_the_forest_how_far_a_half_screen_is() {
-        let mut forest = forest::flatten(&a_grove(30));
+        let mut forest = an_open_grove(30);
 
         forest.apply(Action::Move(Motion::HalfScreenDown));
         assert_eq!(
@@ -1767,7 +1767,7 @@ mod tests {
             "the forest's own default, until a frame has been drawn"
         );
 
-        let mut forest = forest::flatten(&a_grove(30));
+        let mut forest = an_open_grove(30);
         painted(
             &mut forest,
             &Tail::Silent("nothing to tail"),
@@ -1796,6 +1796,15 @@ mod tests {
         fn focus(&self, _pane: &str) -> Result<(), RunFailure> {
             Ok(())
         }
+    }
+
+    /// The grove with its root opened by hand. Nobody is working in it and
+    /// nothing is wrong with it, so the fold default rests it as its header,
+    /// and what these tests are about is the rows under it.
+    fn an_open_grove(beads: usize) -> forest::Forest {
+        let mut forest = forest::flatten(&a_grove(beads));
+        forest.apply(Action::ToggleFold);
+        forest
     }
 
     fn shown(snapshot: Snapshot) -> Shown {
@@ -1840,6 +1849,7 @@ mod tests {
     #[test]
     fn a_refresh_that_reorders_around_the_selection_keeps_it_on_its_bead() {
         let mut shown = shown(a_grove(6));
+        shown.apply(Action::ExpandOrChild);
         shown.apply(Action::Move(Motion::LastRow));
         let was = shown.forest.selected_line();
 
@@ -1900,7 +1910,7 @@ mod tests {
 
     #[test]
     fn a_frame_puts_the_tail_in_the_band_reserved_for_it() {
-        let mut forest = forest::flatten(&a_grove(30));
+        let mut forest = an_open_grove(30);
         let tail = Tail::Pane {
             pane: "w:p1".to_string(),
             lines: vec!["rebuilt .#thinkpad".to_string()],

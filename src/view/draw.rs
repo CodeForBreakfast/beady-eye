@@ -1973,6 +1973,15 @@ mod tests {
         }
     }
 
+    /// A forest with its first tree opened by hand. Nothing in these fixtures
+    /// is staffed, so the fold default rests every tree as its header, and
+    /// what these tests are about is the rows under one.
+    fn opened(snapshot: &Snapshot) -> Forest {
+        let mut forest = flatten(snapshot);
+        forest.apply(Action::ToggleFold);
+        forest
+    }
+
     fn frame_of(forest: &Forest, width: u16, height: u16) -> Vec<String> {
         frame_with(forest, &[], width, height)
     }
@@ -1992,7 +2001,7 @@ mod tests {
     /// reserved tail, and the foot.
     #[test]
     fn a_frame_is_the_forest_the_tails_reserved_band_and_the_foot() {
-        let forest = flatten(&snapshot(
+        let forest = opened(&snapshot(
             vec![grove(2)],
             Vec::new(),
             HerdrState::Unavailable,
@@ -2021,7 +2030,7 @@ mod tests {
     /// because nothing above the foot is wrong.
     #[test]
     fn a_socket_that_would_not_open_is_said_at_the_foot_of_the_frame() {
-        let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
 
         assert_eq!(
             frame_with(&forest, &[Notice::NoInboundChannel], 80, 10),
@@ -2045,7 +2054,7 @@ mod tests {
     /// matches the line count in the forest.
     #[test]
     fn a_narrow_frame_cuts_every_row_and_wraps_none() {
-        let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
         let frame = frame_of(&forest, 24, 10);
 
         assert_eq!(
@@ -2099,7 +2108,7 @@ mod tests {
 
         assert_eq!(
             frame_of(&forest, 75, 4)[0],
-            "▾ summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
+            "▸ summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
         );
     }
 
