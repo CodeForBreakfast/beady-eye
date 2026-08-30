@@ -42,8 +42,18 @@ jobs:
             grep -E '/[a-z0-9]+-beads-[^/]*\.drv$')
           test "${#drvs[@]}" -gt 0
 
+          # --outputs answers from the derivation, so it names paths that were
+          # never realised: once bd itself substitutes, nothing builds its
+          # module closure and that output is not on this machine to push.
           mapfile -t paths < <(nix-store -q --outputs "${drvs[@]}")
-          printf 'seeding %s\n' "${paths[@]}"
+          seed=()
+          for path in "${paths[@]}"; do
+            if nix-store --check-validity "$path" 2>/dev/null; then
+              seed+=("$path")
+            fi
+          done
+          test "${#seed[@]}" -gt 0
+          printf 'seeding %s\n' "${seed[@]}"
 
           # --inputs-from takes attic from this flake's locked nixpkgs. A bare
           # nixpkgs# resolves through the installer's registry to a weekly
@@ -51,4 +61,4 @@ jobs:
           attic() { nix run --inputs-from . nixpkgs#attic-client -- "$@"; }
 
           attic login homelab https://cache.example.invalid "$ATTIC_TOKEN"
-          attic push homelab "${paths[@]}"
+          attic push homelab "${seed[@]}"
