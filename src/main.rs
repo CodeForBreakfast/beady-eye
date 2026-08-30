@@ -1,16 +1,21 @@
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 
-use beady_eye::collect::run::RealRunner;
+use beady_eye::collect::run::{RealRunner, Runner};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
+
+/// The variable that names the project when no config file names one. commy
+/// resolves a project the same way, so a name set once reaches both.
+const PROJECT_IN_THE_ENVIRONMENT: &str = "COMMY_PROJECT";
 
 /// The interactive view is a plan of its own, so until it lands `--json` is
 /// the only thing `bdi` can draw.
@@ -19,9 +24,14 @@ const NO_VIEW_YET: u8 = 2;
 #[derive(Parser)]
 #[command(name = "bdi", version, about = "A tree of work in flight")]
 struct Cli {
-    /// Read the configuration from this file.
-    #[arg(long, default_value = DEFAULT_CONFIG)]
-    config: String,
+    /// Draw the tree this bead roots, alongside the trees bdi discovers.
+    #[arg(value_name = "BEAD-ID")]
+    beads: Vec<String>,
+
+    /// Read the configuration from this file, rather than
+    /// ~/.config/beady-eye/config.toml.
+    #[arg(long)]
+    config: Option<String>,
 
     /// Emit the snapshot as JSON.
     #[arg(long)]
@@ -35,10 +45,12 @@ struct Cli {
 fn main() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
 
-    let path = expand_tilde(&cli.config, std::env::var_os("HOME").map(PathBuf::from));
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading the config at {}", path.display()))?;
-    let cfg = Config::from_toml(&text)?;
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let cfg = match &cli.config {
+        Some(named) => read_config(&expand_tilde(named, home)),
+        None => config_for_wherever_bdi_was_run(&RealRunner, &expand_tilde(DEFAULT_CONFIG, home)),
+    }?;
+    let cfg = with_roots_named_on_the_command_line(cfg, &cli.beads);
 
     let filter = if cli.all {
         Filter::All
@@ -54,6 +66,43 @@ fn main() -> anyhow::Result<ExitCode> {
 
     println!("{}", serde_json::to_string_pretty(&snapshot)?);
     Ok(ExitCode::SUCCESS)
+}
+
+/// A path the user named is read as written: a config that is not there is an
+/// error, never a reason to look somewhere else.
+fn read_config(path: &Path) -> anyhow::Result<Config> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading the config at {}", path.display()))?;
+    Config::from_toml(&text)
+}
+
+/// The config, or — where there is no config file at all — the repository the
+/// current directory sits in. Only an absent file falls back; one that is
+/// there and will not open is still an error.
+fn config_for_wherever_bdi_was_run(runner: &dyn Runner, path: &Path) -> anyhow::Result<Config> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Config::from_toml(&text),
+        Err(absent) if absent.kind() == ErrorKind::NotFound => {
+            let cwd = std::env::current_dir().context("finding the current directory")?;
+            let named = std::env::var(PROJECT_IN_THE_ENVIRONMENT).ok();
+            Config::from_the_current_directory(runner, &cwd, named.as_deref()).with_context(|| {
+                format!(
+                    "there is no config at {}, so bdi read the current directory",
+                    path.display()
+                )
+            })
+        }
+        Err(unreadable) => {
+            Err(unreadable).with_context(|| format!("reading the config at {}", path.display()))
+        }
+    }
+}
+
+/// Roots named on the command line join those named in config: discovery rule
+/// 3 has two spellings and one meaning.
+fn with_roots_named_on_the_command_line(mut cfg: Config, beads: &[String]) -> Config {
+    cfg.roots.explicit.extend(beads.iter().cloned());
+    cfg
 }
 
 /// `~` belongs to the shell, so a config path written with one is expanded
@@ -73,6 +122,45 @@ mod tests {
     #[test]
     fn the_command_line_is_well_formed() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn no_config_is_named_unless_one_is_asked_for() {
+        assert_eq!(Cli::parse_from(["bdi"]).config, None);
+    }
+
+    #[test]
+    fn a_config_named_on_the_command_line_is_taken_as_written() {
+        let cli = Cli::parse_from(["bdi", "--config", "/etc/beady-eye.toml"]);
+
+        assert_eq!(cli.config.as_deref(), Some("/etc/beady-eye.toml"));
+    }
+
+    #[test]
+    fn bead_ids_are_taken_as_arguments() {
+        let cli = Cli::parse_from(["bdi", "orb-7", "orb-9", "--json"]);
+
+        assert_eq!(cli.beads, ["orb-7", "orb-9"]);
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn roots_named_on_the_command_line_join_those_named_in_config() {
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+
+[roots]
+explicit = ["orb-4"]
+"#,
+        )
+        .expect("the config parses");
+
+        let cfg = with_roots_named_on_the_command_line(cfg, &["orb-7".to_string()]);
+
+        assert_eq!(cfg.roots.explicit, ["orb-4", "orb-7"]);
     }
 
     #[test]

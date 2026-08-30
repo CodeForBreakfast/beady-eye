@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use crate::collect::run::{Env, FailureKind, Runner};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Config {
@@ -88,6 +90,48 @@ impl Config {
         Ok(cfg)
     }
 
+    /// The single project `bdi` reads when no config file names one: the
+    /// repository the current directory sits in, on the ambient credential.
+    ///
+    /// bd and git are asked where their own things are rather than walked for
+    /// here, so `BEADS_DIR`, a redirect or a worktree resolves the way it does
+    /// for any other command run in the same place.
+    pub fn from_the_current_directory(
+        runner: &dyn Runner,
+        cwd: &Path,
+        name_from_the_environment: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        if let Err(failure) = runner.run("bd", &["where", "--json"], Some(cwd), &Env::new()) {
+            // bd that never ran has said nothing about this directory.
+            if failure.kind == FailureKind::Exec {
+                return Err(failure.into());
+            }
+            anyhow::bail!("{} is not in anything beads tracks", cwd.display());
+        }
+
+        let root = git(runner, cwd, &["rev-parse", "--show-toplevel"])
+            .map_or_else(|| cwd.to_path_buf(), PathBuf::from);
+        let name = name_from_the_environment
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                git(runner, cwd, &["remote", "get-url", "origin"]).map(|url| repository_name(&url))
+            })
+            .unwrap_or_else(|| directory_name(&root));
+
+        Ok(Self {
+            projects: vec![Project {
+                name,
+                path: root,
+                credential_command: None,
+            }],
+            roots: Roots::default(),
+            badges: Vec::new(),
+            anomalies: Anomalies::default(),
+            join: Join::default(),
+        })
+    }
+
     fn projects_on_the_ambient_credential(&self) -> Vec<&str> {
         self.projects
             .iter()
@@ -95,6 +139,29 @@ impl Config {
             .map(|p| p.name.as_str())
             .collect()
     }
+}
+
+/// One line of git's answer, or nothing where git has none to give: no
+/// repository, no remote, or no git at all.
+fn git(runner: &dyn Runner, cwd: &Path, args: &[&str]) -> Option<String> {
+    let said = runner.run("git", args, Some(cwd), &Env::new()).ok()?;
+    let line = said.trim();
+    (!line.is_empty()).then(|| line.to_string())
+}
+
+/// The repository a remote URL names, in any of the spellings git accepts:
+/// `git@host:owner/name.git`, `https://host/owner/name`, `/srv/git/name.git`.
+fn repository_name(url: &str) -> String {
+    let named = url.trim_end_matches('/');
+    let named = named.rsplit(['/', ':']).next().unwrap_or(named);
+    named.trim_end_matches(".git").to_string()
+}
+
+/// What a directory is called, or its whole path where it is called nothing.
+fn directory_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 impl Badge {
@@ -113,6 +180,9 @@ impl Badge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::run::testing::FakeRunner;
+    use crate::collect::run::{FailureKind, RunFailure};
+    use std::path::Path;
 
     const EVERY_SECTION: &str = r#"
 [[projects]]
@@ -294,5 +364,189 @@ path = "/home/user/dev/cinder"
         };
         assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
         assert_eq!(b.apply("dependency"), None);
+    }
+
+    /// A repository beads tracks, as bd and git answer for it. The remote and
+    /// the directory disagree deliberately, so a test can tell which was read.
+    fn a_tracked_repository() -> FakeRunner {
+        FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
+            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .with(
+                "git remote get-url origin",
+                "git@github.com:pilot/ground-station.git\n",
+            )
+    }
+
+    fn no_such_repository() -> RunFailure {
+        RunFailure {
+            kind: FailureKind::Unavailable,
+            program: "git".to_string(),
+            detail: "git exited 128 for a reason bdi cannot place".to_string(),
+        }
+    }
+
+    #[test]
+    fn the_repository_the_directory_sits_in_becomes_the_one_project() {
+        let cfg = Config::from_the_current_directory(
+            &a_tracked_repository(),
+            Path::new("/srv/work/orbital/src"),
+            None,
+        )
+        .expect("the repository is a project");
+
+        assert_eq!(
+            cfg.projects,
+            vec![Project {
+                name: "ground-station".to_string(),
+                path: PathBuf::from("/srv/work/orbital"),
+                credential_command: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_synthesised_project_gets_every_other_default() {
+        let cfg = Config::from_the_current_directory(
+            &a_tracked_repository(),
+            Path::new("/srv/work/orbital"),
+            None,
+        )
+        .expect("the repository is a project");
+
+        assert_eq!(cfg.roots, Roots::default());
+        assert!(cfg.badges.is_empty());
+        assert_eq!(cfg.anomalies.stale_claim_days, 30);
+        assert_eq!(cfg.join.pane_key, "agent_pane");
+    }
+
+    #[test]
+    fn the_environment_names_the_project_ahead_of_git() {
+        let cfg = Config::from_the_current_directory(
+            &a_tracked_repository(),
+            Path::new("/srv/work/orbital"),
+            Some("atlas"),
+        )
+        .expect("the repository is a project");
+
+        assert_eq!(cfg.projects[0].name, "atlas");
+    }
+
+    #[test]
+    fn an_empty_name_in_the_environment_is_no_name_at_all() {
+        let cfg = Config::from_the_current_directory(
+            &a_tracked_repository(),
+            Path::new("/srv/work/orbital"),
+            Some(""),
+        )
+        .expect("the repository is a project");
+
+        assert_eq!(cfg.projects[0].name, "ground-station");
+    }
+
+    #[test]
+    fn a_repository_with_no_remote_is_named_by_its_directory() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
+            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .failing("git remote get-url origin", no_such_repository());
+
+        let cfg = Config::from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+            .expect("the repository is a project");
+
+        assert_eq!(cfg.projects[0].name, "orbital");
+    }
+
+    #[test]
+    fn every_spelling_of_a_remote_names_the_same_project() {
+        for url in [
+            "git@github.com:pilot/ground-station.git",
+            "https://github.com/pilot/ground-station.git",
+            "https://github.com/pilot/ground-station",
+            "ssh://git@host/~pilot/ground-station.git/",
+            "/srv/git/ground-station.git",
+        ] {
+            let runner = FakeRunner::default()
+                .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
+                .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+                .with("git remote get-url origin", &format!("{url}\n"));
+
+            let cfg =
+                Config::from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+                    .expect("the repository is a project");
+
+            assert_eq!(cfg.projects[0].name, "ground-station", "from {url}");
+        }
+    }
+
+    /// `BEADS_DIR` reaches a tracker from anywhere, so a directory in no
+    /// repository is still worth reading; it is just its own project.
+    #[test]
+    fn a_tracker_outside_any_repository_is_read_from_where_bdi_was_run() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/srv/beads/.beads"}"#)
+            .failing("git rev-parse --show-toplevel", no_such_repository())
+            .failing("git remote get-url origin", no_such_repository());
+
+        let cfg = Config::from_the_current_directory(&runner, Path::new("/srv/loose"), None)
+            .expect("the directory is a project");
+
+        assert_eq!(
+            cfg.projects,
+            vec![Project {
+                name: "loose".to_string(),
+                path: PathBuf::from("/srv/loose"),
+                credential_command: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_directory_beads_does_not_track_is_reported() {
+        let runner = FakeRunner::default().failing(
+            "bd where --json",
+            RunFailure {
+                kind: FailureKind::Unavailable,
+                program: "bd".to_string(),
+                detail: "bd exited 1 for a reason bdi cannot place".to_string(),
+            },
+        );
+
+        let err = Config::from_the_current_directory(&runner, Path::new("/srv/loose"), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("/srv/loose"), "got: {err}");
+        assert!(err.contains("beads"), "got: {err}");
+    }
+
+    /// bd that never ran has said nothing about this directory, and telling
+    /// someone to move is the wrong answer to a missing binary.
+    #[test]
+    fn a_bd_that_cannot_run_says_so_rather_than_blaming_the_directory() {
+        let runner = FakeRunner::default().failing(
+            "bd where --json",
+            RunFailure::exec("bd", "No such file or directory (os error 2)"),
+        );
+
+        let err = Config::from_the_current_directory(&runner, Path::new("/srv/loose"), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("bd could not be run"), "got: {err}");
+        assert!(!err.contains("/srv/loose"), "got: {err}");
+    }
+
+    #[test]
+    fn the_tracker_is_probed_where_bdi_was_run() {
+        let runner = a_tracked_repository();
+
+        Config::from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
+            .expect("the repository is a project");
+
+        assert_eq!(
+            runner.call("bd where --json").cwd,
+            Some(PathBuf::from("/srv/work/orbital/src"))
+        );
     }
 }
