@@ -309,22 +309,22 @@ mod tests {
 
     #[test]
     fn dep_tree_asks_bd_in_the_projects_directory_with_its_credential() {
-        let runner = FakeRunner::default().with("bd dep tree nix-1 --direction=up --json", FIXTURE);
+        let runner = FakeRunner::default().with("bd dep tree p-1 --direction=up --json", FIXTURE);
 
-        let beads = dep_tree(&runner, &project_dir(), &credentialled(), "nix-1").unwrap();
+        let beads = dep_tree(&runner, &project_dir(), &credentialled(), "p-1").unwrap();
 
         assert_eq!(beads.len(), 6);
-        let call = runner.call("bd dep tree nix-1 --direction=up --json");
+        let call = runner.call("bd dep tree p-1 --direction=up --json");
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
         assert_eq!(call.env, credentialled());
     }
 
     #[test]
     fn discovery_unions_statuses_and_metadata_keys_without_duplicates() {
-        let in_flight = r#"[{"id":"nix-1.16","title":"a","status":"in_progress"}]"#;
-        let stuck = r#"[{"id":"nix-1.1","title":"b","status":"blocked"}]"#;
+        let in_flight = r#"[{"id":"p-1.16","title":"a","status":"in_progress"}]"#;
+        let stuck = r#"[{"id":"p-1.1","title":"b","status":"blocked"}]"#;
         // The metadata query returns a bead the status query already found.
-        let carrying_the_key = r#"[{"id":"nix-1.16","title":"a","status":"in_progress"}]"#;
+        let carrying_the_key = r#"[{"id":"p-1.16","title":"a","status":"in_progress"}]"#;
 
         let runner = FakeRunner::default()
             .with("bd list --status in_progress --limit 0 --json", in_flight)
@@ -343,7 +343,7 @@ mod tests {
         .unwrap();
 
         let ids: Vec<&str> = got.iter().map(|b| b.id.as_str()).collect();
-        assert_eq!(ids, vec!["nix-1.1", "nix-1.16"]);
+        assert_eq!(ids, vec!["p-1.1", "p-1.16"]);
 
         let call = runner.call("bd list --status blocked --limit 0 --json");
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
@@ -352,44 +352,44 @@ mod tests {
 
     #[test]
     fn ready_ids_returns_the_set_bd_considers_startable() {
-        let out = r#"[{"id":"nix-1.1","title":"a","status":"open"},
-                      {"id":"nix-1.3","title":"b","status":"open"}]"#;
+        let out = r#"[{"id":"p-1.1","title":"a","status":"open"},
+                      {"id":"p-1.3","title":"b","status":"open"}]"#;
         let runner = FakeRunner::default().with("bd ready --limit 0 --json", out);
 
         let got = ready_ids(&runner, &project_dir(), &credentialled()).unwrap();
 
-        assert!(got.contains("nix-1.1"));
-        assert!(got.contains("nix-1.3"));
+        assert!(got.contains("p-1.1"));
+        assert!(got.contains("p-1.3"));
         assert!(
-            !got.contains("nix-1.4"),
+            !got.contains("p-1.4"),
             "a bead bd did not list is not ready"
         );
     }
 
-    /// The shape measured on this repo's own tracker: bdi-3um.9 is blocked by
-    /// two beads and its dep-tree row names only one of them.
+    /// The shape a real tracker produces: a bead blocked by two beads, whose
+    /// dep-tree row names only one of them.
     #[test]
     fn blocked_by_carries_every_blocker_not_only_the_one_the_tree_shows() {
-        let out = r#"[{"id":"bdi-3um.9","title":"a","status":"blocked","blocked_by_count":2,
-                       "blocked_by":["bdi-3um.2","bdi-3um.5"]},
-                      {"id":"bdi-3um.11","title":"b","status":"open","blocked_by_count":1,
-                       "blocked_by":["bdi-3um.10"]}]"#;
+        let out = r#"[{"id":"p-1.9","title":"a","status":"blocked","blocked_by_count":2,
+                       "blocked_by":["p-1.2","p-1.5"]},
+                      {"id":"p-1.11","title":"b","status":"open","blocked_by_count":1,
+                       "blocked_by":["p-1.10"]}]"#;
         let runner = FakeRunner::default().with("bd blocked --json", out);
 
         let got = blocked_by(&runner, &project_dir(), &credentialled()).unwrap();
 
         assert_eq!(
-            got.get("bdi-3um.9").map(Vec::as_slice),
-            Some(["bdi-3um.2".to_string(), "bdi-3um.5".to_string()].as_slice())
+            got.get("p-1.9").map(Vec::as_slice),
+            Some(["p-1.2".to_string(), "p-1.5".to_string()].as_slice())
         );
         assert_eq!(got.len(), 2);
-        assert_eq!(got.get("nix-1.1"), None);
+        assert_eq!(got.get("p-1.1"), None);
     }
 
     #[test]
     fn a_tracker_that_refuses_the_credential_reaches_the_caller_classified() {
         let runner = FakeRunner::default().failing(
-            "bd dep tree nix-1 --direction=up --json",
+            "bd dep tree p-1 --direction=up --json",
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
@@ -397,7 +397,7 @@ mod tests {
             },
         );
 
-        let failure = dep_tree(&runner, &project_dir(), &credentialled(), "nix-1").unwrap_err();
+        let failure = dep_tree(&runner, &project_dir(), &credentialled(), "p-1").unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Auth);
     }

@@ -77,7 +77,7 @@ mod tests {
 
     fn pane(pane_status: PaneStatus) -> AgentRef {
         AgentRef {
-            pane: "wCM:p1".into(),
+            pane: "w:p1".into(),
             pane_status,
             title: None,
             source: JoinSource::AgentPane,

@@ -290,9 +290,7 @@ mod tests {
     const BEADS: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
     const PANES: &str = include_str!("../../tests/fixtures/herdr_agent_list.json");
 
-    /// The captured fixtures are real, so the path a fixture pane sits in
-    /// has to be the real one for a project to contain it.
-    const BEADY_EYE: &str = "/tmp/bdi-ground/beady-eye";
+    const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/beady-eye";
 
     fn project(name: &str, path: &str) -> Project {
         Project {
@@ -441,7 +439,7 @@ mod tests {
     fn a_pane_naming_its_bead_resolves_as_inferred() {
         let beads = rows(BEADS);
         let live = parse_agent_list(PANES).expect("the fixture parses");
-        let cfg = vec![project("beady-eye", BEADY_EYE)];
+        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
@@ -544,7 +542,7 @@ mod tests {
     fn a_pane_in_no_configured_project_joins_nothing_and_is_unattributed() {
         let beads = rows(BEADS);
         let live = parse_agent_list(PANES).expect("the fixture parses");
-        let cfg = vec![project("beady-eye", BEADY_EYE)];
+        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
