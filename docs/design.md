@@ -159,7 +159,11 @@ Roots come from bd, unioned and deduped:
 2. Beads carrying any metadata key named in `roots.metadata_keys` (see
    *Conventions are configuration*), likewise walked to their root. Empty by
    default.
-3. Roots named explicitly in config, or as `bdi <bead-id>` arguments.
+3. Roots named explicitly in config, or as `bdi <bead-id>` arguments. Both
+   carry the project whose tracker holds the bead, because the key is
+   `(project, id)`: config lists the ids under the project, and an argument is
+   written `<project>:<bead-id>` — bare where there is only one project, which
+   is the whole of a zero-config run.
 4. Any bead named by a live pane's `display_agent` that the first three missed.
    This is the only root herdr contributes, and it exists so an agent working
    off-tree still appears.
@@ -172,6 +176,9 @@ of them. Its config names which keys to notice:
 ```toml
 [roots]
 metadata_keys = ["working_topic"]      # presence marks a bead as live work
+
+[roots.explicit]                        # roots named outright, per tracker
+orbital = ["orb-7"]
 
 [[badges]]                              # rendered as a marker on the row
 key    = "delivery_pr"

@@ -25,6 +25,8 @@ const NO_VIEW_YET: u8 = 2;
 #[command(name = "bdi", version, about = "A tree of work in flight")]
 struct Cli {
     /// Draw the tree this bead roots, alongside the trees bdi discovers.
+    /// Write it as <project>:<bead-id> where the config names more than one
+    /// project; a bare id means the only project there is.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
 
@@ -50,7 +52,7 @@ fn main() -> anyhow::Result<ExitCode> {
         Some(named) => read_config(&expand_tilde(named, home)),
         None => config_for_wherever_bdi_was_run(&RealRunner, &expand_tilde(DEFAULT_CONFIG, home)),
     }?;
-    let cfg = with_roots_named_on_the_command_line(cfg, &cli.beads);
+    let cfg = cfg.with_roots_named_on_the_command_line(&cli.beads)?;
 
     let filter = if cli.all {
         Filter::All
@@ -98,13 +100,6 @@ fn config_for_wherever_bdi_was_run(runner: &dyn Runner, path: &Path) -> anyhow::
     }
 }
 
-/// Roots named on the command line join those named in config: discovery rule
-/// 3 has two spellings and one meaning.
-fn with_roots_named_on_the_command_line(mut cfg: Config, beads: &[String]) -> Config {
-    cfg.roots.explicit.extend(beads.iter().cloned());
-    cfg
-}
-
 /// `~` belongs to the shell, so a config path written with one is expanded
 /// here rather than handed to the filesystem verbatim.
 fn expand_tilde(path: &str, home: Option<PathBuf>) -> PathBuf {
@@ -138,29 +133,10 @@ mod tests {
 
     #[test]
     fn bead_ids_are_taken_as_arguments() {
-        let cli = Cli::parse_from(["bdi", "orb-7", "orb-9", "--json"]);
+        let cli = Cli::parse_from(["bdi", "orb-7", "ferry:fer-9", "--json"]);
 
-        assert_eq!(cli.beads, ["orb-7", "orb-9"]);
+        assert_eq!(cli.beads, ["orb-7", "ferry:fer-9"]);
         assert!(cli.json);
-    }
-
-    #[test]
-    fn roots_named_on_the_command_line_join_those_named_in_config() {
-        let cfg = Config::from_toml(
-            r#"
-[[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
-
-[roots]
-explicit = ["orb-4"]
-"#,
-        )
-        .expect("the config parses");
-
-        let cfg = with_roots_named_on_the_command_line(cfg, &["orb-7".to_string()]);
-
-        assert_eq!(cfg.roots.explicit, ["orb-4", "orb-7"]);
     }
 
     #[test]

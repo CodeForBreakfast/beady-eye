@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -32,7 +33,10 @@ pub struct Project {
 #[serde(default)]
 pub struct Roots {
     pub metadata_keys: Vec<String>,
-    pub explicit: Vec<String>,
+    /// The roots named outright, under the project whose tracker holds each.
+    /// Bead prefixes are per-tracker and uncoordinated, so an id on its own
+    /// names nothing bdi can go and read.
+    pub explicit: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -87,7 +91,63 @@ impl Config {
                 );
             }
         }
+        for (named, ids) in &cfg.roots.explicit {
+            if !cfg.is_configured(named) {
+                anyhow::bail!(
+                    "[roots.explicit] gives {} to {named}, which is no project of this \
+                     config; bdi is reading {}",
+                    ids.join(", "),
+                    names_of(&cfg.projects).join(", ")
+                );
+            }
+        }
         Ok(cfg)
+    }
+
+    /// Roots named on the command line join those named in config: discovery
+    /// rule 3 has two spellings and one meaning. `<project>:<bead-id>` says
+    /// whose tracker holds the bead; a bare id can only mean the one project
+    /// there is, so the terse form survives exactly as far as it is
+    /// unambiguous.
+    pub fn with_roots_named_on_the_command_line(
+        mut self,
+        beads: &[String],
+    ) -> anyhow::Result<Self> {
+        for named in beads {
+            let (project, id) = self.placed(named)?;
+            self.roots.explicit.entry(project).or_default().push(id);
+        }
+        Ok(self)
+    }
+
+    /// The project and bead a command-line root names, or why it names
+    /// neither.
+    fn placed(&self, named: &str) -> anyhow::Result<(String, String)> {
+        let Some((project, id)) = named.split_once(':') else {
+            return match self.projects.as_slice() {
+                [only] => Ok((only.name.clone(), named.to_string())),
+                several => anyhow::bail!(
+                    "{named} names no project, and bdi is reading {}; write it as \
+                     <project>:{named}",
+                    names_of(several).join(", ")
+                ),
+            };
+        };
+        if project.is_empty() || id.is_empty() {
+            anyhow::bail!("{named} is not <project>:<bead-id>");
+        }
+        if !self.is_configured(project) {
+            anyhow::bail!(
+                "{named} gives {id} to {project}, which is no project of this config; \
+                 bdi is reading {}",
+                names_of(&self.projects).join(", ")
+            );
+        }
+        Ok((project.to_string(), id.to_string()))
+    }
+
+    fn is_configured(&self, name: &str) -> bool {
+        self.projects.iter().any(|p| p.name == name)
     }
 
     /// The single project `bdi` reads when no config file names one: the
@@ -139,6 +199,10 @@ impl Config {
             .map(|p| p.name.as_str())
             .collect()
     }
+}
+
+fn names_of(projects: &[Project]) -> Vec<&str> {
+    projects.iter().map(|p| p.name.as_str()).collect()
 }
 
 /// One line of git's answer, or nothing where git has none to give: no
@@ -197,7 +261,10 @@ credential_command = "cat /home/user/dev/beacon/.beads-password"
 
 [roots]
 metadata_keys = ["working_topic", "delivery_pr"]
-explicit = ["a-1", "b-1"]
+
+[roots.explicit]
+atlas  = ["a-1", "a-9"]
+beacon = ["b-1"]
 
 [[badges]]
 key    = "delivery_pr"
@@ -272,7 +339,13 @@ path = "/home/user/dev/cinder"
             cfg.roots,
             Roots {
                 metadata_keys: vec!["working_topic".to_string(), "delivery_pr".to_string()],
-                explicit: vec!["a-1".to_string(), "b-1".to_string()],
+                explicit: BTreeMap::from([
+                    (
+                        "atlas".to_string(),
+                        vec!["a-1".to_string(), "a-9".to_string()]
+                    ),
+                    ("beacon".to_string(), vec!["b-1".to_string()]),
+                ]),
             }
         );
         assert_eq!(
@@ -337,6 +410,122 @@ path = "/home/user/dev/cinder"
 
         assert!(err.contains("beacon"), "got: {err}");
         assert!(err.contains("cinder"), "got: {err}");
+    }
+
+    const TWO_PROJECTS: &str = r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
+
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+credential_command = "cat /home/user/dev/beacon/.beads-password"
+"#;
+
+    const ROOT_IN_NO_CONFIGURED_PROJECT: &str = r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
+
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+credential_command = "cat /home/user/dev/beacon/.beads-password"
+
+[roots.explicit]
+cinder = ["c-1"]
+"#;
+
+    #[test]
+    fn an_explicit_root_under_a_project_the_config_does_not_name_is_rejected() {
+        let err = Config::from_toml(ROOT_IN_NO_CONFIGURED_PROJECT)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("cinder"), "got: {err}");
+        assert!(err.contains("atlas"), "got: {err}");
+        assert!(err.contains("beacon"), "got: {err}");
+    }
+
+    fn two_projects() -> Config {
+        Config::from_toml(TWO_PROJECTS).expect("the config parses")
+    }
+
+    #[test]
+    fn a_qualified_root_from_the_command_line_goes_to_the_project_it_names() {
+        let cfg = two_projects()
+            .with_roots_named_on_the_command_line(&["beacon:b-7".to_string()])
+            .expect("beacon is configured");
+
+        assert_eq!(
+            cfg.roots.explicit,
+            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+        );
+    }
+
+    #[test]
+    fn a_root_from_the_command_line_joins_those_the_config_names() {
+        let cfg = Config::from_toml(EVERY_SECTION)
+            .expect("the config parses")
+            .with_roots_named_on_the_command_line(&["atlas:a-3".to_string()])
+            .expect("atlas is configured");
+
+        assert_eq!(
+            cfg.roots.explicit["atlas"],
+            ["a-1", "a-9", "a-3"],
+            "the command line appends rather than replacing"
+        );
+    }
+
+    #[test]
+    fn a_bare_root_belongs_to_the_only_project_there_is() {
+        let cfg = Config::from_toml(ONE_PROJECT)
+            .expect("the config parses")
+            .with_roots_named_on_the_command_line(&["b-7".to_string()])
+            .expect("there is only one project it can mean");
+
+        assert_eq!(
+            cfg.roots.explicit,
+            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+        );
+    }
+
+    #[test]
+    fn a_bare_root_with_several_projects_configured_is_rejected() {
+        let err = two_projects()
+            .with_roots_named_on_the_command_line(&["b-7".to_string()])
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("b-7"), "got: {err}");
+        assert!(err.contains("atlas"), "got: {err}");
+        assert!(err.contains("beacon"), "got: {err}");
+    }
+
+    #[test]
+    fn a_root_from_the_command_line_naming_no_configured_project_is_rejected() {
+        let err = two_projects()
+            .with_roots_named_on_the_command_line(&["cinder:c-1".to_string()])
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("cinder"), "got: {err}");
+        assert!(err.contains("beacon"), "got: {err}");
+    }
+
+    #[test]
+    fn a_root_that_is_all_colon_and_no_bead_is_rejected() {
+        for named in ["atlas:", ":a-1", ":"] {
+            let err = two_projects()
+                .with_roots_named_on_the_command_line(&[named.to_string()])
+                .unwrap_err()
+                .to_string();
+
+            assert!(err.contains(named), "got: {err}");
+        }
     }
 
     #[test]

@@ -107,7 +107,14 @@ fn read_project(
     };
 
     let mut ancestors: BTreeMap<String, String> = BTreeMap::new();
-    let mut roots: BTreeSet<String> = cfg.roots.explicit.iter().cloned().collect();
+    let mut roots: BTreeSet<String> = cfg
+        .roots
+        .explicit
+        .get(&project.name)
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
     for bead in &discovered {
         roots.insert(root_of(runner, project, &env, &bead.id, &mut ancestors)?);
     }
@@ -415,8 +422,8 @@ credential_command = "secret ferry"
 name = "orbital"
 path = "{ORBITAL}"
 
-[roots]
-explicit = ["orb-7", "orb-4"]
+[roots.explicit]
+orbital = ["orb-7", "orb-4"]
 "#
         ))
         .expect("the config parses");
@@ -429,6 +436,53 @@ explicit = ["orb-7", "orb-4"]
             roots,
             vec!["orb-4", "orb-7"],
             "the root config and discovery both name is drawn once"
+        );
+    }
+
+    /// The key is `(project, id)`: a root named in config belongs to one
+    /// tracker, and no other is asked about an id it was never given. Asking
+    /// them all drew a tree per project claiming a healthy tracker was
+    /// unreachable.
+    #[test]
+    fn a_root_named_in_config_is_read_only_from_the_project_it_is_named_under() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+credential_command = "secret orbital"
+
+[[projects]]
+name = "ferry"
+path = "{FERRY}"
+credential_command = "secret ferry"
+
+[roots.explicit]
+orbital = ["orb-4"]
+"#
+        ))
+        .expect("the config parses");
+        let runner = colliding_trackers(r#"{"result":{"agents":[]}}"#)
+            .with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+
+        let snap = run(&cfg, &runner, Filter::All, now());
+
+        let roots: Vec<(&str, &str)> = snap
+            .trees
+            .iter()
+            .map(|t| (t.project.as_str(), t.root.as_str()))
+            .collect();
+        assert_eq!(
+            roots,
+            vec![("orbital", "orb-4"), ("orbital", "x-1"), ("ferry", "x-1")],
+            "ferry draws no tree for a root orbital was given"
+        );
+
+        // `call` panics on a second invocation, so this is the assertion that
+        // ferry's tracker was asked about orb-4 exactly no times.
+        assert_eq!(
+            runner.call("bd dep tree orb-4 --direction=up --json").cwd,
+            Some(PathBuf::from(ORBITAL))
         );
     }
 

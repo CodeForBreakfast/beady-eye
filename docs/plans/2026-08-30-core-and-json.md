@@ -165,7 +165,7 @@ git commit -m "feat: scaffold the crate and dev shell"
 - Produces:
   - `config::Config { projects: Vec<Project>, roots: Roots, badges: Vec<Badge>, anomalies: Anomalies, join: Join }`
   - `config::Project { name: String, path: PathBuf }`
-  - `config::Roots { metadata_keys: Vec<String>, explicit: Vec<String> }`
+  - `config::Roots { metadata_keys: Vec<String>, explicit: BTreeMap<String, Vec<String>> }`
   - `config::Badge { key: String, match_value: Option<String>, render: String }`
   - `config::Anomalies { stale_claim_days: i64 }`
   - `config::Join { pane_key: String }`
@@ -207,7 +207,7 @@ pub struct Project {
 #[serde(default)]
 pub struct Roots {
     pub metadata_keys: Vec<String>,
-    pub explicit: Vec<String>,
+    pub explicit: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
