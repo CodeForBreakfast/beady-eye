@@ -303,8 +303,12 @@ rows say so.
 Two rules that a naive implementation gets wrong.
 
 **A pane joins only to its own project's beads.** A pane's `cwd` resolves it to a
-project by longest matching configured path; a pane belonging to no configured
-project joins nothing and lands in `unattributed`. Without this, two trackers
+project by the longest matching working tree of that project — its configured
+path, and, where `bdi` discovered the project itself, every working tree
+`git worktree list` reports for the repository. A pane belonging to no project
+joins nothing and lands in `unattributed`. One worktree per seat is a common
+way to work, and it puts the panes under neither each other nor the checkout
+`bdi` was run from, so a project that held only one directory staffed nothing. Without this, two trackers
 with colliding id prefixes cross-attach agents — and prefixes are per-tracker and
 uncoordinated, so a collision is a matter of time rather than bad luck.
 
