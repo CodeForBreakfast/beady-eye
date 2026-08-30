@@ -110,10 +110,6 @@ pub struct Pane {
     #[serde(default)]
     pub state_labels: BTreeMap<String, String>,
     pub agent_status: PaneStatus,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    #[serde(default)]
-    pub tab_id: Option<String>,
 }
 
 impl Pane {

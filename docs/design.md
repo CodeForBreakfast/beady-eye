@@ -259,7 +259,6 @@ silently reclassifies beads.
 | `title` | the agent's one-line "what I am doing" |
 | `state_labels` | per-state text, shown for the state the pane is in |
 | `agent_status` | `idle` / `working` / `blocked` / `done` |
-| `workspace_id`, `tab_id` | grouping, and the target for focus |
 
 `herdr agent read <pane>` gives terminal output for the tail pane.
 `herdr agent focus <pane>` is the only write `bdi` performs, and it writes to

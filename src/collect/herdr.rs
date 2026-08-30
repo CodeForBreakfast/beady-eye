@@ -108,8 +108,6 @@ mod tests {
             Some("parse herdr agent list into typed panes")
         );
         assert_eq!(p.agent_status, PaneStatus::Working);
-        assert_eq!(p.workspace_id.as_deref(), Some("wCW"));
-        assert_eq!(p.tab_id.as_deref(), Some("wCW:t1"));
         assert_eq!(
             p.state_labels.get("idle").map(String::as_str),
             Some("asleep: fixture captured, awaiting review")
