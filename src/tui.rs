@@ -1,11 +1,16 @@
 //! The terminal's lifecycle and the loop that keeps the view live.
 
 use std::collections::{BTreeSet, VecDeque};
+use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEventKind,
+};
+use ratatui::crossterm::execute;
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Wanted;
@@ -44,6 +49,10 @@ pub fn run(
 #[cfg_attr(test, derive(Debug, PartialEq))]
 enum Event {
     Key(KeyEvent),
+    /// A left click, on the row of the screen it landed on.
+    Clicked(u16),
+    /// A wheel notch, as the move it asks the selection to make.
+    Scrolled(Motion),
     Resize,
     /// Work has moved on, and what has to be read to see it.
     Changed(Wanted),
@@ -73,6 +82,14 @@ trait View {
 
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
+
+    /// Select whatever is drawn on one row of the screen, reporting whether
+    /// the screen has changed.
+    ///
+    /// A row is a fact about the frame rather than about the forest, so this
+    /// is the loop's other seam: the loop knows where the pointer was and
+    /// nothing about what is drawn there.
+    fn clicked(&mut self, row: u16) -> bool;
 
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()>;
 }
@@ -112,6 +129,15 @@ fn drive(
                 Some(action) => view.apply(action),
                 None => false,
             },
+            // A click or a notch takes the bindings away and does no more,
+            // for the same reason a key does: the window is over the forest,
+            // so the rows under the pointer are rows nobody can see.
+            Event::Clicked(_) | Event::Scrolled(_) if showing == Showing::Bindings => {
+                showing = Showing::Forest;
+                true
+            }
+            Event::Clicked(row) => view.clicked(row),
+            Event::Scrolled(motion) => view.apply(Action::Move(motion)),
             Event::Resize => true,
             Event::Changed(wanted) => {
                 outstanding.ask(ask, wanted);
@@ -537,19 +563,47 @@ fn collector(
 }
 
 /// Read the terminal until it has nothing more to say.
-///
-/// A key that is only being released is not a keystroke; on terminals that
-/// report releases at all, taking both would act on every binding twice.
 fn keys(to: &Sender<Event>) {
     while let Ok(read) = event::read() {
-        let event = match read {
-            event::Event::Key(key) if key.kind == KeyEventKind::Press => Event::Key(key),
-            event::Event::Resize(..) => Event::Resize,
-            _ => continue,
+        let Some(event) = incoming(read) else {
+            continue;
         };
         if to.send(event).is_err() {
             return;
         }
+    }
+}
+
+/// What the loop is told about one thing the terminal reported, where it is
+/// told anything at all.
+///
+/// A key that is only being released is not a keystroke; on terminals that
+/// report releases at all, taking both would act on every binding twice.
+///
+/// Capture turns on far more than the two gestures the forest answers.
+/// Crossterm asks for any-event tracking, so the terminal reports every cell
+/// the pointer crosses whether a button is down or not, and a reader dragging
+/// across the screen produces hundreds. They are dropped here, on the thread
+/// that reads them, because the loop must stay under the user's hands: a
+/// wedged loop is a `^C` that never reaches the Quit mapping and a terminal
+/// left in raw mode.
+///
+/// So of the pointer only two things are answered — a left click, which names
+/// a row, and a wheel notch, which moves the selection. A release, a drag,
+/// bare motion, the other two buttons and the horizontal wheel are each
+/// dropped: none of them names a row the reader is asking for, and
+/// right-click in a herdr pane belongs to herdr's own menu.
+fn incoming(read: event::Event) -> Option<Event> {
+    match read {
+        event::Event::Key(key) if key.kind == KeyEventKind::Press => Some(Event::Key(key)),
+        event::Event::Resize(..) => Some(Event::Resize),
+        event::Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => Some(Event::Clicked(mouse.row)),
+            MouseEventKind::ScrollUp => Some(Event::Scrolled(Motion::PreviousRow)),
+            MouseEventKind::ScrollDown => Some(Event::Scrolled(Motion::NextRow)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -593,6 +647,22 @@ impl Shown {
         }
     }
 
+    /// Report a selection that may have moved, taking the tail with it where
+    /// it did. Every way of moving the selection goes through here, so no
+    /// route to it can leave the tail behind showing another bead's pane.
+    fn moved(&mut self, changed: bool) -> bool {
+        if changed {
+            self.follow();
+        }
+        changed
+    }
+
+    /// Put the selection on one line of the forest.
+    fn select(&mut self, at: usize) -> bool {
+        let changed = self.forest.select_line(at);
+        self.moved(changed)
+    }
+
     /// Bring the selected bead's pane to the front, reporting whether that
     /// changed the screen. A row with no pane is a no-op: there is nothing to
     /// focus and nothing has gone wrong.
@@ -621,19 +691,17 @@ impl Shown {
         }
 
         let changed = self.forest.apply(action);
-        if changed {
-            self.follow();
-        }
-        changed
+        self.moved(changed)
     }
 }
 
 /// The alternate screen, and what is drawn on it.
 ///
-/// The terminal is on the alternate screen and in raw mode for as long as
-/// this lives, so dropping it puts the terminal back however the loop ended.
-/// `ratatui::init` hooks panics as well, so a crash does not leave a wedged
-/// tty behind either.
+/// The terminal is on the alternate screen, in raw mode and reporting the
+/// mouse for as long as this lives, so dropping it puts the terminal back
+/// however the loop ended. `ratatui::init` hooks panics as well, and `Drop`
+/// runs as the panic unwinds, so a crash does not leave a wedged tty behind
+/// either.
 struct Screen {
     terminal: DefaultTerminal,
     shown: Shown,
@@ -649,12 +717,25 @@ impl Screen {
         at_startup: Vec<Notice>,
     ) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
-
-        Ok(Self {
+        // Built before the mouse is asked for, so that a terminal which
+        // refuses is still put back by the `Drop` this now has.
+        let screen = Self {
             terminal,
             shown: Shown::of(snapshot, panes),
             at_startup,
-        })
+        };
+
+        // Capture costs the reader the terminal's own mouse: while `bdi` is
+        // up, dragging over the window no longer selects text in it. It is
+        // taken anyway and unconditionally, because in the terminal this is
+        // read in it costs less than it looks. herdr owns the mouse above
+        // the pane and keeps its copy mode, which selects by keyboard; kitty
+        // keeps its shift-drag, which bypasses whatever the application
+        // grabbed. So what is given up is drag-selection inside one pane,
+        // and what is bought is the pointer working at all.
+        execute!(io::stdout(), EnableMouseCapture)?;
+
+        Ok(screen)
     }
 }
 
@@ -684,6 +765,11 @@ fn paint(
 
 impl Drop for Screen {
     fn drop(&mut self) {
+        // Ahead of the restore, mirroring the order they were turned on in.
+        // A session that ended with the mouse still captured would leave the
+        // reader a window whose pointer does nothing and no program left to
+        // ask for it back.
+        let _ = execute!(io::stdout(), DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -695,6 +781,24 @@ impl View for Screen {
 
     fn apply(&mut self, action: Action) -> bool {
         self.shown.apply(action)
+    }
+
+    fn clicked(&mut self, row: u16) -> bool {
+        let bands = draw::regions(self.terminal.get_frame().area());
+        let forest = &self.shown.forest;
+
+        match draw::line_at(
+            bands.forest,
+            forest.selected_line(),
+            forest.lines().len(),
+            row,
+        ) {
+            Some(at) => self.shown.select(at),
+            // The tail is an echo of a pane and the key row is a legend.
+            // Neither holds anything the selection could sit on, and a row
+            // past the last line of the forest holds nothing at all.
+            None => false,
+        }
     }
 
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
@@ -710,11 +814,11 @@ impl View for Screen {
 mod tests {
     use super::*;
     use crate::collect::run::RunFailure;
-    use crate::model::join::BeadKey;
+    use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
         self, Counts, Filter, HerdrState, Node, TrackerFailure, TrackerState, Tree,
     };
-    use crate::model::types::Status;
+    use crate::model::types::{PaneStatus, Status};
     use crate::view::bindings::bindings_window;
     use crate::view::Motion;
     use chrono::Utc;
@@ -759,9 +863,13 @@ mod tests {
     #[derive(Default)]
     struct Recorder {
         applied: Vec<Action>,
+        clicked: Vec<u16>,
         collected: usize,
         drawn: usize,
         showing: Vec<Showing>,
+        /// What a click reports back, for the tests about a click that lands
+        /// on no row.
+        nothing_under_the_pointer: bool,
     }
 
     impl View for Recorder {
@@ -772,6 +880,11 @@ mod tests {
         fn apply(&mut self, action: Action) -> bool {
             self.applied.push(action);
             true
+        }
+
+        fn clicked(&mut self, row: u16) -> bool {
+            self.clicked.push(row);
+            !self.nothing_under_the_pointer
         }
 
         fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
@@ -1653,6 +1766,243 @@ mod tests {
         assert_eq!(view.drawn, 1, "the first draw and no other");
     }
 
+    // ---- the pointer ------------------------------------------------------
+
+    fn moused(kind: MouseEventKind, row: u16) -> event::Event {
+        event::Event::Mouse(event::MouseEvent {
+            kind,
+            column: 17,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// The row every table entry below is reported on, so that what a test
+    /// asserts is the kind and not the arithmetic.
+    const ON_ROW: u16 = 9;
+
+    /// Every kind of mouse event a captured terminal reports, and what the
+    /// reader makes of it.
+    ///
+    /// The match is what makes it every one rather than every one anybody
+    /// remembered: a kind added to crossterm's enum makes it non-exhaustive,
+    /// and the compiler names this function until the list above it has been
+    /// decided too.
+    fn every_mouse_kind() -> Vec<(MouseEventKind, Option<Event>)> {
+        let every = vec![
+            (
+                MouseEventKind::Down(MouseButton::Left),
+                Some(Event::Clicked(ON_ROW)),
+            ),
+            (MouseEventKind::Down(MouseButton::Right), None),
+            (MouseEventKind::Down(MouseButton::Middle), None),
+            (MouseEventKind::Up(MouseButton::Left), None),
+            (MouseEventKind::Up(MouseButton::Right), None),
+            (MouseEventKind::Up(MouseButton::Middle), None),
+            (MouseEventKind::Drag(MouseButton::Left), None),
+            (MouseEventKind::Drag(MouseButton::Right), None),
+            (MouseEventKind::Drag(MouseButton::Middle), None),
+            (MouseEventKind::Moved, None),
+            (
+                MouseEventKind::ScrollUp,
+                Some(Event::Scrolled(Motion::PreviousRow)),
+            ),
+            (
+                MouseEventKind::ScrollDown,
+                Some(Event::Scrolled(Motion::NextRow)),
+            ),
+            (MouseEventKind::ScrollLeft, None),
+            (MouseEventKind::ScrollRight, None),
+        ];
+
+        for (kind, _) in &every {
+            match kind {
+                MouseEventKind::Down(button)
+                | MouseEventKind::Up(button)
+                | MouseEventKind::Drag(button) => match button {
+                    MouseButton::Left | MouseButton::Right | MouseButton::Middle => (),
+                },
+                MouseEventKind::Moved
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight => (),
+            }
+        }
+
+        every
+    }
+
+    /// The bead this arm exists for: capture turns on every report the
+    /// terminal can make, and each one is answered or dropped because it was
+    /// decided, not because it fell through a gap.
+    #[test]
+    fn every_kind_of_mouse_report_is_answered_or_dropped_on_purpose() {
+        for (kind, wanted) in every_mouse_kind() {
+            assert_eq!(incoming(moused(kind, ON_ROW)), wanted, "{kind:?}");
+        }
+    }
+
+    /// Motion is the flood: capture asks for a report on every cell the
+    /// pointer crosses, and the loop must never be handed one. Dropping it
+    /// here costs a match arm on a thread that is not the loop.
+    #[test]
+    fn a_pointer_moving_over_the_screen_reaches_the_loop_not_at_all() {
+        let flood: Vec<Option<Event>> = (0..500)
+            .map(|row| incoming(moused(MouseEventKind::Moved, row % 24)))
+            .collect();
+
+        assert!(flood.iter().all(Option::is_none));
+    }
+
+    /// A click names a row and nothing else. Every band spans the width of
+    /// the screen, so the column the pointer was in names no other row.
+    #[test]
+    fn a_click_is_read_as_the_row_it_landed_on() {
+        for row in [0, 9, 23, u16::MAX] {
+            assert_eq!(
+                incoming(moused(MouseEventKind::Down(MouseButton::Left), row)),
+                Some(Event::Clicked(row)),
+                "row {row}"
+            );
+        }
+    }
+
+    /// The rule that was there before the mouse was: a key only being
+    /// released is not a keystroke, and nothing else the terminal reports is
+    /// one either.
+    #[test]
+    fn a_key_release_a_focus_change_and_a_resize_are_read_as_they_were() {
+        let pressed = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let released = KeyEvent::new_with_kind(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        );
+
+        assert_eq!(
+            incoming(event::Event::Key(pressed)),
+            Some(Event::Key(pressed))
+        );
+        assert_eq!(incoming(event::Event::Key(released)), None);
+        assert_eq!(incoming(event::Event::Resize(80, 24)), Some(Event::Resize));
+        assert_eq!(incoming(event::Event::FocusGained), None);
+        assert_eq!(incoming(event::Event::FocusLost), None);
+    }
+
+    #[test]
+    fn a_click_reaches_the_view_as_the_row_it_landed_on() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(&mut view, &waiting(vec![Event::Clicked(9)]), &ask).expect("the loop runs");
+
+        assert_eq!(view.clicked, [9]);
+        assert!(view.applied.is_empty(), "a click asks for no action");
+        assert_eq!(view.drawn, 2, "the first draw, and the click");
+    }
+
+    /// The screen is drawn for what changed it. A click on the tail, the key
+    /// row or a blank row past the last line changed nothing.
+    #[test]
+    fn a_click_that_lands_on_no_row_does_not_redraw() {
+        let mut view = Recorder {
+            nothing_under_the_pointer: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+
+        drive(&mut view, &waiting(vec![Event::Clicked(21)]), &ask).expect("the loop runs");
+
+        assert_eq!(view.clicked, [21]);
+        assert_eq!(view.drawn, 1, "the first draw and no other");
+    }
+
+    /// `bdi` holds no scroll of its own — the window is a pure function of
+    /// where the selection sits — so the wheel moves the selection, which is
+    /// the only thing the window follows.
+    #[test]
+    fn a_wheel_notch_moves_the_selection_one_row() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Scrolled(Motion::PreviousRow),
+                Event::Scrolled(Motion::NextRow),
+            ]),
+            &ask,
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.applied,
+            [
+                Action::Move(Motion::PreviousRow),
+                Action::Move(Motion::NextRow)
+            ]
+        );
+        assert!(view.clicked.is_empty(), "a wheel notch points at no row");
+    }
+
+    /// The bindings window sits over the forest, so while it is up the rows
+    /// under the pointer are rows the reader cannot see. A click takes the
+    /// window away and selects nothing, for the same reason any key does.
+    #[test]
+    fn a_click_over_the_bindings_window_closes_it_and_selects_nothing() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Key(key(KeyCode::Char('?'))),
+                Event::Clicked(9),
+                Event::Clicked(9),
+            ]),
+            &ask,
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.clicked,
+            [9],
+            "the first click took the window away; only the second reached the forest"
+        );
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Bindings,
+                Showing::Forest,
+                Showing::Forest
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wheel_notch_over_the_bindings_window_closes_it_and_moves_nothing() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Key(key(KeyCode::Char('?'))),
+                Event::Scrolled(Motion::NextRow),
+            ]),
+            &ask,
+        )
+        .expect("the loop runs");
+
+        assert!(view.applied.is_empty());
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bindings, Showing::Forest]
+        );
+    }
+
     /// A tree with enough beads under it that a half-screen motion has room
     /// to land somewhere that says how far it moved.
     fn a_grove(beads: usize) -> Snapshot {
@@ -1875,6 +2225,44 @@ mod tests {
             Showing::Forest,
         );
         rows[..bands.forest.height as usize].to_vec()
+    }
+
+    /// The same grove with a live agent on every bead, so that moving the
+    /// selection changes which pane the tail is reading.
+    fn a_staffed_grove(beads: usize) -> Snapshot {
+        let mut snapshot = a_grove(beads);
+        for tree in snapshot.trees.iter_mut().chain(snapshot.collected.iter_mut()) {
+            for (at, node) in tree.nodes.iter_mut().enumerate() {
+                node.agent = Some(AgentRef {
+                    pane: format!("w:p{at}"),
+                    pane_status: PaneStatus::Working,
+                    title: None,
+                    source: JoinSource::AgentPane,
+                });
+            }
+        }
+        snapshot
+    }
+
+    /// A click is another way to move the selection and not another kind of
+    /// selection. Where a keystroke would have taken the tail, a click that
+    /// lands on the same row has to take it to the same place — the tail
+    /// going stale under the pointer is a screen that quietly disagrees with
+    /// itself.
+    #[test]
+    fn a_click_takes_the_tail_with_it_exactly_as_a_keystroke_does() {
+        let mut by_key = shown(a_staffed_grove(6));
+        by_key.apply(Action::Move(Motion::LastRow));
+
+        let mut by_click = shown(a_staffed_grove(6));
+        let at_rest = by_click.tailing.clone();
+        assert!(by_click.select(by_key.forest.selected_line()));
+
+        assert_ne!(
+            by_key.tailing, at_rest,
+            "the fixture has to move the tail at all"
+        );
+        assert_eq!(by_click.tailing, by_key.tailing);
     }
 
     #[test]
