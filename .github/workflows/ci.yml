@@ -40,6 +40,10 @@ jobs:
           modules=$(nix-store -qR --include-outputs "$check" | grep -E 'beads-[^/]*-go-modules\.drv$')
           test "$(printf '%s' "$modules" | grep -c .)" -eq 1
 
-          nix profile install nixpkgs#attic-client
+          # --inputs-from takes attic from this flake's locked nixpkgs. A bare
+          # nixpkgs# resolves through the installer's registry to a weekly
+          # channel, which is an unpinned dependency of every CI run.
+          attic() { nix run --inputs-from . nixpkgs#attic-client -- "$@"; }
+
           attic login homelab https://cache.example.invalid "$ATTIC_TOKEN"
           attic push homelab "$(nix-store -q --outputs "$modules")"
