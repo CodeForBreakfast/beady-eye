@@ -1,10 +1,10 @@
 //! The forest and the tail, drawn into a ratatui frame.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Block, Clear, Widget};
 use ratatui::Frame;
 
 use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState};
@@ -582,36 +582,77 @@ pub fn scroll_offset(selected: usize, lines: usize, height: usize) -> usize {
     selected.saturating_sub(height / 2).min(lines - height)
 }
 
-/// Draw every binding over the whole screen, in place of the forest.
+/// Where the bindings window sits: the size its table wants, centred over the
+/// forest, and clamped by the screen where the screen is the smaller.
+///
+/// `Rect::centered` is `Flex::Center` underneath, so a window wider or taller
+/// than the terminal comes back the size of the terminal rather than
+/// overflowing it.
+pub fn bindings_window(area: Rect, bindings: &[(String, &str)]) -> Rect {
+    area.centered(
+        Constraint::Length(wanted_width(bindings)),
+        Constraint::Length(bindings.len() as u16 + BORDERS),
+    )
+}
+
+/// The width the whole table would like: its longest row, the count it would
+/// draw if every binding were left off, and the title, whichever is widest.
+fn wanted_width(bindings: &[(String, &str)]) -> u16 {
+    let keys = key_column(bindings);
+    let widest = bindings
+        .iter()
+        .map(|(_, does)| GAP + keys + GAP + does.chars().count())
+        .chain([
+            GAP + left_off(bindings.len()).chars().count(),
+            CLOSE_BINDINGS.chars().count(),
+        ])
+        .max()
+        .unwrap_or(0);
+
+    u16::try_from(widest)
+        .unwrap_or(u16::MAX)
+        .saturating_add(BORDERS)
+}
+
+/// How wide the keys are set, so that what a binding does starts in the same
+/// column on every row. The sizing and the drawing read it from here rather
+/// than working it out twice.
+fn key_column(bindings: &[(String, &str)]) -> usize {
+    bindings
+        .iter()
+        .map(|(keys, _)| columns(&[Span::raw(keys.clone())]))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Draw every binding in a window over the forest.
 ///
 /// Each pair is the keys to press, already named, and what pressing them
-/// does. The way out is drawn first so that a screen too short for the
-/// bindings still holds it: a reader who cannot see how to leave is stuck in
-/// a view they may have opened by accident. Where the bindings do not all
-/// fit, the last row counts the ones left off, because a list that simply
-/// stopped would read as the whole of what the view answers to.
+/// does. `Clear` blanks the window first, which is what stops the trees
+/// showing through between the rows.
+///
+/// The way out is the border's title, so a window too short for a single
+/// binding still holds it: a reader who cannot see how to leave is stuck in a
+/// view they may have opened by accident. Where the bindings do not all fit,
+/// the last row counts the ones left off, because a list that simply stopped
+/// would read as the whole of what the view answers to. A window is smaller
+/// than the screen it sits on, so that is the ordinary case rather than the
+/// short-terminal one.
 pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) {
-    if area.height == 0 {
+    let window = bindings_window(area, bindings);
+    if window.is_empty() {
         return;
     }
-    let row = |n: usize| Rect {
-        y: area.y + n as u16,
-        height: 1,
-        ..area
-    };
-    frame.render_widget(
-        Fitted::new(
-            vec![Span::styled(
-                CLOSE_BINDINGS,
-                Style::new().add_modifier(Modifier::BOLD),
-            )],
-            Vec::new(),
-            Vec::new(),
-        ),
-        row(0),
-    );
 
-    let room = area.height as usize - 1;
+    let block = Block::bordered().title(Span::styled(
+        CLOSE_BINDINGS,
+        Style::new().add_modifier(Modifier::BOLD),
+    ));
+    let inner = block.inner(window);
+    frame.render_widget(Clear, window);
+    frame.render_widget(block, window);
+
+    let room = inner.height as usize;
     // A last row spent saying that one binding is missing would be better
     // spent on the binding, so the count is never drawn over fewer than two.
     let shown = if bindings.len() <= room {
@@ -619,11 +660,12 @@ pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) 
     } else {
         room.saturating_sub(1)
     };
-    let width = bindings
-        .iter()
-        .map(|(keys, _)| columns(&[Span::raw(keys.clone())]))
-        .max()
-        .unwrap_or(0);
+    let width = key_column(bindings);
+    let row = |n: usize| Rect {
+        y: inner.y + n as u16,
+        height: 1,
+        ..inner
+    };
 
     for (n, (keys, does)) in bindings.iter().take(shown).enumerate() {
         frame.render_widget(
@@ -632,7 +674,7 @@ pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) 
                 vec![Span::raw((*does).to_string())],
                 Vec::new(),
             ),
-            row(n + 1),
+            row(n),
         );
     }
 
@@ -647,7 +689,7 @@ pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) 
                 Vec::new(),
                 Vec::new(),
             ),
-            row(shown + 1),
+            row(shown),
         );
     }
 }
@@ -658,6 +700,9 @@ fn left_off(count: usize) -> String {
     let binding = if count == 1 { "binding" } else { "bindings" };
     format!("{CUT} {count} more {binding} · no room on a screen this short")
 }
+
+/// The rows a bordered window spends on its own edges.
+const BORDERS: u16 = 2;
 
 /// The row at the foot of the screen: the keys, and anything true of the
 /// whole session rather than of any row above.
@@ -1490,18 +1535,20 @@ mod tests {
             .collect()
     }
 
-    /// The whole view, character for character. The keys share a column so a
-    /// reader's eye runs down one edge to find the one they want.
+    /// The whole view, character for character: a bordered window sized to
+    /// its own table and centred on the screen, with the way out in its
+    /// title. The keys share a column so a reader's eye runs down one edge to
+    /// find the one they want.
     #[test]
     fn the_key_bindings_view_names_the_keys_and_what_pressing_them_does() {
         assert_eq!(
             bindings_frame(&a_few_bindings(), 60, 5),
             vec![
-                "Key bindings · press any key to close                       ",
-                "  Down, j  move down one row                                ",
-                "  Enter    focus the selected bead's pane in herdr          ",
-                "  q, ^C    quit                                             ",
-                "                                                            ",
+                "   ┌Key bindings · press any key to close───────────────┐   ",
+                "   │  Down, j  move down one row                        │   ",
+                "   │  Enter    focus the selected bead's pane in herdr  │   ",
+                "   │  q, ^C    quit                                     │   ",
+                "   └────────────────────────────────────────────────────┘   ",
             ]
         );
     }
@@ -1517,14 +1564,18 @@ mod tests {
 
     /// Degrade, never disappear: a list that simply stopped would read as the
     /// whole of what the view answers to.
+    ///
+    /// A window costs two of the screen's rows on its own border, so this is
+    /// what an ordinary screen does rather than what a short one does.
     #[test]
     fn a_screen_too_short_for_every_binding_counts_the_ones_it_left_off() {
         assert_eq!(
-            bindings_frame(&a_few_bindings(), 60, 3),
+            bindings_frame(&a_few_bindings(), 60, 4),
             vec![
-                "Key bindings · press any key to close                       ",
-                "  Down, j  move down one row                                ",
-                "  … 2 more bindings · no room on a screen this short        ",
+                "   ┌Key bindings · press any key to close───────────────┐   ",
+                "   │  Down, j  move down one row                        │   ",
+                "   │  … 2 more bindings · no room on a screen this short│   ",
+                "   └────────────────────────────────────────────────────┘   ",
             ]
         );
     }
@@ -1551,13 +1602,14 @@ mod tests {
         }
     }
 
-    /// One row is room for the way out and nothing else. It still says what
-    /// was opened and how to leave it, which is the most a single row can do.
+    /// One row is room for the way out and nothing else: it is the window's
+    /// top edge, and the title on it says what was opened and how to leave.
+    /// That is the most a single row can do.
     #[test]
     fn a_screen_with_one_row_spends_it_on_the_way_out() {
         assert_eq!(
             bindings_frame(&a_few_bindings(), 60, 1),
-            vec!["Key bindings · press any key to close                       "]
+            vec!["   ┌Key bindings · press any key to close───────────────┐   "]
         );
     }
 

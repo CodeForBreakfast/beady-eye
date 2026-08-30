@@ -51,10 +51,9 @@ enum Event {
 
 /// What the screen has on it.
 ///
-/// The bindings take the whole screen rather than sitting over the forest, so
-/// that a terminal with room for eight rows spends all eight on them. The loop
-/// holds this rather than the view because it decides what a keystroke means,
-/// and while the bindings are up every keystroke means "take them away".
+/// The loop holds this rather than the view because it decides what a
+/// keystroke means, and while the bindings are up every keystroke means "take
+/// them away".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Showing {
     Forest,
@@ -635,18 +634,22 @@ impl Screen {
     }
 }
 
-/// One frame: the forest, the tail beneath it, and the height the forest is
-/// told it has.
+/// One frame: the forest, the tail beneath it, the height the forest is told
+/// it has, and the bindings window when one is up.
 ///
 /// Outside the `terminal.draw` closure so a test backend can drive the whole
 /// frame. This is the only place the three bands are agreed on, and `^D` and
 /// `^U` are the part of that agreement nothing on screen would show was
-/// broken.
-fn paint(frame: &mut Frame, forest: &mut Forest, tail: &Tail) {
+/// broken. The bindings go on last because they sit over the forest rather
+/// than in place of it.
+fn paint(frame: &mut Frame, forest: &mut Forest, tail: &Tail, showing: Showing) {
     let bands = draw::regions(frame.area());
     forest.set_half_screen(draw::half_screen(bands.forest));
     draw::draw(frame, frame.area(), forest, &key_row());
     draw::draw_tail(frame, bands.tail, tail);
+    if showing == Showing::Bindings {
+        draw::key_bindings(frame, frame.area(), &bindings());
+    }
 }
 
 impl Drop for Screen {
@@ -666,10 +669,8 @@ impl View for Screen {
 
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
-        self.terminal.draw(|frame| match showing {
-            Showing::Forest => paint(frame, forest, tail),
-            Showing::Bindings => draw::key_bindings(frame, frame.area(), &bindings()),
-        })?;
+        self.terminal
+            .draw(|frame| paint(frame, forest, tail, showing))?;
         Ok(())
     }
 }
@@ -687,11 +688,42 @@ mod tests {
     use chrono::Utc;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
+    use ratatui::widgets::Block;
     use ratatui::Terminal;
 
     /// Long enough that a thread which was going to report has, and short
     /// enough that a test waiting in vain is not a hang.
     const A_MOMENT: Duration = Duration::from_secs(5);
+
+    /// What the bindings window has inside its border, one string per row,
+    /// with the forest it sits over left out. Trailing blanks are trimmed, so
+    /// anything the window failed to clear survives into the assertion.
+    fn window_inner(width: u16, height: u16) -> Vec<String> {
+        let mut forest = forest::flatten(&a_grove(30));
+        let screen = painted(
+            &mut forest,
+            &Tail::Silent("nothing to tail"),
+            width,
+            height,
+            Showing::Bindings,
+        );
+        let inner = Block::bordered().inner(draw::bindings_window(
+            Rect::new(0, 0, width, height),
+            &bindings(),
+        ));
+
+        (inner.y..inner.y + inner.height)
+            .map(|y| {
+                screen[y as usize]
+                    .chars()
+                    .skip(inner.x as usize)
+                    .take(inner.width as usize)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
 
     /// A view that remembers what the loop did to it.
     #[derive(Default)]
@@ -881,15 +913,7 @@ mod tests {
     /// asserted against the table rather than against a list beside it.
     #[test]
     fn the_key_bindings_view_names_every_binding_the_mapping_holds() {
-        let rows = BINDINGS.len() as u16 + 1;
-        let mut terminal = Terminal::new(TestBackend::new(100, rows)).expect("a test backend");
-        terminal
-            .draw(|frame| draw::key_bindings(frame, frame.area(), &bindings()))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        let drawn: Vec<String> = (0..rows)
-            .map(|y| (0..100).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
+        let drawn = window_inner(100, BINDINGS.len() as u16 + 2);
 
         for binding in BINDINGS {
             let named = binding
@@ -908,40 +932,136 @@ mod tests {
         }
     }
 
-    /// The bead's short terminal, decided rather than left to a cut: the way
-    /// out, then as many bindings as fit from the top of the table, then a
-    /// count of what is missing. Nothing is drawn with its bottom sheared off,
-    /// and what survives is the half a reader could not have guessed.
+    /// The bead's short terminal, decided rather than left to a cut: as many
+    /// bindings as fit from the top of the table, then a count of what is
+    /// missing. Nothing is drawn with its bottom sheared off, and what
+    /// survives is the half a reader could not have guessed.
+    ///
+    /// The way out is the window's title rather than a row, so it is checked
+    /// on the border above these.
     #[test]
-    fn eight_rows_hold_the_way_out_the_keys_worth_most_and_a_count_of_the_rest() {
-        let mut terminal = Terminal::new(TestBackend::new(80, 8)).expect("a test backend");
-        terminal
-            .draw(|frame| draw::key_bindings(frame, frame.area(), &bindings()))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        let drawn: Vec<String> = (0..8)
-            .map(|y| {
-                (0..80)
-                    .map(|x| buffer[(x, y)].symbol())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect();
-
+    fn eight_rows_hold_the_keys_worth_most_and_a_count_of_the_rest() {
         assert_eq!(
-            drawn,
+            window_inner(80, 8),
             vec![
-                "Key bindings · press any key to close",
+                "  Enter     focus the selected bead's pane in herdr",
+                "  Space     fold or unfold the selected node",
+                "  a         show every tree, not only those with a live agent",
+                "  ?         show these key bindings",
+                "  q, ^C     quit",
+                "  … 9 more bindings · no room on a screen this short",
+            ]
+        );
+    }
+
+    /// A reader who cannot see how to leave is stuck in a view they may have
+    /// opened by accident, so the way out is the one thing a window too short
+    /// for any binding at all still carries.
+    #[test]
+    fn the_way_out_is_the_windows_title_however_short_the_screen() {
+        for height in [8, 24] {
+            let window = draw::bindings_window(Rect::new(0, 0, 80, height), &bindings());
+            let mut forest = forest::flatten(&a_grove(30));
+            let screen = painted(
+                &mut forest,
+                &Tail::Silent("nothing to tail"),
+                80,
+                height,
+                Showing::Bindings,
+            );
+
+            assert!(
+                screen[window.y as usize].contains("Key bindings · press any key to close"),
+                "no way out on the window's own top row at {height} rows: {:?}",
+                screen[window.y as usize]
+            );
+        }
+    }
+
+    /// The bead: a reader opens `?` to look up the key for the row they are
+    /// on, so that row has to still be on the screen. The full-screen view
+    /// this replaced took the whole forest away.
+    #[test]
+    fn the_forest_is_still_drawn_around_the_bindings_window() {
+        let mut forest = forest::flatten(&a_grove(30));
+        let tail = Tail::Silent("nothing to tail");
+        let alone = painted(&mut forest, &tail, 80, 24, Showing::Forest);
+        let over = painted(&mut forest, &tail, 80, 24, Showing::Bindings);
+        let window = draw::bindings_window(Rect::new(0, 0, 80, 24), &bindings());
+
+        assert!(
+            window.height < 24 && window.width < 80,
+            "a window the size of the screen is the view this replaced: {window:?}"
+        );
+
+        let beside = window.x as usize;
+        assert!(
+            beside > 0,
+            "no forest is left beside a window flush to the edge"
+        );
+
+        for (n, (row, was)) in over.iter().zip(alone.iter()).enumerate() {
+            if !(window.y..window.y + window.height).contains(&(n as u16)) {
+                assert_eq!(
+                    row, was,
+                    "row {n} is above or below the window and changed anyway"
+                );
+                continue;
+            }
+            let left: String = row.chars().take(beside).collect();
+            assert_eq!(
+                left,
+                was.chars().take(beside).collect::<String>(),
+                "the forest beside the window on row {n}"
+            );
+        }
+    }
+
+    /// `Clear` is what stops the trees showing between the bindings. Every
+    /// row is asserted whole, so forest text surviving in the columns a
+    /// shorter binding does not reach is a failure rather than a trim.
+    #[test]
+    fn no_forest_shows_through_the_bindings_window() {
+        assert_eq!(
+            window_inner(80, 24),
+            vec![
                 "  Enter     focus the selected bead's pane in herdr",
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
                 "  q, ^C     quit",
                 "  ^R        collect from the trackers again now",
-                "  … 8 more bindings · no room on a screen this short",
+                "  Down, j   move down one row",
+                "  Up, k     move up one row",
+                "  Right, l  expand, or move to the first child when it is already expanded",
+                "  Left, h   collapse, or move to the parent when it is already collapsed",
+                "  ^D        move down half a screen",
+                "  ^U        move up half a screen",
+                "  g         move to the first row",
+                "  G         move to the last row",
             ]
         );
+    }
+
+    /// A window two columns narrower than the screen it sits in, on the
+    /// narrowest screen anyone uses. `q, ^C quit` is the line that must
+    /// survive: a reader who cannot find it is stuck.
+    #[test]
+    fn a_forty_column_screen_keeps_the_keys_and_cuts_only_what_it_must() {
+        let window = draw::bindings_window(Rect::new(0, 0, 40, 24), &bindings());
+        assert_eq!(
+            window.width, 40,
+            "a window wider than the screen has to clamp"
+        );
+
+        let drawn = window_inner(40, 24);
+
+        assert_eq!(drawn[4], "  q, ^C     quit");
+        assert_eq!(
+            drawn[8], "  Right, l  expand, or move to the fi…",
+            "the one line too long for forty columns, cut with the cut marked"
+        );
+        assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
 
     /// Graeme could not tell what `⏎` was, let alone press it. A key named
@@ -1548,10 +1668,16 @@ mod tests {
         }
     }
 
-    fn painted(forest: &mut Forest, tail: &Tail, width: u16, height: u16) -> Vec<String> {
+    fn painted(
+        forest: &mut Forest,
+        tail: &Tail,
+        width: u16,
+        height: u16,
+        showing: Showing,
+    ) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| paint(frame, forest, tail))
+            .draw(|frame| paint(frame, forest, tail, showing))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -1573,7 +1699,13 @@ mod tests {
         );
 
         let mut forest = forest::flatten(&a_grove(30));
-        painted(&mut forest, &Tail::Silent("nothing to tail"), 60, 24);
+        painted(
+            &mut forest,
+            &Tail::Silent("nothing to tail"),
+            60,
+            24,
+            Showing::Forest,
+        );
         forest.apply(Action::Move(Motion::HalfScreenDown));
 
         assert_eq!(
@@ -1613,7 +1745,13 @@ mod tests {
     /// different hat, and only the rows show the difference.
     fn forest_band(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
         let bands = draw::regions(Rect::new(0, 0, width, height));
-        let rows = painted(&mut shown.forest, &shown.tail, width, height);
+        let rows = painted(
+            &mut shown.forest,
+            &shown.tail,
+            width,
+            height,
+            Showing::Forest,
+        );
         rows[..bands.forest.height as usize].to_vec()
     }
 
@@ -1699,7 +1837,7 @@ mod tests {
             lines: vec!["rebuilt .#thinkpad".to_string()],
         };
 
-        let rows = painted(&mut forest, &tail, 40, 12);
+        let rows = painted(&mut forest, &tail, 40, 12, Showing::Forest);
         let bands = draw::regions(Rect::new(0, 0, 40, 12));
 
         assert!(
