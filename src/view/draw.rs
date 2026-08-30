@@ -1284,8 +1284,62 @@ mod tests {
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
         let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 100, 1);
 
-        assert!(drawn[0].contains("◍ wCM:p9 working"), "{drawn:?}");
+        assert!(drawn[0].contains("◍ wCM:p9 · working"), "{drawn:?}");
         assert!(drawn[0].contains("58"), "{drawn:?}");
+    }
+
+    fn captioned(caption: &str) -> Node {
+        let mut staffed = node(
+            "nix-9670s.20",
+            "wallpaper timer calls dms",
+            Status::InProgress,
+        );
+        staffed.agent = Some(AgentRef {
+            pane: "wCM:p9".into(),
+            pane_status: PaneStatus::Working,
+            title: Some(caption.into()),
+            source: JoinSource::AgentPane,
+        });
+        staffed
+    }
+
+    /// A caption is the first unbounded string to reach this cell — a pane id
+    /// was short and fixed — so the cut it takes is the one every other cell
+    /// takes, and the row is still exactly as wide as it was given.
+    #[test]
+    fn a_caption_too_long_for_the_row_is_cut_like_every_other_cell() {
+        let staffed = captioned("teach the elided run to fold back open on a keypress");
+
+        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 50, 1);
+
+        assert_eq!(drawn[0].chars().count(), 50, "{drawn:?}");
+        assert!(drawn[0].ends_with('…'), "{drawn:?}");
+        assert!(!drawn[0].contains("keypress"), "{drawn:?}");
+    }
+
+    /// The cell is fitted before the title is, so a caption long enough takes
+    /// the room the title would have had. The bead is still named by its id,
+    /// which is fitted before either of them and cannot be crowded out.
+    #[test]
+    fn a_caption_long_enough_takes_the_room_the_title_would_have_had() {
+        let staffed = captioned("teach the elided run to fold back open on a keypress");
+
+        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 80, 1);
+
+        assert!(!drawn[0].contains("wallpaper"), "{drawn:?}");
+        assert!(drawn[0].contains(".20"), "{drawn:?}");
+    }
+
+    /// Narrow enough and the cell has no room at all. It goes whole rather
+    /// than leaving a marker standing for a caption that is not there.
+    #[test]
+    fn a_caption_with_no_room_left_takes_the_whole_agent_cell_with_it() {
+        let staffed = captioned("teach the elided run to fold back open on a keypress");
+
+        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 14, 1);
+
+        assert!(!drawn[0].contains(row::AGENT), "{drawn:?}");
+        assert!(drawn[0].contains(".20"), "{drawn:?}");
     }
 
     #[test]

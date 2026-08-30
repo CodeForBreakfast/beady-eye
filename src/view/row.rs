@@ -93,17 +93,26 @@ pub fn abbreviate<'a>(id: &'a str, root: &str) -> &'a str {
         .unwrap_or(id)
 }
 
+/// A live agent, said as what it is doing rather than as which pane it sits
+/// in. herdr shows a pane id nowhere a reader can look one up, so an id here
+/// spends the row's widest cell on a handle nobody can follow.
+///
+/// A pane that has said nothing keeps its id, which is then the only thing
+/// left that tells one live agent from another.
+///
+/// The caption is free text and a state can be several words, so the row's own
+/// `·` goes between them; run together they read as one sentence. The state
+/// stays between the caption and the join caveat, which is about which pane
+/// this is and not about the work, and beside the caption would read as doubt
+/// about what the agent is doing.
 pub fn agent_marker(agent: &AgentRef) -> String {
-    let mut said = format!(
-        "{AGENT} {} {}",
-        agent.pane,
-        phrase::pane_state(&agent.pane_status)
-    );
-    if let Some(caveat) = phrase::join_caveat(agent.source) {
-        said.push_str(" · ");
-        said.push_str(caveat);
-    }
-    said
+    let doing = agent.title.as_deref().unwrap_or(&agent.pane);
+    let mut said = vec![
+        format!("{AGENT} {doing}"),
+        phrase::pane_state(&agent.pane_status),
+    ];
+    said.extend(phrase::join_caveat(agent.source).map(str::to_string));
+    said.join(" · ")
 }
 
 /// Every rule that fired, not the first: an old claim whose agent has died is
@@ -151,6 +160,13 @@ mod tests {
             pane_status: PaneStatus::Working,
             title: Some("shell selector".into()),
             source,
+        }
+    }
+
+    fn unlabelled(source: JoinSource) -> AgentRef {
+        AgentRef {
+            title: None,
+            ..agent(source)
         }
     }
 
@@ -206,18 +222,61 @@ mod tests {
     }
 
     #[test]
-    fn a_live_agent_is_marked_with_its_pane_and_what_that_pane_is_doing() {
+    fn a_live_agent_is_marked_with_what_it_is_doing_and_not_with_its_pane() {
         let said = agent_marker(&agent(JoinSource::AgentPane));
 
-        assert_eq!(said, "◍ wCM:p9 working");
+        assert_eq!(said, "◍ shell selector · working");
+    }
+
+    /// herdr shows a pane id nowhere a reader can look one up, so on a row it
+    /// costs the widest columns of the cell and answers nothing.
+    #[test]
+    fn a_pane_that_says_what_it_is_doing_never_shows_its_id() {
+        let said = agent_marker(&agent(JoinSource::DisplayAgent));
+
+        assert!(!said.contains("wCM:p9"), "{said}");
+    }
+
+    /// The last thing left that identifies the pane. A cell saying only that
+    /// something is working would drop the agent the row exists to show.
+    #[test]
+    fn a_pane_that_has_said_nothing_falls_back_to_the_id_it_cannot_lose() {
+        let said = agent_marker(&unlabelled(JoinSource::AgentPane));
+
+        assert_eq!(said, "◍ wCM:p9 · working");
     }
 
     #[test]
     fn an_agent_the_bead_never_named_is_marked_as_inferred() {
         let said = agent_marker(&agent(JoinSource::DisplayAgent));
 
-        assert!(said.contains("wCM:p9"), "{said}");
         assert!(said.contains("inferred, not confirmed"), "{said}");
+    }
+
+    /// The caveat is about the join, not about the work: it says the pane was
+    /// matched to this bead by inference. Left against the caption it would
+    /// read as doubt about what the agent is doing, so the state stays between
+    /// them and the caveat keeps the place it has always had.
+    #[test]
+    fn the_join_caveat_follows_the_state_rather_than_the_caption() {
+        let said = agent_marker(&agent(JoinSource::DisplayAgent));
+
+        assert_eq!(said, "◍ shell selector · working · inferred, not confirmed");
+    }
+
+    /// A caption is free text and a state can be several words, so run
+    /// together they read as one sentence and neither can be picked out.
+    #[test]
+    fn a_caption_is_kept_apart_from_the_state_that_follows_it() {
+        let waiting = AgentRef {
+            pane_status: PaneStatus::Blocked,
+            ..agent(JoinSource::AgentPane)
+        };
+
+        assert_eq!(
+            agent_marker(&waiting),
+            "◍ shell selector · waiting at a prompt"
+        );
     }
 
     #[test]
