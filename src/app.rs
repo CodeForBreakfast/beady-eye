@@ -14,77 +14,160 @@ use crate::model::tree::{assemble, Assembled};
 
 /// One project's roots in id order, each either read or unreadable.
 struct ProjectWork {
-    project: String,
     readiness: Readiness,
     roots: Vec<(String, Result<Assembled, TrackerFailure>)>,
+}
+
+/// What a collection is asked to read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Wanted {
+    /// Every project, as a run that has read nothing yet must.
+    Everything,
+    /// One project. Every other keeps what its tracker last said.
+    Project(String),
+}
+
+impl Wanted {
+    fn names(&self, project: &str) -> bool {
+        match self {
+            Wanted::Everything => true,
+            Wanted::Project(named) => named == project,
+        }
+    }
+}
+
+/// What each project's tracker last said, kept between collections.
+///
+/// Reading a tracker is dozens of round trips; joining what came back is a
+/// pass over rows already in hand. Keeping the reads is what lets a project a
+/// change message named be read on its own, and the join then runs over the
+/// standing set exactly as it runs over a set read all at once — so refreshing
+/// one project and rebuilding everything agree by construction rather than by
+/// argument.
+#[derive(Default)]
+pub struct Collection {
+    read: BTreeMap<String, Result<ProjectWork, TrackerFailure>>,
+}
+
+impl Collection {
+    /// Read what `wanted` names, and draw everything standing.
+    pub fn collect(
+        &mut self,
+        cfg: &Config,
+        runner: &dyn Runner,
+        wanted: &Wanted,
+        filter: Filter,
+        now: DateTime<Utc>,
+    ) -> Snapshot {
+        // herdr is the second tier: without it there is no agent to join and
+        // no filter to apply, and every tracker still reads.
+        //
+        // Read again however few projects `wanted` names: it is one local
+        // call, the join it feeds is across every project, and a project with
+        // a producer is never polled — so a refresh naming it is the only
+        // chance the agent join gets.
+        let (panes, herdr_state) = match herdr::agent_list(runner) {
+            Ok(panes) => (panes, HerdrState::Ok),
+            Err(_) => (Vec::new(), HerdrState::Unavailable),
+        };
+
+        for project in cfg.projects.iter().filter(|p| wanted.names(&p.name)) {
+            let read = read_project(runner, project, cfg, &panes)
+                .map_err(|failure| tracker_failure(failure.kind));
+            self.read.insert(project.name.clone(), read);
+        }
+
+        self.draw(cfg, &panes, herdr_state, filter, now)
+    }
+
+    /// Everything standing, in config order, however much of it this
+    /// collection just read.
+    fn draw(
+        &self,
+        cfg: &Config,
+        panes: &[Pane],
+        herdr_state: HerdrState,
+        filter: Filter,
+        now: DateTime<Utc>,
+    ) -> Snapshot {
+        // One resolve over every project's rows at once. A pane names its bead
+        // by id alone, and only the whole set tells a match from a prefix
+        // collision.
+        let rows: Vec<ProjectRows<'_>> = self
+            .that_answered(cfg)
+            .flat_map(|(project, work)| {
+                work.roots.iter().filter_map(move |(_, read)| {
+                    read.as_ref().ok().map(|assembled| ProjectRows {
+                        project,
+                        rows: &assembled.rows,
+                    })
+                })
+            })
+            .collect();
+        let joined = &join::resolve(&rows, panes, &cfg.projects, &cfg.join);
+
+        let trees = self
+            .that_answered(cfg)
+            .flat_map(|(project, work)| {
+                work.roots.iter().map(move |(root, read)| match read {
+                    Ok(assembled) => {
+                        snapshot::build_tree(project, assembled, joined, &work.readiness, cfg, now)
+                    }
+                    Err(failure) => Tree::tracker_unreachable(project, root, *failure),
+                })
+            })
+            .collect();
+
+        let failed_projects = self
+            .standing(cfg)
+            .filter_map(|(project, read)| {
+                read.as_ref().err().map(|failure| FailedProject {
+                    project: project.to_string(),
+                    tracker: *failure,
+                })
+            })
+            .collect();
+
+        snapshot::build(
+            Collected {
+                trees,
+                failed_projects,
+            },
+            panes,
+            joined,
+            cfg,
+            herdr_state,
+            filter,
+            now,
+        )
+    }
+
+    /// What has been read, in the order the config names the projects. The
+    /// order a snapshot draws in belongs to the config, not to how a
+    /// collection happened to store what it read.
+    fn standing<'a>(
+        &'a self,
+        cfg: &'a Config,
+    ) -> impl Iterator<Item = (&'a str, &'a Result<ProjectWork, TrackerFailure>)> {
+        cfg.projects
+            .iter()
+            .filter_map(|p| Some((p.name.as_str(), self.read.get(&p.name)?)))
+    }
+
+    /// The projects whose trackers answered, in the same order.
+    fn that_answered<'a>(
+        &'a self,
+        cfg: &'a Config,
+    ) -> impl Iterator<Item = (&'a str, &'a ProjectWork)> {
+        self.standing(cfg)
+            .filter_map(|(project, read)| Some((project, read.as_ref().ok()?)))
+    }
 }
 
 /// Read every configured tracker and, where there is one, the herdr session,
 /// and draw the result.
 pub fn run(cfg: &Config, runner: &dyn Runner, filter: Filter, now: DateTime<Utc>) -> Snapshot {
-    // herdr is the second tier: without it there is no agent to join and no
-    // filter to apply, and every tracker still reads.
-    let (panes, herdr_state) = match herdr::agent_list(runner) {
-        Ok(panes) => (panes, HerdrState::Ok),
-        Err(_) => (Vec::new(), HerdrState::Unavailable),
-    };
-
-    let mut read: Vec<ProjectWork> = Vec::new();
-    let mut failed_projects: Vec<FailedProject> = Vec::new();
-    for project in &cfg.projects {
-        match read_project(runner, project, cfg, &panes) {
-            Ok(work) => read.push(work),
-            Err(failure) => failed_projects.push(FailedProject {
-                project: project.name.clone(),
-                tracker: tracker_failure(failure.kind),
-            }),
-        }
-    }
-
-    // One resolve over every project's rows at once. A pane names its bead by
-    // id alone, and only the whole set tells a match from a prefix collision.
-    let rows: Vec<ProjectRows<'_>> = read
-        .iter()
-        .flat_map(|work| {
-            work.roots.iter().filter_map(|(_, read)| {
-                read.as_ref().ok().map(|assembled| ProjectRows {
-                    project: work.project.as_str(),
-                    rows: &assembled.rows,
-                })
-            })
-        })
-        .collect();
-    let joined = join::resolve(&rows, &panes, &cfg.projects, &cfg.join);
-
-    let trees = read
-        .iter()
-        .flat_map(|work| {
-            work.roots.iter().map(|(root, read)| match read {
-                Ok(assembled) => snapshot::build_tree(
-                    &work.project,
-                    assembled,
-                    &joined,
-                    &work.readiness,
-                    cfg,
-                    now,
-                ),
-                Err(failure) => Tree::tracker_unreachable(&work.project, root, *failure),
-            })
-        })
-        .collect();
-
-    snapshot::build(
-        Collected {
-            trees,
-            failed_projects,
-        },
-        &panes,
-        &joined,
-        cfg,
-        herdr_state,
-        filter,
-        now,
-    )
+    Collection::default().collect(cfg, runner, &Wanted::Everything, filter, now)
 }
 
 /// Everything one project's tracker is asked for. A failure before the roots
@@ -130,7 +213,6 @@ fn read_project(
     }
 
     Ok(ProjectWork {
-        project: project.name.clone(),
         readiness,
         roots: roots
             .into_iter()
@@ -871,6 +953,141 @@ orbital = ["orb-4"]
                     Some("ferry-password".to_string())
                 ),
             ]
+        );
+    }
+
+    // ---- reading one project at a time ---------------------------------
+
+    /// A pane on a bead in one project and a session on none in the other,
+    /// so the join has both directions to do across both trackers.
+    const PANES_IN_BOTH: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","display_agent":"x-1.1"},
+      {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"idle"}
+    ]}}"#;
+
+    fn collect(collection: &mut Collection, runner: &dyn Runner, wanted: &Wanted) -> Snapshot {
+        collection.collect(&two_projects(), runner, wanted, Filter::All, now())
+    }
+
+    fn orbital_alone() -> Wanted {
+        Wanted::Project("orbital".to_string())
+    }
+
+    /// What one project's tracker was asked, however it was reached.
+    fn tracker_calls(runner: &FakeRunner, path: &str) -> usize {
+        runner
+            .calls()
+            .iter()
+            .filter(|c| c.cwd == Some(PathBuf::from(path)))
+            .count()
+    }
+
+    fn trees_of<'a>(snap: &'a Snapshot, project: &str) -> Vec<&'a Tree> {
+        snap.trees.iter().filter(|t| t.project == project).collect()
+    }
+
+    /// The whole of the split, and the thing it would be worst to get wrong:
+    /// reading one project on its own and rebuilding everything must not be
+    /// able to disagree about what is on the screen.
+    #[test]
+    fn refreshing_one_project_gives_the_snapshot_a_whole_rebuild_would_have() {
+        let runner = colliding_trackers(PANES_IN_BOTH);
+        let mut standing = Collection::default();
+        collect(&mut standing, &runner, &Wanted::Everything);
+
+        let refreshed = collect(&mut standing, &runner, &orbital_alone());
+        let rebuilt = collect(&mut Collection::default(), &runner, &Wanted::Everything);
+
+        assert_eq!(refreshed, rebuilt);
+    }
+
+    /// The saving the change channel exists for: a project nothing said had
+    /// changed is not read again.
+    #[test]
+    fn refreshing_one_project_asks_no_other_projects_tracker() {
+        let runner = colliding_trackers(PANES_IN_BOTH);
+        let mut standing = Collection::default();
+        collect(&mut standing, &runner, &Wanted::Everything);
+        let (orbital, ferry) = (
+            tracker_calls(&runner, ORBITAL),
+            tracker_calls(&runner, FERRY),
+        );
+
+        collect(&mut standing, &runner, &orbital_alone());
+
+        assert_eq!(
+            tracker_calls(&runner, FERRY),
+            ferry,
+            "ferry was not named, so its tracker was not asked again"
+        );
+        assert!(
+            tracker_calls(&runner, ORBITAL) > orbital,
+            "orbital was named, so it was read"
+        );
+    }
+
+    /// Degrade, never disappear, with further to reach than the whole-snapshot
+    /// path ever had to: the projects already drawn are not the ones being
+    /// read, so a tracker that fails mid-refresh cannot cost them anything.
+    #[test]
+    fn a_tracker_that_fails_while_one_project_refreshes_leaves_the_others_drawn() {
+        let mut standing = Collection::default();
+        let before = collect(
+            &mut standing,
+            &colliding_trackers(PANES_IN_BOTH),
+            &Wanted::Everything,
+        );
+
+        let refused = colliding_trackers(PANES_IN_BOTH).failing(
+            "bd list --status in_progress --limit 0 --json",
+            failing(FailureKind::Auth),
+        );
+        let after = collect(&mut standing, &refused, &orbital_alone());
+
+        assert_eq!(
+            after.failed_projects,
+            vec![FailedProject {
+                project: "orbital".to_string(),
+                tracker: TrackerFailure::Auth,
+            }]
+        );
+        assert!(
+            trees_of(&after, "orbital").is_empty(),
+            "orbital's trees went with the tracker that could not be read"
+        );
+        assert_eq!(
+            trees_of(&after, "ferry"),
+            trees_of(&before, "ferry"),
+            "ferry is exactly what it was before orbital's outage"
+        );
+    }
+
+    /// A project something reports for is never polled, so a refresh naming
+    /// it is the only chance the agent join gets. The herdr session is read
+    /// again whatever a refresh names — it is one local call, and the join it
+    /// feeds runs across every project by design. What a refresh leaves alone
+    /// is the trackers it did not name, not the panes.
+    #[test]
+    fn a_refresh_naming_one_project_still_reads_the_herdr_session() {
+        let mut standing = Collection::default();
+        let before = collect(
+            &mut standing,
+            &colliding_trackers(r#"{"result":{"agents":[]}}"#),
+            &Wanted::Everything,
+        );
+        assert!(node(tree_of(&before, "ferry"), "x-1.1").agent.is_none());
+
+        let arrived = colliding_trackers(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"working",
+               "display_agent":"x-1.1"}
+            ]}}"#,
+        );
+        let after = collect(&mut standing, &arrived, &orbital_alone());
+
+        assert!(
+            node(tree_of(&after, "ferry"), "x-1.1").agent.is_some(),
+            "the pane reached the project the refresh did not name"
         );
     }
 
