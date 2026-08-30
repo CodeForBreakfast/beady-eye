@@ -133,6 +133,36 @@ pub fn blocked_by(
         .collect())
 }
 
+/// One row of `bd show <id> --json`, which is the only call carrying a bead's
+/// real parent.
+#[derive(Deserialize)]
+struct ShownRow {
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+/// The bead a bead hangs under, or `None` at the top of a parent-child chain.
+///
+/// A dep-tree row cannot answer this. `bd dep tree --direction=up` walks
+/// dependents, so whatever bead it is asked about comes back as its own root,
+/// and the `parent_id` on every other row is that traversal's parent rather
+/// than the bead's own.
+pub fn parent_of(
+    runner: &dyn Runner,
+    cwd: &Path,
+    env: &Env,
+    id: &str,
+) -> Result<Option<String>, RunFailure> {
+    let out = runner.run("bd", &["show", id, "--json"], Some(cwd), env)?;
+    let shown: Vec<ShownRow> =
+        serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
+    let row = shown
+        .into_iter()
+        .next()
+        .ok_or_else(|| RunFailure::parse("bd", "bd show named no bead"))?;
+    Ok(row.parent.filter(|parent| !parent.is_empty()))
+}
+
 /// `bd dep tree`, `bd list` and `bd ready` all answer with the same rows.
 fn rows(out: &str) -> Result<Vec<Bead>, RunFailure> {
     parse_dep_tree(out).map_err(|e| RunFailure::parse("bd", e))
@@ -469,5 +499,44 @@ mod tests {
             credential_env(&runner, &project).unwrap_err().kind,
             FailureKind::Exec
         );
+    }
+
+    #[test]
+    fn the_parent_comes_from_bd_show_because_the_dep_tree_cannot_carry_it() {
+        let out = r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1.4"}]"#;
+        let runner = FakeRunner::default().with("bd show p-1.16 --json", out);
+
+        let parent = parent_of(&runner, &project_dir(), &credentialled(), "p-1.16").unwrap();
+
+        assert_eq!(parent.as_deref(), Some("p-1.4"));
+        let call = runner.call("bd show p-1.16 --json");
+        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
+        assert_eq!(call.env, credentialled());
+    }
+
+    /// bd writes a root's absent parent as `null`; the dep tree writes the
+    /// same absence as `""`, and an older bd omitted the field. All three
+    /// mean the same thing.
+    #[test]
+    fn a_root_has_no_parent_however_bd_spells_the_absence() {
+        for spelling in [r#","parent":null"#, r#","parent":"""#, ""] {
+            let out = format!(r#"[{{"id":"p-1","title":"a","status":"open"{spelling}}}]"#);
+            let runner = FakeRunner::default().with("bd show p-1 --json", &out);
+
+            assert_eq!(
+                parent_of(&runner, &project_dir(), &credentialled(), "p-1").unwrap(),
+                None,
+                "on {spelling:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bd_show_naming_no_bead_is_a_parse_failure() {
+        let runner = FakeRunner::default().with("bd show p-9 --json", "[]");
+
+        let failure = parent_of(&runner, &project_dir(), &credentialled(), "p-9").unwrap_err();
+
+        assert_eq!(failure.kind, FailureKind::Parse);
     }
 }

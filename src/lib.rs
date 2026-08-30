@@ -1,3 +1,4 @@
+pub mod app;
 pub mod collect;
 pub mod config;
 pub mod model;
