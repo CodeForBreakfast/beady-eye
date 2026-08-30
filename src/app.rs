@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 
-use crate::collect::herdr::Pane;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::collect::{bd, herdr};
 use crate::config::{Config, Project};
@@ -11,6 +10,7 @@ use crate::model::snapshot::{
     self, Collected, FailedProject, Filter, HerdrState, Readiness, Snapshot, TrackerFailure, Tree,
 };
 use crate::model::tree::{assemble, Assembled};
+use crate::model::types::Pane;
 
 /// One project's roots in id order, each either read or unreadable.
 struct ProjectWork {

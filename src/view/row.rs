@@ -141,8 +141,8 @@ pub fn anomaly_marker(anomalies: &[Anomaly]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::herdr::PaneStatus;
     use crate::model::join::{Badged, JoinSource};
+    use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
     const ROOT: &str = "nix-9670s";

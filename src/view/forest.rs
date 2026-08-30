@@ -729,13 +729,14 @@ fn selectable(line: &Line) -> bool {
 mod tests {
     use super::*;
     use crate::collect::bd::parse_dep_tree;
-    use crate::collect::herdr::{parse_agent_list, Pane};
+    use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::snapshot::{
         build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure,
     };
     use crate::model::tree::{assemble, Assembled};
+    use crate::model::types::Pane;
     use crate::view::lines::{OPEN, SHUT};
     use crate::view::phrase;
     use crate::view::row::{Progress, Row};

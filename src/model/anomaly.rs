@@ -64,8 +64,8 @@ pub fn detect(
 mod tests {
     use super::*;
     use crate::collect::bd::parse_dep_tree;
-    use crate::collect::herdr::PaneStatus;
     use crate::model::join::JoinSource;
+    use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
     const NOW: &str = "2026-08-30T12:00:00Z";

@@ -5,9 +5,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
-use crate::collect::herdr::PaneStatus;
 use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState};
-use crate::model::types::Status;
+use crate::model::types::{PaneStatus, Status};
 use crate::view::fitted::{columns, indent, Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Group, GroupKind, Header, Item, Note};
@@ -604,10 +603,10 @@ mod tests {
     use ratatui::widgets::Widget;
     use ratatui::Terminal;
 
-    use crate::collect::herdr::PaneStatus;
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{AgentRef, Badged, BeadKey, JoinSource};
     use crate::model::snapshot::{FailedProject, Filter, Node, Snapshot, TrackerFailure, Tree};
+    use crate::model::types::PaneStatus;
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
     use chrono::{TimeZone, Utc};

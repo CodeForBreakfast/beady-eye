@@ -161,14 +161,13 @@ pub fn focus(forest: &Forest, panes: &dyn Panes) -> Option<Tail> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::herdr::PaneStatus;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::model::join::JoinSource;
     use crate::model::snapshot::{
         Counts, FailedProject, Filter, LoosePane, Node, TrackerFailure, TrackerState, Tree,
         UnconfiguredPane,
     };
-    use crate::model::types::{Edge, Status};
+    use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::forest;
     use crate::view::lines::GroupKind;
     use crate::view::{Action, Motion};

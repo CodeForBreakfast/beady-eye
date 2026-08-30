@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -83,4 +84,52 @@ pub struct Bead {
 fn none_if_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     let raw = Option::<String>::deserialize(d)?;
     Ok(raw.filter(|s| !s.is_empty()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneStatus {
+    Idle,
+    Working,
+    /// A TTY prompt is waiting — a permission gate, or a pane at a startup
+    /// confirmation. A property of the terminal, never of the work.
+    Blocked,
+    Done,
+    #[serde(untagged)]
+    Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Pane {
+    pub pane_id: String,
+    pub cwd: PathBuf,
+    #[serde(default)]
+    pub display_agent: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub state_labels: BTreeMap<String, String>,
+    pub agent_status: PaneStatus,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+}
+
+impl Pane {
+    /// The line to show for this pane: its state label for the state it is
+    /// actually in, falling back to its title.
+    pub fn caption(&self) -> Option<&str> {
+        let state = match &self.agent_status {
+            PaneStatus::Idle => "idle",
+            PaneStatus::Working => "working",
+            PaneStatus::Blocked => "blocked",
+            PaneStatus::Done => "done",
+            PaneStatus::Other(s) => s.as_str(),
+        };
+        self.state_labels
+            .get(state)
+            .map(String::as_str)
+            .or(self.title.as_deref())
+    }
 }

@@ -6,6 +6,7 @@ use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 
+use beady_eye::collect::discovery;
 use beady_eye::collect::run::{RealRunner, Runner};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
@@ -105,12 +106,14 @@ fn config_for_wherever_bdi_was_run(runner: &dyn Runner, path: &Path) -> anyhow::
         Err(absent) if absent.kind() == ErrorKind::NotFound => {
             let cwd = std::env::current_dir().context("finding the current directory")?;
             let named = std::env::var(PROJECT_IN_THE_ENVIRONMENT).ok();
-            Config::from_the_current_directory(runner, &cwd, named.as_deref()).with_context(|| {
-                format!(
-                    "there is no config at {}, so bdi read the current directory",
-                    path.display()
-                )
-            })
+            discovery::from_the_current_directory(runner, &cwd, named.as_deref()).with_context(
+                || {
+                    format!(
+                        "there is no config at {}, so bdi read the current directory",
+                        path.display()
+                    )
+                },
+            )
         }
         Err(unreadable) => {
             Err(unreadable).with_context(|| format!("reading the config at {}", path.display()))

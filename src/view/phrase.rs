@@ -9,12 +9,11 @@
 //! agent states, and a status or state neither project's vocabulary covers,
 //! which is quoted so it reads as a foreign word rather than as `bdi`'s.
 
-use crate::collect::herdr::PaneStatus;
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
-use crate::model::types::Status;
+use crate::model::types::{PaneStatus, Status};
 use crate::view::Notice;
 
 pub fn tracker_failure(failure: TrackerFailure) -> &'static str {

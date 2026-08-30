@@ -3,12 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::collect::herdr::{Pane, PaneStatus};
 use crate::config::Config;
 use crate::model::anomaly::{self, Anomaly};
 use crate::model::join::{self, AgentRef, Badged, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
-use crate::model::types::{Edge, Status};
+use crate::model::types::{Edge, Pane, PaneStatus, Status};
 
 /// Which tier `bdi` is reading: with no herdr there are no panes, so there is
 /// no agent to join and no filter to apply.

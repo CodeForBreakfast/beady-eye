@@ -3,10 +3,9 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::collect::herdr::{Pane, PaneStatus};
 use crate::config::{Badge, Join, Project};
 use crate::model::tree::Placed;
-use crate::model::types::Bead;
+use crate::model::types::{Bead, Pane, PaneStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
