@@ -527,6 +527,32 @@ Keys: arrows to move, space to fold, `⏎` to focus the pane, `a` to drop the
 live-agent filter, `^R` to refresh, `q` to quit. Refresh is a poll — herdr has no
 event stream — on a default interval with `^R` to force one.
 
+The pointer works too. A click selects the row under it; a wheel notch moves the
+selection one row, because `bdi` holds no scroll of its own and the window is
+wherever the selection puts it. A click on the tail, on the key row, or on a
+blank row past the last line selects nothing, and neither does one on a row the
+keyboard cannot rest on — a note, or an elided run. Sliding to the neighbour
+would select something the reader did not point at.
+
+**Capture is on for the whole session, unconditionally, and that is a decision
+with a cost.** While `bdi` is up the terminal stops getting the mouse, so
+dragging over the window no longer selects text in it — a real loss in a tool
+whose job is showing bead ids and pane ids you then want to paste. It is taken
+anyway, because in the terminal this is read in the loss is smaller than it
+looks: herdr owns the mouse above the pane and keeps its copy mode, which
+selects by keyboard, and kitty keeps its shift-drag, which bypasses whatever the
+application grabbed. What is actually given up is drag-selection inside one
+pane. There is no setting for it: a flag would put the question to every reader
+when it has one answer here, and the answer is a property of the terminal rather
+than of the reader's taste.
+
+Of everything capture then reports, only those two gestures are answered.
+crossterm asks the terminal for any-event tracking, so it reports every cell the
+pointer crosses whether a button is down or not. A release, a drag, bare motion,
+the other two buttons and the horizontal wheel are each dropped on the thread
+that reads them, before the loop can be handed one — a loop wedged by a flood is
+a `^C` that never reaches the Quit mapping and a terminal left in raw mode.
+
 ## Alternatives considered
 
 **`bv` (beads_viewer)** — a mature Go TUI for beads with a list/detail split, a
