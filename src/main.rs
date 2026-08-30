@@ -1,4 +1,4 @@
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -17,9 +17,9 @@ const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
 /// resolves a project the same way, so a name set once reaches both.
 const PROJECT_IN_THE_ENVIRONMENT: &str = "COMMY_PROJECT";
 
-/// The interactive view is a plan of its own, so until it lands `--json` is
-/// the only thing `bdi` can draw.
-const NO_VIEW_YET: u8 = 2;
+/// The view is drawn on the alternate screen, so a `bdi` whose output is a
+/// pipe has nowhere to draw and `--json` is the only thing it can give.
+const NO_TERMINAL: u8 = 2;
 
 #[derive(Parser)]
 #[command(name = "bdi", version, about = "A tree of work in flight")]
@@ -59,14 +59,25 @@ fn main() -> anyhow::Result<ExitCode> {
     } else {
         Filter::LiveAgents
     };
-    let snapshot = beady_eye::app::run(&cfg, &RealRunner, filter, Utc::now());
-
-    if !cli.json {
-        eprintln!("bdi has no interactive view yet; re-run with --json");
-        return Ok(ExitCode::from(NO_VIEW_YET));
+    if cli.json {
+        let snapshot = beady_eye::app::run(&cfg, &RealRunner, filter, Utc::now());
+        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+        return Ok(ExitCode::SUCCESS);
     }
 
-    println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    if !std::io::stdout().is_terminal() {
+        eprintln!("bdi's view needs a terminal; re-run with --json");
+        return Ok(ExitCode::from(NO_TERMINAL));
+    }
+
+    let refresh = cfg.tui.refresh();
+    // RealRunner is a unit struct, so the collection builds its own rather
+    // than borrowing one across the thread it runs on.
+    beady_eye::tui::run(
+        refresh,
+        Box::new(move || beady_eye::app::run(&cfg, &RealRunner, filter, Utc::now())),
+    )?;
+
     Ok(ExitCode::SUCCESS)
 }
 
