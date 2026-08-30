@@ -949,7 +949,7 @@ orbital = ["orb-4"]
 
         let loose: Vec<&str> = snap.unattributed.iter().map(|p| p.pane.as_str()).collect();
         assert_eq!(loose, vec!["w:p9"]);
-        assert_eq!(snap.unattributed[0].project.as_deref(), Some("orbital"));
+        assert_eq!(snap.unattributed[0].project, "orbital");
     }
 
     // ---- several projects at once --------------------------------------

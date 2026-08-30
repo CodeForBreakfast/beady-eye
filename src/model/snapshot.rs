@@ -131,12 +131,22 @@ pub struct HiddenTree {
     pub reason: &'static str,
 }
 
-/// A live pane that resolved to no bead. `project` is absent when the pane's
-/// directory sits under no configured project.
+/// A live pane in a configured project that no bead in it claims.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LoosePane {
     pub pane: String,
-    pub project: Option<String>,
+    pub project: String,
+    pub cwd: String,
+    pub pane_status: PaneStatus,
+}
+
+/// A live pane whose directory sits under no `[[projects]]` entry. `bdi` has
+/// not failed to attribute it; it has never been told the project exists, so
+/// there was no tracker to look in. There is no project to name, and the
+/// absence of the field is how a consumer tells this from a `LoosePane`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnconfiguredPane {
+    pub pane: String,
     pub cwd: String,
     pub pane_status: PaneStatus,
 }
@@ -150,6 +160,9 @@ pub struct Snapshot {
     pub hidden_trees: Vec<HiddenTree>,
     pub failed_projects: Vec<FailedProject>,
     pub unattributed: Vec<LoosePane>,
+    /// Panes in directories no configured project covers. Apart from
+    /// `unattributed` because the fix is a config entry, not a bead.
+    pub unconfigured: Vec<UnconfiguredPane>,
     pub conflicts: Vec<Conflict>,
     /// Every tree that was read, in the order it was read, shown or hidden.
     /// `trees` and `hidden_trees` are how the current filter divides this, and
@@ -307,15 +320,23 @@ pub fn build(
     } = collected;
     let (shown, hidden) = partition(&trees, herdr, filter);
 
-    let unattributed = join::unattributed(panes, joined)
-        .into_iter()
-        .map(|pane| LoosePane {
-            pane: pane.pane_id.clone(),
-            project: join::project_of(&pane.cwd, &cfg.projects).map(|p| p.name.clone()),
-            cwd: pane.cwd.display().to_string(),
-            pane_status: pane.agent_status.clone(),
-        })
-        .collect();
+    let (mut unattributed, mut unconfigured) = (Vec::new(), Vec::new());
+    for pane in join::unattributed(panes, joined) {
+        let cwd = pane.cwd.display().to_string();
+        match join::project_of(&pane.cwd, &cfg.projects) {
+            Some(project) => unattributed.push(LoosePane {
+                pane: pane.pane_id.clone(),
+                project: project.name.clone(),
+                cwd,
+                pane_status: pane.agent_status.clone(),
+            }),
+            None => unconfigured.push(UnconfiguredPane {
+                pane: pane.pane_id.clone(),
+                cwd,
+                pane_status: pane.agent_status.clone(),
+            }),
+        }
+    }
 
     Snapshot {
         generated_at: now,
@@ -325,6 +346,7 @@ pub fn build(
         hidden_trees: hidden,
         failed_projects,
         unattributed,
+        unconfigured,
         conflicts: joined.conflicts.clone(),
         collected: trees,
     }
@@ -794,21 +816,33 @@ render = "⏸ waiting"
 
         assert_eq!(
             snap.unattributed,
-            vec![
-                LoosePane {
-                    pane: "w:p9".to_string(),
-                    project: Some("orbital".to_string()),
-                    cwd: "/srv/work/orbital".to_string(),
-                    pane_status: PaneStatus::Blocked,
-                },
-                LoosePane {
-                    pane: "w:pF".to_string(),
-                    project: None,
-                    cwd: "/srv/spike".to_string(),
-                    pane_status: PaneStatus::Idle,
-                },
-            ],
-            "a pane under no configured project is still a pane nobody can account for"
+            vec![LoosePane {
+                pane: "w:p9".to_string(),
+                project: "orbital".to_string(),
+                cwd: "/srv/work/orbital".to_string(),
+                pane_status: PaneStatus::Blocked,
+            }],
+            "a pane in a known project that no bead claims is unattributed"
+        );
+    }
+
+    /// The two loose cases ask different things of the reader: one is an agent
+    /// off the tracked work, the other is a project `bdi` was never told about.
+    #[test]
+    fn a_pane_under_no_configured_project_is_reported_apart_from_the_unattributed() {
+        let snap = snapshot(vec![tree()]);
+
+        assert_eq!(
+            snap.unconfigured,
+            vec![UnconfiguredPane {
+                pane: "w:pF".to_string(),
+                cwd: "/srv/spike".to_string(),
+                pane_status: PaneStatus::Idle,
+            }]
+        );
+        assert!(
+            !snap.unattributed.iter().any(|p| p.pane == "w:pF"),
+            "a pane is in one list or the other, never both"
         );
     }
 

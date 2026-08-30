@@ -150,6 +150,16 @@ pub fn unattributed(count: usize) -> String {
     format!("{count} unattributed {pane}")
 }
 
+/// Live panes working somewhere `bdi` was never told about. The finding is
+/// about the configuration rather than the pane, so the sentence is too, and
+/// each directory below it is the one a `[[projects]]` entry would name.
+pub fn unconfigured(count: usize) -> String {
+    if count == 1 {
+        return "1 pane in a directory no configured project covers".to_string();
+    }
+    format!("{count} panes in directories no configured project covers")
+}
+
 /// Beads whose declared parent was absent, now hanging off the root.
 pub fn dangling(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
@@ -344,6 +354,7 @@ mod tests {
                 said.push(hidden_trees(count, with_findings));
             }
             said.push(unattributed(count));
+            said.push(unconfigured(count));
         }
         said.push(dangling(1));
         said.push(dangling(3));
@@ -482,6 +493,7 @@ mod tests {
             hidden_trees(1, 0),
             hidden_trees(1, 1),
             unattributed(1),
+            unconfigured(1),
             anomaly(&Anomaly::StaleClaim { days: 1 }),
         ] {
             for plural in ["beads", "days", "projects", "trees", "panes", "conflicts"] {

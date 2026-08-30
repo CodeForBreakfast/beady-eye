@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     self, FailedProject, Filter, HiddenTree, LoosePane, Node, Snapshot, TrackerState, Tree,
+    UnconfiguredPane,
 };
 use crate::model::types::Status;
 use crate::view::row::{self, Progress, Row};
@@ -120,19 +121,21 @@ pub struct Group {
     pub with_findings: usize,
 }
 
-/// The groups below the trees, in the order they are drawn: what could not be
-/// read first, what the filter chose to hide last.
+/// The groups below the trees, in the order they are drawn: the projects with
+/// nothing to show first, what the filter chose to hide last.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GroupKind {
     FailedProjects,
+    Unconfigured,
     Conflicts,
     HiddenTrees,
     Unattributed,
 }
 
 impl GroupKind {
-    pub const ALL: [GroupKind; 4] = [
+    pub const ALL: [GroupKind; 5] = [
         GroupKind::FailedProjects,
+        GroupKind::Unconfigured,
         GroupKind::Conflicts,
         GroupKind::HiddenTrees,
         GroupKind::Unattributed,
@@ -145,6 +148,7 @@ pub enum Item {
     Conflict(Conflict),
     Hidden(HiddenTree),
     Loose(LoosePane),
+    Unconfigured(UnconfiguredPane),
 }
 
 /// What a line that folds is known by, so both the fold and the selection
@@ -511,12 +515,10 @@ impl Forest {
         let mut recovered = vec![Vec::new(); self.snapshot.trees.len()];
         let mut loose = Vec::new();
         for pane in &self.snapshot.unattributed {
-            let home = pane.project.as_ref().and_then(|project| {
-                self.snapshot
-                    .trees
-                    .iter()
-                    .position(|tree| tree.tracker != TrackerState::Ok && &tree.project == project)
-            });
+            let home =
+                self.snapshot.trees.iter().position(|tree| {
+                    tree.tracker != TrackerState::Ok && tree.project == pane.project
+                });
             match home {
                 Some(tree) => recovered[tree].push(pane.clone()),
                 None => loose.push(pane.clone()),
@@ -549,6 +551,13 @@ impl Forest {
                 .map(Item::Hidden)
                 .collect(),
             GroupKind::Unattributed => loose.iter().cloned().map(Item::Loose).collect(),
+            GroupKind::Unconfigured => self
+                .snapshot
+                .unconfigured
+                .iter()
+                .cloned()
+                .map(Item::Unconfigured)
+                .collect(),
         }
     }
 
@@ -565,12 +574,7 @@ impl Forest {
     fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
         let root = root_key(tree);
         let open = self.expanded(&Handle::Bead(root.clone()));
-        let complete = tree.tracker == TrackerState::Ok
-            || !self
-                .snapshot
-                .unattributed
-                .iter()
-                .any(|pane| pane.project.is_none());
+        let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
 
         lines.push(Line {
             prefix: marker(open).to_string(),
@@ -1154,9 +1158,10 @@ credential_command = "secret harbour"
                 "  └── ▸ … 2 more",
                 "▸ ferry · fer-2",
                 "▸ [FailedProjects] 1",
+                "▸ [Unconfigured] 1",
                 "▸ [Conflicts] 1",
                 "▸ [HiddenTrees] 1",
-                "▸ [Unattributed] 3",
+                "▸ [Unattributed] 2",
             ]
         );
     }
@@ -1280,9 +1285,10 @@ credential_command = "secret harbour"
                 "      └── ✓ .3 pour the pad",
                 "▸ ferry · fer-2",
                 "▸ [FailedProjects] 1",
+                "▸ [Unconfigured] 1",
                 "▸ [Conflicts] 1",
                 "▸ [HiddenTrees] 1",
-                "▸ [Unattributed] 3",
+                "▸ [Unattributed] 2",
             ]
         );
     }
@@ -1721,7 +1727,28 @@ credential_command = "secret harbour"
         let drawn = sketch(&forest);
         let items = drawn.iter().filter(|line| line.contains("Loose")).count();
 
-        assert_eq!(items, 3, "{drawn:#?}");
+        assert_eq!(items, 2, "{drawn:#?}");
+    }
+
+    /// The panes under no configured project open into their own directories,
+    /// which is the whole use of the group: the line says a `[[projects]]`
+    /// entry is missing and opening it says which one.
+    #[test]
+    fn opening_the_unconfigured_group_names_the_directories() {
+        let mut forest = flatten(&snapshot());
+        forest
+            .folds
+            .insert(Handle::Group(GroupKind::Unconfigured), true);
+        forest.refresh(&snapshot());
+
+        let drawn = sketch(&forest);
+
+        assert!(
+            drawn
+                .iter()
+                .any(|line| line.contains("Unconfigured") && line.contains("/srv/spike")),
+            "{drawn:#?}"
+        );
     }
 
     /// The filter's choice holds — a hidden tree is not drawn — but a group
@@ -1781,7 +1808,7 @@ credential_command = "secret harbour"
             })
             .collect();
 
-        assert_eq!(others.len(), 3);
+        assert_eq!(others.len(), 4);
         assert!(
             others.iter().all(|group| group.with_findings == 0),
             "{others:#?}"
@@ -1789,7 +1816,7 @@ credential_command = "secret harbour"
     }
 
     /// Every fold state over every root, every group and one interior node:
-    /// 128 of them, which is small enough to visit rather than sample.
+    /// 256 of them, which is small enough to visit rather than sample.
     #[test]
     fn nothing_reported_disappears_under_any_fold_state() {
         let snapshot = snapshot();
@@ -1798,6 +1825,7 @@ credential_command = "secret harbour"
             Handle::Bead(key("ferry", "fer-2")),
             Handle::Bead(key("orbital", "orb-7.1")),
             Handle::Group(GroupKind::FailedProjects),
+            Handle::Group(GroupKind::Unconfigured),
             Handle::Group(GroupKind::Conflicts),
             Handle::Group(GroupKind::HiddenTrees),
             Handle::Group(GroupKind::Unattributed),
@@ -1817,7 +1845,8 @@ credential_command = "secret harbour"
         }
     }
 
-    /// The five degraded kinds, plus the loose panes the recovery moves about.
+    /// The five degraded kinds, plus the two sorts of loose pane — the ones
+    /// the recovery moves about, and the ones no configured project covers.
     #[derive(Debug, Default, PartialEq, Eq)]
     struct Reported {
         dangling: usize,
@@ -1826,6 +1855,7 @@ credential_command = "secret harbour"
         conflicts: usize,
         failed_projects: usize,
         loose_panes: usize,
+        unconfigured_panes: usize,
     }
 
     fn in_the_snapshot(snapshot: &Snapshot) -> Reported {
@@ -1841,6 +1871,7 @@ credential_command = "secret harbour"
             conflicts: snapshot.conflicts.len(),
             failed_projects: snapshot.failed_projects.len(),
             loose_panes: snapshot.unattributed.len(),
+            unconfigured_panes: snapshot.unconfigured.len(),
         }
     }
 
@@ -1856,6 +1887,7 @@ credential_command = "secret harbour"
                     GroupKind::Conflicts => found.conflicts += count,
                     GroupKind::FailedProjects => found.failed_projects += count,
                     GroupKind::Unattributed => found.loose_panes += count,
+                    GroupKind::Unconfigured => found.unconfigured_panes += count,
                     GroupKind::HiddenTrees => {}
                 },
                 _ => {}

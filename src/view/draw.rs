@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Widget};
 use ratatui::Frame;
 
+use crate::collect::herdr::PaneStatus;
 use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState};
 use crate::model::types::Status;
 use crate::view::forest::{self, Content, Forest, Group, GroupKind, Header, Item, Note};
@@ -150,6 +151,7 @@ fn group_line(prefix: &str, group: Group) -> Fitted {
         GroupKind::Conflicts => (phrase::conflicts(group.count), false),
         GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
         GroupKind::Unattributed => (phrase::unattributed(group.count), false),
+        GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
     };
 
     let (said, colour) = if hidden {
@@ -186,15 +188,23 @@ fn item_line(prefix: &str, item: &Item) -> Fitted {
             vec![Span::raw(hidden.title.clone())],
             Vec::new(),
         ),
-        Item::Loose(pane) => Fitted::new(
-            vec![Span::styled(
-                format!("{prefix}{}", pane_marker(pane)),
-                Style::new().fg(LIVE),
-            )],
-            vec![Span::raw(pane.cwd.clone())],
-            Vec::new(),
-        ),
+        Item::Loose(pane) => loose_line(prefix, &pane.pane, &pane.pane_status, &pane.cwd),
+        Item::Unconfigured(pane) => loose_line(prefix, &pane.pane, &pane.pane_status, &pane.cwd),
     }
+}
+
+/// A live pane in one of the groups: which pane it is, and the directory it is
+/// working in. The directory is what both groups are asking the reader to
+/// look at — one to place the agent, the other to configure the project.
+fn loose_line(prefix: &str, pane: &str, status: &PaneStatus, cwd: &str) -> Fitted {
+    Fitted::new(
+        vec![Span::styled(
+            format!("{prefix}{}", pane_marker(pane, status)),
+            Style::new().fg(LIVE),
+        )],
+        vec![Span::raw(cwd.to_string())],
+        Vec::new(),
+    )
 }
 
 /// Draw the tail into the band `regions` reserved for it: a rule naming the
@@ -422,7 +432,7 @@ fn unreadable(failure: TrackerFailure, panes: &[LoosePane], complete: bool) -> V
     } else {
         panes
             .iter()
-            .map(pane_marker)
+            .map(|pane| pane_marker(&pane.pane, &pane.pane_status))
             .collect::<Vec<_>>()
             .join(" · ")
     });
@@ -436,12 +446,8 @@ fn unreadable(failure: TrackerFailure, panes: &[LoosePane], complete: bool) -> V
     )]
 }
 
-fn pane_marker(pane: &LoosePane) -> String {
-    format!(
-        "{AGENT} {} {}",
-        pane.pane,
-        phrase::pane_state(&pane.pane_status)
-    )
+fn pane_marker(pane: &str, status: &PaneStatus) -> String {
+    format!("{AGENT} {pane} {}", phrase::pane_state(status))
 }
 
 /// One bead's line, under the box-drawing run its ancestors leave.
@@ -922,7 +928,7 @@ mod tests {
     fn pane(pane: &str, status: PaneStatus) -> LoosePane {
         LoosePane {
             pane: pane.into(),
-            project: Some("summit-works".into()),
+            project: "summit-works".into(),
             cwd: "/tmp/bdi-ground/summit-works".into(),
             pane_status: status,
         }
@@ -1774,6 +1780,7 @@ mod tests {
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),
             unattributed,
+            unconfigured: Vec::new(),
             conflicts: Vec::new(),
         }
     }

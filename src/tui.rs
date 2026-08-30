@@ -819,6 +819,7 @@ mod tests {
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),
             unattributed: Vec::new(),
+            unconfigured: Vec::new(),
             conflicts: Vec::new(),
             collected: vec![tree],
         }
@@ -1663,6 +1664,7 @@ mod tests {
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),
             unattributed: Vec::new(),
+            unconfigured: Vec::new(),
             conflicts: Vec::new(),
             collected: trees,
         }

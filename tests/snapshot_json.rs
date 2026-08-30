@@ -36,7 +36,8 @@ const PANES: &str = r#"{"id":"cli:agent:list","result":{"agents":[
   {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"},
   {"pane_id":"w:p2","cwd":"/srv/work/orbital","agent_status":"idle","display_agent":"orb-7"},
   {"pane_id":"w:p3","cwd":"/srv/work/orbital","agent_status":"idle","display_agent":"orb-7.2"},
-  {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"blocked"}
+  {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"blocked"},
+  {"pane_id":"w:pF","cwd":"/srv/spike","agent_status":"idle"}
 ]}}"#;
 
 const CONFIG: &str = r#"
@@ -318,6 +319,32 @@ fn a_pane_on_no_bead_is_reported_with_its_project() {
     );
 }
 
+/// A pane under no configured project is a finding about the configuration,
+/// so it is its own array rather than an `unattributed` entry with the
+/// project left out. The two carry different keys, which a consumer can test
+/// for; a missing value would be a judgement they have to make.
+#[test]
+fn a_pane_under_no_configured_project_is_its_own_array() {
+    let emitted = emit(&canned(), Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["unconfigured"],
+        json!([{"pane": "w:pF", "cwd": "/srv/spike", "pane_status": "idle"}])
+    );
+    assert!(
+        emitted["unconfigured"][0].get("project").is_none(),
+        "there is no project to name, so there is no key"
+    );
+    assert!(
+        !emitted["unattributed"]
+            .as_array()
+            .expect("unattributed is an array")
+            .iter()
+            .any(|pane| pane["pane"] == "w:pF"),
+        "a pane is in one array or the other, never both"
+    );
+}
+
 /// The two directions of the join disagreeing is a finding, not something to
 /// resolve by picking a winner.
 #[test]
@@ -367,6 +394,35 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
     assert_eq!(
         emitted["failed_projects"],
         json!([{"project": "orbital", "tracker": "auth"}])
+    );
+}
+
+/// A configured project whose tracker refused is still a configured project.
+/// Its panes have nowhere to be attributed, which is not the same as `bdi`
+/// never having been told the project exists — and telling those two apart is
+/// the whole of the split.
+#[test]
+fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
+    let runner = canned().failing(
+        "bd list --status in_progress --limit 0 --json",
+        FailureKind::Auth,
+    );
+
+    let emitted = emit(&runner, Filter::LiveAgents);
+
+    let unattributed = emitted["unattributed"]
+        .as_array()
+        .expect("unattributed is an array");
+    assert!(
+        unattributed
+            .iter()
+            .all(|pane| pane["project"] == "orbital" && pane["cwd"] == "/srv/work/orbital"),
+        "{unattributed:#?}"
+    );
+    assert_eq!(
+        emitted["unconfigured"],
+        json!([{"pane": "w:pF", "cwd": "/srv/spike", "pane_status": "idle"}]),
+        "only the pane outside every configured project"
     );
 }
 
