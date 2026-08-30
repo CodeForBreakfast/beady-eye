@@ -177,6 +177,45 @@ enum Handle {
     /// one run, so the bead names it.
     Elided(BeadKey),
     Group(GroupKind),
+    Item(ItemKey),
+}
+
+/// What one thing in a group is known by.
+///
+/// A handle has to be an identity the thing still has after the next collect,
+/// never where it sat, or a group re-read in another order would move the
+/// selection to a neighbour with nothing on screen to say so.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ItemKey {
+    /// A pane, by its id, which is unique in a herdr session. It serves both
+    /// groups that hold panes: `recovery` puts a pane in exactly one of them,
+    /// and an unconfigured pane is one under no configured project at all.
+    Pane(String),
+    Project(String),
+    /// A hidden tree, by the root it was hidden by.
+    Tree(BeadKey),
+    /// A disagreement, by the whole of what it says. No one field identifies
+    /// every arm — several panes naming one bead in another project make
+    /// several conflicts sharing that bead — and the value is made entirely
+    /// of pane and bead ids, sorted and deduplicated by the join, so two
+    /// collects that saw the same disagreement write the same one.
+    Conflict(Conflict),
+}
+
+/// What a thing in a group is known by. Every kind has an identity, so every
+/// one of them can hold the selection; a kind whose identity were only its
+/// place in the group would have to return `None` here and stay unreachable.
+fn item_key(item: &Item) -> Option<ItemKey> {
+    Some(match item {
+        Item::Loose(pane) => ItemKey::Pane(pane.pane.clone()),
+        Item::Unconfigured(pane) => ItemKey::Pane(pane.pane.clone()),
+        Item::Failed(failed) => ItemKey::Project(failed.project.clone()),
+        Item::Hidden(hidden) => ItemKey::Tree(BeadKey {
+            project: hidden.project.clone(),
+            id: hidden.root.clone(),
+        }),
+        Item::Conflict(conflict) => ItemKey::Conflict(conflict.clone()),
+    })
 }
 
 /// One entry in a parent's sequence of children, before it becomes a line.
@@ -321,6 +360,13 @@ impl Forest {
             Some(Handle::Elided(key)) => {
                 chain.push(Handle::Bead(key.clone()));
                 key.clone()
+            }
+            // Only the snapshot a pane was found in still knows which group
+            // held it, so a pane that goes away falls back to that group
+            // rather than to the top of the forest.
+            Some(Handle::Item(key)) => {
+                chain.extend(self.group_holding(key).map(Handle::Group));
+                return chain;
             }
             _ => return chain,
         };
@@ -476,12 +522,7 @@ impl Forest {
     }
 
     fn handle_at(&self, at: usize) -> Option<Handle> {
-        let line = self.lines.get(at)?;
-        match &line.content {
-            Content::Group(group) => Some(Handle::Group(group.kind)),
-            Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
-            _ => line.bead.clone().map(Handle::Bead),
-        }
+        handle_of(self.lines.get(at)?)
     }
 
     /// Redraw, and put the selection back on whatever it was holding.
@@ -536,7 +577,18 @@ impl Forest {
                 let (_, loose) = self.recovery();
                 !self.group_items(*kind, &loose).is_empty()
             }
+            Handle::Item(key) => self.group_holding(key).is_some(),
         }
+    }
+
+    /// The group one thing sits in, where the snapshot still holds it.
+    fn group_holding(&self, key: &ItemKey) -> Option<GroupKind> {
+        let (_, loose) = self.recovery();
+        GroupKind::ALL.into_iter().find(|kind| {
+            self.group_items(*kind, &loose)
+                .iter()
+                .any(|item| item_key(item).as_ref() == Some(key))
+        })
     }
 
     /// Whether a fold is open: what the user set it to, or how it rests when
@@ -814,11 +866,23 @@ fn marker(open: bool) -> &'static str {
     }
 }
 
+/// What a line is known by, where it is one the selection can hold.
+///
+/// A note stands for a finding rather than for a thing, so it has none — and
+/// a line the forest cannot name could not be put back after a refresh, which
+/// is why this is the same question as whether the selection may sit there.
+fn handle_of(line: &Line) -> Option<Handle> {
+    match &line.content {
+        Content::Tree(_) | Content::Bead(_) => line.bead.clone().map(Handle::Bead),
+        Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
+        Content::Group(group) => Some(Handle::Group(group.kind)),
+        Content::Item(item) => item_key(item).map(Handle::Item),
+        Content::Note(_) => None,
+    }
+}
+
 fn selectable(line: &Line) -> bool {
-    matches!(
-        line.content,
-        Content::Tree(_) | Content::Bead(_) | Content::Elided { .. } | Content::Group(_)
-    )
+    handle_of(line).is_some()
 }
 
 fn prefix(trunk: &[bool], last: bool, shut: bool) -> String {
@@ -2223,6 +2287,140 @@ credential_command = "secret harbour"
             .unwrap_or_else(|| panic!("{project} has a header"))
     }
 
+    /// The defect: a group's lines were drawn and could not be reached, so
+    /// nothing the forest holds in a group could be looked at or acted on.
+    #[test]
+    fn the_selection_can_walk_onto_a_line_under_a_group() {
+        let mut forest = flatten(&snapshot());
+        let panes: Vec<usize> = forest
+            .lines()
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| matches!(line.content, Content::Item(Item::Loose(_))))
+            .map(|(at, _)| at)
+            .collect();
+
+        assert_eq!(panes.len(), 2, "{:#?}", sketch(&forest));
+        for at in panes {
+            forest.apply(Action::Move(Motion::FirstRow));
+            for _ in 0..forest.lines().len() {
+                if forest.selected_line() >= at {
+                    break;
+                }
+                forest.apply(Action::Move(Motion::NextRow));
+            }
+            assert_eq!(
+                forest.selected_line(),
+                at,
+                "line {at} cannot be reached: {:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// The identity has to be the pane itself and never where it sat, or a
+    /// refresh that reorders a group moves the selection to another pane
+    /// while everything on screen still looks right.
+    #[test]
+    fn a_selected_pane_survives_a_refresh_that_reorders_its_group() {
+        let mut forest = flatten(&snapshot());
+        select_item(&mut forest, "w:p4");
+
+        forest.refresh(&reordered_groups());
+
+        assert_eq!(selected_item(&forest), Some("w:p4".to_string()));
+    }
+
+    /// Every group's items, so no kind is selectable by accident and none is
+    /// left behind: a group whose lines cannot be reached is the defect.
+    #[test]
+    fn every_kind_of_thing_a_group_holds_can_hold_the_selection() {
+        let mut forest = flatten(&built(Filter::LiveAgents));
+        for kind in GroupKind::ALL {
+            forest.folds.insert(Handle::Group(kind), true);
+        }
+        forest.refresh(&built(Filter::LiveAgents));
+
+        let items: Vec<usize> = forest
+            .lines()
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| matches!(line.content, Content::Item(_)))
+            .map(|(at, _)| at)
+            .collect();
+
+        assert_eq!(items.len(), 6, "{:#?}", sketch(&forest));
+        for at in items {
+            assert!(
+                selectable(&forest.lines()[at]),
+                "{:?} cannot hold the selection",
+                forest.lines()[at].content
+            );
+        }
+    }
+
+    /// A pane that goes away leaves the selection on the group it was in,
+    /// rather than at the top of the forest. Work ending should not look
+    /// like the screen jumping.
+    #[test]
+    fn a_selection_on_a_pane_that_goes_away_falls_back_to_its_group() {
+        let mut forest = flatten(&snapshot());
+        select_item(&mut forest, "w:p4");
+
+        forest.refresh(&built_without_the_conflicting_panes());
+
+        assert!(
+            matches!(
+                forest.lines()[forest.selected_line()].content,
+                Content::Group(Group {
+                    kind: GroupKind::Unattributed,
+                    ..
+                })
+            ),
+            "{:#?}",
+            forest.lines()[forest.selected_line()]
+        );
+    }
+
+    /// The pane id on the line the selection sits on, where it sits on one.
+    fn selected_item(forest: &Forest) -> Option<String> {
+        match &forest.lines()[forest.selected_line()].content {
+            Content::Item(Item::Loose(pane)) => Some(pane.pane.clone()),
+            Content::Item(Item::Unconfigured(pane)) => Some(pane.pane.clone()),
+            _ => None,
+        }
+    }
+
+    /// Put the selection on the line for one pane, by moving down to it.
+    fn select_item(forest: &mut Forest, pane: &str) {
+        forest.apply(Action::Move(Motion::FirstRow));
+        for _ in 0..=forest.lines().len() {
+            if selected_item(forest).as_deref() == Some(pane) {
+                return;
+            }
+            forest.apply(Action::Move(Motion::NextRow));
+        }
+        panic!("{pane} is not reachable by moving down");
+    }
+
+    /// The same snapshot with every group's items in the other order, which
+    /// is what a collect that re-read them may hand over.
+    fn reordered_groups() -> Snapshot {
+        let mut snapshot = snapshot();
+        snapshot.unattributed.reverse();
+        snapshot.conflicts.reverse();
+        snapshot.hidden_trees.reverse();
+        snapshot
+    }
+
+    /// The same snapshot with the two panes that were fighting over `orb-7.1`
+    /// gone, which empties the unattributed group of the one the tests hold.
+    fn built_without_the_conflicting_panes() -> Snapshot {
+        let mut snapshot = snapshot();
+        snapshot.unattributed.retain(|pane| pane.pane == "w:p3");
+        snapshot
+    }
+
     #[test]
     fn an_empty_group_draws_nothing() {
         let orbital = assembled(ORBITAL);
@@ -2259,6 +2457,9 @@ credential_command = "secret harbour"
                 .count()
         };
         forest.apply(Action::Move(Motion::LastRow));
+        // The last line is a pane now that a group's lines can be reached,
+        // and a pane has no fold, so `h` steps out to the group holding it.
+        forest.apply(Action::CollapseOrParent);
 
         assert!(forest.apply(Action::ToggleFold));
         assert_eq!(loose(&forest), 0, "{:#?}", sketch(&forest));
