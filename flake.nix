@@ -26,10 +26,13 @@
             # Issue tracker. Pinned so every shell resolves the same binary as
             # the tracker's schema; the ambient bd on PATH is a different build.
             beads.packages.${system}.bd
-          ];
 
-          # The Rust toolchain and cargo arrive with Task 1 of
-          # docs/plans/2026-08-30-core-and-json.md, alongside the crate itself.
+            pkgs.cargo
+            pkgs.rustc
+            pkgs.rustfmt
+            pkgs.clippy
+            pkgs.rust-analyzer
+          ];
 
           shellHook = ''
             # Pin bd to this repo's .beads dir so it works from any
@@ -59,6 +62,13 @@
               echo "⚠️  no .env.local — bd cannot authenticate to tracker.example.invalid"
             fi
           '';
+        };
+
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = "beady-eye";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
         };
       }
     );
