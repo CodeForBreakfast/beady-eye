@@ -98,6 +98,57 @@ pub fn truncated() -> &'static str {
     "more beneath this · the tracker stopped at its depth limit"
 }
 
+/// A run of closed siblings nobody is working, drawn as a count rather than
+/// as rows of its own.
+pub fn elided(count: usize) -> String {
+    let bead = if count == 1 { "bead" } else { "beads" };
+    format!("{count} more {bead} · closed, and nobody on them")
+}
+
+/// Beads bd stopped at, counted for the tree they sit in.
+pub fn truncated_nodes(count: usize) -> String {
+    let (bead, them) = if count == 1 {
+        ("bead", "it")
+    } else {
+        ("beads", "them")
+    };
+    format!("{count} {bead} the tracker stopped at · what hangs beneath {them} is not in this tree")
+}
+
+/// Projects whose tracker could not be read at all, so they have no root to
+/// hang anything on.
+pub fn failed_projects(count: usize) -> String {
+    let project = if count == 1 { "project" } else { "projects" };
+    format!("{count} {project} whose tracker could not be read")
+}
+
+/// Beads and panes that name each other in ways that cannot all be true.
+pub fn conflicts(count: usize) -> String {
+    let conflict = if count == 1 { "conflict" } else { "conflicts" };
+    format!("{count} {conflict} nothing could settle")
+}
+
+/// Trees the live-agent filter is holding back, and how many of those carry
+/// findings that are therefore not on screen.
+///
+/// A group that said only how many trees it hides would read as "nothing to
+/// see here" while hiding broken ones. The findings stay hidden — the user
+/// asked for that — but the group admits they exist.
+pub fn hidden_trees(count: usize, with_findings: usize) -> String {
+    let tree = if count == 1 { "tree" } else { "trees" };
+    let hidden = format!("{count} {tree} with no live agent");
+    if with_findings == 0 {
+        return hidden;
+    }
+    format!("{hidden} · {with_findings} with findings")
+}
+
+/// Live panes that resolved to no bead.
+pub fn unattributed(count: usize) -> String {
+    let pane = if count == 1 { "pane" } else { "panes" };
+    format!("{count} unattributed {pane}")
+}
+
 /// Beads whose declared parent was absent, now hanging off the root.
 pub fn dangling(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
@@ -240,6 +291,16 @@ mod tests {
         said.push(no_live_panes().to_string());
         said.push(panes_may_be_incomplete().to_string());
         said.push(truncated().to_string());
+        for count in [1, 3] {
+            said.push(elided(count));
+            said.push(truncated_nodes(count));
+            said.push(failed_projects(count));
+            said.push(conflicts(count));
+            for with_findings in [0, 1, count] {
+                said.push(hidden_trees(count, with_findings));
+            }
+            said.push(unattributed(count));
+        }
         said.push(dangling(1));
         said.push(dangling(3));
         said.push(unreachable(1));
@@ -366,10 +427,18 @@ mod tests {
         for said in [
             dangling(1),
             unreachable(1),
+            elided(1),
+            truncated_nodes(1),
+            failed_projects(1),
+            conflicts(1),
+            hidden_trees(1, 0),
+            hidden_trees(1, 1),
+            unattributed(1),
             anomaly(&Anomaly::StaleClaim { days: 1 }),
         ] {
-            assert!(!said.contains("beads"), "{said}");
-            assert!(!said.contains("days"), "{said}");
+            for plural in ["beads", "days", "projects", "trees", "panes", "conflicts"] {
+                assert!(!said.contains(plural), "{said}");
+            }
         }
     }
 

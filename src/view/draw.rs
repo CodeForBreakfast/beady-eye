@@ -7,9 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use ratatui::Frame;
 
-use crate::model::snapshot::{Counts, LoosePane, TrackerFailure, TrackerState, Tree};
+use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState, Tree};
 use crate::model::types::Status;
-use crate::view::forest::Forest;
+use crate::view::forest::{self, Content, Forest, Group, GroupKind, Item, Note};
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 use crate::view::tail::Tail;
@@ -24,11 +24,150 @@ const GAP: usize = 2;
 /// The keys the view answers to, in the order the design lists them.
 const KEYS: &str = "⏎ focus   a all   ^R refresh   q quit";
 
+/// What lifts the live-agent filter, said beside the trees it is holding back.
+const SHOW_ALL: &str = "a to show all";
+
 const LIVE: Color = Color::Green;
 const LOOK_AT_THIS: Color = Color::Yellow;
 
-pub fn draw(_frame: &mut Frame, _area: Rect, _forest: &Forest) {
-    todo!()
+/// Draw the forest and the key bar, leaving the tail's band to whoever holds
+/// a tail.
+pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest) {
+    let bands = regions(area);
+    let lines = forest.lines();
+    let selected = forest.selected_line();
+    let height = bands.forest.height as usize;
+    let ids = id_width(lines);
+
+    for (row, (at, line)) in lines
+        .iter()
+        .enumerate()
+        .skip(scroll_offset(selected, lines.len(), height))
+        .take(height)
+        .enumerate()
+    {
+        let drawn = fitted(line, ids);
+        let drawn = if at == selected {
+            drawn.selected()
+        } else {
+            drawn
+        };
+        frame.render_widget(
+            drawn,
+            Rect {
+                y: bands.forest.y + row as u16,
+                height: 1,
+                ..bands.forest
+            },
+        );
+    }
+
+    frame.render_widget(status_bar(forest.snapshot().herdr), bands.keys);
+}
+
+/// The widest abbreviated id on screen, so every title starts in the same
+/// column and a reader's eye runs down one edge rather than a ragged one.
+fn id_width(lines: &[forest::Line]) -> usize {
+    lines
+        .iter()
+        .filter_map(|line| match &line.content {
+            Content::Bead(row) => Some(columns(&[Span::raw(row.id.clone())])),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// One line of the forest, whatever kind it is.
+fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
+    match &line.content {
+        Content::Tree(head) => header(&head.tree, &line.prefix, &head.panes, head.panes_complete),
+        Content::Bead(row) => bead_line(row, &line.prefix, id_width),
+        Content::Elided { count } => {
+            sentence(&line.prefix, phrase::elided(*count), Color::DarkGray)
+        }
+        Content::Note(note) => sentence(&line.prefix, finding(*note), LOOK_AT_THIS),
+        Content::Group(group) => group_line(&line.prefix, *group),
+        Content::Item(item) => item_line(&line.prefix, item),
+    }
+}
+
+/// A line that is one sentence and nothing else.
+fn sentence(prefix: &str, said: String, colour: Color) -> Fitted {
+    Fitted::new(
+        vec![Span::styled(
+            format!("{prefix}{said}"),
+            Style::new().fg(colour),
+        )],
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+/// A finding about the tree above, in `bdi`'s words for it.
+fn finding(note: Note) -> String {
+    let said = match note {
+        Note::Dangling(count) => phrase::dangling(count),
+        Note::Unreachable(count) => phrase::unreachable(count),
+        Note::Truncated(count) => phrase::truncated_nodes(count),
+    };
+    format!("{WARNING} {said}")
+}
+
+/// One of the groups below the trees. The hidden trees are the only group
+/// nothing went wrong in — the filter put them there and a key takes them
+/// back out — so they are the only one drawn without a warning.
+fn group_line(prefix: &str, group: Group) -> Fitted {
+    let (said, hidden) = match group.kind {
+        GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
+        GroupKind::Conflicts => (phrase::conflicts(group.count), false),
+        GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
+        GroupKind::Unattributed => (phrase::unattributed(group.count), false),
+    };
+
+    let (said, colour) = if hidden {
+        (said, Color::Reset)
+    } else {
+        (format!("{WARNING} {said}"), LOOK_AT_THIS)
+    };
+    let state = if hidden {
+        vec![Span::styled(SHOW_ALL, Style::new().fg(Color::DarkGray))]
+    } else {
+        Vec::new()
+    };
+
+    Fitted::new(
+        vec![Span::styled(
+            format!("{prefix}{said}"),
+            Style::new().fg(colour),
+        )],
+        Vec::new(),
+        state,
+    )
+}
+
+/// One thing inside such a group.
+fn item_line(prefix: &str, item: &Item) -> Fitted {
+    match item {
+        Item::Failed(failed) => sentence(prefix, phrase::failed_project(failed), LOOK_AT_THIS),
+        Item::Conflict(conflict) => sentence(prefix, phrase::conflict(conflict), LOOK_AT_THIS),
+        Item::Hidden(hidden) => Fitted::new(
+            vec![Span::raw(format!(
+                "{prefix}{} · {}",
+                hidden.project, hidden.root
+            ))],
+            vec![Span::raw(hidden.title.clone())],
+            Vec::new(),
+        ),
+        Item::Loose(pane) => Fitted::new(
+            vec![Span::styled(
+                format!("{prefix}{}", pane_marker(pane)),
+                Style::new().fg(LIVE),
+            )],
+            vec![Span::raw(pane.cwd.clone())],
+            Vec::new(),
+        ),
+    }
 }
 
 pub fn draw_tail(_frame: &mut Frame, _area: Rect, _tail: &Tail) {
@@ -109,11 +248,12 @@ impl Widget for Fitted {
 
 /// One tree's own line: where it is, what it is, and how much of it is done.
 ///
-/// A tree whose tracker could not be read has no title and no counts, and says
-/// so where the counts would be. It is not given a phrase in place of the
-/// title: the marker beside it already says the tracker never answered, which
-/// is the whole reason the title is missing, and a second saying of it would
-/// cost the columns the recovered panes need.
+/// A tree whose tracker could not be read has no title and no counts. Its
+/// line is the only place that failure is said, so it says why, and shows the
+/// live panes recovered for it, where the counts would be. It is not given a
+/// phrase in place of the title: the reason beside it is already the reason
+/// the title is missing, and saying it twice would cost the columns the panes
+/// need.
 pub fn header(tree: &Tree, prefix: &str, panes: &[LoosePane], panes_complete: bool) -> Fitted {
     let identity = vec![Span::raw(format!(
         "{prefix}{} · {}",
@@ -155,10 +295,10 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
     said
 }
 
-/// A tree whose tracker never answered: why, and whatever live panes could
-/// still be found for it. Where those panes cannot be known to be all of them,
-/// it says that too — a list that is quietly short is the one way this can be
-/// read wrongly.
+/// Why a tree's tracker never answered, and whatever live panes could still
+/// be found for it. Where those panes cannot be known to be all of them it
+/// says so — a list that is quietly short is the one way this line can be
+/// read wrongly, because it looks exactly like a complete one.
 fn unreadable(failure: TrackerFailure, panes: &[LoosePane], complete: bool) -> Vec<Span<'static>> {
     let mut said = vec![format!("{WARNING} {}", phrase::tracker_failure(failure))];
     said.push(if panes.is_empty() {
@@ -323,9 +463,26 @@ pub fn scroll_offset(selected: usize, lines: usize, height: usize) -> usize {
     selected.saturating_sub(height / 2).min(lines - height)
 }
 
-/// The keys the view answers to.
-pub fn key_bar() -> Line<'static> {
-    Line::raw(KEYS)
+/// The row at the foot of the screen: the keys, and anything true of the
+/// whole session rather than of any row above.
+///
+/// A herdr that could not be reached belongs here because it changes what
+/// every row above it means — none of them can show an agent — and this is
+/// the one row a reader can neither fold nor scroll away from. It is drawn
+/// first and yields last: keys can be rediscovered, and a herdr that is
+/// silently absent reads as a fleet with nobody working in it.
+pub fn status_bar(herdr: HerdrState) -> Fitted {
+    match phrase::herdr_state(herdr) {
+        None => Fitted::new(vec![Span::raw(KEYS)], Vec::new(), Vec::new()),
+        Some(said) => Fitted::new(
+            vec![Span::styled(
+                format!("{WARNING} {said}"),
+                Style::new().fg(LOOK_AT_THIS),
+            )],
+            Vec::new(),
+            vec![Span::raw(KEYS)],
+        ),
+    }
 }
 
 /// What a run of spans takes up on screen, in columns rather than in bytes:
@@ -389,7 +546,10 @@ mod tests {
     use crate::collect::herdr::PaneStatus;
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{AgentRef, Badged, JoinSource};
-    use crate::model::snapshot::Node;
+    use crate::model::snapshot::{Filter, Node, Snapshot, TrackerFailure};
+    use crate::view::forest::flatten;
+    use crate::view::{Action, Motion};
+    use chrono::{TimeZone, Utc};
 
     const OPEN: &str = "▾ ";
     const SHUT: &str = "▸ ";
@@ -887,11 +1047,226 @@ mod tests {
     // ---- the key bar -----------------------------------------------------
 
     #[test]
-    fn the_key_bar_names_every_key_the_view_answers_to() {
-        let drawn = drawn(key_bar(), 60, 1);
+    fn the_foot_of_the_screen_names_every_key_the_view_answers_to() {
+        let drawn = drawn(status_bar(HerdrState::Ok), 60, 1);
 
         for key in ["⏎", "a", "^R", "q"] {
             assert!(drawn[0].contains(key), "{key} missing from {drawn:?}");
         }
+    }
+
+    /// With no herdr there is no agent on any row, and a screen that only
+    /// stopped showing them would read as a fleet with nobody working in it.
+    /// It goes at the foot because that is the one row that cannot be folded
+    /// or scrolled away.
+    #[test]
+    fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
+        let drawn = drawn(status_bar(HerdrState::Unavailable), 90, 1);
+
+        assert!(
+            drawn[0].contains(phrase::herdr_state(HerdrState::Unavailable).expect("a notice")),
+            "{drawn:?}"
+        );
+    }
+
+    /// Keys can be rediscovered; a herdr that is silently absent cannot. So on
+    /// a screen too narrow for both, the keys are what gives way.
+    #[test]
+    fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
+        let drawn = drawn(status_bar(HerdrState::Unavailable), 60, 1);
+
+        assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
+        assert_eq!(drawn[0].chars().count(), 60);
+    }
+
+    // ---- the groups below the trees --------------------------------------
+
+    /// The filter hides trees, and it takes their findings with them. Saying
+    /// only how many trees are hidden would read as "nothing to see here"
+    /// while some of them are broken.
+    #[test]
+    fn the_hidden_trees_group_admits_that_what_it_hides_is_not_empty() {
+        let quiet = Group {
+            kind: GroupKind::HiddenTrees,
+            count: 4,
+            with_findings: 0,
+        };
+        let broken = Group {
+            with_findings: 2,
+            ..quiet
+        };
+
+        assert_eq!(
+            drawn(group_line(SHUT, quiet), 64, 1),
+            vec!["▸ 4 trees with no live agent                       a to show all"]
+        );
+        assert_eq!(
+            drawn(group_line(SHUT, broken), 64, 1),
+            vec!["▸ 4 trees with no live agent · 2 with findings     a to show all"]
+        );
+    }
+
+    /// Every other group is something that went wrong, and is marked as such.
+    /// The hidden trees are not: the user asked for them to be hidden.
+    #[test]
+    fn only_the_group_nothing_went_wrong_in_is_drawn_without_a_warning() {
+        for kind in GroupKind::ALL {
+            let group = Group {
+                kind,
+                count: 2,
+                with_findings: 0,
+            };
+            let drawn = drawn(group_line(SHUT, group), 80, 1);
+            let marked = drawn[0].contains(WARNING);
+
+            assert_eq!(
+                marked,
+                kind != GroupKind::HiddenTrees,
+                "{kind:?}: {drawn:?}"
+            );
+        }
+    }
+
+    // ---- the whole frame -------------------------------------------------
+
+    fn snapshot(trees: Vec<Tree>, unattributed: Vec<LoosePane>, herdr: HerdrState) -> Snapshot {
+        Snapshot {
+            generated_at: Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap(),
+            herdr,
+            filter: Filter::All,
+            collected: trees.clone(),
+            trees,
+            hidden_trees: Vec::new(),
+            failed_projects: Vec::new(),
+            unattributed,
+            conflicts: Vec::new(),
+        }
+    }
+
+    /// One tree of `children` open beads under an in-flight root.
+    fn grove(children: usize) -> Tree {
+        let mut nodes = vec![Node {
+            depth: 0,
+            ..node("nix-9670s", "lift the ground station", Status::InProgress)
+        }];
+        for child in 1..=children {
+            nodes.push(node(
+                &format!("nix-9670s.{child}"),
+                &format!("bead number {child}"),
+                Status::Open,
+            ));
+        }
+
+        Tree {
+            counts: counts(0, nodes.len(), 0, 0),
+            nodes,
+            ..tree(
+                "summit-works",
+                "nix-9670s",
+                "lift the ground station",
+                counts(0, 0, 0, 0),
+            )
+        }
+    }
+
+    fn frame_of(forest: &Forest, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
+        terminal
+            .draw(|frame| draw(frame, frame.area(), forest))
+            .expect("a draw into memory");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// The whole screen, character for character: five rows of forest, four of
+    /// reserved tail, and the foot.
+    #[test]
+    fn a_frame_is_the_forest_the_tails_reserved_band_and_the_foot() {
+        let forest = flatten(&snapshot(
+            vec![grove(2)],
+            Vec::new(),
+            HerdrState::Unavailable,
+        ));
+
+        assert_eq!(
+            frame_of(&forest, 60, 10),
+            vec![
+                "▾ summit-works · nix-9670s  lift the ground station      0/3",
+                "  ├── ○ .1  bead number 1                                   ",
+                "  └── ○ .2  bead number 2                                   ",
+                "                                                            ",
+                "                                                            ",
+                "                                                            ",
+                "                                                            ",
+                "                                                            ",
+                "                                                            ",
+                "⚠ no herdr session · which agents are alive is unknown  ⏎ f…",
+            ]
+        );
+    }
+
+    /// The definition of done's first case, at the whole-frame level: a narrow
+    /// screen cuts every row and wraps none, so the row count on screen still
+    /// matches the line count in the forest.
+    #[test]
+    fn a_narrow_frame_cuts_every_row_and_wraps_none() {
+        let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let frame = frame_of(&forest, 24, 10);
+
+        assert_eq!(
+            frame[..3].to_vec(),
+            vec![
+                "▾ summit-works · nix-96…",
+                "  ├── ○ .1  bead number…",
+                "  └── ○ .2  bead number…",
+            ]
+        );
+        assert!(
+            frame[3..9].iter().all(|row| row.trim().is_empty()),
+            "{frame:?}"
+        );
+    }
+
+    /// The definition of done's second case: however far the selection moves,
+    /// the row it is on is drawn.
+    #[test]
+    fn the_selected_row_is_drawn_wherever_the_selection_has_moved_to() {
+        let mut forest = flatten(&snapshot(vec![grove(40)], Vec::new(), HerdrState::Ok));
+
+        for motion in [Motion::LastRow, Motion::FirstRow, Motion::HalfScreenDown] {
+            forest.apply(Action::Move(motion));
+            let at = forest.selected_line();
+            let said = match &forest.lines()[at].content {
+                Content::Bead(row) => row.title.clone(),
+                Content::Tree(header) => header.tree.title.clone(),
+                other => panic!("unexpected line under the selection: {other:?}"),
+            };
+            let frame = frame_of(&forest, 60, 10);
+
+            assert!(
+                frame.iter().any(|row| row.contains(&said)),
+                "{motion:?} put line {at} ({said}) off screen: {frame:?}"
+            );
+        }
+    }
+
+    /// The definition of done's third case: a tree nobody could read renders
+    /// as its header, the reason it failed, and the panes still working in it.
+    #[test]
+    fn an_unreachable_tree_draws_its_header_its_reason_and_its_panes() {
+        let failed =
+            Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
+        let forest = flatten(&snapshot(
+            vec![failed],
+            vec![pane("wCM:p9", PaneStatus::Working)],
+            HerdrState::Ok,
+        ));
+
+        assert_eq!(
+            frame_of(&forest, 75, 4)[0],
+            "▾ summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
+        );
     }
 }
