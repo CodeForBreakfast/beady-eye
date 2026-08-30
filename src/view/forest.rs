@@ -2272,6 +2272,24 @@ credential_command = "secret harbour"
         assert_eq!(row_of(&forest, "sdg-4.2").notes, Vec::<String>::new());
     }
 
+    /// Asked of the branch, not of the bead: `sdg-4.3` is unfinished itself
+    /// and holds one unfinished bead, and a walk that counted the bead it was
+    /// asked about would say two. Only closed nodes reach it from the
+    /// renderer today, where a self that is closed adds nothing and the
+    /// difference cannot show.
+    #[test]
+    fn what_a_branch_holds_never_counts_the_bead_it_was_asked_about() {
+        let tree = tree_of("orbital", SIDING);
+        let children = children_of(&tree.nodes);
+        let at = tree
+            .nodes
+            .iter()
+            .position(|node| node.id == "sdg-4.3")
+            .expect("the fixture has an unfinished branch");
+
+        assert_eq!(unfinished_beneath(&tree, &children, at), 1);
+    }
+
     /// Only a line whose own glyph says done. An unfinished bead resting shut
     /// over unfinished work is not hiding anything its status did not already
     /// admit, and a sentence on every such row is the noise that would stop
