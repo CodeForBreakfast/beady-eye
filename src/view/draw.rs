@@ -12,7 +12,7 @@ use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Group, GroupKind, Header, Item, Note};
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
-use crate::view::tail::Tail;
+use crate::view::tail::{self, Tail};
 use crate::view::Notice;
 
 /// What the rule above the tail is drawn from.
@@ -514,11 +514,6 @@ fn fg(colour: Option<Color>) -> Style {
     colour.map_or_else(Style::new, |colour| Style::new().fg(colour))
 }
 
-/// The lines of its pane the tail shows where the screen can spare them. The
-/// band it is given is one more than this: the rule that names the pane is
-/// part of the tail and not part of the forest above it.
-const TAIL_LINES: u16 = 6;
-
 /// The three bands of the screen, top to bottom.
 ///
 /// Named rather than returned from `draw` because the tail is drawn by
@@ -540,7 +535,7 @@ pub fn regions(area: Rect) -> Regions {
     let mut rows = area.height;
     let keys = if rows >= 2 { 1 } else { 0 };
     rows -= keys;
-    let tail = (TAIL_LINES + 1).min(rows.saturating_sub(1) / 2);
+    let tail = (tail::LINES + 1).min(rows.saturating_sub(1) / 2);
     let forest = rows - tail;
 
     Regions {
