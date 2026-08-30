@@ -7,7 +7,7 @@ use crate::model::snapshot::{self, Filter, LoosePane, Snapshot, TrackerState, Tr
 use crate::view::lines::{
     beneath, children_of, marker, notes_of, opens_a_fold, prefix, progress_of, quiet, root_key,
     run_size, split, unfinished_beneath, Content, Group, GroupKind, Header, Item, Line, Note,
-    Place,
+    Place, NO_FOLD,
 };
 use crate::view::row;
 use crate::view::{Action, Motion};
@@ -546,17 +546,24 @@ impl Forest {
     fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
         let root = Place::root(root_key(tree));
         let children = children_of(&tree.nodes);
+        // A tree with no nodes has no fold: its findings are drawn under it
+        // whether it rests open or shut, so there is nothing for a marker to
+        // stand for and nothing a key could do to it.
+        let foldable = !tree.nodes.is_empty();
         // A tree opens because of what is in it, not because the selection
         // is in it: the first screen is meant to be the answer to what is
         // being worked and what could be started.
-        let resting = !tree.nodes.is_empty() && opens_a_fold(tree, &children, 0);
-        let open = self.expanded(&Handle::Bead(root.clone()), resting);
+        let open = foldable
+            && self.expanded(
+                &Handle::Bead(root.clone()),
+                opens_a_fold(tree, &children, 0),
+            );
         let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
 
         lines.push(Line {
-            prefix: marker(open).to_string(),
+            prefix: if foldable { marker(open) } else { NO_FOLD }.to_string(),
             depth: 0,
-            folded: Some(open),
+            folded: foldable.then_some(open),
             place: Some(root.clone()),
             content: Content::Tree(Header {
                 project: tree.project.clone(),
@@ -571,7 +578,7 @@ impl Forest {
         });
 
         let mut entries: Vec<Child> = notes_of(tree).into_iter().map(Child::Note).collect();
-        if open && !tree.nodes.is_empty() {
+        if open {
             entries.extend(self.children_entries(tree, &children, 0));
         }
         self.draw_children(tree, &children, entries, &root, &mut Vec::new(), lines);
@@ -1462,11 +1469,11 @@ credential_command = "secret harbour"
                 "▾ orbital · orb-7",
                 "  ├── ! Dangling(1)",
                 "  ├── ! Truncated(1)",
-                "  ├── ▸ ○ .1 re-point the dish",
+                "  ├─▸ ○ .1 re-point the dish",
                 "  ├── ○ .7 log the survey marks",
                 "  ├── ✓ .4 clear the access road",
-                "  └── ▸ … 3 more",
-                "▸ ferry · fer-2",
+                "  └─▸ … 3 more",
+                "  ferry · fer-2",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
                 "  └── - Unconfigured(UnconfiguredPane { pane: \"w:pF\", cwd: \"/srv/spike\", pane_status: Idle })",
@@ -1665,7 +1672,7 @@ credential_command = "secret harbour"
             "  ├── ○ .1 stand the mast",
             "  │   └── ○ .1.1 bolt the sections",
             "  │       └── ○ .1.1.1 dress the cables",
-            "  └── ▸ ○ .2 pour the base",
+            "  └─▸ ○ .2 pour the base",
         ];
 
         let staffed = flatten(&tower_staffed(&["tow-1.1.1.1"]));
@@ -1782,7 +1789,7 @@ credential_command = "secret harbour"
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
         let forest = flatten(&snapshot());
 
-        assert!(sketch(&forest).contains(&"  └── ▸ … 3 more".to_string()));
+        assert!(sketch(&forest).contains(&"  └─▸ … 3 more".to_string()));
     }
 
     /// The count is the only account the screen gives of the beads it stands
@@ -1793,7 +1800,7 @@ credential_command = "secret harbour"
 
         select_run(&mut forest);
 
-        assert_eq!(sketch(&forest)[forest.selected_line()], "  └── ▸ … 3 more");
+        assert_eq!(sketch(&forest)[forest.selected_line()], "  └─▸ … 3 more");
     }
 
     #[test]
@@ -1932,7 +1939,7 @@ credential_command = "secret harbour"
                 "  ├── ○ .1 grade the bed",
                 "  └── … 6 more",
                 "      ├── ✓ .2 lift the old rail",
-                "      │   └── ▸ … 3 more",
+                "      │   └─▸ … 3 more",
                 "      ├── ✓ .3 clear the ballast",
                 "      └── ✓ .4 burn the sleepers",
             ]
@@ -2102,7 +2109,7 @@ credential_command = "secret harbour"
                 "  │       └── ◐ .2.1.1 cut the stays",
                 "  ├── ✓ .4 lift the feeder",
                 "  │   └── ✓ .4.1 coil the heliax",
-                "  └── ▸ … 4 more",
+                "  └─▸ … 4 more",
             ]
         );
     }
@@ -2160,7 +2167,7 @@ credential_command = "secret harbour"
                 "▾ orbital · dep-1",
                 "  ├── ○ .1 grade the bed",
                 "  ├── ○ .3 clear the ballast",
-                "  ├── ▸ ✓ .2 lift the old rail",
+                "  ├─▸ ✓ .2 lift the old rail",
                 "  └── ✓ .4 burn the sleepers",
             ]
         );
@@ -2187,9 +2194,9 @@ credential_command = "secret harbour"
             sketch(&forest),
             vec![
                 "▾ orbital · sdg-4",
-                "  ├── ▸ ◐ .3 re-signal the box",
-                "  ├── ▸ ✓ .1 slew the up line",
-                "  └── ▸ ✓ .2 clip the down line",
+                "  ├─▸ ◐ .3 re-signal the box",
+                "  ├─▸ ✓ .1 slew the up line",
+                "  └─▸ ✓ .2 clip the down line",
             ]
         );
         assert_eq!(
@@ -2306,12 +2313,12 @@ credential_command = "secret harbour"
             sketch(&forest),
             vec![
                 "▾ orbital · sdg-4",
-                "  ├── ▸ ◐ .3 re-signal the box",
+                "  ├─▸ ◐ .3 re-signal the box",
                 "  ├── ✓ .1 slew the up line",
                 "  │   ├── ○ .1.2 weld the closure rail",
-                "  │   ├── ▸ ✓ .1.1 key the switch",
+                "  │   ├─▸ ✓ .1.1 key the switch",
                 "  │   └── ✓ .1.3 lift the old chairs",
-                "  └── ▸ ✓ .2 clip the down line",
+                "  └─▸ ✓ .2 clip the down line",
             ]
         );
         assert_eq!(row_of(&forest, "sdg-4.1").notes, Vec::<String>::new());
@@ -2362,7 +2369,7 @@ credential_command = "secret harbour"
                 "  ├── ○ .1 grade the bed",
                 "  ├── ○ .3 clear the ballast",
                 "  ├── ✓ .2 lift the old rail",
-                "  │   └── ▸ … 3 more",
+                "  │   └─▸ … 3 more",
                 "  └── ✓ .4 burn the sleepers",
             ]
         );
@@ -2982,6 +2989,119 @@ credential_command = "secret harbour"
             }
         }
         found
+    }
+
+    // ---- the column a line's content starts in ----------------------------
+
+    /// How wide a prefix is on screen. Every glyph a prefix is drawn from is
+    /// one column, so counting them is the column its content starts in.
+    fn columns(prefix: &str) -> usize {
+        prefix.chars().count()
+    }
+
+    /// The line drawn for one bead, by the whole id it carries.
+    fn line_of<'a>(forest: &'a Forest, id: &str) -> &'a Line {
+        forest
+            .lines()
+            .iter()
+            .find(|line| line.bead().is_some_and(|bead| bead.id == id))
+            .unwrap_or_else(|| panic!("{id} is not drawn"))
+    }
+
+    /// Every fold in the forest open, so the prefixes deeper in it are drawn
+    /// rather than folded away.
+    fn open_everything(forest: &mut Forest) {
+        for _ in 0..=forest.lines().len() {
+            let shut: Vec<Handle> = forest
+                .lines()
+                .iter()
+                .filter(|line| line.folded == Some(false))
+                .filter_map(handle_of)
+                .collect();
+            if shut.is_empty() {
+                return;
+            }
+            for handle in shut {
+                forest.folds.insert(handle, true);
+            }
+            forest.lay_out();
+        }
+        panic!("a fold would not open: {:#?}", sketch(forest));
+    }
+
+    /// `sdg-4.3` rests shut over work of its own and `sdg-4.1` rests open
+    /// beside it, both children of the root. A reader runs down the column
+    /// the ids are in, and a line pushed right of its siblings is out of the
+    /// column that was drawn to be read.
+    ///
+    /// Asked in columns rather than of a substring: every prefix here holds
+    /// the elbow the other one does, so a test that looked for one found it
+    /// on both and said nothing about where they started.
+    #[test]
+    fn a_shut_node_starts_in_the_same_column_as_an_open_sibling() {
+        let forest = flatten(&ready_alone(
+            "orbital",
+            SIDING,
+            &panes_on(&["sdg-4.3"]),
+            &["sdg-4.1.2"],
+        ));
+        let shut = line_of(&forest, "sdg-4.3");
+        let open = line_of(&forest, "sdg-4.1");
+
+        assert_eq!(shut.folded, Some(false), "sdg-4.3 is the one resting shut");
+        assert_eq!(open.folded, Some(true), "sdg-4.1 is the one resting open");
+        assert_eq!(shut.depth, open.depth, "they are siblings");
+        assert_eq!(
+            columns(&shut.prefix),
+            columns(&open.prefix),
+            "a shut node and an open sibling start in different columns:\n{}",
+            sketch(&forest).join("\n")
+        );
+    }
+
+    /// Four columns a level, every line, whatever it is doing.
+    ///
+    /// Stated once over whole screens rather than shape by shape. What went
+    /// wrong was a span appended to the prefix of one kind of line, and the
+    /// next such span will be appended by someone reading a rule about the
+    /// kind of line they happen to be drawing.
+    #[test]
+    fn every_prefix_is_four_columns_a_level() {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+            let staffed = panes_on(&["orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1"]);
+            let mut forest = flatten(&alone("orbital", json, &staffed));
+            four_columns_a_level(&forest);
+            open_everything(&mut forest);
+            four_columns_a_level(&forest);
+        }
+    }
+
+    fn four_columns_a_level(forest: &Forest) {
+        for line in forest.lines() {
+            assert_eq!(
+                columns(&line.prefix),
+                2 + 4 * line.depth as usize,
+                "a prefix at depth {} is not four columns a level:\n{}",
+                line.depth,
+                sketch(forest).join("\n")
+            );
+        }
+    }
+
+    /// A header drawing no marker holds no fold state either. The two say the
+    /// same thing about the same line, and a line offering a fold that
+    /// nothing could act on is how the marker got there in the first place.
+    #[test]
+    fn a_tree_header_with_nothing_under_it_holds_no_fold_to_set() {
+        let forest = flatten(&snapshot());
+        let header = forest
+            .lines()
+            .iter()
+            .find(|line| matches!(&line.content, Content::Tree(header) if header.root == "fer-2"))
+            .expect("the shared snapshot draws a tree whose tracker refused");
+
+        assert_eq!(header.folded, None, "{:#?}", sketch(&forest));
+        assert_eq!(columns(&header.prefix), columns(OPEN));
     }
 
     // ---- a forest with nothing in it --------------------------------------

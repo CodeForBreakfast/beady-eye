@@ -24,6 +24,11 @@ pub(crate) const SHUT: &str = "▸ ";
 const INDENT: &str = "  ";
 const BRANCH: &str = "├── ";
 const LAST: &str = "└── ";
+/// The same elbows with the shut marker drawn into them. A marker appended
+/// after an elbow would cost its own two columns, and a line's content would
+/// then start further right for having something folded under it.
+const BRANCH_SHUT: &str = "├─▸ ";
+const LAST_SHUT: &str = "└─▸ ";
 const TRUNK: &str = "│   ";
 const GAP: &str = "    ";
 
@@ -253,15 +258,25 @@ pub(crate) fn marker(open: bool) -> &'static str {
     }
 }
 
+/// What stands where a marker would, on a line with no fold to draw one for.
+/// The column is held so the line starts where every other one of its kind
+/// does.
+pub(crate) const NO_FOLD: &str = "  ";
+
+/// Where a line sits, in four columns a level of depth. A line resting shut
+/// says so inside its own elbow, so the fold state costs no width and every
+/// line at a depth starts in the same column.
 pub(crate) fn prefix(trunk: &[bool], last: bool, shut: bool) -> String {
     let mut drawn = String::from(INDENT);
     for more in trunk {
         drawn.push_str(if *more { TRUNK } else { GAP });
     }
-    drawn.push_str(if last { LAST } else { BRANCH });
-    if shut {
-        drawn.push_str(SHUT);
-    }
+    drawn.push_str(match (last, shut) {
+        (false, false) => BRANCH,
+        (false, true) => BRANCH_SHUT,
+        (true, false) => LAST,
+        (true, true) => LAST_SHUT,
+    });
     drawn
 }
 

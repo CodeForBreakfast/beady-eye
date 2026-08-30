@@ -336,12 +336,17 @@ pub fn half_screen(forest: Rect) -> usize {
 /// and leaves the marker where a reader already looks to see what is folded.
 pub fn header(head: &Header, prefix: &str) -> Fitted {
     let mut identity = vec![Span::raw(prefix.to_string())];
-    if let Some(status) = &head.status {
-        identity.push(Span::styled(
-            row::status_glyph(status).to_string(),
-            status_style(status),
-        ));
-        identity.push(Span::raw(" "));
+    match &head.status {
+        Some(status) => {
+            identity.push(Span::styled(
+                row::status_glyph(status).to_string(),
+                status_style(status),
+            ));
+            identity.push(Span::raw(" "));
+        }
+        // No root to read a status off. The column is held rather than
+        // closed up, so the project names still line up down the screen.
+        None => identity.push(Span::raw("  ")),
     }
     identity.push(Span::raw(format!("{} · {}", head.project, head.root)));
 
@@ -634,6 +639,7 @@ mod tests {
 
     const OPEN: &str = "▾ ";
     const SHUT: &str = "▸ ";
+    const NO_FOLD: &str = "  ";
     const BRANCH: &str = "  ├── ";
     const LAST: &str = "  └── ";
 
@@ -703,8 +709,10 @@ mod tests {
         }
     }
 
-    /// A tree's header as `flatten` would build it, for a root whose status
-    /// the test does not care about.
+    /// A tree's header as `flatten` would build it, for a tree whose nodes
+    /// never arrived, so there is no root to read a status off. Not a
+    /// don't-care: the status is a column, and a header without one holds it
+    /// rather than closing it up.
     fn head(tree: Tree) -> Header {
         Header {
             project: tree.project,
@@ -788,7 +796,7 @@ mod tests {
 
         assert_eq!(
             drawn(header(&head(tree), OPEN), 78, 1),
-            vec!["▾ summit-works · nix-9670s  DMS → noctalia v5              8/21  3 agents  ⚠ 3"]
+            vec!["▾   summit-works · nix-9670s  DMS → noctalia v5            8/21  3 agents  ⚠ 3"]
         );
     }
 
@@ -854,10 +862,10 @@ mod tests {
     fn a_tree_whose_tracker_never_answered_shows_no_status_it_was_never_told() {
         let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
 
-        let drawn = drawn(header(&head(tree), OPEN), 120, 1);
+        let drawn = drawn(header(&head(tree), NO_FOLD), 120, 1);
 
         assert!(
-            drawn[0].starts_with("▾ summit-works · nix-9670s"),
+            drawn[0].starts_with("    summit-works · nix-9670s"),
             "{drawn:?}"
         );
     }
@@ -876,7 +884,7 @@ mod tests {
 
         assert_eq!(
             drawn(header(&head(tree), SHUT), 60, 1),
-            vec!["▸ homelab · hl-sgqyv  heartbeat cadence                  2/7"]
+            vec!["▸   homelab · hl-sgqyv  heartbeat cadence                2/7"]
         );
     }
 
@@ -891,7 +899,7 @@ mod tests {
 
         assert_eq!(
             drawn(header(&head(tree), SHUT), 60, 1),
-            vec!["▸ homelab · hl-sgqyv  heartbeat cadence         2/7  1 agent"]
+            vec!["▸   homelab · hl-sgqyv  heartbeat cadence       2/7  1 agent"]
         );
     }
 
@@ -909,7 +917,7 @@ mod tests {
         assert_eq!(
             drawn(header(&head(tree), OPEN), 60, 2),
             vec![
-                "▾ summit-works · nix-9670s  Switch the…  8/21  3 agents  ⚠ 3",
+                "▾   summit-works · nix-9670s  Switch t…  8/21  3 agents  ⚠ 3",
                 "                                                            ",
             ]
         );
@@ -928,7 +936,7 @@ mod tests {
 
         assert_eq!(
             drawn(header(&head(tree), OPEN), 12, 1),
-            vec!["▾ nixos-con…"]
+            vec!["▾   nixos-c…"]
         );
     }
 
@@ -952,11 +960,13 @@ mod tests {
 
     // ---- a tree whose tracker never answered -----------------------------
 
-    /// The design has such a tree render as a header, a marker and its live
-    /// panes. All three are here, and the panes are named the way a bead's
-    /// agent is named so one reads as the other.
+    /// The design has such a tree render as a header and its live panes.
+    /// Both are here, and the panes are named the way a bead's agent is named
+    /// so one reads as the other. There is nothing under it to fold, so it is
+    /// handed no marker — and the columns a marker and a root's glyph would
+    /// have taken are held, so it starts where every other header does.
     #[test]
-    fn an_unreachable_tree_renders_its_header_its_marker_and_its_panes() {
+    fn an_unreachable_tree_renders_its_header_and_its_panes() {
         let tree =
             Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
         let panes = [
@@ -965,8 +975,8 @@ mod tests {
         ];
 
         assert_eq!(
-            drawn(header(&recovered(tree, &panes, true), OPEN), 100, 1),
-            vec!["▾ summit-works · nix-9670s           ⚠ the tracker did not answer · ◍ wCM:p9 working · ◍ wCM:p6 idle"
+            drawn(header(&recovered(tree, &panes, true), NO_FOLD), 100, 1),
+            vec!["    summit-works · nix-9670s         ⚠ the tracker did not answer · ◍ wCM:p9 working · ◍ wCM:p6 idle"
                 .to_string()]
         );
     }
@@ -1018,10 +1028,10 @@ mod tests {
     fn a_narrow_unreachable_header_keeps_the_tree_and_the_reason_over_the_panes() {
         let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
         let panes = [pane("wCM:p9", PaneStatus::Working)];
-        let drawn = drawn(header(&recovered(tree, &panes, false), OPEN), 80, 1);
+        let drawn = drawn(header(&recovered(tree, &panes, false), NO_FOLD), 80, 1);
 
         assert!(
-            drawn[0].starts_with("▾ summit-works · nix-9670s"),
+            drawn[0].starts_with("    summit-works · nix-9670s"),
             "{drawn:?}"
         );
         assert!(
@@ -2093,8 +2103,42 @@ mod tests {
         ));
 
         assert_eq!(
-            frame_of(&forest, 75, 4)[0],
-            "▸ summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
+            frame_of(&forest, 77, 4)[0],
+            "    summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
+        );
+    }
+
+    /// A tree with nothing under it has no fold for a marker to stand for —
+    /// its findings are drawn whether it rests open or shut — so it draws
+    /// none. It holds the columns the marker and the root's glyph would have
+    /// taken, because a reader running down the project names finds every
+    /// other header's in the same place.
+    #[test]
+    fn a_tree_header_with_nothing_under_it_draws_no_marker_and_still_lines_up() {
+        let unreadable =
+            Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
+        let forest = flatten(&snapshot(
+            vec![grove(2), unreadable],
+            Vec::new(),
+            HerdrState::Ok,
+        ));
+        let frame = frame_of(&forest, 90, 4);
+        let column = |row: &str| {
+            let byte = row.find("summit-works").expect("the project on the row");
+            row[..byte].chars().count()
+        };
+
+        assert!(
+            !frame[1].contains(SHUT.trim()),
+            "nothing opens this header, so nothing should say it is shut: {:?}",
+            frame[1]
+        );
+        assert_eq!(
+            column(&frame[1]),
+            column(&frame[0]),
+            "the headers start in different columns:\n{}\n{}",
+            frame[0],
+            frame[1]
         );
     }
 
