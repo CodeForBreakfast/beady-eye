@@ -264,11 +264,19 @@ pub fn build_tree(
         })
         .collect();
 
+    // A bead drawn once for every way down to it is still one bead, and every
+    // count here is a count of beads: a header over the rows would name more
+    // work than the tracker holds and send a reader hunting for copies.
+    let mut counted = BTreeSet::new();
+    let once: Vec<&Node> = nodes
+        .iter()
+        .filter(|node| counted.insert(node.id.clone()))
+        .collect();
     let counts = Counts {
-        total: nodes.len(),
-        closed: nodes.iter().filter(|n| n.status.is_closed()).count(),
-        live_agents: nodes.iter().filter(|n| n.agent.is_some()).count(),
-        anomalies: nodes.iter().filter(|n| !n.anomalies.is_empty()).count(),
+        total: once.len(),
+        closed: once.iter().filter(|n| n.status.is_closed()).count(),
+        live_agents: once.iter().filter(|n| n.agent.is_some()).count(),
+        anomalies: once.iter().filter(|n| !n.anomalies.is_empty()).count(),
     };
 
     let root = nodes.first();
@@ -736,6 +744,36 @@ render = "⏸ waiting"
         assert_eq!(t.dangling, ["orb-4.2"]);
         assert_eq!(t.counts.total, 2, "a reported bead is still drawn");
         assert_eq!(node(&t, "orb-4.2").depth, 1);
+    }
+
+    #[test]
+    fn a_header_counts_beads_rather_than_the_rows_they_are_drawn_on() {
+        // `orb-8.9` blocks both of the root's children, so it is drawn three
+        // times. A header saying five would send a reader looking for a bead
+        // that is not there.
+        let json = r#"[
+          {"id":"orb-8","title":"root","status":"open","parent_id":""},
+          {"id":"orb-8.1","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
+                           {"depends_on_id":"orb-8.9","type":"blocks"}]},
+          {"id":"orb-8.2","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
+                           {"depends_on_id":"orb-8.9","type":"blocks"}]},
+          {"id":"orb-8.9","title":"what both wait on","status":"closed",
+           "parent_id":"orb-8"}
+        ]"#;
+        let t = build_tree(
+            "orbital",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &cfg(),
+            now(),
+        );
+
+        assert_eq!(t.nodes.len(), 6, "a copy per way down");
+        assert_eq!(t.counts.total, 4);
+        assert_eq!(t.counts.closed, 1);
     }
 
     #[test]

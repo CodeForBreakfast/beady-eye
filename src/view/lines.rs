@@ -6,6 +6,8 @@
 //! drawn on, which is what lets the state machine next door be about nothing
 //! else.
 
+use std::collections::BTreeSet;
+
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     Counts, FailedProject, HiddenTree, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
@@ -328,6 +330,20 @@ pub(crate) fn beneath(children: &[Vec<usize>], at: usize) -> Vec<usize> {
     found
 }
 
+/// The beads strictly beneath `at`, one row each.
+///
+/// A bead reachable more than one way down is drawn once for each, and every
+/// question asked of what a branch holds is a question about work rather than
+/// about rows: a blocker two of its descendants share is one piece of work
+/// however many times it is drawn.
+fn beads_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> Vec<usize> {
+    let mut seen = BTreeSet::new();
+    beneath(children, at)
+        .into_iter()
+        .filter(|node| seen.insert(tree.nodes[*node].id.as_str()))
+        .collect()
+}
+
 /// Whether the line at `at` rests open: whether anything beneath it is work
 /// a reader needs on the first screen.
 ///
@@ -369,7 +385,7 @@ fn ready_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
 /// ones is the ordinary shape of this tree — but with nobody on any of them
 /// the branch rests shut, and the row above it says done.
 pub(crate) fn unfinished_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> usize {
-    beneath(children, at)
+    beads_beneath(tree, children, at)
         .into_iter()
         .filter(|node| !tree.nodes[*node].status.is_closed())
         .count()
@@ -428,20 +444,15 @@ pub(crate) fn progress_of(tree: &Tree, children: &[Vec<usize>], at: usize) -> Op
         return None;
     }
 
-    let mut counted = Progress {
-        closed: 0,
-        total: 0,
-    };
-    let mut walking = vec![at];
-    while let Some(node) = walking.pop() {
-        counted.total += 1;
-        if tree.nodes[node].status.is_closed() {
-            counted.closed += 1;
-        }
-        walking.extend(children[node].iter().copied());
-    }
-
-    Some(counted)
+    let mut counting = vec![at];
+    counting.extend(beads_beneath(tree, children, at));
+    Some(Progress {
+        total: counting.len(),
+        closed: counting
+            .into_iter()
+            .filter(|node| tree.nodes[*node].status.is_closed())
+            .count(),
+    })
 }
 
 /// What a run stands for: its own beads and everything beneath them.

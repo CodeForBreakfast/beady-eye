@@ -1933,6 +1933,57 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A fraction says how much of what a bead is waiting on is done, and
+    /// that is a count of beads. A blocker two of its descendants share is one
+    /// piece of work whether it is drawn once or twice.
+    #[test]
+    fn a_fraction_counts_beads_rather_than_the_rows_they_are_drawn_on() {
+        const SHARED: &str = r#"[
+          {"id":"shr-1","title":"root","status":"open","parent_id":""},
+          {"id":"shr-1.1","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"},
+                           {"depends_on_id":"shr-1.9","type":"blocks"}]},
+          {"id":"shr-1.2","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"},
+                           {"depends_on_id":"shr-1.9","type":"blocks"}]},
+          {"id":"shr-1.9","title":"what both wait on","status":"closed",
+           "parent_id":"shr-1"}
+        ]"#;
+        let tree = tree_of("orbital", SHARED);
+        let children = children_of(&tree.nodes);
+
+        assert_eq!(
+            progress_of(&tree, &children, 0),
+            Some(Progress {
+                closed: 1,
+                total: 4
+            })
+        );
+    }
+
+    /// A closed bead's descendants are what had to finish before it, so beads
+    /// that merely waited on it are not among them and cannot be counted into
+    /// its fraction.
+    #[test]
+    fn a_closed_blocker_reports_no_fraction_over_the_beads_that_waited_on_it() {
+        const WAITED: &str = r#"[
+          {"id":"wtd-1","title":"root","status":"open","parent_id":""},
+          {"id":"wtd-1.1","title":"waiting","status":"open",
+           "dependencies":[{"depends_on_id":"wtd-1","type":"parent-child"},
+                           {"depends_on_id":"wtd-1.9","type":"blocks"}]},
+          {"id":"wtd-1.9","title":"done","status":"closed","parent_id":"wtd-1"}
+        ]"#;
+        let tree = tree_of("orbital", WAITED);
+        let children = children_of(&tree.nodes);
+        let at = tree
+            .nodes
+            .iter()
+            .position(|node| node.id == "wtd-1.9")
+            .expect("the closed blocker is drawn");
+
+        assert_eq!(progress_of(&tree, &children, at), None);
+    }
+
     /// A leaf stands for itself alone, so there is nothing to be part-way
     /// through and a fraction over one bead would only repeat its glyph.
     #[test]
