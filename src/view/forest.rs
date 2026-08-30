@@ -1195,8 +1195,9 @@ mod tests {
     /// closing it unblocked — the ordinary shape of this tree, not a
     /// malformed one. Nobody is on any of them and nothing is wrong with
     /// them, so the branch rests shut under a row whose own glyph says done.
-    /// `sdg-4.2` is finished all the way down and `sdg-4.3` carries the only
-    /// pane, which is what opens the root.
+    /// `sdg-4.2` is finished all the way down. `sdg-4.3` carries the only
+    /// pane, which is what opens the root, and rests shut over unfinished
+    /// work of its own without ever claiming to be done.
     const SIDING: &str = r#"[
       {"id":"sdg-4","title":"re-point the crossover","status":"in_progress","parent_id":"",
        "priority":1,"issue_type":"epic"},
@@ -1217,6 +1218,8 @@ mod tests {
       {"id":"sdg-4.2.1","title":"torque the fishbolts","status":"closed","parent_id":"sdg-4.2",
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
       {"id":"sdg-4.3","title":"re-signal the box","status":"in_progress","parent_id":"sdg-4",
+       "priority":2,"issue_type":"task"},
+      {"id":"sdg-4.3.1","title":"prove the interlocking","status":"open","parent_id":"sdg-4.3",
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -2248,7 +2251,7 @@ credential_command = "secret harbour"
             sketch(&forest),
             vec![
                 "▾ orbital · sdg-4",
-                "  ├── ◐ .3 re-signal the box",
+                "  ├── ▸ ◐ .3 re-signal the box",
                 "  ├── ▸ ✓ .1 slew the up line",
                 "  └── ▸ ✓ .2 clip the down line",
             ]
@@ -2267,6 +2270,17 @@ credential_command = "secret harbour"
         let forest = flatten(&siding());
 
         assert_eq!(row_of(&forest, "sdg-4.2").notes, Vec::<String>::new());
+    }
+
+    /// Only a line whose own glyph says done. An unfinished bead resting shut
+    /// over unfinished work is not hiding anything its status did not already
+    /// admit, and a sentence on every such row is the noise that would stop
+    /// the closed ones being read.
+    #[test]
+    fn an_unfinished_branch_resting_shut_over_its_own_work_says_nothing_extra() {
+        let forest = flatten(&siding());
+
+        assert_eq!(row_of(&forest, "sdg-4.3").notes, Vec::<String>::new());
     }
 
     /// Counted at every depth. With the open bead directly under `sdg-4.1`

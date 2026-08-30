@@ -599,6 +599,13 @@ mod tests {
         assert!(anomaly(&Anomaly::StaleClaim { days: 58 }).contains("58"));
     }
 
+    /// The whole of what this sentence is for: the fold is shut over the
+    /// beads, so the number is the only thing about them a reader gets.
+    #[test]
+    fn work_behind_a_shut_line_is_counted_rather_than_merely_admitted_to() {
+        assert!(unfinished_beneath(7).contains('7'));
+    }
+
     #[test]
     fn one_of_a_thing_is_not_described_in_the_plural() {
         for said in [
