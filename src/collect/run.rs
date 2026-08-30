@@ -230,11 +230,10 @@ mod tests {
     use super::testing::FakeRunner;
     use super::*;
 
-    /// bd's two failure lines, captured from this machine's own tracker on
-    /// 2026-08-30: a deliberately wrong `BEADS_DOLT_PASSWORD`, and a config
-    /// copied to a scratch directory with the host rewritten. Both name
-    /// things the output must never carry.
-    const REFUSED: &str = r#"Error: failed to open database: failed to check if database "beady-eye" exists on server tracker.example.invalid:3306: Error 1045 (28000): Access denied for user 'beady-eye'"#;
+    /// The two shapes bd writes when it cannot open a tracker: a credential
+    /// the server refuses, and a server that does not answer. Both name a
+    /// database, a host and a user the output must never carry.
+    const REFUSED: &str = r#"Error: failed to open database: failed to check if database "atlas" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'atlas'"#;
     const UNREACHABLE: &str = "Error: failed to open database: Dolt server unreachable at nosuchhost.invalid:3306: dial tcp: lookup nosuchhost.invalid: no such host";
 
     /// A real subprocess writing `stderr` and exiting non-zero.
@@ -300,7 +299,7 @@ mod tests {
         let failure = failing_command(REFUSED);
         let shown = format!("{failure} {failure:?}");
 
-        for secret in ["beady-eye", "tracker.example.invalid", "Access denied", "1045"] {
+        for secret in ["atlas", "db.example.invalid", "Access denied", "1045"] {
             assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
         }
     }

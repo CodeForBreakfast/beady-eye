@@ -415,7 +415,7 @@ mod tests {
     fn a_projects_credential_command_supplies_its_password() {
         let runner = FakeRunner::default().with("sh -c op read the/password", "hunter2\n");
         let project = Project {
-            name: "summit-works".to_string(),
+            name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
         };
@@ -441,7 +441,7 @@ mod tests {
     fn a_project_with_no_credential_command_adds_nothing_to_the_environment() {
         let runner = FakeRunner::default();
         let project = Project {
-            name: "beady-eye".to_string(),
+            name: "beacon".to_string(),
             path: project_dir(),
             credential_command: None,
         };
@@ -460,7 +460,7 @@ mod tests {
             RunFailure::exec("sh", "op: command not found"),
         );
         let project = Project {
-            name: "summit-works".to_string(),
+            name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
         };

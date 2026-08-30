@@ -290,6 +290,8 @@ mod tests {
     const BEADS: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
     const PANES: &str = include_str!("../../tests/fixtures/herdr_agent_list.json");
 
+    /// The captured fixtures are real, so the path a fixture pane sits in
+    /// has to be the real one for a project to contain it.
     const BEADY_EYE: &str = "/tmp/bdi-ground/beady-eye";
 
     fn project(name: &str, path: &str) -> Project {
@@ -350,10 +352,10 @@ mod tests {
             ]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working",
                 "title":"doing the work"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -382,11 +384,11 @@ mod tests {
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working",
                 "title":"the title",
                 "state_labels":{"idle":"the idle line","working":"the working line"}}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -414,10 +416,10 @@ mod tests {
             ]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"idle"},
-               {"pane_id":"w:p2","cwd":"/tmp/bdi-ground/proj","agent_status":"idle"}"#,
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle"},
+               {"pane_id":"w:p2","cwd":"/home/user/proj","agent_status":"idle"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
         let join = Join {
             pane_key: "herdr_pane".to_string(),
         };
@@ -468,8 +470,8 @@ mod tests {
             r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":"",
                  "metadata":{"agent_pane":"w:pGONE"}}]"#,
         );
-        let live = panes(r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"idle"}"#);
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle"}"#);
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -490,10 +492,10 @@ mod tests {
     fn a_pane_whose_display_agent_names_no_bead_joins_nothing() {
         let beads = rows(r#"[{"id":"p-1","title":"root","status":"open","parent_id":""}]"#);
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working",
                 "display_agent":"orch: some-effort"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -515,27 +517,27 @@ mod tests {
     #[test]
     fn the_longest_configured_path_containing_a_pane_wins() {
         let cfg = vec![
-            project("outer", "/tmp/bdi-ground/dev"),
-            project("inner", "/tmp/bdi-ground/dev/inner"),
+            project("outer", "/home/user/dev"),
+            project("inner", "/home/user/dev/inner"),
         ];
 
         assert_eq!(
-            project_of(Path::new("/tmp/bdi-ground/dev/inner/src"), &cfg).map(|p| p.name.as_str()),
+            project_of(Path::new("/home/user/dev/inner/src"), &cfg).map(|p| p.name.as_str()),
             Some("inner")
         );
         assert_eq!(
-            project_of(Path::new("/tmp/bdi-ground/dev/other"), &cfg).map(|p| p.name.as_str()),
+            project_of(Path::new("/home/user/dev/other"), &cfg).map(|p| p.name.as_str()),
             Some("outer")
         );
-        assert_eq!(project_of(Path::new("/tmp/bdi-ground"), &cfg), None);
+        assert_eq!(project_of(Path::new("/home/user"), &cfg), None);
     }
 
     /// A sibling directory sharing a textual prefix is a different project.
     #[test]
     fn a_path_is_matched_by_whole_directories_rather_than_by_text() {
-        let cfg = vec![project("bead", "/tmp/bdi-ground/dev/bead")];
+        let cfg = vec![project("bead", "/home/user/dev/bead")];
 
-        assert_eq!(project_of(Path::new("/tmp/bdi-ground/dev/beady"), &cfg), None);
+        assert_eq!(project_of(Path::new("/home/user/dev/beady"), &cfg), None);
     }
 
     #[test]
@@ -577,12 +579,12 @@ mod tests {
             r#"[{"id":"x-1","title":"in project two","status":"in_progress","parent_id":""}]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/one/src","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/one/src","agent_status":"working",
                 "display_agent":"x-1"}"#,
         );
         let cfg = vec![
-            project("one", "/tmp/bdi-ground/one"),
-            project("two", "/tmp/bdi-ground/two"),
+            project("one", "/home/user/one"),
+            project("two", "/home/user/two"),
         ];
 
         let joined = resolve(
@@ -617,10 +619,10 @@ mod tests {
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live =
-            panes(r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/one/src","agent_status":"working"}"#);
+            panes(r#"{"pane_id":"w:p1","cwd":"/home/user/one/src","agent_status":"working"}"#);
         let cfg = vec![
-            project("one", "/tmp/bdi-ground/one"),
-            project("two", "/tmp/bdi-ground/two"),
+            project("one", "/home/user/one"),
+            project("two", "/home/user/two"),
         ];
 
         let joined = resolve(
@@ -661,12 +663,12 @@ mod tests {
         let one = rows(r#"[{"id":"a-1","title":"only in one","status":"open","parent_id":""}]"#);
         let two = rows(r#"[{"id":"b-1","title":"only in two","status":"open","parent_id":""}]"#);
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/two","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/two","agent_status":"working",
                 "display_agent":"a-1"}"#,
         );
         let cfg = vec![
-            project("one", "/tmp/bdi-ground/one"),
-            project("two", "/tmp/bdi-ground/two"),
+            project("one", "/home/user/one"),
+            project("two", "/home/user/two"),
         ];
 
         let joined = resolve(
@@ -703,7 +705,7 @@ mod tests {
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(r#"{"pane_id":"w:p1","cwd":"/tmp","agent_status":"working"}"#);
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -735,11 +737,11 @@ mod tests {
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working"},
-               {"pane_id":"w:p2","cwd":"/tmp/bdi-ground/proj","agent_status":"idle",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working"},
+               {"pane_id":"w:p2","cwd":"/home/user/proj","agent_status":"idle",
                 "display_agent":"p-1"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -774,10 +776,10 @@ mod tests {
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working",
                 "display_agent":"p-1"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -800,12 +802,12 @@ mod tests {
     fn several_panes_naming_one_bead_leaves_it_unclaimed_and_reported() {
         let beads = rows(r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":""}]"#);
         let live = panes(
-            r#"{"pane_id":"w:p2","cwd":"/tmp/bdi-ground/proj","agent_status":"working",
+            r#"{"pane_id":"w:p2","cwd":"/home/user/proj","agent_status":"working",
                 "display_agent":"p-1"},
-               {"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"idle",
+               {"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle",
                 "display_agent":"p-1"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -839,9 +841,8 @@ mod tests {
                "metadata":{"agent_pane":"w:p1"}}
             ]"#,
         );
-        let live =
-            panes(r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working"}"#);
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working"}"#);
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {
@@ -878,11 +879,11 @@ mod tests {
             ]"#,
         );
         let live = panes(
-            r#"{"pane_id":"w:p1","cwd":"/tmp/bdi-ground/proj","agent_status":"working"},
-               {"pane_id":"w:p9","cwd":"/tmp/bdi-ground/proj","agent_status":"working",
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working"},
+               {"pane_id":"w:p9","cwd":"/home/user/proj","agent_status":"working",
                 "display_agent":"p-1.1"}"#,
         );
-        let cfg = vec![project("proj", "/tmp/bdi-ground/proj")];
+        let cfg = vec![project("proj", "/home/user/proj")];
 
         let joined = resolve(
             &[ProjectRows {

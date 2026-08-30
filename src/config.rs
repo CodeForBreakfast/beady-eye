@@ -116,18 +116,18 @@ mod tests {
 
     const EVERY_SECTION: &str = r#"
 [[projects]]
-name = "summit-works"
-path = "/tmp/bdi-ground/summit-works"
-credential_command = "op read op://Private/beads-tracker/password"
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
 
 [[projects]]
-name = "beady-eye"
-path = "/tmp/bdi-ground/beady-eye"
-credential_command = "cat /tmp/bdi-ground/beady-eye/.beads-password"
+name = "beacon"
+path = "/home/user/dev/beacon"
+credential_command = "cat /home/user/dev/beacon/.beads-password"
 
 [roots]
 metadata_keys = ["working_topic", "delivery_pr"]
-explicit = ["nix-1", "bdi-3um"]
+explicit = ["a-1", "b-1"]
 
 [[badges]]
 key    = "delivery_pr"
@@ -147,34 +147,34 @@ pane_key = "herdr_pane"
 
     const ONE_PROJECT: &str = r#"
 [[projects]]
-name = "beady-eye"
-path = "/tmp/bdi-ground/beady-eye"
+name = "beacon"
+path = "/home/user/dev/beacon"
 "#;
 
     const ONE_CREDENTIALLED_ONE_AMBIENT: &str = r#"
 [[projects]]
-name = "summit-works"
-path = "/tmp/bdi-ground/summit-works"
-credential_command = "op read op://Private/beads-tracker/password"
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
 
 [[projects]]
-name = "beady-eye"
-path = "/tmp/bdi-ground/beady-eye"
+name = "beacon"
+path = "/home/user/dev/beacon"
 "#;
 
     const TWO_AMBIENT: &str = r#"
 [[projects]]
-name = "summit-works"
-path = "/tmp/bdi-ground/summit-works"
-credential_command = "op read op://Private/beads-tracker/password"
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
 
 [[projects]]
-name = "beady-eye"
-path = "/tmp/bdi-ground/beady-eye"
+name = "beacon"
+path = "/home/user/dev/beacon"
 
 [[projects]]
-name = "herdr"
-path = "/tmp/bdi-ground/herdr"
+name = "cinder"
+path = "/home/user/dev/cinder"
 "#;
 
     #[test]
@@ -185,17 +185,15 @@ path = "/tmp/bdi-ground/herdr"
             cfg.projects,
             vec![
                 Project {
-                    name: "summit-works".to_string(),
-                    path: PathBuf::from("/tmp/bdi-ground/summit-works"),
-                    credential_command: Some(
-                        "op read op://Private/beads-tracker/password".to_string()
-                    ),
+                    name: "atlas".to_string(),
+                    path: PathBuf::from("/home/user/atlas"),
+                    credential_command: Some("secret-tool lookup tracker atlas".to_string()),
                 },
                 Project {
-                    name: "beady-eye".to_string(),
-                    path: PathBuf::from("/tmp/bdi-ground/beady-eye"),
+                    name: "beacon".to_string(),
+                    path: PathBuf::from("/home/user/dev/beacon"),
                     credential_command: Some(
-                        "cat /tmp/bdi-ground/beady-eye/.beads-password".to_string()
+                        "cat /home/user/dev/beacon/.beads-password".to_string()
                     ),
                 },
             ]
@@ -204,7 +202,7 @@ path = "/tmp/bdi-ground/herdr"
             cfg.roots,
             Roots {
                 metadata_keys: vec!["working_topic".to_string(), "delivery_pr".to_string()],
-                explicit: vec!["nix-1".to_string(), "bdi-3um".to_string()],
+                explicit: vec!["a-1".to_string(), "b-1".to_string()],
             }
         );
         assert_eq!(
@@ -250,7 +248,7 @@ path = "/tmp/bdi-ground/herdr"
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("beady-eye"), "got: {err}");
+        assert!(err.contains("beacon"), "got: {err}");
         assert!(err.contains("credential_command"), "got: {err}");
     }
 
@@ -260,15 +258,15 @@ path = "/tmp/bdi-ground/herdr"
             .unwrap_err()
             .to_string();
 
-        assert!(!err.contains("op read"), "got: {err}");
+        assert!(!err.contains("secret-tool"), "got: {err}");
     }
 
     #[test]
     fn every_project_without_a_credential_is_named() {
         let err = Config::from_toml(TWO_AMBIENT).unwrap_err().to_string();
 
-        assert!(err.contains("beady-eye"), "got: {err}");
-        assert!(err.contains("herdr"), "got: {err}");
+        assert!(err.contains("beacon"), "got: {err}");
+        assert!(err.contains("cinder"), "got: {err}");
     }
 
     #[test]
