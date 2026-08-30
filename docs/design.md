@@ -386,13 +386,39 @@ Nothing else changes. `beady-eye` works without it, less precisely.
 ## Alternatives considered
 
 **`bv` (beads_viewer)** — a mature Go TUI for beads with a list/detail split, a
-kanban board, a dependency graph view and PageRank/critical-path insights. It
-reads `.beads/issues.jsonl`, which `bd` only writes on an explicit
-`bd export` (auto-export is off by default and throttled to 60s when on). So it
-renders a snapshot of whenever the last export ran. A tool whose question is
-"what is being worked on right now" cannot be built on that, which is why
-beady-eye reads `bd` live instead. `bv` remains the better bead *browser*; this
-is not one.
+kanban board, a dependency view, a multi-repo workspace mode and
+PageRank/critical-path insights. Ruled out on three grounds, in order of weight.
+
+**It cannot read a Dolt-backed tracker.** Its readers are SQLite-file and
+JSONL-file only; the backend switch is a compile-time `switch` with no Dolt arm.
+Where it detects a Dolt workspace it shells out to `bd export -o
+.beads/issues.jsonl` and reads the file. Every tracker here is Dolt in server
+mode, so `bv` would always render a snapshot of whenever the last export ran —
+and this tool's question is what is happening now.
+
+**Its licence is not usable.** MIT plus a rider, declared to control over any
+conflicting MIT term, naming OpenAI and Anthropic as Restricted Parties along
+with anyone "acting on their behalf, for their benefit, or under their
+direction". It grants such parties no rights at all, defines "Use" to include
+analysing and benchmarking, must be carried forward unmodified into any
+derivative, and terminates automatically on breach. A fork carries it forever.
+
+**It does not take contributions.** The README states outright that outside PRs
+are not merged. So upstreaming the herdr overlay is not available either.
+
+Two things it teaches, which are worth having without the code:
+
+- **Its tree duplicates a node with multiple parents**, materialising a full
+  copy of the subtree per parent, and its id→node map keeps whichever copy was
+  built last — so navigating by id resolves to only one of the visible
+  instances. That is the failure our dedup rule exists to avoid, and it is why
+  dedup has to be in the model rather than the renderer.
+- **Root-scoping has a direction, and getting it wrong is silent.** `bv` has two
+  root-scoped subgraph extractors that disagree: one walks *forward* from the
+  root along dependencies, the other walks *backward* from blocker to dependent.
+  Only the backward one yields "the epic and everything beneath it". That is the
+  same distinction as `bd dep tree --direction=up`, and it is easy to get
+  backwards while producing a plausible-looking tree.
 
 ## Risks
 
