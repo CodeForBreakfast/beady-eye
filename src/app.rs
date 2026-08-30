@@ -179,7 +179,7 @@ fn read_project(
     cfg: &Config,
     panes: &[Pane],
 ) -> Result<ProjectWork, RunFailure> {
-    let env = bd::credential_env(runner, project)?;
+    let env = bd::credential_env(runner, project, bd::ambient_credential().as_deref())?;
     let discovered = bd::discover_roots(runner, &project.path, &env, &cfg.roots.metadata_keys)?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker

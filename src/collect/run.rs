@@ -9,7 +9,17 @@ use std::process::Command;
 /// A working directory does not carry a credential. A child inherits the
 /// parent's environment whatever its cwd, so reading a second tracker means
 /// changing this, not only the directory.
+///
+/// `CREDENTIAL_VAR` is the exception to the inheritance: a subprocess holds
+/// one only if this names it.
 pub type Env = BTreeMap<String, String>;
+
+/// The variable bd authenticates its Dolt server with.
+///
+/// No subprocess `bdi` launches inherits it — `git`, `herdr` and a project's
+/// own `credential_command` are all arbitrary programs that were never given
+/// a tracker's password and have no business holding one.
+pub const CREDENTIAL_VAR: &str = "BEADS_DOLT_PASSWORD";
 
 /// Why a command did not yield usable output. Each kind wants a different
 /// response from the caller, so they stay apart.
@@ -155,6 +165,7 @@ impl Runner for RealRunner {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
+        cmd.env_remove(CREDENTIAL_VAR);
         cmd.envs(env);
 
         let out = cmd.output().map_err(|e| RunFailure::exec(program, e))?;
@@ -288,7 +299,7 @@ mod tests {
     /// The leading risk in the design: a child inherits the parent's
     /// environment whatever its directory, so a per-tracker credential has to
     /// travel in the overlay. What the overlay does not name is still
-    /// inherited, which is what lets a project on the ambient credential work.
+    /// inherited, bar the credential itself; `tests/credential.rs` holds that.
     #[test]
     fn an_overlaid_variable_replaces_the_parents_and_the_rest_is_inherited() {
         let mut env = Env::new();

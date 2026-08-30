@@ -4,12 +4,9 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::collect::run::{Env, RunFailure, Runner};
+use crate::collect::run::{Env, RunFailure, Runner, CREDENTIAL_VAR};
 use crate::config::Project;
 use crate::model::types::Bead;
-
-/// The variable bd authenticates its Dolt server with.
-const CREDENTIAL_VAR: &str = "BEADS_DOLT_PASSWORD";
 
 /// Parse the output of `bd dep tree <root> --direction=up --json`.
 ///
@@ -29,15 +26,28 @@ struct BlockedRow {
     blocked_by: Vec<String>,
 }
 
+/// The credential the shell `bdi` was launched from holds, which a project
+/// configuring none reaches its tracker on.
+pub fn ambient_credential() -> Option<String> {
+    std::env::var(CREDENTIAL_VAR).ok()
+}
+
 /// The environment bd is given for one project's tracker.
 ///
-/// A project naming a `credential_command` gets that command's stdout, which
-/// replaces whatever the shell bdi was started from holds. A project naming
-/// none adds nothing and reaches its tracker on the ambient credential, so a
-/// single-tracker setup needs no credential configured at all.
-pub fn credential_env(runner: &dyn Runner, project: &Project) -> Result<Env, RunFailure> {
+/// A project naming a `credential_command` gets that command's stdout. A
+/// project naming none is handed `ambient` instead, so a single-tracker setup
+/// needs no credential configured at all — it is passed the one it would once
+/// have inherited, which is what lets everything else `bdi` launches be
+/// denied it.
+pub fn credential_env(
+    runner: &dyn Runner,
+    project: &Project,
+    ambient: Option<&str>,
+) -> Result<Env, RunFailure> {
     let Some(command) = &project.credential_command else {
-        return Ok(Env::new());
+        return Ok(ambient.map_or_else(Env::new, |password| {
+            Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
+        }));
     };
     let password = runner.run("sh", &["-c", command], Some(&project.path), &Env::new())?;
     Ok(Env::from([(
@@ -450,7 +460,7 @@ mod tests {
             credential_command: Some("op read the/password".to_string()),
         };
 
-        let env = credential_env(&runner, &project).unwrap();
+        let env = credential_env(&runner, &project, Some("the-launching-shells-password")).unwrap();
 
         assert_eq!(
             env,
@@ -465,10 +475,11 @@ mod tests {
         );
     }
 
-    /// A single-tracker setup configures no credential and reaches its
-    /// tracker on the ambient one, so nothing is added and nothing removed.
+    /// A single-tracker setup configures no credential and reaches its tracker
+    /// on the ambient one. It is handed that credential rather than left to
+    /// inherit it, because nothing bdi launches inherits it any more.
     #[test]
-    fn a_project_with_no_credential_command_adds_nothing_to_the_environment() {
+    fn a_project_with_no_credential_command_is_handed_the_ambient_credential() {
         let runner = FakeRunner::default();
         let project = Project {
             name: "beacon".to_string(),
@@ -476,11 +487,27 @@ mod tests {
             credential_command: None,
         };
 
-        assert_eq!(credential_env(&runner, &project).unwrap(), Env::new());
+        let env = credential_env(&runner, &project, Some("hunter2")).unwrap();
+
+        assert_eq!(env, credentialled());
         assert!(
             runner.calls().is_empty(),
             "nothing is run to find no credential"
         );
+    }
+
+    /// Nothing to hand on is not an empty password: a tracker that wants one
+    /// should refuse the call rather than be told the password is "".
+    #[test]
+    fn a_project_with_no_credential_command_and_no_ambient_one_is_given_nothing() {
+        let runner = FakeRunner::default();
+        let project = Project {
+            name: "beacon".to_string(),
+            path: project_dir(),
+            credential_command: None,
+        };
+
+        assert_eq!(credential_env(&runner, &project, None).unwrap(), Env::new());
     }
 
     #[test]
@@ -496,7 +523,7 @@ mod tests {
         };
 
         assert_eq!(
-            credential_env(&runner, &project).unwrap_err().kind,
+            credential_env(&runner, &project, None).unwrap_err().kind,
             FailureKind::Exec
         );
     }
