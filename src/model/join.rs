@@ -53,7 +53,16 @@ pub enum Conflict {
     /// Several panes name one bead. None of them wins it.
     SeveralPanesNameOneBead { bead: BeadKey, panes: Vec<String> },
     /// Several beads name one pane. None of them gets it.
-    SeveralBeadsNameOnePane { pane: String, beads: Vec<BeadKey> },
+    ///
+    /// `caption` is the pane's own account of what it is working on, carried
+    /// here because it is the one thing that tells a live claim from a stale
+    /// one and it is nowhere else on the screen: a caption is drawn off the
+    /// agent a pane was awarded, and a contested pane is awarded to nobody.
+    SeveralBeadsNameOnePane {
+        pane: String,
+        caption: Option<String>,
+        beads: Vec<BeadKey>,
+    },
     /// A pane and the bead naming it, or named by it, sit in different
     /// projects. No join. `pane_project` is absent when the pane's `cwd` is
     /// under no configured project at all.
@@ -181,6 +190,7 @@ pub fn resolve(
         } else {
             let shared = Conflict::SeveralBeadsNameOnePane {
                 pane: pane.pane_id.clone(),
+                caption: pane.caption().map(str::to_string),
                 beads: named.clone(),
             };
             conflicts.push(shared.clone());
@@ -963,6 +973,7 @@ mod tests {
         assert_eq!(joined.agents, BTreeMap::new(), "neither bead gets the pane");
         let contested = Conflict::SeveralBeadsNameOnePane {
             pane: "w:p1".to_string(),
+            caption: None,
             beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
         };
         assert_eq!(joined.conflicts, vec![contested.clone()]);
@@ -973,6 +984,93 @@ mod tests {
                 (key("proj", "p-1.2"), contested),
             ]),
             "each of them claimed the pane, so each is owed the reason it has none"
+        );
+    }
+
+    /// The reading this was measured from: one seat claimed three beads in
+    /// turn and cleared its key on none of them, so three claims stood on the
+    /// pane it was still sitting in. `bdi` awards it to none of them, and the
+    /// only thing on the screen that tells the live claim from the two stale
+    /// ones is the pane's own account of what it is working on — which the
+    /// disagreement therefore carries. The session here is the one captured
+    /// while it was happening.
+    #[test]
+    fn a_contested_pane_carries_its_own_account_of_what_it_is_working_on() {
+        let beads = rows(
+            r#"[
+              {"id":"bdi-7ao","title":"bdi v1","status":"open","parent_id":""},
+              {"id":"bdi-2bb.16","title":"a claim its seat moved on from",
+               "status":"in_progress","parent_id":"bdi-7ao",
+               "metadata":{"agent_pane":"wCW:p1P"}},
+              {"id":"bdi-xey","title":"open the spine to every live agent",
+               "status":"in_progress","parent_id":"bdi-7ao",
+               "metadata":{"agent_pane":"wCW:p1P"}},
+              {"id":"bdi-2bb.19","title":"the other claim it moved on from",
+               "status":"in_progress","parent_id":"bdi-7ao",
+               "metadata":{"agent_pane":"wCW:p1P"}}
+            ]"#,
+        );
+        let live = parse_agent_list(JOINED_PANES).expect("the fixture parses");
+        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "beady-eye",
+                rows: &beads,
+            }],
+            &live,
+            &cfg,
+            &Join::default(),
+        );
+
+        assert_eq!(joined.agents, BTreeMap::new(), "none of the three gets it");
+        assert_eq!(
+            joined.conflicts,
+            vec![Conflict::SeveralBeadsNameOnePane {
+                pane: "wCW:p1P".to_string(),
+                caption: Some("bdi-xey: open the spine to every live agent".to_string()),
+                beads: vec![
+                    key("beady-eye", "bdi-2bb.16"),
+                    key("beady-eye", "bdi-2bb.19"),
+                    key("beady-eye", "bdi-xey"),
+                ],
+            }]
+        );
+    }
+
+    /// A pane with nothing to say about itself still contests, and the
+    /// disagreement says what it can rather than inventing the rest.
+    #[test]
+    fn a_contested_pane_that_says_nothing_about_itself_carries_nothing() {
+        let beads = rows(
+            r#"[
+              {"id":"p-1","title":"root","status":"open","parent_id":""},
+              {"id":"p-1.1","title":"one","status":"in_progress","parent_id":"p-1",
+               "metadata":{"agent_pane":"w:p1"}},
+              {"id":"p-1.2","title":"two","status":"in_progress","parent_id":"p-1",
+               "metadata":{"agent_pane":"w:p1"}}
+            ]"#,
+        );
+        let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working"}"#);
+        let cfg = vec![project("proj", "/home/user/proj")];
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            &live,
+            &cfg,
+            &Join::default(),
+        );
+
+        assert_eq!(
+            joined.conflicts,
+            vec![Conflict::SeveralBeadsNameOnePane {
+                pane: "w:p1".to_string(),
+                caption: None,
+                beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
+            }]
         );
     }
 
@@ -1020,6 +1118,7 @@ mod tests {
                 },
                 Conflict::SeveralBeadsNameOnePane {
                     pane: "w:p1".to_string(),
+                    caption: None,
                     beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
                 },
             ]

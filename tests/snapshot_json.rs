@@ -292,6 +292,42 @@ fn a_pane_under_no_configured_project_is_its_own_array() {
     );
 }
 
+/// bdi-2jh. A seat that claims a bead and moves on without clearing its key
+/// leaves a claim standing on the pane it is still sitting in, so two beads
+/// name one pane and `bdi` awards it to neither. Nothing else in the emitted
+/// snapshot then says what that pane is working on — the caption is carried
+/// on the agent a pane was awarded, and this one was awarded to nobody — so
+/// the disagreement carries it, and a consumer can tell the live claim from
+/// the stale one without going back to the tracker.
+#[test]
+fn a_contested_pane_is_reported_with_its_own_account_of_itself() {
+    let contested = TREE.replace(
+        r#""started_at":"2026-07-01T09:00:00Z"}"#,
+        r#""started_at":"2026-07-01T09:00:00Z","metadata":{"agent_pane":"w:p1"}}"#,
+    );
+    let emitted = emit(
+        &canned().answering("bd dep tree orb-7 --direction=up --json", &contested),
+        Filter::LiveAgents,
+    );
+
+    assert!(
+        emitted["conflicts"]
+            .as_array()
+            .expect("conflicts is an array")
+            .contains(&json!({
+                "conflict": "several-beads-name-one-pane",
+                "pane": "w:p1",
+                "caption": "the dish",
+                "beads": [
+                    {"project": "orbital", "id": "orb-7"},
+                    {"project": "orbital", "id": "orb-7.3"},
+                ],
+            })),
+        "{}",
+        emitted["conflicts"]
+    );
+}
+
 /// The two directions of the join disagreeing is a finding, not something to
 /// resolve by picking a winner.
 #[test]

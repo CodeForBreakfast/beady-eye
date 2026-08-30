@@ -5,9 +5,11 @@
 //! text that classified it is dropped there, so a phrase is handed the reason
 //! and never the tool's account of it.
 //!
-//! The two exceptions are deliberate and are not error text: herdr's own
-//! agent states, and a status or state neither project's vocabulary covers,
-//! which is quoted so it reads as a foreign word rather than as `bdi`'s.
+//! The exceptions are deliberate and none of them is error text: herdr's own
+//! agent states; a status or state neither project's vocabulary covers; and
+//! what a pane says of itself, where that is the only thing on the screen
+//! that can settle the finding. The last two are quoted, so they read as
+//! somebody else's words rather than as `bdi`'s.
 
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
@@ -93,8 +95,13 @@ pub fn conflict(conflict: &Conflict) -> String {
             panes.len(),
             panes.join(", ")
         ),
-        Conflict::SeveralBeadsNameOnePane { pane, beads } => format!(
-            "pane {pane}: {} beads name it — {} — so none holds it",
+        Conflict::SeveralBeadsNameOnePane {
+            pane,
+            caption,
+            beads,
+        } => format!(
+            "pane {pane}{}: {} beads name it — {} — so none holds it",
+            caption.as_deref().map(saying).unwrap_or_default(),
             beads.len(),
             beads.iter().map(bead_key).collect::<Vec<_>>().join(", ")
         ),
@@ -300,6 +307,15 @@ fn quoted(word: &str) -> String {
     format!("“{word}”")
 }
 
+/// What a pane says of itself, set into a sentence `bdi` is saying about it.
+///
+/// It sits directly after the pane it belongs to, ahead of anything else the
+/// sentence has to say, because a sentence too long for the width is cut from
+/// the right.
+fn saying(caption: &str) -> String {
+    format!(" {}", quoted(caption))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +377,7 @@ mod tests {
             Anomaly::OrphanClaim {
                 refused: Some(Conflict::SeveralBeadsNameOnePane {
                     pane: "wCM:p9".into(),
+                    caption: None,
                     beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
                 }),
             },
@@ -383,6 +400,12 @@ mod tests {
             },
             Conflict::SeveralBeadsNameOnePane {
                 pane: "wCM:p9".into(),
+                caption: None,
+                beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+            },
+            Conflict::SeveralBeadsNameOnePane {
+                pane: "wCM:p9".into(),
+                caption: Some("nix-9670s.1: rebuild the installer image".into()),
                 beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
             },
             Conflict::PaneInAnotherProject {
@@ -591,6 +614,7 @@ mod tests {
         let shared = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::SeveralBeadsNameOnePane {
                 pane: "wCM:p9".into(),
+                caption: None,
                 beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
             }),
         });
@@ -643,6 +667,65 @@ mod tests {
         assert!(said.contains("wCM:p9"), "{said}");
         assert!(said.contains("wCM:p6"), "{said}");
         assert!(said.contains("nix-9670s.20"), "{said}");
+    }
+
+    /// A contested pane is awarded to nobody, so nothing else on the screen
+    /// says what it is working on — and that is the one thing that tells the
+    /// live claim from the stale ones. It is said in the pane's own words:
+    /// `bdi` reads no bead id out of it and picks no winner.
+    #[test]
+    fn a_contested_pane_says_what_it_is_working_on_in_its_own_words() {
+        let said = conflict(&Conflict::SeveralBeadsNameOnePane {
+            pane: "wCM:p9".into(),
+            caption: Some("nix-9670s.1: rebuild the installer image".into()),
+            beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+        });
+
+        assert!(
+            said.contains("nix-9670s.1: rebuild the installer image"),
+            "{said}"
+        );
+        assert!(
+            said.contains('\u{201c}'),
+            "the pane's words are marked as its own: {said}"
+        );
+    }
+
+    /// The sentence is cut from the right at the width it is drawn in, so the
+    /// part that settles which claim is live has to come before the roll of
+    /// claims, which is the part a reader can lose and still act.
+    #[test]
+    fn a_contested_panes_own_words_come_before_the_claims_on_it() {
+        let said = conflict(&Conflict::SeveralBeadsNameOnePane {
+            pane: "wCM:p9".into(),
+            caption: Some("nix-9670s.1: rebuild the installer image".into()),
+            beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+        });
+
+        let words = said
+            .find("rebuild the installer image")
+            .expect("the pane's own words are in the sentence");
+        let claims = said
+            .find("beads name it")
+            .expect("so is the roll of claims on it");
+
+        assert!(words < claims, "{said}");
+    }
+
+    /// A pane herdr reports nothing about still contests, and the sentence
+    /// says what it has rather than leaving an empty pair of quotes standing
+    /// for words nobody wrote.
+    #[test]
+    fn a_contested_pane_with_nothing_to_say_is_described_without_it() {
+        let said = conflict(&Conflict::SeveralBeadsNameOnePane {
+            pane: "wCM:p9".into(),
+            caption: None,
+            beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+        });
+
+        assert!(!said.contains('\u{201c}'), "{said}");
+        assert!(said.contains("wCM:p9"), "{said}");
+        assert!(said.contains('2'), "{said}");
     }
 
     /// A pane under no configured project has no project to name, and saying

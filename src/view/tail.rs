@@ -524,6 +524,7 @@ mod tests {
     fn several_beads_name_one_pane() -> Conflict {
         Conflict::SeveralBeadsNameOnePane {
             pane: "w:p5".to_string(),
+            caption: None,
             beads: vec![key("orb-7.2"), key("orb-7.3")],
         }
     }
