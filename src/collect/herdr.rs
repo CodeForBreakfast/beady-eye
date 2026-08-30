@@ -1,0 +1,225 @@
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneStatus {
+    Idle,
+    Working,
+    /// A TTY prompt is waiting — a permission gate, or a pane at a startup
+    /// confirmation. A property of the terminal, never of the work.
+    Blocked,
+    Done,
+    #[serde(untagged)]
+    Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Pane {
+    pub pane_id: String,
+    pub cwd: PathBuf,
+    #[serde(default)]
+    pub display_agent: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub state_labels: BTreeMap<String, String>,
+    pub agent_status: PaneStatus,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub tab_id: Option<String>,
+}
+
+impl Pane {
+    /// The line to show for this pane: its state label for the state it is
+    /// actually in, falling back to its title.
+    pub fn caption(&self) -> Option<&str> {
+        let state = match &self.agent_status {
+            PaneStatus::Idle => "idle",
+            PaneStatus::Working => "working",
+            PaneStatus::Blocked => "blocked",
+            PaneStatus::Done => "done",
+            PaneStatus::Other(s) => s.as_str(),
+        };
+        self.state_labels
+            .get(state)
+            .map(String::as_str)
+            .or(self.title.as_deref())
+    }
+}
+
+#[derive(Deserialize)]
+struct Envelope {
+    result: AgentList,
+}
+
+#[derive(Deserialize)]
+struct AgentList {
+    agents: Vec<Pane>,
+}
+
+/// Parse the output of `herdr agent list`.
+pub fn parse_agent_list(s: &str) -> anyhow::Result<Vec<Pane>> {
+    let envelope: Envelope = serde_json::from_str(s)?;
+    Ok(envelope.result.agents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    const FIXTURE: &str = include_str!("../../tests/fixtures/herdr_agent_list.json");
+
+    fn pane<'a>(panes: &'a [Pane], id: &str) -> &'a Pane {
+        panes
+            .iter()
+            .find(|p| p.pane_id == id)
+            .expect("pane is in the fixture")
+    }
+
+    #[test]
+    fn unwraps_the_envelope() {
+        let panes = parse_agent_list(FIXTURE).expect("parses");
+
+        assert_eq!(panes.len(), 10);
+    }
+
+    #[test]
+    fn a_pane_that_has_not_identified_itself_is_kept() {
+        let panes = parse_agent_list(FIXTURE).unwrap();
+        let p = pane(&panes, "wCW:p1");
+
+        assert_eq!(p.display_agent, None);
+        assert_eq!(p.title, None);
+        assert_eq!(p.state_labels, BTreeMap::new());
+        assert_eq!(p.caption(), None);
+    }
+
+    #[test]
+    fn reads_every_field_of_an_identified_pane() {
+        let panes = parse_agent_list(FIXTURE).unwrap();
+        let p = pane(&panes, "wCW:p6");
+
+        assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/beady-eye"));
+        assert_eq!(p.display_agent.as_deref(), Some("bdi-3um.5"));
+        assert_eq!(
+            p.title.as_deref(),
+            Some("parse herdr agent list into typed panes")
+        );
+        assert_eq!(p.agent_status, PaneStatus::Working);
+        assert_eq!(p.workspace_id.as_deref(), Some("wCW"));
+        assert_eq!(p.tab_id.as_deref(), Some("wCW:t1"));
+        assert_eq!(
+            p.state_labels.get("idle").map(String::as_str),
+            Some("asleep: fixture captured, awaiting review")
+        );
+    }
+
+    #[test]
+    fn caption_prefers_the_label_for_the_current_state() {
+        let panes = parse_agent_list(FIXTURE).unwrap();
+        let p = pane(&panes, "wCW:p6");
+
+        assert_eq!(p.agent_status, PaneStatus::Working);
+        assert_eq!(p.caption(), Some("writing the parser and its tests"));
+    }
+
+    #[test]
+    fn caption_falls_back_to_title_when_a_pane_has_no_labels() {
+        let panes = parse_agent_list(FIXTURE).unwrap();
+        let p = pane(&panes, "wCW:p5");
+
+        assert_eq!(p.state_labels, BTreeMap::new());
+        assert_eq!(p.caption(), Some("parse bd dep-tree JSON into typed rows"));
+    }
+
+    /// The same labels under two states, so the lookup cannot be a fixed key.
+    #[test]
+    fn caption_follows_the_state_the_pane_is_in() {
+        let list = r#"{"id":"cli:agent:list","result":{"type":"agent_list","agents":[
+            {"pane_id":"w:p1","cwd":"/tmp","agent_status":"idle","title":"a title",
+             "state_labels":{"idle":"the idle line","working":"the working line"}},
+            {"pane_id":"w:p2","cwd":"/tmp","agent_status":"working","title":"a title",
+             "state_labels":{"idle":"the idle line","working":"the working line"}}
+        ]}}"#;
+
+        let panes = parse_agent_list(list).unwrap();
+
+        assert_eq!(panes[0].caption(), Some("the idle line"));
+        assert_eq!(panes[1].caption(), Some("the working line"));
+    }
+
+    /// Labels present, but none for this state — the title still wins over
+    /// whichever label happens to be there.
+    #[test]
+    fn caption_falls_back_to_title_when_no_label_covers_this_state() {
+        let list = r#"{"id":"cli:agent:list","result":{"type":"agent_list","agents":[
+            {"pane_id":"w:p1","cwd":"/tmp","agent_status":"blocked","title":"the title",
+             "state_labels":{"idle":"the idle line","working":"the working line"}}
+        ]}}"#;
+
+        let panes = parse_agent_list(list).unwrap();
+
+        assert_eq!(panes[0].caption(), Some("the title"));
+    }
+
+    /// herdr's four states, so a rename in the enum cannot pass unnoticed. The
+    /// fixture is one capture and holds whichever states this machine was in.
+    #[test]
+    fn reads_each_state_herdr_reports() {
+        let list = r#"{"id":"cli:agent:list","result":{"type":"agent_list","agents":[
+            {"pane_id":"w:p1","cwd":"/tmp","agent_status":"idle"},
+            {"pane_id":"w:p2","cwd":"/tmp","agent_status":"working"},
+            {"pane_id":"w:p3","cwd":"/tmp","agent_status":"blocked"},
+            {"pane_id":"w:p4","cwd":"/tmp","agent_status":"done"}
+        ]}}"#;
+
+        let got: Vec<PaneStatus> = parse_agent_list(list)
+            .expect("parses")
+            .into_iter()
+            .map(|p| p.agent_status)
+            .collect();
+
+        assert_eq!(
+            got,
+            vec![
+                PaneStatus::Idle,
+                PaneStatus::Working,
+                PaneStatus::Blocked,
+                PaneStatus::Done,
+            ]
+        );
+    }
+
+    /// A state a future herdr reports must not break the parse.
+    #[test]
+    fn an_unrecognised_state_is_kept_verbatim() {
+        let list = r#"{"id":"cli:agent:list","result":{"type":"agent_list","agents":[
+            {"pane_id":"w:p1","cwd":"/tmp","agent_status":"hibernating","title":"a state we do not know"}
+        ]}}"#;
+
+        let panes = parse_agent_list(list).expect("an unknown state still parses");
+
+        assert_eq!(
+            panes[0].agent_status,
+            PaneStatus::Other("hibernating".into())
+        );
+        assert_eq!(panes[0].caption(), Some("a state we do not know"));
+
+        let out = serde_json::to_string(&panes[0].agent_status).unwrap();
+        assert_eq!(out, r#""hibernating""#);
+    }
+
+    /// The contract spells the known states the way herdr does, not the way
+    /// Rust does.
+    #[test]
+    fn a_known_state_serialises_back_to_herdrs_spelling() {
+        let out = serde_json::to_string(&PaneStatus::Blocked).unwrap();
+
+        assert_eq!(out, r#""blocked""#);
+    }
+}

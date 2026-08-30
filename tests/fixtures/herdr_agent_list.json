@@ -1,0 +1,236 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "agents": [
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "51544060-50c0-4d82-8fd5-2caf91b491da"
+        },
+        "agent_status": "done",
+        "cwd": "/tmp/bdi-ground/homelab",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/homelab",
+        "pane_id": "wCF:p2",
+        "revision": 3,
+        "state_change_seq": 582,
+        "tab_id": "wCF:t1",
+        "terminal_id": "term_65a2c00b909fd3",
+        "terminal_title": "✳ Do not rotate existing secrets",
+        "terminal_title_stripped": "Do not rotate existing secrets",
+        "workspace_id": "wCF"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "c2278dac-b45e-430f-8695-6aaaf37be96e"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/homelab",
+        "display_agent": "orch: heartbeat-cadence",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/homelab",
+        "pane_id": "wCF:pC",
+        "revision": 2,
+        "state_change_seq": 430,
+        "tab_id": "wCF:t1",
+        "terminal_id": "term_65a2f4a4d1b4211",
+        "terminal_title": "✳ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "orchestrating hl-sgqyv",
+        "workspace_id": "wCF"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "63a03cf8-af77-4b63-a4fd-2f12e6a0f70c"
+        },
+        "agent_status": "done",
+        "cwd": "/tmp/bdi-ground/summit-works",
+        "display_agent": "orch: noctalia-switch",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/summit-works",
+        "pane_id": "wCM:p2",
+        "revision": 3,
+        "state_change_seq": 583,
+        "tab_id": "wCM:t1",
+        "terminal_id": "term_65a2fba13c27915",
+        "terminal_title": "✳ Noctalia contribution guidelines",
+        "terminal_title_stripped": "Noctalia contribution guidelines",
+        "title": "orchestrating nix-9670s",
+        "workspace_id": "wCM"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "22a80b11-135e-4734-9aba-6f9dcb281d84"
+        },
+        "agent_status": "done",
+        "cwd": "/tmp/bdi-ground/summit-works",
+        "display_agent": "nix-9670s.5",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/summit-works",
+        "pane_id": "wCM:pN",
+        "revision": 2,
+        "state_change_seq": 562,
+        "tab_id": "wCM:t1",
+        "terminal_id": "term_65a41099313c633",
+        "terminal_title": "✳ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "asleep: waiting on switch + reboot verification",
+        "workspace_id": "wCM"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "8c6a7211-8d1c-43bf-a5ff-b40914b39ed0"
+        },
+        "agent_status": "done",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "focused": true,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wCW:p1",
+        "revision": 23,
+        "state_change_seq": 585,
+        "tab_id": "wCW:t1",
+        "terminal_id": "term_65a407110a84c2e",
+        "terminal_title": "✳ New project familiarization",
+        "terminal_title_stripped": "New project familiarization",
+        "workspace_id": "wCW"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "1f9af83d-e2d5-49bf-8c3d-7ed34269492f"
+        },
+        "agent_status": "done",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "orch: core-json",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wCW:p2",
+        "revision": 2,
+        "state_change_seq": 595,
+        "tab_id": "wCW:t1",
+        "terminal_id": "term_65a4156f5d8c434",
+        "terminal_title": "✳ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "orchestrating bdi-3um",
+        "workspace_id": "wCW"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "55984de3-b61a-49d8-8121-5ba626bfa062"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "bdi-3um.5",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wCW:p6",
+        "revision": 2,
+        "state_change_seq": 592,
+        "state_labels": {
+          "idle": "asleep: fixture captured, awaiting review",
+          "working": "writing the parser and its tests"
+        },
+        "tab_id": "wCW:t1",
+        "terminal_id": "term_65a417071459038",
+        "terminal_title": "◐ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "parse herdr agent list into typed panes",
+        "workspace_id": "wCW"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "9527f8cf-f0e4-4779-9809-c489dfe0fc3f"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "bdi-3um.3",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wCW:p5",
+        "revision": 2,
+        "state_change_seq": 591,
+        "tab_id": "wCW:t1",
+        "terminal_id": "term_65a4170518a9537",
+        "terminal_title": "◐ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "parse bd dep-tree JSON into typed rows",
+        "workspace_id": "wCW"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "646a7131-98b4-4458-8313-457bd1df289a"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "bdi-3um.2",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wCW:p4",
+        "revision": 2,
+        "state_change_seq": 590,
+        "tab_id": "wCW:t1",
+        "terminal_id": "term_65a417022bbe336",
+        "terminal_title": "◐ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "T2 config: Config/Project/Roots/Badge + credential_command",
+        "workspace_id": "wCW"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "31459653-df64-423e-ab90-88de9940ac56"
+        },
+        "agent_status": "done",
+        "cwd": "/tmp/bdi-ground/summit-works",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/summit-works",
+        "pane_id": "wCY:p1",
+        "revision": 4,
+        "state_change_seq": 577,
+        "tab_id": "wCY:t1",
+        "terminal_id": "term_65a40fd400ba831",
+        "terminal_title": "✳ Beady-eye setup for commy",
+        "terminal_title_stripped": "Beady-eye setup for commy",
+        "workspace_id": "wCY"
+      }
+    ],
+    "type": "agent_list"
+  }
+}
