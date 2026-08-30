@@ -35,6 +35,26 @@ const SHOW_ALL: &str = "a to show all";
 const LIVE: Color = Color::Green;
 const LOOK_AT_THIS: Color = Color::Yellow;
 
+/// `bd list`'s own colours for a status, read off `bd` 1.2.2's output. They
+/// are literal rather than named because `bd`'s are: it sends 24-bit values
+/// that do not move with the terminal's theme, so a named colour here would
+/// track the theme away from the tool this is matching.
+///
+/// `open` is absent on purpose. `bd` sends no escape at all for it, and a
+/// glyph that inherits is what lets a row's own brightness reach it.
+const IN_PROGRESS: Color = Color::Rgb(255, 180, 84);
+const BLOCKED: Color = Color::Rgb(242, 109, 120);
+const CLOSED: Color = Color::Rgb(128, 144, 160);
+
+/// `bd` draws a deferred bead's glyph and every cell of a finished row in
+/// this one grey, so one name serves both.
+const DIM: Color = Color::Rgb(108, 118, 128);
+
+/// The top of the brightness scale, and the one tier `bd list` could not
+/// draw: a row a live agent is on. Named rather than literal because it is
+/// `bdi`'s own and should follow the reader's terminal, not `bd`'s palette.
+const STAFFED: Color = Color::White;
+
 /// Draw the forest and the key bar, leaving the tail's band to whoever holds
 /// a tail.
 ///
@@ -131,16 +151,14 @@ fn elided_run(prefix: &str, count: usize) -> Fitted {
     let glyph = row::status_glyph(&Status::Closed);
     Fitted::new(
         vec![
-            Span::raw(prefix.to_string()),
+            structure(prefix),
             Span::styled(glyph.to_string(), status_style(glyph)),
-            Span::styled(
-                format!(" {}", phrase::elided(count)),
-                Style::new().fg(Color::DarkGray),
-            ),
+            Span::raw(format!(" {}", phrase::elided(count))),
         ],
         Vec::new(),
         Vec::new(),
     )
+    .toned(Style::new().fg(DIM))
 }
 
 /// A line that is one sentence and nothing else.
@@ -319,7 +337,7 @@ pub struct Fitted {
     identity: Vec<Span<'static>>,
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
-    background: Style,
+    whole: Style,
 }
 
 impl Fitted {
@@ -332,14 +350,23 @@ impl Fitted {
             identity,
             title,
             state,
-            background: Style::new(),
+            whole: Style::new(),
         }
     }
 
     /// The row under the cursor, drawn so the eye finds it without reading it.
     #[must_use]
     pub fn selected(mut self) -> Self {
-        self.background = Style::new().add_modifier(Modifier::REVERSED);
+        self.whole = self.whole.add_modifier(Modifier::REVERSED);
+        self
+    }
+
+    /// How live this line is, drawn under every span that did not ask for a
+    /// colour of its own. A span that named one keeps it: the status glyph,
+    /// the agent and the anomalies say what they say at any brightness.
+    #[must_use]
+    fn toned(mut self, tone: Style) -> Self {
+        self.whole = tone.patch(self.whole);
         self
     }
 }
@@ -374,7 +401,7 @@ impl Widget for Fitted {
             spans
         };
 
-        Line::from(spans).style(self.background).render(area, buf);
+        Line::from(spans).style(self.whole).render(area, buf);
     }
 }
 
@@ -479,7 +506,7 @@ fn pane_marker(pane: &str, status: &PaneStatus) -> String {
 /// lines up under one another and the titles start together.
 pub fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     let identity = vec![
-        Span::raw(prefix.to_string()),
+        structure(prefix),
         Span::styled(row.glyph.to_string(), status_style(row.glyph)),
         Span::raw(format!(" {:id_width$}", row.id)),
     ];
@@ -491,26 +518,55 @@ pub fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     }
 
     let mut state: Vec<Span<'static>> = Vec::new();
-    let mut say = |text: &str, colour: Color| {
+    let mut say = |text: &str, colour: Option<Color>| {
         if !state.is_empty() {
             state.push(Span::raw(" ".repeat(GAP)));
         }
-        state.push(Span::styled(text.to_string(), Style::new().fg(colour)));
+        state.push(Span::styled(text.to_string(), fg(colour)));
     };
     if let Some(progress) = row.progress {
-        say(&done(progress.closed, progress.total), Color::Reset);
+        say(&done(progress.closed, progress.total), None);
     }
     if let Some(agent) = &row.agent {
-        say(agent, LIVE);
+        say(agent, Some(LIVE));
     }
     if let Some(anomalies) = &row.anomalies {
-        say(anomalies, LOOK_AT_THIS);
+        say(anomalies, Some(LOOK_AT_THIS));
     }
     for note in &row.notes {
-        say(note, LOOK_AT_THIS);
+        say(note, Some(LOOK_AT_THIS));
     }
 
-    Fitted::new(identity, title, state)
+    Fitted::new(identity, title, state).toned(tone(row))
+}
+
+/// The box-drawing a line hangs under. It says how the tree is shaped rather
+/// than how a bead is going, so it is held at the terminal's default while the
+/// row around it dims or brightens. `bd list` leaves its own tree prefix
+/// undimmed on a closed row too.
+fn structure(prefix: &str) -> Span<'static> {
+    Span::styled(prefix.to_string(), Style::new().fg(Color::Reset))
+}
+
+/// How live a row is, which is the one thing about a bead `bd list` has no
+/// way to know — and so the one this scale is spent on.
+///
+/// | row | drawn |
+/// |---|---|
+/// | an agent is on it | brighter than the page |
+/// | nobody on it, still going | the terminal's default |
+/// | finished, nobody on it | the grey `bd` dims a closed row to |
+///
+/// Finished means what it means to `forest::split`: closed, no agent, no
+/// anomaly. A closed bead whose pane is still alive is exactly the row worth
+/// looking at, and dimming it is how it would be missed.
+fn tone(row: &Row) -> Style {
+    if row.agent.is_some() {
+        return Style::new().fg(STAFFED);
+    }
+    let finished = status_of(row.glyph) == Some(Status::Closed) && row.anomalies.is_none();
+
+    fg(finished.then_some(DIM))
 }
 
 /// The colour a bead's status is drawn in.
@@ -521,23 +577,37 @@ pub fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 /// and never the only one: the glyph already says the status, so a terminal
 /// with no colour loses nothing.
 fn status_style(glyph: char) -> Style {
-    let colour = every_status()
-        .into_iter()
-        .find(|status| row::status_glyph(status) == glyph)
-        .map(|status| status_colour(&status));
-
-    colour.map_or_else(Style::new, |colour| Style::new().fg(colour))
+    fg(status_of(glyph).and_then(|status| status_colour(&status)))
 }
 
-fn status_colour(status: &Status) -> Color {
+/// The status a glyph stands for. A `Row` carries the glyph and not the status
+/// it came from, and `row::status_glyph` gives each status its own, so the
+/// glyph is enough to get back.
+fn status_of(glyph: char) -> Option<Status> {
+    every_status()
+        .into_iter()
+        .find(|status| row::status_glyph(status) == glyph)
+}
+
+/// `bd`'s colour for a status, or none where `bd` sends no escape and the
+/// glyph should take the brightness of the row it sits on.
+fn status_colour(status: &Status) -> Option<Color> {
     match status {
-        Status::InProgress => Color::Cyan,
-        Status::Blocked => Color::Yellow,
-        Status::Open => Color::Reset,
-        Status::Deferred => Color::DarkGray,
-        Status::Closed => Color::Green,
-        Status::Other(_) => Color::Magenta,
+        Status::InProgress => Some(IN_PROGRESS),
+        Status::Blocked => Some(BLOCKED),
+        Status::Closed => Some(CLOSED),
+        Status::Deferred => Some(DIM),
+        Status::Open => None,
+        // The one status `bd` has no colour for, because it has no such
+        // status. It takes the colour of the note already beside it.
+        Status::Other(_) => Some(LOOK_AT_THIS),
     }
+}
+
+/// A style that says a colour, or one that says nothing and lets the line's
+/// own reach the span.
+fn fg(colour: Option<Color>) -> Style {
+    colour.map_or_else(Style::new, |colour| Style::new().fg(colour))
 }
 
 /// One of each status, which is what makes the glyph-to-colour lookup total.
@@ -1038,7 +1108,7 @@ mod tests {
             painted[1],
             (
                 row::status_glyph(&Status::Blocked).to_string(),
-                status_colour(&Status::Blocked)
+                status_colour(&Status::Blocked).expect("blocked is one bd colours")
             )
         );
     }
@@ -1252,12 +1322,7 @@ mod tests {
             closed: 3,
             total: 8,
         });
-        epic.agent = Some(row::agent_marker(&AgentRef {
-            pane: "wCM:p9".into(),
-            pane_status: PaneStatus::Working,
-            title: None,
-            source: JoinSource::AgentPane,
-        }));
+        epic.agent = Some(row::agent_marker(&a_pane()));
 
         let drawn = drawn(bead_line(&epic, BRANCH, 3), 60, 1);
 
@@ -1306,17 +1371,23 @@ mod tests {
             "wallpaper timer calls dms",
             Status::InProgress,
         );
-        staffed.agent = Some(AgentRef {
-            pane: "wCM:p9".into(),
-            pane_status: PaneStatus::Working,
-            title: None,
-            source: JoinSource::AgentPane,
-        });
+        staffed.agent = Some(a_pane());
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
         let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 100, 1);
 
         assert!(drawn[0].contains("◍ wCM:p9 · working"), "{drawn:?}");
         assert!(drawn[0].contains("58"), "{drawn:?}");
+    }
+
+    /// A pane with something on it, which is all most of these rows need to
+    /// know about an agent.
+    fn a_pane() -> AgentRef {
+        AgentRef {
+            pane: "wCM:p9".into(),
+            pane_status: PaneStatus::Working,
+            title: None,
+            source: JoinSource::AgentPane,
+        }
     }
 
     fn captioned(caption: &str) -> Node {
@@ -1326,10 +1397,8 @@ mod tests {
             Status::InProgress,
         );
         staffed.agent = Some(AgentRef {
-            pane: "wCM:p9".into(),
-            pane_status: PaneStatus::Working,
             title: Some(caption.into()),
-            source: JoinSource::AgentPane,
+            ..a_pane()
         });
         staffed
     }
@@ -1432,18 +1501,238 @@ mod tests {
         }
     }
 
-    /// A status that arrived without a colour would be drawn in whatever the
-    /// terminal defaults to, which is the same as `open`'s — two statuses
-    /// telling the same story is exactly what the glyph test above forbids.
     #[test]
-    fn every_status_has_a_colour_reachable_from_the_glyph_it_is_drawn_with() {
+    fn every_status_reaches_its_colour_through_the_glyph_it_is_drawn_with() {
         for status in every_status() {
             assert_eq!(
                 status_style(row::status_glyph(&status)),
-                Style::new().fg(status_colour(&status)),
+                fg(status_colour(&status)),
                 "{status:?}"
             );
         }
+    }
+
+    /// Two statuses sharing a colour would tell one story between them. Only
+    /// `open` may arrive without one at all: `bd` sends no escape for it, and
+    /// the glyph already says which status it is.
+    #[test]
+    fn no_colour_is_given_to_two_statuses_and_only_open_goes_without_one() {
+        let coloured: Vec<Color> = every_status().iter().filter_map(status_colour).collect();
+
+        for (nth, colour) in coloured.iter().enumerate() {
+            assert!(
+                !coloured[nth + 1..].contains(colour),
+                "{colour:?} is drawn for two statuses"
+            );
+        }
+        assert_eq!(coloured.len(), every_status().len() - 1);
+        assert_eq!(status_colour(&Status::Open), None);
+    }
+
+    // ---- bd's palette, and the brightness only bdi can draw ---------------
+
+    /// Read off `bd` 1.2.2's own output. A reader coming from `bd list` has
+    /// already learned these, and a status drawn in a colour `bd` gives to a
+    /// different one would be worse than no colour at all.
+    #[test]
+    fn a_status_glyph_is_painted_the_colour_bd_paints_it() {
+        let bds = [
+            (Status::InProgress, Color::Rgb(255, 180, 84)),
+            (Status::Blocked, Color::Rgb(242, 109, 120)),
+            (Status::Closed, Color::Rgb(128, 144, 160)),
+            (Status::Deferred, Color::Rgb(108, 118, 128)),
+        ];
+
+        for (status, colour) in bds {
+            let bead = node("nix-9670s.1", "a bead", status.clone());
+            let painted = painted(bead_line(&row(&bead), BRANCH, 3), 60);
+
+            assert_eq!(
+                painted[1],
+                (row::status_glyph(&status).to_string(), colour),
+                "{status:?}: {painted:?}"
+            );
+        }
+    }
+
+    /// `bd` sends no escape at all for an open bead's glyph, and inheriting is
+    /// what lets the row's own brightness reach it. A glyph pinned to the
+    /// terminal's default would leave a staffed row reading as two colours.
+    #[test]
+    fn an_open_glyph_takes_the_brightness_of_the_row_it_sits_on() {
+        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        staffed.agent = Some(a_pane());
+
+        let painted = painted(bead_line(&row(&staffed), BRANCH, 3), 90);
+
+        assert!(painted[1].0.starts_with('○'), "{painted:?}");
+        assert_eq!(painted[1].1, Color::White, "{painted:?}");
+    }
+
+    /// The tier that earns the screen. `bd list` has no notion of a live
+    /// agent, so it has no way to say which row is the one you came for.
+    #[test]
+    fn a_row_with_an_agent_on_it_is_drawn_brighter_than_one_without() {
+        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        staffed.agent = Some(a_pane());
+
+        let bright = painted(bead_line(&row(&staffed), BRANCH, 3), 90);
+        let plain = painted(
+            bead_line(
+                &row(&node("nix-9670s.1", "a bead", Status::Open)),
+                BRANCH,
+                3,
+            ),
+            90,
+        );
+
+        assert_eq!(bright[1].1, Color::White, "{bright:?}");
+        assert_eq!(
+            plain,
+            vec![(plain[0].0.clone(), Color::Reset)],
+            "nobody on it, so the whole line is the terminal's own"
+        );
+    }
+
+    /// What `bd` already does to a closed row, arrived at from the other
+    /// side: a finished branch nobody is on falls back into the page.
+    #[test]
+    fn a_finished_row_nobody_is_on_is_dimmed_to_the_grey_bd_dims_one_to() {
+        let painted = painted(
+            bead_line(
+                &row(&node("nix-9670s.1", "a bead", Status::Closed)),
+                BRANCH,
+                3,
+            ),
+            60,
+        );
+
+        assert_eq!(
+            painted[1].1,
+            Color::Rgb(128, 144, 160),
+            "the glyph keeps its own status colour: {painted:?}"
+        );
+        assert_eq!(painted[2].1, Color::Rgb(108, 118, 128), "{painted:?}");
+    }
+
+    /// Exactly the row worth looking at, and dimming it is how it would be
+    /// missed. `forest::split` leaves it out of a run for the same reason.
+    #[test]
+    fn a_closed_bead_whose_pane_is_still_alive_is_not_dimmed() {
+        let mut alive = node("nix-9670s.1", "a bead", Status::Closed);
+        alive.agent = Some(a_pane());
+        alive.anomalies = vec![Anomaly::StalePane];
+
+        let painted = painted(bead_line(&row(&alive), BRANCH, 3), 110);
+
+        assert_eq!(painted[2].1, Color::White, "{painted:?}");
+    }
+
+    /// Finished means what it means in `forest::split` — closed, no agent, no
+    /// anomaly — so an anomaly alone is enough to keep a row out of the dim.
+    #[test]
+    fn a_closed_bead_with_an_anomaly_against_it_is_not_dimmed() {
+        let mut odd = node("nix-9670s.1", "a bead", Status::Closed);
+        odd.anomalies = vec![Anomaly::StalePane];
+
+        let painted = painted(bead_line(&row(&odd), BRANCH, 3), 110);
+
+        assert_eq!(painted[2].1, Color::Reset, "{painted:?}");
+    }
+
+    /// The box-drawing says how the tree is shaped, not how a bead is going,
+    /// so it holds the terminal's default while the row around it moves.
+    /// `bd list` leaves its own tree prefix undimmed on a closed row too.
+    #[test]
+    fn the_box_drawing_a_row_hangs_under_never_takes_the_rows_brightness() {
+        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        staffed.agent = Some(a_pane());
+        let finished = node("nix-9670s.1", "a bead", Status::Closed);
+
+        for bead in [staffed, finished] {
+            let painted = painted(bead_line(&row(&bead), BRANCH, 3), 90);
+
+            assert_eq!(
+                painted[0],
+                (BRANCH.to_string(), Color::Reset),
+                "{painted:?}"
+            );
+        }
+    }
+
+    /// A run stands for finished rows and is drawn as one of them, so the two
+    /// cannot fall out of step and the palette holds one grey, not two.
+    #[test]
+    fn an_elided_run_is_dimmed_the_same_grey_a_finished_row_is() {
+        let run = painted(elided_run(BRANCH, 4), 60);
+        let finished = painted(
+            bead_line(
+                &row(&node("nix-9670s.1", "a bead", Status::Closed)),
+                BRANCH,
+                3,
+            ),
+            60,
+        );
+
+        assert_eq!(run[0], (BRANCH.to_string(), Color::Reset), "{run:?}");
+        assert_eq!(run[1].1, finished[1].1, "the glyph: {run:?}");
+        assert_eq!(run[2].1, finished[2].1, "what follows it: {run:?}");
+    }
+
+    /// A header's agent and anomaly counts are its whole subtree's and not the
+    /// root bead's own, so the rule that decides a row's tier cannot be asked
+    /// of it without quietly changing what it means. It stays off the scale.
+    #[test]
+    fn a_tree_header_is_left_off_the_scale_a_bead_row_is_on() {
+        let done = Header {
+            status: Some(Status::Closed),
+            ..head(tree(
+                "homelab",
+                "hl-sgqyv",
+                "heartbeat cadence",
+                counts(7, 7, 0, 0),
+            ))
+        };
+
+        let painted = painted(header(&done, OPEN), 60);
+
+        assert_eq!(painted[2].1, Color::Reset, "{painted:?}");
+    }
+
+    /// `bd`'s hues belong to `bd`'s concepts. The live agent and the anomaly
+    /// are the two things it cannot say, so they are a different axis and
+    /// keep a different colour system whatever the row around them does.
+    #[test]
+    fn the_cells_bd_cannot_draw_keep_their_own_colours_however_bright_the_row() {
+        let mut staffed = node("nix-9670s.1", "a bead", Status::InProgress);
+        staffed.agent = Some(a_pane());
+        staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+
+        let painted = painted(bead_line(&row(&staffed), BRANCH, 3), 120);
+
+        assert!(
+            painted
+                .iter()
+                .any(|(said, colour)| said.contains(AGENT) && *colour == LIVE),
+            "{painted:?}"
+        );
+        assert!(
+            painted
+                .iter()
+                .any(|(said, colour)| said.contains(WARNING) && *colour == LOOK_AT_THIS),
+            "{painted:?}"
+        );
+    }
+
+    /// The one status `bd` has no colour for, because it has no such status.
+    /// It takes the colour of the note already beside it on the row.
+    #[test]
+    fn a_status_bd_never_had_is_painted_the_colour_of_the_note_beside_it() {
+        let odd = node("nix-9670s.1", "a bead", Status::Other("triage".into()));
+
+        let painted = painted(bead_line(&row(&odd), BRANCH, 3), 120);
+
+        assert_eq!(painted[1], ('?'.to_string(), LOOK_AT_THIS), "{painted:?}");
     }
 
     // ---- the bands of the screen -----------------------------------------
@@ -1870,7 +2159,7 @@ mod tests {
             painted[1],
             (
                 row::status_glyph(&Status::Closed).to_string(),
-                status_colour(&Status::Closed)
+                status_colour(&Status::Closed).expect("closed is one bd colours")
             )
         );
     }
@@ -1884,7 +2173,7 @@ mod tests {
         let painted = painted(fitted(&under(BRANCH, elided(3)), 0), 72);
 
         assert_eq!(painted[0], (BRANCH.to_string(), Color::Reset));
-        assert_eq!(painted[2].1, Color::DarkGray);
+        assert_eq!(painted[2].1, DIM);
     }
 
     #[test]
