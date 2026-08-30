@@ -28,9 +28,9 @@ pub struct Project {
     /// itself. Absent when the project needs no credential of its own.
     #[serde(default)]
     pub credential_command: Option<String>,
-    /// Every working tree of this project's repository, as git listed them:
-    /// the main checkout and each linked worktree. Discovered rather than
-    /// configured, so nothing written by hand can outrank what git says.
+    /// Where this project is worked: the place it names, in each working
+    /// tree git lists for its repository. Measured rather than configured, so
+    /// nothing written by hand can outrank what git says.
     #[serde(skip)]
     pub worktrees: Vec<PathBuf>,
 }

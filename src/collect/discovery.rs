@@ -53,6 +53,42 @@ pub fn from_the_current_directory(
     })
 }
 
+/// The config a file spelled out, with each project's working trees filled
+/// in from git — so a project a file names holds what the same project would
+/// hold had discovery found it.
+///
+/// A project's path is wherever its config said, which may be a directory
+/// inside the repository rather than the checkout itself. A linked worktree
+/// is a second copy of the whole repository, so that directory has a
+/// counterpart at the same place in each of them, and those counterparts are
+/// the project — never the whole repository a subdirectory happens to sit in.
+pub fn with_the_working_trees_git_lists(mut config: Config, runner: &dyn Runner) -> Config {
+    for project in &mut config.projects {
+        let listed = worktrees_of(runner, &project.path);
+        project.worktrees = the_same_place_in_each(&listed, &project.path);
+    }
+    config
+}
+
+/// Where `path` sits again in each of the working trees listed, given one of
+/// them holds it. Nothing, where none does: git listed no working trees, or
+/// listed the ones of some other repository, and the project is left holding
+/// the path it was configured with.
+///
+/// A worktree added inside the checkout is held by both, so the one the path
+/// is really in is the deepest — the tie `Project::holds` breaks the same
+/// way — which is the one leaving the shortest remainder.
+fn the_same_place_in_each(working_trees: &[PathBuf], path: &Path) -> Vec<PathBuf> {
+    let Some(within) = working_trees
+        .iter()
+        .filter_map(|tree| path.strip_prefix(tree).ok())
+        .min_by_key(|within| within.components().count())
+    else {
+        return Vec::new();
+    };
+    working_trees.iter().map(|tree| tree.join(within)).collect()
+}
+
 /// Every working tree of the repository the directory sits in, as
 /// `git worktree list` reports them, and empty where git reports none.
 ///
@@ -232,6 +268,142 @@ detached
         );
     }
 
+    /// A config file naming one project, in the repository the fake answers
+    /// for.
+    const ONE_CONFIGURED_PROJECT: &str = r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+"#;
+
+    /// A config naming a directory inside the repository rather than the
+    /// checkout itself.
+    const A_PROJECT_IN_A_SUBDIRECTORY: &str = r#"
+[[projects]]
+name = "dish"
+path = "/srv/work/orbital/crates/dish"
+"#;
+
+    /// Two, each in its own repository, so a test can see which directory
+    /// each question was asked in.
+    const TWO_CONFIGURED_PROJECTS: &str = r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+credential_command = "secret-tool lookup tracker orbital"
+
+[[projects]]
+name = "harbour"
+path = "/srv/work/harbour"
+credential_command = "secret-tool lookup tracker harbour"
+"#;
+
+    /// The bug: a project a config file names holds only the path the file
+    /// spelled out, so a seat working in a linked worktree sits under nothing
+    /// bdi knows about — exactly what discovery was fixed for.
+    #[test]
+    fn a_configured_project_holds_every_working_tree_git_lists() {
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        let cfg = with_the_working_trees_git_lists(
+            Config::from_toml(ONE_CONFIGURED_PROJECT).expect("the config parses"),
+            &runner,
+        );
+
+        assert_eq!(
+            cfg.projects[0].worktrees,
+            vec![
+                PathBuf::from("/srv/work/orbital"),
+                PathBuf::from("/tmp/seat-a/wt"),
+                PathBuf::from("/tmp/seat-b/wt"),
+            ]
+        );
+        assert!(
+            cfg.projects[0]
+                .holds(Path::new("/tmp/seat-a/wt/src"))
+                .is_some(),
+            "a seat in a linked worktree is working in the project"
+        );
+    }
+
+    /// git answers for the directory it runs in, so each project is asked
+    /// where it sits rather than wherever bdi was started.
+    #[test]
+    fn each_configured_project_is_asked_from_its_own_path() {
+        let runner = FakeRunner::default().with("git worktree list --porcelain", ONE_CHECKOUT);
+
+        with_the_working_trees_git_lists(
+            Config::from_toml(TWO_CONFIGURED_PROJECTS).expect("the config parses"),
+            &runner,
+        );
+
+        let asked: Vec<Option<PathBuf>> = runner
+            .calls()
+            .into_iter()
+            .filter(|call| call.argv == "git worktree list --porcelain")
+            .map(|call| call.cwd)
+            .collect();
+        assert_eq!(
+            asked,
+            vec![
+                Some(PathBuf::from("/srv/work/orbital")),
+                Some(PathBuf::from("/srv/work/harbour")),
+            ]
+        );
+    }
+
+    /// A config naming a directory inside the repository means that
+    /// directory, not the repository around it: the seat working on it in a
+    /// sibling worktree is in the project, and the sibling directory nobody
+    /// configured is not.
+    #[test]
+    fn a_project_inside_the_repository_is_that_place_in_each_working_tree() {
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        let cfg = with_the_working_trees_git_lists(
+            Config::from_toml(A_PROJECT_IN_A_SUBDIRECTORY).expect("the config parses"),
+            &runner,
+        );
+
+        assert_eq!(
+            cfg.projects[0].worktrees,
+            vec![
+                PathBuf::from("/srv/work/orbital/crates/dish"),
+                PathBuf::from("/tmp/seat-a/wt/crates/dish"),
+                PathBuf::from("/tmp/seat-b/wt/crates/dish"),
+            ]
+        );
+        assert!(
+            cfg.projects[0]
+                .holds(Path::new("/srv/work/orbital/docs"))
+                .is_none(),
+            "a project configured as one directory annexed the repository around it"
+        );
+    }
+
+    /// Degrade, never disappear: a configured path git will not answer for
+    /// still holds itself, and says nothing alarming about it.
+    #[test]
+    fn a_configured_path_that_is_no_repository_still_holds_itself() {
+        let runner =
+            FakeRunner::default().failing("git worktree list --porcelain", no_such_repository());
+
+        let cfg = with_the_working_trees_git_lists(
+            Config::from_toml(ONE_CONFIGURED_PROJECT).expect("the config parses"),
+            &runner,
+        );
+
+        assert!(cfg.projects[0].worktrees.is_empty());
+        assert!(
+            cfg.projects[0]
+                .holds(Path::new("/srv/work/orbital/src"))
+                .is_some(),
+            "a project in no repository holds nothing at all"
+        );
+    }
+
     /// A directory of our own to build a repository in, outside anything
     /// this checkout tracks.
     fn a_scratch_directory(named: &str) -> PathBuf {
@@ -293,6 +465,102 @@ detached
             worktrees_of(&RealRunner, &linked),
             vec![checkout, linked],
             "git did not list both working trees the way the parse expects"
+        );
+
+        std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");
+    }
+
+    /// A repository with a directory inside it and a linked worktree cut
+    /// from before that directory existed, so the same place in the two
+    /// working trees is a directory in one and nothing at all in the other.
+    fn a_repository_with_a_subdirectory_and_a_linked_worktree(
+        named: &str,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let scratch = a_scratch_directory(named);
+        let checkout = scratch.join("checkout");
+        std::fs::create_dir_all(&checkout).expect("the directory is ours to make");
+        git_in(&checkout, &["init"]);
+        git_in(&checkout, &["commit", "--allow-empty", "-m", "root"]);
+        let root = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&checkout)
+            .output()
+            .expect("git runs");
+        let root = String::from_utf8_lossy(&root.stdout).trim().to_string();
+
+        let inside = checkout.join("crates/dish");
+        std::fs::create_dir_all(&inside).expect("the directory is ours to make");
+        std::fs::write(inside.join("Cargo.toml"), "").expect("the file is ours to write");
+        git_in(&checkout, &["add", "."]);
+        git_in(&checkout, &["commit", "-m", "a crate"]);
+
+        let linked = scratch.join("seat/wt");
+        git_in(
+            &checkout,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                &linked.display().to_string(),
+                &root,
+            ],
+        );
+
+        (scratch, checkout, linked)
+    }
+
+    /// The re-rooting is a claim about what `git worktree list --porcelain`
+    /// really emits, so this one measures it against git rather than against
+    /// another test's idea of git.
+    #[test]
+    fn a_configured_subdirectory_is_re_rooted_onto_gits_own_listing() {
+        let (scratch, checkout, linked) =
+            a_repository_with_a_subdirectory_and_a_linked_worktree("configured-subdirectory");
+
+        let cfg = with_the_working_trees_git_lists(
+            Config::from_toml(&format!(
+                "[[projects]]\nname = \"dish\"\npath = \"{}\"\n",
+                checkout.join("crates/dish").display()
+            ))
+            .expect("the config parses"),
+            &RealRunner,
+        );
+
+        assert_eq!(
+            cfg.projects[0].worktrees,
+            vec![checkout.join("crates/dish"), linked.join("crates/dish")]
+        );
+
+        std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");
+    }
+
+    /// A linked worktree has its own branch out, so the project's directory
+    /// may not be there at all. It stays in the set: a project's territory is
+    /// the repository's layout, not what somebody has checked out this
+    /// minute, and a path no pane is under costs nothing to carry.
+    #[test]
+    fn a_place_that_is_not_there_on_this_branch_is_still_the_projects() {
+        let (scratch, checkout, linked) =
+            a_repository_with_a_subdirectory_and_a_linked_worktree("place-not-there");
+        assert!(
+            !linked.join("crates/dish").exists(),
+            "the worktree was cut from before the directory, so it should not be there"
+        );
+
+        let cfg = with_the_working_trees_git_lists(
+            Config::from_toml(&format!(
+                "[[projects]]\nname = \"dish\"\npath = \"{}\"\n",
+                checkout.join("crates/dish").display()
+            ))
+            .expect("the config parses"),
+            &RealRunner,
+        );
+
+        assert!(
+            cfg.projects[0]
+                .holds(&linked.join("crates/dish/src"))
+                .is_some(),
+            "a seat working there was dropped because the directory is not checked out"
         );
 
         std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");

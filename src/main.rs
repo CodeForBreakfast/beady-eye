@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<ExitCode> {
 
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let cfg = match &cli.config {
-        Some(named) => read_config(&expand_tilde(named, home)),
+        Some(named) => read_config(&RealRunner, &expand_tilde(named, home)),
         None => config_for_wherever_bdi_was_run(&RealRunner, &expand_tilde(DEFAULT_CONFIG, home)),
     }?;
     let cfg = cfg.with_roots_named_on_the_command_line(&cli.beads)?;
@@ -91,10 +91,20 @@ fn main() -> anyhow::Result<ExitCode> {
 
 /// A path the user named is read as written: a config that is not there is an
 /// error, never a reason to look somewhere else.
-fn read_config(path: &Path) -> anyhow::Result<Config> {
+fn read_config(runner: &dyn Runner, path: &Path) -> anyhow::Result<Config> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading the config at {}", path.display()))?;
-    Config::from_toml(&text)
+    config_and_its_working_trees(&text, runner)
+}
+
+/// A config file's text, as a config whose projects know their working trees.
+/// The file says where a project is; git says where else the same project is,
+/// because a seat working in a linked worktree is working in the project.
+fn config_and_its_working_trees(text: &str, runner: &dyn Runner) -> anyhow::Result<Config> {
+    Ok(discovery::with_the_working_trees_git_lists(
+        Config::from_toml(text)?,
+        runner,
+    ))
 }
 
 /// The config, or — where there is no config file at all — the repository the
@@ -102,7 +112,7 @@ fn read_config(path: &Path) -> anyhow::Result<Config> {
 /// there and will not open is still an error.
 fn config_for_wherever_bdi_was_run(runner: &dyn Runner, path: &Path) -> anyhow::Result<Config> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Config::from_toml(&text),
+        Ok(text) => config_and_its_working_trees(&text, runner),
         Err(absent) if absent.kind() == ErrorKind::NotFound => {
             let cwd = std::env::current_dir().context("finding the current directory")?;
             let named = std::env::var(PROJECT_IN_THE_ENVIRONMENT).ok();
@@ -133,7 +143,87 @@ fn expand_tilde(path: &str, home: Option<PathBuf>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beady_eye::collect::run::{Env, RunFailure};
     use clap::CommandFactory;
+
+    /// A config file naming one project, and git's answer for where that
+    /// project's repository is worked in.
+    const ONE_PROJECT: &str = r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+"#;
+
+    const A_WORKTREE_PER_SEAT: &str = "\
+worktree /srv/work/orbital
+HEAD 4d3c1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d
+branch refs/heads/main
+
+worktree /tmp/seat-a/wt
+HEAD 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+detached
+";
+
+    /// A config file of our own, written where the test can hand its path to
+    /// the thing that reads it.
+    fn a_config_file(named: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("bdi-{named}-{}.toml", std::process::id()));
+        std::fs::write(&path, ONE_PROJECT).expect("the file is ours to write");
+        path
+    }
+
+    /// git, as far as reading a config needs it: the one listing, whatever
+    /// is asked and wherever it is asked from.
+    struct ARepositoryWorkedInTwoPlaces;
+
+    impl Runner for ARepositoryWorkedInTwoPlaces {
+        fn run(
+            &self,
+            _program: &str,
+            _args: &[&str],
+            _cwd: Option<&Path>,
+            _env: &Env,
+        ) -> Result<String, RunFailure> {
+            Ok(A_WORKTREE_PER_SEAT.to_string())
+        }
+    }
+
+    /// A config file is where a project is written down, and nothing written
+    /// down can say where the seats are. Both ways of reading one ask git.
+    #[test]
+    fn a_config_the_command_line_names_learns_its_working_trees() {
+        let path = a_config_file("named-config");
+
+        let cfg =
+            read_config(&ARepositoryWorkedInTwoPlaces, &path).expect("the config is ours to read");
+
+        assert_eq!(
+            cfg.projects[0].worktrees,
+            vec![
+                PathBuf::from("/srv/work/orbital"),
+                PathBuf::from("/tmp/seat-a/wt"),
+            ]
+        );
+
+        std::fs::remove_file(&path).expect("the file is ours to remove");
+    }
+
+    #[test]
+    fn the_config_found_where_bdi_looks_learns_its_working_trees() {
+        let path = a_config_file("default-config");
+
+        let cfg = config_for_wherever_bdi_was_run(&ARepositoryWorkedInTwoPlaces, &path)
+            .expect("the config is ours to read");
+
+        assert!(
+            cfg.projects[0]
+                .holds(Path::new("/tmp/seat-a/wt/src"))
+                .is_some(),
+            "a seat in a linked worktree is working in the project"
+        );
+
+        std::fs::remove_file(&path).expect("the file is ours to remove");
+    }
 
     #[test]
     fn the_command_line_is_well_formed() {
