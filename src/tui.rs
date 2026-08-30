@@ -12,6 +12,7 @@ use crate::app::Wanted;
 use crate::collect::changes::{self, Reported, Socket, Uncovered};
 use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
+use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::tail::{self, Herdr, Panes, Tail};
 use crate::view::{draw, Action, Motion, Notice};
@@ -676,7 +677,7 @@ fn paint(
     draw::draw(frame, frame.area(), forest, at_startup, &key_row());
     draw::draw_tail(frame, bands.tail, tail);
     if showing == Showing::Bindings {
-        draw::key_bindings(frame, frame.area(), &bindings());
+        key_bindings(frame, frame.area(), &bindings());
     }
 }
 
@@ -713,6 +714,7 @@ mod tests {
         self, Counts, Filter, HerdrState, Node, TrackerFailure, TrackerState, Tree,
     };
     use crate::model::types::Status;
+    use crate::view::bindings::bindings_window;
     use crate::view::Motion;
     use chrono::Utc;
     use ratatui::backend::TestBackend;
@@ -736,10 +738,8 @@ mod tests {
             height,
             Showing::Bindings,
         );
-        let inner = Block::bordered().inner(draw::bindings_window(
-            Rect::new(0, 0, width, height),
-            &bindings(),
-        ));
+        let inner =
+            Block::bordered().inner(bindings_window(Rect::new(0, 0, width, height), &bindings()));
 
         (inner.y..inner.y + inner.height)
             .map(|y| {
@@ -990,7 +990,7 @@ mod tests {
     #[test]
     fn the_way_out_is_the_windows_title_however_short_the_screen() {
         for height in [8, 24] {
-            let window = draw::bindings_window(Rect::new(0, 0, 80, height), &bindings());
+            let window = bindings_window(Rect::new(0, 0, 80, height), &bindings());
             let mut forest = forest::flatten(&a_grove(30));
             let screen = painted(
                 &mut forest,
@@ -1017,7 +1017,7 @@ mod tests {
         let tail = Tail::Silent("nothing to tail");
         let alone = painted(&mut forest, &tail, 80, 24, Showing::Forest);
         let over = painted(&mut forest, &tail, 80, 24, Showing::Bindings);
-        let window = draw::bindings_window(Rect::new(0, 0, 80, 24), &bindings());
+        let window = bindings_window(Rect::new(0, 0, 80, 24), &bindings());
 
         assert!(
             window.height < 24 && window.width < 80,
@@ -1078,7 +1078,7 @@ mod tests {
     /// survive: a reader who cannot find it is stuck.
     #[test]
     fn a_forty_column_screen_keeps_the_keys_and_cuts_only_what_it_must() {
-        let window = draw::bindings_window(Rect::new(0, 0, 40, 24), &bindings());
+        let window = bindings_window(Rect::new(0, 0, 40, 24), &bindings());
         assert_eq!(
             window.width, 40,
             "a window wider than the screen has to clamp"

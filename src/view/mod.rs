@@ -2,7 +2,9 @@
 //! model found, the cells of one row, the forest those rows are drawn from, and
 //! the pane tail beneath it.
 
+pub mod bindings;
 pub mod draw;
+pub mod fitted;
 pub mod forest;
 pub mod phrase;
 pub mod row;
