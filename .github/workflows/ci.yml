@@ -23,17 +23,23 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
-      # Temporary. The runner mounts a credential for the shared binary cache,
-      # and seeding the Go module closure into it needs to know its shape. Names
-      # only: a value printed here is a value in the log.
-      - name: report what the runner offers attic
-        run: |
-          echo "attic-shaped variables, names only:"
-          env | cut -d= -f1 | grep -i attic || echo "  none"
-          echo "attic on PATH: $(command -v attic || echo no)"
-          echo "netrc: $(nix config show netrc-file 2>/dev/null || echo unknown)"
-          echo "substituters: $(nix config show substituters 2>/dev/null || echo unknown)"
-
       # Every check comes from the flake's `checks` output, so a check added
       # there is a check this runs. Naming one here is the drift to avoid.
       - run: nix flake check -L
+
+      # beads-1.2.2-go-modules fetches the whole Go module closure over the
+      # network, and that is more than half of this job. It is fixed-output, so
+      # any cache can serve it, and nothing had ever pushed it to one.
+      #
+      # The path comes out of the derivation graph rather than a match against
+      # the store, so moving the beads pin moves what this seeds instead of
+      # quietly seeding the version the pin used to name.
+      - name: seed the beads module closure into the shared cache
+        run: |
+          check=$(nix path-info --derivation .#checks.x86_64-linux.build-and-test)
+          modules=$(nix-store -qR --include-outputs "$check" | grep -E 'beads-[^/]*-go-modules\.drv$')
+          test "$(printf '%s' "$modules" | grep -c .)" -eq 1
+
+          nix profile install nixpkgs#attic-client
+          attic login homelab https://cache.example.invalid "$ATTIC_TOKEN"
+          attic push homelab "$(nix-store -q --outputs "$modules")"
