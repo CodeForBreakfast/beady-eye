@@ -14,26 +14,41 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, beads }:
+    let
+      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+
+      # The overlay and the per-system outputs are the same package, so a
+      # consumer taking either gets what CI built.
+      beadyEyeFor = pkgs: pkgs.rustPlatform.buildRustPackage {
+        # The crate names the version once. A release tag that disagrees with it
+        # is refused before anything is published, so a crate on crates.io
+        # always has a flake output built from the same source at the same
+        # version.
+        pname = cargoToml.package.name;
+        version = cargoToml.package.version;
+
+        src = ./.;
+        cargoLock.lockFile = ./Cargo.lock;
+
+        # tests/no_config.rs runs the binary as a fresh machine would, and
+        # bdi asks bd where the tracker is. The worktree-listing test builds
+        # a repository and adds a worktree to it, so git has to be here too.
+        # Only the check phase needs either; nothing at runtime is built
+        # against them.
+        nativeCheckInputs = [
+          beads.packages.${pkgs.stdenv.hostPlatform.system}.bd
+          pkgs.git
+        ];
+
+        # The package is named for the crate, the binary for the command.
+        meta.mainProgram = "bdi";
+      };
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
-        beady-eye = pkgs.rustPlatform.buildRustPackage {
-          pname = "beady-eye";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-
-          # tests/no_config.rs runs the binary as a fresh machine would, and
-          # bdi asks bd where the tracker is. The worktree-listing test builds
-          # a repository and adds a worktree to it, so git has to be here too.
-          # Only the check phase needs either; nothing at runtime is built
-          # against them.
-          nativeCheckInputs = [ beads.packages.${system}.bd pkgs.git ];
-
-          # The package is named for the crate, the binary for the command.
-          meta.mainProgram = "bdi";
-        };
+        beady-eye = beadyEyeFor pkgs;
 
         # A lint runs against the same source and the same vendored crates as
         # the build, so the two cannot drift apart.
@@ -97,6 +112,7 @@
         };
 
         packages.default = beady-eye;
+        packages.beady-eye = beady-eye;
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
@@ -106,5 +122,11 @@
           fmt = lintOf "fmt" pkgs.rustfmt "cargo fmt --check";
         };
       }
-    );
+    ) // {
+      # Overlays carry no system, so this sits outside eachDefaultSystem. A
+      # consumer adds it to nixpkgs.overlays and reaches pkgs.beady-eye.
+      overlays.default = final: _prev: {
+        beady-eye = beadyEyeFor final;
+      };
+    };
 }
