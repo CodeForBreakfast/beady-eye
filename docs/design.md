@@ -157,16 +157,39 @@ Verified against a live session, 2026-08-30.
 
 ### bd
 
-`bd dep tree <root> --direction=up --json` is the tree source. It:
+`bd dep tree <root> --direction=up --json` is the tree source, and it gives more
+than expected. It returns a **flat array, already in render order**, one row per
+bead, carrying:
 
-- walks **both** edge kinds and labels each `parent-child` or `blocks`
-- **dedups** — a bead with five blockers appears once, under the first path that
-  reaches it (`--show-all-paths` opts out)
-- carries id, title, status, priority, and the edge type per node
+| field | use |
+|---|---|
+| `id`, `title`, `status`, `priority`, `issue_type` | the row |
+| `parent_id` | the tree edge — empty on the root |
+| `depth` | pre-computed nesting level |
+| `edge_from_parent` | `parent-child` or `blocks` |
+| `metadata` | the whole map, inline |
+| `updated_at`, `started_at`, `closed_at`, `owner`, `assignee` | the age rules |
+| `truncated` | bd hit its depth limit on this node |
 
-We follow its model and redo its rendering: the shipped glyphs are wrong (a node
-draws under a bead that is not one of its blockers, and `└──` appears mid-list
-where `├──` belongs).
+Three consequences, all simplifications:
+
+- **We do not build the tree.** bd has already resolved it. The model assembles
+  rows into a renderable structure by `parent_id` and re-orders siblings; it does
+  not walk edges.
+- **bd already dedups.** Measured on a 23-node tree: 23 rows, 23 distinct ids,
+  none repeated — including a node with four blockers, which appears once.
+- **Badges need no second call.** `metadata` is inline per row, so a configured
+  key is read from the row that already loaded.
+
+What we still redo is the **rendering**. bd's text tree emits broken glyphs —
+vertical connectors missing under a node that has following siblings, and child
+indent that does not line up with its parent's marker. The JSON is sound; only
+the drawing is not.
+
+Two parsing notes. `bd show <id> --json` returns an **array**, not an object, so
+a consumer indexing it as a map fails. And `truncated` must be surfaced rather
+than ignored: a truncated node means the tree shown is incomplete, which is
+exactly the kind of silent partial answer this tool exists to avoid.
 
 `bd list --has-metadata-key <key> --limit 0 --json` supplies discovery and the
 reverse join. `--limit 0` matters — the default is 50, and a truncated list
