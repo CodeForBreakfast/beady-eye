@@ -1,5 +1,6 @@
 //! The terminal's lifecycle and the loop that keeps the view live.
 
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -7,7 +8,8 @@ use std::time::Duration;
 use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::collect::changes::{self, Reported, Socket};
+use crate::app::Wanted;
+use crate::collect::changes::{self, Reported, Socket, Uncovered};
 use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
 use crate::view::forest::{self, Forest};
@@ -22,9 +24,9 @@ use crate::view::{draw, Action, Motion};
 pub fn run(
     refresh: Duration,
     projects: Vec<String>,
-    collect: Box<dyn Fn() -> Snapshot + Send>,
+    mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
-    let first = collect();
+    let first = collect(&Wanted::Everything);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
     let (events, ask, _socket) = wire(refresh, Reported::watching(projects), collect);
@@ -37,11 +39,12 @@ pub fn run(
 ///
 /// A `Snapshot` is large and the other three carry almost nothing, so the
 /// collected one is boxed rather than widening every event to its size.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 enum Event {
     Key(KeyEvent),
     Resize,
-    /// A project's work has moved on.
-    Changed,
+    /// Work has moved on, and what has to be read to see it.
+    Changed(Wanted),
     /// A collection has come back.
     Collected(Box<Snapshot>),
 }
@@ -78,10 +81,14 @@ trait View {
 /// Every wait in here is a wait on the one channel: a keystroke, a resize, a
 /// project reporting a change and a collection coming back are the same kind
 /// of thing to the loop, and none of them is a deadline it sleeps until.
-fn drive(view: &mut dyn View, events: &Receiver<Event>, ask: &Sender<()>) -> anyhow::Result<()> {
+fn drive(
+    view: &mut dyn View,
+    events: &Receiver<Event>,
+    ask: &Sender<Wanted>,
+) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
     view.draw(showing)?;
-    let mut collecting = false;
+    let mut outstanding = Outstanding::default();
 
     while let Ok(event) = events.recv() {
         let changed = match event {
@@ -98,19 +105,19 @@ fn drive(view: &mut dyn View, events: &Receiver<Event>, ask: &Sender<()>) -> any
                     true
                 }
                 Some(Action::Refresh) => {
-                    collecting = request(ask, collecting);
+                    outstanding.ask(ask, Wanted::Everything);
                     false
                 }
                 Some(action) => view.apply(action),
                 None => false,
             },
             Event::Resize => true,
-            Event::Changed => {
-                collecting = request(ask, collecting);
+            Event::Changed(wanted) => {
+                outstanding.ask(ask, wanted);
                 false
             }
             Event::Collected(snapshot) => {
-                collecting = false;
+                outstanding.came_back(ask);
                 view.collected(*snapshot);
                 true
             }
@@ -124,12 +131,56 @@ fn drive(view: &mut dyn View, events: &Receiver<Event>, ask: &Sender<()>) -> any
     Ok(())
 }
 
-/// Ask for a collection, reporting whether one is now running.
+/// What has been asked for and not yet collected.
 ///
-/// A request made while one is in flight is dropped: the collection already
-/// running is reading exactly what this one would ask for.
-fn request(ask: &Sender<()>, collecting: bool) -> bool {
-    collecting || ask.send(()).is_ok()
+/// A request arriving while a collection is in flight used to be dropped, on
+/// the grounds that the collection already running was reading exactly what
+/// it would ask for. A refresh that names a project is what ends that: the
+/// one running may be reading a different project entirely, and dropping the
+/// request would lose the change it was sent for — the failure the inbound
+/// channel exists to prevent. So a request waits its turn instead. A whole
+/// collection absorbs the single projects it would read anyway, so what waits
+/// is never more than one per project.
+#[derive(Default)]
+struct Outstanding {
+    collecting: bool,
+    everything: bool,
+    projects: BTreeSet<String>,
+}
+
+impl Outstanding {
+    /// Ask for a collection, or keep it until the one running comes back.
+    fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) {
+        if !self.collecting {
+            self.collecting = ask.send(wanted).is_ok();
+            return;
+        }
+        match wanted {
+            Wanted::Everything => {
+                self.everything = true;
+                self.projects.clear();
+            }
+            Wanted::Project(project) => {
+                if !self.everything {
+                    self.projects.insert(project);
+                }
+            }
+        }
+    }
+
+    /// Take the collection that came back, asking for whatever waited behind
+    /// it.
+    fn came_back(&mut self, ask: &Sender<Wanted>) {
+        self.collecting = false;
+        let next = if std::mem::take(&mut self.everything) {
+            Some(Wanted::Everything)
+        } else {
+            self.projects.pop_first().map(Wanted::Project)
+        };
+        if let Some(next) = next {
+            self.ask(ask, next);
+        }
+    }
 }
 
 /// One key a reader can press, and the word for it they can read.
@@ -329,13 +380,13 @@ fn key_row() -> String {
 fn wire(
     refresh: Duration,
     reported: Reported,
-    collect: Box<dyn Fn() -> Snapshot + Send>,
-) -> (Receiver<Event>, Sender<()>, Option<Socket>) {
+    collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+) -> (Receiver<Event>, Sender<Wanted>, Option<Socket>) {
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
 
     let collecting = to_the_loop.clone();
-    thread::spawn(move || collector(collect.as_ref(), &asked, &collecting));
+    thread::spawn(move || collector(collect, &asked, &collecting));
 
     let typing = to_the_loop.clone();
     thread::spawn(move || keys(&typing));
@@ -371,6 +422,7 @@ fn wire(
             &mut Timer {
                 every: refresh,
                 reported,
+                due: VecDeque::new(),
             },
             &to_the_loop,
         );
@@ -386,8 +438,9 @@ fn wire(
 /// source runs on its own thread and blocks there, so the loop never sleeps
 /// until a deadline of its own.
 trait Changes: Send {
-    /// Block until there is something to collect for.
-    fn next(&mut self);
+    /// Block until there is something to collect for, and say what reading it
+    /// takes. Nothing, where the source has no more to report.
+    fn next(&mut self) -> Option<Wanted>;
 }
 
 /// The source for the projects nothing else reports for: it says the work has
@@ -403,14 +456,23 @@ trait Changes: Send {
 struct Timer {
     every: Duration,
     reported: Reported,
+    /// What the last interval found uncovered and has not yet reported. One
+    /// report is one collection, so several projects are handed over one at
+    /// a time.
+    due: VecDeque<String>,
 }
 
 impl Changes for Timer {
-    fn next(&mut self) {
+    fn next(&mut self) -> Option<Wanted> {
         loop {
+            if let Some(project) = self.due.pop_front() {
+                return Some(Wanted::Project(project));
+            }
             thread::sleep(self.every);
-            if !self.reported.covered(self.every) {
-                return;
+            match self.reported.uncovered(self.every) {
+                Uncovered::Everything => return Some(Wanted::Everything),
+                Uncovered::These(projects) => self.due = projects.into(),
+                Uncovered::Nothing => {}
             }
         }
     }
@@ -419,23 +481,22 @@ impl Changes for Timer {
 /// The source for the projects something else reports for: it says the work
 /// has moved when a writer has said which project it moved in.
 struct Inbound {
-    changes: Receiver<()>,
+    changes: Receiver<String>,
     /// Held so the channel never runs out of writers. A source whose last
     /// writer has gone must go quiet, not report as fast as it can.
-    _open: Sender<()>,
+    _open: Sender<String>,
 }
 
 impl Changes for Inbound {
-    fn next(&mut self) {
-        let _ = self.changes.recv();
+    fn next(&mut self) -> Option<Wanted> {
+        self.changes.recv().ok().map(Wanted::Project)
     }
 }
 
 /// Report one project's changes until the loop stops listening.
 fn report(source: &mut dyn Changes, to: &Sender<Event>) {
-    loop {
-        source.next();
-        if to.send(Event::Changed).is_err() {
+    while let Some(wanted) = source.next() {
+        if to.send(Event::Changed(wanted)).is_err() {
             return;
         }
     }
@@ -445,9 +506,16 @@ fn report(source: &mut dyn Changes, to: &Sender<Event>) {
 ///
 /// One collection is dozens of remote round trips per project, and the view
 /// has to stay under the user's hands throughout.
-fn collector(collect: &dyn Fn() -> Snapshot, asked: &Receiver<()>, to: &Sender<Event>) {
-    while asked.recv().is_ok() {
-        if to.send(Event::Collected(Box::new(collect()))).is_err() {
+fn collector(
+    mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    asked: &Receiver<Wanted>,
+    to: &Sender<Event>,
+) {
+    while let Ok(wanted) = asked.recv() {
+        if to
+            .send(Event::Collected(Box::new(collect(&wanted))))
+            .is_err()
+        {
             return;
         }
     }
@@ -652,14 +720,31 @@ mod tests {
     }
 
     /// A source that reports only when the test says so.
-    struct OnCue(Receiver<()>);
+    struct OnCue(Receiver<Wanted>);
 
     impl Changes for OnCue {
-        fn next(&mut self) {
+        fn next(&mut self) -> Option<Wanted> {
             // A test that has finished with this source drops the cue, and
-            // the thread's next send fails and ends it.
-            let _ = self.0.recv();
+            // the source goes quiet.
+            self.0.recv().ok()
         }
+    }
+
+    /// A timer with nothing yet due, as one starts.
+    fn polling(every: Duration, reported: Reported) -> Timer {
+        Timer {
+            every,
+            reported,
+            due: VecDeque::new(),
+        }
+    }
+
+    fn atlas() -> Wanted {
+        Wanted::Project("atlas".to_string())
+    }
+
+    fn ferry() -> Wanted {
+        Wanted::Project("ferry".to_string())
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1060,7 +1145,7 @@ mod tests {
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
-        assert_eq!(asked.try_iter().count(), 1);
+        assert_eq!(asked.try_iter().collect::<Vec<_>>(), [Wanted::Everything]);
         assert_eq!(
             view.applied,
             [Action::Move(Motion::NextRow)],
@@ -1069,21 +1154,82 @@ mod tests {
     }
 
     #[test]
-    fn a_change_arriving_while_one_is_in_flight_does_not_stack_another() {
+    fn only_one_collection_runs_at_a_time() {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed,
-            Event::Changed,
+            Event::Changed(atlas()),
+            Event::Changed(ferry()),
             Event::Key(control('r')),
         ]);
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
         assert_eq!(
-            asked.try_iter().count(),
-            1,
-            "the collection in flight is already reading what these would ask for"
+            asked.try_iter().collect::<Vec<_>>(),
+            [atlas()],
+            "the two behind it wait for the one in flight to come back"
+        );
+    }
+
+    /// What a refresh naming a project costs: the collection in flight is no
+    /// longer reading what every other request would ask for, so a request
+    /// dropped while it runs is a change lost — which is the failure the
+    /// inbound channel exists to prevent.
+    #[test]
+    fn a_change_that_arrived_mid_collection_is_asked_for_when_it_comes_back() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Changed(atlas()),
+            Event::Changed(ferry()),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), ferry()]);
+    }
+
+    /// A project reported for again while it is being read is read again: the
+    /// collection in flight may have passed it before the message arrived.
+    #[test]
+    fn a_project_reported_for_twice_is_read_again_rather_than_deduped() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Changed(atlas()),
+            Event::Changed(atlas()),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), atlas()]);
+    }
+
+    /// Whatever waits behind a collection is bounded by the projects there
+    /// are: a whole collection reads them all, so it stands in for every
+    /// single project waiting with it.
+    #[test]
+    fn a_whole_collection_absorbs_the_projects_waiting_beside_it() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Changed(atlas()),
+            Event::Changed(ferry()),
+            Event::Key(control('r')),
+            Event::Changed(ferry()),
+            Event::Collected(Box::new(a_snapshot())),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(
+            asked.try_iter().collect::<Vec<_>>(),
+            [atlas(), Wanted::Everything],
+            "ferry was going to be read by the whole collection anyway"
         );
     }
 
@@ -1092,17 +1238,17 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed,
+            Event::Changed(atlas()),
             Event::Collected(Box::new(a_snapshot())),
-            Event::Changed,
+            Event::Changed(ferry()),
         ]);
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
-            asked.try_iter().count(),
-            2,
+            asked.try_iter().collect::<Vec<_>>(),
+            [atlas(), ferry()],
             "the collection was over, so the second change asked for its own"
         );
     }
@@ -1116,10 +1262,10 @@ mod tests {
         let collecting = to_the_loop.clone();
         let worker = thread::spawn(move || {
             collector(
-                &move || {
+                Box::new(move |_| {
                     let _ = held.recv();
                     a_snapshot()
-                },
+                }),
                 &asked,
                 &collecting,
             );
@@ -1156,9 +1302,13 @@ mod tests {
             "nothing was reported until the source said so"
         );
 
-        cue.send(()).expect("the source is listening");
+        cue.send(atlas()).expect("the source is listening");
 
-        assert!(matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed)));
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(atlas())),
+            "the loop was told which project moved, not just that something did"
+        );
     }
 
     /// A project something is reporting for does not need asking: the poll
@@ -1174,18 +1324,39 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         });
         thread::spawn(move || {
-            report(
-                &mut Timer {
-                    every: Duration::from_secs(1),
-                    reported,
-                },
-                &to_the_loop,
-            );
+            report(&mut polling(Duration::from_secs(1), reported), &to_the_loop);
         });
 
         assert!(
             events.recv_timeout(Duration::from_millis(1500)).is_err(),
             "the writer had said everything a poll would have found"
+        );
+    }
+
+    /// The saving a mixed setup gets from a refresh being nameable: the
+    /// project with a producer is left out of the poll its neighbour still
+    /// needs, rather than swept up with it every interval.
+    #[test]
+    fn a_poll_names_only_the_projects_nothing_is_reporting_for() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reported = Reported::watching(["atlas".to_string(), "ferry".to_string()]);
+
+        let producing = reported.clone();
+        thread::spawn(move || loop {
+            producing.take("atlas");
+            thread::sleep(Duration::from_millis(20));
+        });
+        thread::spawn(move || {
+            report(
+                &mut polling(Duration::from_millis(300), reported),
+                &to_the_loop,
+            );
+        });
+
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(ferry())),
+            "atlas is being reported for, so the poll has only ferry to find"
         );
     }
 
@@ -1199,15 +1370,16 @@ mod tests {
 
         thread::spawn(move || {
             report(
-                &mut Timer {
-                    every: Duration::from_millis(20),
-                    reported,
-                },
+                &mut polling(Duration::from_millis(20), reported),
                 &to_the_loop,
             );
         });
 
-        assert!(matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed)));
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(Wanted::Everything)),
+            "a poll knows nothing about where the work moved, so it reads everywhere"
+        );
     }
 
     /// A channel whose writers have all gone must go quiet. A source that
@@ -1235,17 +1407,14 @@ mod tests {
         let (to_the_loop, events) = mpsc::channel();
         thread::spawn(move || {
             report(
-                &mut Timer {
-                    every: Duration::from_millis(20),
-                    reported: Reported::default(),
-                },
+                &mut polling(Duration::from_millis(20), Reported::default()),
                 &to_the_loop,
             );
         });
 
         for reported in 1..=2 {
             assert!(
-                matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed)),
+                matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed(_))),
                 "the timer stopped after {reported} report(s)"
             );
         }
@@ -1258,10 +1427,7 @@ mod tests {
         let (to_the_loop, events) = mpsc::channel();
         let reporter = thread::spawn(move || {
             report(
-                &mut Timer {
-                    every: Duration::from_millis(1),
-                    reported: Reported::default(),
-                },
+                &mut polling(Duration::from_millis(1), Reported::default()),
                 &to_the_loop,
             );
         });

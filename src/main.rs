@@ -78,10 +78,11 @@ fn main() -> anyhow::Result<ExitCode> {
         .iter()
         .map(|project| project.name.clone())
         .collect();
+    let mut collection = beady_eye::app::Collection::default();
     beady_eye::tui::run(
         refresh,
         projects,
-        Box::new(move || beady_eye::app::run(&cfg, &RealRunner, filter, Utc::now())),
+        Box::new(move |wanted| collection.collect(&cfg, &RealRunner, wanted, filter, Utc::now())),
     )?;
 
     Ok(ExitCode::SUCCESS)

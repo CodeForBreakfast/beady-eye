@@ -307,6 +307,54 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
+    /// Every way a collection can be asked for, named where a test that reads
+    /// the sources can enumerate them.
+    fn every_wanted() -> [&'static str; 2] {
+        match Wanted::Everything {
+            Wanted::Everything | Wanted::Project(_) => ["Wanted::Everything", "Wanted::Project"],
+        }
+    }
+
+    /// The crate's own source, with each file's tests cut away.
+    fn source_outside_tests(except: &str) -> String {
+        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut walking = vec![src];
+        let mut read = String::new();
+
+        while let Some(path) = walking.pop() {
+            for entry in std::fs::read_dir(&path).expect("the crate's own source") {
+                let found = entry.expect("a directory entry").path();
+                if found.is_dir() {
+                    walking.push(found);
+                } else if found.extension().is_some_and(|kind| kind == "rs")
+                    && found.file_name().is_some_and(|name| name != except)
+                {
+                    let text = std::fs::read_to_string(&found).expect("a source file");
+                    read.push_str(text.split("\n#[cfg(test)]\n").next().unwrap_or_default());
+                }
+            }
+        }
+        read
+    }
+
+    /// Per-project refresh is built in `tui.rs` and only consumed here, so a
+    /// change that emptied that file would leave this one compiling, every
+    /// test passing, and `bdi` reading every tracker on every message. That
+    /// happened, in `8b227ab`, and stood for an hour behind a green suite: a
+    /// test cannot catch its own deletion, so this one lives beside the type
+    /// rather than beside the code it guards.
+    #[test]
+    fn something_that_is_not_a_test_asks_for_each_kind_of_collection() {
+        let source = source_outside_tests("app.rs");
+
+        for wanted in every_wanted() {
+            assert!(
+                source.contains(wanted),
+                "{wanted} is built nowhere but in tests"
+            );
+        }
+    }
+
     const ORBITAL: &str = "/srv/work/orbital";
     const FERRY: &str = "/srv/work/ferry";
 
