@@ -231,11 +231,6 @@ impl Forest {
         self.selected
     }
 
-    /// The bead the selection sits on, where it sits on one.
-    pub fn selected(&self) -> Option<&BeadKey> {
-        self.lines.get(self.selected)?.bead.as_ref()
-    }
-
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
     }
@@ -1272,6 +1267,15 @@ credential_command = "secret harbour"
             .unwrap_or_else(|| panic!("{id} is not drawn"))
     }
 
+    /// Where the cursor is, by the bead its line carries. A tree's header
+    /// line carries its root, so this answers for a header as readily as for
+    /// a bead — which is the question these tests ask, and why nothing in
+    /// production may ask it this way: `tail::target` has to tell a header
+    /// from a bead before it reads the key.
+    fn cursor(forest: &Forest) -> Option<&BeadKey> {
+        forest.lines()[forest.selected_line()].bead.as_ref()
+    }
+
     fn key(project: &str, id: &str) -> BeadKey {
         BeadKey {
             project: project.into(),
@@ -1334,7 +1338,7 @@ credential_command = "secret harbour"
     fn select(forest: &mut Forest, bead: &BeadKey) {
         forest.apply(Action::Move(Motion::FirstRow));
         for _ in 0..=forest.lines().len() {
-            if forest.selected() == Some(bead) {
+            if cursor(forest) == Some(bead) {
                 return;
             }
             forest.apply(Action::Move(Motion::NextRow));
@@ -1376,7 +1380,7 @@ credential_command = "secret harbour"
         let forest = flatten(&snapshot());
 
         assert_eq!(forest.selected_line(), 0);
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
     }
 
     /// The fold state is the user's and the live work's, and moving is
@@ -1808,7 +1812,9 @@ credential_command = "secret harbour"
 
         select_run(&mut forest);
 
-        assert_eq!(forest.selected(), None);
+        let line = &forest.lines()[forest.selected_line()];
+        assert!(matches!(line.content, Content::Elided { .. }));
+        assert_eq!(line.bead, None);
     }
 
     /// A closed bead with a pane still on it is the stale-pane anomaly, and
@@ -2015,7 +2021,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         ));
 
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1.2")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.2")));
         assert_ne!(forest.selected_line(), was);
     }
 
@@ -2039,7 +2045,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         ));
 
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
     }
 
     #[test]
@@ -2054,7 +2060,7 @@ credential_command = "secret harbour"
             Filter::All,
         ));
 
-        assert_eq!(forest.selected(), Some(&key("harbour", "hbr-3")));
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
         assert!(forest.selected_line() < forest.lines().len());
     }
 
@@ -2083,11 +2089,11 @@ credential_command = "secret harbour"
         open(&mut forest, &key("orbital", "orb-7.1"));
 
         assert!(forest.apply(Action::CollapseOrParent));
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
         assert!(!sketch(&forest).iter().any(|line| line.contains(".1.1")));
 
         assert!(forest.apply(Action::CollapseOrParent));
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
     }
 
     #[test]
@@ -2097,10 +2103,10 @@ credential_command = "secret harbour"
         forest.apply(Action::CollapseOrParent);
 
         assert!(forest.apply(Action::ExpandOrChild));
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
 
         assert!(forest.apply(Action::ExpandOrChild));
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1.1")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
     }
 
     #[test]
@@ -2111,7 +2117,7 @@ credential_command = "secret harbour"
 
         assert!(!forest.apply(Action::ExpandOrChild));
         assert!(forest.apply(Action::CollapseOrParent));
-        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
     }
 
     #[test]

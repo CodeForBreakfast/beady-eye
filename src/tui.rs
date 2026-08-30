@@ -1811,6 +1811,15 @@ mod tests {
         Shown::of(snapshot, Box::new(NoPanes))
     }
 
+    /// Where the cursor is, by the bead its line carries. `Forest` does not
+    /// answer this: a tree's header line carries its root, so a caller that
+    /// read the key without telling a header from a bead would tail the root
+    /// of whatever tree the cursor's header stands for.
+    fn cursor(shown: &Shown) -> Option<&BeadKey> {
+        let forest = &shown.forest;
+        forest.lines()[forest.selected_line()].bead.as_ref()
+    }
+
     fn bead(project: &str, id: &str) -> BeadKey {
         BeadKey {
             project: project.to_string(),
@@ -1853,11 +1862,11 @@ mod tests {
         shown.apply(Action::Move(Motion::LastRow));
         let was = shown.forest.selected_line();
 
-        assert_eq!(shown.forest.selected(), Some(&bead("grove", "grv-1.6")));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
 
         shown.collected(a_grove_reordered(6));
 
-        assert_eq!(shown.forest.selected(), Some(&bead("grove", "grv-1.6")));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
         assert_ne!(shown.forest.selected_line(), was);
     }
 
@@ -1883,12 +1892,12 @@ mod tests {
         let mut shown = shown(a_hidden_grove_above_a_shown_tree());
         let was = shown.forest.selected_line();
 
-        assert_eq!(shown.forest.selected(), Some(&bead("atlas", "a-1")));
+        assert_eq!(cursor(&shown), Some(&bead("atlas", "a-1")));
 
         assert!(shown.apply(Action::ToggleFilter));
 
         assert_eq!(shown.forest.snapshot().filter, Filter::All);
-        assert_eq!(shown.forest.selected(), Some(&bead("atlas", "a-1")));
+        assert_eq!(cursor(&shown), Some(&bead("atlas", "a-1")));
         assert_ne!(
             shown.forest.selected_line(),
             was,
