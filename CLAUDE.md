@@ -5,8 +5,10 @@ root, annotated with the live agent on each node. Read-only.
 
 ## Where things are
 
-- `docs/design.md` is the spec. It is accepted; changes to it are design
-  decisions, not edits.
+- `docs/design.md` is the spec, and a starting point rather than gospel — we
+  deviate from it as we learn. Where it is ambiguous, the seat that hits the
+  ambiguity decides it against the code in front of it and records what it
+  chose; `bdi-2bb.1` folds those decisions back into the document at the end.
 - `docs/plans/2026-08-30-core-and-json.md` is the implementation plan for the
   core and `--json`. Its **Known defects in this plan** section at the end is a
   fix-as-you-reach-it list, not a backlog — each entry names the task it lands
