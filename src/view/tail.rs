@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use crate::collect::herdr::{self, Source};
+use crate::collect::herdr;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::model::join::{AgentRef, BeadKey};
 use crate::model::snapshot::{HerdrState, Snapshot};
@@ -15,14 +15,6 @@ use crate::view::phrase;
 /// How many lines of the pane the tail shows. The band reserved for it is
 /// this plus the rule that names the pane.
 pub const LINES: u16 = 6;
-
-/// Which snapshot of a pane the tail reads.
-///
-/// Every agent worth tailing is in the alternate screen and working, and
-/// herdr will not scroll one of those: asked for `recent` it refuses with
-/// `agent_not_idle` and names this as the way through. What is on the pane's
-/// screen is the one view that is always there to be had.
-const SOURCE: Source = Source::Visible;
 
 /// How long the loop waits on herdr before drawing the tail without it.
 ///
@@ -113,9 +105,7 @@ fn no_answer() -> RunFailure {
 fn work(runner: &dyn Runner, asked: &Receiver<Job>, to: &Sender<Done>) {
     while let Ok(job) = asked.recv() {
         let done = match job {
-            Job::Read { pane, lines } => {
-                Done::Read(herdr::agent_read(runner, &pane, lines, SOURCE))
-            }
+            Job::Read { pane, lines } => Done::Read(herdr::agent_read(runner, &pane, lines)),
             Job::Focus { pane } => Done::Focus(herdr::agent_focus(runner, &pane)),
         };
         if to.send(done).is_err() {

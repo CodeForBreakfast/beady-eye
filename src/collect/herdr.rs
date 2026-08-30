@@ -79,57 +79,25 @@ pub fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
     parse_agent_list(&out).map_err(|e| RunFailure::parse("herdr", e))
 }
 
-/// Which terminal snapshot to read from a pane.
-///
-/// `Recent` and `RecentUnwrapped` scroll a pane's history, which herdr can
-/// only do while the pane is idle: asked for either while an alternate-screen
-/// pane is working — every Claude Code agent, most of the time — herdr
-/// refuses with `agent_not_idle` and names `Visible` as the way through.
-/// `Detection` is the snapshot herdr takes to decide a pane's state, not a
-/// view it offers a reader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    Visible,
-    Recent,
-    RecentUnwrapped,
-    Detection,
-}
-
-impl Source {
-    fn flag(self) -> &'static str {
-        match self {
-            Source::Visible => "visible",
-            Source::Recent => "recent",
-            Source::RecentUnwrapped => "recent-unwrapped",
-            Source::Detection => "detection",
-        }
-    }
-}
-
 /// `herdr agent read <pane>`, as the lines it drew.
+///
+/// Always the visible screen. herdr's other snapshots are not `bdi`'s to ask
+/// for: `recent` and `recent-unwrapped` scroll a pane's history, which herdr
+/// will only do while the pane is idle — asked for either while an
+/// alternate-screen pane is working, which is every Claude Code agent most of
+/// the time, it refuses with `agent_not_idle` and names `visible` as the way
+/// through — and `detection` is the snapshot herdr takes to decide a pane's
+/// state rather than a view it offers a reader.
 ///
 /// `lines` counts back from the newest and clamps to what the snapshot holds.
 /// Plain text, because the alternative carries terminal escapes no part of
 /// `bdi` reads.
-pub fn agent_read(
-    runner: &dyn Runner,
-    pane: &str,
-    lines: u16,
-    source: Source,
-) -> Result<Vec<String>, RunFailure> {
+pub fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
     let lines = lines.to_string();
     let out = runner.run(
         "herdr",
         &[
-            "agent",
-            "read",
-            pane,
-            "--source",
-            source.flag(),
-            "--lines",
-            &lines,
-            "--format",
-            "text",
+            "agent", "read", pane, "--source", "visible", "--lines", &lines, "--format", "text",
         ],
         None,
         &Env::new(),
@@ -330,35 +298,18 @@ mod tests {
         assert_eq!(agent_list(&runner).unwrap_err().kind, FailureKind::Parse);
     }
 
-    /// The read a tail makes: one pane, the snapshot that answers while the
-    /// pane is working, and text rather than escapes.
+    /// The read a tail makes: one pane, the visible screen — the caller is
+    /// given no way to ask for another snapshot — and text rather than escapes.
     #[test]
-    fn agent_read_asks_for_one_panes_terminal_as_plain_text() {
+    fn agent_read_asks_for_one_panes_visible_screen_as_plain_text() {
         const ARGV: &str = "herdr agent read wCW:p6 --source visible --lines 40 --format text";
         let runner = FakeRunner::default().with(ARGV, "");
 
-        agent_read(&runner, "wCW:p6", 40, Source::Visible).expect("herdr answers");
+        agent_read(&runner, "wCW:p6", 40).expect("herdr answers");
 
         let call = runner.call(ARGV);
         assert_eq!(call.cwd, None);
         assert!(call.env.is_empty());
-    }
-
-    #[test]
-    fn every_snapshot_source_is_spelled_the_way_herdr_spells_it() {
-        for (source, flag) in [
-            (Source::Visible, "visible"),
-            (Source::Recent, "recent"),
-            (Source::RecentUnwrapped, "recent-unwrapped"),
-            (Source::Detection, "detection"),
-        ] {
-            let argv = format!("herdr agent read w:p1 --source {flag} --lines 1 --format text");
-            let runner = FakeRunner::default().with(&argv, "");
-
-            agent_read(&runner, "w:p1", 1, source).expect("herdr answers");
-
-            runner.call(&argv);
-        }
     }
 
     /// herdr ends its output with a newline, which a split would read as one
@@ -370,7 +321,7 @@ mod tests {
             "one\ntwo\n",
         );
 
-        let lines = agent_read(&runner, "w:p1", 2, Source::Visible).unwrap();
+        let lines = agent_read(&runner, "w:p1", 2).unwrap();
 
         assert_eq!(lines, ["one", "two"]);
     }
@@ -383,7 +334,7 @@ mod tests {
             "\none\n\nthree\n",
         );
 
-        let lines = agent_read(&runner, "w:p1", 4, Source::Visible).unwrap();
+        let lines = agent_read(&runner, "w:p1", 4).unwrap();
 
         assert_eq!(lines, ["", "one", "", "three"]);
     }
@@ -395,7 +346,7 @@ mod tests {
             "",
         );
 
-        let lines = agent_read(&runner, "w:p1", 4, Source::Visible).unwrap();
+        let lines = agent_read(&runner, "w:p1", 4).unwrap();
 
         assert_eq!(lines, Vec::<String>::new());
     }
@@ -430,9 +381,7 @@ mod tests {
         let focus = FakeRunner::default().failing("herdr agent focus w:gone", vanished());
 
         assert_eq!(
-            agent_read(&read, "w:gone", 4, Source::Visible)
-                .unwrap_err()
-                .kind,
+            agent_read(&read, "w:gone", 4).unwrap_err().kind,
             FailureKind::Gone
         );
         assert_eq!(
