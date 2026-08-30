@@ -40,6 +40,42 @@ A tree of work rooted at a bead, with each node annotated by the live agent
 working on it. The work is the spine; agents are an annotation that is absent on
 most rows.
 
+## Terminology
+
+**Every term comes from beads or herdr. Where both are silent, and only then, we
+coin one — and say so.**
+
+| term | source | meaning here |
+|---|---|---|
+| bead, root, epic | beads | the unit of work; the bead a tree hangs from; `issue_type: epic` |
+| tree | beads (`bd dep tree`) | a root and its descendants |
+| claim | beads (`bd update --claim`) | an agent taking a bead |
+| stale | beads (`bd stale`) | in-progress with no recent activity, "may be abandoned" |
+| ready | beads (`bd ready`) | open **and** every dependency satisfied |
+| completed, progress | beads (`bd swarm status`) | the finished count and the `n/m` roll-up |
+| active | beads (`bd swarm status`) | in-progress, an agent on it |
+| agent, pane, session | herdr | the worker; its terminal; the server holding them |
+| `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
+| snapshot | herdr (`herdr api snapshot`) | one poll's whole state |
+| **badge** | *coined* | a rendering of one metadata value. beads has `label`, but a label is a bead's own tag; this renders a `metadata` entry, which neither project has a display term for. |
+| **unattributed** | *coined* | a live pane resolving to no bead. Neither project names this, because neither knows about the other. |
+
+### Three different things are called "blocked"
+
+This is the trap the whole tool walks into, and one word for all three would make
+it unreadable.
+
+| name it | source | means |
+|---|---|---|
+| `status: blocked` | a bead's own field | somebody set that status |
+| **not ready** | `bd ready`, `bd swarm status` | computed: an unmet dependency edge |
+| `pane_status: blocked` | herdr `agent_status` | a TTY prompt is waiting |
+
+They are close to disjoint in practice. A bead can be `status: open` and not
+ready; a bead can be `status: blocked` with every dependency satisfied. `bd
+blocked` reports the *edge* kind, not the status kind. The model keeps three
+separate fields and the renderer never prints a bare "blocked".
+
 ## Scope
 
 `bdi` assumes **bd and nothing else**. herdr is an optional provider that adds
@@ -191,6 +227,14 @@ a consumer indexing it as a map fails. And `truncated` must be surfaced rather
 than ignored: a truncated node means the tree shown is incomplete, which is
 exactly the kind of silent partial answer this tool exists to avoid.
 
+`bd ready --limit 0 --json` supplies **readiness**, which the tree JSON cannot
+give us. A node's row carries only its *tree* parent, not its full blocker set,
+so "open with every dependency satisfied" is not computable from the tree alone.
+beads already answers it, and `bd swarm status` shows it as a first-class state
+alongside Completed, Active and Blocked — so a viewer that collapses Ready into
+plain "open" is throwing away a distinction beads makes. One call per project,
+intersected with the tree's ids.
+
 `bd list --has-metadata-key <key> --limit 0 --json` supplies discovery and the
 reverse join. `--limit 0` matters — the default is 50, and a truncated list
 silently reclassifies beads.
@@ -252,14 +296,20 @@ All computed in the pure model. The first needs bd alone; the rest need herdr.
 
 | rule | condition | reading |
 |---|---|---|
-| `aged-claim` | `in_progress`, not updated in N days | claim probably abandoned |
+| `stale-claim` | `in_progress`, not updated in N days | beads' own `bd stale`, narrowed to claims |
 | `orphan-claim` | `in_progress`, no pane resolves for it | agent died mid-claim |
 | `stale-pane` | bead is closed, its pane is alive | agent finished and did not exit |
 | `unattributed` | pane alive in a known project, no bead resolves | a pane nobody can account for |
 
-`orphan-claim` keys on `in_progress` alone. A bead that is `blocked` with a live
-pane is not an anomaly — an agent parked on a blocked bead is a normal state,
-and firing on it would report every waiting agent as dead.
+`stale-claim` is `bd stale` restricted to `in_progress`. Its window defaults to
+**30 days, matching `bd stale --days`** — not a number of our own. Two names stay
+apart deliberately: `stale-claim` is about a bead nobody has touched;
+`stale-pane` is about a pane that outlived its bead. They share a word because
+both are "this outlived its usefulness", and nothing else.
+
+`orphan-claim` keys on `in_progress` alone. A bead that is `status: blocked` with
+a live pane is not an anomaly — an agent parked on it is a normal state, and
+firing on it would report every waiting agent as dead.
 
 `unattributed` will also catch ordinary interactive sessions, which are not
 anomalies. It renders as its own collapsed group, never as an error against a
@@ -356,6 +406,7 @@ id), never id alone.**
           "edge": "parent-child",
           "depth": 1,
           "blocked_by": ["nix-9670s.13"],
+          "ready": false,
           "badges": [{ "key": "blocked_on", "text": "⏸ waiting" }],
           "agent": {
             "pane": "wCM:p9",
@@ -473,7 +524,7 @@ draws what it is told to draw.
 - **bd's CLI is the interface.** `--json` shapes can change. Pin the bd version
   the parser is written against and fail loudly on an unexpected shape, rather
   than rendering a silently wrong tree.
-- **The `aged-claim` threshold is a guess.** A long-running bead trips it. A
+- **The `stale-claim` threshold is a guess.** A long-running bead trips it. A
   warning, never a verdict, and configurable.
 - **`unattributed` noise.** Every interactive session shows up here. If it is
   louder than it is useful, it becomes opt-in.

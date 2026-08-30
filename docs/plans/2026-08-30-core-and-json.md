@@ -167,12 +167,12 @@ git commit -m "feat: scaffold the crate and dev shell"
   - `config::Project { name: String, path: PathBuf }`
   - `config::Roots { metadata_keys: Vec<String>, explicit: Vec<String> }`
   - `config::Badge { key: String, match_value: Option<String>, render: String }`
-  - `config::Anomalies { aged_claim_days: i64 }`
+  - `config::Anomalies { stale_claim_days: i64 }`
   - `config::Join { pane_key: String }`
   - `Config::from_toml(&str) -> anyhow::Result<Config>`
   - `Badge::apply(&self, value: &str) -> Option<String>`
 
-The defaults matter: `aged_claim_days` is 14, `pane_key` is `"agent_pane"`, and every list defaults empty. A config naming no projects is an error, because there is nothing to read.
+The defaults matter: `stale_claim_days` is 30, matching `bd stale --days`, `pane_key` is `"agent_pane"`, and every list defaults empty. A config naming no projects is an error, because there is nothing to read.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -221,7 +221,7 @@ pub struct Badge {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Anomalies {
-    pub aged_claim_days: i64,
+    pub stale_claim_days: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -232,7 +232,7 @@ pub struct Join {
 
 impl Default for Anomalies {
     fn default() -> Self {
-        Self { aged_claim_days: 14 }
+        Self { stale_claim_days: 30 }
     }
 }
 
@@ -297,7 +297,7 @@ render = "waiting"
         assert_eq!(cfg.badges.len(), 2);
 
         // Defaults apply when the sections are absent.
-        assert_eq!(cfg.anomalies.aged_claim_days, 14);
+        assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
     }
 
@@ -1190,10 +1190,10 @@ git commit -m "feat: join agents onto beads and render configured badges"
 **Interfaces:**
 - Consumes: `model::types::{Bead, Status}`, `model::join::AgentRef`, `config::Anomalies`.
 - Produces:
-  - `model::anomaly::Anomaly::{AgedClaim { days: i64 }, OrphanClaim, StalePane}`
+  - `model::anomaly::Anomaly::{StaleClaim { days: i64 }, OrphanClaim, StalePane}`
   - `model::anomaly::detect(bead: &Bead, agent: Option<&AgentRef>, cfg: &Anomalies, now: DateTime<Utc>) -> Option<Anomaly>`
 
-`now` is a parameter, not `Utc::now()` inside, so the age rule is testable. Precedence when several could fire: `StalePane`, then `OrphanClaim`, then `AgedClaim`. A blocked bead with a live pane yields nothing — an agent parked on blocked work is normal.
+`now` is a parameter, not `Utc::now()` inside, so the age rule is testable. Precedence when several could fire: `StalePane`, then `OrphanClaim`, then `StaleClaim`. A blocked bead with a live pane yields nothing — an agent parked on blocked work is normal.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1211,7 +1211,7 @@ use crate::model::types::{Bead, Status};
 #[serde(tag = "rule", rename_all = "kebab-case")]
 pub enum Anomaly {
     /// in_progress and untouched for longer than the configured window.
-    AgedClaim { days: i64 },
+    StaleClaim { days: i64 },
     /// in_progress with no live pane behind it.
     OrphanClaim,
     /// Closed, but its pane is still alive.
@@ -1239,7 +1239,7 @@ pub fn detect(
 
     let updated = bead.updated_at?;
     let days = (now - updated).num_days();
-    (days >= cfg.aged_claim_days).then_some(Anomaly::AgedClaim { days })
+    (days >= cfg.stale_claim_days).then_some(Anomaly::StaleClaim { days })
 }
 
 #[cfg(test)]
@@ -1287,10 +1287,10 @@ mod tests {
     }
 
     #[test]
-    fn in_progress_and_long_untouched_is_an_aged_claim() {
+    fn in_progress_and_long_untouched_is_a_stale_claim() {
         // nix-1.16 was last updated 2026-07-01; that is 60 days before now().
         let got = detect(&bead("nix-1.16"), Some(&live()), &Anomalies::default(), now());
-        assert_eq!(got, Some(Anomaly::AgedClaim { days: 60 }));
+        assert_eq!(got, Some(Anomaly::StaleClaim { days: 60 }));
     }
 
     #[test]
@@ -1311,7 +1311,7 @@ mod tests {
 
     #[test]
     fn the_age_window_is_configurable() {
-        let cfg = Anomalies { aged_claim_days: 90 };
+        let cfg = Anomalies { stale_claim_days: 90 };
         let got = detect(&bead("nix-1.16"), Some(&live()), &cfg, now());
         assert_eq!(got, None, "60 days is inside a 90-day window");
     }
@@ -1342,7 +1342,7 @@ Expected: PASS — 7 tests.
 
 ```bash
 git add src/model/anomaly.rs src/model/mod.rs
-git commit -m "feat: anomaly rules for stale panes, orphan claims and aged claims"
+git commit -m "feat: anomaly rules for stale panes, orphan claims and stale claims"
 ```
 
 ---
@@ -1413,6 +1413,10 @@ pub struct Node {
     pub status: Status,
     pub priority: u8,
     pub depth: u16,
+    /// Open, with every dependency satisfied. From `bd ready`, which is the
+    /// only thing that knows — a tree row carries its tree parent, not its
+    /// full blocker set.
+    pub ready: bool,
     pub edge: Option<crate::model::types::Edge>,
     pub badges: Vec<Badged>,
     pub agent: Option<AgentRef>,
@@ -1806,6 +1810,7 @@ pub mod testing {
 Append to `src/collect/bd.rs`:
 
 ```rust
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::collect::run::Runner;
@@ -1819,6 +1824,14 @@ pub fn dep_tree(runner: &dyn Runner, cwd: &Path, root: &str) -> anyhow::Result<V
         Some(cwd),
     )?;
     parse_dep_tree(&out)
+}
+
+/// Ids that beads considers ready: open, with every dependency satisfied.
+/// The tree JSON cannot answer this — a row carries only its tree parent, not
+/// its blockers — so we ask bd, which already computes it.
+pub fn ready_ids(runner: &dyn Runner, cwd: &Path) -> anyhow::Result<BTreeSet<String>> {
+    let out = runner.run("bd", &["ready", "--limit", "0", "--json"], Some(cwd))?;
+    Ok(parse_dep_tree(&out)?.into_iter().map(|b| b.id).collect())
 }
 
 /// Beads that mark live work: bd's own in-flight statuses, plus any bead
@@ -1890,6 +1903,18 @@ Append to `src/collect/bd.rs`'s test module:
 
         let ids: Vec<&str> = got.iter().map(|b| b.id.as_str()).collect();
         assert_eq!(ids, vec!["nix-1.1", "nix-1.16"]);
+    }
+
+    #[test]
+    fn ready_ids_returns_the_set_bd_considers_startable() {
+        let out = r#"[{"id":"nix-1.1","title":"a","status":"open","priority":2,"metadata":{},"truncated":false},
+                      {"id":"nix-1.3","title":"b","status":"open","priority":1,"metadata":{},"truncated":false}]"#;
+        let runner = FakeRunner::default().with("bd ready --limit 0 --json", out);
+
+        let got = ready_ids(&runner, &PathBuf::from("/tmp/proj")).unwrap();
+        assert!(got.contains("nix-1.1"));
+        assert!(got.contains("nix-1.3"));
+        assert!(!got.contains("nix-1.4"), "a blocked bead is not ready");
     }
 
     #[test]
@@ -2274,7 +2299,7 @@ git commit -m "feat: wire the bdi binary and emit the JSON contract"
 
 ## Self-review
 
-**Spec coverage.** Discovery (Task 9), conventions-as-configuration (Tasks 2, 6), the two-tier degradation (Tasks 9, 10), the default filter (Task 8), tree assembly and dedup (Task 4), the join in both directions (Task 6), all four anomaly rules — `aged-claim`, `orphan-claim`, `stale-pane` in Task 7 and `unattributed` in Tasks 6 and 8 — and the JSON contract (Tasks 8, 10). The `(project, id)` rule is carried by `Tree.project` scoping every node.
+**Spec coverage.** Discovery (Task 9), conventions-as-configuration (Tasks 2, 6), the two-tier degradation (Tasks 9, 10), the default filter (Task 8), tree assembly and dedup (Task 4), the join in both directions (Task 6), all four anomaly rules — `stale-claim`, `orphan-claim`, `stale-pane` in Task 7 and `unattributed` in Tasks 6 and 8 — and the JSON contract (Tasks 8, 10). The `(project, id)` rule is carried by `Tree.project` scoping every node.
 
 **Gap, stated rather than hidden.** The design's `agent.source` distinction is implemented, but nothing yet *renders* the "inferred rather than confirmed" caveat to a reader — that lands with the TUI.
 
