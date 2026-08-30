@@ -290,6 +290,29 @@ which is what makes drift detection exact rather than a guess.
 it: without it, liveness falls back to `display_agent` alone and the affected
 rows say so.
 
+### The join is scoped to one project, and conflicts are reported
+
+Two rules that a naive implementation gets wrong.
+
+**A pane joins only to its own project's beads.** A pane's `cwd` resolves it to a
+project by longest matching configured path; a pane belonging to no configured
+project joins nothing and lands in `unattributed`. Without this, two trackers
+with colliding id prefixes cross-attach agents — and prefixes are per-tracker and
+uncoordinated, so a collision is a matter of time rather than bad luck.
+
+**Where the two directions disagree, that is a finding, not a tie to break.**
+
+| situation | what `bdi` does |
+|---|---|
+| `agent_pane` and `display_agent` name different panes | the bead's own key wins; the disagreement is reported |
+| several panes name one bead | none wins; reported |
+| one pane is named by several beads | none wins; reported |
+| a pane's project differs from the bead's | no join; reported |
+
+Silently picking one is the failure mode: each of these is drift of exactly the
+kind the tool exists to surface, and last-write-wins would hide it behind a
+plausible-looking row.
+
 ## Anomaly rules
 
 All computed in the pure model. The first needs bd alone; the rest need herdr.
@@ -306,6 +329,11 @@ All computed in the pure model. The first needs bd alone; the rest need herdr.
 apart deliberately: `stale-claim` is about a bead nobody has touched;
 `stale-pane` is about a pane that outlived its bead. They share a word because
 both are "this outlived its usefulness", and nothing else.
+
+**A node carries every anomaly that fires, not the first one.** An old claim
+whose agent has died is both `stale-claim` and `orphan-claim`, and reporting only
+the second throws away how long it has been sitting there — which is the part
+that tells you whether to care. The field is a list.
 
 `orphan-claim` keys on `in_progress` alone. A bead that is `status: blocked` with
 a live pane is not an anomaly — an agent parked on it is a normal state, and
@@ -348,24 +376,44 @@ biggest constraint on the multi-project view.
 
 ### v1 takes a per-project credential set
 
-`bdi` holds one credential per project it may read, in its own config. Confirmed
-with the operator of this deployment: no cross-project reader exists today; the
-one read-only user on the server is scoped to a single database.
+Confirmed with the operator of this deployment: no cross-project reader exists
+today; the one read-only user on the server is scoped to a single database.
 
-### A shared read-only user is the clean follow-up, and its shape is measured
+**A working directory does not carry a credential.** An earlier draft said `bd`
+finds a project's credential by being run in that project's directory. It does
+not. `BEADS_DOLT_PASSWORD` reaches an interactive shell through direnv, and a
+child process inherits **the parent's** environment whatever its working
+directory is. So a single process that merely changes directory authenticates
+every tracker with whichever credential it started with — silently, and against
+the wrong database only when two trackers share a name.
 
-Measured on the current server generation (Dolt 2.1.11) with a throwaway
-SELECT-only user:
+So the credential is explicit, per project, and set on the child:
 
-- reads reached the base tables **and the `ready_issues` view** — that view
-  carries no `DEFINER` clause, so it resolves with the invoker's privileges
-- `CREATE TABLE`, `INSERT`, `UPDATE` and `DELETE` were each refused
+```toml
+[[projects]]
+name = "summit-works"
+path = "/tmp/bdi-ground/summit-works"
+credential_command = "op read op://Private/beads-tracker/password"
+```
 
-The view result is the one that matters for a bead-graph viewer, and it is a
-measurement rather than an assumption. A multi-database reader is therefore
-`GRANT SELECT ON <db>.*` repeated per tracker against one user — a proven shape,
-not new design. It is not v1's problem for a non-technical reason: reading
-another project's tracker needs that project's consent.
+- **The config stores a command, never a secret.** Its stdout is the password.
+  That keeps plaintext out of a file that is otherwise unremarkable, and composes
+  with whatever the machine already uses — a password manager, a sealed secret,
+  `cat` of a mode-0600 file.
+- **The child's environment is built, not inherited.** `bdi` clears
+  `BEADS_DOLT_PASSWORD` and sets it from that project's command, so one project's
+  credential cannot leak into another's subprocess.
+- **An authentication failure is distinguished from the others.**
+  `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`, `exec`, or
+  `parse`. They want different responses and reporting them as one string does
+  not help anyone.
+- **No error text reaches the output verbatim.** bd's failures name the database
+  and user; the reason is reported, the raw stderr is not.
+
+`direnv exec <path> bd …` is the alternative and needs no config at all. It costs
+a direnv evaluation per call and requires every tracker to be a direnv-managed
+checkout. Worth measuring before choosing; the config field above is the fallback
+that always works.
 
 ### Degradation is the rule either way
 

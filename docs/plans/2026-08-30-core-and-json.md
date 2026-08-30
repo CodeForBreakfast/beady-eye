@@ -2304,3 +2304,80 @@ git commit -m "feat: wire the bdi binary and emit the JSON contract"
 **Gap, stated rather than hidden.** The design's `agent.source` distinction is implemented, but nothing yet *renders* the "inferred rather than confirmed" caveat to a reader — that lands with the TUI.
 
 **Type consistency.** `Status`, `Edge`, `Bead` (Task 3) are used unchanged in Tasks 4, 6, 7, 8. `Placed`/`Assembled` (Task 4) feed Tasks 6 and 8. `AgentRef`/`Badged`/`JoinSource` (Task 6) feed Tasks 7 and 8. `Runner` (Task 9) is taken by `bd::dep_tree`, `bd::discover_roots`, `herdr::agent_list` and `app::run` with one signature.
+
+---
+
+## Known defects in this plan
+
+Found by an independent review before any code was written. The design-level
+faults are already fixed in `docs/design.md`; these are the places this plan's
+code still contradicts it. Fix each as its task is reached.
+
+**The plan's code does not implement the credential model.** `Project` has no
+`credential_command`, and `RealRunner` sets `current_dir` without touching the
+environment — which cannot switch a per-tracker password. Task 2 gains the field;
+Task 9's `Runner::run` takes an environment map and the caller builds it per
+project. This is the leading risk in the design and the first thing to prove
+against a live second tracker.
+
+**The join ignores project scope.** `join::resolve` keys on `id` alone and
+`build_tree` hands every pane to every tree, so two trackers with colliding
+prefixes cross-attach agents — violating this plan's own `(project, id)` global
+constraint. Tasks 6 and 8: resolve each pane to a project from its `cwd` first,
+and carry project identity through the join key.
+
+**Conflicts are silently resolved rather than reported.** `resolve`'s second loop
+is last-write-wins over duplicate `display_agent` values. Per the design, each
+disagreement is a finding.
+
+**Only one anomaly survives per node.** `detect` returns `Option<Anomaly>` and
+short-circuits, so an old abandoned claim reports `orphan-claim` and loses its
+age. Task 7 returns a list; Task 8's `Node.anomaly` becomes `anomalies`.
+
+**Discovery rule 4 is missing.** The design's fourth root source — a bead named
+by a live pane's `display_agent` that the other rules missed — is never
+implemented; Task 10 does not consult `panes` at all. The self-review claiming
+full spec coverage was wrong.
+
+**An unreachable tracker renders less than promised.** Task 10 emits an anonymous
+empty `Tree` with no root, title, or project-scoped panes, and a failure during
+`root_of` can emit several indistinguishable ones. A project-level failure needs
+its own representation, distinct from a known-root tree that failed.
+
+**`assemble` silently keeps only the last root.** `None => root = Some(bead)`
+overwrites. Valid `bd dep tree` output has exactly one root, so validate that and
+fail loudly rather than discarding components. Unreachable rows after traversal
+should likewise be reported, not dropped — "degrade, never disappear" applies to
+them too.
+
+**`Node` does not carry `blocked_by`**, which the design's contract shows, nor
+`issue_type`, `started_at` or `closed_at`. Either add them or stop claiming the
+contract is emitted unchanged.
+
+**Several tests would pass against a wrong implementation.** Fix these when
+writing them, not after:
+
+- `depth_is_recomputed_from_the_parent_chain` — the fixture's own `depth` values
+  already equal the expected ones, so copying bd's `depth` passes. Give the
+  fixture deliberately wrong depths.
+- `a_parent_cycle_terminates` — `b` and `c` are disconnected, so `walk` never
+  reaches them and the `seen` guard is never exercised.
+- `dep_tree_asks_bd_in_the_projects_directory` — `FakeRunner` ignores `cwd`, so
+  passing `None` passes the test. Record and assert it.
+- `a_failing_bd_surfaces_its_stderr` — injects a ready-made error, so it never
+  tests that `RealRunner` extracts a subprocess's stderr.
+- `the_json_carries_the_contract_fields` — asserts key presence only; nulls and
+  wrong enum spellings pass.
+- `siblings_order_...` — tests the status rank but neither the priority nor the
+  id tie-breaks.
+
+**The red phase is not real in Tasks 4, 6, 7, 9 and 10.** "The Step 1 code is the
+implementation" means the expected failure is missing module wiring rather than
+missing behaviour. Acceptable for the declarative type definitions in Tasks 2, 3,
+5 and 8; for the five with real logic, write the test, watch it fail *for the
+right reason*, then implement.
+
+**Unknown enum values are untested.** `Status::Other`, `Edge::Other` and
+`PaneStatus::Other` exist so a new bd or herdr value does not break the parse.
+Nothing round-trips one. The review confirmed the serde patterns themselves are
+valid, so these tests are about compatibility, not syntax.
