@@ -45,3 +45,20 @@ pub enum Action {
     Refresh,
     Quit,
 }
+
+/// Something true of the view as a whole rather than of any row in it, said
+/// at the foot of the screen.
+///
+/// Two unrelated things produce these: a collection, every refresh, and this
+/// process, once at startup before there is anything to collect. The status
+/// bar is where they meet, and it is handed them in the order it should give
+/// them up, so it draws a notice without knowing which kind it has and a
+/// third kind needs no third path to the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    /// There is no herdr to ask about liveness, so no row can show an agent.
+    NoHerdr,
+    /// Nothing can tell `bdi` a project has changed, so every project is
+    /// polled on the refresh interval and the view is as stale as that.
+    NoInboundChannel,
+}

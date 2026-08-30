@@ -14,7 +14,7 @@ use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
 use crate::view::forest::{self, Forest};
 use crate::view::tail::{self, Herdr, Panes, Tail};
-use crate::view::{draw, Action, Motion};
+use crate::view::{draw, Action, Motion, Notice};
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
 ///
@@ -29,8 +29,8 @@ pub fn run(
     let first = collect(&Wanted::Everything);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, _socket) = wire(refresh, Reported::watching(projects), collect);
-    let mut screen = Screen::showing(first, Box::new(Herdr::new(RealRunner)))?;
+    let (events, ask, _socket, at_startup) = wire(refresh, Reported::watching(projects), collect);
+    let mut screen = Screen::showing(first, Box::new(Herdr::new(RealRunner)), at_startup)?;
 
     drive(&mut screen, &events, &ask)
 }
@@ -373,14 +373,36 @@ fn key_row() -> String {
         .join("   ")
 }
 
+/// The inbound channel, or nothing and the two things said in its place.
+///
+/// Both are deliberate and neither is a copy of the other. The notice is what
+/// a reader needs while they are looking: the view is polled rather than
+/// reported, so it is only ever as fresh as the refresh interval, and no row
+/// above the foot could show that. The stderr line is what they need
+/// afterwards: it names the path and the error underneath it, which is the
+/// actionable half — another `bdi` holding the socket is closed by hand — and
+/// the half no phrase may carry. It is written before the alternate screen
+/// opens, so it is still on the primary screen when the view tears down, and
+/// it can be redirected to a file where a notice never can.
+fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<Notice>) {
+    match opened {
+        Ok(socket) => (Some(socket), None),
+        Err(refused) => {
+            eprintln!("bdi: {refused}");
+            (None, Some(Notice::NoInboundChannel))
+        }
+    }
+}
+
 /// Start everything that produces events, and hand back the loop's ends: the
-/// events themselves, the channel a collection is asked for on, and the
-/// inbound socket for as long as there is a view to keep live.
+/// events themselves, the channel a collection is asked for on, the inbound
+/// socket for as long as there is a view to keep live, and whatever this run
+/// of `bdi` has to say about itself.
 fn wire(
     refresh: Duration,
     reported: Reported,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
-) -> (Receiver<Event>, Sender<Wanted>, Option<Socket>) {
+) -> (Receiver<Event>, Sender<Wanted>, Option<Socket>, Vec<Notice>) {
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
 
@@ -391,19 +413,11 @@ fn wire(
     thread::spawn(move || keys(&typing));
 
     let (changed, changes) = mpsc::channel();
-    // Opened before the alternate screen, so anything that stopped it is said
-    // where the user's own terminal still has it when the view closes.
-    let socket = match changes::listen(
+    let (socket, refused) = inbound(changes::listen(
         changes::where_writers_find_bdi(),
         &reported,
         changed.clone(),
-    ) {
-        Ok(socket) => Some(socket),
-        Err(refused) => {
-            eprintln!("bdi: {refused}");
-            None
-        }
-    };
+    ));
 
     let told = to_the_loop.clone();
     thread::spawn(move || {
@@ -427,7 +441,7 @@ fn wire(
         );
     });
 
-    (events, ask, socket)
+    (events, ask, socket, refused.into_iter().collect())
 }
 
 /// What tells `bdi` that a project's work has moved on.
@@ -621,15 +635,23 @@ impl Shown {
 struct Screen {
     terminal: DefaultTerminal,
     shown: Shown,
+    /// What this run of `bdi` could not do, settled before the first
+    /// collection and true until the session ends.
+    at_startup: Vec<Notice>,
 }
 
 impl Screen {
-    fn showing(snapshot: Snapshot, panes: Box<dyn Panes>) -> anyhow::Result<Self> {
+    fn showing(
+        snapshot: Snapshot,
+        panes: Box<dyn Panes>,
+        at_startup: Vec<Notice>,
+    ) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
 
         Ok(Self {
             terminal,
             shown: Shown::of(snapshot, panes),
+            at_startup,
         })
     }
 }
@@ -642,10 +664,16 @@ impl Screen {
 /// `^U` are the part of that agreement nothing on screen would show was
 /// broken. The bindings go on last because they sit over the forest rather
 /// than in place of it.
-fn paint(frame: &mut Frame, forest: &mut Forest, tail: &Tail, showing: Showing) {
+fn paint(
+    frame: &mut Frame,
+    forest: &mut Forest,
+    tail: &Tail,
+    showing: Showing,
+    at_startup: &[Notice],
+) {
     let bands = draw::regions(frame.area());
     forest.set_half_screen(draw::half_screen(bands.forest));
-    draw::draw(frame, frame.area(), forest, &key_row());
+    draw::draw(frame, frame.area(), forest, at_startup, &key_row());
     draw::draw_tail(frame, bands.tail, tail);
     if showing == Showing::Bindings {
         draw::key_bindings(frame, frame.area(), &bindings());
@@ -669,8 +697,9 @@ impl View for Screen {
 
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
+        let at_startup = &self.at_startup;
         self.terminal
-            .draw(|frame| paint(frame, forest, tail, showing))?;
+            .draw(|frame| paint(frame, forest, tail, showing, at_startup))?;
         Ok(())
     }
 }
@@ -1670,6 +1699,44 @@ mod tests {
         }
     }
 
+    /// A directory of this test's own, so a test that binds a socket does not
+    /// collide with another run of the suite.
+    fn a_socket_path(named: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
+        dir.join("beady-eye").join("changes.sock")
+    }
+
+    /// The bead's own case: the failure that used to reach only stderr now
+    /// also reaches the view, as a notice that outlives the moment it was
+    /// printed in. The stderr line is kept — see `inbound` — so this asserts
+    /// the notice and leaves the printing to the test harness to capture.
+    #[test]
+    fn a_channel_that_would_not_open_leaves_a_notice_behind_it() {
+        let (socket, notice) = inbound(Err(changes::Refused::NoRuntimeDirectory));
+
+        assert!(socket.is_none());
+        assert_eq!(notice, Some(Notice::NoInboundChannel));
+    }
+
+    /// A session with a working channel has nothing to say about itself, and
+    /// a foot that warned anyway would teach a reader to ignore it.
+    #[test]
+    fn a_channel_that_opens_says_nothing() {
+        let (changed, _changes) = mpsc::channel();
+        let at = a_socket_path("inbound");
+
+        let (socket, notice) = inbound(changes::listen(
+            Some(at),
+            &Reported::watching(["atlas".to_string()]),
+            changed,
+        ));
+
+        assert!(socket.is_some());
+        assert_eq!(notice, None);
+    }
+
     fn painted(
         forest: &mut Forest,
         tail: &Tail,
@@ -1679,7 +1746,7 @@ mod tests {
     ) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| paint(frame, forest, tail, showing))
+            .draw(|frame| paint(frame, forest, tail, showing, &[]))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)

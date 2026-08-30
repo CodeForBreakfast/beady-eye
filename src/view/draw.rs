@@ -14,6 +14,7 @@ use crate::view::forest::{self, Content, Forest, Group, GroupKind, Header, Item,
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 use crate::view::tail::Tail;
+use crate::view::Notice;
 
 /// The mark left where a line ran out of width, so a cut line reads as cut
 /// rather than as one that had nothing more to say.
@@ -39,7 +40,7 @@ const LOOK_AT_THIS: Color = Color::Yellow;
 ///
 /// `keys` arrives already named. What a key is called belongs with the
 /// mapping that answers it, and this file has never known one.
-pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest, keys: &str) {
+pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest, at_startup: &[Notice], keys: &str) {
     let bands = regions(area);
     let lines = forest.lines();
     let selected = forest.selected_line();
@@ -69,7 +70,29 @@ pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest, keys: &str) {
         );
     }
 
-    frame.render_widget(status_bar(forest.snapshot().herdr, keys), bands.keys);
+    frame.render_widget(
+        status_bar(&notices(forest.snapshot().herdr, at_startup), keys),
+        bands.keys,
+    );
+}
+
+/// Everything the status bar has to say, in the order it should give it up.
+///
+/// The herdr one is read off the snapshot behind this frame and can change
+/// under the reader; the rest were settled before the first collection and
+/// hold for the session. Consequence decides the order, not provenance: a
+/// herdr nobody can reach empties the agent column, which is what the reader
+/// came for, so it is the last thing a narrow screen takes away.
+fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
+    let collected = match herdr {
+        HerdrState::Ok => None,
+        HerdrState::Unavailable => Some(Notice::NoHerdr),
+    };
+
+    collected
+        .into_iter()
+        .chain(at_startup.iter().copied())
+        .collect()
 }
 
 /// The widest abbreviated id on screen, so every title starts in the same
@@ -710,27 +733,35 @@ fn left_off(count: usize) -> String {
 /// The rows a bordered window spends on its own edges.
 const BORDERS: u16 = 2;
 
-/// The row at the foot of the screen: the keys, and anything true of the
-/// whole session rather than of any row above.
+/// The row at the foot of the screen: the keys, and every notice the view
+/// carries.
 ///
-/// A herdr that could not be reached belongs here because it changes what
-/// every row above it means — none of them can show an agent — and this is
-/// the one row a reader can neither fold nor scroll away from. It is drawn
-/// first and yields last: keys can be rediscovered, and a herdr that is
-/// silently absent reads as a fleet with nobody working in it.
-pub fn status_bar(herdr: HerdrState, keys: &str) -> Fitted {
+/// The notices are drawn first and yield last: keys can be rediscovered, and
+/// a fact that is silently absent from the one row a reader can neither fold
+/// nor scroll away from is a fact they will never learn. Where the screen is
+/// too narrow even for those, they yield from the end, so the caller's order
+/// is the order they are given up in.
+///
+/// Nothing here knows what produced a notice. That is the point: a snapshot
+/// and this process both reach the screen through the same list, and the next
+/// thing that has something to say joins them by being one.
+pub fn status_bar(notices: &[Notice], keys: &str) -> Fitted {
     let keys = Span::raw(keys.to_string());
-    match phrase::herdr_state(herdr) {
-        None => Fitted::new(vec![keys], Vec::new(), Vec::new()),
-        Some(said) => Fitted::new(
-            vec![Span::styled(
-                format!("{WARNING} {said}"),
-                Style::new().fg(LOOK_AT_THIS),
-            )],
-            Vec::new(),
-            vec![keys],
-        ),
+    if notices.is_empty() {
+        return Fitted::new(vec![keys], Vec::new(), Vec::new());
     }
+
+    let said = notices
+        .iter()
+        .map(|notice| format!("{WARNING} {}", phrase::notice(*notice)))
+        .collect::<Vec<_>>()
+        .join(&" ".repeat(GAP));
+
+    Fitted::new(
+        vec![Span::styled(said, Style::new().fg(LOOK_AT_THIS))],
+        Vec::new(),
+        vec![keys],
+    )
 }
 
 /// What a run of spans takes up on screen, in columns rather than in bytes:
@@ -1540,7 +1571,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = drawn(status_bar(HerdrState::Ok, A_KEY_ROW), 60, 1);
+        let drawn = drawn(status_bar(&[], A_KEY_ROW), 60, 1);
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -1551,19 +1582,96 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = drawn(status_bar(HerdrState::Unavailable, A_KEY_ROW), 90, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW), 90, 1);
 
         assert!(
-            drawn[0].contains(phrase::herdr_state(HerdrState::Unavailable).expect("a notice")),
+            drawn[0].contains(phrase::notice(Notice::NoHerdr)),
             "{drawn:?}"
         );
+    }
+
+    /// The bead this row was built for: a `bdi` that could not open its
+    /// inbound socket is told nothing when a project changes, so what is on
+    /// screen is only as fresh as the last poll. Nothing above the foot could
+    /// show that — no row is wrong — so the foot is the only place it can go.
+    #[test]
+    fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
+        let drawn = drawn(status_bar(&[Notice::NoInboundChannel], A_KEY_ROW), 90, 1);
+
+        assert!(
+            drawn[0].contains(phrase::notice(Notice::NoInboundChannel)),
+            "{drawn:?}"
+        );
+    }
+
+    /// Two notices are two facts and the reader needs both: neither one
+    /// implies the other, and a foot that showed only the first would leave
+    /// the second unsaid for the whole session.
+    #[test]
+    fn a_foot_with_room_says_every_notice_it_is_given() {
+        let drawn = drawn(
+            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW),
+            200,
+            1,
+        );
+
+        for said in [Notice::NoHerdr, Notice::NoInboundChannel] {
+            assert!(drawn[0].contains(phrase::notice(said)), "{drawn:?}");
+        }
+    }
+
+    /// The order the caller gives is the order the foot gives up, so a screen
+    /// with room for one keeps the one that costs the reader most.
+    #[test]
+    fn a_narrow_foot_gives_up_the_last_notice_first() {
+        let drawn = drawn(
+            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW),
+            60,
+            1,
+        );
+
+        assert!(
+            drawn[0].contains(phrase::notice(Notice::NoHerdr)),
+            "{drawn:?}"
+        );
+        assert!(
+            !drawn[0].contains(phrase::notice(Notice::NoInboundChannel)),
+            "{drawn:?}"
+        );
+    }
+
+    /// A frame draws what the snapshot behind it found and what the session
+    /// settled at startup through one list, and the snapshot's go first
+    /// because a herdr nobody can reach empties the agent column.
+    #[test]
+    fn the_snapshots_notice_outranks_the_sessions() {
+        assert_eq!(
+            notices(HerdrState::Unavailable, &[Notice::NoInboundChannel]),
+            vec![Notice::NoHerdr, Notice::NoInboundChannel]
+        );
+    }
+
+    /// A session fact reaches the foot whether or not the collection behind
+    /// the frame found anything to say — the two travel by the same road and
+    /// neither depends on the other.
+    #[test]
+    fn a_session_notice_stands_alone_where_the_snapshot_is_well() {
+        assert_eq!(
+            notices(HerdrState::Ok, &[Notice::NoInboundChannel]),
+            vec![Notice::NoInboundChannel]
+        );
+    }
+
+    #[test]
+    fn a_session_with_nothing_wrong_leaves_the_foot_to_the_keys() {
+        assert_eq!(notices(HerdrState::Ok, &[]), Vec::new());
     }
 
     /// Keys can be rediscovered; a herdr that is silently absent cannot. So on
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = drawn(status_bar(HerdrState::Unavailable, A_KEY_ROW), 60, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW), 60, 1);
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);
@@ -1866,9 +1974,13 @@ mod tests {
     }
 
     fn frame_of(forest: &Forest, width: u16, height: u16) -> Vec<String> {
+        frame_with(forest, &[], width, height)
+    }
+
+    fn frame_with(forest: &Forest, at_startup: &[Notice], width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| draw(frame, frame.area(), forest, A_KEY_ROW))
+            .draw(|frame| draw(frame, frame.area(), forest, at_startup, A_KEY_ROW))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -1899,6 +2011,31 @@ mod tests {
                 "                                                            ",
                 "                                                            ",
                 "⚠ no herdr session · which agents are alive is unknown  Ent…",
+            ]
+        );
+    }
+
+    /// The bead's own case, at the whole-frame level: a `bdi` that could not
+    /// open its socket says so at the foot, and it is the same row and the
+    /// same shape a herdr failure uses. Nothing above the foot changes,
+    /// because nothing above the foot is wrong.
+    #[test]
+    fn a_socket_that_would_not_open_is_said_at_the_foot_of_the_frame() {
+        let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+
+        assert_eq!(
+            frame_with(&forest, &[Notice::NoInboundChannel], 80, 10),
+            vec![
+                "▾ ● summit-works · nix-9670s  lift the ground station                        0/3",
+                "  ├── ○ .1  bead number 1                                                       ",
+                "  └── ○ .2  bead number 2                                                       ",
+                "                                                                                ",
+                "                                                                                ",
+                "                                                                                ",
+                "                                                                                ",
+                "                                                                                ",
+                "                                                                                ",
+                "⚠ nothing can tell bdi a project changed · every project is polled instead  Ent…",
             ]
         );
     }

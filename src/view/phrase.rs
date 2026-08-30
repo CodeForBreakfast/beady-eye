@@ -13,8 +13,9 @@ use crate::collect::herdr::PaneStatus;
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
-use crate::model::snapshot::{FailedProject, HerdrState, TrackerFailure};
+use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::types::Status;
+use crate::view::Notice;
 
 pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     match failure {
@@ -25,11 +26,16 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     }
 }
 
-/// The note a view carries when there is no herdr to ask about liveness.
-pub fn herdr_state(state: HerdrState) -> Option<&'static str> {
-    match state {
-        HerdrState::Ok => None,
-        HerdrState::Unavailable => Some("no herdr session · which agents are alive is unknown"),
+/// A fact about the whole view, said at the foot of the screen.
+///
+/// Each of these is written so a reader can tell what it costs them: what
+/// they can no longer see, or how stale what they are looking at may be.
+pub fn notice(notice: Notice) -> &'static str {
+    match notice {
+        Notice::NoHerdr => "no herdr session · which agents are alive is unknown",
+        Notice::NoInboundChannel => {
+            "nothing can tell bdi a project changed · every project is polled instead"
+        }
     }
 }
 
@@ -288,8 +294,8 @@ mod tests {
             }));
         }
 
-        for state in [HerdrState::Ok, HerdrState::Unavailable] {
-            said.extend(herdr_state(state).map(str::to_string));
+        for fact in [Notice::NoHerdr, Notice::NoInboundChannel] {
+            said.push(notice(fact).to_string());
         }
 
         for rule in [
@@ -418,7 +424,7 @@ mod tests {
     #[test]
     fn the_failure_phrases_are_static() {
         let _: fn(TrackerFailure) -> &'static str = tracker_failure;
-        let _: fn(HerdrState) -> Option<&'static str> = herdr_state;
+        let _: fn(Notice) -> &'static str = notice;
         let _: fn() -> &'static str = truncated;
         let _: fn() -> &'static str = no_live_panes;
         let _: fn() -> &'static str = panes_may_be_incomplete;
@@ -452,9 +458,24 @@ mod tests {
     }
 
     #[test]
-    fn a_reachable_herdr_and_a_confirmed_agent_have_nothing_to_say() {
-        assert_eq!(herdr_state(HerdrState::Ok), None);
+    fn a_confirmed_agent_has_nothing_to_say() {
         assert_eq!(join_caveat(JoinSource::AgentPane), None);
+    }
+
+    /// Neither notice can be acted on without knowing which one it is: one
+    /// says the agents are missing, the other that the beads may be stale.
+    #[test]
+    fn the_two_notices_are_told_apart() {
+        assert_ne!(notice(Notice::NoHerdr), notice(Notice::NoInboundChannel));
+    }
+
+    /// The reader cannot open the socket from in here, so the notice is
+    /// written about what it costs them rather than about what failed.
+    #[test]
+    fn a_bdi_nothing_can_reach_says_the_view_is_polled_rather_than_reported() {
+        let said = notice(Notice::NoInboundChannel);
+
+        assert!(said.contains("polled"), "{said}");
     }
 
     #[test]
