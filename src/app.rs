@@ -219,14 +219,14 @@ fn read_project(
         }
     }
 
+    let beads = bd::all_beads(runner, &project.path, &env)?;
+
     Ok(ProjectWork {
         readiness,
         roots: roots
             .into_iter()
             .map(|root| {
-                let read = bd::dep_tree(runner, &project.path, &env, &root)
-                    .map_err(|failure| tracker_failure(failure.kind))
-                    .and_then(|rows| assemble(rows, &root).map_err(|_| TrackerFailure::Parse));
+                let read = assemble(beads.clone(), &root).map_err(|_| TrackerFailure::Parse);
                 (root, read)
             })
             .collect(),
@@ -440,6 +440,10 @@ credential_command = "secret ferry"
         .expect("the config parses")
     }
 
+    /// The one call a project's whole forest is drawn from, spelled as bd
+    /// takes it.
+    const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
+
     /// The one call discovery makes for statuses, spelled as bd takes it.
     const UNFINISHED_CALL: &str =
         "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
@@ -467,7 +471,7 @@ credential_command = "secret ferry"
                 "bd blocked --json",
                 r#"[{"id":"orb-7.1","blocked_by":["orb-9"]}]"#,
             )
-            .with("bd dep tree orb-7 --direction=up --json", ORBITAL_TREE)
+            .with(TRACKER_CALL, ORBITAL_TREE)
     }
 
     fn failing(kind: FailureKind) -> RunFailure {
@@ -594,7 +598,7 @@ credential_command = "secret ferry"
                 r#"[{"id":"orb-7","parent":"orb-7.1"}]"#,
             )
             .with(
-                "bd dep tree orb-7.1 --direction=up --json",
+                TRACKER_CALL,
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
                      "parent_id":"","priority":2,"issue_type":"task"}]"#,
             );
@@ -618,7 +622,7 @@ orbital = ["orb-7", "orb-4"]
 "#
         ))
         .expect("the config parses");
-        let runner = orbital().with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+        let runner = orbital().merging(TRACKER_CALL, MAST_TREE);
 
         let snap = run(&cfg, &runner, Filter::All, now());
 
@@ -653,8 +657,8 @@ orbital = ["orb-4"]
 "#
         ))
         .expect("the config parses");
-        let runner = colliding_trackers(r#"{"result":{"agents":[]}}"#)
-            .with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+        let runner =
+            colliding_trackers(r#"{"result":{"agents":[]}}"#).merging(TRACKER_CALL, MAST_TREE);
 
         let snap = run(&cfg, &runner, Filter::All, now());
 
@@ -669,11 +673,11 @@ orbital = ["orb-4"]
             "ferry draws no tree for a root orbital was given"
         );
 
-        // `call` panics on a second invocation, so this is the assertion that
-        // ferry's tracker was asked about orb-4 exactly no times.
-        assert_eq!(
-            runner.call("bd dep tree orb-4 --direction=up --json").cwd,
-            Some(PathBuf::from(ORBITAL))
+        // A tracker is read whole rather than per root, so no call names a
+        // bead id at all — which is the stronger form of the same guarantee.
+        assert!(
+            runner.calls().iter().all(|c| !c.argv.contains("orb-4")),
+            "no tracker was asked about an id it was never given"
         );
     }
 
@@ -695,7 +699,7 @@ orbital = ["orb-4"]
                 ]}}"#,
             )
             .with("bd show orb-4 --json", r#"[{"id":"orb-4","parent":null}]"#)
-            .with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+            .merging(TRACKER_CALL, MAST_TREE);
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -809,7 +813,7 @@ orbital = ["orb-4"]
             ]}}"#,
         )
         .with("bd show orb-4 --json", r#"[{"id":"orb-4","parent":null}]"#)
-        .with("bd dep tree orb-4 --direction=up --json", MAST_TREE);
+        .merging(TRACKER_CALL, MAST_TREE);
 
         let snap = run(&two_projects(), &runner, Filter::All, now());
 
@@ -907,11 +911,8 @@ orbital = ["orb-4"]
     /// A root we already know the id of keeps it, which is what tells two
     /// failures apart, and the filter has no agent count to hide it by.
     #[test]
-    fn a_root_whose_tree_cannot_be_read_keeps_its_id_and_is_never_hidden() {
-        let runner = orbital().failing(
-            "bd dep tree orb-7 --direction=up --json",
-            failing(FailureKind::Unavailable),
-        );
+    fn a_root_the_answer_does_not_hold_keeps_its_id_and_is_never_hidden() {
+        let runner = orbital().with(TRACKER_CALL, MAST_TREE);
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -923,14 +924,43 @@ orbital = ["orb-4"]
         assert_eq!(snap.trees[0].root, "orb-7");
         assert_eq!(
             snap.trees[0].tracker,
-            TrackerState::Unreachable(TrackerFailure::Unavailable)
+            TrackerState::Unreachable(TrackerFailure::Parse)
         );
         assert!(snap.hidden_trees.is_empty());
     }
 
+    /// A project's whole forest is drawn from one read, so that read failing
+    /// is the project's failure and not any one root's. It is named with its
+    /// reason rather than drawn empty, and the panes working in it are still
+    /// recovered.
+    #[test]
+    fn the_one_tracker_read_failing_takes_the_project_down_by_name() {
+        let runner = orbital().failing(TRACKER_CALL, failing(FailureKind::Unavailable));
+
+        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+
+        assert_eq!(
+            snap.failed_projects,
+            vec![FailedProject {
+                project: "orbital".to_string(),
+                tracker: TrackerFailure::Unavailable,
+            }]
+        );
+        assert!(snap.trees.is_empty());
+        assert!(snap.hidden_trees.is_empty());
+        assert_eq!(
+            snap.unattributed
+                .iter()
+                .map(|pane| pane.pane.as_str())
+                .collect::<Vec<&str>>(),
+            vec!["w:p1", "w:p9"],
+            "the panes working in it are recovered rather than lost with it"
+        );
+    }
+
     #[test]
     fn rows_bd_could_not_have_written_are_a_parse_failure_not_a_missing_tree() {
-        let runner = orbital().with("bd dep tree orb-7 --direction=up --json", "[]");
+        let runner = orbital().with(TRACKER_CALL, "[]");
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -1048,7 +1078,7 @@ orbital = ["orb-4"]
         let reads: Vec<(Option<PathBuf>, Option<String>)> = runner
             .calls()
             .iter()
-            .filter(|c| c.argv == "bd dep tree x-1 --direction=up --json")
+            .filter(|c| c.argv == TRACKER_CALL)
             .map(|c| (c.cwd.clone(), c.env.get("BEADS_DOLT_PASSWORD").cloned()))
             .collect();
 
@@ -1212,6 +1242,6 @@ orbital = ["orb-4"]
             )
             .with("bd ready --limit 0 --json", "[]")
             .with("bd blocked --json", "[]")
-            .with("bd dep tree x-1 --direction=up --json", COLLIDING_TREE)
+            .with(TRACKER_CALL, COLLIDING_TREE)
     }
 }

@@ -63,7 +63,7 @@ pub fn detect(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_dep_tree;
+    use crate::collect::bd::parse_beads;
     use crate::model::join::JoinSource;
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
@@ -77,7 +77,7 @@ mod tests {
     /// A bead as bd writes it, so the fields the rules read come through the
     /// real parser rather than a struct literal that can drift from it.
     fn bead(status: &str, updated_at: &str) -> Bead {
-        parse_dep_tree(&format!(
+        parse_beads(&format!(
             r#"[{{"id":"p-1","title":"work","status":"{status}","parent_id":"",
                   "updated_at":"{updated_at}"}}]"#
         ))

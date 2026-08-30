@@ -382,7 +382,7 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_dep_tree;
+    use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::model::join::{JoinSource, ProjectRows};
     use crate::model::tree::{assemble, Placed};
@@ -454,7 +454,7 @@ render = "⏸ waiting"
     }
 
     fn assembled(json: &str) -> Assembled {
-        let beads = parse_dep_tree(json).expect("the rows parse");
+        let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
         assemble(beads, &root).expect("the rows assemble")
     }

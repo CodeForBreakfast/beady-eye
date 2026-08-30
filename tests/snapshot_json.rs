@@ -89,8 +89,12 @@ fn canned() -> Canned {
             "bd show orb-7.2 --json",
             r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
         )
-        .answering("bd dep tree orb-7 --direction=up --json", TREE)
+        .answering(TRACKER_CALL, TREE)
 }
+
+/// The one call a project's whole forest is drawn from, spelled as bd takes
+/// it.
+const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
 
 fn cfg() -> Config {
     Config::from_toml(CONFIG).expect("the config parses")
@@ -306,7 +310,7 @@ fn a_contested_pane_is_reported_with_its_own_account_of_itself() {
         r#""started_at":"2026-07-01T09:00:00Z","metadata":{"agent_pane":"w:p1"}}"#,
     );
     let emitted = emit(
-        &canned().answering("bd dep tree orb-7 --direction=up --json", &contested),
+        &canned().answering(TRACKER_CALL, &contested),
         Filter::LiveAgents,
     );
 
@@ -346,11 +350,8 @@ fn a_join_disagreement_is_reported_at_the_top_level() {
 }
 
 #[test]
-fn a_root_whose_tracker_cannot_be_read_is_named_in_the_json() {
-    let runner = canned().failing(
-        "bd dep tree orb-7 --direction=up --json",
-        FailureKind::Unavailable,
-    );
+fn a_root_the_answer_does_not_hold_is_named_in_the_json() {
+    let runner = canned().answering(TRACKER_CALL, "[]");
 
     let emitted = emit(&runner, Filter::LiveAgents);
 
@@ -358,9 +359,26 @@ fn a_root_whose_tracker_cannot_be_read_is_named_in_the_json() {
     assert_eq!(emitted["trees"][0]["project"], "orbital");
     assert_eq!(
         emitted["trees"][0]["tracker"],
-        json!({"unreachable": "unavailable"})
+        json!({"unreachable": "parse"})
     );
     assert_eq!(emitted["trees"][0]["nodes"], json!([]));
+    assert_eq!(emitted["hidden_trees"], json!([]), "never filtered away");
+}
+
+/// One read draws a project's whole forest, so its failure is the project's
+/// and not any one root's — named, with its reason, rather than a screen of
+/// empty trees.
+#[test]
+fn a_tracker_that_stops_answering_is_named_in_the_json_as_the_project_it_is() {
+    let runner = canned().failing(TRACKER_CALL, FailureKind::Unavailable);
+
+    let emitted = emit(&runner, Filter::LiveAgents);
+
+    assert_eq!(emitted["trees"], json!([]));
+    assert_eq!(
+        emitted["failed_projects"],
+        json!([{"project": "orbital", "tracker": "unavailable"}])
+    );
     assert_eq!(emitted["hidden_trees"], json!([]), "never filtered away");
 }
 
@@ -521,11 +539,7 @@ fn across_two_projects() -> Canned {
             "bd show orb-7 --json",
             r#"[{"id":"orb-7","parent":null}]"#,
         )
-        .answering_in(
-            HARBOUR_DIR,
-            "bd dep tree orb-7 --direction=up --json",
-            HARBOUR_TREE,
-        )
+        .answering_in(HARBOUR_DIR, TRACKER_CALL, HARBOUR_TREE)
 }
 
 fn emit_over(cfg: &Config, runner: &Canned, filter: Filter) -> Value {

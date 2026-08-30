@@ -8,13 +8,11 @@ use crate::collect::run::{Env, RunFailure, Runner, CREDENTIAL_VAR};
 use crate::config::Project;
 use crate::model::types::Bead;
 
-/// Parse the output of `bd dep tree <root> --direction=up --json`.
-///
-/// bd returns a flat array already in its own render order, each row carrying
-/// `parent_id` and `edge_from_parent`. We keep the rows and re-order them
-/// ourselves; see `model::tree`.
-pub fn parse_dep_tree(s: &str) -> anyhow::Result<Vec<Bead>> {
-    serde_json::from_str(s).context("bd dep tree --json returned a shape we do not understand")
+/// Parse a flat array of bd rows, however the answer that carried them was
+/// asked for. `bd list`, `bd ready` and `bd dep tree` all write the same
+/// row.
+pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
+    serde_json::from_str(s).context("bd --json returned a shape we do not understand")
 }
 
 /// One row of `bd blocked --json`, which carries a blocker set no dep-tree
@@ -56,21 +54,25 @@ pub fn credential_env(
     )]))
 }
 
-/// `bd dep tree <root> --direction=up --json`, in the project's directory and
-/// with its credential.
+/// Every bead one tracker holds, each carrying the beads it depends on and
+/// the kind of each dependency.
 ///
-/// Never `--max-depth`: bd reparents rows past the limit rather than marking
-/// them, so a depth-limited call returns a different tree, not an incomplete
-/// one.
-pub fn dep_tree(
-    runner: &dyn Runner,
-    cwd: &Path,
-    env: &Env,
-    root: &str,
-) -> Result<Vec<Bead>, RunFailure> {
+/// One call per project rather than one per root, because a tree is drawn
+/// from dependency edges and `bd dep tree` cannot carry them: it walks
+/// dependents and dedupes, so what comes back is a spanning tree — each bead
+/// with the one edge the walk first reached it by, and every other edge into
+/// it missing. Measured against this project's own tracker on 2026-08-30,
+/// that walk carried 93 of the 176 edges among the beads it returned. It is
+/// also the reason `blocked_by` is asked for separately and `parent_of`
+/// exists at all.
+///
+/// `--all` is load-bearing: without it bd answers about open beads only, and
+/// a smaller correct-looking answer about a different population is the kind
+/// of wrong that reads as right.
+pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>, RunFailure> {
     let out = runner.run(
         "bd",
-        &["dep", "tree", root, "--direction=up", "--json"],
+        &["list", "--all", "--limit", "0", "--json"],
         Some(cwd),
         env,
     )?;
@@ -191,20 +193,20 @@ pub fn parent_of(
     Ok(row.parent.filter(|parent| !parent.is_empty()))
 }
 
-/// `bd dep tree`, `bd list` and `bd ready` all answer with the same rows.
+/// `bd list`, `bd ready` and `bd dep tree` all answer with the same rows.
 fn rows(out: &str) -> Result<Vec<Bead>, RunFailure> {
-    parse_dep_tree(out).map_err(|e| RunFailure::parse("bd", e))
+    parse_beads(out).map_err(|e| RunFailure::parse("bd", e))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::types::{Edge, Status};
+    use crate::model::types::{Dependency, Edge, Status};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
 
     fn fixture() -> Vec<Bead> {
-        parse_dep_tree(FIXTURE).expect("the captured tree parses")
+        parse_beads(FIXTURE).expect("the captured tree parses")
     }
 
     fn row(id: &str) -> Bead {
@@ -254,21 +256,21 @@ mod tests {
 
         for (spelling, want) in spellings.iter().zip(expected) {
             let json = format!(r#"[{{"id":"x","title":"t","status":"{spelling}"}}]"#);
-            assert_eq!(parse_dep_tree(&json).unwrap()[0].status, want);
+            assert_eq!(parse_beads(&json).unwrap()[0].status, want);
         }
     }
 
     #[test]
     fn a_status_a_later_bd_invents_is_kept_rather_than_rejected() {
         let json = r#"[{"id":"x","title":"t","status":"marinating"}]"#;
-        let beads = parse_dep_tree(json).expect("an unknown status still parses");
+        let beads = parse_beads(json).expect("an unknown status still parses");
         assert_eq!(beads[0].status, Status::Other("marinating".to_string()));
     }
 
     #[test]
     fn an_edge_a_later_bd_invents_is_kept_rather_than_rejected() {
         let json = r#"[{"id":"x","title":"t","status":"open","edge_from_parent":"discovered-by"}]"#;
-        let beads = parse_dep_tree(json).expect("an unknown edge still parses");
+        let beads = parse_beads(json).expect("an unknown edge still parses");
         assert_eq!(
             beads[0].edge_from_parent,
             Some(Edge::Other("discovered-by".to_string()))
@@ -317,13 +319,13 @@ mod tests {
         }
 
         let json = r#"[{"id":"x","title":"t","status":"open","truncated":true}]"#;
-        assert!(parse_dep_tree(json).unwrap()[0].truncated);
+        assert!(parse_beads(json).unwrap()[0].truncated);
     }
 
     #[test]
     fn a_wrongly_typed_field_is_an_error_not_a_default() {
         let bad = r#"[{"id":"x","title":"t","status":"open","priority":"high"}]"#;
-        assert!(parse_dep_tree(bad).is_err());
+        assert!(parse_beads(bad).is_err());
     }
 
     #[test]
@@ -365,16 +367,59 @@ mod tests {
         Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())])
     }
 
-    #[test]
-    fn dep_tree_asks_bd_in_the_projects_directory_with_its_credential() {
-        let runner = FakeRunner::default().with("bd dep tree p-1 --direction=up --json", FIXTURE);
+    /// The one call a project's whole forest is drawn from, spelled as bd
+    /// takes it. `--all` is what makes it the whole tracker rather than its
+    /// open beads.
+    const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
 
-        let beads = dep_tree(&runner, &project_dir(), &credentialled(), "p-1").unwrap();
+    #[test]
+    fn the_tracker_is_read_in_the_projects_directory_with_its_credential() {
+        let runner = FakeRunner::default().with(TRACKER_CALL, FIXTURE);
+
+        let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
 
         assert_eq!(beads.len(), 6);
-        let call = runner.call("bd dep tree p-1 --direction=up --json");
+        let call = runner.call(TRACKER_CALL);
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
         assert_eq!(call.env, credentialled());
+    }
+
+    #[test]
+    fn a_row_carries_every_bead_it_depends_on_and_the_kind_of_each() {
+        let json = r#"[{"id":"p-1.4","title":"t","status":"open","dependencies":[
+          {"issue_id":"p-1.4","depends_on_id":"p-1","type":"parent-child"},
+          {"issue_id":"p-1.4","depends_on_id":"p-1.3","type":"blocks"}]}]"#;
+        let bead = &parse_beads(json).expect("the row parses")[0];
+
+        assert_eq!(
+            bead.depends_on(),
+            vec![
+                Dependency {
+                    on: "p-1".to_string(),
+                    edge: Edge::ParentChild,
+                },
+                Dependency {
+                    on: "p-1.3".to_string(),
+                    edge: Edge::Blocks,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dep_tree_row_names_the_one_edge_the_walk_reached_it_by() {
+        // `bd dep tree` carries a spanning tree rather than an edge set, and
+        // the row shape says so: one parent, one kind, and no way to hold the
+        // second bead this one waits on.
+        let blocker = row("bdi-3um.11");
+
+        assert_eq!(
+            blocker.depends_on(),
+            vec![Dependency {
+                on: "bdi-3um.10".to_string(),
+                edge: Edge::Blocks,
+            }]
+        );
     }
 
     const UNFINISHED_CALL: &str =
@@ -453,7 +498,7 @@ mod tests {
             .split(',')
             .map(|status| {
                 let json = format!(r#"[{{"id":"x","title":"t","status":"{status}"}}]"#);
-                parse_dep_tree(&json).unwrap()[0].status.clone()
+                parse_beads(&json).unwrap()[0].status.clone()
             })
             .collect();
 
@@ -516,7 +561,7 @@ mod tests {
     #[test]
     fn a_tracker_that_refuses_the_credential_reaches_the_caller_classified() {
         let runner = FakeRunner::default().failing(
-            "bd dep tree p-1 --direction=up --json",
+            TRACKER_CALL,
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
@@ -524,7 +569,7 @@ mod tests {
             },
         );
 
-        let failure = dep_tree(&runner, &project_dir(), &credentialled(), "p-1").unwrap_err();
+        let failure = all_beads(&runner, &project_dir(), &credentialled()).unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Auth);
     }

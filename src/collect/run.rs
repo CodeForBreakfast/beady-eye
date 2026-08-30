@@ -210,6 +210,26 @@ pub mod testing {
             self
         }
 
+        /// Add rows to an answer already staged for `argv`, which is how a
+        /// test stages a tracker holding more than one root: bd answers for
+        /// the whole tracker in one array, not one array per root.
+        pub fn merging(mut self, argv: &str, rows: &str) -> Self {
+            let standing = match self.responses.get(argv) {
+                Some(Ok(out)) => out.clone(),
+                _ => return self.with(argv, rows),
+            };
+            let joined = format!(
+                "[{},{}]",
+                standing
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']'),
+                rows.trim().trim_start_matches('[').trim_end_matches(']')
+            );
+            self.responses.insert(argv.to_string(), Ok(joined));
+            self
+        }
+
         pub fn failing(mut self, argv: &str, failure: RunFailure) -> Self {
             self.responses.insert(argv.to_string(), Err(failure));
             self

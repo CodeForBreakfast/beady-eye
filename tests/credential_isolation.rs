@@ -73,7 +73,7 @@ fn tracker(runner: Canned, cwd: &str, id: &str) -> Canned {
         )
         .answering_in(
             cwd,
-            &format!("bd dep tree {id} --direction=up --json"),
+            "bd list --all --limit 0 --json",
             &format!(
                 r#"[{{"id":"{id}","title":"the work","status":"in_progress","parent_id":"",
                       "priority":1,"issue_type":"task","started_at":"2026-08-29T09:00:00Z",

@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use beady_eye::collect::bd::parse_dep_tree;
+use beady_eye::collect::bd::parse_beads;
 use beady_eye::collect::herdr::parse_agent_list;
 use beady_eye::config::Config;
 use beady_eye::model::anomaly::Anomaly;
@@ -88,7 +88,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
     let assembled: Vec<(&str, _)> = [("orbital", orbital_rows), ("ferry", FERRY_ROWS)]
         .into_iter()
         .map(|(project, rows)| {
-            let beads = parse_dep_tree(rows).expect("the rows parse");
+            let beads = parse_beads(rows).expect("the rows parse");
             let root = beads
                 .iter()
                 .find(|b| b.parent_id.is_none())

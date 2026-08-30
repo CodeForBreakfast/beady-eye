@@ -807,7 +807,7 @@ fn selectable(line: &Line) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_dep_tree;
+    use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
@@ -1123,7 +1123,7 @@ credential_command = "secret harbour"
     }
 
     fn assembled(json: &str) -> Assembled {
-        let beads = parse_dep_tree(json).expect("the rows parse");
+        let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
         assemble(beads, &root).expect("the rows assemble")
     }

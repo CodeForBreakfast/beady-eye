@@ -170,7 +170,7 @@ mod tests {
 
     /// The root of every hand-written tree below.
     const ROOT: &str = "r";
-    use crate::collect::bd::parse_dep_tree;
+    use crate::collect::bd::parse_beads;
     use crate::model::types::Edge;
 
     /// A slice of this project's own tracker as `bd list --all --json`
@@ -180,7 +180,7 @@ mod tests {
     const FIXTURE_ROOT: &str = "bdi-2bb";
 
     fn assembled(json: &str, root: &str) -> Assembled {
-        assemble(parse_dep_tree(json).expect("the rows parse"), root).expect("the rows assemble")
+        assemble(parse_beads(json).expect("the rows parse"), root).expect("the rows assemble")
     }
 
     fn ids(a: &Assembled) -> Vec<&str> {
@@ -501,7 +501,7 @@ mod tests {
           {"id":"one","title":"one","status":"open","parent_id":""},
           {"id":"two","title":"two","status":"open","parent_id":""}
         ]"#;
-        let err = assemble(parse_dep_tree(json).unwrap(), "three")
+        let err = assemble(parse_beads(json).unwrap(), "three")
             .expect_err("no bead three to draw from")
             .to_string();
 
