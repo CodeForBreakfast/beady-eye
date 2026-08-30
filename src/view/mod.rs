@@ -39,6 +39,13 @@ pub enum Action {
     /// expanded.
     ExpandOrChild,
     ToggleFold,
+    /// Expand every node in the forest, at every depth.
+    ExpandAll,
+    /// Collapse every node in the forest, at every depth.
+    CollapseAll,
+    /// Let go of every fold set by hand, so the forest rests as `bdi` would
+    /// have drawn it for the snapshot it is holding now.
+    RestoreDefault,
     /// Show every tree, rather than only those with a live agent.
     ToggleFilter,
     /// Focus the selected bead's pane in herdr.

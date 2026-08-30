@@ -250,6 +250,9 @@ impl Forest {
             Action::CollapseOrParent => self.collapse_or_parent(),
             Action::ExpandOrChild => self.expand_or_child(),
             Action::ToggleFold => self.toggle_fold(),
+            Action::ExpandAll => self.fold_all(true),
+            Action::CollapseAll => self.fold_all(false),
+            Action::RestoreDefault => self.folds.clear(),
             Action::ToggleFilter => self.toggle_filter(),
             Action::Focus | Action::ShowBindings | Action::Refresh | Action::Quit => return false,
         }
@@ -263,6 +266,41 @@ impl Forest {
             Filter::All => Filter::LiveAgents,
         };
         self.snapshot = snapshot::refilter(&self.snapshot, next);
+    }
+
+    /// `E` and `C`: point every fold in the forest, at every depth, one way.
+    ///
+    /// Opening a node draws children that were not there to be enumerated, so
+    /// the whole forest is opened a level at a time until a draw turns up
+    /// nothing left shut. Shutting goes the same way round first: a fold the
+    /// reader cannot see is still a fold, and one left open under a shut
+    /// parent would spring its subtree back the moment that parent was opened
+    /// again.
+    ///
+    /// The walks draw without laying out, because `apply` tells the loop
+    /// whether the screen moved by comparing against the lines its own
+    /// lay-out displaced — one in here would leave it comparing the new lines
+    /// with themselves.
+    fn fold_all(&mut self, open: bool) {
+        while self.point_every_drawn_fold(true) {}
+        if !open {
+            self.point_every_drawn_fold(false);
+        }
+    }
+
+    /// Point every fold on a drawn line at `open`, reporting whether any of
+    /// them was pointing the other way.
+    fn point_every_drawn_fold(&mut self, open: bool) -> bool {
+        let pointed: Vec<Handle> = self
+            .draw()
+            .iter()
+            .filter(|line| line.folded == Some(!open))
+            .filter_map(handle_of)
+            .collect();
+        for handle in &pointed {
+            self.folds.insert(handle.clone(), open);
+        }
+        !pointed.is_empty()
     }
 
     fn toggle_fold(&mut self) {
@@ -3308,5 +3346,200 @@ credential_command = "secret harbour"
         forest.refresh(&overlapping(&panes));
 
         assert_eq!(forest.selected_line(), lower, "{:#?}", sketch(&forest));
+    }
+
+    // ---- expand all, collapse all, and back to the default ---------------
+
+    /// Every bead on screen, by id, in render order. A bead reachable more
+    /// than once is here once per copy drawn.
+    fn drawn_beads(forest: &Forest) -> Vec<String> {
+        forest
+            .lines()
+            .iter()
+            .filter_map(|line| line.bead().map(|key| key.id.clone()))
+            .collect()
+    }
+
+    /// Opening a node draws children that were not there to be enumerated
+    /// when the key was pressed, so one pass over the lines stops at the
+    /// first level it opened. Tower is a spine four deep with nothing live
+    /// in it, so every level below the header is a fold no reader could see.
+    #[test]
+    fn expand_all_reaches_a_fold_that_was_not_drawn_when_it_was_pressed() {
+        let mut forest = flatten(&tower_staffed(&[]));
+        assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
+
+        forest.apply(Action::ExpandAll);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            [
+                "tow-1",
+                "tow-1.1",
+                "tow-1.1.1",
+                "tow-1.1.1.1",
+                "tow-1.2",
+                "tow-1.2.1"
+            ],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    #[test]
+    fn expand_all_leaves_no_fold_shut() {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+            let mut forest = flatten(&alone("orbital", json, &two_panes()));
+            forest.apply(Action::ExpandAll);
+
+            assert!(
+                forest.lines().iter().all(|line| line.folded != Some(false)),
+                "{:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    #[test]
+    fn collapse_all_leaves_no_fold_open() {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+            let mut forest = flatten(&alone("orbital", json, &two_panes()));
+            forest.apply(Action::CollapseAll);
+
+            assert!(
+                forest.lines().iter().all(|line| line.folded != Some(true)),
+                "{:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// Put the selection on a bead and fold it, the way a reader would with
+    /// the keys they have.
+    fn toggle_fold_of(forest: &mut Forest, id: &str) {
+        let at = *lines_of(forest, id)
+            .first()
+            .unwrap_or_else(|| panic!("{id} is not drawn: {:#?}", sketch(forest)));
+        step_onto(forest, at);
+        forest.apply(Action::ToggleFold);
+    }
+
+    /// A fold shut over another fold hides it without settling it, so
+    /// shutting only what is on screen leaves that one resting open. The
+    /// reader then opens their way back down and a subtree springs at them
+    /// from a forest they were told was collapsed.
+    ///
+    /// `tow-1.1` is shut by hand first, which puts `tow-1.1.1` out of sight
+    /// still resting open over the agent beneath it. Collapse-all has to
+    /// reach it there.
+    #[test]
+    fn collapse_all_shuts_a_fold_the_reader_cannot_see() {
+        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        toggle_fold_of(&mut forest, "tow-1.1");
+
+        forest.apply(Action::CollapseAll);
+        toggle_fold_of(&mut forest, "tow-1");
+        toggle_fold_of(&mut forest, "tow-1.1");
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The default is derived from what is live rather than stored, so
+    /// restoring it after an agent has gone home opens the spine to the work
+    /// that is left and not to where the work was.
+    ///
+    /// The agent on `tow-1.1.1.1` goes and the one on `tow-1.2.1` stays, so
+    /// nothing new arrives under any fold and every fold collapse-all set
+    /// survives the refresh. What is restored is therefore the whole of what
+    /// the key did, and not something the refresh had already undone.
+    #[test]
+    fn restoring_the_default_recomputes_it_rather_than_replaying_the_old_one() {
+        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseAll);
+        forest.refresh(&tower_staffed(&["tow-1.2.1"]));
+
+        forest.apply(Action::RestoreDefault);
+
+        assert_eq!(
+            sketch(&forest),
+            sketch(&flatten(&tower_staffed(&["tow-1.2.1"])))
+        );
+    }
+
+    /// A fold these keys set is a fold the user set, so it keeps the standing
+    /// rule: it survives a refresh that brings nothing new beneath it.
+    #[test]
+    fn the_folds_these_keys_set_survive_a_refresh() {
+        for action in [Action::ExpandAll, Action::CollapseAll] {
+            let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+            forest.apply(action);
+            let before = sketch(&forest);
+
+            forest.refresh(&tower_staffed(&["tow-1.1.1.1"]));
+
+            assert_eq!(sketch(&forest), before, "{action:?}");
+        }
+    }
+
+    /// No fold `bdi` chooses hides a live agent. Collapse-all is the one
+    /// place a reader may override that, because they asked for it by name —
+    /// and restoring the default is how they get the agent back.
+    #[test]
+    fn collapse_all_may_shut_a_fold_over_a_live_agent_because_the_reader_asked() {
+        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let staffed = "tow-1.1.1.1".to_string();
+        assert!(
+            drawn_beads(&forest).contains(&staffed),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.apply(Action::CollapseAll);
+        assert!(
+            !drawn_beads(&forest).contains(&staffed),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.apply(Action::RestoreDefault);
+        assert!(
+            drawn_beads(&forest).contains(&staffed),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// These three keys are about folds. Which trees are drawn at all is the
+    /// filter's, with its own key and its own word for what it does, so a
+    /// reader who pressed `a` deliberately does not lose it to a fold key.
+    #[test]
+    fn the_fold_keys_leave_the_filter_where_the_reader_put_it() {
+        for action in [
+            Action::ExpandAll,
+            Action::CollapseAll,
+            Action::RestoreDefault,
+        ] {
+            let mut forest = flatten(&built(Filter::LiveAgents));
+            forest.apply(Action::ToggleFilter);
+
+            forest.apply(action);
+
+            assert_eq!(forest.snapshot().filter, Filter::All, "{action:?}");
+        }
+    }
+
+    /// `apply` reports whether the screen moved, and a forest already open
+    /// has nowhere to go. The loop redraws on that answer.
+    #[test]
+    fn expand_all_on_a_forest_already_open_moves_nothing() {
+        let mut forest = flatten(&tower_staffed(&[]));
+
+        assert!(forest.apply(Action::ExpandAll), "{:#?}", sketch(&forest));
+        assert!(!forest.apply(Action::ExpandAll), "{:#?}", sketch(&forest));
     }
 }

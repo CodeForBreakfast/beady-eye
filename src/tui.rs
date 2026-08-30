@@ -297,6 +297,24 @@ const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
+        keys: &[alone(KeyCode::Char('E'), "E")],
+        action: Action::ExpandAll,
+        does: "expand every node",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('C'), "C")],
+        action: Action::CollapseAll,
+        does: "collapse every node",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('D'), "D")],
+        action: Action::RestoreDefault,
+        does: "restore the default view",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Down, "Down"), alone(KeyCode::Char('j'), "j")],
         action: Action::Move(Motion::NextRow),
         does: "move down one row",
@@ -1010,6 +1028,9 @@ mod tests {
             Action::CollapseOrParent,
             Action::ExpandOrChild,
             Action::ToggleFold,
+            Action::ExpandAll,
+            Action::CollapseAll,
+            Action::RestoreDefault,
             Action::ToggleFilter,
             Action::Focus,
             Action::ShowBindings,
@@ -1030,6 +1051,9 @@ mod tests {
                 Action::CollapseOrParent
                 | Action::ExpandOrChild
                 | Action::ToggleFold
+                | Action::ExpandAll
+                | Action::CollapseAll
+                | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::Focus
                 | Action::ShowBindings
@@ -1098,7 +1122,7 @@ mod tests {
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
                 "  q, ^C     quit",
-                "  … 9 more bindings · no room on a screen this short",
+                "  … 12 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1180,6 +1204,9 @@ mod tests {
                 "  ?         show these key bindings",
                 "  q, ^C     quit",
                 "  ^R        collect from the trackers again now",
+                "  E         expand every node",
+                "  C         collapse every node",
+                "  D         restore the default view",
                 "  Down, j   move down one row",
                 "  Up, k     move up one row",
                 "  Right, l  expand, or move to the first child when it is already expanded",
@@ -1207,7 +1234,7 @@ mod tests {
 
         assert_eq!(drawn[4], "  q, ^C     quit");
         assert_eq!(
-            drawn[8], "  Right, l  expand, or move to the fi…",
+            drawn[11], "  Right, l  expand, or move to the fi…",
             "the one line too long for forty columns, cut with the cut marked"
         );
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
@@ -1247,6 +1274,29 @@ mod tests {
             );
         }
         assert!(row.contains("? keys"), "the way to the rest: {row:?}");
+    }
+
+    /// The row is cut from its own end, so one that outgrew the narrowest
+    /// screen anyone uses would lose `q quit` — which is what a reader who
+    /// cannot get out is looking for. `bdi-2bb.12` cut `^R` from it to make
+    /// room for keys named in words, and it has been full to the column ever
+    /// since: expanding and collapsing the whole forest and restoring the
+    /// default are named in `?` alone for exactly that reason.
+    #[test]
+    fn the_row_under_the_tail_is_drawn_whole_on_the_narrowest_screen() {
+        let mut forest = an_open_grove(30);
+        let screen = painted(
+            &mut forest,
+            &Tail::Silent("nothing to tail"),
+            40,
+            24,
+            Showing::Forest,
+        );
+
+        assert_eq!(
+            screen.last().expect("a screen with rows on it").trim_end(),
+            key_row()
+        );
     }
 
     /// A binding added as a match arm rather than to the table would answer a
