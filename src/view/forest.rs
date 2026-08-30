@@ -209,8 +209,45 @@ impl Forest {
 
     /// Take a freshly collected snapshot, keeping the folds and the selection.
     pub fn refresh(&mut self, snapshot: &Snapshot) {
+        // Only the snapshot the cursor was found in knows what stood above
+        // it, so where the new one has dropped the bead the cursor falls to
+        // the nearest of its forebears that survived.
+        let ancestry = self.ancestry();
         self.snapshot = snapshot.clone();
+        self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
         self.lay_out();
+    }
+
+    /// What the cursor is on, then everything above it in its tree, nearest
+    /// first.
+    fn ancestry(&self) -> Vec<Handle> {
+        let mut chain: Vec<Handle> = self.cursor.iter().cloned().collect();
+        let Some(Handle::Bead(key)) = &self.cursor else {
+            return chain;
+        };
+
+        for tree in self
+            .snapshot
+            .trees
+            .iter()
+            .filter(|t| t.project == key.project)
+        {
+            let Some(at) = tree.nodes.iter().position(|node| node.id == key.id) else {
+                continue;
+            };
+            let mut above = tree.nodes[at].depth;
+            for node in tree.nodes[..at].iter().rev() {
+                if node.depth < above {
+                    above = node.depth;
+                    chain.push(Handle::Bead(BeadKey {
+                        project: tree.project.clone(),
+                        id: node.id.clone(),
+                    }));
+                }
+            }
+            break;
+        }
+        chain
     }
 
     /// Apply one action, reporting whether it changed anything.
@@ -1129,6 +1166,28 @@ credential_command = "secret harbour"
 
         assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1.2")));
         assert_ne!(forest.selected_line(), was);
+    }
+
+    /// Closing a bead under the cursor is the ordinary way for one to go, and
+    /// the tree it was in is still on screen. The cursor stays in that tree,
+    /// on the parent, rather than going back to the top of the forest.
+    #[test]
+    fn a_refresh_that_drops_the_selected_bead_falls_back_to_its_parent() {
+        let mut forest = flatten(&snapshot());
+        select(&mut forest, &key("orbital", "orb-7.1.2"));
+
+        let without = ORBITAL.replace(
+            r#"{"id":"orb-7.1.2","title":"seal the feed horn","status":"open","parent_id":"orb-7.1",
+       "priority":3,"issue_type":"task","truncated":true},"#,
+            "",
+        );
+        forest.refresh(&gather(
+            vec![tree_of("orbital", &without)],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+
+        assert_eq!(forest.selected(), Some(&key("orbital", "orb-7.1")));
     }
 
     #[test]

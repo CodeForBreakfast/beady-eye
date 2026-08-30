@@ -9,7 +9,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::collect::changes::{self, Reported, Socket};
 use crate::collect::run::RealRunner;
-use crate::model::snapshot::{self, Filter, Snapshot};
+use crate::model::snapshot::Snapshot;
 use crate::view::forest::{self, Forest};
 use crate::view::tail::{self, Herdr, Panes, Tail};
 use crate::view::{draw, Action, Motion};
@@ -282,18 +282,12 @@ fn keys(to: &Sender<Event>) {
     }
 }
 
-/// The forest on the alternate screen, and the snapshot it was flattened
-/// from.
+/// The forest on the alternate screen and the tail beneath it.
 ///
-/// The terminal is on the alternate screen and in raw mode for as long as
-/// this lives, so dropping it puts the terminal back however the loop ended.
-/// `ratatui::init` hooks panics as well, so a crash does not leave a wedged
-/// tty behind either.
-struct Screen {
-    terminal: DefaultTerminal,
-    snapshot: Snapshot,
+/// Held apart from the terminal that draws it because the terminal needs a
+/// tty and none of this does.
+struct Shown {
     forest: Forest,
-    filter: Filter,
     panes: Box<dyn Panes>,
     tail: Tail,
     /// The pane the tail on screen was read from, so a selection moving
@@ -301,22 +295,18 @@ struct Screen {
     tailing: Option<String>,
 }
 
-impl Screen {
-    fn showing(snapshot: Snapshot, panes: Box<dyn Panes>) -> anyhow::Result<Self> {
-        let terminal = ratatui::try_init()?;
+impl Shown {
+    fn of(snapshot: Snapshot, panes: Box<dyn Panes>) -> Self {
         let forest = forest::flatten(&snapshot);
         let tail = tail::tail(&forest, panes.as_ref(), tail::LINES);
         let tailing = tail::target(&forest).pane().map(str::to_string);
 
-        Ok(Self {
-            terminal,
-            filter: snapshot.filter,
-            snapshot,
+        Self {
             forest,
             panes,
             tail,
             tailing,
-        })
+        }
     }
 
     /// Read the tail for whatever the selection is on now.
@@ -344,6 +334,49 @@ impl Screen {
             }
         }
     }
+
+    fn collected(&mut self, snapshot: Snapshot) {
+        // A refresh keeps the folds and the selection, so the cursor stays on
+        // the bead the user put it on however the new snapshot has moved it.
+        self.forest.refresh(&snapshot);
+        // The refresh tick is when the pane is re-read: the rows it has drawn
+        // since the last one are exactly what has moved on.
+        self.retail();
+    }
+
+    fn apply(&mut self, action: Action) -> bool {
+        if action == Action::Focus {
+            return self.focus();
+        }
+
+        let changed = self.forest.apply(action);
+        if changed {
+            self.follow();
+        }
+        changed
+    }
+}
+
+/// The alternate screen, and what is drawn on it.
+///
+/// The terminal is on the alternate screen and in raw mode for as long as
+/// this lives, so dropping it puts the terminal back however the loop ended.
+/// `ratatui::init` hooks panics as well, so a crash does not leave a wedged
+/// tty behind either.
+struct Screen {
+    terminal: DefaultTerminal,
+    shown: Shown,
+}
+
+impl Screen {
+    fn showing(snapshot: Snapshot, panes: Box<dyn Panes>) -> anyhow::Result<Self> {
+        let terminal = ratatui::try_init()?;
+
+        Ok(Self {
+            terminal,
+            shown: Shown::of(snapshot, panes),
+        })
+    }
 }
 
 /// One frame: the forest, the tail beneath it, and the height the forest is
@@ -368,40 +401,15 @@ impl Drop for Screen {
 
 impl View for Screen {
     fn collected(&mut self, snapshot: Snapshot) {
-        self.snapshot = snapshot;
-        self.forest = forest::flatten(&self.snapshot);
-        // The refresh tick is when the pane is re-read: the rows it has drawn
-        // since the last one are exactly what has moved on.
-        self.retail();
+        self.shown.collected(snapshot);
     }
 
     fn apply(&mut self, action: Action) -> bool {
-        if action == Action::Focus {
-            return self.focus();
-        }
-
-        // Which trees show is a display choice over what was collected, so
-        // the filter re-reads the snapshot in hand rather than the trackers.
-        if action == Action::ToggleFilter {
-            self.filter = match self.filter {
-                Filter::LiveAgents => Filter::All,
-                Filter::All => Filter::LiveAgents,
-            };
-            self.snapshot = snapshot::refilter(&self.snapshot, self.filter);
-            self.forest = forest::flatten(&self.snapshot);
-            self.follow();
-            return true;
-        }
-
-        let changed = self.forest.apply(action);
-        if changed {
-            self.follow();
-        }
-        changed
+        self.shown.apply(action)
     }
 
     fn draw(&mut self) -> anyhow::Result<()> {
-        let (forest, tail) = (&mut self.forest, &self.tail);
+        let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
         self.terminal.draw(|frame| paint(frame, forest, tail))?;
         Ok(())
     }
@@ -410,7 +418,11 @@ impl View for Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::snapshot::{Counts, HerdrState, Node, TrackerFailure, TrackerState, Tree};
+    use crate::collect::run::RunFailure;
+    use crate::model::join::BeadKey;
+    use crate::model::snapshot::{
+        self, Counts, Filter, HerdrState, Node, TrackerFailure, TrackerState, Tree,
+    };
     use crate::model::types::Status;
     use crate::view::Motion;
     use chrono::Utc;
@@ -830,6 +842,16 @@ mod tests {
     /// A tree with enough beads under it that a half-screen motion has room
     /// to land somewhere that says how far it moved.
     fn a_grove(beads: usize) -> Snapshot {
+        a_grove_of((1..=beads).collect())
+    }
+
+    /// The same grove, with its children in the order a tracker would report
+    /// them after every one of them changed priority.
+    fn a_grove_reordered(beads: usize) -> Snapshot {
+        a_grove_of((1..=beads).rev().collect())
+    }
+
+    fn a_grove_of(children: Vec<usize>) -> Snapshot {
         let bead = |id: String, depth: u16| Node {
             id,
             title: "a bead in the grove".to_string(),
@@ -849,14 +871,14 @@ mod tests {
         };
 
         let mut nodes = vec![bead("grv-1".to_string(), 0)];
-        nodes.extend((1..=beads).map(|n| bead(format!("grv-1.{n}"), 1)));
+        nodes.extend(children.iter().map(|n| bead(format!("grv-1.{n}"), 1)));
 
         let tree = Tree {
             project: "grove".to_string(),
             root: "grv-1".to_string(),
             title: "a tree with a great many beads".to_string(),
             counts: Counts {
-                total: beads,
+                total: children.len(),
                 closed: 0,
                 live_agents: 0,
                 anomalies: 0,
@@ -922,6 +944,114 @@ mod tests {
             8,
             "half of the sixteen rows the forest was given, not half the frame"
         );
+    }
+
+    /// herdr, for a forest whose beads carry no pane. Nothing here asks it
+    /// anything; the tail needs one to exist, not to answer.
+    struct NoPanes;
+
+    impl Panes for NoPanes {
+        fn read(&self, _pane: &str, _lines: u16) -> Result<Vec<String>, RunFailure> {
+            Ok(Vec::new())
+        }
+
+        fn focus(&self, _pane: &str) -> Result<(), RunFailure> {
+            Ok(())
+        }
+    }
+
+    fn shown(snapshot: Snapshot) -> Shown {
+        Shown::of(snapshot, Box::new(NoPanes))
+    }
+
+    fn bead(project: &str, id: &str) -> BeadKey {
+        BeadKey {
+            project: project.to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    /// The band as drawn, not the selected index: a selection restored into a
+    /// viewport that scrolled back to the top is the same bug wearing a
+    /// different hat, and only the rows show the difference.
+    fn forest_band(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
+        let bands = draw::regions(Rect::new(0, 0, width, height));
+        let rows = painted(&mut shown.forest, &shown.tail, width, height);
+        rows[..bands.forest.height as usize].to_vec()
+    }
+
+    #[test]
+    fn a_refresh_that_changes_nothing_leaves_the_forest_exactly_as_it_was() {
+        let grove = a_grove(30);
+        let mut shown = shown(grove.clone());
+        forest_band(&mut shown, 60, 24);
+        shown.apply(Action::Move(Motion::LastRow));
+
+        let before = forest_band(&mut shown, 60, 24);
+        shown.collected(grove);
+
+        assert_eq!(forest_band(&mut shown, 60, 24), before);
+    }
+
+    #[test]
+    fn a_refresh_that_reorders_around_the_selection_keeps_it_on_its_bead() {
+        let mut shown = shown(a_grove(6));
+        shown.apply(Action::Move(Motion::LastRow));
+        let was = shown.forest.selected_line();
+
+        assert_eq!(shown.forest.selected(), Some(&bead("grove", "grv-1.6")));
+
+        shown.collected(a_grove_reordered(6));
+
+        assert_eq!(shown.forest.selected(), Some(&bead("grove", "grv-1.6")));
+        assert_ne!(shown.forest.selected_line(), was);
+    }
+
+    /// A quiet grove the live-agent filter hides, drawn ahead of a tree it
+    /// keeps, so dropping the filter moves the surviving tree down the
+    /// forest rather than leaving it where it already was.
+    fn a_hidden_grove_above_a_shown_tree() -> Snapshot {
+        let grove = a_grove(6).trees[0].clone();
+        let atlas = a_snapshot().trees[0].clone();
+        let both = vec![grove, atlas];
+
+        snapshot::refilter(
+            &Snapshot {
+                collected: both,
+                ..a_snapshot_of(Vec::new())
+            },
+            Filter::LiveAgents,
+        )
+    }
+
+    #[test]
+    fn dropping_the_filter_keeps_the_cursor_on_its_bead() {
+        let mut shown = shown(a_hidden_grove_above_a_shown_tree());
+        let was = shown.forest.selected_line();
+
+        assert_eq!(shown.forest.selected(), Some(&bead("atlas", "a-1")));
+
+        assert!(shown.apply(Action::ToggleFilter));
+
+        assert_eq!(shown.forest.snapshot().filter, Filter::All);
+        assert_eq!(shown.forest.selected(), Some(&bead("atlas", "a-1")));
+        assert_ne!(
+            shown.forest.selected_line(),
+            was,
+            "the grove came back above it"
+        );
+    }
+
+    #[test]
+    fn a_refresh_that_changes_nothing_keeps_the_folds_set_by_hand() {
+        let grove = a_grove(6);
+        let mut shown = shown(grove.clone());
+        shown.apply(Action::ToggleFold);
+        let folded = forest_band(&mut shown, 60, 24);
+
+        shown.collected(grove);
+
+        assert_eq!(forest_band(&mut shown, 60, 24), folded);
     }
 
     #[test]
