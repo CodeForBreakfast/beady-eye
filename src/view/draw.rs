@@ -98,10 +98,10 @@ fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
 /// A line that is one sentence and nothing else.
 fn sentence(prefix: &str, said: String, colour: Color) -> Fitted {
     Fitted::new(
-        vec![Span::styled(
-            format!("{prefix}{said}"),
-            Style::new().fg(colour),
-        )],
+        vec![
+            Span::raw(prefix.to_string()),
+            Span::styled(said, Style::new().fg(colour)),
+        ],
         Vec::new(),
         Vec::new(),
     )
@@ -140,10 +140,10 @@ fn group_line(prefix: &str, group: Group) -> Fitted {
     };
 
     Fitted::new(
-        vec![Span::styled(
-            format!("{prefix}{said}"),
-            Style::new().fg(colour),
-        )],
+        vec![
+            Span::raw(prefix.to_string()),
+            Span::styled(said, Style::new().fg(colour)),
+        ],
         Vec::new(),
         state,
     )
@@ -621,7 +621,7 @@ mod tests {
     use crate::collect::herdr::PaneStatus;
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{AgentRef, Badged, JoinSource};
-    use crate::model::snapshot::{Filter, Node, Snapshot, TrackerFailure};
+    use crate::model::snapshot::{FailedProject, Filter, Node, Snapshot, TrackerFailure};
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
     use chrono::{TimeZone, Utc};
@@ -641,6 +641,40 @@ mod tests {
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
             .collect()
+    }
+
+    /// One row of what a widget puts on screen, in runs of a single
+    /// foreground colour. `drawn` reads symbols only and cannot see a colour
+    /// at all, so a test about which spans a colour reaches asks here.
+    fn painted<W: Widget>(widget: W, width: u16) -> Vec<(String, Color)> {
+        let mut terminal = Terminal::new(TestBackend::new(width, 1)).expect("a test backend");
+        terminal
+            .draw(|frame| frame.render_widget(widget, frame.area()))
+            .expect("a draw into memory");
+        let buffer = terminal.backend().buffer();
+
+        let mut runs: Vec<(String, Color)> = Vec::new();
+        for x in 0..width {
+            let cell = &buffer[(x, 0)];
+            match runs.last_mut() {
+                Some((said, colour)) if *colour == cell.fg => said.push_str(cell.symbol()),
+                _ => runs.push((cell.symbol().to_string(), cell.fg)),
+            }
+        }
+        runs
+    }
+
+    /// One forest line, behind the box-drawing a flatten would have put in
+    /// front of it.
+    fn under(prefix: &str, content: Content) -> forest::Line {
+        forest::Line {
+            prefix: prefix.into(),
+            depth: 1,
+            last_child: false,
+            folded: None,
+            bead: None,
+            content,
+        }
     }
 
     fn counts(closed: usize, total: usize, live_agents: usize, anomalies: usize) -> Counts {
@@ -1203,6 +1237,61 @@ mod tests {
                 kind != GroupKind::HiddenTrees,
                 "{kind:?}: {drawn:?}"
             );
+        }
+    }
+
+    /// A reader follows the vertical rules down a tree. A sentence that took
+    /// its box-drawing into its own colour would break that run wherever it
+    /// fell, so the drawing stays in the terminal's own foreground and only
+    /// the words beside it are coloured.
+    #[test]
+    fn an_elided_run_leaves_its_box_drawing_in_the_terminals_own_colour() {
+        let painted = painted(fitted(&under(BRANCH, Content::Elided { count: 3 }), 0), 72);
+
+        assert_eq!(painted[0], (BRANCH.to_string(), Color::Reset));
+        assert_eq!(painted[1].1, Color::DarkGray);
+    }
+
+    #[test]
+    fn a_note_leaves_its_box_drawing_in_the_terminals_own_colour() {
+        let painted = painted(
+            fitted(&under(LAST, Content::Note(Note::Dangling(2))), 0),
+            96,
+        );
+
+        assert_eq!(painted[0], (LAST.to_string(), Color::Reset));
+        assert_eq!(painted[1].1, LOOK_AT_THIS);
+    }
+
+    /// The failed and conflicted items in the bottom groups get their
+    /// box-drawing the same way a bead does, so they are tree drawing too.
+    #[test]
+    fn a_failed_project_leaves_its_box_drawing_in_the_terminals_own_colour() {
+        let failed = Item::Failed(FailedProject {
+            project: "summit-works".into(),
+            tracker: TrackerFailure::Auth,
+        });
+        let painted = painted(item_line(LAST, &failed), 96);
+
+        assert_eq!(painted[0], (LAST.to_string(), Color::Reset));
+        assert_eq!(painted[1].1, LOOK_AT_THIS);
+    }
+
+    /// The fold arrow is a control rather than a word, and every group has
+    /// one. Drawn in the terminal's own foreground the column of arrows reads
+    /// as the one control it is, whatever the group beside each says.
+    #[test]
+    fn a_groups_fold_arrow_is_drawn_in_the_terminals_own_colour() {
+        for kind in GroupKind::ALL {
+            let group = Group {
+                kind,
+                count: 2,
+                with_findings: 0,
+            };
+            let painted = painted(group_line(SHUT, group), 80);
+
+            assert_eq!(painted[0].1, Color::Reset, "{kind:?}: {painted:?}");
+            assert!(painted[0].0.starts_with(SHUT), "{kind:?}: {painted:?}");
         }
     }
 
