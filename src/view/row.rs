@@ -15,12 +15,26 @@ pub const AGENT: char = '◍';
 /// Something the reader should look at.
 pub const WARNING: char = '⚠';
 
+/// How much of what a line stands for is done, closed beads over all of them.
+///
+/// Counted over the whole subtree with the line's own bead among them, which
+/// is the count a root already carries for a tree: one rule at every depth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub closed: usize,
+    pub total: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub glyph: char,
     pub id: String,
     pub title: String,
     pub badges: Vec<String>,
+    /// How far along what hangs off this bead is, where anything does. A leaf
+    /// stands for itself alone, so a fraction over it would only repeat the
+    /// glyph.
+    pub progress: Option<Progress>,
     pub agent: Option<String>,
     pub anomalies: Option<String>,
     /// What is true of this bead beyond its own fields: a subtree the tracker
@@ -28,7 +42,7 @@ pub struct Row {
     pub notes: Vec<String>,
 }
 
-pub fn cells(node: &Node, root: &str) -> Row {
+pub fn cells(node: &Node, root: &str, progress: Option<Progress>) -> Row {
     let mut notes = Vec::new();
     if node.truncated {
         notes.push(phrase::truncated().to_string());
@@ -40,6 +54,7 @@ pub fn cells(node: &Node, root: &str) -> Row {
         id: abbreviate(&node.id, root).to_string(),
         title: node.title.clone(),
         badges: node.badges.iter().map(|b| b.text.clone()).collect(),
+        progress,
         agent: node.agent.as_ref().map(agent_marker),
         anomalies: anomaly_marker(&node.anomalies),
         notes,
@@ -166,8 +181,8 @@ mod tests {
         staffed.agent = Some(agent(JoinSource::AgentPane));
 
         assert_eq!(
-            cells(&staffed, ROOT).glyph,
-            cells(&node("nix-9670s.20", Status::InProgress), ROOT).glyph
+            cells(&staffed, ROOT, None).glyph,
+            cells(&node("nix-9670s.20", Status::InProgress), ROOT, None).glyph
         );
     }
 
@@ -216,7 +231,7 @@ mod tests {
 
     #[test]
     fn a_bead_with_nothing_wrong_carries_no_marker_at_all() {
-        let row = cells(&node("nix-9670s.20", Status::Open), ROOT);
+        let row = cells(&node("nix-9670s.20", Status::Open), ROOT, None);
 
         assert_eq!(row.anomalies, None);
         assert_eq!(row.agent, None);
@@ -230,13 +245,13 @@ mod tests {
         let mut stopped = node("nix-9670s.20", Status::Open);
         stopped.truncated = true;
 
-        assert_eq!(cells(&stopped, ROOT).notes, vec![phrase::truncated()]);
+        assert_eq!(cells(&stopped, ROOT, None).notes, vec![phrase::truncated()]);
     }
 
     #[test]
     fn a_status_outside_bds_own_set_leaves_the_word_bd_used_on_the_row() {
         let odd = node("nix-9670s.20", Status::Other("triage".into()));
-        let row = cells(&odd, ROOT);
+        let row = cells(&odd, ROOT, None);
 
         assert_eq!(row.glyph, '?');
         assert!(
@@ -259,12 +274,15 @@ mod tests {
             },
         ];
 
-        assert_eq!(cells(&badged, ROOT).badges, vec!["⇢ #12", "⏸ waiting"]);
+        assert_eq!(
+            cells(&badged, ROOT, None).badges,
+            vec!["⇢ #12", "⏸ waiting"]
+        );
     }
 
     #[test]
     fn a_row_says_what_the_bead_says() {
-        let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT);
+        let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT, None);
 
         assert_eq!(row.glyph, '◐');
         assert_eq!(row.id, ".20");

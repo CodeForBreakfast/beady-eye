@@ -378,11 +378,17 @@ pub fn header(head: &Header, prefix: &str) -> Fitted {
     Fitted::new(identity, vec![Span::raw(tree.title.clone())], state)
 }
 
+/// How far along something is. A tree and one epic inside it ask the same
+/// question of different scopes, so they answer it in the same words.
+fn done(closed: usize, total: usize) -> String {
+    format!("{closed}/{total}")
+}
+
 /// How much of a tree is done, who is on it, and how much of it wants looking
 /// at. A count that is zero is left out rather than drawn as a zero: a row of
 /// noughts reads as something to check.
 fn summary(counts: &Counts) -> Vec<Span<'static>> {
-    let mut said = vec![Span::raw(format!("{}/{}", counts.closed, counts.total))];
+    let mut said = vec![Span::raw(done(counts.closed, counts.total))];
     if counts.live_agents > 0 {
         let agent = if counts.live_agents == 1 {
             "agent"
@@ -462,6 +468,9 @@ pub fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
         }
         state.push(Span::styled(text.to_string(), Style::new().fg(colour)));
     };
+    if let Some(progress) = row.progress {
+        say(&done(progress.closed, progress.total), Color::Reset);
+    }
     if let Some(agent) = &row.agent {
         say(agent, LIVE);
     }
@@ -875,7 +884,7 @@ mod tests {
     }
 
     fn row(node: &Node) -> Row {
-        row::cells(node, "nix-9670s")
+        row::cells(node, "nix-9670s", None)
     }
 
     // ---- the header ------------------------------------------------------
@@ -1145,6 +1154,50 @@ mod tests {
             drawn(bead_line(&row(&node), BRANCH, 4), 46, 1),
             vec!["  ├── ◐ .20   wallpaper timer calls dms       "]
         );
+    }
+
+    /// An epic reads like the root above it: how far along, then who is on
+    /// it, then what wants looking at. The count leads the state column
+    /// because that is the order a header already puts them in.
+    #[test]
+    fn a_bead_standing_for_a_subtree_says_how_much_of_it_is_done_before_who_is_on_it() {
+        let mut epic = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        epic.progress = Some(row::Progress {
+            closed: 3,
+            total: 8,
+        });
+        epic.agent = Some(row::agent_marker(&AgentRef {
+            pane: "wCM:p9".into(),
+            pane_status: PaneStatus::Working,
+            title: None,
+            source: JoinSource::AgentPane,
+        }));
+
+        let drawn = drawn(bead_line(&epic, BRANCH, 3), 60, 1);
+
+        let count = drawn[0].find("3/8").expect("the count is drawn");
+        let agent = drawn[0].find("wCM:p9").expect("the agent is drawn");
+        assert!(count < agent, "{drawn:?}");
+    }
+
+    /// A leaf stands for itself alone. A fraction over one bead would say
+    /// nothing its glyph has not already said, and would spend width a title
+    /// needs.
+    #[test]
+    fn a_bead_standing_only_for_itself_draws_no_count() {
+        let leaf = row(&node(
+            "nix-9670s.20",
+            "wallpaper timer calls dms",
+            Status::Open,
+        ));
+
+        let drawn = drawn(bead_line(&leaf, BRANCH, 4), 60, 1);
+
+        assert!(!drawn[0].contains('/'), "{drawn:?}");
     }
 
     /// Ids are padded to the widest in the tree so the titles start together;

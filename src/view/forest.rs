@@ -7,7 +7,7 @@ use crate::model::snapshot::{
     self, FailedProject, Filter, HiddenTree, LoosePane, Node, Snapshot, TrackerState, Tree,
 };
 use crate::model::types::Status;
-use crate::view::row::{self, Row};
+use crate::view::row::{self, Progress, Row};
 use crate::view::{Action, Motion};
 
 /// How far a half-screen motion moves until the renderer says otherwise.
@@ -672,7 +672,11 @@ impl Forest {
                         last_child: last,
                         folded: (!kids.is_empty()).then_some(open),
                         bead: Some(key),
-                        content: Content::Bead(row::cells(node, &tree.root)),
+                        content: Content::Bead(row::cells(
+                            node,
+                            &tree.root,
+                            progress_of(tree, children, at),
+                        )),
                     });
                     if open {
                         trunk.push(!last);
@@ -833,6 +837,33 @@ fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, Vec<us
         .filter(|kid| !quiet.contains(kid))
         .collect();
     (drawn, quiet)
+}
+
+/// How far along the subtree at `at` is, where it is more than the one bead.
+///
+/// A leaf gets nothing: it stands for itself alone, and a fraction over one
+/// bead would only say again what its glyph says. Everything else is counted
+/// with its own bead among the total, which is the rule a root's counts
+/// already follow.
+fn progress_of(tree: &Tree, children: &[Vec<usize>], at: usize) -> Option<Progress> {
+    if children[at].is_empty() {
+        return None;
+    }
+
+    let mut counted = Progress {
+        closed: 0,
+        total: 0,
+    };
+    let mut walking = vec![at];
+    while let Some(node) = walking.pop() {
+        counted.total += 1;
+        if tree.nodes[node].status.is_closed() {
+            counted.closed += 1;
+        }
+        walking.extend(children[node].iter().copied());
+    }
+
+    Some(counted)
 }
 
 /// What a run stands for: its own beads and everything beneath them.
@@ -1056,6 +1087,19 @@ credential_command = "secret harbour"
         }
     }
 
+    /// The drawn row for one bead, found by the whole id its line carries
+    /// rather than the abbreviated one it shows.
+    fn row_of<'a>(forest: &'a Forest, id: &str) -> &'a Row {
+        forest
+            .lines()
+            .iter()
+            .find_map(|line| match (&line.bead, &line.content) {
+                (Some(bead), Content::Bead(row)) if bead.id == id => Some(row),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{id} is not drawn"))
+    }
+
     fn key(project: &str, id: &str) -> BeadKey {
         BeadKey {
             project: project.into(),
@@ -1253,6 +1297,36 @@ credential_command = "secret harbour"
         forest.apply(Action::CollapseOrParent);
 
         assert_eq!(sketch(&forest), was);
+    }
+
+    /// A line that stands for more than itself says how much of that is done,
+    /// which is the question a root's `35/51` answers — asked here one level
+    /// down. `orb-7.1` is open and holds two open children, so its subtree is
+    /// three beads with none of them closed.
+    ///
+    /// Counted including the bead's own line, because that is what a root
+    /// already does: `snapshot` sets `total` to `nodes.len()`, and the root is
+    /// one of those nodes. One rule at every depth.
+    #[test]
+    fn a_bead_with_children_says_how_much_of_its_own_subtree_is_done() {
+        let forest = flatten(&snapshot());
+
+        assert_eq!(
+            row_of(&forest, "orb-7.1").progress,
+            Some(Progress {
+                closed: 0,
+                total: 3
+            })
+        );
+    }
+
+    /// A leaf stands for itself alone, so there is nothing to be part-way
+    /// through and a fraction over one bead would only repeat its glyph.
+    #[test]
+    fn a_bead_with_no_children_has_no_progress_to_report() {
+        let forest = flatten(&snapshot());
+
+        assert_eq!(row_of(&forest, "orb-7.1.1").progress, None);
     }
 
     /// A run is drawn with one status glyph standing for every bead it hides,
