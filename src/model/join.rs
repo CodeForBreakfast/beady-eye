@@ -84,13 +84,14 @@ pub struct Joined {
     pub conflicts: Vec<Conflict>,
 }
 
-/// The configured project a path sits in: the longest configured path that
-/// contains it. `None` when no configured project does.
+/// The project a path sits in: the one whose deepest working tree contains
+/// it. `None` when no project's does.
 pub fn project_of<'a>(path: &Path, projects: &'a [Project]) -> Option<&'a Project> {
     projects
         .iter()
-        .filter(|p| path.starts_with(&p.path))
-        .max_by_key(|p| p.path.components().count())
+        .filter_map(|p| Some((p.holds(path)?, p)))
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, project)| project)
 }
 
 /// Join live panes onto beads, scoped to each pane's own project.
@@ -321,6 +322,14 @@ mod tests {
             name: name.to_string(),
             path: path.into(),
             credential_command: None,
+            worktrees: Vec::new(),
+        }
+    }
+
+    fn project_working_in(name: &str, path: &str, worktrees: &[&str]) -> Project {
+        Project {
+            worktrees: worktrees.iter().map(Into::into).collect(),
+            ..project(name, path)
         }
     }
 
@@ -577,6 +586,38 @@ mod tests {
             Some("outer")
         );
         assert_eq!(project_of(Path::new("/home/user"), &cfg), None);
+    }
+
+    /// One worktree per seat puts the panes in sibling worktrees, under
+    /// neither each other nor the checkout bdi was run from.
+    #[test]
+    fn a_pane_in_another_worktree_of_the_repository_is_in_the_project() {
+        let cfg = vec![project_working_in(
+            "proj",
+            "/home/user/proj",
+            &["/home/user/proj", "/tmp/seat-a/wt"],
+        )];
+
+        assert_eq!(
+            project_of(Path::new("/tmp/seat-a/wt/src"), &cfg).map(|p| p.name.as_str()),
+            Some("proj")
+        );
+        assert_eq!(project_of(Path::new("/tmp/seat-b/wt"), &cfg), None);
+    }
+
+    /// A worktree is territory like any other, so the deepest directory
+    /// containing the pane still wins the paths two projects share.
+    #[test]
+    fn a_worktree_deeper_than_another_projects_path_wins_the_pane() {
+        let cfg = vec![
+            project("outer", "/home/user/dev"),
+            project_working_in("inner", "/srv/inner", &["/home/user/dev/wt"]),
+        ];
+
+        assert_eq!(
+            project_of(Path::new("/home/user/dev/wt/src"), &cfg).map(|p| p.name.as_str()),
+            Some("inner")
+        );
     }
 
     /// A sibling directory sharing a textual prefix is a different project.

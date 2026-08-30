@@ -25,9 +25,11 @@
           cargoLock.lockFile = ./Cargo.lock;
 
           # tests/no_config.rs runs the binary as a fresh machine would, and
-          # bdi asks bd where the tracker is. Only the check phase needs it;
-          # nothing at runtime is built against bd.
-          nativeCheckInputs = [ beads.packages.${system}.bd ];
+          # bdi asks bd where the tracker is. The worktree-listing test builds
+          # a repository and adds a worktree to it, so git has to be here too.
+          # Only the check phase needs either; nothing at runtime is built
+          # against them.
+          nativeCheckInputs = [ beads.packages.${system}.bd pkgs.git ];
 
           # The package is named for the crate, the binary for the command.
           meta.mainProgram = "bdi";

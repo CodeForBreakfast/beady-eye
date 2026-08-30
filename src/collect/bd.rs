@@ -545,6 +545,7 @@ mod tests {
             name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
+            worktrees: Vec::new(),
         };
 
         let env = credential_env(&runner, &project, Some("the-launching-shells-password")).unwrap();
@@ -572,6 +573,7 @@ mod tests {
             name: "beacon".to_string(),
             path: project_dir(),
             credential_command: None,
+            worktrees: Vec::new(),
         };
 
         let env = credential_env(&runner, &project, Some("hunter2")).unwrap();
@@ -592,6 +594,7 @@ mod tests {
             name: "beacon".to_string(),
             path: project_dir(),
             credential_command: None,
+            worktrees: Vec::new(),
         };
 
         assert_eq!(credential_env(&runner, &project, None).unwrap(), Env::new());
@@ -607,6 +610,7 @@ mod tests {
             name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
+            worktrees: Vec::new(),
         };
 
         assert_eq!(
