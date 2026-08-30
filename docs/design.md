@@ -252,19 +252,45 @@ bd found homelab's config — it knew the database and the user — and had no
 password for it. **This is a credential boundary, not a policy one**, and it is
 the single biggest constraint on the multi-project view.
 
-Two ways out, and the design does not have to pick now:
+### v1 takes the per-project credential set
 
-- **`direnv exec <project-root> bd …`** per project, so each query runs in the
-  environment that owns its credential. Costs a direnv evaluation per project per
-  refresh, which caching makes tolerable. Untested — verifying it needs a seat
-  with reach into a second project.
-- **A credential set given to `bdi` directly**, one entry per project in its own
-  config. Simpler and faster; a second place secrets live, which is a real cost.
+Confirmed with homelab, who own the Dolt servers: **no cross-project reader
+exists today.** The one read-only user on the server, `assistant-ro`, is scoped
+to `assistant.*` alone. So v1 gives `bdi` its own config holding one credential
+per project it may read.
 
-Either way, **a tracker that cannot be reached must degrade, not disappear**: the
-effort renders as a header with its live panes and a `tracker unreachable`
-marker. An effort shown without its tree beats an effort silently missing — the
-same principle as the default filter.
+### A `fleet-ro` user is the clean follow-up, and its shape is already measured
+
+Homelab measured this on the current server generation (Dolt 2.1.11) with a
+throwaway SELECT-only user against the `homelab` database:
+
+- reads reached the base tables **and the `ready_issues` view** — that view
+  carries no `DEFINER` clause, so it resolves with the invoker's privileges
+- `CREATE TABLE`, `INSERT`, `UPDATE` and `DELETE` were each refused
+
+The view result is the one that matters for a bead-graph TUI, and it is a
+measurement rather than an assumption. A multi-database reader is therefore
+`GRANT SELECT ON <db>.*` repeated per tenant against one user — a proven shape,
+not new design.
+
+It is not v1's problem, for a reason that is not technical: reading another
+project's tracker needs that project's consent, which is Graeme's call to make
+and not something to assume into a design.
+
+### Degradation is the rule either way
+
+**A tracker that cannot be reached must degrade, not disappear**: the effort
+renders as a header with its live panes and a `tracker unreachable` marker. An
+effort shown without its tree beats an effort silently missing — the same
+principle as the default filter.
+
+### Bead prefix
+
+`bdi`, confirmed clear of homelab's `hl`. Homelab cannot enumerate other
+projects' prefixes — each tracker's config is its own — and `beady-eye` reads
+several trackers in one process, so a collision matters here in a way it does
+not for a single-tracker project. Confirm per project before relying on a prefix
+to identify a tracker; do not treat the id as the key.
 
 ## The JSON contract
 
@@ -356,6 +382,17 @@ bd update <id> --set-metadata herdr_pane=$HERDR_PANE_ID
 ```
 
 Nothing else changes. `beady-eye` works without it, less precisely.
+
+## Alternatives considered
+
+**`bv` (beads_viewer)** — a mature Go TUI for beads with a list/detail split, a
+kanban board, a dependency graph view and PageRank/critical-path insights. It
+reads `.beads/issues.jsonl`, which `bd` only writes on an explicit
+`bd export` (auto-export is off by default and throttled to 60s when on). So it
+renders a snapshot of whenever the last export ran. A tool whose question is
+"what is being worked on right now" cannot be built on that, which is why
+beady-eye reads `bd` live instead. `bv` remains the better bead *browser*; this
+is not one.
 
 ## Risks
 

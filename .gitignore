@@ -1,0 +1,11 @@
+# rust
+/target/
+
+# nix
+result
+result-*
+.direnv/
+
+# beads: credentials never leave the machine
+.env.local
+.beads-credential-key
