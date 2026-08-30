@@ -802,6 +802,28 @@ mod tests {
         }
     }
 
+    /// The two smallest screens that still show something, pinned so the rule
+    /// that produces them cannot be simplified into one that does not.
+    #[test]
+    fn the_smallest_screens_spend_their_rows_on_the_forest_first() {
+        assert_eq!(
+            regions(Rect::new(0, 0, 80, 2)),
+            Regions {
+                forest: Rect::new(0, 0, 80, 1),
+                tail: Rect::new(0, 1, 80, 0),
+                keys: Rect::new(0, 1, 80, 1),
+            }
+        );
+        assert_eq!(
+            regions(Rect::new(0, 0, 80, 1)),
+            Regions {
+                forest: Rect::new(0, 0, 80, 1),
+                tail: Rect::new(0, 1, 80, 0),
+                keys: Rect::new(0, 1, 80, 0),
+            }
+        );
+    }
+
     /// The three bands are the screen: a gap between them would draw whatever
     /// the last frame left there, and an overlap would draw two things at once.
     #[test]
