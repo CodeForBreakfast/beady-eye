@@ -92,9 +92,10 @@ pub struct Header {
     pub panes_complete: bool,
 }
 
-/// A finding about a tree rather than about any bead in it.
+/// A finding about a tree rather than about any bead in it, or about the
+/// forest rather than about any tree in it.
 ///
-/// Each of these says what was in a tree the tracker answered for. A tracker
+/// The first three say what was in a tree the tracker answered for. A tracker
 /// that did not answer is a property of the tree instead, carried on the
 /// header, because a child line explaining why a tree has no children is
 /// backwards.
@@ -107,6 +108,10 @@ pub enum Note {
     Dangling(usize),
     Unreachable(usize),
     Truncated(usize),
+    /// Every tracker answered and none of them had a root to draw, so the
+    /// forest is empty. Under no tree, because there is none: it is the only
+    /// line on the screen.
+    NoRoots,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

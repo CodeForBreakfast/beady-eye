@@ -211,6 +211,16 @@ pub fn unreachable(count: usize) -> String {
     format!("{count} {bead} hanging off the root · a parent chain that loops")
 }
 
+/// Why the whole forest is empty. `bd` is asked for unfinished work and
+/// every root is climbed from what it names, so nothing unfinished anywhere
+/// is the only thing that leaves no root to draw — a tracker that refused is
+/// a failed project or an unreadable tree, and either draws a line of its
+/// own. The clause after the separator is the point: it says the trackers
+/// answered, which is what a reader must not mistake a blank screen for.
+pub fn no_roots() -> &'static str {
+    "no unfinished work anywhere · every tracker answered, and none of them had a root to draw"
+}
+
 /// Why the tail is showing no pane, where the selection points at none.
 ///
 /// The band under the forest is reserved whether or not there is a pane to

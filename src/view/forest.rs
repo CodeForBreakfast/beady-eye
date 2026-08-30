@@ -512,6 +512,11 @@ impl Forest {
             self.draw_tree(tree, panes, &mut lines);
         }
         self.draw_groups(&loose, &mut lines);
+        // Asked of the drawn lines rather than of the snapshot's fields, so
+        // a later kind of line cannot be left out of the question.
+        if lines.is_empty() {
+            lines.push(nothing_to_draw());
+        }
         lines
     }
 
@@ -703,6 +708,19 @@ impl Forest {
                 });
             }
         }
+    }
+}
+
+/// The one line of a forest with nothing in it. Under no tree and in no
+/// group, because there is neither: it stands for the whole screen.
+fn nothing_to_draw() -> Line {
+    Line {
+        prefix: String::new(),
+        depth: 0,
+        last_child: false,
+        folded: None,
+        bead: None,
+        content: Content::Note(Note::NoRoots),
     }
 }
 
@@ -2722,9 +2740,16 @@ credential_command = "secret harbour"
         let mut found = Reported::default();
         for line in forest.lines() {
             match &line.content {
-                Content::Note(Note::Dangling(n)) => found.dangling += n,
-                Content::Note(Note::Unreachable(n)) => found.unreachable += n,
-                Content::Note(Note::Truncated(n)) => found.truncated += n,
+                // Matched variant by variant so a note added later has to
+                // be decided here rather than fall through as nothing.
+                Content::Note(note) => match note {
+                    Note::Dangling(n) => found.dangling += n,
+                    Note::Unreachable(n) => found.unreachable += n,
+                    Note::Truncated(n) => found.truncated += n,
+                    // A property of the drawing rather than a finding in the
+                    // snapshot, so there is no count for it to reach.
+                    Note::NoRoots => {}
+                },
                 Content::Tree(header) => found.loose_panes += header.panes.len(),
                 Content::Group(Group { kind, count, .. }) => match kind {
                     GroupKind::Conflicts => found.conflicts += count,
@@ -2737,5 +2762,129 @@ credential_command = "secret harbour"
             }
         }
         found
+    }
+
+    // ---- a forest with nothing in it --------------------------------------
+
+    /// A pane working in a configured project, with no tracker answering for
+    /// it, so it reaches the forest as a loose one.
+    const WORKING_IN_ORBITAL: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"}
+    ]}}"#;
+
+    /// A pane working in a directory no configured project covers.
+    const WORKING_NOWHERE: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:pF","cwd":"/srv/spike","agent_status":"idle"}
+    ]}}"#;
+
+    fn one_pane(json: &str) -> Vec<Pane> {
+        parse_agent_list(json).expect("the panes parse")
+    }
+
+    /// A snapshot built out of exactly what it is handed, with no other
+    /// project's trees or panes standing behind it.
+    ///
+    /// Everything the forest draws a line from arrives through one of these:
+    /// the trees and failed projects `Collected` carries, and the panes a
+    /// join resolves. Handed one of them alone the forest draws that one
+    /// thing, which is what it takes to ask whether anything else is quietly
+    /// supplying a line.
+    fn only(collected: Collected, panes: &[Pane]) -> Snapshot {
+        let cfg = cfg();
+        let joined = join::resolve(&[], panes, &cfg.projects, &cfg.join);
+        snapshot::build(
+            collected,
+            panes,
+            &joined,
+            &cfg,
+            HerdrState::Ok,
+            Filter::LiveAgents,
+            now(),
+        )
+    }
+
+    fn says_it_holds_nothing(forest: &Forest) -> bool {
+        forest
+            .lines()
+            .iter()
+            .any(|line| matches!(line.content, Content::Note(Note::NoRoots)))
+    }
+
+    /// Every tracker answered and none of them had a root. The screen has to
+    /// carry the reason, because a pane drawn blank reads as a crash.
+    #[test]
+    fn a_forest_with_nothing_in_it_says_so_rather_than_drawing_nothing() {
+        let forest = flatten(&only(Collected::default(), &[]));
+
+        assert_eq!(sketch(&forest), vec!["! NoRoots"]);
+    }
+
+    /// Everything that can stand alone in a forest. A conflict is not among
+    /// them: a pane can only conflict over a bead a tracker answered for, so
+    /// it never arrives without the tree that bead is in.
+    #[test]
+    fn a_forest_holding_any_one_thing_does_not_say_it_holds_nothing() {
+        let cases = [
+            (
+                "a tree",
+                only(
+                    Collected {
+                        trees: vec![tree_of("orbital", ORBITAL)],
+                        failed_projects: Vec::new(),
+                    },
+                    &[],
+                ),
+            ),
+            (
+                "a hidden tree",
+                only(
+                    Collected {
+                        trees: vec![tree_of("harbour", HARBOUR)],
+                        failed_projects: Vec::new(),
+                    },
+                    &[],
+                ),
+            ),
+            (
+                "a failed project",
+                only(
+                    Collected {
+                        trees: Vec::new(),
+                        failed_projects: vec![FailedProject {
+                            project: "lunar".into(),
+                            tracker: TrackerFailure::Exec,
+                        }],
+                    },
+                    &[],
+                ),
+            ),
+            (
+                "a loose pane",
+                only(Collected::default(), &one_pane(WORKING_IN_ORBITAL)),
+            ),
+            (
+                "an unconfigured pane",
+                only(Collected::default(), &one_pane(WORKING_NOWHERE)),
+            ),
+        ];
+
+        for (held, snapshot) in cases {
+            let forest = flatten(&snapshot);
+
+            assert!(
+                !forest.lines().is_empty(),
+                "a forest holding {held} drew nothing at all"
+            );
+            assert!(
+                !says_it_holds_nothing(&forest),
+                "a forest holding {held} said it holds nothing: {:?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    #[test]
+    fn a_forest_holding_trees_and_every_group_does_not_say_it_holds_nothing() {
+        assert!(!says_it_holds_nothing(&flatten(&snapshot())));
     }
 }

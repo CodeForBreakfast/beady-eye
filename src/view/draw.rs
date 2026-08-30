@@ -123,7 +123,10 @@ fn fitted(line: &lines::Line, id_width: usize) -> Fitted {
         Content::Tree(head) => header(head, &line.prefix),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
-        Content::Note(note) => sentence(&line.prefix, finding(*note), LOOK_AT_THIS),
+        Content::Note(note) => {
+            let (said, colour) = finding(*note);
+            sentence(&line.prefix, said, colour)
+        }
         Content::Group(group) => group_line(&line.prefix, *group),
         Content::Item(item) => item_line(&line.prefix, item),
     }
@@ -163,14 +166,20 @@ fn sentence(prefix: &str, said: String, colour: Color) -> Fitted {
     )
 }
 
-/// A finding about the tree above, in `bdi`'s words for it.
-fn finding(note: Note) -> String {
+/// A finding about the tree above, in `bdi`'s words for it, and the colour
+/// it is said in.
+///
+/// An empty forest is the one note nothing went wrong in — the trackers
+/// answered and there was no work — so it alone is drawn plain, the way
+/// `group_line` draws the hidden trees.
+fn finding(note: Note) -> (String, Color) {
     let said = match note {
         Note::Dangling(count) => phrase::dangling(count),
         Note::Unreachable(count) => phrase::unreachable(count),
         Note::Truncated(count) => phrase::truncated_nodes(count),
+        Note::NoRoots => return (phrase::no_roots().to_string(), Color::Reset),
     };
-    format!("{WARNING} {said}")
+    (format!("{WARNING} {said}"), LOOK_AT_THIS)
 }
 
 /// One of the groups below the trees. The hidden trees are the only group
@@ -1772,6 +1781,18 @@ mod tests {
         assert_eq!(painted[1].1, LOOK_AT_THIS);
     }
 
+    /// Every other note is a fault and wears a warning. Nothing went wrong in
+    /// a forest with no work left in it, and a warning over that reads as one
+    /// — so it is drawn plain, in one colour the whole way across.
+    #[test]
+    fn the_line_for_an_empty_forest_is_drawn_in_the_terminals_own_colour() {
+        let painted = painted(fitted(&under("", Content::Note(Note::NoRoots)), 0), 96);
+
+        assert_eq!(painted.len(), 1, "{painted:?}");
+        assert_eq!(painted[0].1, Color::Reset);
+        assert!(!painted[0].0.contains(WARNING), "{painted:?}");
+    }
+
     /// The failed and conflicted items in the bottom groups get their
     /// box-drawing the same way a bead does, so they are tree drawing too.
     #[test]
@@ -1983,6 +2004,19 @@ mod tests {
         assert_eq!(
             frame_of(&forest, 75, 4)[0],
             "▸ summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
+        );
+    }
+
+    /// A forest with nothing in it says why, where a blank pane would have
+    /// read as a crash. The sentence is the whole of it: it names no tree,
+    /// because there is none to name.
+    #[test]
+    fn a_forest_with_nothing_in_it_draws_its_reason_where_the_trees_would_be() {
+        let forest = flatten(&snapshot(Vec::new(), Vec::new(), HerdrState::Ok));
+
+        assert_eq!(
+            frame_of(&forest, 90, 4)[0].trim_end(),
+            "no unfinished work anywhere · every tracker answered, and none of them had a root to draw"
         );
     }
 
