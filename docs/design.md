@@ -538,13 +538,13 @@ would select something the reader did not point at.
 with a cost.** While `bdi` is up the terminal stops getting the mouse, so
 dragging over the window no longer selects text in it — a real loss in a tool
 whose job is showing bead ids and pane ids you then want to paste. It is taken
-anyway, because in the terminal this is read in the loss is smaller than it
-looks: herdr owns the mouse above the pane and keeps its copy mode, which
-selects by keyboard, and kitty keeps its shift-drag, which bypasses whatever the
-application grabbed. What is actually given up is drag-selection inside one
-pane. There is no setting for it: a flag would put the question to every reader
-when it has one answer here, and the answer is a property of the terminal rather
-than of the reader's taste.
+anyway, because the stack this is read in gives most of it straight back: herdr
+owns the mouse above the pane and keeps its copy mode, which selects by
+keyboard, and kitty maps shift-drag to plain text selection even while an
+application has grabbed the mouse. What is actually given up is drag-selection
+inside one pane. There is no setting for it: a flag would put the question to
+every reader when it has one answer here, and the answer is a property of the
+terminal rather than of the reader's taste.
 
 Of everything capture then reports, only those two gestures are answered.
 crossterm asks the terminal for any-event tracking, so it reports every cell the
