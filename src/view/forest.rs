@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
-    self, FailedProject, Filter, HiddenTree, LoosePane, Node, Snapshot, TrackerFailure,
-    TrackerState, Tree,
+    self, FailedProject, Filter, HiddenTree, LoosePane, Node, Snapshot, TrackerState, Tree,
 };
 use crate::view::row::{self, Row};
 use crate::view::{Action, Motion};
@@ -81,12 +80,16 @@ pub struct Header {
 
 /// A finding about a tree rather than about any bead in it.
 ///
+/// Each of these says what was in a tree the tracker answered for. A tracker
+/// that did not answer is a property of the tree instead, carried on the
+/// header, because a child line explaining why a tree has no children is
+/// backwards.
+///
 /// Drawn under the header whether the tree is folded or not: folding is where
 /// a finding is easiest to lose, and losing one is the silent partial answer
 /// this tool exists to avoid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
-    TrackerUnreachable(TrackerFailure),
     Dangling(usize),
     Unreachable(usize),
     Truncated(usize),
@@ -657,9 +660,6 @@ fn prefix(trunk: &[bool], last: bool, shut: bool) -> String {
 
 fn notes_of(tree: &Tree) -> Vec<Note> {
     let mut notes = Vec::new();
-    if let TrackerState::Unreachable(failure) = tree.tracker {
-        notes.push(Note::TrackerUnreachable(failure));
-    }
     if !tree.dangling.is_empty() {
         notes.push(Note::Dangling(tree.dangling.len()));
     }
@@ -736,7 +736,7 @@ mod tests {
     use crate::collect::herdr::{parse_agent_list, Pane};
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
-    use crate::model::snapshot::{build_tree, Collected, HerdrState, Readiness};
+    use crate::model::snapshot::{build_tree, Collected, HerdrState, Readiness, TrackerFailure};
     use crate::model::tree::{assemble, Assembled};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -952,7 +952,6 @@ credential_command = "secret harbour"
                 "  ├── ✓ .4 clear the access road",
                 "  └── … 2 more",
                 "▸ ferry · fer-2",
-                "  └── ! TrackerUnreachable(Auth)",
                 "▸ [FailedProjects] 1",
                 "▸ [Conflicts] 1",
                 "▸ [HiddenTrees] 1",
@@ -1231,6 +1230,31 @@ credential_command = "secret harbour"
             vec!["w:p9"]
         );
         assert!(!header.panes_complete, "w:pF could belong here");
+    }
+
+    /// A tracker that did not answer is a property of the tree, so it rides
+    /// the header rather than a line under it — one place, not two.
+    #[test]
+    fn a_tracker_that_could_not_be_read_says_so_on_its_header_and_nowhere_else() {
+        let forest = flatten(&snapshot());
+
+        assert_eq!(
+            header_of(&forest, "ferry").tree.tracker,
+            TrackerState::Unreachable(TrackerFailure::Auth)
+        );
+        let header = forest
+            .lines()
+            .iter()
+            .position(
+                |line| matches!(&line.content, Content::Tree(tree) if tree.tree.project == "ferry"),
+            )
+            .expect("ferry has a header");
+
+        assert!(
+            matches!(forest.lines()[header + 1].content, Content::Group(_)),
+            "nothing is drawn under it: {:#?}",
+            sketch(&forest)
+        );
     }
 
     #[test]
