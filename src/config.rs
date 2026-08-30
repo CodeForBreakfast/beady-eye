@@ -75,7 +75,25 @@ impl Config {
         if cfg.projects.is_empty() {
             anyhow::bail!("config names no projects; bdi has nothing to read");
         }
+        if cfg.projects.len() > 1 {
+            let ambient = cfg.projects_on_the_ambient_credential();
+            if !ambient.is_empty() {
+                anyhow::bail!(
+                    "every project needs a credential_command once the config names more \
+                     than one, or one tracker's credential reaches another's; missing on: {}",
+                    ambient.join(", ")
+                );
+            }
+        }
         Ok(cfg)
+    }
+
+    fn projects_on_the_ambient_credential(&self) -> Vec<&str> {
+        self.projects
+            .iter()
+            .filter(|p| p.credential_command.is_none())
+            .map(|p| p.name.as_str())
+            .collect()
     }
 }
 
@@ -105,6 +123,7 @@ credential_command = "op read op://Private/beads-tracker/password"
 [[projects]]
 name = "beady-eye"
 path = "/tmp/bdi-ground/beady-eye"
+credential_command = "cat /tmp/bdi-ground/beady-eye/.beads-password"
 
 [roots]
 metadata_keys = ["working_topic", "delivery_pr"]
@@ -132,6 +151,32 @@ name = "beady-eye"
 path = "/tmp/bdi-ground/beady-eye"
 "#;
 
+    const ONE_CREDENTIALLED_ONE_AMBIENT: &str = r#"
+[[projects]]
+name = "summit-works"
+path = "/tmp/bdi-ground/summit-works"
+credential_command = "op read op://Private/beads-tracker/password"
+
+[[projects]]
+name = "beady-eye"
+path = "/tmp/bdi-ground/beady-eye"
+"#;
+
+    const TWO_AMBIENT: &str = r#"
+[[projects]]
+name = "summit-works"
+path = "/tmp/bdi-ground/summit-works"
+credential_command = "op read op://Private/beads-tracker/password"
+
+[[projects]]
+name = "beady-eye"
+path = "/tmp/bdi-ground/beady-eye"
+
+[[projects]]
+name = "herdr"
+path = "/tmp/bdi-ground/herdr"
+"#;
+
     #[test]
     fn parses_every_section() {
         let cfg = Config::from_toml(EVERY_SECTION).expect("parses");
@@ -149,7 +194,9 @@ path = "/tmp/bdi-ground/beady-eye"
                 Project {
                     name: "beady-eye".to_string(),
                     path: PathBuf::from("/tmp/bdi-ground/beady-eye"),
-                    credential_command: None,
+                    credential_command: Some(
+                        "cat /tmp/bdi-ground/beady-eye/.beads-password".to_string()
+                    ),
                 },
             ]
         );
@@ -188,6 +235,40 @@ path = "/tmp/bdi-ground/beady-eye"
         assert!(cfg.badges.is_empty());
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
+    }
+
+    #[test]
+    fn a_lone_project_needs_no_credential_command() {
+        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
+
+        assert_eq!(cfg.projects[0].credential_command, None);
+    }
+
+    #[test]
+    fn a_project_without_a_credential_alongside_one_with_is_rejected() {
+        let err = Config::from_toml(ONE_CREDENTIALLED_ONE_AMBIENT)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("beady-eye"), "got: {err}");
+        assert!(err.contains("credential_command"), "got: {err}");
+    }
+
+    #[test]
+    fn rejecting_a_project_does_not_repeat_another_projects_credential_command() {
+        let err = Config::from_toml(ONE_CREDENTIALLED_ONE_AMBIENT)
+            .unwrap_err()
+            .to_string();
+
+        assert!(!err.contains("op read"), "got: {err}");
+    }
+
+    #[test]
+    fn every_project_without_a_credential_is_named() {
+        let err = Config::from_toml(TWO_AMBIENT).unwrap_err().to_string();
+
+        assert!(err.contains("beady-eye"), "got: {err}");
+        assert!(err.contains("herdr"), "got: {err}");
     }
 
     #[test]
