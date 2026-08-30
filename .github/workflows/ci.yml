@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # The tracker writes to .beads on main constantly. Those commits change no
+    # code, so they must not spend a runner.
+    paths-ignore:
+      - '.beads/**'
+
+permissions:
+  contents: read
+
+jobs:
+  flake-check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # Actions are pinned by commit because a tag is mutable and an action
+      # runs with this repository's token.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+        with:
+          # Cache in GitHub's own Actions cache and nowhere else. FlakeHub
+          # wants an account and an OIDC token, and the diagnostic endpoint
+          # reports a private repository's builds off-site.
+          use-flakehub: false
+          diagnostic-endpoint: ""
+
+      # Every check comes from the flake's `checks` output, so a check added
+      # there is a check this runs. Naming one here is the drift to avoid.
+      - run: nix flake check -L
