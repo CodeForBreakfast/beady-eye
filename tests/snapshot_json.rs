@@ -2,7 +2,7 @@
 //! binary's model through the one public entry point a consumer sees.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use beady_eye::collect::run::{Env, FailureKind, RunFailure, Runner};
 use beady_eye::config::Config;
@@ -56,42 +56,59 @@ render = "⏸ waiting"
 stale_claim_days = 7
 "#;
 
-/// A runner that replays one canned answer per command line. The directory
-/// and the environment each call carries are the unit tests' business.
-struct Canned(HashMap<String, Result<String, RunFailure>>);
+/// A runner that replays one canned answer per command line, either wherever
+/// that line is run or only in one project's directory. Two trackers answer
+/// the same argv with beads of their own, so the directory a call carries is
+/// part of what identifies it; the environment is the unit tests' business.
+struct Canned(HashMap<(Option<PathBuf>, String), Result<String, RunFailure>>);
 
 impl Runner for Canned {
     fn run(
         &self,
         program: &str,
         args: &[&str],
-        _cwd: Option<&Path>,
+        cwd: Option<&Path>,
         _env: &Env,
     ) -> Result<String, RunFailure> {
         let argv = format!("{program} {}", args.join(" "));
         self.0
-            .get(&argv)
+            .get(&(cwd.map(Path::to_path_buf), argv.clone()))
+            .or_else(|| self.0.get(&(None, argv.clone())))
             .cloned()
-            .unwrap_or_else(|| panic!("no canned response for `{argv}`"))
+            .unwrap_or_else(|| panic!("no canned response for `{argv}` in {cwd:?}"))
     }
 }
 
 impl Canned {
     fn answering(mut self, argv: &str, out: &str) -> Self {
-        self.0.insert(argv.to_string(), Ok(out.to_string()));
+        self.0.insert((None, argv.to_string()), Ok(out.to_string()));
+        self
+    }
+
+    fn answering_in(mut self, cwd: &str, argv: &str, out: &str) -> Self {
+        self.0
+            .insert((Some(cwd.into()), argv.to_string()), Ok(out.to_string()));
         self
     }
 
     fn failing(mut self, argv: &str, kind: FailureKind) -> Self {
-        self.0.insert(
-            argv.to_string(),
-            Err(RunFailure {
-                kind,
-                program: "bd".to_string(),
-                detail: "Access denied for user 'orbital' at db.example.invalid:3306".to_string(),
-            }),
-        );
+        self.0.insert((None, argv.to_string()), Err(refused(kind)));
         self
+    }
+
+    fn failing_in(mut self, cwd: &str, argv: &str, kind: FailureKind) -> Self {
+        self.0
+            .insert((Some(cwd.into()), argv.to_string()), Err(refused(kind)));
+        self
+    }
+}
+
+/// bd names the database and the SQL user when it turns a call away.
+fn refused(kind: FailureKind) -> RunFailure {
+    RunFailure {
+        kind,
+        program: "bd".to_string(),
+        detail: "Access denied for user 'orbital' at db.example.invalid:3306".to_string(),
     }
 }
 
@@ -398,4 +415,168 @@ fn a_tree_with_no_live_agent_is_reported_and_the_flag_shows_it() {
     assert_eq!(unfiltered["filter"], "all");
     assert_eq!(unfiltered["trees"][0]["root"], "orb-7");
     assert_eq!(unfiltered["hidden_trees"], json!([]));
+}
+
+const HARBOUR_DIR: &str = "/srv/work/harbour";
+
+/// A second tracker's own `orb-7`: the same bare id, a different bead, a
+/// different project. Prefixes are per-tracker and uncoordinated, so this is
+/// the case `(project, id)` exists for. Invented rather than captured — no
+/// other project's tracker was read to write it.
+const HARBOUR_TREE: &str = r#"[
+  {"id":"orb-7","title":"re-dredge the north channel","status":"in_progress","parent_id":"",
+   "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
+   "started_at":"2026-08-25T09:00:00Z","metadata":{"agent_pane":"w:p5"}},
+  {"id":"orb-7.1","title":"hire the dredger","status":"in_progress","parent_id":"orb-7",
+   "priority":2,"issue_type":"task","edge_from_parent":"parent-child",
+   "updated_at":"2026-08-29T11:00:00Z","started_at":"2026-08-29T11:00:00Z"}
+]"#;
+
+/// One live pane in each project's directory.
+const PANES_ACROSS: &str = r#"{"id":"cli:agent:list","result":{"agents":[
+  {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"},
+  {"pane_id":"w:p5","cwd":"/srv/work/harbour","agent_status":"working","title":"the channel"}
+]}}"#;
+
+const TWO_PROJECTS: &str = r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+credential_command = "pass show orbital/tracker"
+
+[[projects]]
+name = "harbour"
+path = "/srv/work/harbour"
+credential_command = "pass show harbour/tracker"
+
+[roots]
+metadata_keys = ["working_topic"]
+
+[[badges]]
+key = "blocked_on"
+match = "human"
+render = "⏸ waiting"
+
+[anomalies]
+stale_claim_days = 7
+"#;
+
+fn two_projects() -> Config {
+    Config::from_toml(TWO_PROJECTS).expect("the config parses")
+}
+
+/// Orbital answering wherever it is asked, plus a harbour tracker that answers
+/// only in harbour's own directory. Every answer harbour gives contradicts
+/// orbital's, so a call that reached the wrong directory replays the wrong
+/// tracker and the case fails rather than passing on a coincidence.
+fn across_two_projects() -> Canned {
+    canned()
+        .answering("herdr agent list", PANES_ACROSS)
+        .answering("sh -c pass show orbital/tracker", "orbital-secret\n")
+        .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
+        .answering_in(
+            HARBOUR_DIR,
+            "bd list --status in_progress --limit 0 --json",
+            r#"[{"id":"orb-7.1","title":"hire the dredger","status":"in_progress"}]"#,
+        )
+        .answering_in(
+            HARBOUR_DIR,
+            "bd list --status blocked --limit 0 --json",
+            "[]",
+        )
+        .answering_in(
+            HARBOUR_DIR,
+            "bd list --has-metadata-key working_topic --limit 0 --json",
+            "[]",
+        )
+        .answering_in(HARBOUR_DIR, "bd ready --limit 0 --json", "[]")
+        .answering_in(HARBOUR_DIR, "bd blocked --json", "[]")
+        .answering_in(
+            HARBOUR_DIR,
+            "bd show orb-7.1 --json",
+            r#"[{"id":"orb-7.1","parent":"orb-7"}]"#,
+        )
+        .answering_in(
+            HARBOUR_DIR,
+            "bd show orb-7 --json",
+            r#"[{"id":"orb-7","parent":null}]"#,
+        )
+        .answering_in(
+            HARBOUR_DIR,
+            "bd dep tree orb-7 --direction=up --json",
+            HARBOUR_TREE,
+        )
+}
+
+fn emit_over(cfg: &Config, runner: &Canned, filter: Filter) -> Value {
+    let snapshot = beady_eye::app::run(cfg, runner, filter, now());
+    serde_json::to_value(&snapshot).expect("the snapshot serialises")
+}
+
+/// Both roots are called `orb-7`, so the project each tree was read from is
+/// the only thing that tells the two apart.
+#[test]
+fn each_tree_carries_the_project_it_was_read_from() {
+    let emitted = emit_over(&two_projects(), &across_two_projects(), Filter::LiveAgents);
+
+    let trees = emitted["trees"].as_array().expect("trees is an array");
+    assert_eq!(trees.len(), 2);
+
+    assert_eq!(trees[0]["project"], "orbital");
+    assert_eq!(trees[0]["root"], "orb-7");
+    assert_eq!(trees[0]["title"], "lift the ground station");
+
+    assert_eq!(trees[1]["project"], "harbour");
+    assert_eq!(trees[1]["root"], "orb-7");
+    assert_eq!(trees[1]["title"], "re-dredge the north channel");
+}
+
+/// The two `orb-7.1`s are different beads: each carries its own tracker's
+/// title, its own tracker's readiness, and the agent in its own project.
+#[test]
+fn a_bare_id_in_two_trackers_names_two_beads() {
+    let emitted = emit_over(&two_projects(), &across_two_projects(), Filter::LiveAgents);
+    let orbital = &emitted["trees"][0];
+    let harbour = &emitted["trees"][1];
+
+    assert_eq!(node(orbital, "orb-7.1")["title"], "re-point the dish");
+    assert_eq!(node(harbour, "orb-7.1")["title"], "hire the dredger");
+
+    assert_eq!(node(orbital, "orb-7.1")["blocked_by"], json!(["orb-9"]));
+    assert_eq!(node(harbour, "orb-7.1")["blocked_by"], json!([]));
+
+    assert_eq!(node(orbital, "orb-7")["agent"]["pane"], "w:p1");
+    assert_eq!(node(harbour, "orb-7")["agent"]["pane"], "w:p5");
+    assert_eq!(emitted["conflicts"], json!([]));
+}
+
+/// Degrade, never disappear, at project granularity: harbour's tracker
+/// refusing the credential costs harbour's trees and nothing else.
+#[test]
+fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
+    let runner = across_two_projects().failing_in(
+        HARBOUR_DIR,
+        "bd list --status in_progress --limit 0 --json",
+        FailureKind::Auth,
+    );
+
+    let emitted = emit_over(&two_projects(), &runner, Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["failed_projects"],
+        json!([{"project": "harbour", "tracker": "auth"}])
+    );
+
+    let trees = emitted["trees"].as_array().expect("trees is an array");
+    assert_eq!(trees.len(), 1);
+    assert_eq!(trees[0]["project"], "orbital");
+    assert_eq!(node(&trees[0], "orb-7.1")["title"], "re-point the dish");
+    assert_eq!(node(&trees[0], "orb-7")["agent"]["pane"], "w:p1");
+
+    assert_eq!(
+        emitted["unattributed"],
+        json!([{"pane": "w:p5", "project": "harbour", "cwd": HARBOUR_DIR,
+                "pane_status": "working"}]),
+        "the pane in the failed project is still reported"
+    );
 }
