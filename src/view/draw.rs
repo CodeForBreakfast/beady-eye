@@ -264,6 +264,53 @@ fn every_status() -> [Status; 6] {
     ]
 }
 
+/// The rows the tail asks for where the screen can spare them. The tail seat
+/// owns this number; it is here because `regions` is where the screen is
+/// divided up.
+const TAIL_ROWS: u16 = 6;
+
+/// The three bands of the screen, top to bottom.
+///
+/// Named rather than returned from `draw` because the tail is drawn by
+/// whoever holds one, and `draw` is handed a forest and no tail. Both sides
+/// ask here instead of agreeing a number twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Regions {
+    pub forest: Rect,
+    pub tail: Rect,
+    pub keys: Rect,
+}
+
+/// Divide the screen between the forest, the tail and the key bar.
+///
+/// The tail gives up its rows before the forest gives up any, and the forest
+/// is never left with none: a `bdi` with no tree on screen is not showing the
+/// thing it exists to show.
+pub fn regions(area: Rect) -> Regions {
+    let mut rows = area.height;
+    let keys = if rows >= 2 { 1 } else { 0 };
+    rows -= keys;
+    let tail = TAIL_ROWS.min(rows.saturating_sub(1) / 2);
+    let forest = rows - tail;
+
+    Regions {
+        forest: Rect {
+            height: forest,
+            ..area
+        },
+        tail: Rect {
+            y: area.y + forest,
+            height: tail,
+            ..area
+        },
+        keys: Rect {
+            y: area.y + forest + tail,
+            height: keys,
+            ..area
+        },
+    }
+}
+
 /// The first visible line, so that the selection is on screen.
 ///
 /// A pure function of the selection, which is what lets the renderer hold no
@@ -721,6 +768,59 @@ mod tests {
                 status_style(row::status_glyph(&status)),
                 Style::new().fg(status_colour(&status)),
                 "{status:?}"
+            );
+        }
+    }
+
+    // ---- the bands of the screen -----------------------------------------
+
+    #[test]
+    fn a_full_screen_gives_the_forest_most_of_it_the_tail_a_look_and_the_keys_a_row() {
+        let bands = regions(Rect::new(0, 0, 80, 24));
+
+        assert_eq!(bands.forest, Rect::new(0, 0, 80, 17));
+        assert_eq!(bands.tail, Rect::new(0, 17, 80, 6));
+        assert_eq!(bands.keys, Rect::new(0, 23, 80, 1));
+    }
+
+    /// The tail yields first, because the forest is the thing this tool is
+    /// for and a screen showing no tree is showing nothing.
+    #[test]
+    fn a_short_screen_takes_the_rows_from_the_tail_and_not_from_the_forest() {
+        let bands = regions(Rect::new(0, 0, 80, 10));
+
+        assert_eq!(bands.forest.height, 5);
+        assert_eq!(bands.tail.height, 4);
+        assert_eq!(bands.keys.height, 1);
+    }
+
+    #[test]
+    fn the_forest_keeps_a_row_however_little_room_there_is() {
+        for height in 1..=8 {
+            let bands = regions(Rect::new(0, 0, 80, height));
+            assert!(bands.forest.height >= 1, "{height} rows: {bands:?}");
+        }
+    }
+
+    /// The three bands are the screen: a gap between them would draw whatever
+    /// the last frame left there, and an overlap would draw two things at once.
+    #[test]
+    fn the_three_bands_tile_the_screen_exactly() {
+        for height in 0..40 {
+            let area = Rect::new(3, 7, 80, height);
+            let bands = regions(area);
+
+            assert_eq!(bands.forest.y, area.y, "{height}");
+            assert_eq!(
+                bands.tail.y,
+                bands.forest.y + bands.forest.height,
+                "{height}"
+            );
+            assert_eq!(bands.keys.y, bands.tail.y + bands.tail.height, "{height}");
+            assert_eq!(
+                bands.forest.height + bands.tail.height + bands.keys.height,
+                area.height,
+                "{height}"
             );
         }
     }
