@@ -325,6 +325,7 @@ mod tests {
     struct Echo {
         said: String,
         ran: Arc<Mutex<Vec<String>>>,
+        late: Cell<bool>,
     }
 
     impl Echo {
@@ -334,6 +335,20 @@ mod tests {
                 Self {
                     said: said.to_string(),
                     ran: Arc::clone(&ran),
+                    late: Cell::new(false),
+                },
+                ran,
+            )
+        }
+
+        /// The same, except that the first answer arrives long after the tail
+        /// gave up waiting for it.
+        fn saying_late(said: &str) -> (Self, Arc<Mutex<Vec<String>>>) {
+            let (echo, ran) = Self::saying(said);
+            (
+                Self {
+                    late: Cell::new(true),
+                    ..echo
                 },
                 ran,
             )
@@ -352,6 +367,9 @@ mod tests {
                 .lock()
                 .expect("no test panics holding this")
                 .push(format!("{program} {}", args.join(" ")));
+            if self.late.replace(false) {
+                thread::sleep(PATIENCE * 2);
+            }
             Ok(self.said.clone())
         }
     }
@@ -676,6 +694,48 @@ mod tests {
         assert!(
             again.elapsed() < PATIENCE,
             "a question is not asked while one is still out, so the second read did not wait again"
+        );
+    }
+
+    /// An answer that came too late must cost the tail that one reading and
+    /// no more. The late reply is thrown away before the next question is
+    /// asked, so the pane is read again once herdr has caught up; were it
+    /// left standing, every later ask would short-circuit and the pane would
+    /// stop updating for the rest of the session with nothing to say it had.
+    #[test]
+    fn the_tail_reads_again_after_a_read_that_timed_out() {
+        let (echo, ran) = Echo::saying_late("back from the dead\n");
+        let herdr = Herdr::new(echo);
+
+        assert_eq!(
+            herdr.read("w:p1", 6).map_err(|f| f.kind),
+            Err(FailureKind::Unavailable),
+            "the first answer outstays PATIENCE"
+        );
+
+        // Nothing is asked while a question is still out, so the tail asks
+        // again on each refresh tick until the late answer has landed and
+        // been drained. A tail that never recovers never leaves this loop.
+        let gave_up_at = std::time::Instant::now() + PATIENCE * 5;
+        let read = loop {
+            match herdr.read("w:p1", 6) {
+                Ok(read) => break read,
+                Err(failure) => assert!(
+                    std::time::Instant::now() < gave_up_at,
+                    "the tail never read the pane again: {failure:?}"
+                ),
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+
+        assert_eq!(read, ["back from the dead"]);
+        assert_eq!(
+            *ran.lock().expect("the worker is done with it"),
+            [
+                "herdr agent read w:p1 --source visible --lines 6 --format text",
+                "herdr agent read w:p1 --source visible --lines 6 --format text"
+            ],
+            "the second reading came from herdr, not from the answer to the first"
         );
     }
 }
