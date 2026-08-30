@@ -3,7 +3,8 @@
 use crate::collect::panes::Panes;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::snapshot::{HerdrState, Snapshot};
-use crate::view::forest::{Content, Forest, Item};
+use crate::view::forest::Forest;
+use crate::view::lines::{Content, Item};
 use crate::view::phrase;
 
 /// How many lines of the pane the tail shows. The band reserved for it is
@@ -168,7 +169,8 @@ mod tests {
         UnconfiguredPane,
     };
     use crate::model::types::{Edge, Status};
-    use crate::view::forest::{self, GroupKind};
+    use crate::view::forest;
+    use crate::view::lines::GroupKind;
     use crate::view::{Action, Motion};
     use chrono::Utc;
     use pretty_assertions::assert_eq;

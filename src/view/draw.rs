@@ -9,7 +9,8 @@ use crate::collect::herdr::PaneStatus;
 use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState};
 use crate::model::types::Status;
 use crate::view::fitted::{columns, indent, Fitted, GAP};
-use crate::view::forest::{self, Content, Forest, Group, GroupKind, Header, Item, Note};
+use crate::view::forest::Forest;
+use crate::view::lines::{self, Content, Group, GroupKind, Header, Item, Note};
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 use crate::view::tail::Tail;
@@ -106,7 +107,7 @@ fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
 
 /// The widest abbreviated id on screen, so every title starts in the same
 /// column and a reader's eye runs down one edge rather than a ragged one.
-fn id_width(lines: &[forest::Line]) -> usize {
+fn id_width(lines: &[lines::Line]) -> usize {
     lines
         .iter()
         .filter_map(|line| match &line.content {
@@ -118,7 +119,7 @@ fn id_width(lines: &[forest::Line]) -> usize {
 }
 
 /// One line of the forest, whatever kind it is.
-fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
+fn fitted(line: &lines::Line, id_width: usize) -> Fitted {
     match &line.content {
         Content::Tree(head) => header(head, &line.prefix),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
@@ -132,7 +133,7 @@ fn fitted(line: &forest::Line, id_width: usize) -> Fitted {
 /// A run of closed siblings said as a count, carrying the glyph each of them
 /// would carry on a line of its own.
 ///
-/// `forest::split` builds a run out of closed beads and nothing else, so this
+/// `lines::split` builds a run out of closed beads and nothing else, so this
 /// is not a summary over mixed states — it is the one state every member
 /// holds. It goes through `status_glyph` and `status_style` exactly as a
 /// bead's does, so a run cannot drift away from the beads it stands for.
@@ -464,7 +465,7 @@ fn structure(prefix: &str) -> Span<'static> {
 /// | nobody on it, still going | the terminal's default |
 /// | finished, nobody on it | the grey `bd` dims a closed row to |
 ///
-/// Finished means what it means to `forest::split`: closed, no agent, no
+/// Finished means what it means to `lines::split`: closed, no agent, no
 /// anomaly. A closed bead whose pane is still alive is exactly the row worth
 /// looking at, and dimming it is how it would be missed.
 fn tone(row: &Row) -> Style {
@@ -663,8 +664,8 @@ mod tests {
 
     /// One forest line, behind the box-drawing a flatten would have put in
     /// front of it.
-    fn under(prefix: &str, content: Content) -> forest::Line {
-        forest::Line {
+    fn under(prefix: &str, content: Content) -> lines::Line {
+        lines::Line {
             prefix: prefix.into(),
             depth: 1,
             last_child: false,
@@ -1333,7 +1334,7 @@ mod tests {
     }
 
     /// Exactly the row worth looking at, and dimming it is how it would be
-    /// missed. `forest::split` leaves it out of a run for the same reason.
+    /// missed. `lines::split` leaves it out of a run for the same reason.
     #[test]
     fn a_closed_bead_whose_pane_is_still_alive_is_not_dimmed() {
         let mut alive = node("nix-9670s.1", "a bead", Status::Closed);
@@ -1345,7 +1346,7 @@ mod tests {
         assert_eq!(painted[2].1, Color::White, "{painted:?}");
     }
 
-    /// Finished means what it means in `forest::split` — closed, no agent, no
+    /// Finished means what it means in `lines::split` — closed, no agent, no
     /// anomaly — so an anomaly alone is enough to keep a row out of the dim.
     #[test]
     fn a_closed_bead_with_an_anomaly_against_it_is_not_dimmed() {

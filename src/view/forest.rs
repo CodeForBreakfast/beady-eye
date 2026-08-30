@@ -3,170 +3,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::{BeadKey, Conflict};
-use crate::model::snapshot::{
-    self, FailedProject, Filter, HiddenTree, LoosePane, Node, Snapshot, TrackerState, Tree,
-    UnconfiguredPane,
+use crate::model::snapshot::{self, Filter, LoosePane, Snapshot, TrackerState, Tree};
+use crate::view::lines::{
+    beneath, children_of, marker, notes_of, opens_a_fold, prefix, progress_of, quiet, root_key,
+    run_size, split, unfinished_beneath, Content, Group, GroupKind, Header, Item, Line, Note,
 };
-use crate::model::types::Status;
-use crate::view::row::{self, Progress, Row};
+use crate::view::row;
 use crate::view::{Action, Motion};
 
 /// How far a half-screen motion moves until the renderer says otherwise.
 const HALF_SCREEN: usize = 10;
-
-/// How many finished siblings it takes before a count reads better than their
-/// names. Under it they are drawn, and a finished branch is one line whatever
-/// it holds, so the run saves one row per member past the first.
-const MANY: usize = 3;
-
-const OPEN: &str = "▾ ";
-const SHUT: &str = "▸ ";
-/// A tree's children start under its header's marker, not under its project.
-const INDENT: &str = "  ";
-const BRANCH: &str = "├── ";
-const LAST: &str = "└── ";
-const TRUNK: &str = "│   ";
-const GAP: &str = "    ";
-
-/// One line of the forest, in the order the screen draws them.
-///
-/// A line is exactly one screen row. `selected_line` is an index into these,
-/// and the renderer derives its scroll offset by arithmetic on that index, so
-/// a line that wrapped would put the selection and the row out of step with
-/// nothing to say so. Anything that wants two rows is two lines.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Line {
-    /// The line's leading text: its fold marker, or the box-drawing that
-    /// places it under its parent. Drawn here rather than by the renderer
-    /// because only the flattening knows which ancestors still have siblings
-    /// below them, which is what decides where a `│` runs.
-    pub prefix: String,
-    /// How far under its tree's header this line sits. Zero for a header, for
-    /// a group, and for the lines beneath a group.
-    pub depth: u16,
-    /// Whether this is the last line drawn at its depth under its parent.
-    pub last_child: bool,
-    /// Whether this line's fold is open, where it has one at all.
-    pub folded: Option<bool>,
-    /// The bead this line stands for, where it stands for one: a bead's own
-    /// row, and a tree header's root.
-    pub bead: Option<BeadKey>,
-    pub content: Content,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Content {
-    /// A root: the line a whole tree collapses to.
-    Tree(Header),
-    Bead(Row),
-    /// A run of closed siblings nobody is working, said as a count.
-    Elided {
-        count: usize,
-        /// The bead whose children the run stands for. A run is not a bead,
-        /// so this is not `Line::bead`; it is what the fold is known by.
-        under: BeadKey,
-    },
-    /// Something true of the tree above rather than of any one bead in it.
-    Note(Note),
-    /// One of the groups below the trees.
-    Group(Group),
-    /// One thing in such a group.
-    Item(Item),
-}
-
-/// A tree's own line, with the panes `bdi` could recover for it where its
-/// tracker could not be read at all.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Header {
-    pub tree: Tree,
-    /// The root's own status. A root is a bead like any other and a reader
-    /// asks the same question of it, but it is the one bead whose line is a
-    /// header, so its status has to be carried here to be drawn at all.
-    ///
-    /// Absent on a tree whose tracker never answered: there are no nodes, so
-    /// there is no status to show, and the header says why instead.
-    pub status: Option<Status>,
-    /// Live panes working in this project, where no bead could be read to
-    /// attribute them to. Empty on a tree that was read.
-    pub panes: Vec<LoosePane>,
-    /// Whether `panes` is all of them. A pane working under no configured
-    /// project could belong here and cannot be told, so one of those anywhere
-    /// leaves every recovery partial.
-    pub panes_complete: bool,
-}
-
-/// A finding about a tree rather than about any bead in it.
-///
-/// Each of these says what was in a tree the tracker answered for. A tracker
-/// that did not answer is a property of the tree instead, carried on the
-/// header, because a child line explaining why a tree has no children is
-/// backwards.
-///
-/// Drawn under the header whether the tree is folded or not: folding is where
-/// a finding is easiest to lose, and losing one is the silent partial answer
-/// this tool exists to avoid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Note {
-    Dangling(usize),
-    Unreachable(usize),
-    Truncated(usize),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Group {
-    pub kind: GroupKind,
-    pub count: usize,
-    /// How many of the things this group holds carry findings the screen is
-    /// not drawing, because the group holds them rather than showing them.
-    ///
-    /// Only a hidden tree has any: the filter took its dangling, unreachable
-    /// and truncated counts out of the forest with it, and that choice should
-    /// hold — but a group that says only how many trees it hides reads like
-    /// "nothing to see" when some of them are broken.
-    pub with_findings: usize,
-}
-
-/// The groups below the trees, in the order they are drawn: the projects with
-/// nothing to show first, what the filter chose to hide last.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum GroupKind {
-    FailedProjects,
-    Unconfigured,
-    Conflicts,
-    HiddenTrees,
-    Unattributed,
-}
-
-impl GroupKind {
-    pub const ALL: [GroupKind; 5] = [
-        GroupKind::FailedProjects,
-        GroupKind::Unconfigured,
-        GroupKind::Conflicts,
-        GroupKind::HiddenTrees,
-        GroupKind::Unattributed,
-    ];
-
-    /// Whether what a group holds is live, which is what rests it open. A
-    /// count is not a view: a shut group over live panes says they exist and
-    /// nothing about which they are or what is on them. What collection and
-    /// the filter did is a report about the reading rather than work in
-    /// flight, and rests as the report it is.
-    fn live(self) -> bool {
-        match self {
-            GroupKind::Unconfigured | GroupKind::Conflicts | GroupKind::Unattributed => true,
-            GroupKind::FailedProjects | GroupKind::HiddenTrees => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Item {
-    Failed(FailedProject),
-    Conflict(Conflict),
-    Hidden(HiddenTree),
-    Loose(LoosePane),
-    Unconfigured(UnconfiguredPane),
-}
 
 /// What a line that folds is known by, so both the fold and the selection
 /// survive a refresh that reorders or drops lines.
@@ -860,23 +706,6 @@ impl Forest {
     }
 }
 
-fn root_key(tree: &Tree) -> BeadKey {
-    BeadKey {
-        project: tree.project.clone(),
-        id: tree.root.clone(),
-    }
-}
-
-/// A header, a group and a shut node say so; an open node says it by drawing
-/// its children, and spending a marker on it would only cost the row width.
-fn marker(open: bool) -> &'static str {
-    if open {
-        OPEN
-    } else {
-        SHUT
-    }
-}
-
 /// What a line is known by, where it is one the selection can hold.
 ///
 /// A note stands for a finding rather than for a thing, so it has none — and
@@ -896,198 +725,6 @@ fn selectable(line: &Line) -> bool {
     handle_of(line).is_some()
 }
 
-fn prefix(trunk: &[bool], last: bool, shut: bool) -> String {
-    let mut drawn = String::from(INDENT);
-    for more in trunk {
-        drawn.push_str(if *more { TRUNK } else { GAP });
-    }
-    drawn.push_str(if last { LAST } else { BRANCH });
-    if shut {
-        drawn.push_str(SHUT);
-    }
-    drawn
-}
-
-fn notes_of(tree: &Tree) -> Vec<Note> {
-    let mut notes = Vec::new();
-    if !tree.dangling.is_empty() {
-        notes.push(Note::Dangling(tree.dangling.len()));
-    }
-    if !tree.unreachable.is_empty() {
-        notes.push(Note::Unreachable(tree.unreachable.len()));
-    }
-    let truncated = tree.nodes.iter().filter(|node| node.truncated).count();
-    if truncated > 0 {
-        notes.push(Note::Truncated(truncated));
-    }
-    notes
-}
-
-/// Which node is whose child. The model hands over one flat list in render
-/// order with an explicit depth, so a node's parent is the last one shallower
-/// than it.
-fn children_of(nodes: &[Node]) -> Vec<Vec<usize>> {
-    let mut children = vec![Vec::new(); nodes.len()];
-    let mut ancestors: Vec<usize> = Vec::new();
-    for (at, node) in nodes.iter().enumerate() {
-        ancestors.truncate(node.depth as usize);
-        if let Some(parent) = ancestors.last() {
-            children[*parent].push(at);
-        }
-        ancestors.push(at);
-    }
-    children
-}
-
-/// Whether nothing is happening on this bead: nobody working it, and nothing
-/// wrong with it. Says nothing about its children.
-fn quiet(node: &Node) -> bool {
-    node.agent.is_none() && node.anomalies.is_empty()
-}
-
-/// The nodes strictly beneath `at`, in no order worth relying on.
-fn beneath(children: &[Vec<usize>], at: usize) -> Vec<usize> {
-    let mut found = Vec::new();
-    let mut walking = children[at].clone();
-    while let Some(node) = walking.pop() {
-        found.push(node);
-        walking.extend(children[node].iter().copied());
-    }
-    found
-}
-
-/// Whether the line at `at` rests open: whether anything beneath it is work
-/// a reader needs on the first screen.
-///
-/// This is the whole of the fold default. A line rests open exactly when it
-/// stands on the spine to such work, so the first screen is that work and the
-/// path to it and nothing else.
-fn opens_a_fold(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    live_beneath(tree, children, at) || ready_beneath(tree, children, at)
-}
-
-/// Whether any bead beneath `at` carries live work: an agent on it, or an
-/// anomaly against it.
-///
-/// No fold `bdi` chose for itself has ever closed over an agent or an
-/// anomaly, and this is what holds that.
-fn live_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    beneath(children, at)
-        .into_iter()
-        .any(|node| !quiet(&tree.nodes[node]))
-}
-
-/// Whether any bead beneath `at` is one `bd` would start today.
-///
-/// Readiness is `bd`'s answer and not a status test: open, blocked and
-/// deferred beads are all unfinished, and only `bd` knows which of them has
-/// every dependency behind it. Work it will not start is still unfinished
-/// work a reader is not looking for, so it earns no fold.
-fn ready_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    beneath(children, at)
-        .into_iter()
-        .any(|node| tree.nodes[node].ready)
-}
-
-/// How many beads beneath `at` are not closed.
-///
-/// The mirror of `live_beneath`, which asks whether anyone is on the work
-/// rather than whether the work is done. `bdi` walks dependents, so a bead's
-/// children are the work closing it unblocked and a closed bead over open
-/// ones is the ordinary shape of this tree — but with nobody on any of them
-/// the branch rests shut, and the row above it says done.
-fn unfinished_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> usize {
-    beneath(children, at)
-        .into_iter()
-        .filter(|node| !tree.nodes[*node].status.is_closed())
-        .count()
-}
-
-/// Whether the branch at `at` is finished: every bead in it closed, no agent
-/// anywhere in it, no anomaly anywhere in it.
-///
-/// Asked of the whole branch rather than of its top bead, because that is the
-/// set every use of the answer stands for. A bead can be closed and unmanned
-/// and still hold a working agent three levels down, and the two mechanisms
-/// this feeds — a branch drawn as one finished line, a run drawn as a count —
-/// each hide everything beneath it.
-fn finished(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    let node = &tree.nodes[at];
-    node.status.is_closed()
-        && quiet(node)
-        && children[at]
-            .iter()
-            .all(|kid| finished(tree, children, *kid))
-}
-
-/// A node's children split into the ones drawn and the run that is not.
-///
-/// A finished sibling collapses into the run; one holding an agent or an
-/// anomaly at any depth does not, because eliding it would hide live work
-/// behind a line saying there is none. A run of one is drawn: `… 1 more`
-/// costs a line and saves none.
-fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, Vec<usize>) {
-    let done: Vec<usize> = children[at]
-        .iter()
-        .copied()
-        .filter(|kid| finished(tree, children, *kid))
-        .collect();
-
-    if done.len() < MANY {
-        return (children[at].clone(), Vec::new());
-    }
-
-    let drawn = children[at]
-        .iter()
-        .copied()
-        .filter(|kid| !done.contains(kid))
-        .collect();
-    (drawn, done)
-}
-
-/// How far along the subtree at `at` is, where it is more than the one bead.
-///
-/// A leaf gets nothing: it stands for itself alone, and a fraction over one
-/// bead would only say again what its glyph says. Everything else is counted
-/// with its own bead among the total, which is the rule a root's counts
-/// already follow.
-fn progress_of(tree: &Tree, children: &[Vec<usize>], at: usize) -> Option<Progress> {
-    if children[at].is_empty() {
-        return None;
-    }
-
-    let mut counted = Progress {
-        closed: 0,
-        total: 0,
-    };
-    let mut walking = vec![at];
-    while let Some(node) = walking.pop() {
-        counted.total += 1;
-        if tree.nodes[node].status.is_closed() {
-            counted.closed += 1;
-        }
-        walking.extend(children[node].iter().copied());
-    }
-
-    Some(counted)
-}
-
-/// What a run stands for: its own beads and everything beneath them.
-///
-/// Opening it draws those beads and leaves their descendants to the same rules,
-/// which for a quiet closed run of their own is another count one level down.
-/// Nothing goes missing either way, so the number holds at every depth.
-fn run_size(children: &[Vec<usize>], members: &[usize]) -> usize {
-    members.iter().map(|kid| subtree_size(children, *kid)).sum()
-}
-
-fn subtree_size(children: &[Vec<usize>], at: usize) -> usize {
-    1 + children[at]
-        .iter()
-        .map(|kid| subtree_size(children, *kid))
-        .sum::<usize>()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1095,9 +732,13 @@ mod tests {
     use crate::collect::herdr::{parse_agent_list, Pane};
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
-    use crate::model::snapshot::{build_tree, Collected, HerdrState, Readiness, TrackerFailure};
+    use crate::model::snapshot::{
+        build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure,
+    };
     use crate::model::tree::{assemble, Assembled};
+    use crate::view::lines::{OPEN, SHUT};
     use crate::view::phrase;
+    use crate::view::row::{Progress, Row};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
