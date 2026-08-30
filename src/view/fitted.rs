@@ -69,10 +69,10 @@ impl Fitted {
 
 impl Widget for Fitted {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let area = Rect { height: 1, ..area };
         if area.width == 0 || area.height == 0 {
             return;
         }
+        let area = Rect { height: 1, ..area };
         let width = area.width as usize;
 
         let identity = columns(&self.identity);
@@ -150,4 +150,81 @@ fn head_of(text: &str, limit: usize) -> String {
         head.push(glyph);
     }
     head
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// A row with something in all three blocks, so any painting at all shows.
+    fn a_row() -> Fitted {
+        Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![Span::raw("a title")],
+            vec![Span::raw("open")],
+        )
+    }
+
+    /// What a buffer holds, one string per row.
+    fn rows(buf: &Buffer) -> Vec<String> {
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    fn blank(width: usize, height: usize) -> Vec<String> {
+        vec![" ".repeat(width); height]
+    }
+
+    /// A band of no rows is a band that was not asked for. Nothing on screen
+    /// shows this going wrong: the row a zero-height band lands on is one the
+    /// buffer is happy to be written to, so the drawing simply covers whatever
+    /// was beneath it.
+    #[test]
+    fn a_band_of_no_rows_is_left_alone() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
+
+        a_row().render(
+            Rect {
+                x: 0,
+                y: 1,
+                width: 20,
+                height: 0,
+            },
+            &mut buf,
+        );
+
+        assert_eq!(rows(&buf), blank(20, 3));
+    }
+
+    /// A band of no columns likewise.
+    #[test]
+    fn a_band_of_no_columns_is_left_alone() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
+
+        a_row().render(
+            Rect {
+                x: 0,
+                y: 1,
+                width: 0,
+                height: 1,
+            },
+            &mut buf,
+        );
+
+        assert_eq!(rows(&buf), blank(20, 3));
+    }
+
+    /// One line is one row. The selection is an index into the forest's lines,
+    /// so a band that spilled past its first row would put that index and the
+    /// screen out of step.
+    #[test]
+    fn a_band_of_several_rows_is_given_one() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
+
+        a_row().render(Rect::new(0, 0, 20, 3), &mut buf);
+
+        assert_eq!(rows(&buf)[1..], blank(20, 2));
+    }
 }
