@@ -1613,6 +1613,20 @@ mod tests {
         );
     }
 
+    /// Two rows are both of the window's edges and no inside at all. A count
+    /// drawn there would land on the bottom border, which is the one row that
+    /// cannot be spent.
+    #[test]
+    fn a_window_with_no_room_inside_it_draws_nothing_inside_it() {
+        assert_eq!(
+            bindings_frame(&a_few_bindings(), 60, 2),
+            vec![
+                "   ┌Key bindings · press any key to close───────────────┐   ",
+                "   └────────────────────────────────────────────────────┘   ",
+            ]
+        );
+    }
+
     /// The band can be nothing at all, and asking for a row inside it would
     /// draw outside the frame.
     #[test]
