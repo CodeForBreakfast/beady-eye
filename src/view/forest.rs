@@ -672,9 +672,9 @@ impl Forest {
     fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
         let root = root_key(tree);
         let children = children_of(&tree.nodes);
-        // A tree opens because someone is working in it, not because the
-        // selection is in it: the first screen is meant to be the answer to
-        // who is working on what.
+        // A tree opens because of what is in it, not because the selection
+        // is in it: the first screen is meant to be the answer to what is
+        // being worked and what could be started.
         let resting = !tree.nodes.is_empty() && opens_a_fold(tree, &children, 0);
         let open = self.expanded(&Handle::Bead(root.clone()), resting);
         let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
@@ -962,10 +962,6 @@ fn beneath(children: &[Vec<usize>], at: usize) -> Vec<usize> {
 /// This is the whole of the fold default. A line rests open exactly when it
 /// stands on the spine to such work, so the first screen is that work and the
 /// path to it and nothing else.
-///
-/// Two things count, and the disjunction is here rather than inside either
-/// term because each term is asked elsewhere in its own right and neither
-/// means the other.
 fn opens_a_fold(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
     live_beneath(tree, children, at) || ready_beneath(tree, children, at)
 }
@@ -2199,6 +2195,47 @@ credential_command = "secret harbour"
         }
 
         assert!(worth_drawing > 0, "the fixtures staffed nothing to check");
+    }
+
+    /// The same invariant for the half `bdi-wt0` added, asked one bead at a
+    /// time so a screen that happened to be open cannot answer for a rule
+    /// that is not there. Every unfinished bead in every fixture takes its
+    /// turn as the only ready one, and each turn is a whole forest whose
+    /// default has to reach it.
+    ///
+    /// Position is the point. A bead behind three closed forebears, or in the
+    /// run a branch collapses to, is where a fold that opens one level would
+    /// still lose it.
+    #[test]
+    fn nothing_the_forest_folds_by_itself_hides_work_bd_would_start() {
+        let mut asked = 0;
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+            let unstaffed = alone("orbital", json, &[]);
+            let unfinished: Vec<String> = unstaffed.trees[0]
+                .nodes
+                .iter()
+                .filter(|node| !node.status.is_closed())
+                .map(|node| node.id.clone())
+                .collect();
+
+            for id in unfinished {
+                asked += 1;
+                let forest = flatten(&ready_alone("orbital", json, &[], &[&id]));
+                let drawn: Vec<&str> = forest
+                    .lines()
+                    .iter()
+                    .filter_map(|line| line.bead.as_ref().map(|key| key.id.as_str()))
+                    .collect();
+
+                assert!(
+                    drawn.contains(&id.as_str()),
+                    "{id} is the one bead bd would start and is not on screen: {:#?}",
+                    sketch(&forest)
+                );
+            }
+        }
+
+        assert!(asked > 0, "the fixtures held no unfinished bead to ready");
     }
 
     /// The shape `bdi-4av` was raised on: a closed parent, a closed child, and
