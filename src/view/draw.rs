@@ -1234,7 +1234,7 @@ mod tests {
 
         assert_eq!(
             drawn(bead_line(&row(&node), BRANCH, 4), 46, 1),
-            vec!["  ├── ◐ .20   wallpaper timer calls dms       "]
+            vec!["  ├── ● .20   wallpaper timer calls dms       "]
         );
     }
 
@@ -2010,7 +2010,7 @@ mod tests {
         assert_eq!(
             frame_of(&forest, 60, 10),
             vec![
-                "▾ ● summit-works · nix-9670s  lift the ground station    0/3",
+                "▾ ◐ summit-works · nix-9670s  lift the ground station    0/3",
                 "  ├── ○ .1  bead number 1                                   ",
                 "  └── ○ .2  bead number 2                                   ",
                 "                                                            ",
@@ -2035,7 +2035,7 @@ mod tests {
         assert_eq!(
             frame_with(&forest, &[Notice::NoInboundChannel], 80, 10),
             vec![
-                "▾ ● summit-works · nix-9670s  lift the ground station                        0/3",
+                "▾ ◐ summit-works · nix-9670s  lift the ground station                        0/3",
                 "  ├── ○ .1  bead number 1                                                       ",
                 "  └── ○ .2  bead number 2                                                       ",
                 "                                                                                ",
@@ -2060,7 +2060,7 @@ mod tests {
         assert_eq!(
             frame[..3].to_vec(),
             vec![
-                "▾ ● summit-works · nix-…",
+                "▾ ◐ summit-works · nix-…",
                 "  ├── ○ .1  bead number…",
                 "  └── ○ .2  bead number…",
             ]

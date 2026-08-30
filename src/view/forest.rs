@@ -1900,7 +1900,7 @@ credential_command = "secret harbour"
                 "  ├── ○ .1 trench the run",
                 "  ├── ✓ .2 strike the old mast",
                 "  │   └── ✓ .2.1 drop the guys",
-                "  │       └── ● .2.1.1 cut the stays",
+                "  │       └── ◐ .2.1.1 cut the stays",
                 "  ├── ✓ .4 lift the feeder",
                 "  │   └── ✓ .4.1 coil the heliax",
                 "  └── ▸ … 4 more",

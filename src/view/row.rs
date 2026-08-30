@@ -64,21 +64,26 @@ pub fn cells(node: &Node, root: &str, progress: Option<Progress>) -> Row {
 /// The glyph is the bead's own status and nothing else. Liveness has its own
 /// cell, and one glyph meaning both would make neither readable.
 ///
+/// Every one of these is the glyph `bd list` prints beside that word in the
+/// legend at the foot of its own output. Terminology comes from beads and a
+/// glyph is terminology, so there is nothing here to improve on — only a
+/// reader's existing habit to keep or to break.
+///
 /// | status | glyph |
 /// |---|---|
-/// | `in_progress` | `●` |
-/// | `blocked` | `◐` |
 /// | `open` | `○` |
-/// | `deferred` | `◌` |
+/// | `in_progress` | `◐` |
+/// | `blocked` | `●` |
 /// | `closed` | `✓` |
-/// | anything else | `?` |
+/// | `deferred` | `❄` |
+/// | anything else | `?` — a status `bd` has no legend for |
 pub fn status_glyph(status: &Status) -> char {
     match status {
-        Status::InProgress => '●',
-        Status::Blocked => '◐',
         Status::Open => '○',
-        Status::Deferred => '◌',
+        Status::InProgress => '◐',
+        Status::Blocked => '●',
         Status::Closed => '✓',
+        Status::Deferred => '❄',
         Status::Other(_) => '?',
     }
 }
@@ -168,6 +173,19 @@ mod tests {
             title: None,
             ..agent(source)
         }
+    }
+
+    /// `bd list` prints this legend at the foot of every listing, so a reader
+    /// arriving from `bd` has already learned which glyph means what. A glyph
+    /// given to a different status here would be read backwards, and no
+    /// amount of doing better elsewhere would undo that.
+    #[test]
+    fn every_glyph_is_the_one_bd_lists_beside_that_status_in_its_own_legend() {
+        assert_eq!(status_glyph(&Status::Open), '○');
+        assert_eq!(status_glyph(&Status::InProgress), '◐');
+        assert_eq!(status_glyph(&Status::Blocked), '●');
+        assert_eq!(status_glyph(&Status::Closed), '✓');
+        assert_eq!(status_glyph(&Status::Deferred), '❄');
     }
 
     #[test]
@@ -343,7 +361,7 @@ mod tests {
     fn a_row_says_what_the_bead_says() {
         let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT, None);
 
-        assert_eq!(row.glyph, '◐');
+        assert_eq!(row.glyph, '●');
         assert_eq!(row.id, ".20");
         assert_eq!(row.title, "wallpaper timer calls dms");
     }
