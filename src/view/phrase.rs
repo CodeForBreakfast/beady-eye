@@ -135,6 +135,17 @@ pub fn elided(count: usize) -> String {
     format!("{count} more {bead} · closed, and nobody on them")
 }
 
+/// Work still to do behind a closed line resting shut over it.
+///
+/// A bead's children here are the work closing it unblocked, so the row above
+/// them says done while they are not, and its fraction says the same thing in
+/// arithmetic a reader has to do. This says it in words, where the line is
+/// shut and the beads are therefore nowhere else on the screen.
+pub fn unfinished_beneath(count: usize) -> String {
+    let bead = if count == 1 { "bead" } else { "beads" };
+    format!("{count} unfinished {bead} beneath this")
+}
+
 /// Beads bd stopped at, counted for the tree they sit in.
 pub fn truncated_nodes(count: usize) -> String {
     let (bead, them) = if count == 1 {
@@ -402,6 +413,7 @@ mod tests {
         said.push(truncated().to_string());
         for count in [1, 3] {
             said.push(elided(count));
+            said.push(unfinished_beneath(count));
             said.push(truncated_nodes(count));
             said.push(failed_projects(count));
             said.push(conflicts(count));
@@ -593,6 +605,7 @@ mod tests {
             dangling(1),
             unreachable(1),
             elided(1),
+            unfinished_beneath(1),
             truncated_nodes(1),
             failed_projects(1),
             conflicts(1),

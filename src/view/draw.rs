@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     fn row(node: &Node) -> Row {
-        row::cells(node, "nix-9670s", None)
+        row::cells(node, "nix-9670s", None, None)
     }
 
     // ---- the header ------------------------------------------------------

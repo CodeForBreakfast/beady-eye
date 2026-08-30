@@ -778,6 +778,9 @@ impl Forest {
                     let open = !kids.is_empty()
                         && self
                             .expanded(&Handle::Bead(key.clone()), live_beneath(tree, children, at));
+                    let holding = (node.status.is_closed() && !open)
+                        .then(|| unfinished_beneath(tree, children, at))
+                        .filter(|unfinished| *unfinished > 0);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open),
                         depth,
@@ -788,6 +791,7 @@ impl Forest {
                             node,
                             &tree.root,
                             progress_of(tree, children, at),
+                            holding,
                         )),
                     });
                     if open {
@@ -965,6 +969,20 @@ fn live_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
         .any(|node| !quiet(&tree.nodes[node]))
 }
 
+/// How many beads beneath `at` are not closed.
+///
+/// The mirror of `live_beneath`, which asks whether anyone is on the work
+/// rather than whether the work is done. `bdi` walks dependents, so a bead's
+/// children are the work closing it unblocked and a closed bead over open
+/// ones is the ordinary shape of this tree — but with nobody on any of them
+/// the branch rests shut, and the row above it says done.
+fn unfinished_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> usize {
+    beneath(children, at)
+        .into_iter()
+        .filter(|node| !tree.nodes[*node].status.is_closed())
+        .count()
+}
+
 /// Whether the branch at `at` is finished: every bead in it closed, no agent
 /// anywhere in it, no anomaly anywhere in it.
 ///
@@ -1059,6 +1077,7 @@ mod tests {
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::snapshot::{build_tree, Collected, HerdrState, Readiness, TrackerFailure};
     use crate::model::tree::{assemble, Assembled};
+    use crate::view::phrase;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
@@ -1168,6 +1187,36 @@ mod tests {
       {"id":"tow-1.2","title":"pour the base","status":"open","parent_id":"tow-1",
        "priority":2,"issue_type":"task"},
       {"id":"tow-1.2.1","title":"tie the rebar","status":"open","parent_id":"tow-1.2",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A closed bead standing over work that is still to do. `bdi` reads
+    /// `bd dep tree --direction=up`, so `sdg-4.1`'s descendants are the work
+    /// closing it unblocked — the ordinary shape of this tree, not a
+    /// malformed one. Nobody is on any of them and nothing is wrong with
+    /// them, so the branch rests shut under a row whose own glyph says done.
+    /// `sdg-4.2` is finished all the way down and `sdg-4.3` carries the only
+    /// pane, which is what opens the root.
+    const SIDING: &str = r#"[
+      {"id":"sdg-4","title":"re-point the crossover","status":"in_progress","parent_id":"",
+       "priority":1,"issue_type":"epic"},
+      {"id":"sdg-4.1","title":"slew the up line","status":"closed","parent_id":"sdg-4",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
+      {"id":"sdg-4.1.1","title":"key the switch","status":"closed","parent_id":"sdg-4.1",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"sdg-4.1.1.1","title":"gauge the check rail","status":"open","parent_id":"sdg-4.1.1",
+       "priority":2,"issue_type":"task"},
+      {"id":"sdg-4.1.1.2","title":"pack the timbers","status":"open","parent_id":"sdg-4.1.1",
+       "priority":2,"issue_type":"task"},
+      {"id":"sdg-4.1.2","title":"weld the closure rail","status":"open","parent_id":"sdg-4.1",
+       "priority":2,"issue_type":"task"},
+      {"id":"sdg-4.1.3","title":"lift the old chairs","status":"closed","parent_id":"sdg-4.1",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"sdg-4.2","title":"clip the down line","status":"closed","parent_id":"sdg-4",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"sdg-4.2.1","title":"torque the fishbolts","status":"closed","parent_id":"sdg-4.2",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
+      {"id":"sdg-4.3","title":"re-signal the box","status":"in_progress","parent_id":"sdg-4",
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -2183,6 +2232,90 @@ credential_command = "secret harbour"
                 total: 4
             })
         );
+    }
+
+    /// `bdi` reads `bd dep tree --direction=up`, so a bead's children are the
+    /// work closing it unblocked. A closed bead standing over open ones is
+    /// therefore the healthy shape of this tree, and where nobody is on them
+    /// the branch rests shut under a row whose glyph says done. Ready and
+    /// unstaffed is the queue a reader most needs to see next, so the line
+    /// that hides it says how much it hides.
+    #[test]
+    fn a_closed_branch_resting_over_unfinished_work_says_how_much_it_holds() {
+        let forest = flatten(&siding());
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital · sdg-4",
+                "  ├── ◐ .3 re-signal the box",
+                "  ├── ▸ ✓ .1 slew the up line",
+                "  └── ▸ ✓ .2 clip the down line",
+            ]
+        );
+        assert_eq!(
+            row_of(&forest, "sdg-4.1").notes,
+            vec![phrase::unfinished_beneath(3)]
+        );
+    }
+
+    /// The common case, and the reason the sentence is not on every closed
+    /// row: a branch that is done all the way down has nothing further to
+    /// say, and a count on it would be noise wherever the eye landed.
+    #[test]
+    fn a_closed_branch_that_is_finished_all_the_way_down_says_nothing_extra() {
+        let forest = flatten(&siding());
+
+        assert_eq!(row_of(&forest, "sdg-4.2").notes, Vec::<String>::new());
+    }
+
+    /// Counted at every depth. With the open bead directly under `sdg-4.1`
+    /// closed, everything unfinished is two levels down, and a count of the
+    /// immediate children would leave the row silent over both of them.
+    #[test]
+    fn unfinished_work_two_levels_under_a_closed_branch_is_still_counted() {
+        let deep = SIDING.replace(
+            r#""status":"open","parent_id":"sdg-4.1""#,
+            r#""status":"closed","closed_at":"2026-08-26T09:00:00Z","parent_id":"sdg-4.1""#,
+        );
+        let forest = flatten(&alone("orbital", &deep, &panes_on(&["sdg-4.3"])));
+
+        assert_eq!(
+            row_of(&forest, "sdg-4.1").notes,
+            vec![phrase::unfinished_beneath(2)]
+        );
+    }
+
+    /// The sentence and the fraction are two readings of one walk, so they
+    /// can never disagree: a row saying `2/5` and `3 unfinished beads` is the
+    /// same fact twice, once as arithmetic and once in words.
+    #[test]
+    fn the_count_a_closed_branch_gives_is_the_remainder_of_its_own_fraction() {
+        let forest = flatten(&siding());
+        let row = row_of(&forest, "sdg-4.1");
+        let progress = row.progress.expect("a branch has a fraction");
+
+        assert_eq!(
+            row.notes,
+            vec![phrase::unfinished_beneath(progress.total - progress.closed)]
+        );
+    }
+
+    /// Opened, the beads are on screen and counting them again above would be
+    /// noise. The sentence is what the shut line is hiding, not a standing
+    /// property of the bead.
+    #[test]
+    fn a_closed_branch_opened_over_its_work_stops_counting_it() {
+        let mut forest = flatten(&siding());
+        select(&mut forest, &key("orbital", "sdg-4.1"));
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(row_of(&forest, "sdg-4.1").notes, Vec::<String>::new());
+    }
+
+    fn siding() -> Snapshot {
+        alone("orbital", SIDING, &panes_on(&["sdg-4.3"]))
     }
 
     /// Collapsed, not dropped: it is the existing fold, and opening it draws

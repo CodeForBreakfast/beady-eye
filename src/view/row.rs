@@ -40,15 +40,20 @@ pub struct Row {
     pub agent: Option<String>,
     pub anomalies: Option<String>,
     /// What is true of this bead beyond its own fields: a subtree the tracker
-    /// stopped at, a status outside bd's own set.
+    /// stopped at, unfinished work the line is shut over, a status outside
+    /// bd's own set.
     pub notes: Vec<String>,
 }
 
-pub fn cells(node: &Node, root: &str, progress: Option<Progress>) -> Row {
+/// `holding` is the unfinished work this line is shut over, where it is
+/// closed and there is any. The caller knows the branch and the fold; the
+/// bead's own fields say nothing about either.
+pub fn cells(node: &Node, root: &str, progress: Option<Progress>, holding: Option<usize>) -> Row {
     let mut notes = Vec::new();
     if node.truncated {
         notes.push(phrase::truncated().to_string());
     }
+    notes.extend(holding.map(phrase::unfinished_beneath));
     notes.extend(phrase::unrecognised_status(&node.status));
 
     Row {
@@ -218,8 +223,8 @@ mod tests {
         staffed.agent = Some(agent(JoinSource::AgentPane));
 
         assert_eq!(
-            cells(&staffed, ROOT, None).glyph,
-            cells(&node("nix-9670s.20", Status::InProgress), ROOT, None).glyph
+            cells(&staffed, ROOT, None, None).glyph,
+            cells(&node("nix-9670s.20", Status::InProgress), ROOT, None, None).glyph
         );
     }
 
@@ -314,7 +319,7 @@ mod tests {
 
     #[test]
     fn a_bead_with_nothing_wrong_carries_no_marker_at_all() {
-        let row = cells(&node("nix-9670s.20", Status::Open), ROOT, None);
+        let row = cells(&node("nix-9670s.20", Status::Open), ROOT, None, None);
 
         assert_eq!(row.anomalies, None);
         assert_eq!(row.agent, None);
@@ -328,13 +333,16 @@ mod tests {
         let mut stopped = node("nix-9670s.20", Status::Open);
         stopped.truncated = true;
 
-        assert_eq!(cells(&stopped, ROOT, None).notes, vec![phrase::truncated()]);
+        assert_eq!(
+            cells(&stopped, ROOT, None, None).notes,
+            vec![phrase::truncated()]
+        );
     }
 
     #[test]
     fn a_status_outside_bds_own_set_leaves_the_word_bd_used_on_the_row() {
         let odd = node("nix-9670s.20", Status::Other("triage".into()));
-        let row = cells(&odd, ROOT, None);
+        let row = cells(&odd, ROOT, None, None);
 
         assert_eq!(row.glyph, '?');
         assert!(
@@ -358,14 +366,14 @@ mod tests {
         ];
 
         assert_eq!(
-            cells(&badged, ROOT, None).badges,
+            cells(&badged, ROOT, None, None).badges,
             vec!["⇢ #12", "⏸ waiting"]
         );
     }
 
     #[test]
     fn a_row_says_what_the_bead_says() {
-        let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT, None);
+        let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT, None, None);
 
         assert_eq!(row.status, Status::Blocked);
         assert_eq!(row.glyph, '●');
