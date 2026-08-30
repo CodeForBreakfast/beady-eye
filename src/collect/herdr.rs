@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::collect::run::{Env, RunFailure, Runner};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneStatus {
@@ -65,6 +67,16 @@ struct AgentList {
 pub fn parse_agent_list(s: &str) -> anyhow::Result<Vec<Pane>> {
     let envelope: Envelope = serde_json::from_str(s)?;
     Ok(envelope.result.agents)
+}
+
+/// `herdr agent list`, which answers with JSON and needs no flag to.
+///
+/// It reports on the whole machine, so it is asked once and takes no
+/// project's directory or credential. A failure here is not fatal: the caller
+/// degrades to the beads-only tier.
+pub fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
+    let out = runner.run("herdr", &["agent", "list"], None, &Env::new())?;
+    parse_agent_list(&out).map_err(|e| RunFailure::parse("herdr", e))
 }
 
 #[cfg(test)]
@@ -221,5 +233,36 @@ mod tests {
         let out = serde_json::to_string(&PaneStatus::Blocked).unwrap();
 
         assert_eq!(out, r#""blocked""#);
+    }
+
+    use crate::collect::run::testing::FakeRunner;
+    use crate::collect::run::FailureKind;
+
+    #[test]
+    fn agent_list_asks_herdr_once_for_the_whole_machine() {
+        let runner = FakeRunner::default().with("herdr agent list", FIXTURE);
+
+        assert_eq!(agent_list(&runner).unwrap().len(), 10);
+
+        let call = runner.call("herdr agent list");
+        assert_eq!(call.cwd, None);
+        assert!(call.env.is_empty());
+    }
+
+    #[test]
+    fn a_missing_herdr_is_a_failure_the_caller_can_degrade_on() {
+        let runner = FakeRunner::default().failing(
+            "herdr agent list",
+            RunFailure::exec("herdr", "No such file or directory (os error 2)"),
+        );
+
+        assert_eq!(agent_list(&runner).unwrap_err().kind, FailureKind::Exec);
+    }
+
+    #[test]
+    fn output_herdr_could_not_have_written_is_a_parse_failure() {
+        let runner = FakeRunner::default().with("herdr agent list", "not json at all");
+
+        assert_eq!(agent_list(&runner).unwrap_err().kind, FailureKind::Parse);
     }
 }
