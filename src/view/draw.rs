@@ -730,7 +730,7 @@ mod tests {
     use crate::model::types::PaneStatus;
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
-    use chrono::{DateTime, TimeZone, Utc};
+    use chrono::{DateTime, Local, TimeZone, Utc};
 
     const OPEN: &str = "▾ ";
     const SHUT: &str = "▸ ";
@@ -769,6 +769,47 @@ mod tests {
             }
         }
         runs
+    }
+
+    /// A row says these words.
+    ///
+    /// The words are written out at the call rather than asked of the code
+    /// that drew the row. A test that takes them from `phrase` passes
+    /// whatever `phrase` says, the empty string included, so it proves the
+    /// words reached the screen and nothing about what they are.
+    fn says(row: &str, words: &str) {
+        assert!(
+            !words.is_empty(),
+            "every row says nothing, so nothing is asserted"
+        );
+        assert!(row.contains(words), "{row:?} does not say {words:?}");
+    }
+
+    /// A row does not say these words. Inverted, the same guard is needed for
+    /// the opposite reason: no row leaves nothing out, so an empty
+    /// expectation fails whatever the row says.
+    fn does_not_say(row: &str, words: &str) {
+        assert!(
+            !words.is_empty(),
+            "no row leaves nothing out, so nothing is asserted"
+        );
+        assert!(!row.contains(words), "{row:?} says {words:?}");
+    }
+
+    /// The whole point of the guard: a phrase emptied at source and passed
+    /// straight through would satisfy `contains` on every row ever drawn.
+    #[test]
+    #[should_panic(expected = "nothing is asserted")]
+    fn nothing_is_not_something_a_row_can_say() {
+        says("⚠ agents unknown", "");
+    }
+
+    /// And its mirror: no row leaves nothing out, so the inverted form has to
+    /// refuse the same expectation for the opposite reason.
+    #[test]
+    #[should_panic(expected = "nothing is asserted")]
+    fn nothing_is_not_something_a_row_can_leave_out() {
+        does_not_say("⚠ agents unknown", "");
     }
 
     /// A run of closed siblings, under whichever bead the test likes: the
@@ -987,11 +1028,8 @@ mod tests {
         );
         let drawn = drawn(unread_line(&unread, LAST, 9), 60, 1);
 
-        assert!(drawn[0].contains("nix-9670s"), "{drawn:?}");
-        assert!(
-            drawn[0].contains(phrase::tracker_failure(TrackerFailure::Unavailable)),
-            "{drawn:?}"
-        );
+        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "the tracker did not answer");
     }
 
     /// A tracker that could not be read has no counts, and `0/0` would say the
@@ -1001,7 +1039,7 @@ mod tests {
         let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
         let drawn = drawn(unread_line(&unread, LAST, 9), 120, 1);
 
-        assert!(!drawn[0].contains("0/0"), "{drawn:?}");
+        does_not_say(&drawn[0], "0/0");
     }
 
     /// Nothing should reach this: a root that read is a bead row, and one that
@@ -1015,8 +1053,8 @@ mod tests {
             1,
         );
 
-        assert!(drawn[0].contains("nix-9670s"), "{drawn:?}");
-        assert!(drawn[0].contains(phrase::root_unread()), "{drawn:?}");
+        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "this root drew no rows, and nothing said why");
     }
 
     /// The design has a project whose roots would not read render its panes.
@@ -1050,7 +1088,7 @@ mod tests {
             1,
         );
 
-        assert!(drawn[0].contains(phrase::no_live_panes()), "{drawn:?}");
+        says(&drawn[0], "no live pane names this project");
     }
 
     /// A pane list that cannot be known to be whole says so. A silently short
@@ -1071,13 +1109,10 @@ mod tests {
             1,
         );
 
-        assert!(
-            !whole[0].contains(phrase::panes_may_be_incomplete()),
-            "{whole:?}"
-        );
-        assert!(
-            partial[0].contains(phrase::panes_may_be_incomplete()),
-            "{partial:?}"
+        does_not_say(&whole[0], "and possibly more");
+        says(
+            &partial[0],
+            "and possibly more · a live pane under no configured project could belong here",
         );
     }
 
@@ -1088,7 +1123,7 @@ mod tests {
         let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
         let drawn = drawn(unread_line(&unread, LAST, 9), 24, 1);
 
-        assert!(drawn[0].contains("nix-9670s"), "{drawn:?}");
+        says(&drawn[0], "nix-9670s");
         assert_eq!(drawn[0].chars().count(), 24);
     }
 
@@ -1267,7 +1302,10 @@ mod tests {
         stopped.truncated = true;
         let drawn = drawn(bead_line(&row(&stopped), BRANCH, 4), 120, 1);
 
-        assert!(drawn[0].contains(phrase::truncated()), "{drawn:?}");
+        says(
+            &drawn[0],
+            "more beneath this · the tracker stopped at its depth limit",
+        );
     }
 
     #[test]
@@ -1747,9 +1785,9 @@ mod tests {
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
         let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 90), 90, 1);
 
-        assert!(
-            drawn[0].contains(phrase::notice(Notice::NoHerdr)),
-            "{drawn:?}"
+        says(
+            &drawn[0],
+            "no herdr session · which agents are alive is unknown",
         );
     }
 
@@ -1765,9 +1803,9 @@ mod tests {
             1,
         );
 
-        assert!(
-            drawn[0].contains(phrase::notice(Notice::NoInboundChannel)),
-            "{drawn:?}"
+        says(
+            &drawn[0],
+            "nothing can tell bdi a project changed · every project is polled instead",
         );
     }
 
@@ -1787,8 +1825,11 @@ mod tests {
             1,
         );
 
-        for said in [Notice::NoHerdr, Notice::NoInboundChannel] {
-            assert!(drawn[0].contains(phrase::notice(said)), "{drawn:?}");
+        for words in [
+            "no herdr session · which agents are alive is unknown",
+            "nothing can tell bdi a project changed · every project is polled instead",
+        ] {
+            says(&drawn[0], words);
         }
     }
 
@@ -1808,11 +1849,11 @@ mod tests {
             1,
         );
 
-        assert!(
-            drawn[0].contains(phrase::notice(Notice::NoHerdr)),
-            "{drawn:?}"
+        says(
+            &drawn[0],
+            "no herdr session · which agents are alive is unknown",
         );
-        assert!(drawn[0].contains("polled, not reported"), "{drawn:?}");
+        says(&drawn[0], "polled, not reported");
     }
 
     // ---- how fresh the screen is ------------------------------------------
@@ -1831,9 +1872,9 @@ mod tests {
             1,
         );
 
-        assert!(
-            drawn[0].contains(&phrase::freshness(Freshness::Collected(at))),
-            "{drawn:?}"
+        says(
+            &drawn[0],
+            &format!("collected {}", at.with_timezone(&Local).format("%H:%M:%S")),
         );
     }
 
@@ -1848,10 +1889,7 @@ mod tests {
             1,
         );
 
-        assert!(
-            drawn[0].contains(&phrase::freshness(Freshness::Collecting)),
-            "{drawn:?}"
-        );
+        says(&drawn[0], "collecting");
     }
 
     /// A notice is something a reader must act on and the keys are the row's
@@ -1871,15 +1909,15 @@ mod tests {
         };
 
         let roomy = drawn(foot(130), 130, 1);
-        assert!(roomy[0].contains("collected"), "{roomy:?}");
+        says(&roomy[0], "collected");
 
         let narrow = drawn(foot(110), 110, 1);
-        assert!(!narrow[0].contains("collected"), "{narrow:?}");
-        assert!(
-            narrow[0].contains(phrase::notice(Notice::NoHerdr)),
-            "{narrow:?}"
+        does_not_say(&narrow[0], "collected");
+        says(
+            &narrow[0],
+            "no herdr session · which agents are alive is unknown",
         );
-        assert!(narrow[0].contains(A_KEY_ROW), "{narrow:?}");
+        says(&narrow[0], A_KEY_ROW);
     }
 
     /// The whole screen at a width with room for the foot's three parts, so
@@ -1897,11 +1935,12 @@ mod tests {
                 "▾ summit-works                                                         0/2",
                 "  └── ◐ nix-9670s  lift the ground station                             0/2",
                 "                                                                          ",
-                // Built from the phrase rather than written out, because the
-                // clock is the reader's own and CI reads it in another zone.
+                // The words are written out; only the clock is computed,
+                // because it is the reader's own and CI reads it in another
+                // zone.
                 &format!(
-                    "{A_KEY_ROW}  {}    ",
-                    phrase::freshness(Freshness::Collected(read_at()))
+                    "{A_KEY_ROW}  collected {}    ",
+                    read_at().with_timezone(&Local).format("%H:%M:%S")
                 ),
             ]
         );

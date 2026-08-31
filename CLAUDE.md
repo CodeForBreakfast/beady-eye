@@ -104,14 +104,6 @@ reads `symbol()` only and is blind to styling, which is how a colour bug
 shipped. `tui.rs` has a `painted()` of its own that is no better: it is named
 for the `paint()` it calls, returns symbols, and sees no colour either.
 
-`assert!(drawn[0].contains(phrase::truncated()))` asks the function that drew
-the row what the row should say, so it holds for whatever words `phrase::`
-returns, and `contains("")` is true of every string, so an emptied phrase leaves
-it unable to fail at all. The phrases asserted that way are the ones carrying
-*degrade, never disappear* — the unreachable tracker, the root with no rows, the
-truncated subtree — so the rule ends up resting on the assertions least able to
-check it. Write the words the reader has to see.
-
 Ask the program, not the library under it. `fc-match` says `\e[1m` gets Bold;
 kitty resolves it to SemiBold, and `kitty +runpy` is what will tell you so. If
 you supplied part of the query, you specified the answer.
