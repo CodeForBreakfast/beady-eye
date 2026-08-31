@@ -743,7 +743,7 @@ impl Forest {
                         folded: Some(open),
                         place: None,
                         content: Content::Elided {
-                            count: run_size(children, &members),
+                            count: run_size(tree, children, &members),
                             under: parent.clone(),
                         },
                     });
@@ -1152,6 +1152,39 @@ mod tests {
     fn closed_bead_drawn_twice_in_one_tree() -> Snapshot {
         drawn_twice(CLOSED_TWICE, "orb-4", &["orb-5.1.1", "orb-5.2.1"])
     }
+
+    /// A run whose branches share a blocker. `lck-2` holds up both halves of
+    /// the refit, so it is drawn beneath each of them, and the four branches
+    /// that are closed and unmanned collapse into one run — five beads drawn
+    /// on six rows.
+    ///
+    /// The only shape where counting beads and counting rows disagree: every
+    /// other fixture's runs draw each of their beads once. `lck-1.5` is the
+    /// work still to do, and is what holds the root open so the run is on
+    /// the screen at all.
+    const SHARED_IN_A_RUN: &str = r#"[
+      {"id":"lck-1","title":"refit the lock gates","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"lck-1.5","title":"hang the new gates","status":"in_progress",
+       "dependencies":[{"depends_on_id":"lck-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"lck-1.1","title":"drain the upper chamber","status":"closed",
+       "dependencies":[{"depends_on_id":"lck-1","type":"parent-child"},
+                       {"depends_on_id":"lck-2","type":"blocks"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
+      {"id":"lck-1.2","title":"drain the lower chamber","status":"closed",
+       "dependencies":[{"depends_on_id":"lck-1","type":"parent-child"},
+                       {"depends_on_id":"lck-2","type":"blocks"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"lck-1.3","title":"scarf the mitre posts","status":"closed",
+       "dependencies":[{"depends_on_id":"lck-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"lck-1.4","title":"re-seat the paddles","status":"closed",
+       "dependencies":[{"depends_on_id":"lck-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
+      {"id":"lck-2","title":"stop off the pound","status":"closed",
+       "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
+    ]"#;
 
     /// One tree, with the subtree at `id` put back on the end so the tree
     /// draws it twice.
@@ -2562,10 +2595,14 @@ credential_command = "secret harbour"
     /// true of every bead it counts — not merely of the siblings it names.
     /// The count and the set it describes are checked together, because it was
     /// their disagreement that let the sentence lie.
+    ///
+    /// The set is of beads rather than of rows, so `SHARED_IN_A_RUN` is here:
+    /// it is the only fixture whose run reaches one bead two ways, and under
+    /// every other one the two answers are the same number.
     #[test]
     fn a_run_counts_exactly_the_beads_its_phrase_is_true_of() {
         let mut runs = 0;
-        for json in [ORBITAL, DEPOT, RELAY] {
+        for json in [ORBITAL, DEPOT, RELAY, SHARED_IN_A_RUN] {
             let tree = alone("orbital", json, &two_panes()).trees.remove(0);
             let children = children_of(&tree.nodes);
 
@@ -2576,11 +2613,11 @@ credential_command = "secret harbour"
                 }
                 runs += 1;
 
-                let mut behind = 0;
+                let mut behind = BTreeSet::new();
                 let mut walking = run.clone();
                 while let Some(node) = walking.pop() {
-                    behind += 1;
                     let bead = &tree.nodes[node];
+                    behind.insert(bead.id.clone());
                     assert!(
                         bead.status.is_closed()
                             && bead.agent.is_none()
@@ -2591,11 +2628,34 @@ credential_command = "secret harbour"
                     walking.extend(children[node].iter().copied());
                 }
 
-                assert_eq!(run_size(&children, &run), behind);
+                assert_eq!(run_size(&tree, &children, &run), behind.len());
             }
         }
 
         assert!(runs > 0, "the fixtures built no run to check");
+    }
+
+    /// A run says how many beads it holds, and a blocker two of its branches
+    /// share is one bead however many ways down there are to it. The count
+    /// stands in for beads that are not on the screen, so counting the rows
+    /// it saved would say the run holds work that does not exist.
+    ///
+    /// `SHARED_IN_A_RUN` draws five beads on six rows, and the expected
+    /// number is written out here rather than walked, because a count taken
+    /// from the tree the count is about cannot disagree with it.
+    #[test]
+    fn a_run_counts_a_blocker_two_of_its_branches_share_once() {
+        let forest = flatten(&alone("orbital", SHARED_IN_A_RUN, &[]));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital",
+                "  └── ◐ lck-1 refit the lock gates",
+                "      ├── ◐ .5 hang the new gates",
+                "      └─▸ … 5 more",
+            ]
+        );
     }
 
     /// A branch that is finished all the way down is one line saying so: the

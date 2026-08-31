@@ -479,13 +479,17 @@ pub(crate) fn progress_of(tree: &Tree, children: &[Vec<usize>], at: usize) -> Op
 /// Opening it draws those beads and leaves their descendants to the same rules,
 /// which for a quiet closed run of their own is another count one level down.
 /// Nothing goes missing either way, so the number holds at every depth.
-pub(crate) fn run_size(children: &[Vec<usize>], members: &[usize]) -> usize {
-    members.iter().map(|kid| subtree_size(children, *kid)).sum()
-}
-
-fn subtree_size(children: &[Vec<usize>], at: usize) -> usize {
-    1 + children[at]
-        .iter()
-        .map(|kid| subtree_size(children, *kid))
-        .sum::<usize>()
+///
+/// Counted as work rather than as rows, like every other statistic here: a
+/// blocker several of the run's branches share is one bead, and the set spans
+/// the whole run rather than each member, because the two branches sharing it
+/// may be two different members.
+pub(crate) fn run_size(tree: &Tree, children: &[Vec<usize>], members: &[usize]) -> usize {
+    let mut seen = BTreeSet::new();
+    for kid in members {
+        for node in std::iter::once(*kid).chain(beneath(children, *kid)) {
+            seen.insert(tree.nodes[node].id.as_str());
+        }
+    }
+    seen.len()
 }
