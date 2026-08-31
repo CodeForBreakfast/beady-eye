@@ -387,35 +387,71 @@ bd found the config — it knew the database and the user — and had no passwor
 for it. **This is a credential boundary, not a policy one**, and it is the
 biggest constraint on the multi-project view.
 
-### v1 takes a per-project credential set
+### v1 reaches a tracker by entering its directory
 
 Confirmed with the operator of this deployment: no cross-project reader exists
 today; the one read-only user on the server is scoped to a single database.
 
-**A working directory does not carry a credential.** An earlier draft said `bd`
-finds a project's credential by being run in that project's directory. It does
-not. `BEADS_DOLT_PASSWORD` reaches an interactive shell through direnv, and a
-child process inherits **the parent's** environment whatever its working
-directory is. So a single process that merely changes directory authenticates
-every tracker with whichever credential it started with — silently, and against
-the wrong database only when two trackers share a name.
+**Neither a credential nor a tracker path is carried by a working directory.**
+An earlier draft said `bd` finds a project's credential by being run in that
+project's directory. It does not. `BEADS_DOLT_PASSWORD` reaches an interactive
+shell through direnv, and a child process inherits **the parent's** environment
+whatever its working directory is. So a single process that merely changes
+directory authenticates every tracker with whichever credential it started
+with — silently, and against the wrong database only when two trackers share a
+name.
 
-So the credential is explicit, per project, and set on the child:
+**The same sentence is true of the tracker path, and the first fix missed it.**
+`BEADS_DIR` names the tracker and outranks the working directory, so a `bdi`
+launched from a shell scoped to one project read that project's tracker for
+every project it was configured with. Which tracker is read and what
+authenticates to it are one identity: a child is told both or neither.
+
+**A shell that has entered a project's directory is correctly configured for
+its tracker.** direnv is what makes that true — it loads the flake, the bd
+version, `BEADS_DIR`, and whatever holds the password. So `bdi` reproduces
+entering the directory rather than reconstructing what entering it would have
+produced, and a project entry needs only a path:
 
 ```toml
 [[projects]]
 name = "summit-works"
 path = "/tmp/bdi-ground/summit-works"
-credential_command = "op read op://Private/beads-tracker/password"
 ```
 
-- **The config stores a command, never a secret.** Its stdout is the password.
-  That keeps plaintext out of a file that is otherwise unremarkable, and composes
-  with whatever the machine already uses — a password manager, a sealed secret,
-  `cat` of a mode-0600 file.
-- **The child's environment is built, not inherited.** `bdi` clears
-  `BEADS_DOLT_PASSWORD` and sets it from that project's command, so one project's
-  credential cannot leak into another's subprocess.
+- **The tracker is named outright, with bd's own `-C`.** Every call `bdi` makes
+  is `bd -C <project.path> --readonly …`. `-C` outranks `BEADS_DIR` in both
+  directions, measured: `BEADS_DIR=/nonsense bd -C <project>` resolves the
+  project, and `BEADS_DIR=<valid> bd -C /tmp` refuses with *no beads project
+  found*. Stating the tracker does not depend on `bdi` having thought of every
+  variable bd reads.
+- **`-C` is what makes entering the directory safe.** direnv fails open: it
+  exits 0 and runs with the ambient environment where an `.envrc` is unallowed
+  or a flake will not evaluate. With the tracker named outright, such a
+  fallback can no longer point bd at the wrong database — only fail to
+  authenticate against the right one, which `bdi` reports per project as `auth`
+  while every other tree still draws.
+- **`--readonly` has bd enforce the no-writes rule** rather than leaving it to
+  `bdi` being well behaved.
+- **The environment is captured once per project, not per call.** `direnv exec`
+  reloads the directory every time it runs. Measured 2026-08-31: 20ms of
+  overhead on `summit-works` but **1.3 to 2.4 seconds** on this repository,
+  whose `.envrc` watches the profile file its own nested `.envrc.local`
+  rewrites, so the cache is invalidated by the previous load every time. A
+  whole collection of both trackers costs 2.5 to 2.7 seconds, and `bdi` makes
+  six or more bd calls per project, so per-call was never affordable.
+- **A project whose `.envrc` writes to stdout cannot corrupt an answer.**
+  direnv's own log lines reach stderr, measured, but nothing stops a project's
+  `.envrc` printing to stdout and only this repository's has been fixed not to.
+  Capturing once confines that text to the one call whose parser tolerates it,
+  rather than to every JSON answer bd gives.
+- **A directory that cannot be entered fails that project, visibly.** There is
+  no fallback to the ambient environment: a mechanism that silently does
+  nothing is indistinguishable from one that worked.
+- **`credential_command` survives as the escape hatch**, for a tracker outside
+  direnv's reach. The config stores a command, never a secret; its stdout is
+  the password. What went is its promotion to the default, and the rule that
+  demanded one from every project once a second was named.
 - **An authentication failure is distinguished from the others.**
   `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`, `exec`, or
   `parse`. They want different responses and reporting them as one string does
@@ -423,15 +459,15 @@ credential_command = "op read op://Private/beads-tracker/password"
 - **No error text reaches the output verbatim.** bd's failures name the database
   and user; the reason is reported, the raw stderr is not.
 
-A single read-only user across every tracker would retire the per-project
-credential entirely, and the shape it would take has been measured — see *Open,
-for Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does
-not depend on it.
+An earlier draft rejected `direnv exec` on two guesses, and both were wrong:
+that it costs a direnv evaluation per call, and that it requires every tracker
+to be a direnv-managed checkout. The first is answered by capturing once; on
+the second, a directory with no `.envrc` runs anyway.
 
-`direnv exec <path> bd …` is the alternative and needs no config at all. It costs
-a direnv evaluation per call and requires every tracker to be a direnv-managed
-checkout. Worth measuring before choosing; the config field above is the fallback
-that always works.
+A single read-only user across every tracker would retire `credential_command`
+entirely, and the shape it would take has been measured — see *Open, for
+Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does not
+depend on it.
 
 ### Degradation is the rule either way
 

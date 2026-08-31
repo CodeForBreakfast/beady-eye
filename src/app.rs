@@ -179,7 +179,7 @@ fn read_project(
     cfg: &Config,
     panes: &[Pane],
 ) -> Result<ProjectWork, RunFailure> {
-    let env = bd::credential_env(runner, project, bd::ambient_credential().as_deref())?;
+    let env = bd::tracker_env(runner, project, bd::ambient_credential().as_deref())?;
     let discovered = bd::discover_roots(runner, &project.path, &env, &cfg.roots.metadata_keys)?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
@@ -405,6 +405,23 @@ mod tests {
       {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"idle"}
     ]}}"#;
 
+    /// A bd call as the runner spells it: the tracker named outright, and
+    /// writes refused. Two projects now differ in their argv as well as their
+    /// directory, so each is staged for the tracker it reads.
+    fn spelled_in(tracker: &str, subcommand: &str) -> String {
+        format!("bd -C {tracker} --readonly {subcommand}")
+    }
+
+    /// The same, for the single project most of these tests read.
+    fn spelled(subcommand: &str) -> String {
+        spelled_in(ORBITAL, subcommand)
+    }
+
+    /// The direnv call that reproduces entering a project's directory.
+    fn entering(tracker: &str) -> String {
+        format!("direnv exec {tracker} env -0")
+    }
+
     fn now() -> DateTime<Utc> {
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
@@ -442,43 +459,43 @@ credential_command = "secret ferry"
 
     /// The one call a project's whole forest is drawn from, spelled as bd
     /// takes it.
-    const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
+    const TRACKER_CALL: &str = "list --all --limit 0 --json";
 
     /// The one call discovery makes for statuses, spelled as bd takes it.
     const UNFINISHED_CALL: &str =
-        "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
+        "list --status open,in_progress,blocked,deferred --limit 0 --json";
 
     /// The same two questions asked of bd's ephemeral table, which `bd list`
     /// does not read.
-    const WISP_CALL: &str = "bd query ephemeral=true --all --limit 0 --json";
-    const UNFINISHED_WISP_CALL: &str = "bd query ephemeral=true --limit 0 --json";
+    const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
+    const UNFINISHED_WISP_CALL: &str = "query ephemeral=true --limit 0 --json";
 
     /// Every call a healthy single-project run makes. Discovery names each
     /// bead's own parent, so a healthy run climbs nothing.
     fn orbital() -> FakeRunner {
         FakeRunner::default()
             .with("herdr agent list", PANES)
-            .with(
-                UNFINISHED_CALL,
+            .with(&entering(ORBITAL), "")
+            .with(&spelled(UNFINISHED_CALL),
                 r#"[{"id":"orb-7","title":"lift the ground station","status":"in_progress","parent":""},
                     {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
                     {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
             )
             .with(
-                "bd list --has-metadata-key working_topic --limit 0 --json",
+                &spelled("list --has-metadata-key working_topic --limit 0 --json"),
                 "[]",
             )
             .with(
-                "bd ready --limit 0 --json",
+                &spelled("ready --limit 0 --json"),
                 r#"[{"id":"orb-7.2","title":"lay the feeder cable","status":"open"}]"#,
             )
             .with(
-                "bd blocked --json",
+                &spelled("blocked --json"),
                 r#"[{"id":"orb-7.1","blocked_by":["orb-9"]}]"#,
             )
-            .with(TRACKER_CALL, ORBITAL_TREE)
-            .with(WISP_CALL, "[]")
-            .with(UNFINISHED_WISP_CALL, "[]")
+            .with(&spelled(TRACKER_CALL), ORBITAL_TREE)
+            .with(&spelled(WISP_CALL), "[]")
+            .with(&spelled(UNFINISHED_WISP_CALL), "[]")
     }
 
     fn failing(kind: FailureKind) -> RunFailure {
@@ -520,12 +537,12 @@ credential_command = "secret ferry"
     #[test]
     fn a_configured_metadata_key_discovers_a_root_bds_statuses_would_miss() {
         let runner = orbital()
-            .with(UNFINISHED_CALL, "[]")
+            .with(&spelled(UNFINISHED_CALL), "[]")
             .with(
-                "bd list --has-metadata-key working_topic --limit 0 --json",
+                &spelled("list --has-metadata-key working_topic --limit 0 --json"),
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7"}]"#,
             )
-            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#);
+            .with(&spelled("show orb-7 --json"), r#"[{"id":"orb-7","parent":null}]"#);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -546,7 +563,7 @@ credential_command = "secret ferry"
             .calls()
             .into_iter()
             .map(|call| call.argv)
-            .filter(|argv| argv.starts_with("bd show "))
+            .filter(|argv| argv.starts_with(&spelled("show ")))
             .collect();
         assert!(climbed.is_empty(), "climbed {climbed:?}");
     }
@@ -557,18 +574,17 @@ credential_command = "secret ferry"
     #[test]
     fn a_closed_ancestor_is_climbed_to_once_however_many_beads_share_it() {
         let runner = orbital()
-            .with(
-                UNFINISHED_CALL,
+            .with(&spelled(UNFINISHED_CALL),
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
                     {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
             )
-            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#);
+            .with(&spelled("show orb-7 --json"), r#"[{"id":"orb-7","parent":null}]"#);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
         assert_eq!(snap.trees[0].root, "orb-7");
         // `call` panics on a second invocation, which is the assertion.
-        runner.call("bd show orb-7 --json");
+        runner.call(&spelled("show orb-7 --json"));
     }
 
     /// The defect this rule replaces. Every seat stood down, so nothing was
@@ -579,8 +595,7 @@ credential_command = "secret ferry"
     fn an_effort_is_drawn_from_the_open_work_under_it_with_nobody_on_it() {
         let runner = orbital()
             .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
-            .with(
-                UNFINISHED_CALL,
+            .with(&spelled(UNFINISHED_CALL),
                 r#"[{"id":"orb-7","title":"lift the ground station","status":"open","parent":""},
                     {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
             );
@@ -596,16 +611,14 @@ credential_command = "secret ferry"
     #[test]
     fn a_parent_chain_that_loops_stops_where_it_repeats() {
         let runner = orbital()
-            .with(
-                UNFINISHED_CALL,
+            .with(&spelled(UNFINISHED_CALL),
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"}]"#,
             )
             .with(
-                "bd show orb-7 --json",
+                &spelled("show orb-7 --json"),
                 r#"[{"id":"orb-7","parent":"orb-7.1"}]"#,
             )
-            .with(
-                TRACKER_CALL,
+            .with(&spelled(TRACKER_CALL),
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
                      "parent_id":"","priority":2,"issue_type":"task"}]"#,
             );
@@ -629,7 +642,7 @@ orbital = ["orb-7", "orb-4"]
 "#
         ))
         .expect("the config parses");
-        let runner = orbital().merging(TRACKER_CALL, MAST_TREE);
+        let runner = orbital().merging(&spelled(TRACKER_CALL), MAST_TREE);
 
         let snap = run(&cfg, &runner, Filter::All, now());
 
@@ -664,8 +677,8 @@ orbital = ["orb-4"]
 "#
         ))
         .expect("the config parses");
-        let runner =
-            colliding_trackers(r#"{"result":{"agents":[]}}"#).merging(TRACKER_CALL, MAST_TREE);
+        let runner = colliding_trackers(r#"{"result":{"agents":[]}}"#)
+            .merging(&spelled(TRACKER_CALL), MAST_TREE);
 
         let snap = run(&cfg, &runner, Filter::All, now());
 
@@ -705,8 +718,11 @@ orbital = ["orb-4"]
                    "display_agent":"orb-4"}
                 ]}}"#,
             )
-            .with("bd show orb-4 --json", r#"[{"id":"orb-4","parent":null}]"#)
-            .merging(TRACKER_CALL, MAST_TREE);
+            .with(
+                &spelled("show orb-4 --json"),
+                r#"[{"id":"orb-4","parent":null}]"#,
+            )
+            .merging(&spelled(TRACKER_CALL), MAST_TREE);
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -742,7 +758,7 @@ orbital = ["orb-4"]
                 ]}}"#,
             )
             .failing(
-                "bd show reviewing the docs --json",
+                &spelled("show reviewing the docs --json"),
                 failing(FailureKind::Unavailable),
             );
 
@@ -768,17 +784,16 @@ orbital = ["orb-4"]
                    "display_agent":"orb-7.1"}
                 ]}}"#,
             )
-            .with(
-                UNFINISHED_CALL,
+            .with(&spelled(UNFINISHED_CALL),
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"}]"#,
             )
-            .with("bd show orb-7 --json", r#"[{"id":"orb-7","parent":null}]"#);
+            .with(&spelled("show orb-7 --json"), r#"[{"id":"orb-7","parent":null}]"#);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
         assert_eq!(snap.trees.len(), 1);
         // `call` panics on a second invocation, which is the assertion.
-        runner.call("bd show orb-7 --json");
+        runner.call(&spelled("show orb-7 --json"));
     }
 
     /// The pane names a bead, not a root. What joins the root set is the top
@@ -797,7 +812,7 @@ orbital = ["orb-4"]
             // Closed, so discovery never saw it — a seat writing up the bead
             // it has just finished still sits on one.
             .with(
-                "bd show orb-7.3 --json",
+                &spelled("show orb-7.3 --json"),
                 r#"[{"id":"orb-7.3","parent":"orb-7"}]"#,
             );
 
@@ -824,8 +839,11 @@ orbital = ["orb-4"]
                "display_agent":"orb-4"}
             ]}}"#,
         )
-        .with("bd show orb-4 --json", r#"[{"id":"orb-4","parent":null}]"#)
-        .merging(TRACKER_CALL, MAST_TREE);
+        .with(
+            &spelled("show orb-4 --json"),
+            r#"[{"id":"orb-4","parent":null}]"#,
+        )
+        .merging(&spelled(TRACKER_CALL), MAST_TREE);
 
         let snap = run(&two_projects(), &runner, Filter::All, now());
 
@@ -842,7 +860,7 @@ orbital = ["orb-4"]
         // `call` panics on a second invocation, so this is also the assertion
         // that ferry was never asked about an id no pane of its own named.
         assert_eq!(
-            runner.call("bd show orb-4 --json").cwd,
+            runner.call(&spelled("show orb-4 --json")).cwd,
             Some(PathBuf::from(ORBITAL))
         );
     }
@@ -888,7 +906,7 @@ orbital = ["orb-4"]
 
     #[test]
     fn a_project_whose_discovery_fails_is_named_not_dropped() {
-        let runner = orbital().failing(UNFINISHED_CALL, failing(FailureKind::Auth));
+        let runner = orbital().failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -912,7 +930,7 @@ orbital = ["orb-4"]
         ];
 
         for (kind, expected) in kinds {
-            let runner = orbital().failing(UNFINISHED_CALL, failing(kind));
+            let runner = orbital().failing(&spelled(UNFINISHED_CALL), failing(kind));
 
             let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -924,7 +942,7 @@ orbital = ["orb-4"]
     /// failures apart, and the filter has no agent count to hide it by.
     #[test]
     fn a_root_the_answer_does_not_hold_keeps_its_id_and_is_never_hidden() {
-        let runner = orbital().with(TRACKER_CALL, MAST_TREE);
+        let runner = orbital().with(&spelled(TRACKER_CALL), MAST_TREE);
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -947,7 +965,7 @@ orbital = ["orb-4"]
     /// recovered.
     #[test]
     fn the_one_tracker_read_failing_takes_the_project_down_by_name() {
-        let runner = orbital().failing(TRACKER_CALL, failing(FailureKind::Unavailable));
+        let runner = orbital().failing(&spelled(TRACKER_CALL), failing(FailureKind::Unavailable));
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -972,7 +990,7 @@ orbital = ["orb-4"]
 
     #[test]
     fn rows_bd_could_not_have_written_are_a_parse_failure_not_a_missing_tree() {
-        let runner = orbital().with(TRACKER_CALL, "[]");
+        let runner = orbital().with(&spelled(TRACKER_CALL), "[]");
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -985,7 +1003,7 @@ orbital = ["orb-4"]
     #[test]
     fn bds_own_words_never_reach_the_snapshot() {
         let runner = orbital().failing(
-            UNFINISHED_CALL,
+            &spelled(UNFINISHED_CALL),
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
@@ -1005,7 +1023,10 @@ orbital = ["orb-4"]
     /// so a tracker that cannot answer must not leave one behind.
     #[test]
     fn a_tracker_that_cannot_answer_readiness_fails_rather_than_calling_every_bead_unready() {
-        for call in ["bd ready --limit 0 --json", "bd blocked --json"] {
+        for call in [
+            &spelled("ready --limit 0 --json"),
+            &spelled("blocked --json"),
+        ] {
             let runner = orbital().failing(call, failing(FailureKind::Unavailable));
 
             let snap = run(&one_project(), &runner, Filter::All, now());
@@ -1090,7 +1111,7 @@ orbital = ["orb-4"]
         let reads: Vec<(Option<PathBuf>, Option<String>)> = runner
             .calls()
             .iter()
-            .filter(|c| c.argv == TRACKER_CALL)
+            .filter(|c| c.argv.ends_with(TRACKER_CALL))
             .map(|c| (c.cwd.clone(), c.env.get("BEADS_DOLT_PASSWORD").cloned()))
             .collect();
 
@@ -1191,8 +1212,8 @@ orbital = ["orb-4"]
             &Wanted::Everything,
         );
 
-        let refused =
-            colliding_trackers(PANES_IN_BOTH).failing(UNFINISHED_CALL, failing(FailureKind::Auth));
+        let refused = colliding_trackers(PANES_IN_BOTH)
+            .failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
         let after = collect(&mut standing, &refused, &orbital_alone());
 
         assert_eq!(
@@ -1243,19 +1264,22 @@ orbital = ["orb-4"]
     }
 
     fn colliding_trackers(panes: &str) -> FakeRunner {
-        FakeRunner::default()
+        let mut runner = FakeRunner::default()
             .with("herdr agent list", panes)
             .with("sh -c secret orbital", "orbital-password")
-            .with("sh -c secret ferry", "ferry-password")
-            .with(
-                UNFINISHED_CALL,
-                r#"[{"id":"x-1","title":"the shared prefix","status":"in_progress","parent":""},
-                    {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent":"x-1"}]"#,
-            )
-            .with("bd ready --limit 0 --json", "[]")
-            .with("bd blocked --json", "[]")
-            .with(TRACKER_CALL, COLLIDING_TREE)
-            .with(WISP_CALL, "[]")
-            .with(UNFINISHED_WISP_CALL, "[]")
+            .with("sh -c secret ferry", "ferry-password");
+        for tracker in [ORBITAL, FERRY] {
+            runner = runner
+                .with(&spelled_in(tracker, UNFINISHED_CALL),
+                    r#"[{"id":"x-1","title":"the shared prefix","status":"in_progress","parent":""},
+                        {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent":"x-1"}]"#,
+                )
+                .with(&spelled_in(tracker, "ready --limit 0 --json"), "[]")
+                .with(&spelled_in(tracker, "blocked --json"), "[]")
+                .with(&spelled_in(tracker, TRACKER_CALL), COLLIDING_TREE)
+                .with(&spelled_in(tracker, WISP_CALL), "[]")
+                .with(&spelled_in(tracker, UNFINISHED_WISP_CALL), "[]");
+        }
+        runner
     }
 }

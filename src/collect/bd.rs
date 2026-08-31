@@ -30,28 +30,113 @@ pub fn ambient_credential() -> Option<String> {
     std::env::var(CREDENTIAL_VAR).ok()
 }
 
-/// The environment bd is given for one project's tracker.
+/// The environment one project's tracker is read with.
 ///
-/// A project naming a `credential_command` gets that command's stdout. A
-/// project naming none is handed `ambient` instead, so a single-tracker setup
-/// needs no credential configured at all — it is passed the one it would once
-/// have inherited, which is what lets everything else `bdi` launches be
-/// denied it.
-pub fn credential_env(
+/// A shell that has entered a project's directory is already configured for
+/// its tracker: direnv loads the flake, the bd version, and whatever holds
+/// the password. So `bdi` reproduces entering the directory rather than
+/// reconstructing what entering it would have produced, and a project entry
+/// needs only a path — no assumption about what the secret is called, where
+/// it lives, or what the DSN is.
+///
+/// Captured once per project rather than by wrapping every call, because
+/// `direnv exec` reloads the directory each time it runs. Measured against
+/// this repository on 2026-08-31: 1.3 to 2.4 seconds per invocation, where a
+/// whole collection of both trackers costs 2.5 to 2.7. It also confines a
+/// project whose `.envrc` writes to stdout to this one call, whose parser
+/// tolerates it, rather than to every answer bd gives.
+///
+/// A `credential_command` is the escape hatch for a tracker outside direnv's
+/// reach, and answers instead of entering the directory.
+///
+/// The ambient credential underneath both is what lets a single-tracker
+/// setup configure nothing at all. It is safe here in a way it was not
+/// before `-C`: a credential belonging to another tracker can now only fail
+/// to authenticate against the right database, never open the wrong one.
+pub fn tracker_env(
     runner: &dyn Runner,
     project: &Project,
     ambient: Option<&str>,
 ) -> Result<Env, RunFailure> {
-    let Some(command) = &project.credential_command else {
-        return Ok(ambient.map_or_else(Env::new, |password| {
-            Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
-        }));
-    };
-    let password = runner.run("sh", &["-c", command], Some(&project.path), &Env::new())?;
-    Ok(Env::from([(
-        CREDENTIAL_VAR.to_string(),
-        password.trim_end_matches(['\r', '\n']).to_string(),
-    )]))
+    let mut env = ambient.map_or_else(Env::new, |password| {
+        Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
+    });
+    match &project.credential_command {
+        Some(command) => {
+            let password = runner.run("sh", &["-c", command], Some(&project.path), &Env::new())?;
+            env.insert(
+                CREDENTIAL_VAR.to_string(),
+                password.trim_end_matches(['\r', '\n']).to_string(),
+            );
+        }
+        None => env.extend(entering(&project.path, runner)?),
+    }
+    Ok(env)
+}
+
+/// The variables entering a directory produces.
+///
+/// direnv is given neither tracker nor credential of `bdi`'s own, so what
+/// comes back is what entering that directory produces rather than what the
+/// shell `bdi` was launched from was already carrying.
+///
+/// A directory direnv cannot enter fails this project rather than falling
+/// back to the ambient environment. direnv itself fails open — it exits 0
+/// and runs with the ambient environment where an `.envrc` is unallowed or a
+/// flake will not evaluate — and a mechanism that silently does nothing is
+/// indistinguishable from one that worked. What such a fallback cannot do,
+/// because `-C` names the tracker, is read another project's database.
+fn entering(path: &Path, runner: &dyn Runner) -> Result<Env, RunFailure> {
+    let named = path.to_string_lossy();
+    let out = runner.run(
+        "direnv",
+        &["exec", named.as_ref(), "env", "-0"],
+        Some(path),
+        &Env::new(),
+    )?;
+    Ok(variables(&out))
+}
+
+/// The variables in an `env -0` answer, tolerating whatever a project's
+/// `.envrc` wrote to stdout before it.
+///
+/// direnv's own log lines reach stderr, measured, but nothing stops a
+/// project's `.envrc` printing to stdout, and only this repository's has had
+/// that fixed. Such text arrives ahead of the first variable and would
+/// otherwise be read as part of its name, losing it. A variable's name holds
+/// no newline, so whatever precedes the last one before the `=` is not part
+/// of it.
+fn variables(out: &str) -> Env {
+    out.split('\0')
+        .filter_map(|entry| {
+            let (named, value) = entry.split_once('=')?;
+            let name = named.rsplit('\n').next().unwrap_or(named);
+            (!name.is_empty()).then(|| (name.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// One answer out of a project's tracker.
+///
+/// `-C` names the tracker outright, and it outranks `BEADS_DIR` in both
+/// directions: a wrong variable still resolves the project, and a wrong
+/// directory is refused rather than resolved to something plausible. That is
+/// what makes entering the directory safe, because direnv can quietly do
+/// nothing. Clearing the inherited variables stays as well; together they
+/// mean a misconfiguration fails loudly.
+///
+/// `--readonly` has bd refuse the writes `bdi` never makes, so the rule is
+/// enforced by bd rather than resting on `bdi` being well behaved.
+fn asked(
+    runner: &dyn Runner,
+    tracker: &Path,
+    env: &Env,
+    subcommand: &[&str],
+) -> Result<String, RunFailure> {
+    let named = tracker.to_string_lossy();
+    let mut argv = vec!["-C", named.as_ref(), "--readonly"];
+    argv.extend_from_slice(subcommand);
+    runner.run("bd", &argv, Some(tracker), env)
 }
 
 /// Every bead one tracker holds, each carrying the beads it depends on and
@@ -70,11 +155,11 @@ pub fn credential_env(
 /// a smaller correct-looking answer about a different population is the kind
 /// of wrong that reads as right.
 pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>, RunFailure> {
-    let out = runner.run(
-        "bd",
-        &["list", "--all", "--limit", "0", "--json"],
-        Some(cwd),
+    let out = asked(
+        runner,
+        cwd,
         env,
+        &["list", "--all", "--limit", "0", "--json"],
     )?;
     let mut beads = rows(&out)?;
     beads.extend(rows(&wisps(runner, cwd, env, &["--all"])?)?);
@@ -90,10 +175,10 @@ pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>
 /// heartbeat wisp that existed. `bd query` is the one call that reads them,
 /// and it writes the same row `bd list` does.
 fn wisps(runner: &dyn Runner, cwd: &Path, env: &Env, also: &[&str]) -> Result<String, RunFailure> {
-    let mut args = vec!["query", EPHEMERAL];
-    args.extend_from_slice(also);
-    args.extend_from_slice(&["--limit", "0", "--json"]);
-    runner.run("bd", &args, Some(cwd), env)
+    let mut subcommand = vec!["query", EPHEMERAL];
+    subcommand.extend_from_slice(also);
+    subcommand.extend_from_slice(&["--limit", "0", "--json"]);
+    asked(runner, cwd, env, &subcommand)
 }
 
 /// The `bd query` expression that selects wisps and nothing else.
@@ -119,11 +204,11 @@ pub fn discover_roots(
 ) -> Result<BTreeMap<String, Option<String>>, RunFailure> {
     let mut found = BTreeMap::new();
 
-    let out = runner.run(
-        "bd",
-        &["list", "--status", UNFINISHED, "--limit", "0", "--json"],
-        Some(cwd),
+    let out = asked(
+        runner,
+        cwd,
         env,
+        &["list", "--status", UNFINISHED, "--limit", "0", "--json"],
     )?;
     note_parents(&out, &mut found)?;
 
@@ -133,11 +218,11 @@ pub fn discover_roots(
     note_parents(&wisps(runner, cwd, env, &[])?, &mut found)?;
 
     for key in metadata_keys {
-        let out = runner.run(
-            "bd",
-            &["list", "--has-metadata-key", key, "--limit", "0", "--json"],
-            Some(cwd),
+        let out = asked(
+            runner,
+            cwd,
             env,
+            &["list", "--has-metadata-key", key, "--limit", "0", "--json"],
         )?;
         note_parents(&out, &mut found)?;
     }
@@ -160,7 +245,7 @@ pub fn ready_ids(
     cwd: &Path,
     env: &Env,
 ) -> Result<BTreeSet<String>, RunFailure> {
-    let out = runner.run("bd", &["ready", "--limit", "0", "--json"], Some(cwd), env)?;
+    let out = asked(runner, cwd, env, &["ready", "--limit", "0", "--json"])?;
     Ok(rows(&out)?.into_iter().map(|bead| bead.id).collect())
 }
 
@@ -174,7 +259,7 @@ pub fn blocked_by(
     cwd: &Path,
     env: &Env,
 ) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
-    let out = runner.run("bd", &["blocked", "--json"], Some(cwd), env)?;
+    let out = asked(runner, cwd, env, &["blocked", "--json"])?;
     let blocked: Vec<BlockedRow> =
         serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
     Ok(blocked
@@ -210,7 +295,7 @@ pub fn parent_of(
     env: &Env,
     id: &str,
 ) -> Result<Option<String>, RunFailure> {
-    let out = runner.run("bd", &["show", id, "--json"], Some(cwd), env)?;
+    let out = asked(runner, cwd, env, &["show", id, "--json"])?;
     let row = parent_rows(&out)?
         .into_iter()
         .next()
@@ -226,6 +311,7 @@ fn rows(out: &str) -> Result<Vec<Bead>, RunFailure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::run::RealRunner;
     use crate::model::types::{Dependency, Edge, Status};
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
@@ -417,6 +503,23 @@ mod tests {
         PathBuf::from("/tmp/proj")
     }
 
+    /// A bd call as the runner spells it: the tracker named outright, and
+    /// writes refused. Every call carries both, so the tests name the
+    /// subcommand and this holds the invocation round it.
+    fn spelled(subcommand: &str) -> String {
+        format!("bd -C {} --readonly {subcommand}", project_dir().display())
+    }
+
+    /// A project entry as the config now takes it: a path, and nothing else.
+    fn ambient_project() -> Project {
+        Project {
+            name: "atlas".to_string(),
+            path: project_dir(),
+            credential_command: None,
+            worktrees: Vec::new(),
+        }
+    }
+
     fn credentialled() -> Env {
         Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())])
     }
@@ -424,25 +527,25 @@ mod tests {
     /// The one call a project's whole forest is drawn from, spelled as bd
     /// takes it. `--all` is what makes it the whole tracker rather than its
     /// open beads.
-    const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
+    const TRACKER_CALL: &str = "list --all --limit 0 --json";
 
     /// The second call the same forest needs, because `bd list` answers
     /// about the permanent table only.
-    const WISP_CALL: &str = "bd query ephemeral=true --all --limit 0 --json";
+    const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
 
     const WISPS: &str = include_str!("../../tests/fixtures/bd_wisps.json");
 
     #[test]
     fn the_tracker_is_read_in_the_projects_directory_with_its_credential() {
         let runner = FakeRunner::default()
-            .with(TRACKER_CALL, FIXTURE)
-            .with(WISP_CALL, "[]");
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), "[]");
 
         let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
 
         assert_eq!(beads.len(), 6);
-        for argv in [TRACKER_CALL, WISP_CALL] {
-            let call = runner.call(argv);
+        for subcommand in [TRACKER_CALL, WISP_CALL] {
+            let call = runner.call(&spelled(subcommand));
             assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
             assert_eq!(call.env, credentialled());
         }
@@ -454,8 +557,8 @@ mod tests {
     #[test]
     fn a_tracker_answers_with_its_wisps_as_well_as_its_permanent_beads() {
         let runner = FakeRunner::default()
-            .with(TRACKER_CALL, FIXTURE)
-            .with(WISP_CALL, WISPS);
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), WISPS);
 
         let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
 
@@ -551,11 +654,11 @@ mod tests {
     }
 
     const UNFINISHED_CALL: &str =
-        "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
+        "list --status open,in_progress,blocked,deferred --limit 0 --json";
 
     /// Discovery's wisp call. No `--all`, so it excludes closed wisps and
     /// nothing else — the same population `UNFINISHED_CALL` asks for.
-    const UNFINISHED_WISP_CALL: &str = "bd query ephemeral=true --limit 0 --json";
+    const UNFINISHED_WISP_CALL: &str = "query ephemeral=true --limit 0 --json";
 
     #[test]
     fn discovery_unions_the_unfinished_statuses_and_metadata_keys_without_duplicates() {
@@ -565,10 +668,10 @@ mod tests {
         let carrying_the_key = r#"[{"id":"p-1.16","title":"a","status":"in_progress"}]"#;
 
         let runner = FakeRunner::default()
-            .with(UNFINISHED_CALL, unfinished)
-            .with(UNFINISHED_WISP_CALL, "[]")
+            .with(&spelled(UNFINISHED_CALL), unfinished)
+            .with(&spelled(UNFINISHED_WISP_CALL), "[]")
             .with(
-                "bd list --has-metadata-key working_topic --limit 0 --json",
+                &spelled("list --has-metadata-key working_topic --limit 0 --json"),
                 carrying_the_key,
             );
 
@@ -583,7 +686,7 @@ mod tests {
         let ids: Vec<&str> = got.keys().map(String::as_str).collect();
         assert_eq!(ids, vec!["p-1.1", "p-1.16"]);
 
-        let call = runner.call(UNFINISHED_CALL);
+        let call = runner.call(&spelled(UNFINISHED_CALL));
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
         assert_eq!(call.env, credentialled());
     }
@@ -595,10 +698,10 @@ mod tests {
     fn a_bead_nobody_has_started_is_discovered() {
         let runner = FakeRunner::default()
             .with(
-                UNFINISHED_CALL,
+                &spelled(UNFINISHED_CALL),
                 r#"[{"id":"p-1.1","title":"the work that is left","status":"open"}]"#,
             )
-            .with(UNFINISHED_WISP_CALL, "[]");
+            .with(&spelled(UNFINISHED_WISP_CALL), "[]");
 
         let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
 
@@ -611,11 +714,11 @@ mod tests {
     fn discovery_keeps_each_beads_own_parent() {
         let runner = FakeRunner::default()
             .with(
-                UNFINISHED_CALL,
+                &spelled(UNFINISHED_CALL),
                 r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1"},
                 {"id":"p-1","title":"b","status":"open","parent":""}]"#,
             )
-            .with(UNFINISHED_WISP_CALL, "[]");
+            .with(&spelled(UNFINISHED_WISP_CALL), "[]");
 
         let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
 
@@ -632,15 +735,15 @@ mod tests {
     #[test]
     fn a_free_standing_wisp_is_discovered_as_a_root_of_its_own() {
         let runner = FakeRunner::default()
-            .with(UNFINISHED_CALL, "[]")
-            .with(UNFINISHED_WISP_CALL, WISPS);
+            .with(&spelled(UNFINISHED_CALL), "[]")
+            .with(&spelled(UNFINISHED_WISP_CALL), WISPS);
 
         let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
 
         assert_eq!(got["bdi-wisp-w3m"], None);
         assert_eq!(got["bdi-7ao.17.2"], Some("bdi-7ao.17".to_string()));
 
-        let call = runner.call(UNFINISHED_WISP_CALL);
+        let call = runner.call(&spelled(UNFINISHED_WISP_CALL));
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
         assert_eq!(call.env, credentialled());
     }
@@ -682,7 +785,7 @@ mod tests {
     fn ready_ids_returns_the_set_bd_considers_startable() {
         let out = r#"[{"id":"p-1.1","title":"a","status":"open"},
                       {"id":"p-1.3","title":"b","status":"open"}]"#;
-        let runner = FakeRunner::default().with("bd ready --limit 0 --json", out);
+        let runner = FakeRunner::default().with(&spelled("ready --limit 0 --json"), out);
 
         let got = ready_ids(&runner, &project_dir(), &credentialled()).unwrap();
 
@@ -702,7 +805,7 @@ mod tests {
                        "blocked_by":["p-1.2","p-1.5"]},
                       {"id":"p-1.11","title":"b","status":"open","blocked_by_count":1,
                        "blocked_by":["p-1.10"]}]"#;
-        let runner = FakeRunner::default().with("bd blocked --json", out);
+        let runner = FakeRunner::default().with(&spelled("blocked --json"), out);
 
         let got = blocked_by(&runner, &project_dir(), &credentialled()).unwrap();
 
@@ -717,7 +820,7 @@ mod tests {
     #[test]
     fn a_tracker_that_refuses_the_credential_reaches_the_caller_classified() {
         let runner = FakeRunner::default().failing(
-            TRACKER_CALL,
+            &spelled(TRACKER_CALL),
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
@@ -732,11 +835,192 @@ mod tests {
 
     #[test]
     fn output_bd_could_not_have_written_is_a_parse_failure_not_an_unreachable_tracker() {
-        let runner = FakeRunner::default().with("bd blocked --json", "not json at all");
+        let runner = FakeRunner::default().with(&spelled("blocked --json"), "not json at all");
 
         let failure = blocked_by(&runner, &project_dir(), &credentialled()).unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Parse);
+    }
+
+    /// The direnv call that reproduces entering a project's directory,
+    /// spelled as the runner makes it.
+    fn entering_the_directory() -> String {
+        format!("direnv exec {} env -0", project_dir().display())
+    }
+
+    /// An `env -0` answer: NUL between variables, and no separator after the
+    /// last one that would make an empty final entry meaningful.
+    fn exported(variables: &[(&str, &str)]) -> String {
+        variables
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("\0")
+    }
+
+    /// The whole of the invocation, in one test because the two halves are
+    /// one fact: bd is told which tracker to read, and told it may not write
+    /// to it. Asserting the tracker alone would pass with the writes still
+    /// allowed.
+    #[test]
+    fn every_call_names_the_tracker_outright_and_refuses_writes() {
+        let runner = FakeRunner::default()
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), "[]");
+
+        all_beads(&runner, &project_dir(), &credentialled()).unwrap();
+
+        for call in runner.calls() {
+            let after_the_program = call
+                .argv
+                .strip_prefix("bd ")
+                .unwrap_or_else(|| panic!("{} is not a bd call", call.argv));
+            assert!(
+                after_the_program
+                    .starts_with(&format!("-C {} --readonly ", project_dir().display())),
+                "the tracker is left to the working directory in: {}",
+                call.argv
+            );
+        }
+    }
+
+    /// The invariant the whole design rests on: a shell that has entered the
+    /// project's directory is configured for its tracker, so bdi reproduces
+    /// entering it rather than restating what it would have produced.
+    #[test]
+    fn a_project_naming_only_a_path_is_read_by_entering_its_directory() {
+        let runner = FakeRunner::default().with(
+            &entering_the_directory(),
+            &exported(&[
+                ("BEADS_DIR", "/tmp/proj/.beads"),
+                ("BEADS_DOLT_PASSWORD", "the-projects-own-password"),
+            ]),
+        );
+
+        let env = tracker_env(&runner, &ambient_project(), None).unwrap();
+
+        assert_eq!(
+            env.get("BEADS_DOLT_PASSWORD").map(String::as_str),
+            Some("the-projects-own-password"),
+            "the credential entering the directory produces did not reach bd"
+        );
+        assert_eq!(
+            env.get("BEADS_DIR").map(String::as_str),
+            Some("/tmp/proj/.beads"),
+            "the tracker entering the directory names did not reach bd"
+        );
+    }
+
+    /// direnv is asked what entering the directory produces, not what bdi was
+    /// already carrying. Handed bdi's own tracker and credential it would
+    /// answer with them for every project alike, which is the defect `-C` and
+    /// the cleared environment exist to stop.
+    #[test]
+    fn direnv_is_given_no_tracker_and_no_credential_of_bdis_own() {
+        let runner = FakeRunner::default().with(&entering_the_directory(), &exported(&[]));
+
+        tracker_env(
+            &runner,
+            &ambient_project(),
+            Some("the-launching-shells-password"),
+        )
+        .unwrap();
+
+        assert!(
+            runner.call(&entering_the_directory()).env.is_empty(),
+            "direnv was handed an environment to reproduce"
+        );
+    }
+
+    /// A project's `.envrc` may print to stdout, and only this repository's
+    /// has been fixed not to. The text lands ahead of the first variable, and
+    /// reading it as part of that variable's name loses the variable.
+    #[test]
+    fn text_a_projects_envrc_wrote_first_does_not_lose_the_variable_behind_it() {
+        let noise = "entering the atlas shell\n";
+        let runner = FakeRunner::default().with(
+            &entering_the_directory(),
+            &format!(
+                "{noise}{}",
+                exported(&[("BEADS_DOLT_PASSWORD", "hunter2"), ("PATH", "/nix/bin")])
+            ),
+        );
+
+        let env = tracker_env(&runner, &ambient_project(), None).unwrap();
+
+        assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter2"));
+        assert_eq!(
+            env.get("PATH").map(String::as_str),
+            Some("/nix/bin"),
+            "the first variable was read as part of the text in front of it"
+        );
+        assert!(
+            !env.keys().any(|name| name.contains('\n')),
+            "text written before the variables became a variable: {env:?}"
+        );
+    }
+
+    /// direnv fails open: it exits 0 and runs with the ambient environment
+    /// where an `.envrc` is unallowed or a flake will not evaluate. So a
+    /// project whose directory cannot be entered at all is that project's
+    /// failure, not a quiet fallback that reads as having worked.
+    #[test]
+    fn a_directory_that_cannot_be_entered_fails_the_project_rather_than_falling_back() {
+        let runner = FakeRunner::default().failing(
+            &entering_the_directory(),
+            RunFailure::exec("direnv", "No such file or directory"),
+        );
+
+        let failure = tracker_env(&runner, &ambient_project(), Some("hunter2")).unwrap_err();
+
+        assert_eq!(failure.kind, FailureKind::Exec);
+        assert_eq!(failure.program, "direnv");
+    }
+
+    /// The escape hatch answers instead of entering the directory, for a
+    /// tracker outside direnv's reach.
+    #[test]
+    fn a_credential_command_answers_instead_of_entering_the_directory() {
+        let runner = FakeRunner::default().with("sh -c op read the/password", "hunter2\n");
+        let project = Project {
+            name: "atlas".to_string(),
+            path: project_dir(),
+            credential_command: Some("op read the/password".to_string()),
+            worktrees: Vec::new(),
+        };
+
+        tracker_env(&runner, &project, None).unwrap();
+
+        assert!(
+            !runner
+                .calls()
+                .iter()
+                .any(|call| call.argv.starts_with("direnv ")),
+            "the directory was entered as well as the escape hatch being used"
+        );
+    }
+
+    /// The parser reads back what `env` actually writes, rather than what we
+    /// believe it writes: a real process, and every variable it exported.
+    #[test]
+    fn the_variables_read_back_are_the_ones_env_wrote() {
+        let out = RealRunner
+            .run(
+                "env",
+                &["-0"],
+                None,
+                &Env::from([("K".to_string(), "v".to_string())]),
+            )
+            .expect("env runs");
+
+        let read = variables(&out);
+
+        assert_eq!(read.get("K").map(String::as_str), Some("v"));
+        assert_eq!(
+            read.len(),
+            out.split('\0').filter(|entry| !entry.is_empty()).count(),
+            "a variable env wrote was not read back"
+        );
     }
 
     #[test]
@@ -749,7 +1033,7 @@ mod tests {
             worktrees: Vec::new(),
         };
 
-        let env = credential_env(&runner, &project, Some("the-launching-shells-password")).unwrap();
+        let env = tracker_env(&runner, &project, Some("the-launching-shells-password")).unwrap();
 
         assert_eq!(
             env,
@@ -769,20 +1053,18 @@ mod tests {
     /// inherit it, because nothing bdi launches inherits it any more.
     #[test]
     fn a_project_with_no_credential_command_is_handed_the_ambient_credential() {
-        let runner = FakeRunner::default();
-        let project = Project {
-            name: "beacon".to_string(),
-            path: project_dir(),
-            credential_command: None,
-            worktrees: Vec::new(),
-        };
+        let runner = FakeRunner::default().with(
+            &entering_the_directory(),
+            &exported(&[("PATH", "/nix/bin")]),
+        );
 
-        let env = credential_env(&runner, &project, Some("hunter2")).unwrap();
+        let env = tracker_env(&runner, &ambient_project(), Some("hunter2")).unwrap();
 
-        assert_eq!(env, credentialled());
-        assert!(
-            runner.calls().is_empty(),
-            "nothing is run to find no credential"
+        assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter2"));
+        assert_eq!(
+            env.get("PATH").map(String::as_str),
+            Some("/nix/bin"),
+            "the directory was entered but what it produced did not reach bd"
         );
     }
 
@@ -790,15 +1072,12 @@ mod tests {
     /// should refuse the call rather than be told the password is "".
     #[test]
     fn a_project_with_no_credential_command_and_no_ambient_one_is_given_nothing() {
-        let runner = FakeRunner::default();
-        let project = Project {
-            name: "beacon".to_string(),
-            path: project_dir(),
-            credential_command: None,
-            worktrees: Vec::new(),
-        };
+        let runner = FakeRunner::default().with(&entering_the_directory(), &exported(&[]));
 
-        assert_eq!(credential_env(&runner, &project, None).unwrap(), Env::new());
+        assert_eq!(
+            tracker_env(&runner, &ambient_project(), None).unwrap(),
+            Env::new()
+        );
     }
 
     #[test]
@@ -815,7 +1094,7 @@ mod tests {
         };
 
         assert_eq!(
-            credential_env(&runner, &project, None).unwrap_err().kind,
+            tracker_env(&runner, &project, None).unwrap_err().kind,
             FailureKind::Exec
         );
     }
@@ -823,12 +1102,12 @@ mod tests {
     #[test]
     fn the_parent_comes_from_bd_show_because_the_dep_tree_cannot_carry_it() {
         let out = r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1.4"}]"#;
-        let runner = FakeRunner::default().with("bd show p-1.16 --json", out);
+        let runner = FakeRunner::default().with(&spelled("show p-1.16 --json"), out);
 
         let parent = parent_of(&runner, &project_dir(), &credentialled(), "p-1.16").unwrap();
 
         assert_eq!(parent.as_deref(), Some("p-1.4"));
-        let call = runner.call("bd show p-1.16 --json");
+        let call = runner.call(&spelled("show p-1.16 --json"));
         assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
         assert_eq!(call.env, credentialled());
     }
@@ -840,7 +1119,7 @@ mod tests {
     fn a_root_has_no_parent_however_bd_spells_the_absence() {
         for spelling in [r#","parent":null"#, r#","parent":"""#, ""] {
             let out = format!(r#"[{{"id":"p-1","title":"a","status":"open"{spelling}}}]"#);
-            let runner = FakeRunner::default().with("bd show p-1 --json", &out);
+            let runner = FakeRunner::default().with(&spelled("show p-1 --json"), &out);
 
             assert_eq!(
                 parent_of(&runner, &project_dir(), &credentialled(), "p-1").unwrap(),
@@ -852,7 +1131,7 @@ mod tests {
 
     #[test]
     fn bd_show_naming_no_bead_is_a_parse_failure() {
-        let runner = FakeRunner::default().with("bd show p-9 --json", "[]");
+        let runner = FakeRunner::default().with(&spelled("show p-9 --json"), "[]");
 
         let failure = parent_of(&runner, &project_dir(), &credentialled(), "p-9").unwrap_err();
 

@@ -47,20 +47,33 @@ fn unfinished_rows() -> String {
     serde_json::to_string(&rows).expect("the rows serialise")
 }
 
+const ORBITAL_DIR: &str = "/srv/work/orbital";
+
+/// A bd call as the runner spells it: the tracker named outright, and writes
+/// refused.
+fn spelled(subcommand: &str) -> String {
+    format!("bd -C {ORBITAL_DIR} --readonly {subcommand}")
+}
+
 fn canned() -> Canned {
     Canned::default()
         .answering("herdr agent list", PANES)
+        // Named by a path alone, so its tracker is reached by entering it.
+        .answering(&format!("direnv exec {ORBITAL_DIR} env -0"), "")
         .answering(
-            "bd list --status open,in_progress,blocked,deferred --limit 0 --json",
+            &spelled("list --status open,in_progress,blocked,deferred --limit 0 --json"),
             &unfinished_rows(),
         )
         // This tracker keeps no wisps. What a wisp root does to the order is
         // the same as any other root's: it has counts like the rest.
-        .answering("bd query ephemeral=true --limit 0 --json", "[]")
-        .answering("bd query ephemeral=true --all --limit 0 --json", "[]")
-        .answering("bd ready --limit 0 --json", "[]")
-        .answering("bd blocked --json", "[]")
-        .answering("bd list --all --limit 0 --json", TRACKER)
+        .answering(&spelled("query ephemeral=true --limit 0 --json"), "[]")
+        .answering(
+            &spelled("query ephemeral=true --all --limit 0 --json"),
+            "[]",
+        )
+        .answering(&spelled("ready --limit 0 --json"), "[]")
+        .answering(&spelled("blocked --json"), "[]")
+        .answering(&spelled("list --all --limit 0 --json"), TRACKER)
 }
 
 fn now() -> DateTime<Utc> {

@@ -51,6 +51,12 @@ name = "solo"
 path = "/srv/work/solo"
 "#;
 
+/// A bd call as the runner spells it: the tracker named outright, and writes
+/// refused.
+fn spelled_in(tracker: &str, subcommand: &str) -> String {
+    format!("bd -C {tracker} --readonly {subcommand}")
+}
+
 /// One in-flight bead under a closed epic, so the climb to a root is made as
 /// well as discovered — every call bd is asked for is one this checks. What
 /// each tracker holds does not matter here; that every call to it carries the
@@ -59,23 +65,34 @@ fn tracker(runner: Canned, cwd: &str, id: &str) -> Canned {
     runner
         .answering_in(
             cwd,
-            "bd list --status open,in_progress,blocked,deferred --limit 0 --json",
+            &spelled_in(
+                cwd,
+                "list --status open,in_progress,blocked,deferred --limit 0 --json",
+            ),
             &format!(
                 r#"[{{"id":"{id}.1","title":"the work","status":"in_progress","parent":"{id}"}}]"#
             ),
         )
-        .answering_in(cwd, "bd query ephemeral=true --limit 0 --json", "[]")
-        .answering_in(cwd, "bd query ephemeral=true --all --limit 0 --json", "[]")
-        .answering_in(cwd, "bd ready --limit 0 --json", "[]")
-        .answering_in(cwd, "bd blocked --json", "[]")
         .answering_in(
             cwd,
-            &format!("bd show {id} --json"),
+            &spelled_in(cwd, "query ephemeral=true --limit 0 --json"),
+            "[]",
+        )
+        .answering_in(
+            cwd,
+            &spelled_in(cwd, "query ephemeral=true --all --limit 0 --json"),
+            "[]",
+        )
+        .answering_in(cwd, &spelled_in(cwd, "ready --limit 0 --json"), "[]")
+        .answering_in(cwd, &spelled_in(cwd, "blocked --json"), "[]")
+        .answering_in(
+            cwd,
+            &spelled_in(cwd, &format!("show {id} --json")),
             &format!(r#"[{{"id":"{id}","parent":null}}]"#),
         )
         .answering_in(
             cwd,
-            "bd list --all --limit 0 --json",
+            &spelled_in(cwd, "list --all --limit 0 --json"),
             &format!(
                 r#"[{{"id":"{id}","title":"the work","status":"in_progress","parent_id":"",
                       "priority":1,"issue_type":"task","started_at":"2026-08-29T09:00:00Z",
@@ -96,7 +113,9 @@ fn across_two_projects() -> Canned {
 }
 
 fn on_the_ambient_credential() -> Canned {
-    let runner = Canned::default().answering("herdr agent list", NO_PANES);
+    let runner = Canned::default()
+        .answering("herdr agent list", NO_PANES)
+        .answering_in(SOLO_DIR, &format!("direnv exec {SOLO_DIR} env -0"), "");
     tracker(runner, SOLO_DIR, "solo-1")
 }
 

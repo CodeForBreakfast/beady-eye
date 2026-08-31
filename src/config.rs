@@ -25,7 +25,9 @@ pub struct Project {
     pub name: String,
     pub path: PathBuf,
     /// A command whose stdout is this tracker's password, never the password
-    /// itself. Absent when the project needs no credential of its own.
+    /// itself. The escape hatch for a tracker outside direnv's reach: absent,
+    /// the project is read with the environment entering its directory
+    /// produces.
     #[serde(default)]
     pub credential_command: Option<String>,
     /// Where this project is worked: the place it names, in each working
@@ -148,16 +150,6 @@ impl Config {
                 repeated.join(", ")
             );
         }
-        if cfg.projects.len() > 1 {
-            let ambient = cfg.projects_on_the_ambient_credential();
-            if !ambient.is_empty() {
-                anyhow::bail!(
-                    "every project needs a credential_command once the config names more \
-                     than one, or one tracker's credential reaches another's; missing on: {}",
-                    ambient.join(", ")
-                );
-            }
-        }
         for (named, ids) in &cfg.roots.explicit {
             if !cfg.is_configured(named) {
                 anyhow::bail!(
@@ -226,14 +218,6 @@ impl Config {
             }
         }
         repeated.into_iter().collect()
-    }
-
-    fn projects_on_the_ambient_credential(&self) -> Vec<&str> {
-        self.projects
-            .iter()
-            .filter(|p| p.credential_command.is_none())
-            .map(|p| p.name.as_str())
-            .collect()
     }
 }
 
@@ -406,38 +390,27 @@ path = "/home/user/dev/cinder"
         assert_eq!(Tui::default().refresh(), Duration::from_secs(30));
     }
 
+    /// The whole of a project entry: a path. Every tracker `bdi` reads is
+    /// reached by entering its directory, so a config restates neither where
+    /// a tracker is nor how to authenticate to it, however many it names.
     #[test]
-    fn a_lone_project_needs_no_credential_command() {
-        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
+    fn a_project_needs_only_a_path_however_many_the_config_names() {
+        for spelling in [ONE_PROJECT, TWO_AMBIENT, ONE_CREDENTIALLED_ONE_AMBIENT] {
+            let cfg = Config::from_toml(spelling).expect("a path is the whole of an entry");
 
-        assert_eq!(cfg.projects[0].credential_command, None);
+            assert!(cfg.projects.iter().any(|p| p.credential_command.is_none()));
+        }
     }
 
+    /// The escape hatch survives, for a tracker outside direnv's reach.
     #[test]
-    fn a_project_without_a_credential_alongside_one_with_is_rejected() {
-        let err = Config::from_toml(ONE_CREDENTIALLED_ONE_AMBIENT)
-            .unwrap_err()
-            .to_string();
+    fn a_project_may_still_name_a_credential_command() {
+        let cfg = Config::from_toml(ONE_CREDENTIALLED_ONE_AMBIENT).expect("parses");
 
-        assert!(err.contains("beacon"), "got: {err}");
-        assert!(err.contains("credential_command"), "got: {err}");
-    }
-
-    #[test]
-    fn rejecting_a_project_does_not_repeat_another_projects_credential_command() {
-        let err = Config::from_toml(ONE_CREDENTIALLED_ONE_AMBIENT)
-            .unwrap_err()
-            .to_string();
-
-        assert!(!err.contains("secret-tool"), "got: {err}");
-    }
-
-    #[test]
-    fn every_project_without_a_credential_is_named() {
-        let err = Config::from_toml(TWO_AMBIENT).unwrap_err().to_string();
-
-        assert!(err.contains("beacon"), "got: {err}");
-        assert!(err.contains("cinder"), "got: {err}");
+        assert_eq!(
+            cfg.projects[0].credential_command.as_deref(),
+            Some("secret-tool lookup tracker atlas")
+        );
     }
 
     const TWO_PROJECTS: &str = r#"
