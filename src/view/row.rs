@@ -141,7 +141,8 @@ pub fn anomaly_marker(anomalies: &[Anomaly]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::join::{Badged, JoinSource};
+    use crate::model::badges::Badged;
+    use crate::model::join::JoinSource;
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 

@@ -722,7 +722,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::model::anomaly::Anomaly;
-    use crate::model::join::{AgentRef, Badged, BeadKey, JoinSource};
+    use crate::model::badges::Badged;
+    use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
         Counts, FailedProject, Filter, LoosePane, Node, Snapshot, TrackerFailure, Tree,
     };

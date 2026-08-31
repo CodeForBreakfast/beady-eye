@@ -3,9 +3,9 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::config::{Badge, Join, Project};
+use crate::config::{Join, Project};
 use crate::model::tree::Placed;
-use crate::model::types::{Bead, Pane, PaneStatus};
+use crate::model::types::{Pane, PaneStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,12 +30,6 @@ pub struct AgentRef {
     pub pane_status: PaneStatus,
     pub title: Option<String>,
     pub source: JoinSource,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Badged {
-    pub key: String,
-    pub text: String,
 }
 
 /// A disagreement between the two directions of the join. Each is reported
@@ -282,21 +276,6 @@ fn agent_ref(pane: &Pane, source: JoinSource) -> AgentRef {
     }
 }
 
-/// Render the configured badges that apply to this bead.
-pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Vec<Badged> {
-    badges
-        .iter()
-        .filter_map(|b| {
-            let value = bead.metadata.get(&b.key)?;
-            let text = b.apply(value)?;
-            Some(Badged {
-                key: b.key.clone(),
-                text,
-            })
-        })
-        .collect()
-}
-
 /// Live panes that resolved to no bead in any tree.
 pub fn unattributed<'a>(panes: &'a [Pane], joined: &Joined) -> Vec<&'a Pane> {
     let taken: HashSet<&str> = joined.agents.values().map(|a| a.pane.as_str()).collect();
@@ -312,6 +291,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::model::tree::assemble;
+    use crate::model::types::Bead;
     use pretty_assertions::assert_eq;
 
     const BEADS: &str = include_str!("../../tests/fixtures/display_agent_bd_list.json");
@@ -1141,75 +1121,6 @@ mod tests {
                 },
             ]
         );
-    }
-
-    // ---- badges ---------------------------------------------------------
-
-    fn bead_with(metadata: &str) -> Bead {
-        let json =
-            format!(r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#);
-        rows(&json).remove(0).bead
-    }
-
-    #[test]
-    fn badges_render_only_where_the_key_and_match_agree() {
-        let bead = bead_with(r#"{"blocked_on":"human","delivery_pr":"owner/repo#7"}"#);
-        let cfg = vec![
-            Badge {
-                key: "blocked_on".into(),
-                match_value: Some("human".into()),
-                render: "waiting".into(),
-            },
-            Badge {
-                key: "blocked_on".into(),
-                match_value: Some("dependency".into()),
-                render: "dep".into(),
-            },
-            Badge {
-                key: "absent_key".into(),
-                match_value: None,
-                render: "never".into(),
-            },
-        ];
-
-        let got = badges_for(&bead, &cfg);
-
-        assert_eq!(
-            got,
-            vec![Badged {
-                key: "blocked_on".to_string(),
-                text: "waiting".to_string(),
-            }]
-        );
-    }
-
-    /// Nothing in the model learns what a metadata key means: a key it has
-    /// never heard of renders exactly as well as a familiar one.
-    #[test]
-    fn badges_render_a_configured_key_without_interpreting_it() {
-        let bead = bead_with(r#"{"xyzzy":"plugh"}"#);
-        let cfg = vec![Badge {
-            key: "xyzzy".into(),
-            match_value: None,
-            render: "→ {}".into(),
-        }];
-
-        let got = badges_for(&bead, &cfg);
-
-        assert_eq!(
-            got,
-            vec![Badged {
-                key: "xyzzy".to_string(),
-                text: "→ plugh".to_string(),
-            }]
-        );
-    }
-
-    #[test]
-    fn a_bead_with_no_configured_badges_renders_none() {
-        let bead = bead_with(r#"{"blocked_on":"human"}"#);
-
-        assert_eq!(badges_for(&bead, &[]), vec![]);
     }
 
     // ---- the contract ----------------------------------------------------

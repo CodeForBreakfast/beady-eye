@@ -5,7 +5,8 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::model::anomaly::{self, Anomaly};
-use crate::model::join::{self, AgentRef, Badged, BeadKey, Conflict, Joined};
+use crate::model::badges::{self, Badged};
+use crate::model::join::{self, AgentRef, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneStatus, Status};
 
@@ -298,7 +299,7 @@ pub fn build_tree(
                     .unwrap_or_default(),
                 started_at: bead.started_at,
                 closed_at: bead.closed_at,
-                badges: join::badges_for(bead, &cfg.badges),
+                badges: badges::badges_for(bead, &cfg.badges),
                 anomalies: anomaly::detect(bead, agent.as_ref(), refused, &cfg.anomalies, now),
                 agent,
                 truncated: bead.truncated,
