@@ -1,0 +1,593 @@
+//! Turning everything that happens into events on the loop's channel.
+//!
+//! A keystroke, a pointer, a signal, a tracker reporting that its work has
+//! moved on and a collection coming back are all the same kind of thing by
+//! the time they leave here: an `Event` on the one channel the loop waits
+//! on. Each source blocks on its own thread so the loop never has to.
+
+use std::collections::VecDeque;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
+
+use ratatui::crossterm::event::{self, KeyEventKind, MouseButton, MouseEventKind};
+use signal_hook::iterator::Signals;
+
+use crate::app::Wanted;
+use crate::collect::changes::{self, Reported, Socket, Uncovered};
+use crate::collect::panes::{Herdr, Panes};
+use crate::collect::run::RealRunner;
+use crate::model::snapshot::Snapshot;
+use crate::view::{Motion, Notice};
+
+use super::drive::Event;
+
+/// The inbound channel, or nothing and the two things said in its place.
+///
+/// Both are deliberate and neither is a copy of the other. The notice is what
+/// a reader needs while they are looking: the view is polled rather than
+/// reported, so it is only ever as fresh as the refresh interval, and no row
+/// above the foot could show that. The stderr line is what they need
+/// afterwards: it names the path and the error underneath it, which is the
+/// actionable half — another `bdi` holding the socket is closed by hand — and
+/// the half no phrase may carry. It is written before the alternate screen
+/// opens, so it is still on the primary screen when the view tears down, and
+/// it can be redirected to a file where a notice never can.
+fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<Notice>) {
+    match opened {
+        Ok(socket) => (Some(socket), None),
+        Err(refused) => {
+            eprintln!("bdi: {refused}");
+            (None, Some(Notice::NoInboundChannel))
+        }
+    }
+}
+
+/// The loop's ends: the events it waits on, the channel a collection is asked
+/// for on, herdr to ask what is on a pane, the inbound socket for as long as
+/// there is a view to keep live, and whatever this run of `bdi` has to say
+/// about itself.
+pub(super) type Wired = (
+    Receiver<Event>,
+    Sender<Wanted>,
+    Box<dyn Panes>,
+    Option<Socket>,
+    Vec<Notice>,
+);
+
+/// Start everything that produces events, and hand back the loop's ends.
+pub(super) fn wire(
+    refresh: Duration,
+    reported: Reported,
+    collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    asked_to_stop: Signals,
+) -> Wired {
+    let (to_the_loop, events) = mpsc::channel();
+    let (ask, asked) = mpsc::channel();
+
+    // herdr's own threads, whose answers come back here like everything
+    // else's: the loop waits on one channel and never on herdr.
+    let panes: Box<dyn Panes> = Box::new(Herdr::new(RealRunner, to_the_loop.clone()));
+
+    let collecting = to_the_loop.clone();
+    thread::spawn(move || collector(collect, &asked, &collecting));
+
+    let typing = to_the_loop.clone();
+    thread::spawn(move || keys(&typing));
+
+    let stopping = to_the_loop.clone();
+    thread::spawn(move || signalled(asked_to_stop, &stopping));
+
+    let (changed, changes) = mpsc::channel();
+    let (socket, refused) = inbound(changes::listen(
+        changes::where_writers_find_bdi(),
+        &reported,
+        changed.clone(),
+    ));
+
+    let told = to_the_loop.clone();
+    thread::spawn(move || {
+        report(
+            &mut Inbound {
+                changes,
+                _open: changed,
+            },
+            &told,
+        );
+    });
+
+    thread::spawn(move || {
+        report(
+            &mut Timer {
+                every: refresh,
+                reported,
+                due: VecDeque::new(),
+            },
+            &to_the_loop,
+        );
+    });
+
+    (events, ask, panes, socket, refused.into_iter().collect())
+}
+
+/// What tells `bdi` that a project's work has moved on.
+///
+/// A tracker that can report its own changes is subscribed to; one that
+/// cannot is timed, and a timer is only a duller way of being told. Each
+/// source runs on its own thread and blocks there, so the loop never sleeps
+/// until a deadline of its own.
+trait Changes: Send {
+    /// Block until there is something to collect for, and say what reading it
+    /// takes. Nothing, where the source has no more to report.
+    fn next(&mut self) -> Option<Wanted>;
+}
+
+/// The source for the projects nothing else reports for: it says the work has
+/// moved every interval, whether or not it has.
+///
+/// It stays quiet for as long as every project is being reported for over the
+/// inbound channel, because a poll then has nothing to find that a message
+/// has not already said. A project the channel stops covering is polled again
+/// from the next interval, so a producer going away costs the view its speed
+/// rather than its truth. The window is the interval itself: a project
+/// reported for more recently than that is one the poll would have found
+/// nothing on.
+struct Timer {
+    every: Duration,
+    reported: Reported,
+    /// What the last interval found uncovered and has not yet reported. One
+    /// report is one collection, so several projects are handed over one at
+    /// a time.
+    due: VecDeque<String>,
+}
+
+impl Changes for Timer {
+    fn next(&mut self) -> Option<Wanted> {
+        loop {
+            if let Some(project) = self.due.pop_front() {
+                return Some(Wanted::Project(project));
+            }
+            thread::sleep(self.every);
+            match self.reported.uncovered(self.every) {
+                Uncovered::Everything => return Some(Wanted::Everything),
+                Uncovered::These(projects) => self.due = projects.into(),
+                Uncovered::Nothing => {}
+            }
+        }
+    }
+}
+
+/// The source for the projects something else reports for: it says the work
+/// has moved when a writer has said which project it moved in.
+struct Inbound {
+    changes: Receiver<String>,
+    /// Held so the channel never runs out of writers. A source whose last
+    /// writer has gone must go quiet, not report as fast as it can.
+    _open: Sender<String>,
+}
+
+impl Changes for Inbound {
+    fn next(&mut self) -> Option<Wanted> {
+        self.changes.recv().ok().map(Wanted::Project)
+    }
+}
+
+/// Report one project's changes until the loop stops listening.
+fn report(source: &mut dyn Changes, to: &Sender<Event>) {
+    while let Some(wanted) = source.next() {
+        if to.send(Event::Changed(wanted)).is_err() {
+            return;
+        }
+    }
+}
+
+/// Collect on demand, off the UI thread.
+///
+/// One collection is dozens of remote round trips per project, and the view
+/// has to stay under the user's hands throughout.
+pub(super) fn collector(
+    mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    asked: &Receiver<Wanted>,
+    to: &Sender<Event>,
+) {
+    while let Ok(wanted) = asked.recv() {
+        if to
+            .send(Event::Collected(Box::new(collect(&wanted))))
+            .is_err()
+        {
+            return;
+        }
+    }
+}
+
+/// Wait to be told to stop, and tell the loop when we are.
+///
+/// A thread of its own, for the same reason `keys` is one: the loop blocks in
+/// `recv` with no deadline, so a flag for it to notice on its next pass would
+/// go unread through exactly the quiet the loop is waiting out. The handler
+/// itself does none of this — `Sender::send` allocates, which no signal
+/// handler may — so what runs in the handler is signal-hook's write to a pipe
+/// and the waiting happens here.
+fn signalled(mut asked_to_stop: Signals, to: &Sender<Event>) {
+    if asked_to_stop.forever().next().is_some() {
+        let _ = to.send(Event::Signalled);
+    }
+}
+
+/// Read the terminal until it has nothing more to say.
+fn keys(to: &Sender<Event>) {
+    while let Ok(read) = event::read() {
+        let Some(event) = incoming(read) else {
+            continue;
+        };
+        if to.send(event).is_err() {
+            return;
+        }
+    }
+}
+
+/// What the loop is told about one thing the terminal reported, where it is
+/// told anything at all.
+///
+/// A key that is only being released is not a keystroke; on terminals that
+/// report releases at all, taking both would act on every binding twice.
+///
+/// Capture turns on far more than the two gestures the forest answers.
+/// Crossterm asks for any-event tracking, so the terminal reports every cell
+/// the pointer crosses whether a button is down or not, and a reader dragging
+/// across the screen produces hundreds. They are dropped here, on the thread
+/// that reads them, because the loop must stay under the user's hands: a
+/// wedged loop is a `^C` that never reaches the Quit mapping and a terminal
+/// left in raw mode.
+///
+/// So of the pointer only two things are answered — a left click, which names
+/// a row, and a wheel notch, which moves the selection. A release, a drag,
+/// bare motion, the other two buttons and the horizontal wheel are each
+/// dropped: none of them names a row the reader is asking for, and
+/// right-click in a herdr pane belongs to herdr's own menu.
+fn incoming(read: event::Event) -> Option<Event> {
+    match read {
+        event::Event::Key(key) if key.kind == KeyEventKind::Press => Some(Event::Key(key)),
+        event::Event::Resize(..) => Some(Event::Resize),
+        event::Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => Some(Event::Clicked(mouse.row)),
+            MouseEventKind::ScrollUp => Some(Event::Scrolled(Motion::PreviousRow)),
+            MouseEventKind::ScrollDown => Some(Event::Scrolled(Motion::NextRow)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::fixtures::{atlas, ferry, A_MOMENT};
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// A source that reports only when the test says so.
+    struct OnCue(Receiver<Wanted>);
+
+    impl Changes for OnCue {
+        fn next(&mut self) -> Option<Wanted> {
+            // A test that has finished with this source drops the cue, and
+            // the source goes quiet.
+            self.0.recv().ok()
+        }
+    }
+
+    /// A timer with nothing yet due, as one starts.
+    fn polling(every: Duration, reported: Reported) -> Timer {
+        Timer {
+            every,
+            reported,
+            due: VecDeque::new(),
+        }
+    }
+
+    #[test]
+    fn a_project_is_reported_by_whatever_reports_its_changes() {
+        let (to_the_loop, events) = mpsc::channel();
+        let (cue, cued) = mpsc::channel();
+        thread::spawn(move || report(&mut OnCue(cued), &to_the_loop));
+
+        assert!(
+            events.recv_timeout(Duration::from_millis(100)).is_err(),
+            "nothing was reported until the source said so"
+        );
+
+        cue.send(atlas()).expect("the source is listening");
+
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(atlas())),
+            "the loop was told which project moved, not just that something did"
+        );
+    }
+
+    /// A project something is reporting for does not need asking: the poll
+    /// would find only what the message has already said.
+    #[test]
+    fn a_polled_project_goes_quiet_while_something_reports_it() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reported = Reported::watching(["atlas".to_string()]);
+
+        let producing = reported.clone();
+        thread::spawn(move || loop {
+            producing.take("atlas");
+            thread::sleep(Duration::from_millis(20));
+        });
+        thread::spawn(move || {
+            report(&mut polling(Duration::from_secs(1), reported), &to_the_loop);
+        });
+
+        assert!(
+            events.recv_timeout(Duration::from_millis(1500)).is_err(),
+            "the writer had said everything a poll would have found"
+        );
+    }
+
+    /// The saving a mixed setup gets from a refresh being nameable: the
+    /// project with a producer is left out of the poll its neighbour still
+    /// needs, rather than swept up with it every interval.
+    #[test]
+    fn a_poll_names_only_the_projects_nothing_is_reporting_for() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reported = Reported::watching(["atlas".to_string(), "ferry".to_string()]);
+
+        let producing = reported.clone();
+        thread::spawn(move || loop {
+            producing.take("atlas");
+            thread::sleep(Duration::from_millis(20));
+        });
+        thread::spawn(move || {
+            report(
+                &mut polling(Duration::from_millis(300), reported),
+                &to_the_loop,
+            );
+        });
+
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(ferry())),
+            "atlas is being reported for, so the poll has only ferry to find"
+        );
+    }
+
+    /// The signal that a live source has gone quiet: the project is polled
+    /// again, so the view degrades to slow rather than to stale.
+    #[test]
+    fn a_project_the_channel_stops_covering_is_polled_again() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reported = Reported::watching(["atlas".to_string()]);
+        reported.take("atlas");
+
+        thread::spawn(move || {
+            report(
+                &mut polling(Duration::from_millis(20), reported),
+                &to_the_loop,
+            );
+        });
+
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(Wanted::Everything)),
+            "a poll knows nothing about where the work moved, so it reads everywhere"
+        );
+    }
+
+    /// A channel whose writers have all gone must go quiet. A source that
+    /// returned from `next` the moment it had nothing left would report in a
+    /// loop and collect without pause.
+    #[test]
+    fn an_inbound_channel_with_no_writers_left_goes_quiet() {
+        let (to_the_loop, events) = mpsc::channel();
+        let (changed, changes) = mpsc::channel();
+        thread::spawn(move || {
+            report(
+                &mut Inbound {
+                    changes,
+                    _open: changed,
+                },
+                &to_the_loop,
+            );
+        });
+
+        assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn a_polled_project_is_reported_every_interval() {
+        let (to_the_loop, events) = mpsc::channel();
+        thread::spawn(move || {
+            report(
+                &mut polling(Duration::from_millis(20), Reported::default()),
+                &to_the_loop,
+            );
+        });
+
+        for reported in 1..=2 {
+            assert!(
+                matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed(_))),
+                "the timer stopped after {reported} report(s)"
+            );
+        }
+    }
+
+    /// The loop's threads are the loop's: each ends when the loop stops
+    /// listening, rather than outliving the screen it was drawing for.
+    #[test]
+    fn a_reporter_ends_when_the_loop_stops_listening() {
+        let (to_the_loop, events) = mpsc::channel();
+        let reporter = thread::spawn(move || {
+            report(
+                &mut polling(Duration::from_millis(1), Reported::default()),
+                &to_the_loop,
+            );
+        });
+
+        drop(events);
+
+        assert!(reporter.join().is_ok());
+    }
+
+    fn moused(kind: MouseEventKind, row: u16) -> event::Event {
+        event::Event::Mouse(event::MouseEvent {
+            kind,
+            column: 17,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// The row every table entry below is reported on, so that what a test
+    /// asserts is the kind and not the arithmetic.
+    const ON_ROW: u16 = 9;
+
+    /// Every kind of mouse event a captured terminal reports, and what the
+    /// reader makes of it.
+    ///
+    /// The match is what makes it every one rather than every one anybody
+    /// remembered: a kind added to crossterm's enum makes it non-exhaustive,
+    /// and the compiler names this function until the list above it has been
+    /// decided too.
+    fn every_mouse_kind() -> Vec<(MouseEventKind, Option<Event>)> {
+        let every = vec![
+            (
+                MouseEventKind::Down(MouseButton::Left),
+                Some(Event::Clicked(ON_ROW)),
+            ),
+            (MouseEventKind::Down(MouseButton::Right), None),
+            (MouseEventKind::Down(MouseButton::Middle), None),
+            (MouseEventKind::Up(MouseButton::Left), None),
+            (MouseEventKind::Up(MouseButton::Right), None),
+            (MouseEventKind::Up(MouseButton::Middle), None),
+            (MouseEventKind::Drag(MouseButton::Left), None),
+            (MouseEventKind::Drag(MouseButton::Right), None),
+            (MouseEventKind::Drag(MouseButton::Middle), None),
+            (MouseEventKind::Moved, None),
+            (
+                MouseEventKind::ScrollUp,
+                Some(Event::Scrolled(Motion::PreviousRow)),
+            ),
+            (
+                MouseEventKind::ScrollDown,
+                Some(Event::Scrolled(Motion::NextRow)),
+            ),
+            (MouseEventKind::ScrollLeft, None),
+            (MouseEventKind::ScrollRight, None),
+        ];
+
+        for (kind, _) in &every {
+            match kind {
+                MouseEventKind::Down(button)
+                | MouseEventKind::Up(button)
+                | MouseEventKind::Drag(button) => match button {
+                    MouseButton::Left | MouseButton::Right | MouseButton::Middle => (),
+                },
+                MouseEventKind::Moved
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight => (),
+            }
+        }
+
+        every
+    }
+
+    /// The bead this arm exists for: capture turns on every report the
+    /// terminal can make, and each one is answered or dropped because it was
+    /// decided, not because it fell through a gap.
+    #[test]
+    fn every_kind_of_mouse_report_is_answered_or_dropped_on_purpose() {
+        for (kind, wanted) in every_mouse_kind() {
+            assert_eq!(incoming(moused(kind, ON_ROW)), wanted, "{kind:?}");
+        }
+    }
+
+    /// Motion is the flood: capture asks for a report on every cell the
+    /// pointer crosses, and the loop must never be handed one. Dropping it
+    /// here costs a match arm on a thread that is not the loop.
+    #[test]
+    fn a_pointer_moving_over_the_screen_reaches_the_loop_not_at_all() {
+        let flood: Vec<Option<Event>> = (0..500)
+            .map(|row| incoming(moused(MouseEventKind::Moved, row % 24)))
+            .collect();
+
+        assert!(flood.iter().all(Option::is_none));
+    }
+
+    /// A click names a row and nothing else. Every band spans the width of
+    /// the screen, so the column the pointer was in names no other row.
+    #[test]
+    fn a_click_is_read_as_the_row_it_landed_on() {
+        for row in [0, 9, 23, u16::MAX] {
+            assert_eq!(
+                incoming(moused(MouseEventKind::Down(MouseButton::Left), row)),
+                Some(Event::Clicked(row)),
+                "row {row}"
+            );
+        }
+    }
+
+    /// The rule that was there before the mouse was: a key only being
+    /// released is not a keystroke, and nothing else the terminal reports is
+    /// one either.
+    #[test]
+    fn a_key_release_a_focus_change_and_a_resize_are_read_as_they_were() {
+        let pressed = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let released = KeyEvent::new_with_kind(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        );
+
+        assert_eq!(
+            incoming(event::Event::Key(pressed)),
+            Some(Event::Key(pressed))
+        );
+        assert_eq!(incoming(event::Event::Key(released)), None);
+        assert_eq!(incoming(event::Event::Resize(80, 24)), Some(Event::Resize));
+        assert_eq!(incoming(event::Event::FocusGained), None);
+        assert_eq!(incoming(event::Event::FocusLost), None);
+    }
+
+    /// A directory of this test's own, so a test that binds a socket does not
+    /// collide with another run of the suite.
+    fn a_socket_path(named: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
+        dir.join("beady-eye").join("changes.sock")
+    }
+
+    /// The bead's own case: the failure that used to reach only stderr now
+    /// also reaches the view, as a notice that outlives the moment it was
+    /// printed in. The stderr line is kept — see `inbound` — so this asserts
+    /// the notice and leaves the printing to the test harness to capture.
+    #[test]
+    fn a_channel_that_would_not_open_leaves_a_notice_behind_it() {
+        let (socket, notice) = inbound(Err(changes::Refused::NoRuntimeDirectory));
+
+        assert!(socket.is_none());
+        assert_eq!(notice, Some(Notice::NoInboundChannel));
+    }
+
+    /// A session with a working channel has nothing to say about itself, and
+    /// a foot that warned anyway would teach a reader to ignore it.
+    #[test]
+    fn a_channel_that_opens_says_nothing() {
+        let (changed, _changes) = mpsc::channel();
+        let at = a_socket_path("inbound");
+
+        let (socket, notice) = inbound(changes::listen(
+            Some(at),
+            &Reported::watching(["atlas".to_string()]),
+            changed,
+        ));
+
+        assert!(socket.is_some());
+        assert_eq!(notice, None);
+    }
+}
