@@ -21,6 +21,16 @@ output — the build and tests, `clippy -D warnings`, `cargo fmt --check`, and a
 `cargo package` verify — so a check added there is a check CI runs, and nothing
 runs that is not there.
 
+The dependency graph is compiled in a derivation of its own, keyed on
+`Cargo.lock` rather than on the source, and every check that compiles unpacks it
+before it starts. So an edit under `src/` costs you this crate and nothing else,
+and a change to the lock costs you the graph. There are two of those
+derivations, because a check reuses one only at the cargo profile it was built
+at: release for the build and tests, dev for everything else. Give a check a
+command at a profile its artifacts were not built at and cargo compiles the
+graph again without saying so — `checkOf` reads each build back and fails on
+that rather than pass slowly.
+
 Once it is pushed, `read-ci-verdict [<commit>]` says whether CI passed for it,
 and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
 

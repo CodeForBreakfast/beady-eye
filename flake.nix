@@ -12,24 +12,49 @@
     # schema version the maintainers' tracker was created at, so moving it moves
     # that store — treat it as a schema decision, not a version bump.
     beads.url = "github:gastownhall/beads/v1.2.2";
+    # The dependency build is its own derivation here, and crane is what makes
+    # one. It declares no inputs of its own, so it costs a lock entry and
+    # nothing else.
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils, beads }:
+  outputs = { self, nixpkgs, flake-utils, beads, crane }:
     let
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
-      # The overlay and the per-system outputs are the same package, so a
-      # consumer taking either gets what CI built.
-      beadyEyeFor = pkgs: pkgs.rustPlatform.buildRustPackage {
-        # The crate names the version once. A release tag that disagrees with it
-        # is refused before anything is published, so a crate on crates.io
-        # always has a flake output built from the same source at the same
-        # version.
+      # The crate names the version once. A release tag that disagrees with it
+      # is refused before anything is published, so a crate on crates.io always
+      # has a flake output built from the same source at the same version.
+      common = {
         pname = cargoToml.package.name;
         version = cargoToml.package.version;
-
         src = ./.;
-        cargoLock.lockFile = ./Cargo.lock;
+      };
+
+      # The dependency graph, compiled on its own and keyed on Cargo.lock rather
+      # than on the source. Nothing in this repository changes it, so the store
+      # and the shared cache can hold one across every later run and every later
+      # check — which is the whole point, because compiling it is most of what
+      # this project waits for.
+      #
+      # Two of them, because a check reuses artifacts only at the profile it was
+      # built at, and the checks are not all at one profile: the package builds
+      # and tests at release, while clippy, the dead-code pass and `cargo
+      # package`'s verify build all run at dev. Building both is what leaves
+      # every check's command exactly as it was.
+      artifactsFor = pkgs:
+        let craneLib = crane.mkLib pkgs; in {
+          release = craneLib.buildDepsOnly common;
+          dev = craneLib.buildDepsOnly (common // {
+            pname = "${common.pname}-dev";
+            CARGO_PROFILE = "dev";
+          });
+        };
+
+      # The overlay and the per-system outputs are the same package, so a
+      # consumer taking either gets what CI built.
+      beadyEyeFor = pkgs: (crane.mkLib pkgs).buildPackage (common // {
+        cargoArtifacts = (artifactsFor pkgs).release;
 
         # tests/no_config.rs runs the binary as a fresh machine would, and
         # bdi asks bd where the tracker is. The worktree-listing test builds
@@ -43,13 +68,14 @@
 
         # The package is named for the crate, the binary for the command.
         meta.mainProgram = "bdi";
-      };
+      });
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
         beady-eye = beadyEyeFor pkgs;
+        artifacts = artifactsFor pkgs;
 
         # Starts bdi and puts it back whenever the source changes, so a copy
         # left running in a terminal keeps up with what the other seats land.
@@ -400,12 +426,38 @@
         ];
 
         # A check runs against the same source and the same vendored crates as
-        # the build, so the two cannot drift apart.
-        checkOf = name: tools: command:
+        # the build, so the two cannot drift apart. It starts from `artifacts`,
+        # the dependency build for the profile its command runs at, or from
+        # `null` where it compiles nothing — so `cargo fmt` can say a file is
+        # misformatted without waiting on a dependency build to say it.
+        checkOf = name: artifacts: tools: command:
           beady-eye.overrideAttrs (build: {
             pname = "${build.pname}-${name}";
+            cargoArtifacts = artifacts;
             nativeBuildInputs = build.nativeBuildInputs ++ tools;
-            buildPhase = command;
+            buildPhase = ''
+              set -o pipefail
+              { ${command}
+              } 2>&1 | tee "$NIX_BUILD_TOP/check.log"
+            '' + pkgs.lib.optionalString (artifacts != null) ''
+
+              # Inheriting a dependency build and then compiling it again is how
+              # this arrangement fails: cargo says nothing, the check still
+              # passes, and the minutes it was meant to save are gone. Reading
+              # the build back is what makes that a failure rather than a
+              # slower green.
+              rebuilt="$(grep -E '^ +(Compiling|Checking) ' "$NIX_BUILD_TOP/check.log" |
+                grep -vE '^ +(Compiling|Checking) ${common.pname} v' || true)"
+              if [ -n "$rebuilt" ]; then
+                echo "This check compiled dependencies it was handed already built:"
+                printf '%s\n' "$rebuilt"
+                echo
+                echo "A dependency build is only reused at the cargo profile it was"
+                echo "built at, so the command above and the artifacts it inherits"
+                echo "have to agree on one. See artifactsFor."
+                exit 1
+              fi
+            '';
             doCheck = false;
             installPhase = "touch $out";
             dontFixup = true;
@@ -473,16 +525,16 @@
         checks = {
           build-and-test = beady-eye;
           check-before-push = checkBeforePushTest;
-          clippy = checkOf "clippy" [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
+          clippy = checkOf "clippy" artifacts.dev [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
 
           # A second invocation rather than a flag on the one above, because
           # `--all-targets` is what defeats it: building the test targets pulls
           # in the dev-dependencies, which turns `testing` on, which makes the
           # library's modules `pub` again and switches `dead_code` off. Only a
           # build without them sees the narrow surface. See src/lib.rs.
-          dead-code = checkOf "dead-code" [ pkgs.clippy ] "cargo clippy -- -D warnings";
-          fmt = checkOf "fmt" [ pkgs.rustfmt ] "cargo fmt --check";
-          module-concerns = checkOf "module-concerns" [ modulesStateTheirConcern ]
+          dead-code = checkOf "dead-code" artifacts.dev [ pkgs.clippy ] "cargo clippy -- -D warnings";
+          fmt = checkOf "fmt" null [ pkgs.rustfmt ] "cargo fmt --check";
+          module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;
 
@@ -496,7 +548,7 @@
           # a warning and an exit code of zero, then verifies a tarball with
           # nothing in it. The tests are left out on purpose, so only the two
           # targets the crate exists to ship are fatal here.
-          package = checkOf "package" [ ] ''
+          package = checkOf "package" artifacts.dev [ ] ''
             set -o pipefail
             cargo package --offline --locked 2>&1 | tee package.log
             ! grep -qE "ignoring (library|binary) .* is not included" package.log

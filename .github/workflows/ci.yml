@@ -25,20 +25,39 @@ jobs:
       # there is a check this runs. Naming one here is the drift to avoid.
       - run: nix flake check -L
 
-      # Building bd is most of this job — four minutes of seven, to give
-      # tests/no_config.rs a real bd to run against. Nothing about it depends on
-      # our source, so every commit rebuilt a binary the last commit had already
-      # built and discarded.
+      # Two of the builds behind that check say nothing about this repository:
+      # bd, which tests/no_config.rs needs a real copy of, and the crate's
+      # dependency graph, which is keyed on Cargo.lock. Left to itself every
+      # commit compiles what the commit before it had already compiled and
+      # thrown away, and between them that is nearly the whole job. Seeding
+      # them here is what lets the next run substitute them instead.
       #
       # The paths come out of the derivation graph rather than a match against
-      # the store, so moving the beads pin moves what this seeds instead of
-      # quietly seeding the version the pin used to name.
-      - name: seed the beads build into the shared cache
+      # the store, so moving the beads pin or a dependency moves what this
+      # seeds instead of quietly seeding what the lock used to name. Both
+      # checks are named because they carry different halves of it: the
+      # dependency build for the release profile hangs off build-and-test, and
+      # the one for dev off clippy.
+      - name: seed the source-independent builds into the shared cache
         run: |
-          check=$(nix path-info --derivation .#checks.x86_64-linux.build-and-test)
-          mapfile -t drvs < <(nix-store -qR --include-outputs "$check" |
-            grep -E '/[a-z0-9]+-beads-[^/]*\.drv$')
-          test "${#drvs[@]}" -gt 0
+          mapfile -t roots < <(nix path-info --derivation \
+            .#checks.x86_64-linux.build-and-test \
+            .#checks.x86_64-linux.clippy)
+          mapfile -t drvs < <(nix-store -qR --include-outputs "${roots[@]}" |
+            grep -E '/[a-z0-9]+-(beads|beady-eye(-dev)?-deps)-[^/]*\.drv$')
+
+          # Each of the three has to be in there by name. A total is the wrong
+          # thing to count — beads brings several derivations of its own, so a
+          # renamed dependency build would hide behind them and this would seed
+          # less than it reads as seeding.
+          for want in beads beady-eye-deps beady-eye-dev-deps; do
+            printf '%s\n' "${drvs[@]}" |
+              grep -qE "/[a-z0-9]+-$want-[^/]*\.drv\$" || {
+                echo "nothing named $want among the checks' inputs — it was"
+                echo "renamed, and this step no longer seeds what it says it does."
+                exit 1
+              }
+          done
 
           # --outputs answers from the derivation, so it names paths that were
           # never realised: once bd itself substitutes, nothing builds its
