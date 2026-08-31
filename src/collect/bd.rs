@@ -201,7 +201,8 @@ const UNFINISHED: &str = "open,in_progress,blocked,deferred";
 /// whole tree at that moment.
 ///
 /// The rows carry a bead's own `parent`, so discovery answers most of the walk
-/// to a root by itself; `app::root_of` climbs only past what it did not see.
+/// to a root by itself; `app::tracker::root_of` climbs only past what it did
+/// not see.
 pub fn discover_roots(
     runner: &dyn Runner,
     cwd: &Path,

@@ -64,14 +64,17 @@ before the branch everyone else works from carries it.
 
 ## Where things are
 
-`src/` is four layers:
+`src/` is five layers:
 
 - `collect/` runs `bd` and `herdr` and parses what they say.
+- `app/` decides what each tracker is asked for and keeps what came back
+  between asks — `tracker.rs` is one project's read, `collection.rs` the
+  standing set of them.
 - `model/` joins the two into a snapshot: the tree, its badges, and the
   anomalies where the two sources disagree.
 - `view/` turns a snapshot into rows and draws them — `forest/` is the
   scrollable tree, `draw/` the widgets, `phrase.rs` every word `bdi` shows.
-- `tui/` and `app.rs` run the loop and own the terminal.
+- `tui/` runs the loop and owns the terminal.
 
 `docs/design.md` is the spec, and a starting point rather than gospel — we
 deviate from it as we learn. `docs/plans/` holds the implementation plans
