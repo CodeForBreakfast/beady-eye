@@ -636,7 +636,7 @@ orbital = ["orb-7", "orb-4"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-4", "orb-7"],
+            vec!["orb-7", "orb-4"],
             "the root config and discovery both name is drawn once"
         );
     }
@@ -676,7 +676,7 @@ orbital = ["orb-4"]
             .collect();
         assert_eq!(
             roots,
-            vec![("orbital", "orb-4"), ("orbital", "x-1"), ("ferry", "x-1")],
+            vec![("orbital", "x-1"), ("orbital", "orb-4"), ("ferry", "x-1")],
             "ferry draws no tree for a root orbital was given"
         );
 
@@ -713,11 +713,16 @@ orbital = ["orb-4"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-4", "orb-7"],
+            vec!["orb-7", "orb-4"],
             "the pane's bead joins the roots bd's own statuses found"
         );
         assert!(snap.hidden_trees.is_empty());
-        assert!(node(tree_of(&snap, "orbital"), "orb-4").agent.is_some());
+        let of_the_pane = snap
+            .trees
+            .iter()
+            .find(|t| t.root == "orb-4")
+            .expect("the pane's bead roots a tree");
+        assert!(node(of_the_pane, "orb-4").agent.is_some());
     }
 
     /// `display_agent` is free text, so reading it as a bead id is a guess.

@@ -1,0 +1,170 @@
+[
+  {
+    "id": "orb-d1",
+    "title": "lift the ground station",
+    "status": "in_progress",
+    "priority": 1,
+    "issue_type": "epic",
+    "parent": "",
+    "updated_at": "2026-08-30T09:00:00Z",
+    "started_at": "2026-08-20T09:00:00Z",
+    "metadata": {
+      "agent_pane": "w:p1"
+    },
+    "dependencies": []
+  },
+  {
+    "id": "orb-d1.1",
+    "title": "re-point the dish",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "orb-d1",
+    "dependencies": [
+      {
+        "issue_id": "orb-d1.1",
+        "depends_on_id": "orb-d1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "orb-d1.2",
+    "title": "survey the mast",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "orb-d1",
+    "closed_at": "2026-08-28T09:00:00Z",
+    "dependencies": [
+      {
+        "issue_id": "orb-d1.2",
+        "depends_on_id": "orb-d1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "orb-c3",
+    "title": "re-fit the ferry",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "orb-c3.1",
+    "title": "strip the hull",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "orb-c3",
+    "dependencies": [
+      {
+        "issue_id": "orb-c3.1",
+        "depends_on_id": "orb-c3",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "orb-c3.2",
+    "title": "re-plate the keel",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "orb-c3",
+    "dependencies": [
+      {
+        "issue_id": "orb-c3.2",
+        "depends_on_id": "orb-c3",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "orb-c3.3",
+    "title": "re-fit the engine",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "orb-c3",
+    "dependencies": [
+      {
+        "issue_id": "orb-c3.3",
+        "depends_on_id": "orb-c3",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "orb-c3.4",
+    "title": "sea-trial her",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "orb-c3",
+    "dependencies": [
+      {
+        "issue_id": "orb-c3.4",
+        "depends_on_id": "orb-c3",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "orb-b1",
+    "title": "seal the port bilge",
+    "status": "blocked",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "orb-b2",
+    "title": "seal the starboard bilge",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "orb-b3",
+    "title": "renew the anchor chain",
+    "status": "blocked",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "orb-b4",
+    "title": "renew the bow shackle",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "orb-b5",
+    "title": "re-lamp the port light",
+    "status": "blocked",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "orb-b6",
+    "title": "re-lamp the starboard light",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "dependencies": []
+  }
+]

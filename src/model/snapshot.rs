@@ -68,6 +68,14 @@ pub struct Counts {
     pub anomalies: usize,
 }
 
+impl Counts {
+    /// The beads a tree still holds a call on. A closed one is a row on the
+    /// screen and nothing anybody has left to do.
+    fn unfinished(&self) -> usize {
+        self.total - self.closed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Node {
     pub id: String,
@@ -292,6 +300,37 @@ pub fn build_tree(
     }
 }
 
+/// A project's trees in the order a reader meets them.
+///
+/// A tracker that files loose beads in bulk gives hundreds of roots holding
+/// one bead each — 530 of 562, measured on one such tracker — and none of
+/// them may be dropped, so the order they come in is the whole of what the
+/// reader has:
+///
+/// - a tree `bdi` could not read leads, for the reason `Tree::survives` shows
+///   it whatever the filter says — a root buried under hundreds of others has
+///   disappeared as surely as one that was dropped;
+/// - then the staffed trees, so that showing every tree adds the rest of the
+///   forest below what the reader was already looking at rather than
+///   shuffling it;
+/// - then the trees with the most unfinished work in them;
+/// - then the root's id, so a redraw moves nothing.
+///
+/// Projects keep the order the config named them in and a project's trees
+/// stay together, so this orders within each project's run rather than across
+/// the forest.
+fn in_flight_first(trees: &mut [Tree]) {
+    for project in trees.chunk_by_mut(|a, b| a.project == b.project) {
+        project.sort_by(|a, b| {
+            (b.tracker != TrackerState::Ok)
+                .cmp(&(a.tracker != TrackerState::Ok))
+                .then(b.counts.live_agents.cmp(&a.counts.live_agents))
+                .then(b.counts.unfinished().cmp(&a.counts.unfinished()))
+                .then_with(|| a.root.cmp(&b.root))
+        });
+    }
+}
+
 /// Divide the collected trees into the ones the filter shows and the ones it
 /// hides. With no herdr there are no panes, so there is no agent to filter on
 /// and every tree renders.
@@ -342,9 +381,10 @@ pub fn build(
     now: DateTime<Utc>,
 ) -> Snapshot {
     let Collected {
-        trees,
+        mut trees,
         failed_projects,
     } = collected;
+    in_flight_first(&mut trees);
     let (shown, hidden) = partition(&trees, herdr, filter);
 
     let (mut unattributed, mut unconfigured) = (Vec::new(), Vec::new());
@@ -563,6 +603,94 @@ render = "⏸ waiting"
     /// lifted filter has to put back.
     fn interleaved() -> Vec<Tree> {
         vec![quiet("orb-2", "quiet work"), tree(), quiet_with_reports()]
+    }
+
+    /// A tree with nothing in it but the numbers the order is made from.
+    fn counted(project: &str, root: &str, live_agents: usize, total: usize, closed: usize) -> Tree {
+        Tree {
+            project: project.to_string(),
+            root: root.to_string(),
+            title: String::new(),
+            counts: Counts {
+                total,
+                closed,
+                live_agents,
+                anomalies: 0,
+            },
+            tracker: TrackerState::Ok,
+            nodes: Vec::new(),
+            dangling: Vec::new(),
+            cycles: Vec::new(),
+        }
+    }
+
+    fn ordered(mut trees: Vec<Tree>) -> Vec<String> {
+        in_flight_first(&mut trees);
+        trees
+            .into_iter()
+            .map(|t| format!("{}:{}", t.project, t.root))
+            .collect()
+    }
+
+    /// Which project comes first is the config's to say, so the order runs
+    /// within a project rather than over the whole forest.
+    #[test]
+    fn a_projects_trees_stay_together_where_the_config_put_them() {
+        assert_eq!(
+            ordered(vec![
+                counted("orbital", "orb-1", 0, 2, 0),
+                counted("orbital", "orb-2", 0, 9, 0),
+                counted("ferry", "fer-1", 1, 1, 0),
+                counted("ferry", "fer-2", 0, 40, 0),
+            ]),
+            [
+                "orbital:orb-2",
+                "orbital:orb-1",
+                "ferry:fer-1",
+                "ferry:fer-2"
+            ]
+        );
+    }
+
+    /// A closed bead is a row, not work, so a long-finished effort does not
+    /// outrank a small one still going.
+    #[test]
+    fn a_tree_of_finished_beads_does_not_outrank_a_smaller_one_still_going() {
+        assert_eq!(
+            ordered(vec![
+                counted("orbital", "orb-done", 0, 90, 88),
+                counted("orbital", "orb-going", 0, 5, 0),
+            ]),
+            ["orbital:orb-going", "orbital:orb-done"]
+        );
+    }
+
+    /// A tracker that could not be read has no counts to sort on, and a root
+    /// buried under hundreds of others has disappeared as surely as a dropped
+    /// one.
+    #[test]
+    fn a_tree_bdi_could_not_read_leads_the_forest() {
+        let mut trees = vec![
+            counted("orbital", "orb-1", 1, 40, 0),
+            Tree::tracker_unreachable("orbital", "orb-9", TrackerFailure::Auth),
+        ];
+        in_flight_first(&mut trees);
+
+        assert_eq!(trees[0].root, "orb-9");
+    }
+
+    /// Nothing tells the beads filed in bulk apart, so the tail is at least
+    /// the same tail on every redraw.
+    #[test]
+    fn trees_holding_the_same_work_come_in_id_order() {
+        assert_eq!(
+            ordered(vec![
+                counted("orbital", "orb-c", 0, 1, 0),
+                counted("orbital", "orb-a", 0, 1, 0),
+                counted("orbital", "orb-b", 0, 1, 0),
+            ]),
+            ["orbital:orb-a", "orbital:orb-b", "orbital:orb-c"]
+        );
     }
 
     #[test]
@@ -1106,14 +1234,14 @@ render = "⏸ waiting"
     }
 
     #[test]
-    fn a_lifted_filter_puts_the_hidden_trees_back_where_they_were_read() {
+    fn a_lifted_filter_puts_the_hidden_trees_back_among_the_shown_ones() {
         let lifted = refilter(&built(interleaved(), Filter::LiveAgents), Filter::All);
 
         let roots: Vec<&str> = lifted.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            ["orb-2", "orb-7", "orb-6"],
-            "the order the trackers were read in, not the shown ones first"
+            ["orb-7", "orb-6", "orb-2"],
+            "the forest's own order, not the shown ones followed by the hidden ones"
         );
         assert!(lifted.hidden_trees.is_empty());
         assert_eq!(lifted.filter, Filter::All);
@@ -1224,7 +1352,7 @@ render = "⏸ waiting"
             "the trees kept for a refilter are not emitted"
         );
         assert_eq!(json["trees"][0]["root"], "orb-7");
-        assert_eq!(json["hidden_trees"][0]["root"], "orb-2");
+        assert_eq!(json["hidden_trees"][0]["root"], "orb-6");
     }
     // ---- finding a bead across trackers -------------------------------
 
