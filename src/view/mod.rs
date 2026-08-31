@@ -73,6 +73,18 @@ pub enum Notice {
     /// Nothing can tell `bdi` a project has changed, so every project is
     /// polled on the refresh interval and the view is as stale as that.
     NoInboundChannel,
+    /// The same loss, with the one cause a reader can do something about:
+    /// another `bdi` had the channel when this one asked for it. Closing that
+    /// one frees the path but gives this run nothing, since the socket is
+    /// asked for once and never again — the line on the primary screen is
+    /// where the whole remedy is said, because it takes two steps and the
+    /// foot has room for neither.
+    ///
+    /// Said in the tense of the refusal rather than as a claim about a
+    /// process that is still running. `bdi` asks for the socket once, at
+    /// startup, and nothing re-checks — so all this ever reports is what was
+    /// true then, and the holder may have gone since.
+    AnotherBdiHadTheInboundChannel,
 }
 
 /// How fresh one project's rows are, said beside its name.

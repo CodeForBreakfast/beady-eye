@@ -38,7 +38,23 @@ fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<
         Ok(socket) => (Some(socket), None),
         Err(refused) => {
             eprintln!("bdi: {refused}");
-            (None, Some(Notice::NoInboundChannel))
+            (None, Some(said_at_the_foot(&refused)))
+        }
+    }
+}
+
+/// Which refusal this was, in the one form the foot can draw.
+///
+/// Only one of them is the reader's to fix, and it is the one that names a
+/// process: a session with no runtime directory and a socket that would not
+/// open leave nothing to close. So the cause is carried through where it is
+/// actionable and dropped where it is not, rather than every refusal arriving
+/// as the same sentence about being polled.
+fn said_at_the_foot(refused: &changes::Refused) -> Notice {
+    match refused {
+        changes::Refused::AlreadyListening(_) => Notice::AnotherBdiHadTheInboundChannel,
+        changes::Refused::NoRuntimeDirectory | changes::Refused::Unopenable(_, _) => {
+            Notice::NoInboundChannel
         }
     }
 }
@@ -572,6 +588,41 @@ mod tests {
 
         assert!(socket.is_none());
         assert_eq!(notice, Some(Notice::NoInboundChannel));
+    }
+
+    /// `bdi-7ao.61`: this is the arm that flattened. Every refusal produced
+    /// the one notice, so the screen said what it cost the reader and never
+    /// what did it — and the reader could not tell a session with no runtime
+    /// directory, where there is nothing to be done, from another `bdi`
+    /// holding the socket, where there is. The pid rides along because
+    /// finding the holder is the whole of the remedy.
+    #[test]
+    fn a_socket_another_bdi_holds_is_said_to_be_that_rather_than_just_lost() {
+        let (socket, notice) = inbound(Err(changes::Refused::AlreadyListening(
+            std::path::PathBuf::from("/run/user/1000/beady-eye/changes.sock"),
+        )));
+
+        assert!(socket.is_none());
+        assert_eq!(notice, Some(Notice::AnotherBdiHadTheInboundChannel));
+    }
+
+    /// The refusals with nothing behind them a reader could close say what
+    /// the loss costs and stop there — a foot that offered a remedy for a
+    /// session with no runtime directory would send them looking for a
+    /// process that does not exist.
+    #[test]
+    fn a_channel_lost_to_nothing_anyone_can_close_offers_no_remedy() {
+        for refused in [
+            changes::Refused::NoRuntimeDirectory,
+            changes::Refused::Unopenable(
+                std::path::PathBuf::from("/run/user/1000/beady-eye/changes.sock"),
+                std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            ),
+        ] {
+            let (_, notice) = inbound(Err(refused));
+
+            assert_eq!(notice, Some(Notice::NoInboundChannel));
+        }
     }
 
     /// A session with a working channel has nothing to say about itself, and

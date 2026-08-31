@@ -256,6 +256,65 @@ mod tests {
         );
     }
 
+    /// `bdi-7ao.61`: measured on this machine, a `bdi` refused the socket
+    /// drew *nothing can tell bdi a project changed · every project is polled
+    /// instead* for an hour while a finished mutation run held the socket,
+    /// and there was no way to learn that from the screen. The cause is what
+    /// was missing, and it is the only one of the three a reader can put
+    /// right.
+    #[test]
+    fn a_socket_another_bdi_holds_says_that_rather_than_only_what_it_cost() {
+        let drawn = drawn(
+            status_bar(&[Notice::AnotherBdiHadTheInboundChannel], A_KEY_ROW, 100),
+            100,
+            1,
+        );
+
+        says(
+            &drawn[0],
+            "another bdi held the inbound channel · every project is polled instead",
+        );
+    }
+
+    /// The cause is the half a reader can act on, so it survives the width
+    /// that takes the words around it. A brief notice that gave it up would
+    /// say no more than the notice this bead replaced.
+    #[test]
+    fn the_narrowest_screen_still_says_another_bdi_took_the_channel() {
+        let drawn = drawn(
+            status_bar(
+                &[Notice::NoHerdr, Notice::AnotherBdiHadTheInboundChannel],
+                A_KEY_ROW,
+                40,
+            ),
+            40,
+            1,
+        );
+
+        assert_eq!(
+            drawn[0].trim_end(),
+            "⚠ agents unknown  ⚠ another bdi had it"
+        );
+    }
+
+    /// A notice nobody looks at is a notice nobody has, and this one is
+    /// asking the reader to go and close something. `drawn` reads symbols and
+    /// is blind to styling, so this asks `painted`.
+    #[test]
+    fn a_socket_another_bdi_holds_is_painted_as_a_warning() {
+        let painted = painted(
+            status_bar(&[Notice::AnotherBdiHadTheInboundChannel], A_KEY_ROW, 100),
+            100,
+        );
+
+        assert!(
+            painted
+                .iter()
+                .any(|(said, colour)| said.contains("another bdi") && *colour == LOOK_AT_THIS),
+            "{painted:?}"
+        );
+    }
+
     /// A frame draws what the snapshot behind it found and what the session
     /// settled at startup through one list, and the snapshot's go first
     /// because a herdr nobody can reach empties the agent column.

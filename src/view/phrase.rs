@@ -41,6 +41,9 @@ pub fn notice(notice: Notice) -> &'static str {
         Notice::NoInboundChannel => {
             "nothing can tell bdi a project changed · every project is polled instead"
         }
+        Notice::AnotherBdiHadTheInboundChannel => {
+            "another bdi held the inbound channel · every project is polled instead"
+        }
     }
 }
 
@@ -55,6 +58,10 @@ pub fn brief_notice(notice: Notice) -> &'static str {
     match notice {
         Notice::NoHerdr => "agents unknown",
         Notice::NoInboundChannel => "polled, not reported",
+        // The cause is what survives the cut, not the cost. A reader who
+        // keeps only *polled* has what the notice this one replaced already
+        // gave them, and still nothing to do about it.
+        Notice::AnotherBdiHadTheInboundChannel => "another bdi had it",
     }
 }
 
@@ -567,8 +574,13 @@ mod tests {
             }));
         }
 
-        for fact in [Notice::NoHerdr, Notice::NoInboundChannel] {
+        for fact in [
+            Notice::NoHerdr,
+            Notice::NoInboundChannel,
+            Notice::AnotherBdiHadTheInboundChannel,
+        ] {
             said.push(notice(fact).to_string());
+            said.push(brief_notice(fact).to_string());
         }
 
         for rule in [
@@ -1096,10 +1108,15 @@ mod tests {
 
     /// A `&'static str` cannot hold text a tool produced at runtime, so the
     /// phrases that are one are clean by construction rather than by test.
+    ///
+    /// The notices are not among them any more: one of them names the pid of
+    /// the process holding the inbound channel, which no `&'static str` can
+    /// carry. What it carries instead is a `u32` the kernel gave, so nothing
+    /// a tool wrote can reach it by any path — and both notices are in
+    /// `every_phrase`, which is where the guarantee is now made.
     #[test]
     fn the_failure_phrases_are_static() {
         let _: fn(TrackerFailure) -> &'static str = tracker_failure;
-        let _: fn(Notice) -> &'static str = notice;
         let _: fn() -> &'static str = truncated;
         let _: fn() -> &'static str = no_live_panes;
         let _: fn() -> &'static str = panes_may_be_incomplete;
@@ -1152,6 +1169,46 @@ mod tests {
         let said = notice(Notice::NoInboundChannel);
 
         assert!(said.contains("polled"), "{said}");
+    }
+
+    /// `bdi-7ao.61`: a reader who knows only that they are polled cannot act.
+    /// Knowing it is another `bdi` is what they can act on, because it is the
+    /// only cause of this that closing something puts right.
+    #[test]
+    fn a_socket_another_bdi_holds_says_so_rather_than_only_what_it_cost() {
+        let said = notice(Notice::AnotherBdiHadTheInboundChannel);
+
+        assert!(said.contains("another bdi"), "{said}");
+        assert!(said.contains("polled"), "{said}");
+    }
+
+    /// The cause is what survives the cut, not the cost. A reader left with
+    /// only *polled* has what the notice this one replaced already gave them,
+    /// and still nothing to do about it.
+    #[test]
+    fn the_brief_words_keep_the_cause_and_give_up_the_cost() {
+        let said = brief_notice(Notice::AnotherBdiHadTheInboundChannel);
+
+        assert!(said.contains("another bdi"), "{said}");
+        assert!(
+            columns(&[Span::raw(said)])
+                <= columns(&[Span::raw(brief_notice(Notice::NoInboundChannel))]),
+            "the brief words are what fit a forty-column foot: {said}"
+        );
+    }
+
+    /// Two ways of losing the channel that want different things of the
+    /// reader: one is theirs to fix by closing a process, the other is not.
+    #[test]
+    fn losing_the_channel_to_another_bdi_reads_differently_from_never_having_one() {
+        assert_ne!(
+            notice(Notice::NoInboundChannel),
+            notice(Notice::AnotherBdiHadTheInboundChannel)
+        );
+        assert_ne!(
+            brief_notice(Notice::NoInboundChannel),
+            brief_notice(Notice::AnotherBdiHadTheInboundChannel)
+        );
     }
 
     #[test]

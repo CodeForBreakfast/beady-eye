@@ -159,7 +159,9 @@ pub enum Refused {
     /// This session owns no runtime directory, so there is nowhere to put a
     /// socket only this user can reach.
     NoRuntimeDirectory,
-    /// Another `bdi` is listening there already.
+    /// Another `bdi` is listening there already, so this one has the channel
+    /// only when that one lets it go. The reader's remedy, and the only
+    /// refusal here that has one.
     AlreadyListening(PathBuf),
     /// The socket could not be made, or could not be made this user's alone.
     Unopenable(PathBuf, std::io::Error),
@@ -178,8 +180,23 @@ impl fmt::Display for Refused {
                     "this session has no {RUNTIME_DIRECTORY} to put the socket in"
                 )
             }
+            // The one refusal with a remedy, so the one that says how to
+            // reach it. The foot can name the cause and no more; naming a
+            // process is a thing to be done here, where there is room for
+            // the path and for a way of asking who holds it that is live
+            // when the reader asks rather than as old as this line.
+            //
+            // The restart is half the remedy and not a flourish. `wire` asks
+            // for the socket once, before the screen opens, and never binds
+            // again — so closing the holder frees the path and gives this run
+            // nothing. A remedy that stopped at "close it" would leave the
+            // reader watching a channel that was never going to arrive.
             Refused::AlreadyListening(at) => {
-                write!(f, "another bdi is listening on {}", at.display())
+                write!(
+                    f,
+                    "another bdi is listening on {}; ss -lxp names which — close it and restart bdi to get the channel",
+                    at.display()
+                )
             }
             Refused::Unopenable(at, why) => {
                 write!(f, "{} could not be opened ({why})", at.display())
@@ -603,6 +620,43 @@ mod tests {
             ["ok atlas"],
             "the first bdi is still listening"
         );
+    }
+
+    /// The line that reaches the primary screen carries the half no notice
+    /// can: the path, and a way of asking who holds it that is live when the
+    /// reader asks rather than as old as this line.
+    ///
+    /// The command is asserted whole, `-p` and all. Without that flag `ss`
+    /// prints the socket's inode where a reader expects a pid — measured
+    /// 2026-08-31 against this machine's own squatted socket, `7385342`
+    /// against a holder of `355214` — and the flagless form is the one that
+    /// reads as having worked, because it matches, prints a line, and there
+    /// is a number on it. Nothing else in the suite would go red for a
+    /// command that had quietly stopped naming a holder.
+    #[test]
+    fn the_line_left_on_the_primary_screen_says_how_to_find_who_is_holding_it() {
+        let said = Refused::AlreadyListening(PathBuf::from("/run/user/1000/x.sock")).to_string();
+
+        assert!(said.contains("another bdi"), "{said}");
+        assert!(said.contains("/run/user/1000/x.sock"), "{said}");
+        assert!(said.contains("ss -lxp names which"), "{said}");
+    }
+
+    /// The remedy is two steps and the second one is the one a reader would
+    /// not guess: `listen` is called once, from `wire`, before the screen
+    /// opens, and nothing binds again for the life of the run. So a reader
+    /// who closes the holder and waits gets a channel that is free and a
+    /// `bdi` that will never take it, which looks exactly like the fault
+    /// they were trying to clear.
+    ///
+    /// Held here rather than at the call site because this is the sentence
+    /// that makes the promise, and a sentence is what would quietly stop
+    /// being true if a retry were ever added and this went unchanged.
+    #[test]
+    fn the_remedy_says_to_restart_because_the_socket_is_asked_for_only_once() {
+        let said = Refused::AlreadyListening(PathBuf::from("/run/user/1000/x.sock")).to_string();
+
+        assert!(said.contains("restart bdi"), "{said}");
     }
 
     #[test]
