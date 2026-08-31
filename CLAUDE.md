@@ -50,10 +50,63 @@ parent, a truncated subtree — each is reported, never silently dropped.
 
 ## Working in this repo
 
-Fixtures under `tests/fixtures/` are the shapes of `bd dep tree … --json` and
-`herdr agent list`, captured from a live session on 2026-08-30. To add a fixture,
-capture it from **this machine's own** session or trackers this project's seat can
-reach — do not read another project's `.beads` directory or source tree. Ask
+Take a worktree per seat, off `origin/main` — five seats sharing the one live
+checkout stopped the build twice. Run `bdi` itself from the shared checkout
+though: a worktree resolves to a project no pane sits under, so every claim is
+refused and you see zero agents while nothing looks wrong (`bdi-9vm`). An
+orchestrator registers its pane on the effort's anchor bead, not on a child
+(`bdi-m29`).
+
+Never squash with `git reset --soft origin/main`. That ref moves under you in a
+shared `.git`, and on 2026-08-30 it silently reverted a landed feature: the
+ancestry was right, the rebase succeeded, the push fast-forwarded and 354 tests
+stayed green. The file list was the only signal. Squash against a base SHA you
+recorded at the start, or `$(git merge-base HEAD origin/main)` if you did not,
+and read `git diff origin/main HEAD --stat` before pushing — every file in it
+must be yours.
+
+A green `nix flake check` on a dirty tree has not compiled your new files.
+Untracked files are invisible to it and the only warning is `Git tree is dirty`.
+Commit first.
+
+`cancelled` is the third CI answer. A superseded push leaves a run `completed /
+cancelled`, which is neither green nor red, so assert `conclusion == "success"`
+against the run's own `headSha` — never the absence of a failure, and never
+`--limit 1`.
+
+Mutation-test before you trust a green — every seat that has done so found a
+real hole. `--in-diff` scopes it to your own change, which is the difference
+between two minutes and unrunnable, and it wants a cap: `systemd-run --user
+--scope -p MemoryMax=4G -p MemorySwapMax=0`. The swap cap is the load-bearing
+half — a non-terminating mutant reached 15.7 GiB, and with swap left available
+`MemoryMax` alone pushes it there instead of killing it. `ulimit -v` is the
+wrong tool: it caps address space, and the false kills it produces read exactly
+like killed mutants. cargo-mutants is not in the flake — `nix run
+nixpkgs#cargo-mutants` (`bdi-7ao.11`).
+
+A path with no non-test caller is described by its tests, not covered by them.
+`Forest::refresh` was correct, tested twice, and called by nothing for days. A
+fixed finding that reappears is a revert until proved otherwise.
+
+A test about colour asks `painted()` in `view/draw.rs`. Its neighbour there,
+`drawn()`, reads `symbol()` only and is blind to styling, which is how a colour
+bug shipped. `tui.rs` has a `painted()` of its own and it is not the same thing:
+it is named for the `paint()` it calls, returns symbols, and sees no colour
+either.
+
+Ask the program, not the library under it. `fc-match` says `\e[1m` gets Bold;
+kitty resolves it to SemiBold, and `kitty +runpy` is what will tell you so. If
+you supplied part of the query, you specified the answer.
+
+`bd close --reason` is write-once. On a closed bead it echoes your text with a ✓
+and stores nothing — reopen, close, and read the field back.
+
+No crate-wide `cargo fmt` while other seats are live.
+
+Fixtures under `tests/fixtures/` are faithful captures of what `bd list`, `bd
+dep tree`, `bd query` and `herdr agent list` put on the wire. To add one,
+capture it from **this machine's own** session, or a tracker this project's seat
+can reach — do not read another project's `.beads` directory or source tree. Ask
 through that project's commy channel instead.
 
 ## Tracker and packaging
