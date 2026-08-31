@@ -226,7 +226,7 @@ impl Showing {
         // file arrives, and a read that outlives its `poll` waits for the next
         // frame instead of reporting that this one is over.
         unsafe { libc::fcntl(ours.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
-        let child = bdi_on(&theirs, &home);
+        let child = bdi_on(&theirs, &home, &[]);
         drop(theirs);
         Self {
             child,

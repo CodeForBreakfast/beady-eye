@@ -1,0 +1,18 @@
+#!/bin/sh
+# A `herdr` that answers `agent read` slowly and everything else as herdr does.
+#
+# The pane read runs on the loop thread (src/tui/mod.rs), so a herdr this slow
+# is what makes the keyboard's own latency visible: a cursor move onto another
+# pane costs the whole read.
+#
+#   BDI_SHIM_HERDR_READ_DELAY  seconds to wait before `agent read`. Unset, this
+#                              is the herdr it shadows.
+#
+# Plain `sh`, and POSIX, for the reason the bd shim beside this one gives.
+set -u
+
+if [ -n "${BDI_SHIM_HERDR_READ_DELAY:-}" ] && [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
+  sleep "$BDI_SHIM_HERDR_READ_DELAY"
+fi
+
+exec "$(dirname "$0")/shadowed" herdr "$@"

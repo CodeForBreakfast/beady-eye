@@ -1,9 +1,31 @@
-//! A terminal of our own to run `bdi` on.
+//! A terminal of our own to run `bdi` on: the pty harness the suite drives
+//! `bdi` with.
 //!
 //! `bdi` only behaves like a terminal application when it has one, so the
 //! tests that read what it writes open a pty and hand it the far end. What is
 //! shared here is the machinery for getting a `bdi` onto one; how each test
 //! then reads it differs, and stays with the test.
+//!
+//! Start here rather than writing another one. What it can do is listed
+//! rather than left to be found:
+//!
+//! * a sized pty and a `bdi` owning it — [`a_pty`], [`own_the_terminal`],
+//!   [`bdi_on`];
+//! * typing at it and timestamping what comes back — [`driver::Driven`];
+//! * making `bd` slow, so a stalled loop can be told from a slow one —
+//!   [`shims::ShimmedTracker`] and `tests/shims/`.
+//!
+//! The size is why this is a harness rather than a shell one-liner: `script
+//! -T` with stdout to a file gives a 0x0 pty, and ratatui then draws an empty
+//! frame and yields perfectly plausible timings for a screen with nothing on
+//! it. Here it is an argument to `openpty` and cannot be forgotten.
+
+// Each test binary uses the part of this that binary needs, so an unused item
+// here is not a dead one.
+#![allow(dead_code)]
+
+pub mod driver;
+pub mod shims;
 
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
@@ -88,8 +110,30 @@ pub fn a_home_naming_one_project(named: &str) -> PathBuf {
     home
 }
 
-/// A `bdi` drawing on the far end of a pty.
-pub fn bdi_on(theirs: &std::fs::File, home: &Path) -> Child {
+/// A `HOME` whose one project reaches its tracker without direnv.
+///
+/// `credential_command` is the escape hatch for a tracker outside direnv's
+/// reach, and it is what a test about `bd` needs: without it the first thing
+/// a collection does is run direnv, and on a machine without one the project
+/// fails there and `bd` is never reached at all.
+pub fn a_home_naming_one_project_read_without_direnv(named: &str) -> PathBuf {
+    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
+    std::fs::write(
+        home.join(".config/beady-eye/config.toml"),
+        format!(
+            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n\
+             credential_command = \"printf ''\"\n",
+            home.display()
+        ),
+    )
+    .expect("the config is ours to write");
+    home
+}
+
+/// A `bdi` drawing on the far end of a pty, with `environment` on top of what
+/// the test binary carries.
+pub fn bdi_on(theirs: &std::fs::File, home: &Path, environment: &[(String, String)]) -> Child {
     unsafe {
         Command::new(env!("CARGO_BIN_EXE_bdi"))
             .current_dir(home)
@@ -97,6 +141,7 @@ pub fn bdi_on(theirs: &std::fs::File, home: &Path) -> Child {
             .env("TERM", "xterm-256color")
             .env_remove("BEADS_DIR")
             .env_remove("COMMY_PROJECT")
+            .envs(environment.iter().map(|(named, value)| (named, value)))
             .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
             .stdout(theirs.try_clone().expect("the pty is ours to hand over"))
             .stderr(theirs.try_clone().expect("the pty is ours to hand over"))

@@ -1,0 +1,38 @@
+#!/bin/sh
+# A `bd` that stops answering while a flag file is there: a tracker that hangs
+# rather than fails.
+#
+# `bdi` reaches bd by a PATH lookup (src/collect/run.rs), so this directory
+# first on PATH is enough to inject any delay without touching `bdi` at all.
+# That is what makes a hung tracker reachable — it is otherwise a state only a
+# broken network produces.
+#
+#   BDI_SHIM_BD_HANGS_WHILE  path to the flag. Touch it and every bd call from
+#                            then on waits until it goes away.
+#   BDI_SHIM_BD_HOLDING      path this writes while it is holding a call, so a
+#                            reader can wait for the hang to have started
+#                            rather than sleeping and hoping.
+#
+# Unset, it is the bd it shadows.
+#
+# Plain `sh`, and POSIX. A nix build sandbox holds `/bin/sh` and nothing else
+# — no `/usr/bin/env`, no `bash` — and the suite runs in one. What decides
+# whether that reaches you is who supplies the interpreter: nix does for a
+# `writeShellScriptBin` or a `runCommand` builder, and those are safe. A
+# script file the repository ships is executed as it stands, so its shebang
+# is resolved against that filesystem. These are.
+set -u
+
+GIVING_UP=1200 # 60s at 50ms, so a leaked shim dies on its own.
+
+if [ -n "${BDI_SHIM_BD_HANGS_WHILE:-}" ] && [ -e "$BDI_SHIM_BD_HANGS_WHILE" ]; then
+  if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then : >"$BDI_SHIM_BD_HOLDING"; fi
+  waited=0
+  while [ -e "$BDI_SHIM_BD_HANGS_WHILE" ] && [ "$waited" -lt "$GIVING_UP" ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then rm -f "$BDI_SHIM_BD_HOLDING"; fi
+fi
+
+exec "$(dirname "$0")/shadowed" bd "$@"

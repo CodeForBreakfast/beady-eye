@@ -99,7 +99,7 @@ impl Session {
         let home = a_home_naming_one_project(named);
         let (ours, theirs) = a_pty(ROWS, COLS);
 
-        let child = bdi_on(&theirs, &home);
+        let child = bdi_on(&theirs, &home, &[]);
         drop(theirs);
 
         let mut session = Self {

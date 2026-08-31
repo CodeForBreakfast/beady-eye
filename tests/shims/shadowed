@@ -1,0 +1,30 @@
+#!/bin/sh
+# Run the program a shim beside this one shadows: the first one on PATH that is
+# not in this directory.
+#
+# A shim naming an absolute path would work on the machine it was captured on
+# and nowhere else. Nothing here is written down but the name.
+# Plain `sh`, and POSIX, for the reason the bd shim beside this one gives:
+# no bash here, so PATH is split with an IFS loop rather than an array.
+set -u
+
+named=$1
+shift
+
+here=$(cd "$(dirname "$0")" && pwd)
+
+elsewhere=""
+was=$IFS
+IFS=:
+for directory in $PATH; do
+  if [ "$directory" != "$here" ]; then
+    elsewhere="${elsewhere:+$elsewhere:}$directory"
+  fi
+done
+IFS=$was
+
+real=$(PATH="$elsewhere" command -v "$named") || {
+  echo "$named: not on PATH beside the shim that shadows it" >&2
+  exit 127
+}
+exec "$real" "$@"
