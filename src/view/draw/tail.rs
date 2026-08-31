@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crate::view::fitted::{columns, indent};
+use crate::view::phrase;
 use crate::view::tail::Tail;
 
 use super::sentence;
@@ -40,6 +41,19 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
                 .enumerate()
             {
                 frame.render_widget(sentence(&indent(), said.clone(), Color::Reset), row(n + 1));
+            }
+        }
+        Tail::Reading { pane } => {
+            frame.render_widget(rule(Some(pane), area.width as usize), row(0));
+            if room > 0 {
+                frame.render_widget(
+                    sentence(
+                        &indent(),
+                        phrase::pane_being_read().to_string(),
+                        Color::DarkGray,
+                    ),
+                    row(1),
+                );
             }
         }
         Tail::Silent(why) => {
@@ -103,6 +117,28 @@ mod tests {
             .collect()
     }
 
+    /// One row of the band, in runs of a colour. `tail_frame` beside this
+    /// reads symbols only, so a band whose words are right and whose colour
+    /// is wrong is a band it calls correct.
+    fn painted(tail: &Tail, width: u16, row: u16) -> Vec<(String, Color)> {
+        let height = row + 1;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
+        terminal
+            .draw(|frame| draw_tail(frame, Rect::new(0, 0, width, height), tail))
+            .expect("a draw into memory");
+        let buffer = terminal.backend().buffer();
+
+        let mut runs: Vec<(String, Color)> = Vec::new();
+        for x in 0..width {
+            let cell = &buffer[(x, row)];
+            match runs.last_mut() {
+                Some((said, colour)) if *colour == cell.fg => said.push_str(cell.symbol()),
+                _ => runs.push((cell.symbol().to_string(), cell.fg)),
+            }
+        }
+        runs
+    }
+
     fn tailing(pane: &str, lines: &[&str]) -> Tail {
         Tail::Pane {
             pane: pane.into(),
@@ -154,6 +190,57 @@ mod tests {
         );
     }
 
+    /// The band between the selection landing on a pane and herdr saying
+    /// what is on it. The rule names the pane already, so the row beneath it
+    /// says only that `bdi` is waiting — a blank one would read as a pane
+    /// sitting quiet.
+    #[test]
+    fn a_pane_not_yet_read_says_it_is_being_read() {
+        assert_eq!(
+            tail_frame(
+                &Tail::Reading {
+                    pane: "wCM:p9".to_string()
+                },
+                40,
+                3,
+                0
+            ),
+            vec![
+                "──────────────── wCM:p9 ────────────────",
+                "  reading that pane                     ",
+                "                                        ",
+            ]
+        );
+    }
+
+    /// What `bdi` says in the band is dimmer than what the pane says, which
+    /// is the whole of what stops a reader taking `bdi`'s own words for the
+    /// pane's. Nothing in the symbols says which of the two a row is.
+    #[test]
+    fn what_bdi_says_in_the_band_is_drawn_dimmer_than_what_the_pane_says() {
+        let waiting = painted(
+            &Tail::Reading {
+                pane: "w:p1".to_string(),
+            },
+            40,
+            1,
+        );
+        assert!(
+            waiting.iter().any(|(said, colour)| {
+                said.contains(phrase::pane_being_read()) && *colour == Color::DarkGray
+            }),
+            "the row saying the pane is being read: {waiting:?}"
+        );
+
+        let said = painted(&tailing("w:p1", &["rebuilt .#thinkpad"]), 40, 1);
+        assert!(
+            said.iter().any(|(said, colour)| {
+                said.contains("rebuilt .#thinkpad") && *colour == Color::Reset
+            }),
+            "the pane's own line: {said:?}"
+        );
+    }
+
     #[test]
     fn a_pane_line_too_wide_for_the_screen_is_cut_rather_than_wrapped() {
         let tail = tailing("w:p1", &["a line with a great deal more to say than this"]);
@@ -175,6 +262,32 @@ mod tests {
             tail_frame(&Tail::Silent(phrase::no_bead_to_tail()), 10, 1, 0),
             vec!["──────────"]
         );
+    }
+
+    /// A band one row high has room for its rule and nothing else, and the
+    /// row beneath it is not the band's to write in. At four rows the screen
+    /// gives the tail exactly one, and puts the key hints on the row under
+    /// it: a phrase written there would be drawn over them.
+    #[test]
+    fn a_band_one_row_high_writes_nothing_under_its_rule() {
+        for tail in [
+            Tail::Reading {
+                pane: "w:p1".to_string(),
+            },
+            Tail::Silent(phrase::no_bead_to_tail()),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(20, 2)).expect("a test backend");
+            terminal
+                .draw(|frame| draw_tail(frame, Rect::new(0, 0, 20, 1), &tail))
+                .expect("a draw into memory");
+
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                (0..20).map(|x| buffer[(x, 1)].symbol()).collect::<String>(),
+                " ".repeat(20),
+                "the row under the band, for {tail:?}"
+            );
+        }
     }
 
     #[test]

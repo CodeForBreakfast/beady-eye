@@ -119,6 +119,31 @@ impl Driven {
         at
     }
 
+    /// Change the size of the terminal under `bdi`, which the kernel reports
+    /// to it as a resize.
+    ///
+    /// What it is for is reading the screen rather than changing it: the
+    /// terminal is written as a difference from the frame before, so a word
+    /// that lands where another word already had letters in the same columns
+    /// reaches the wire in pieces and no test can look for it. A resize is
+    /// answered by drawing every cell again, so what comes back is the screen
+    /// as it stands rather than what changed about it.
+    pub fn resize(&mut self, rows: u16, cols: u16) -> Mark {
+        let at = Mark(self.said.len());
+        let size = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        assert_eq!(
+            unsafe { libc::ioctl(self.terminal.as_raw_fd(), libc::TIOCSWINSZ, &size) },
+            0,
+            "the terminal is ours to resize"
+        );
+        at
+    }
+
     /// Everything `bdi` wrote after `since`, waiting up to `patience` for the
     /// first of it. Empty only where it wrote nothing at all in that time.
     pub fn answer_to(&mut self, since: Mark, patience: Duration) -> Vec<u8> {

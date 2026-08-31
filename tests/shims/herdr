@@ -1,18 +1,52 @@
 #!/bin/sh
-# A `herdr` that answers `agent read` slowly and everything else as herdr does.
+# A `herdr` a test can answer for and hold up: it says what a file tells it to
+# say, and stops answering `agent read` while a flag file is there.
 #
-# The pane read runs on the loop thread (src/tui/mod.rs), so a herdr this slow
-# is what makes the keyboard's own latency visible: a cursor move onto another
-# pane costs the whole read.
+# `bdi` reaches herdr by a PATH lookup (src/collect/run.rs), so this directory
+# first on PATH is enough to give a machine with no herdr a session to read,
+# and to hold a pane read outstanding — a state a working herdr never reaches,
+# and the one that tells a stalled loop from a slow one.
 #
-#   BDI_SHIM_HERDR_READ_DELAY  seconds to wait before `agent read`. Unset, this
-#                              is the herdr it shadows.
+#   BDI_SHIM_HERDR_AGENTS       file holding what `agent list` answers with.
+#                               Unset, the list goes to the herdr this shadows.
+#   BDI_SHIM_HERDR_VISIBLE      file holding what `agent read` answers with.
+#   BDI_SHIM_HERDR_HANGS_WHILE  path to the flag. While it is there, every
+#                               `agent read` waits for it to go away.
+#   BDI_SHIM_HERDR_HOLDING      path this writes while it is holding a read, so
+#                               a reader can wait for the hold to have started
+#                               rather than sleeping and hoping.
+#   BDI_SHIM_HERDR_READ_DELAY   seconds to wait before `agent read`, for
+#                               measuring a herdr that is slow rather than
+#                               stopped. A delay is not a hold: nothing can
+#                               wait for one to have started.
+#
+# Unset, it is the herdr it shadows.
 #
 # Plain `sh`, and POSIX, for the reason the bd shim beside this one gives.
 set -u
 
-if [ -n "${BDI_SHIM_HERDR_READ_DELAY:-}" ] && [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
-  sleep "$BDI_SHIM_HERDR_READ_DELAY"
+GIVING_UP=1200 # 60s at 50ms, so a leaked shim dies on its own.
+
+if [ "${1:-}" = "agent" ] && [ "${2:-}" = "list" ] && [ -n "${BDI_SHIM_HERDR_AGENTS:-}" ]; then
+  exec cat "$BDI_SHIM_HERDR_AGENTS"
+fi
+
+if [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
+  if [ -n "${BDI_SHIM_HERDR_READ_DELAY:-}" ]; then
+    sleep "$BDI_SHIM_HERDR_READ_DELAY"
+  fi
+  if [ -n "${BDI_SHIM_HERDR_HANGS_WHILE:-}" ] && [ -e "$BDI_SHIM_HERDR_HANGS_WHILE" ]; then
+    if [ -n "${BDI_SHIM_HERDR_HOLDING:-}" ]; then : >"$BDI_SHIM_HERDR_HOLDING"; fi
+    waited=0
+    while [ -e "$BDI_SHIM_HERDR_HANGS_WHILE" ] && [ "$waited" -lt "$GIVING_UP" ]; do
+      sleep 0.05
+      waited=$((waited + 1))
+    done
+    if [ -n "${BDI_SHIM_HERDR_HOLDING:-}" ]; then rm -f "$BDI_SHIM_HERDR_HOLDING"; fi
+  fi
+  if [ -n "${BDI_SHIM_HERDR_VISIBLE:-}" ]; then
+    exec cat "$BDI_SHIM_HERDR_VISIBLE"
+  fi
 fi
 
 exec "$(dirname "$0")/shadowed" herdr "$@"

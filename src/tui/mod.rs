@@ -20,7 +20,7 @@ use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
 use crate::collect::changes::{self, Reported, Socket, Uncovered};
-use crate::collect::panes::{Herdr, Panes};
+use crate::collect::panes::{Answer, Herdr, Panes};
 use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
@@ -59,13 +59,13 @@ pub fn run(
         .context("asking to be told about the signals that would otherwise kill bdi")?;
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, _socket, at_startup) = wire(
+    let (events, ask, panes, _socket, at_startup) = wire(
         refresh,
         Reported::watching(projects),
         collect,
         asked_to_stop,
     );
-    let mut screen = Screen::showing(first, Box::new(Herdr::new(RealRunner)), at_startup)?;
+    let mut screen = Screen::showing(first, panes, at_startup)?;
 
     drive(&mut screen, &events, &ask)
 }
@@ -86,6 +86,8 @@ enum Event {
     Changed(Wanted),
     /// A collection has come back.
     Collected(Box<Snapshot>),
+    /// herdr has said what is on a pane, or would not say.
+    Tailed(Answer),
     /// Something outside has asked `bdi` to stop.
     ///
     /// Its own event rather than a keystroke standing in for one: the loop
@@ -93,6 +95,15 @@ enum Event {
     /// synthesised 'q' arriving while that window is up would close the
     /// window and leave `bdi` running.
     Signalled,
+}
+
+/// Every answer herdr gives reaches the loop as one of these, which is the
+/// whole of what `collect::panes` knows about the loop: it is handed a
+/// `Sender` and told nothing about where it goes.
+impl From<Answer> for Event {
+    fn from(answer: Answer) -> Self {
+        Event::Tailed(answer)
+    }
 }
 
 /// What the screen has on it.
@@ -133,6 +144,10 @@ trait View {
     /// thing a second later, and a mark part way through turning is a frame
     /// behind by the time the next one is due.
     fn holds_for(&self) -> Option<Duration>;
+
+    /// Take what herdr said about a pane it was asked to read or to focus,
+    /// reporting whether the screen has changed.
+    fn tailed(&mut self, answer: Answer) -> bool;
 
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
@@ -244,6 +259,7 @@ fn drive(
                 view.collecting(outstanding.in_flight());
                 true
             }
+            Event::Tailed(answer) => view.tailed(answer),
             // The same return 'q' takes, and for the same reason: it is
             // returning that drops the screen, and dropping the screen is
             // what hands the terminal back.
@@ -348,18 +364,31 @@ fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<
     }
 }
 
-/// Start everything that produces events, and hand back the loop's ends: the
-/// events themselves, the channel a collection is asked for on, the inbound
-/// socket for as long as there is a view to keep live, and whatever this run
-/// of `bdi` has to say about itself.
+/// The loop's ends: the events it waits on, the channel a collection is asked
+/// for on, herdr to ask what is on a pane, the inbound socket for as long as
+/// there is a view to keep live, and whatever this run of `bdi` has to say
+/// about itself.
+type Wired = (
+    Receiver<Event>,
+    Sender<Wanted>,
+    Box<dyn Panes>,
+    Option<Socket>,
+    Vec<Notice>,
+);
+
+/// Start everything that produces events, and hand back the loop's ends.
 fn wire(
     refresh: Duration,
     reported: Reported,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
     asked_to_stop: Signals,
-) -> (Receiver<Event>, Sender<Wanted>, Option<Socket>, Vec<Notice>) {
+) -> Wired {
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
+
+    // herdr's own threads, whose answers come back here like everything
+    // else's: the loop waits on one channel and never on herdr.
+    let panes: Box<dyn Panes> = Box::new(Herdr::new(RealRunner, to_the_loop.clone()));
 
     let collecting = to_the_loop.clone();
     thread::spawn(move || collector(collect, &asked, &collecting));
@@ -399,7 +428,7 @@ fn wire(
         );
     });
 
-    (events, ask, socket, refused.into_iter().collect())
+    (events, ask, panes, socket, refused.into_iter().collect())
 }
 
 /// What tells `bdi` that a project's work has moved on.
@@ -559,9 +588,11 @@ struct Shown {
     forest: Forest,
     panes: Box<dyn Panes>,
     tail: Tail,
-    /// The pane the tail on screen was read from, so a selection moving
-    /// within it does not spend a herdr call on the answer already drawn.
+    /// The pane the band on screen is about, so a selection moving within it
+    /// does not spend a herdr call on the answer already drawn.
     tailing: Option<String>,
+    /// Where the band is with the pane read it is waiting on.
+    reading: Reading,
     /// What the collection in flight is reading, where one is running. Every
     /// project line it names says its own rows are about to be replaced, and
     /// the rest of the screen carries on saying how stale it is.
@@ -573,23 +604,44 @@ struct Shown {
     collecting: Option<Wanted>,
 }
 
+/// Where the band under the forest is with the read it is waiting on.
+///
+/// At most one is ever out, so what a reader moving faster than herdr answers
+/// costs is a run of answers dropped rather than a herdr call per keystroke.
+/// An answer is the answer to what was drawn when it was asked for, and what
+/// is drawn moves on: the cursor onto another pane, and a collection coming
+/// back under the same one, which is the refresh tick the pane is re-read on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// Nothing is out, so the pane the band names is the pane to ask for.
+    Nothing,
+    /// A read is out, and its answer is the answer to what is drawn.
+    Outstanding,
+    /// A read is out, and what is drawn moved on after it was asked. Its
+    /// answer is the answer to nothing on the screen, so it is dropped and
+    /// the pane the band names now is asked for in its place.
+    Superseded,
+}
+
 impl Shown {
     fn of(snapshot: Snapshot, panes: Box<dyn Panes>) -> Self {
         let forest = forest::flatten(&snapshot);
-        let tail = tail::tail(&forest, panes.as_ref(), tail::LINES);
-        let tailing = tail::target(&forest).pane().map(str::to_string);
-
-        Self {
+        let mut shown = Self {
+            tail: tail::tail(&forest),
+            tailing: tail::target(&forest).pane().map(str::to_string),
             forest,
             panes,
-            tail,
-            tailing,
+            reading: Reading::Nothing,
             // The one collection nothing can say is running. It is
             // synchronous and finishes before this exists — measured at 3.6
             // to 3.9 seconds against real trackers, the longest wait a
             // reader has, and there is no screen to announce it on.
             collecting: None,
-        }
+        };
+        // Asked for here rather than waited for: the first frame is drawn on
+        // the answer to this arriving, not on herdr getting round to it.
+        shown.ask();
+        shown
     }
 
     /// Say what the collection in flight is reading, or that none is,
@@ -629,10 +681,70 @@ impl Shown {
             .min()
     }
 
-    /// Read the tail for whatever the selection is on now.
+    /// Put the band on whatever the selection is on now, and ask herdr for
+    /// the pane where it is on one.
+    ///
+    /// Whatever herdr is already answering was asked for the band this
+    /// replaces, so it is superseded here whether or not the pane has
+    /// changed: a collection coming back is the refresh tick the pane is
+    /// re-read on, and an answer read before it would be the pane as it was
+    /// rather than as it is.
     fn retail(&mut self) {
         self.tailing = tail::target(&self.forest).pane().map(str::to_string);
-        self.tail = tail::tail(&self.forest, self.panes.as_ref(), tail::LINES);
+        self.tail = tail::tail(&self.forest);
+        if self.reading == Reading::Outstanding {
+            self.reading = Reading::Superseded;
+        }
+        self.ask();
+    }
+
+    /// Ask herdr for the pane the band is waiting on, where it is waiting on
+    /// one and herdr has not been asked already.
+    ///
+    /// A reader holding an arrow key down moves faster than a slow herdr
+    /// answers, so every answer arrives about a screen they have already left
+    /// and is dropped; the band goes on naming the pane it is waiting for
+    /// until the cursor rests long enough for one answer to land. That is the
+    /// trade the bound is spent on: the tail can fall behind the selection,
+    /// and the keyboard never does.
+    fn ask(&mut self) {
+        if self.reading != Reading::Nothing {
+            return;
+        }
+        let Tail::Reading { pane } = &self.tail else {
+            return;
+        };
+        let pane = pane.clone();
+        self.panes.read(&pane, tail::LINES);
+        self.reading = Reading::Outstanding;
+    }
+
+    /// Take what herdr said, reporting whether the screen is any different
+    /// for it.
+    fn tailed(&mut self, answer: Answer) -> bool {
+        match answer {
+            Answer::Read { pane, read } => {
+                let superseded = self.reading == Reading::Superseded;
+                self.reading = Reading::Nothing;
+                if superseded {
+                    self.ask();
+                    return false;
+                }
+                self.tail = tail::read(pane, read);
+                true
+            }
+            // A focus that would not come says so where the tail is, and only
+            // while the tail is still that pane's: the rule above the band
+            // names the pane, so a refusal about one the reader has left
+            // would be drawn as a refusal about the one they are on.
+            Answer::Focused { pane, focused } => match tail::focused(focused) {
+                Some(said) if self.tailing.as_deref() == Some(pane.as_str()) => {
+                    self.tail = said;
+                    true
+                }
+                _ => false,
+            },
+        }
     }
 
     /// Follow the selection, where it has left the pane the tail is showing.
@@ -658,19 +770,6 @@ impl Shown {
         self.moved(changed)
     }
 
-    /// Bring the selected bead's pane to the front, reporting whether that
-    /// changed the screen. A row with no pane is a no-op: there is nothing to
-    /// focus and nothing has gone wrong.
-    fn focus(&mut self) -> bool {
-        match tail::focus(&self.forest, self.panes.as_ref()) {
-            None => false,
-            Some(said) => {
-                self.tail = said;
-                true
-            }
-        }
-    }
-
     fn collected(&mut self, snapshot: Snapshot) {
         // A refresh keeps the folds and the selection, so the cursor stays on
         // the bead the user put it on however the new snapshot has moved it.
@@ -681,8 +780,13 @@ impl Shown {
     }
 
     fn apply(&mut self, action: Action) -> bool {
+        // Asking for the selected bead's pane to be brought to the front
+        // changes nothing on this screen, and a row with no pane is a no-op:
+        // there is nothing to focus and nothing has gone wrong. What herdr
+        // makes of it arrives as an answer like a reading does.
         if action == Action::Focus {
-            return self.focus();
+            tail::focus(&self.forest, self.panes.as_ref());
+            return false;
         }
 
         let changed = self.forest.apply(action);
@@ -811,6 +915,10 @@ impl View for Screen {
         self.shown.holds_for(Utc::now())
     }
 
+    fn tailed(&mut self, answer: Answer) -> bool {
+        self.shown.tailed(answer)
+    }
+
     fn apply(&mut self, action: Action) -> bool {
         self.shown.apply(action)
     }
@@ -852,7 +960,7 @@ mod tests {
     use super::keys::tests::{control, key};
     use super::keys::BINDINGS;
     use super::*;
-    use crate::collect::run::RunFailure;
+    use crate::collect::run::{FailureKind, RunFailure};
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
         self, Counts, Filter, HerdrState, Node, TrackerFailure, TrackerState, Tree,
@@ -867,6 +975,7 @@ mod tests {
     use ratatui::widgets::Block;
     use ratatui::Terminal;
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     /// Long enough that a thread which was going to report has, and short
@@ -934,6 +1043,10 @@ mod tests {
         /// away from being out of date, and this view has no ages on it.
         fn holds_for(&self) -> Option<Duration> {
             self.collecting.last()?.as_ref().map(|_| phrase::FRAME)
+        }
+
+        fn tailed(&mut self, _answer: Answer) -> bool {
+            true
         }
 
         fn apply(&mut self, action: Action) -> bool {
@@ -2308,17 +2421,94 @@ mod tests {
         );
     }
 
-    /// herdr, for a forest whose beads carry no pane. Nothing here asks it
-    /// anything; the tail needs one to exist, not to answer.
-    struct NoPanes;
+    /// herdr, remembering what it was asked and answering nothing.
+    ///
+    /// Nothing here answers, because nothing in `Shown` waits for an answer:
+    /// what herdr said arrives through `tailed`, and a test hands it one
+    /// itself, whenever it likes and about whichever pane it likes.
+    #[derive(Clone, Default)]
+    struct Asking {
+        reads: Arc<Mutex<Vec<String>>>,
+        focuses: Arc<Mutex<Vec<String>>>,
+    }
 
-    impl Panes for NoPanes {
-        fn read(&self, _pane: &str, _lines: u16) -> Result<Vec<String>, RunFailure> {
-            Ok(Vec::new())
+    impl Asking {
+        fn reads(&self) -> Vec<String> {
+            self.reads
+                .lock()
+                .expect("no test panics holding this")
+                .clone()
         }
 
-        fn focus(&self, _pane: &str) -> Result<(), RunFailure> {
-            Ok(())
+        fn focuses(&self) -> Vec<String> {
+            self.focuses
+                .lock()
+                .expect("no test panics holding this")
+                .clone()
+        }
+    }
+
+    impl Panes for Asking {
+        fn read(&self, pane: &str, lines: u16) {
+            self.reads
+                .lock()
+                .expect("no test panics holding this")
+                .push(format!("{pane} {lines}"));
+        }
+
+        fn focus(&self, pane: &str) {
+            self.focuses
+                .lock()
+                .expect("no test panics holding this")
+                .push(pane.to_string());
+        }
+    }
+
+    /// What herdr said about a pane it read.
+    fn read(pane: &str, lines: &[&str]) -> Answer {
+        Answer::Read {
+            pane: pane.to_string(),
+            read: Ok(lines.iter().map(|line| (*line).to_string()).collect()),
+        }
+    }
+
+    /// Press down until the selection stops moving, and say how many presses
+    /// moved it.
+    ///
+    /// Bounded by the rows on screen rather than by `apply` reporting the
+    /// screen stopped moving: a mutation can leave it reporting movement
+    /// honestly and for ever, and a test that cannot stop cannot report — it
+    /// hangs, and cargo-mutants scores the hang as a timeout, which reads
+    /// exactly like a mutant that does not terminate in production.
+    fn to_the_last_row(shown: &mut Shown) -> usize {
+        let rows = shown.forest.lines().len();
+        let from = shown.forest.selected_line();
+
+        let mut moved = 0;
+        for _ in 0..rows {
+            if !shown.apply(Action::Move(Motion::NextRow)) {
+                break;
+            }
+            moved += 1;
+        }
+
+        assert_eq!(
+            moved,
+            rows - 1 - from,
+            "a walk from row {from} of {rows} reaches the last row in one press per row after it"
+        );
+        moved
+    }
+
+    /// herdr refusing to bring a pane to the front.
+    fn refused(pane: &str) -> Answer {
+        Answer::Focused {
+            pane: pane.to_string(),
+            focused: Err(RunFailure {
+                kind: FailureKind::Gone,
+                program: "herdr".to_string(),
+                detail: "the test said so".to_string(),
+            }),
         }
     }
 
@@ -2340,7 +2530,13 @@ mod tests {
     }
 
     fn shown(snapshot: Snapshot) -> Shown {
-        Shown::of(snapshot, Box::new(NoPanes))
+        Shown::of(snapshot, Box::new(Asking::default()))
+    }
+
+    /// The same, with the record of what herdr was asked kept beside it.
+    fn shown_asking(snapshot: Snapshot) -> (Shown, Asking) {
+        let panes = Asking::default();
+        (Shown::of(snapshot, Box::new(panes.clone())), panes)
     }
 
     /// The screen opens on a snapshot already collected, so there is nothing
@@ -2468,6 +2664,9 @@ mod tests {
         rows[..bands.forest.height as usize].to_vec()
     }
 
+    /// The pane on the row a staffed grove opens with.
+    const A_SELECTED_PANE: &str = "w:p0";
+
     /// The same grove with a live agent on every bead, so that moving the
     /// selection changes which pane the tail is reading.
     fn a_staffed_grove(beads: usize) -> Snapshot {
@@ -2583,6 +2782,217 @@ mod tests {
         shown.collected(grove);
 
         assert_eq!(forest_band(&mut shown, 60, 24), folded);
+    }
+
+    /// The screen opens on what the band has to say while herdr is still
+    /// answering, and asks for the reading rather than waiting on it. The
+    /// startup path used to pay the whole of `PATIENCE` before the first
+    /// frame, on a screen that had nothing to announce it with.
+    #[test]
+    fn the_screen_opens_naming_the_pane_it_is_waiting_on() {
+        let (shown, panes) = shown_asking(a_staffed_grove(6));
+
+        assert_eq!(
+            shown.tail,
+            Tail::Reading {
+                pane: A_SELECTED_PANE.to_string()
+            }
+        );
+        assert_eq!(
+            panes.reads(),
+            [format!("{A_SELECTED_PANE} {}", tail::LINES)],
+            "the pane is asked for exactly the lines the band has room for"
+        );
+    }
+
+    /// A bead nobody is working names no pane, so there is nothing to ask
+    /// herdr and the band says so on its own.
+    #[test]
+    fn a_row_with_no_pane_asks_herdr_nothing() {
+        let (shown, panes) = shown_asking(a_grove(6));
+
+        assert_eq!(shown.tail, Tail::Silent(phrase::no_agent_to_tail()));
+        assert!(panes.reads().is_empty());
+    }
+
+    #[test]
+    fn what_herdr_read_for_the_pane_selected_is_what_the_band_shows() {
+        let (mut shown, _) = shown_asking(a_staffed_grove(6));
+
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["rebuilt .#thinkpad"])));
+
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: A_SELECTED_PANE.to_string(),
+                lines: vec!["rebuilt .#thinkpad".to_string()],
+            }
+        );
+    }
+
+    /// A reader holding an arrow key down moves faster than a slow herdr
+    /// answers. Every move asks for the pane it landed on, but only one
+    /// question is ever out, so what a run of keystrokes costs is one herdr
+    /// call — not one per key — and the band goes on naming the pane it is
+    /// waiting for.
+    ///
+    /// The tail falling behind the selection is the price of the keyboard
+    /// never doing so, and it is a decision rather than an accident: the loop
+    /// answers every one of these moves at once, and the rows under the
+    /// forest arrive when the cursor rests long enough for an answer to land.
+    #[test]
+    fn moving_faster_than_herdr_answers_costs_one_read_at_a_time() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+        let opened_on = panes.reads();
+
+        let moved = to_the_last_row(&mut shown);
+
+        assert!(moved > 1, "the forest has rows to move down");
+        assert_eq!(
+            panes.reads(),
+            opened_on,
+            "a read was already out, so none of the moves asked for another"
+        );
+        let resting_on = match &shown.tail {
+            Tail::Reading { pane } => pane.clone(),
+            other => panic!("the band is still waiting on a pane: {other:?}"),
+        };
+        assert_ne!(
+            resting_on, A_SELECTED_PANE,
+            "the selection left the pane the read is out for"
+        );
+
+        // The answer to the read started before any of that arrives, about a
+        // pane the reader is nowhere near.
+        assert!(
+            !shown.tailed(read(A_SELECTED_PANE, &["nothing should reach the screen"])),
+            "an answer about a pane the selection has left changes no screen"
+        );
+
+        assert_eq!(
+            shown.tail,
+            Tail::Reading {
+                pane: resting_on.clone()
+            },
+            "the band still names the pane the cursor is on"
+        );
+        assert_eq!(
+            panes.reads(),
+            [opened_on, vec![format!("{resting_on} {}", tail::LINES)]].concat(),
+            "and that pane is what herdr is asked for next"
+        );
+    }
+
+    /// The refresh tick is when the pane is re-read, and a read already out
+    /// when the collection lands was asked for before it. Taking that one as
+    /// the refresh's reading would draw the pane as it was rather than as it
+    /// is, and ask for nothing further until the tick after — which on a
+    /// herdr slow enough to overlap every tick is a band that stops keeping
+    /// up altogether while the cursor sits still.
+    #[test]
+    fn a_collection_landing_mid_read_reads_the_pane_again() {
+        let grove = a_staffed_grove(6);
+        let (mut shown, panes) = shown_asking(grove.clone());
+        let opened_on = panes.reads();
+
+        shown.collected(grove);
+        assert_eq!(
+            panes.reads(),
+            opened_on,
+            "a read was already out, so the refresh asked for no second one"
+        );
+
+        assert!(
+            !shown.tailed(read(
+                A_SELECTED_PANE,
+                &["what the pane said before the refresh"]
+            )),
+            "the answer to a question asked before the refresh is not the refresh's answer"
+        );
+        assert_eq!(
+            shown.tail,
+            Tail::Reading {
+                pane: A_SELECTED_PANE.to_string()
+            }
+        );
+        assert_eq!(
+            panes.reads(),
+            [
+                opened_on,
+                vec![format!("{A_SELECTED_PANE} {}", tail::LINES)]
+            ]
+            .concat(),
+            "so the pane is asked for again once herdr is free"
+        );
+
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["what it says now"])));
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: A_SELECTED_PANE.to_string(),
+                lines: vec!["what it says now".to_string()],
+            }
+        );
+    }
+
+    /// The read the answer above asked for lands where the cursor is resting,
+    /// so a tail that falls behind catches up rather than stopping.
+    #[test]
+    fn the_tail_catches_up_once_the_cursor_rests() {
+        let (mut shown, _) = shown_asking(a_staffed_grove(6));
+        to_the_last_row(&mut shown);
+        let resting_on = match &shown.tail {
+            Tail::Reading { pane } => pane.clone(),
+            other => panic!("the band is still waiting on a pane: {other:?}"),
+        };
+
+        shown.tailed(read(A_SELECTED_PANE, &["about the pane left behind"]));
+        assert!(shown.tailed(read(&resting_on, &["about the pane rested on"])));
+
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: resting_on,
+                lines: vec!["about the pane rested on".to_string()],
+            }
+        );
+    }
+
+    /// `⏎` asks herdr for the pane and nothing on this screen changes for it:
+    /// what changes is which terminal pane is in front of the reader.
+    #[test]
+    fn enter_asks_for_the_pane_and_draws_nothing() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+
+        assert!(!shown.apply(Action::Focus));
+
+        assert_eq!(panes.focuses(), [A_SELECTED_PANE]);
+    }
+
+    #[test]
+    fn a_pane_that_will_not_come_to_the_front_says_so_where_the_tail_is() {
+        let (mut shown, _) = shown_asking(a_staffed_grove(6));
+
+        assert!(shown.tailed(refused(A_SELECTED_PANE)));
+
+        assert_eq!(
+            shown.tail,
+            Tail::Silent(phrase::pane_unreadable(FailureKind::Gone))
+        );
+    }
+
+    /// The rule above the band names the pane the band is about, so a refusal
+    /// about a pane the reader has left would read as a refusal about the one
+    /// they are on. It is dropped instead.
+    #[test]
+    fn a_focus_refused_for_a_pane_the_reader_has_left_is_not_drawn_over_the_one_they_are_on() {
+        let (mut shown, _) = shown_asking(a_staffed_grove(6));
+        assert!(shown.apply(Action::Move(Motion::NextRow)));
+        let was = shown.tail.clone();
+
+        assert!(!shown.tailed(refused(A_SELECTED_PANE)));
+
+        assert_eq!(shown.tail, was);
     }
 
     #[test]

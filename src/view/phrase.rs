@@ -412,6 +412,13 @@ pub fn no_herdr_to_tail() -> &'static str {
     "no herdr session · there is no pane to read"
 }
 
+/// That the pane the selection points at is being read and has not answered
+/// yet. The rule above the band names the pane already, so what is left to
+/// say is that `bdi` is waiting rather than that the pane is quiet.
+pub fn pane_being_read() -> &'static str {
+    "reading that pane"
+}
+
 /// Why the pane the selection points at could not be read. A pane that went
 /// away between one poll and the next is the ordinary one of these: an agent
 /// finishing is not a fault.
@@ -591,6 +598,7 @@ mod tests {
         said.push(no_bead_to_tail().to_string());
         said.push(no_agent_to_tail().to_string());
         said.push(no_herdr_to_tail().to_string());
+        said.push(pane_being_read().to_string());
         for kind in [
             FailureKind::Auth,
             FailureKind::Unavailable,
@@ -894,6 +902,7 @@ mod tests {
         let _: fn() -> &'static str = no_bead_to_tail;
         let _: fn() -> &'static str = no_agent_to_tail;
         let _: fn() -> &'static str = no_herdr_to_tail;
+        let _: fn() -> &'static str = pane_being_read;
         let _: fn(FailureKind) -> &'static str = pane_unreadable;
     }
 

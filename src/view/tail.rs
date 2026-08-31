@@ -1,6 +1,7 @@
 //! The tail of the selected bead's pane, shown beneath the forest.
 
 use crate::collect::panes::Panes;
+use crate::collect::run::RunFailure;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::snapshot::{HerdrState, Snapshot};
 use crate::view::forest::Forest;
@@ -13,12 +14,16 @@ pub const LINES: u16 = 6;
 
 /// What a pane has most recently written, or why there is nothing to show.
 ///
-/// The two are one type because the band under the forest is reserved either
-/// way: there is always something to draw there, and a band left blank would
-/// read as a pane sitting quiet rather than as no pane at all.
+/// The three are one type because the band under the forest is reserved
+/// whatever is happening: there is always something to draw there, and a band
+/// left blank would read as a pane sitting quiet rather than as no pane at
+/// all. `Reading` is the band between a selection landing on a pane and herdr
+/// saying what is on it — a moment on a healthy machine, and for as long as
+/// it takes on one where herdr is slow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tail {
     Pane { pane: String, lines: Vec<String> },
+    Reading { pane: String },
     Silent(&'static str),
 }
 
@@ -99,23 +104,30 @@ fn agent<'a>(snapshot: &'a Snapshot, key: &BeadKey) -> Option<&'a AgentRef> {
     snapshot.node(key)?.agent.as_ref()
 }
 
-/// Read the tail for whatever the selection points at.
+/// The tail for whatever the selection points at, before herdr has said
+/// anything about it.
 ///
-/// Every way this can come back empty says so in `bdi`'s own words. The order
-/// matters: with no herdr there is no pane on any row, so that is answered
-/// before the row is looked at.
-pub fn tail(forest: &Forest, panes: &dyn Panes, lines: u16) -> Tail {
+/// Every way this can come back with no pane says so in `bdi`'s own words.
+/// The order matters: with no herdr there is no pane on any row, so that is
+/// answered before the row is looked at. Where there is a pane, what is left
+/// is the reading, and that is the caller's to ask for.
+pub fn tail(forest: &Forest) -> Tail {
     if forest.snapshot().herdr == HerdrState::Unavailable {
         return Tail::Silent(phrase::no_herdr_to_tail());
     }
 
-    let pane = match target(forest) {
-        Target::NotABead => return Tail::Silent(phrase::no_bead_to_tail()),
-        Target::NoAgent => return Tail::Silent(phrase::no_agent_to_tail()),
-        Target::Pane(pane) => pane.to_string(),
-    };
+    match target(forest) {
+        Target::NotABead => Tail::Silent(phrase::no_bead_to_tail()),
+        Target::NoAgent => Tail::Silent(phrase::no_agent_to_tail()),
+        Target::Pane(pane) => Tail::Reading {
+            pane: pane.to_string(),
+        },
+    }
+}
 
-    match panes.read(&pane, lines) {
+/// The tail for what herdr said about a pane it was asked to read.
+pub fn read(pane: String, read: Result<Vec<String>, RunFailure>) -> Tail {
+    match read {
         Ok(lines) => Tail::Pane { pane, lines },
         Err(failure) => Tail::Silent(phrase::pane_unreadable(failure.kind)),
     }
@@ -138,15 +150,24 @@ pub fn moved_on(forest: &Forest, showing: Option<&str>) -> bool {
     }
 }
 
-/// Focus the pane the selection points at, saying nothing where it points at
-/// none.
+/// Ask for the pane the selection points at to be brought to the front,
+/// saying nothing where it points at none.
 ///
 /// Most rows carry no pane, so `⏎` on one is not a mistake and there is
 /// nothing to report: there is simply nothing to focus. A pane that is named
-/// and will not come is a different thing, and says so where the tail is.
-pub fn focus(forest: &Forest, panes: &dyn Panes) -> Option<Tail> {
-    let pane = target(forest).pane()?.to_string();
-    match panes.focus(&pane) {
+/// and will not come is a different thing, and says so where the tail is when
+/// herdr gets round to answering.
+pub fn focus(forest: &Forest, panes: &dyn Panes) {
+    if let Some(pane) = target(forest).pane() {
+        panes.focus(pane);
+    }
+}
+
+/// The tail for what herdr said about a pane it was asked to focus, where
+/// that is worth saying at all. A focus that worked is its own report — the
+/// pane is in front of the reader — so only a refusal reaches the band.
+pub fn focused(focused: Result<(), RunFailure>) -> Option<Tail> {
+    match focused {
         Ok(()) => None,
         Err(failure) => Some(Tail::Silent(phrase::pane_unreadable(failure.kind))),
     }
@@ -170,49 +191,22 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
-    /// A herdr that answers however the test says, and remembers what it was
-    /// asked.
+    /// A herdr that remembers what it was asked. It answers nothing, because
+    /// nothing here waits for an answer: what herdr said arrives later, and
+    /// [`read`] and [`focused`] are what turn it into a band.
     #[derive(Default)]
     struct Fake {
-        read: RefCell<Option<Result<Vec<String>, RunFailure>>>,
-        focus: RefCell<Option<Result<(), RunFailure>>>,
         asked: RefCell<Vec<String>>,
         focused: RefCell<Vec<String>>,
     }
 
-    impl Fake {
-        fn reading(lines: &[&str]) -> Self {
-            Self {
-                read: RefCell::new(Some(Ok(lines.iter().map(|l| (*l).to_string()).collect()))),
-                ..Self::default()
-            }
-        }
-
-        fn refusing(kind: FailureKind) -> Self {
-            Self {
-                read: RefCell::new(Some(Err(failure(kind)))),
-                focus: RefCell::new(Some(Err(failure(kind)))),
-                ..Self::default()
-            }
-        }
-    }
-
     impl Panes for Fake {
-        fn read(&self, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
+        fn read(&self, pane: &str, lines: u16) {
             self.asked.borrow_mut().push(format!("{pane} {lines}"));
-            match &*self.read.borrow() {
-                Some(Ok(lines)) => Ok(lines.clone()),
-                Some(Err(failure)) => Err(failure.clone()),
-                None => Ok(Vec::new()),
-            }
         }
 
-        fn focus(&self, pane: &str) -> Result<(), RunFailure> {
+        fn focus(&self, pane: &str) {
             self.focused.borrow_mut().push(pane.to_string());
-            match &*self.focus.borrow() {
-                Some(Err(failure)) => Err(failure.clone()),
-                _ => Ok(()),
-            }
         }
     }
 
@@ -316,61 +310,54 @@ mod tests {
         forest
     }
 
+    /// The band names the pane it is waiting on the moment the selection
+    /// lands, which is what it has to draw while herdr is still answering.
     #[test]
     fn the_tail_follows_the_selection() {
-        let panes = Fake::reading(&["rebuilt .#thinkpad, generation 541"]);
-
-        let on_the_agent = tail(&selecting(1, HerdrState::Ok), &panes, LINES);
-
         assert_eq!(
-            on_the_agent,
-            Tail::Pane {
-                pane: "w:p1".to_string(),
-                lines: vec!["rebuilt .#thinkpad, generation 541".to_string()],
+            tail(&selecting(1, HerdrState::Ok)),
+            Tail::Reading {
+                pane: "w:p1".to_string()
             }
         );
         assert_eq!(
-            tail(&selecting(2, HerdrState::Ok), &panes, LINES),
+            tail(&selecting(2, HerdrState::Ok)),
             Tail::Silent(phrase::no_agent_to_tail()),
             "the row below is a bead nobody is working"
         );
     }
 
     #[test]
-    fn the_pane_is_asked_for_the_lines_the_tail_shows() {
-        let panes = Fake::reading(&[]);
-
-        tail(&selecting(1, HerdrState::Ok), &panes, LINES);
-
-        assert_eq!(*panes.asked.borrow(), ["w:p1 6"]);
+    fn what_herdr_read_is_the_band_under_the_forest() {
+        assert_eq!(
+            read(
+                "w:p1".to_string(),
+                Ok(vec!["rebuilt .#thinkpad, generation 541".to_string()])
+            ),
+            Tail::Pane {
+                pane: "w:p1".to_string(),
+                lines: vec!["rebuilt .#thinkpad, generation 541".to_string()],
+            }
+        );
     }
 
     /// A project is not a bead, so its line names no pane. Its roots do, and
     /// each says so on its own row.
     #[test]
     fn a_project_line_has_no_pane_to_tail() {
-        let panes = Fake::reading(&["nothing should reach the screen"]);
-
         assert_eq!(
-            tail(&on_the_project(HerdrState::Ok), &panes, LINES),
+            tail(&on_the_project(HerdrState::Ok)),
             Tail::Silent(phrase::no_bead_to_tail())
-        );
-        assert!(
-            panes.asked.borrow().is_empty(),
-            "a project names no pane, so herdr was never asked"
         );
     }
 
     #[test]
     fn no_herdr_means_no_pane_to_read() {
-        let panes = Fake::reading(&["nothing should reach the screen"]);
-
         assert_eq!(
-            tail(&selecting(1, HerdrState::Unavailable), &panes, LINES),
+            tail(&selecting(1, HerdrState::Unavailable)),
             Tail::Silent(phrase::no_herdr_to_tail()),
             "with no herdr there is no pane on any row, whatever the row says"
         );
-        assert!(panes.asked.borrow().is_empty());
     }
 
     /// A pane that went away between one poll and the next. The band says so
@@ -378,10 +365,8 @@ mod tests {
     /// say.
     #[test]
     fn a_pane_that_has_gone_degrades_to_a_phrase() {
-        let panes = Fake::refusing(FailureKind::Gone);
-
         assert_eq!(
-            tail(&selecting(1, HerdrState::Ok), &panes, LINES),
+            read("w:p1".to_string(), Err(failure(FailureKind::Gone))),
             Tail::Silent(phrase::pane_unreadable(FailureKind::Gone))
         );
     }
@@ -396,10 +381,8 @@ mod tests {
             FailureKind::Exec,
             FailureKind::Parse,
         ] {
-            let panes = Fake::refusing(kind);
-
             assert_eq!(
-                tail(&selecting(1, HerdrState::Ok), &panes, LINES),
+                read("w:p1".to_string(), Err(failure(kind))),
                 Tail::Silent(phrase::pane_unreadable(kind)),
                 "for {kind:?}"
             );
@@ -410,7 +393,8 @@ mod tests {
     fn enter_focuses_the_pane_the_selection_is_on() {
         let panes = Fake::default();
 
-        assert_eq!(focus(&selecting(1, HerdrState::Ok), &panes), None);
+        focus(&selecting(1, HerdrState::Ok), &panes);
+
         assert_eq!(*panes.focused.borrow(), ["w:p1"]);
     }
 
@@ -421,17 +405,19 @@ mod tests {
         let panes = Fake::default();
 
         for steps in [0, 2] {
-            assert_eq!(focus(&selecting(steps, HerdrState::Ok), &panes), None);
+            focus(&selecting(steps, HerdrState::Ok), &panes);
         }
+
         assert!(panes.focused.borrow().is_empty());
     }
 
+    /// A focus that worked is its own report — the pane is in front of the
+    /// reader — so only a refusal reaches the band.
     #[test]
     fn a_pane_that_will_not_come_to_the_front_says_so_where_the_tail_is() {
-        let panes = Fake::refusing(FailureKind::Gone);
-
+        assert_eq!(focused(Ok(())), None);
         assert_eq!(
-            focus(&selecting(1, HerdrState::Ok), &panes),
+            focused(Err(failure(FailureKind::Gone))),
             Some(Tail::Silent(phrase::pane_unreadable(FailureKind::Gone)))
         );
     }
@@ -471,18 +457,16 @@ mod tests {
     /// So no phrase can outlive the row it was said for.
     #[test]
     fn a_tail_that_stands_is_the_tail_the_new_row_calls_for() {
-        let panes = Fake::reading(&["rebuilt .#thinkpad, generation 541"]);
-
         for from in 0..5 {
             let was = selecting(from, HerdrState::Ok);
             let showing = target(&was).pane().map(str::to_string);
-            let on_screen = tail(&was, &panes, LINES);
+            let on_screen = tail(&was);
 
             for onto in 0..5 {
                 let now = selecting(onto, HerdrState::Ok);
                 if !moved_on(&now, showing.as_deref()) {
                     assert_eq!(
-                        tail(&now, &panes, LINES),
+                        tail(&now),
                         on_screen,
                         "the tail read on row {from} was left standing on row {onto}"
                     );
@@ -676,17 +660,15 @@ mod tests {
 
     #[test]
     fn a_pane_no_bead_claims_can_be_tailed() {
-        let panes = Fake::reading(&["waiting on the flake check"]);
         let mut forest = with_groups_open(HerdrState::Ok);
 
         for (item, pane) in pane_bearing() {
             step_onto(&mut forest, onto(&item));
 
             assert_eq!(
-                tail(&forest, &panes, LINES),
-                Tail::Pane {
-                    pane: pane.to_string(),
-                    lines: vec!["waiting on the flake check".to_string()],
+                tail(&forest),
+                Tail::Reading {
+                    pane: pane.to_string()
                 },
                 "on {item:?}"
             );
@@ -701,7 +683,7 @@ mod tests {
         for (item, _) in pane_bearing() {
             step_onto(&mut forest, onto(&item));
 
-            assert_eq!(focus(&forest, &panes), None, "on {item:?}");
+            focus(&forest, &panes);
         }
         assert_eq!(*panes.focused.borrow(), ["w:p2", "w:p3", "w:p4", "w:p5"]);
     }
@@ -713,7 +695,7 @@ mod tests {
     /// all.
     #[test]
     fn a_line_in_a_group_that_turns_on_no_one_pane_is_unchanged() {
-        let panes = Fake::reading(&["nothing should reach the screen"]);
+        let panes = Fake::default();
         let mut forest = with_groups_open(HerdrState::Ok);
 
         for item in [
@@ -724,13 +706,12 @@ mod tests {
             step_onto(&mut forest, onto(&item));
 
             assert_eq!(
-                tail(&forest, &panes, LINES),
+                tail(&forest),
                 Tail::Silent(phrase::no_bead_to_tail()),
                 "on {item:?}"
             );
-            assert_eq!(focus(&forest, &panes), None, "on {item:?}");
+            focus(&forest, &panes);
         }
-        assert!(panes.asked.borrow().is_empty());
         assert!(panes.focused.borrow().is_empty());
     }
 
@@ -739,7 +720,7 @@ mod tests {
     /// line is not one.
     #[test]
     fn a_groups_own_line_names_no_pane() {
-        let panes = Fake::reading(&["nothing should reach the screen"]);
+        let panes = Fake::default();
         let mut forest = with_groups_open(HerdrState::Ok);
         let kinds: Vec<GroupKind> = forest
             .lines()
@@ -758,13 +739,12 @@ mod tests {
             );
 
             assert_eq!(
-                tail(&forest, &panes, LINES),
+                tail(&forest),
                 Tail::Silent(phrase::no_bead_to_tail()),
                 "on the {kind:?} group"
             );
-            assert_eq!(focus(&forest, &panes), None, "on the {kind:?} group");
+            focus(&forest, &panes);
         }
-        assert!(panes.asked.borrow().is_empty());
         assert!(panes.focused.borrow().is_empty());
     }
 
@@ -775,7 +755,6 @@ mod tests {
     /// bead's.
     #[test]
     fn the_tail_follows_the_selection_onto_a_loose_pane_and_off_it() {
-        let panes = Fake::reading(&["waiting on the flake check"]);
         let mut forest = with_groups_open(HerdrState::Ok);
         let pane = Item::Loose(loose());
 
@@ -784,12 +763,11 @@ mod tests {
             moved_on(&forest, None),
             "arriving on the pane, nothing on screen was read for it"
         );
-        let on_arrival = tail(&forest, &panes, LINES);
+        let on_arrival = tail(&forest);
         assert_eq!(
             on_arrival,
-            Tail::Pane {
-                pane: "w:p2".to_string(),
-                lines: vec!["waiting on the flake check".to_string()],
+            Tail::Reading {
+                pane: "w:p2".to_string()
             }
         );
         assert!(
@@ -804,12 +782,7 @@ mod tests {
         );
 
         step_onto(&mut forest, onto(&pane));
-        assert_eq!(tail(&forest, &panes, LINES), on_arrival);
-        assert_eq!(
-            *panes.asked.borrow(),
-            ["w:p2 6", "w:p2 6"],
-            "the pane was read on arriving and on returning, and not while sat on it"
-        );
+        assert_eq!(tail(&forest), on_arrival);
     }
 
     /// The property restated over a forest with panes no bead claims in it.
@@ -819,19 +792,18 @@ mod tests {
     /// happen unseen.
     #[test]
     fn a_tail_that_stands_holds_over_the_groups_too() {
-        let panes = Fake::reading(&["rebuilt .#thinkpad, generation 541"]);
         let rows = rows(HerdrState::Ok);
 
         for from in 0..rows {
             let was = stepping(from, HerdrState::Ok);
             let showing = target(&was).pane().map(str::to_string);
-            let on_screen = tail(&was, &panes, LINES);
+            let on_screen = tail(&was);
 
             for onto in 0..rows {
                 let now = stepping(onto, HerdrState::Ok);
                 if !moved_on(&now, showing.as_deref()) {
                     assert_eq!(
-                        tail(&now, &panes, LINES),
+                        tail(&now),
                         on_screen,
                         "the tail read on row {from} was left standing on row {onto}"
                     );
@@ -844,16 +816,12 @@ mod tests {
     /// its own text is no exception.
     #[test]
     fn no_herdr_means_no_pane_on_a_loose_row_either() {
-        let panes = Fake::reading(&["nothing should reach the screen"]);
         let mut forest = with_groups_open(HerdrState::Unavailable);
         step_onto(&mut forest, onto(&Item::Loose(loose())));
 
-        assert_eq!(
-            tail(&forest, &panes, LINES),
-            Tail::Silent(phrase::no_herdr_to_tail())
-        );
-        assert!(panes.asked.borrow().is_empty());
+        assert_eq!(tail(&forest), Tail::Silent(phrase::no_herdr_to_tail()));
     }
+
     /// A refresh that reorders a group around the selection leaves the
     /// selection on the same *pane*, not merely on some pane.
     ///
