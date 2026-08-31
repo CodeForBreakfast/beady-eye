@@ -191,10 +191,18 @@ impl fmt::Display for Refused {
             // again — so closing the holder frees the path and gives this run
             // nothing. A remedy that stopped at "close it" would leave the
             // reader watching a channel that was never going to arrive.
+            //
+            // Two tools rather than one conditioned on the target, because
+            // which of them the reader has is a fact about their machine and
+            // not about this build: `ss` comes with iproute2 and is not on
+            // macOS, `lsof` is in the macOS base system and is not everywhere
+            // on Linux. A `cfg` would also put the arm this crate never
+            // compiles beyond the reach of the assertion below, which is the
+            // only thing holding either command to naming a holder.
             Refused::AlreadyListening(at) => {
                 write!(
                     f,
-                    "another bdi is listening on {}; ss -lxp names which — close it and restart bdi to get the channel",
+                    "another bdi is listening on {}; ss -lxp or lsof -U names which — close it and restart bdi to get the channel",
                     at.display()
                 )
             }
@@ -626,20 +634,22 @@ mod tests {
     /// can: the path, and a way of asking who holds it that is live when the
     /// reader asks rather than as old as this line.
     ///
-    /// The command is asserted whole, `-p` and all. Without that flag `ss`
-    /// prints the socket's inode where a reader expects a pid — measured
-    /// 2026-08-31 against this machine's own squatted socket, `7385342`
-    /// against a holder of `355214` — and the flagless form is the one that
-    /// reads as having worked, because it matches, prints a line, and there
-    /// is a number on it. Nothing else in the suite would go red for a
-    /// command that had quietly stopped naming a holder.
+    /// Both commands are asserted whole, flags and all, because each one is
+    /// a flag away from a form that reads as having worked. Without `-p`,
+    /// `ss` prints the socket's inode where a reader expects a pid —
+    /// measured 2026-08-31 against this machine's own squatted socket,
+    /// `7385342` against a holder of `355214` — and it still matches, still
+    /// prints a line, and there is still a number on it. Without `-U`,
+    /// `lsof` answers the same question in 303,936 lines instead of 829,
+    /// measured the same day on the same machine. Nothing else in the suite
+    /// would go red for a command that had quietly stopped naming a holder.
     #[test]
     fn the_line_left_on_the_primary_screen_says_how_to_find_who_is_holding_it() {
         let said = Refused::AlreadyListening(PathBuf::from("/run/user/1000/x.sock")).to_string();
 
         assert!(said.contains("another bdi"), "{said}");
         assert!(said.contains("/run/user/1000/x.sock"), "{said}");
-        assert!(said.contains("ss -lxp names which"), "{said}");
+        assert!(said.contains("ss -lxp or lsof -U names which"), "{said}");
     }
 
     /// The remedy is two steps and the second one is the one a reader would
