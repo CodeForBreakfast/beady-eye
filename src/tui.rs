@@ -2195,8 +2195,8 @@ mod tests {
         forest.apply(Action::Move(Motion::HalfScreenDown));
         assert_eq!(
             forest.selected_line(),
-            10,
-            "the forest's own default, until a frame has been drawn"
+            11,
+            "the forest's own default, from the first root, until a frame has been drawn"
         );
 
         let mut forest = an_open_grove(30);
@@ -2211,7 +2211,7 @@ mod tests {
 
         assert_eq!(
             forest.selected_line(),
-            8,
+            9,
             "half of the sixteen rows the forest was given, not half the frame"
         );
     }

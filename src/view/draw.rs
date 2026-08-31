@@ -5,11 +5,13 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
-use crate::model::snapshot::{Counts, HerdrState, LoosePane, TrackerFailure, TrackerState};
+use crate::model::snapshot::{Counts, HerdrState, TrackerState};
 use crate::model::types::{PaneStatus, Status};
 use crate::view::fitted::{columns, indent, Fitted, GAP};
 use crate::view::forest::Forest;
-use crate::view::lines::{self, Content, Group, GroupKind, Header, Item, Note};
+use crate::view::lines::{
+    self, Content, Group, GroupKind, Item, Note, ProjectLine, Recovery, Unread,
+};
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 use crate::view::tail::{self, Tail};
@@ -120,7 +122,8 @@ fn id_width(lines: &[lines::Line]) -> usize {
 /// One line of the forest, whatever kind it is.
 fn fitted(line: &lines::Line, id_width: usize) -> Fitted {
     match &line.content {
-        Content::Tree(head) => header(head, &line.prefix),
+        Content::Project(project) => project_line(project, &line.prefix),
+        Content::Unread(unread) => unread_line(unread, &line.prefix, id_width),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Note(note) => {
@@ -319,43 +322,51 @@ pub fn half_screen(forest: Rect) -> usize {
     (forest.height / 2) as usize
 }
 
-/// One tree's own line: where it is, what it is, and how much of it is done.
+/// A project's own line: what it is, how much work it holds, and the live
+/// panes recovered for it where a root would not read.
 ///
-/// A tree whose tracker could not be read has no title and no counts. Its
-/// line is the only place that failure is said, so it says why, and shows the
-/// live panes recovered for it, where the counts would be. It is not given a
-/// phrase in place of the title: the reason beside it is already the reason
-/// the title is missing, and saying it twice would cost the columns the panes
-/// need.
-///
-/// The root's own glyph sits between the fold marker and the tree, which is
-/// where every other line puts one: box-drawing, then glyph, then who it is.
-/// The marker is the header's box-drawing — it holds the same column and says
-/// the same kind of thing, how the tree is shaped rather than how it is going
-/// — so keeping the glyph after it leaves one order to read down the screen,
-/// and leaves the marker where a reader already looks to see what is folded.
-pub fn header(head: &Header, prefix: &str) -> Fitted {
-    let mut identity = vec![Span::raw(prefix.to_string())];
-    match &head.status {
-        Some(status) => {
-            identity.push(Span::styled(
-                row::status_glyph(status).to_string(),
-                status_style(status),
-            ));
-            identity.push(Span::raw(" "));
-        }
-        // No root to read a status off. The column is held rather than
-        // closed up, so the project names still line up down the screen.
-        None => identity.push(Span::raw("  ")),
-    }
-    identity.push(Span::raw(format!("{} · {}", head.project, head.root)));
+/// It says nothing about any one root, because every root below it says that
+/// for itself. What is left is what only a project can answer: which project,
+/// how much of it there is, and — where a root refused — which panes `bdi`
+/// found working here that no bead could be attributed to.
+pub fn project_line(project: &ProjectLine, prefix: &str) -> Fitted {
+    let identity = vec![
+        Span::raw(prefix.to_string()),
+        Span::raw(project.project.clone()),
+    ];
 
-    let state = match head.tracker {
-        TrackerState::Ok => summary(&head.counts),
-        TrackerState::Unreachable(failure) => unreadable(failure, &head.panes, head.panes_complete),
+    let mut state = summary(&project.counts);
+    if let Some(found) = &project.recovery {
+        if !state.is_empty() {
+            state.push(Span::raw(" ".repeat(GAP)));
+        }
+        state.push(recovered(found));
+    }
+
+    Fitted::new(identity, Vec::new(), state)
+}
+
+/// A root that drew no row, said where its row would have been.
+///
+/// It holds the same columns a bead row does — the mark, then the id — so a
+/// reader scanning a project's roots meets it in the column the others are in
+/// rather than having to find it.
+fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fitted {
+    let identity = vec![
+        structure(prefix),
+        Span::styled(WARNING.to_string(), Style::new().fg(LOOK_AT_THIS)),
+        Span::raw(format!(" {:id_width$}", unread.root)),
+    ];
+    let why = match unread.tracker {
+        TrackerState::Unreachable(failure) => phrase::tracker_failure(failure),
+        TrackerState::Ok => phrase::root_unread(),
     };
 
-    Fitted::new(identity, vec![Span::raw(head.title.clone())], state)
+    Fitted::new(
+        identity,
+        vec![Span::styled(why.to_string(), Style::new().fg(LOOK_AT_THIS))],
+        Vec::new(),
+    )
 }
 
 /// How far along something is. A tree and one epic inside it ask the same
@@ -368,7 +379,12 @@ fn done(closed: usize, total: usize) -> String {
 /// at. A count that is zero is left out rather than drawn as a zero: a row of
 /// noughts reads as something to check.
 fn summary(counts: &Counts) -> Vec<Span<'static>> {
-    let mut said = vec![Span::raw(done(counts.closed, counts.total))];
+    // Nothing counted means no root here read at all, and `0/0` would say the
+    // opposite of what is true — that they were read and hold nothing.
+    let mut said = match counts.total {
+        0 => Vec::new(),
+        total => vec![Span::raw(done(counts.closed, total))],
+    };
     if counts.live_agents > 0 {
         let agent = if counts.live_agents == 1 {
             "agent"
@@ -391,12 +407,13 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
     said
 }
 
-/// Why a tree's tracker never answered, and whatever live panes could still
-/// be found for it. Where those panes cannot be known to be all of them it
-/// says so — a list that is quietly short is the one way this line can be
-/// read wrongly, because it looks exactly like a complete one.
-fn unreadable(failure: TrackerFailure, panes: &[LoosePane], complete: bool) -> Vec<Span<'static>> {
-    let mut said = vec![format!("{WARNING} {}", phrase::tracker_failure(failure))];
+/// The live panes found working in a project no bead could be read to
+/// attribute them to. Where they cannot be known to be all of them it says so
+/// — a list that is quietly short is the one way this can be read wrongly,
+/// because it looks exactly like a complete one.
+fn recovered(found: &Recovery) -> Span<'static> {
+    let panes = &found.panes;
+    let mut said = Vec::new();
     said.push(if panes.is_empty() {
         phrase::no_live_panes().to_string()
     } else {
@@ -406,14 +423,11 @@ fn unreadable(failure: TrackerFailure, panes: &[LoosePane], complete: bool) -> V
             .collect::<Vec<_>>()
             .join(" · ")
     });
-    if !complete {
+    if !found.complete {
         said.push(phrase::panes_may_be_incomplete().to_string());
     }
 
-    vec![Span::styled(
-        said.join(" · "),
-        Style::new().fg(LOOK_AT_THIS),
-    )]
+    Span::styled(said.join(" · "), Style::new().fg(LOOK_AT_THIS))
 }
 
 fn pane_marker(pane: &str, status: &PaneStatus) -> String {
@@ -631,7 +645,9 @@ mod tests {
 
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{AgentRef, Badged, BeadKey, JoinSource};
-    use crate::model::snapshot::{FailedProject, Filter, Node, Snapshot, TrackerFailure, Tree};
+    use crate::model::snapshot::{
+        Counts, FailedProject, Filter, LoosePane, Node, Snapshot, TrackerFailure, Tree,
+    };
     use crate::model::types::PaneStatus;
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
@@ -709,33 +725,6 @@ mod tests {
         }
     }
 
-    /// A tree's header as `flatten` would build it, for a tree whose nodes
-    /// never arrived, so there is no root to read a status off. Not a
-    /// don't-care: the status is a column, and a header without one holds it
-    /// rather than closing it up.
-    fn head(tree: Tree) -> Header {
-        Header {
-            project: tree.project,
-            root: tree.root,
-            title: tree.title,
-            counts: tree.counts,
-            tracker: tree.tracker,
-            status: None,
-            panes: Vec::new(),
-            panes_complete: true,
-        }
-    }
-
-    /// The same, for a tree whose tracker refused and whose panes had to be
-    /// recovered from herdr instead.
-    fn recovered(tree: Tree, panes: &[LoosePane], panes_complete: bool) -> Header {
-        Header {
-            panes: panes.to_vec(),
-            panes_complete,
-            ..head(tree)
-        }
-    }
-
     fn tree(project: &str, root: &str, title: &str, counts: Counts) -> Tree {
         Tree {
             project: project.into(),
@@ -782,161 +771,79 @@ mod tests {
         row::cells(node, "nix-9670s", None, None)
     }
 
-    // ---- the header ------------------------------------------------------
+    // ---- a project's line ------------------------------------------------
 
-    /// The design's own example, at the width it was written for.
+    /// A project whose roots all read, so its line is its name and its counts
+    /// and there are no panes to recover.
+    fn project(name: &str, counts: Counts) -> ProjectLine {
+        ProjectLine {
+            project: name.into(),
+            counts,
+            recovery: None,
+        }
+    }
+
+    /// The same, for a project where a root refused and whose panes had to be
+    /// recovered from herdr instead.
+    fn recovering(name: &str, panes: &[LoosePane], complete: bool) -> ProjectLine {
+        ProjectLine {
+            recovery: Some(Recovery {
+                panes: panes.to_vec(),
+                complete,
+            }),
+            ..project(name, counts(0, 0, 0, 0))
+        }
+    }
+
+    fn unread(root: &str, tracker: TrackerState) -> Unread {
+        Unread {
+            root: root.into(),
+            tracker,
+        }
+    }
+
+    /// The design's own example, at the width it was written for. What is the
+    /// project's is here; what is a root's is on the root's own row below.
     #[test]
-    fn a_header_says_where_a_tree_is_what_it_is_and_how_much_of_it_is_done() {
-        let tree = tree(
-            "summit-works",
-            "nix-9670s",
-            "DMS → noctalia v5",
-            counts(8, 21, 3, 3),
-        );
+    fn a_project_line_says_which_project_it_is_and_how_much_of_it_is_done() {
+        let counts = counts(8, 21, 3, 3);
 
         assert_eq!(
-            drawn(header(&head(tree), OPEN), 78, 1),
-            vec!["▾   summit-works · nix-9670s  DMS → noctalia v5            8/21  3 agents  ⚠ 3"]
+            drawn(project_line(&project("summit-works", counts), OPEN), 40, 1),
+            vec!["▾ summit-works       8/21  3 agents  ⚠ 3"]
         );
     }
 
-    /// Every other line on screen reads box-drawing, then glyph, then who it
-    /// is. A header's fold marker is its box-drawing: the same column, and
-    /// structure rather than status. So the glyph goes after it, and one
-    /// order holds down the whole screen.
-    ///
-    /// Asked through `status_glyph` rather than written out, so the mapping
-    /// stays in the one place that owns it.
-    #[test]
-    fn a_tree_header_shows_its_roots_own_status_after_the_fold_marker() {
-        let blocked = Header {
-            status: Some(Status::Blocked),
-            ..head(tree(
-                "homelab",
-                "hl-sgqyv",
-                "heartbeat cadence",
-                counts(2, 7, 0, 0),
-            ))
-        };
-
-        let drawn = drawn(header(&blocked, OPEN), 60, 1);
-
-        assert!(
-            drawn[0].starts_with(&format!(
-                "▾ {} homelab · hl-sgqyv",
-                row::status_glyph(&Status::Blocked)
-            )),
-            "{drawn:?}"
-        );
-    }
-
-    /// A root is a bead, so its status reaches the screen through the same two
-    /// channels every other bead's does — glyph first, colour second.
-    #[test]
-    fn a_tree_headers_glyph_is_painted_the_colour_its_status_is_drawn_in() {
-        let blocked = Header {
-            status: Some(Status::Blocked),
-            ..head(tree(
-                "homelab",
-                "hl-sgqyv",
-                "heartbeat cadence",
-                counts(2, 7, 0, 0),
-            ))
-        };
-
-        let painted = painted(header(&blocked, OPEN), 60);
-
-        assert_eq!(painted[0], (OPEN.to_string(), Color::Reset));
-        assert_eq!(
-            painted[1],
-            (
-                row::status_glyph(&Status::Blocked).to_string(),
-                status_colour(&Status::Blocked).expect("blocked is one bd colours")
-            )
-        );
-    }
-
-    /// A tracker that never answered reported no root, so there is no status
-    /// to show. A glyph drawn there would be a status `bd` never gave.
-    #[test]
-    fn a_tree_whose_tracker_never_answered_shows_no_status_it_was_never_told() {
-        let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
-
-        let drawn = drawn(header(&head(tree), NO_FOLD), 120, 1);
-
-        assert!(
-            drawn[0].starts_with("    summit-works · nix-9670s"),
-            "{drawn:?}"
-        );
-    }
-
-    /// A count of nothing is left out rather than drawn as a nought: a header
+    /// A count of nothing is left out rather than drawn as a nought: a line
     /// reading `0 agents  ⚠ 0` sends a reader looking for rows that are not
     /// there.
     #[test]
-    fn a_tree_with_no_live_agent_and_nothing_wrong_says_only_how_much_is_done() {
-        let tree = tree(
-            "homelab",
-            "hl-sgqyv",
-            "heartbeat cadence",
-            counts(2, 7, 0, 0),
-        );
+    fn a_project_with_no_live_agent_and_nothing_wrong_says_only_how_much_is_done() {
+        let counts = counts(2, 7, 0, 0);
 
         assert_eq!(
-            drawn(header(&head(tree), SHUT), 60, 1),
-            vec!["▸   homelab · hl-sgqyv  heartbeat cadence                2/7"]
+            drawn(project_line(&project("homelab", counts), SHUT), 30, 1),
+            vec!["▸ homelab                  2/7"]
         );
     }
 
     #[test]
     fn one_agent_is_not_described_in_the_plural() {
-        let tree = tree(
-            "homelab",
-            "hl-sgqyv",
-            "heartbeat cadence",
-            counts(2, 7, 1, 0),
-        );
+        let counts = counts(2, 7, 1, 0);
+        let drawn = drawn(project_line(&project("homelab", counts), SHUT), 40, 1);
 
-        assert_eq!(
-            drawn(header(&head(tree), SHUT), 60, 1),
-            vec!["▸   homelab · hl-sgqyv  heartbeat cadence       2/7  1 agent"]
-        );
-    }
-
-    /// A tree row is one row. A title that will not fit is cut, and the cut is
-    /// marked so it reads as cut rather than as a title that is simply short.
-    #[test]
-    fn a_title_too_long_for_the_width_is_cut_rather_than_wrapped() {
-        let tree = tree(
-            "summit-works",
-            "nix-9670s",
-            "Switch the thinkpad's session shell from DMS to noctalia v5",
-            counts(8, 21, 3, 3),
-        );
-
-        assert_eq!(
-            drawn(header(&head(tree), OPEN), 60, 2),
-            vec![
-                "▾   summit-works · nix-9670s  Switch t…  8/21  3 agents  ⚠ 3",
-                "                                                            ",
-            ]
-        );
+        assert!(drawn[0].ends_with("2/7  1 agent"), "{drawn:?}");
     }
 
     /// Narrower than the identity itself there is nothing left to protect, and
     /// the line is cut like any other.
     #[test]
-    fn a_width_too_narrow_for_anything_else_keeps_as_much_of_the_tree_as_it_can() {
-        let tree = tree(
-            "summit-works",
-            "nix-9670s",
-            "DMS → noctalia v5",
-            counts(8, 21, 3, 3),
-        );
+    fn a_width_too_narrow_for_anything_else_keeps_as_much_of_the_project_as_it_can() {
+        let counts = counts(8, 21, 3, 3);
 
         assert_eq!(
-            drawn(header(&head(tree), OPEN), 12, 1),
-            vec!["▾   nixos-c…"]
+            drawn(project_line(&project("summit-works", counts), OPEN), 10, 1),
+            vec!["▾ nixos-c…"]
         );
     }
 
@@ -945,56 +852,124 @@ mod tests {
     /// land inside one and put a broken character on the terminal.
     #[test]
     fn a_cut_is_counted_in_columns_and_never_lands_inside_a_glyph() {
-        let tree = tree(
-            "summit-works",
-            "nix-9670s",
-            "→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→",
-            counts(0, 1, 0, 0),
+        let name = "→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→";
+        let drawn = drawn(
+            project_line(&project(name, counts(0, 1, 0, 0)), OPEN),
+            20,
+            1,
         );
-        let drawn = drawn(header(&head(tree), OPEN), 40, 1);
 
-        assert_eq!(drawn[0].chars().count(), 40);
+        assert_eq!(drawn[0].chars().count(), 20);
         assert!(!drawn[0].contains('\u{fffd}'), "{drawn:?}");
-        assert!(drawn[0].ends_with("0/1"), "{drawn:?}");
     }
 
-    // ---- a tree whose tracker never answered -----------------------------
+    // ---- a root's own row ------------------------------------------------
 
-    /// The design has such a tree render as a header and its live panes.
-    /// Both are here, and the panes are named the way a bead's agent is named
-    /// so one reads as the other. There is nothing under it to fold, so it is
-    /// handed no marker — and the columns a marker and a root's glyph would
-    /// have taken are held, so it starts where every other header does.
+    /// `bdi-2bb.25`: a root is a bead like any other, so its status reaches
+    /// the screen through the two channels every other bead's does — the
+    /// glyph, and the colour that glyph is painted. Before this it was drawn
+    /// on a header that spoke a project's language and answered none of it.
+    ///
+    /// Asked through `status_glyph` and `status_colour` rather than written
+    /// out, so the mappings stay in the one place each owns.
     #[test]
-    fn an_unreachable_tree_renders_its_header_and_its_panes() {
-        let tree =
-            Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
-        let panes = [
-            pane("wCM:p9", PaneStatus::Working),
-            pane("wCM:p6", PaneStatus::Idle),
-        ];
+    fn a_root_is_drawn_with_its_own_status_glyph_like_any_other_bead() {
+        let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let root = &forest.lines()[1];
 
-        assert_eq!(
-            drawn(header(&recovered(tree, &panes, true), NO_FOLD), 100, 1),
-            vec!["    summit-works · nix-9670s         ⚠ the tracker did not answer · ◍ wCM:p9 working · ◍ wCM:p6 idle"
-                .to_string()]
+        let painted = painted(fitted(root, 12), 60);
+        let drawn = drawn(fitted(root, 12), 60, 1);
+
+        assert!(
+            drawn[0].contains(&format!(
+                "{} nix-9670s",
+                row::status_glyph(&Status::InProgress)
+            )),
+            "{drawn:?}"
+        );
+        assert!(
+            painted.iter().any(|(said, colour)| said
+                .contains(row::status_glyph(&Status::InProgress))
+                && Some(*colour) == status_colour(&Status::InProgress)),
+            "{painted:?}"
+        );
+    }
+
+    // ---- a root that would not read --------------------------------------
+
+    /// A root `bdi` was told about and could not read has no row to draw, and
+    /// leaving it out would lose it as surely as dropping it. It is named
+    /// where its row would have been, with the reason beside it.
+    #[test]
+    fn an_unread_root_is_named_where_its_row_would_have_been_with_the_reason() {
+        let unread = unread(
+            "nix-9670s",
+            TrackerState::Unreachable(TrackerFailure::Unavailable),
+        );
+        let drawn = drawn(unread_line(&unread, LAST, 9), 60, 1);
+
+        assert!(drawn[0].contains("nix-9670s"), "{drawn:?}");
+        assert!(
+            drawn[0].contains(phrase::tracker_failure(TrackerFailure::Unavailable)),
+            "{drawn:?}"
         );
     }
 
     /// A tracker that could not be read has no counts, and `0/0` would say the
     /// opposite of what is true — that it was read and holds nothing.
     #[test]
-    fn an_unreachable_tree_never_shows_a_count_it_could_not_read() {
-        let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
-        let drawn = drawn(header(&head(tree), OPEN), 120, 1);
+    fn an_unread_root_never_shows_a_count_it_could_not_read() {
+        let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
+        let drawn = drawn(unread_line(&unread, LAST, 9), 120, 1);
 
         assert!(!drawn[0].contains("0/0"), "{drawn:?}");
     }
 
+    /// Nothing should reach this: a root that read is a bead row, and one that
+    /// did not carries the failure that stopped it. A root that got here
+    /// anyway is still a root on the screen, which is the whole point.
     #[test]
-    fn an_unreachable_tree_with_no_pane_to_show_says_that_rather_than_nothing() {
-        let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
-        let drawn = drawn(header(&head(tree), OPEN), 120, 1);
+    fn a_root_with_no_row_and_no_reason_still_says_it_is_there() {
+        let drawn = drawn(
+            unread_line(&unread("nix-9670s", TrackerState::Ok), LAST, 9),
+            90,
+            1,
+        );
+
+        assert!(drawn[0].contains("nix-9670s"), "{drawn:?}");
+        assert!(drawn[0].contains(phrase::root_unread()), "{drawn:?}");
+    }
+
+    /// The design has a project whose roots would not read render its panes.
+    /// They are named the way a bead's agent is named, so one reads as the
+    /// other.
+    #[test]
+    fn a_project_with_a_root_it_could_not_read_shows_the_panes_working_in_it() {
+        let panes = [
+            pane("wCM:p9", PaneStatus::Working),
+            pane("wCM:p6", PaneStatus::Idle),
+        ];
+
+        assert_eq!(
+            drawn(
+                project_line(&recovering("summit-works", &panes, true), NO_FOLD),
+                80,
+                1
+            ),
+            vec![
+                "  summit-works                                  ◍ wCM:p9 working · ◍ wCM:p6 idle"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_project_with_no_pane_to_show_says_that_rather_than_nothing() {
+        let drawn = drawn(
+            project_line(&recovering("summit-works", &[], true), OPEN),
+            120,
+            1,
+        );
 
         assert!(drawn[0].contains(phrase::no_live_panes()), "{drawn:?}");
     }
@@ -1004,12 +979,18 @@ mod tests {
     /// exactly like a complete one.
     #[test]
     fn a_pane_list_that_may_be_short_says_so_rather_than_reading_as_complete() {
-        let tree =
-            Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
         let panes = [pane("wCM:p9", PaneStatus::Working)];
 
-        let whole = drawn(header(&recovered(tree.clone(), &panes, true), OPEN), 200, 1);
-        let partial = drawn(header(&recovered(tree, &panes, false), OPEN), 200, 1);
+        let whole = drawn(
+            project_line(&recovering("summit-works", &panes, true), OPEN),
+            200,
+            1,
+        );
+        let partial = drawn(
+            project_line(&recovering("summit-works", &panes, false), OPEN),
+            200,
+            1,
+        );
 
         assert!(
             !whole[0].contains(phrase::panes_may_be_incomplete()),
@@ -1021,24 +1002,15 @@ mod tests {
         );
     }
 
-    /// The identity of a tree outlasts everything else on its line: a reader
-    /// who cannot tell which tree failed learns nothing from knowing that one
-    /// did.
+    /// The identity of a root outlasts everything else on its line: a reader
+    /// who cannot tell which root failed learns nothing from knowing one did.
     #[test]
-    fn a_narrow_unreachable_header_keeps_the_tree_and_the_reason_over_the_panes() {
-        let tree = Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Auth);
-        let panes = [pane("wCM:p9", PaneStatus::Working)];
-        let drawn = drawn(header(&recovered(tree, &panes, false), NO_FOLD), 80, 1);
+    fn a_narrow_unread_root_keeps_the_root_over_the_reason() {
+        let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
+        let drawn = drawn(unread_line(&unread, LAST, 9), 24, 1);
 
-        assert!(
-            drawn[0].starts_with("    summit-works · nix-9670s"),
-            "{drawn:?}"
-        );
-        assert!(
-            drawn[0].contains(phrase::tracker_failure(TrackerFailure::Auth)),
-            "{drawn:?}"
-        );
-        assert_eq!(drawn[0].chars().count(), 80);
+        assert!(drawn[0].contains("nix-9670s"), "{drawn:?}");
+        assert_eq!(drawn[0].chars().count(), 24);
     }
 
     // ---- a bead's line ---------------------------------------------------
@@ -1430,24 +1402,20 @@ mod tests {
         assert_eq!(run[2].1, finished[2].1, "what follows it: {run:?}");
     }
 
-    /// A header's agent and anomaly counts are its whole subtree's and not the
-    /// root bead's own, so the rule that decides a row's tier cannot be asked
-    /// of it without quietly changing what it means. It stays off the scale.
+    /// A project line's counts are its whole project's and not any one bead's,
+    /// so the rule that decides a row's tier cannot be asked of it without
+    /// quietly changing what it means. It stays off the scale. A root does
+    /// not: it is a bead row, and the rule is asked of it like any other.
     #[test]
-    fn a_tree_header_is_left_off_the_scale_a_bead_row_is_on() {
-        let done = Header {
-            status: Some(Status::Closed),
-            ..head(tree(
-                "homelab",
-                "hl-sgqyv",
-                "heartbeat cadence",
-                counts(7, 7, 0, 0),
-            ))
-        };
+    fn a_project_line_is_left_off_the_scale_a_bead_row_is_on() {
+        let quiet = project("homelab", counts(7, 7, 0, 0));
 
-        let painted = painted(header(&done, OPEN), 60);
+        let painted = painted(project_line(&quiet, OPEN), 60);
 
-        assert_eq!(painted[2].1, Color::Reset, "{painted:?}");
+        assert!(
+            painted.iter().all(|(_, colour)| *colour == Color::Reset),
+            "{painted:?}"
+        );
     }
 
     /// `bd`'s hues belong to `bd`'s concepts. The live agent and the anomaly
@@ -1623,10 +1591,10 @@ mod tests {
 
         for row in band.y..band.y + band.height {
             let at = line_at(band, selected, lines, row).expect("the band is full of lines");
-            let shown = if at == 0 {
-                "lift the ground station".to_string()
-            } else {
-                format!("bead number {at}")
+            let shown = match at {
+                0 => "summit-works".to_string(),
+                1 => "lift the ground station".to_string(),
+                at => format!("bead number {}", at - 1),
             };
             assert!(
                 frame[row as usize].contains(&shown),
@@ -2006,10 +1974,10 @@ mod tests {
         assert_eq!(
             frame_of(&forest, 60, 10),
             vec![
-                "▾ ◐ summit-works · nix-9670s  lift the ground station    0/3",
-                "  ├── ○ .1  bead number 1                                   ",
-                "  └── ○ .2  bead number 2                                   ",
-                "                                                            ",
+                "▾ summit-works                                           0/3",
+                "  └── ◐ nix-9670s  lift the ground station               0/3",
+                "      ├── ○ .1         bead number 1                        ",
+                "      └── ○ .2         bead number 2                        ",
                 "                                                            ",
                 "                                                            ",
                 "                                                            ",
@@ -2031,10 +1999,10 @@ mod tests {
         assert_eq!(
             frame_with(&forest, &[Notice::NoInboundChannel], 80, 10),
             vec![
-                "▾ ◐ summit-works · nix-9670s  lift the ground station                        0/3",
-                "  ├── ○ .1  bead number 1                                                       ",
-                "  └── ○ .2  bead number 2                                                       ",
-                "                                                                                ",
+                "▾ summit-works                                                               0/3",
+                "  └── ◐ nix-9670s  lift the ground station                                   0/3",
+                "      ├── ○ .1         bead number 1                                            ",
+                "      └── ○ .2         bead number 2                                            ",
                 "                                                                                ",
                 "                                                                                ",
                 "                                                                                ",
@@ -2054,15 +2022,16 @@ mod tests {
         let frame = frame_of(&forest, 24, 10);
 
         assert_eq!(
-            frame[..3].to_vec(),
+            frame[..4].to_vec(),
             vec![
-                "▾ ◐ summit-works · nix-…",
-                "  ├── ○ .1  bead number…",
-                "  └── ○ .2  bead number…",
+                "▾ summit-works       0/3",
+                "  └── ◐ nix-9670s    0/3",
+                "      ├── ○ .1         …",
+                "      └── ○ .2         …",
             ]
         );
         assert!(
-            frame[3..9].iter().all(|row| row.trim().is_empty()),
+            frame[4..9].iter().all(|row| row.trim().is_empty()),
             "{frame:?}"
         );
     }
@@ -2078,7 +2047,7 @@ mod tests {
             let at = forest.selected_line();
             let said = match &forest.lines()[at].content {
                 Content::Bead(row) => row.title.clone(),
-                Content::Tree(header) => header.title.clone(),
+                Content::Project(line) => line.project.clone(),
                 other => panic!("unexpected line under the selection: {other:?}"),
             };
             let frame = frame_of(&forest, 60, 10);
@@ -2090,10 +2059,11 @@ mod tests {
         }
     }
 
-    /// The definition of done's third case: a tree nobody could read renders
-    /// as its header, the reason it failed, and the panes still working in it.
+    /// The definition of done's third case: a root nobody could read renders
+    /// as the root it is, the reason it failed, and — on its project's line —
+    /// the panes still working there.
     #[test]
-    fn an_unreachable_tree_draws_its_header_its_reason_and_its_panes() {
+    fn a_root_that_would_not_read_draws_its_reason_and_its_projects_panes() {
         let failed =
             Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
         let forest = flatten(&snapshot(
@@ -2101,20 +2071,23 @@ mod tests {
             vec![pane("wCM:p9", PaneStatus::Working)],
             HerdrState::Ok,
         ));
+        let frame = frame_of(&forest, 77, 4);
 
         assert_eq!(
-            frame_of(&forest, 77, 4)[0],
-            "    summit-works · nix-9670s  ⚠ the tracker did not answer · ◍ wCM:p9 working"
+            frame[..2],
+            [
+                "▾ summit-works                                               ◍ wCM:p9 working",
+                "  └── ⚠ nix-9670s  the tracker did not answer                                ",
+            ]
         );
     }
 
-    /// A tree with nothing under it has no fold for a marker to stand for —
-    /// its findings are drawn whether it rests open or shut — so it draws
-    /// none. It holds the columns the marker and the root's glyph would have
-    /// taken, because a reader running down the project names finds every
-    /// other header's in the same place.
+    /// A root with nothing under it has no fold for a marker to stand for, so
+    /// it draws none — and it still starts in the column its siblings start
+    /// in, because a reader running down a project's roots finds every one of
+    /// them in the same place.
     #[test]
-    fn a_tree_header_with_nothing_under_it_draws_no_marker_and_still_lines_up() {
+    fn a_root_with_nothing_under_it_draws_no_marker_and_still_lines_up() {
         let unreadable =
             Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
         let forest = flatten(&snapshot(
@@ -2122,36 +2095,27 @@ mod tests {
             Vec::new(),
             HerdrState::Ok,
         ));
-        let frame = frame_of(&forest, 90, 4);
+        let frame = frame_of(&forest, 90, 5);
+        let unread = frame
+            .iter()
+            .position(|row| row.contains(WARNING))
+            .expect("the root that would not read");
         let column = |row: &str| {
-            let byte = row.find("summit-works").expect("the project on the row");
+            let byte = row.find("nix-9670s").expect("the root on the row");
             row[..byte].chars().count()
         };
 
         assert!(
-            !frame[1].contains(SHUT.trim()),
-            "nothing opens this header, so nothing should say it is shut: {:?}",
-            frame[1]
+            !frame[unread].contains(SHUT.trim()),
+            "nothing opens this root, so nothing should say it is shut: {:?}",
+            frame[unread]
         );
         assert_eq!(
+            column(&frame[unread]),
             column(&frame[1]),
-            column(&frame[0]),
-            "the headers start in different columns:\n{}\n{}",
-            frame[0],
-            frame[1]
-        );
-    }
-
-    /// A forest with nothing in it says why, where a blank pane would have
-    /// read as a crash. The sentence is the whole of it: it names no tree,
-    /// because there is none to name.
-    #[test]
-    fn a_forest_with_nothing_in_it_draws_its_reason_where_the_trees_would_be() {
-        let forest = flatten(&snapshot(Vec::new(), Vec::new(), HerdrState::Ok));
-
-        assert_eq!(
-            frame_of(&forest, 90, 4)[0].trim_end(),
-            "no unfinished work anywhere · every tracker answered, and none of them had a root to draw"
+            "the mark stands where a status glyph does:\n{}\n{}",
+            frame[1],
+            frame[unread]
         );
     }
 

@@ -130,6 +130,13 @@ pub fn panes_may_be_incomplete() -> &'static str {
     "and possibly more · a live pane under no configured project could belong here"
 }
 
+/// A root that drew no row and whose tracker named no reason. Nothing should
+/// reach this, and a root that quietly left the screen would be the one kind
+/// of wrong answer `bdi` exists to prevent.
+pub fn root_unread() -> &'static str {
+    "this root drew no rows, and nothing said why"
+}
+
 /// A node bd stopped at, so what hangs beneath it is not in this tree.
 pub fn truncated() -> &'static str {
     "more beneath this · the tracker stopped at its depth limit"

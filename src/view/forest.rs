@@ -3,11 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::{BeadKey, Conflict};
-use crate::model::snapshot::{self, Filter, LoosePane, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{self, Counts, Filter, LoosePane, Snapshot, TrackerState, Tree};
 use crate::view::lines::{
     beneath, children_of, marker, notes_of, opens_a_fold, prefix, progress_of, quiet, root_key,
-    run_size, split, unfinished_beneath, Content, Group, GroupKind, Header, Item, Line, Note,
-    Place, NO_FOLD,
+    run_size, split, unfinished_beneath, Content, Group, GroupKind, Item, Line, Note, Place,
+    ProjectLine, Recovery, Unread,
 };
 use crate::view::row;
 use crate::view::{Action, Motion};
@@ -28,6 +28,8 @@ enum Handle {
     Elided(Place),
     Group(GroupKind),
     Item(ItemKey),
+    /// A project, by its name, which the config makes unique.
+    Project(String),
 }
 
 /// What one thing in a group is known by.
@@ -104,6 +106,7 @@ pub fn flatten(snapshot: &Snapshot) -> Forest {
         selected: 0,
     };
     forest.lay_out();
+    forest.select_first_root();
     forest
 }
 
@@ -111,6 +114,20 @@ impl Forest {
     /// The visible lines, in render order.
     pub fn lines(&self) -> &[Line] {
         &self.lines
+    }
+
+    /// Open on the first root rather than on the project above it. A project
+    /// is not a bead, so it has no pane, and a screen that opens with its tail
+    /// band empty has spent it saying nothing.
+    fn select_first_root(&mut self) {
+        let first = self
+            .lines
+            .iter()
+            .position(|line| matches!(line.content, Content::Bead(_) | Content::Unread(_)));
+        if let Some(at) = first {
+            self.selected = at;
+            self.cursor = self.handle_at(at);
+        }
     }
 
     /// Where the selection sits in `lines`.
@@ -212,6 +229,7 @@ impl Forest {
             _ => return chain,
         };
         chain.extend(place.forebears().map(Handle::Bead));
+        chain.push(Handle::Project(place.tree.project.clone()));
         chain
     }
 
@@ -482,6 +500,11 @@ impl Forest {
                 !self.group_items(*kind, &loose).is_empty()
             }
             Handle::Item(key) => self.group_holding(key).is_some(),
+            Handle::Project(project) => self
+                .snapshot
+                .trees
+                .iter()
+                .any(|tree| &tree.project == project),
         }
     }
 
@@ -569,8 +592,13 @@ impl Forest {
     fn draw(&self) -> Vec<Line> {
         let (recovered, loose) = self.recovery();
         let mut lines = Vec::new();
-        for (tree, panes) in self.snapshot.trees.iter().zip(recovered) {
-            self.draw_tree(tree, panes, &mut lines);
+        let mut from = 0;
+        // A project's trees arrive together and in the order the config named
+        // the projects, so a run of them is a project.
+        for run in self.snapshot.trees.chunk_by(|a, b| a.project == b.project) {
+            let panes = &recovered[from..from + run.len()];
+            self.draw_project(run, panes, &mut lines);
+            from += run.len();
         }
         self.draw_groups(&loose, &mut lines);
         // Asked of the drawn lines rather than of the snapshot's fields, so
@@ -581,45 +609,93 @@ impl Forest {
         lines
     }
 
-    fn draw_tree(&self, tree: &Tree, panes: Vec<LoosePane>, lines: &mut Vec<Line>) {
+    /// A project's own line, and the roots that hang under it.
+    ///
+    /// The project line says what is the project's — its name, how much work
+    /// it holds, and the panes recovered where a root would not read — and
+    /// every root below it is a bead row like any other. A root is a bead, and
+    /// a reader asks a bead's questions of it: what is its status, who is on
+    /// it, what is it doing. A line that answered those in a project's terms
+    /// answered none of them.
+    fn draw_project(&self, trees: &[Tree], panes: &[Vec<LoosePane>], lines: &mut Vec<Line>) {
+        let project = trees[0].project.clone();
+        let unread = trees.iter().any(|tree| tree.tracker != TrackerState::Ok);
+        // A project rests open: the forest is what is being worked, and a
+        // project shut over it says only that it exists.
+        let open = self.expanded(&Handle::Project(project.clone()), true);
+        let recovery = unread.then(|| Recovery {
+            panes: panes.iter().flatten().cloned().collect(),
+            complete: self.snapshot.unconfigured.is_empty(),
+        });
+
+        lines.push(Line {
+            prefix: marker(open).to_string(),
+            depth: 0,
+            folded: Some(open),
+            place: None,
+            content: Content::Project(ProjectLine {
+                project,
+                counts: Counts::over(trees.iter().flat_map(|tree| &tree.nodes)),
+                recovery,
+            }),
+        });
+
+        if !open {
+            return;
+        }
+        let count = trees.len();
+        for (n, tree) in trees.iter().enumerate() {
+            self.draw_tree(tree, n + 1 == count, lines);
+        }
+    }
+
+    fn draw_tree(&self, tree: &Tree, last: bool, lines: &mut Vec<Line>) {
         let root = Place::root(root_key(tree));
         let children = children_of(&tree.nodes);
-        // A tree with no nodes has no fold: its findings are drawn under it
-        // whether it rests open or shut, so there is nothing for a marker to
-        // stand for and nothing a key could do to it.
-        let foldable = !tree.nodes.is_empty();
+        let Some(node) = tree.nodes.first() else {
+            // No nodes, so no row: the root is named on a line of its own
+            // rather than left out, because a root that would not read is the
+            // one a reader most needs to see is there.
+            lines.push(Line {
+                prefix: prefix(&[], last, false),
+                depth: 1,
+                folded: None,
+                place: Some(root),
+                content: Content::Unread(Unread {
+                    root: tree.root.clone(),
+                    tracker: tree.tracker,
+                }),
+            });
+            return;
+        };
         // A tree opens because of what is in it, not because the selection
         // is in it: the first screen is meant to be the answer to what is
         // being worked and what could be started.
-        let open = foldable
+        let kids = self.children_entries(tree, &children, 0);
+        let open = !kids.is_empty()
             && self.expanded(
                 &Handle::Bead(root.clone()),
                 opens_a_fold(tree, &children, 0),
             );
-        let complete = tree.tracker == TrackerState::Ok || self.snapshot.unconfigured.is_empty();
 
         lines.push(Line {
-            prefix: if foldable { marker(open) } else { NO_FOLD }.to_string(),
-            depth: 0,
-            folded: foldable.then_some(open),
+            prefix: prefix(&[], last, !kids.is_empty() && !open),
+            depth: 1,
+            folded: (!kids.is_empty()).then_some(open),
             place: Some(root.clone()),
-            content: Content::Tree(Header {
-                project: tree.project.clone(),
-                root: tree.root.clone(),
-                title: tree.title.clone(),
-                counts: tree.counts.clone(),
-                tracker: tree.tracker,
-                status: tree.nodes.first().map(|root| root.status.clone()),
-                panes,
-                panes_complete: complete,
-            }),
+            content: Content::Bead(row::cells(
+                node,
+                &tree.root,
+                progress_of(tree, &children, 0),
+                None,
+            )),
         });
 
         let mut entries: Vec<Child> = notes_of(tree).into_iter().map(Child::Note).collect();
         if open {
-            entries.extend(self.children_entries(tree, &children, 0));
+            entries.extend(kids);
         }
-        self.draw_children(tree, &children, entries, &root, &mut Vec::new(), lines);
+        self.draw_children(tree, &children, entries, &root, &mut vec![!last], lines);
     }
 
     /// A node's children as they are drawn: the ones worth a line each, then
@@ -792,7 +868,8 @@ fn nothing_to_draw() -> Line {
 /// is why this is the same question as whether the selection may sit there.
 fn handle_of(line: &Line) -> Option<Handle> {
     match &line.content {
-        Content::Tree(_) | Content::Bead(_) => line.place.clone().map(Handle::Bead),
+        Content::Bead(_) | Content::Unread(_) => line.place.clone().map(Handle::Bead),
+        Content::Project(line) => Some(Handle::Project(line.project.clone())),
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
         Content::Group(group) => Some(Handle::Group(group.kind)),
         Content::Item(item) => item_key(item).map(Handle::Item),
@@ -1231,7 +1308,8 @@ credential_command = "secret harbour"
 
     fn said(content: &Content) -> String {
         match content {
-            Content::Tree(header) => format!("{} · {}", header.project, header.root),
+            Content::Project(line) => line.project.clone(),
+            Content::Unread(unread) => format!("⚠ {} unread", unread.root),
             Content::Bead(row) => format!("{} {} {}", row.glyph, row.id, row.title),
             Content::Elided { count, .. } => format!("… {count} more"),
             Content::Note(note) => format!("! {note:?}"),
@@ -1310,13 +1388,13 @@ credential_command = "secret harbour"
     /// same, and holding the selection on it across a refresh is what says
     /// the forest knows a tree by its root rather than by a node.
     #[test]
-    fn the_selection_holds_the_header_of_a_tree_whose_tracker_refused() {
+    fn the_selection_holds_the_line_of_a_root_whose_tracker_refused() {
         let mut forest = flatten(&snapshot());
         let header = forest
             .lines()
             .iter()
             .position(
-                |line| matches!(&line.content, Content::Tree(header) if header.root == "fer-2"),
+                |line| matches!(&line.content, Content::Unread(unread) if unread.root == "fer-2"),
             )
             .expect("the shared snapshot draws a tree whose tracker refused");
 
@@ -1519,14 +1597,16 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital · orb-7",
-                "  ├── ! Dangling(1)",
-                "  ├── ! Truncated(1)",
-                "  ├─▸ ○ .1 re-point the dish",
-                "  ├── ○ .7 log the survey marks",
-                "  ├── ✓ .4 clear the access road",
-                "  └─▸ … 3 more",
-                "  ferry · fer-2",
+                "▾ orbital",
+                "  └── ◐ orb-7 lift the ground station",
+                "      ├── ! Dangling(1)",
+                "      ├── ! Truncated(1)",
+                "      ├─▸ ○ .1 re-point the dish",
+                "      ├── ○ .7 log the survey marks",
+                "      ├── ✓ .4 clear the access road",
+                "      └─▸ … 3 more",
+                "▾ ferry",
+                "  └── ⚠ fer-2 unread",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
                 "  └── - Unconfigured(UnconfiguredPane { pane: \"w:pF\", cwd: \"/srv/spike\", pane_status: Idle })",
@@ -1540,12 +1620,14 @@ credential_command = "secret harbour"
         );
     }
 
-    /// The selection starts on the first root, which is what expands it.
+    /// The selection starts on the first root and not on the project line
+    /// above it: a project has no pane, so opening there would spend the tail
+    /// band saying there is nothing to show.
     #[test]
     fn the_selection_starts_on_the_first_root() {
         let forest = flatten(&snapshot());
 
-        assert_eq!(forest.selected_line(), 0);
+        assert_eq!(forest.selected_line(), 1);
         assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
     }
 
@@ -1603,9 +1685,9 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest)[..3],
             [
-                "▸ orbital · orb-7",
-                "  ├── ! Dangling(1)",
-                "  └── ! Truncated(1)",
+                "▾ orbital",
+                "  └─▸ ◐ orb-7 lift the ground station",
+                "      ├── ! Dangling(1)",
             ]
         );
     }
@@ -1721,11 +1803,12 @@ credential_command = "secret harbour"
     #[test]
     fn the_default_opens_every_forebear_of_a_live_agent_or_of_ready_work_and_nothing_else() {
         let opened = vec![
-            "▾ orbital · tow-1",
-            "  ├── ○ .1 stand the mast",
-            "  │   └── ○ .1.1 bolt the sections",
-            "  │       └── ○ .1.1.1 dress the cables",
-            "  └─▸ ○ .2 pour the base",
+            "▾ orbital",
+            "  └── ○ tow-1 raise the tower",
+            "      ├── ○ .1 stand the mast",
+            "      │   └── ○ .1.1 bolt the sections",
+            "      │       └── ○ .1.1.1 dress the cables",
+            "      └─▸ ○ .2 pour the base",
         ];
 
         let staffed = flatten(&tower_staffed(&["tow-1.1.1.1"]));
@@ -1747,7 +1830,10 @@ credential_command = "secret harbour"
     fn a_tree_with_nothing_live_in_it_rests_as_its_header() {
         let forest = flatten(&tower_staffed(&[]));
 
-        assert_eq!(sketch(&forest), vec!["▸ orbital · tow-1"]);
+        assert_eq!(
+            sketch(&forest),
+            vec!["▾ orbital", "  └─▸ ○ tow-1 raise the tower"]
+        );
     }
 
     /// A default, not a lock: the user shuts a node holding an agent and it
@@ -1842,7 +1928,7 @@ credential_command = "secret harbour"
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
         let forest = flatten(&snapshot());
 
-        assert!(sketch(&forest).contains(&"  └─▸ … 3 more".to_string()));
+        assert!(sketch(&forest).contains(&"      └─▸ … 3 more".to_string()));
     }
 
     /// The count is the only account the screen gives of the beads it stands
@@ -1853,7 +1939,10 @@ credential_command = "secret harbour"
 
         select_run(&mut forest);
 
-        assert_eq!(sketch(&forest)[forest.selected_line()], "  └─▸ … 3 more");
+        assert_eq!(
+            sketch(&forest)[forest.selected_line()],
+            "      └─▸ … 3 more"
+        );
     }
 
     #[test]
@@ -1872,10 +1961,10 @@ credential_command = "secret harbour"
         assert_eq!(
             from_the_run[..4],
             [
-                "  └── … 3 more",
-                "      ├── ✓ .2 survey the mast",
-                "      ├── ✓ .3 pour the pad",
-                "      └── ✓ .5 set the guard rail",
+                "      └── … 3 more",
+                "          ├── ✓ .2 survey the mast",
+                "          ├── ✓ .3 pour the pad",
+                "          └── ✓ .5 set the guard rail",
             ]
         );
     }
@@ -2039,13 +2128,13 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest)[..7],
             [
-                "▾ orbital · dep-1",
-                "  ├── ○ .1 grade the bed",
-                "  └── … 6 more",
-                "      ├── ✓ .2 lift the old rail",
-                "      │   └─▸ … 3 more",
-                "      ├── ✓ .3 clear the ballast",
-                "      └── ✓ .4 burn the sleepers",
+                "▾ orbital",
+                "  └── ◐ dep-1 re-lay the sidings",
+                "      ├── ○ .1 grade the bed",
+                "      └── … 6 more",
+                "          ├── ✓ .2 lift the old rail",
+                "          │   └─▸ … 3 more",
+                "          ├── ✓ .3 clear the ballast",
             ]
         );
     }
@@ -2067,10 +2156,10 @@ credential_command = "secret harbour"
 
         let drawn = sketch(&forest);
         assert!(
-            drawn.contains(&"      └── ✓ .5 set the guard rail".to_string()),
+            drawn.contains(&"          └── ✓ .5 set the guard rail".to_string()),
             "{drawn:#?}"
         );
-        assert_eq!(drawn[forest.selected_line()], "  └── … 3 more");
+        assert_eq!(drawn[forest.selected_line()], "      └── … 3 more");
     }
 
     /// A run has no bead of its own, so a line the cursor is holding must not
@@ -2206,14 +2295,15 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital · rly-2",
-                "  ├── ○ .1 trench the run",
-                "  ├── ✓ .2 strike the old mast",
-                "  │   └── ✓ .2.1 drop the guys",
-                "  │       └── ◐ .2.1.1 cut the stays",
-                "  ├── ✓ .4 lift the feeder",
-                "  │   └── ✓ .4.1 coil the heliax",
-                "  └─▸ … 4 more",
+                "▾ orbital",
+                "  └── ◐ rly-2 re-site the relay",
+                "      ├── ○ .1 trench the run",
+                "      ├── ✓ .2 strike the old mast",
+                "      │   └── ✓ .2.1 drop the guys",
+                "      │       └── ◐ .2.1.1 cut the stays",
+                "      ├── ✓ .4 lift the feeder",
+                "      │   └── ✓ .4.1 coil the heliax",
+                "      └─▸ … 4 more",
             ]
         );
     }
@@ -2268,11 +2358,12 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital · dep-1",
-                "  ├── ○ .1 grade the bed",
-                "  ├── ○ .3 clear the ballast",
-                "  ├─▸ ✓ .2 lift the old rail",
-                "  └── ✓ .4 burn the sleepers",
+                "▾ orbital",
+                "  └── ◐ dep-1 re-lay the sidings",
+                "      ├── ○ .1 grade the bed",
+                "      ├── ○ .3 clear the ballast",
+                "      ├─▸ ✓ .2 lift the old rail",
+                "      └── ✓ .4 burn the sleepers",
             ]
         );
         assert_eq!(
@@ -2297,10 +2388,11 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital · sdg-4",
-                "  ├─▸ ◐ .3 re-signal the box",
-                "  ├─▸ ✓ .1 slew the up line",
-                "  └─▸ ✓ .2 clip the down line",
+                "▾ orbital",
+                "  └── ◐ sdg-4 re-point the crossover",
+                "      ├─▸ ◐ .3 re-signal the box",
+                "      ├─▸ ✓ .1 slew the up line",
+                "      └─▸ ✓ .2 clip the down line",
             ]
         );
         assert_eq!(
@@ -2416,13 +2508,14 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital · sdg-4",
-                "  ├─▸ ◐ .3 re-signal the box",
-                "  ├── ✓ .1 slew the up line",
-                "  │   ├── ○ .1.2 weld the closure rail",
-                "  │   ├─▸ ✓ .1.1 key the switch",
-                "  │   └── ✓ .1.3 lift the old chairs",
-                "  └─▸ ✓ .2 clip the down line",
+                "▾ orbital",
+                "  └── ◐ sdg-4 re-point the crossover",
+                "      ├─▸ ◐ .3 re-signal the box",
+                "      ├── ✓ .1 slew the up line",
+                "      │   ├── ○ .1.2 weld the closure rail",
+                "      │   ├─▸ ✓ .1.1 key the switch",
+                "      │   └── ✓ .1.3 lift the old chairs",
+                "      └─▸ ✓ .2 clip the down line",
             ]
         );
         assert_eq!(row_of(&forest, "sdg-4.1").notes, Vec::<String>::new());
@@ -2469,12 +2562,13 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital · dep-1",
-                "  ├── ○ .1 grade the bed",
-                "  ├── ○ .3 clear the ballast",
-                "  ├── ✓ .2 lift the old rail",
-                "  │   └─▸ … 3 more",
-                "  └── ✓ .4 burn the sleepers",
+                "▾ orbital",
+                "  └── ◐ dep-1 re-lay the sidings",
+                "      ├── ○ .1 grade the bed",
+                "      ├── ○ .3 clear the ballast",
+                "      ├── ✓ .2 lift the old rail",
+                "      │   └─▸ … 3 more",
+                "      └── ✓ .4 burn the sleepers",
             ]
         );
     }
@@ -2558,9 +2652,8 @@ credential_command = "secret harbour"
 
         assert_eq!(forest.snapshot().filter, Filter::All);
         assert_eq!(forest.snapshot().generated_at, generated_at);
-        assert!(sketch(&forest)
-            .iter()
-            .any(|line| line.contains("harbour · hbr-3")));
+        assert!(sketch(&forest).iter().any(|line| line == "▾ harbour"));
+        assert!(sketch(&forest).iter().any(|line| line.contains("hbr-3")));
         assert!(!sketch(&forest)
             .iter()
             .any(|line| line.contains("[HiddenTrees]")));
@@ -2606,6 +2699,7 @@ credential_command = "secret harbour"
     #[test]
     fn moving_stops_at_the_ends() {
         let mut forest = flatten(&snapshot());
+        forest.apply(Action::Move(Motion::FirstRow));
 
         assert!(!forest.apply(Action::Move(Motion::PreviousRow)));
         assert_eq!(forest.selected_line(), 0);
@@ -2624,11 +2718,11 @@ credential_command = "secret harbour"
 
         forest.apply(Action::Move(Motion::HalfScreenDown));
 
-        assert_eq!(forest.selected_line(), 3);
+        assert_eq!(forest.selected_line(), 4);
 
         forest.apply(Action::Move(Motion::HalfScreenUp));
 
-        assert_eq!(forest.selected_line(), 0);
+        assert_eq!(forest.selected_line(), 1);
     }
 
     /// A keystroke asks whether the screen moved by comparing the lines, so a
@@ -2679,65 +2773,125 @@ credential_command = "secret harbour"
         assert_eq!(sketch(&forest), before);
     }
 
+    /// The panes are the project's, not any one root's: `recovery` puts every
+    /// unattributed pane of a project on one of its trees, so a project line
+    /// is where they were always heading.
     #[test]
-    fn the_panes_of_a_tree_whose_tracker_failed_are_drawn_on_its_header() {
+    fn the_panes_of_a_project_whose_root_would_not_read_are_drawn_on_its_line() {
         let forest = flatten(&snapshot());
-        let header = header_of(&forest, "ferry");
+        let found = header_of(&forest, "ferry")
+            .recovery
+            .as_ref()
+            .expect("ferry has a root that would not read");
 
         assert_eq!(
-            header
+            found
                 .panes
                 .iter()
-                .map(|pane| pane.pane.as_str())
+                .map(|p| p.pane.as_str())
                 .collect::<Vec<_>>(),
             vec!["w:p9"]
         );
-        assert!(!header.panes_complete, "w:pF could belong here");
+        assert!(!found.complete, "w:pF could belong here");
     }
 
-    /// A tracker that did not answer is a property of the tree, so it rides
-    /// the header rather than a line under it — one place, not two.
+    /// A root that would not read says so on a line of its own under its
+    /// project. The failure is that root's and not the project's — the
+    /// project answered, and this one root did not — so it rides where the
+    /// root's row would have been rather than on the line above.
     #[test]
-    fn a_tracker_that_could_not_be_read_says_so_on_its_header_and_nowhere_else() {
+    fn a_root_that_could_not_be_read_says_so_where_its_row_would_have_been() {
         let forest = flatten(&snapshot());
-
-        assert_eq!(
-            header_of(&forest, "ferry").tracker,
-            TrackerState::Unreachable(TrackerFailure::Auth)
-        );
-        let header = forest
+        let at = forest
             .lines()
             .iter()
             .position(
-                |line| matches!(&line.content, Content::Tree(header) if header.project == "ferry"),
+                |line| matches!(&line.content, Content::Project(line) if line.project == "ferry"),
             )
-            .expect("ferry has a header");
+            .expect("ferry has a line");
 
         assert!(
-            matches!(forest.lines()[header + 1].content, Content::Group(_)),
-            "nothing is drawn under it: {:#?}",
+            matches!(
+                &forest.lines()[at + 1].content,
+                Content::Unread(unread)
+                    if unread.root == "fer-2"
+                        && unread.tracker == TrackerState::Unreachable(TrackerFailure::Auth)
+            ),
+            "{:#?}",
             sketch(&forest)
         );
     }
 
+    /// A project every one of whose roots read has nothing to recover, and
+    /// says nothing rather than saying it found no panes. A project that says
+    /// that on every healthy line buries the one where it matters.
     #[test]
-    fn a_tree_that_was_read_recovers_no_panes_and_wants_none() {
+    fn a_project_whose_roots_all_read_recovers_nothing_and_says_nothing() {
         let forest = flatten(&snapshot());
-        let header = header_of(&forest, "orbital");
 
-        assert_eq!(header.panes, Vec::new());
-        assert!(header.panes_complete);
+        assert_eq!(header_of(&forest, "orbital").recovery, None);
     }
 
-    fn header_of<'a>(forest: &'a Forest, project: &str) -> &'a Header {
+    /// The defect: a root drew as a tree header, which is not a bead row, so
+    /// nothing that reads a bead row could see the agent on it. What is the
+    /// project's — its name, and the panes recovered for it — is the project's
+    /// own line, and the root beneath it is a bead like any other.
+    #[test]
+    fn a_project_owns_its_own_line_and_its_roots_are_ordinary_bead_rows() {
+        let forest = flatten(&snapshot());
+        let lines = forest.lines();
+
+        assert!(
+            matches!(&lines[0].content, Content::Project(line) if line.project == "orbital"),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            matches!(&lines[1].content, Content::Bead(row) if row.id == "orb-7"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `bdi-2bb.25`: the root carries a pane of its own while `orb-7.4`
+    /// beneath it carries another, so a count over the subtree and the root's
+    /// own agent cannot come out the same by chance.
+    #[test]
+    fn a_staffed_root_says_what_its_agent_is_doing_like_any_other_row() {
+        let forest = flatten(&snapshot());
+
+        assert_eq!(
+            row_of(&forest, "orb-7").agent.as_deref(),
+            Some("◍ w:p1 · working")
+        );
+    }
+
+    /// A root is a bead row, so the tail reaches its pane by the road every
+    /// other bead row takes. Before this it was the one staffed row on the
+    /// screen where the tail said there was no bead to show.
+    #[test]
+    fn the_tail_follows_a_staffed_root_as_it_follows_any_other_bead() {
+        let mut forest = flatten(&snapshot());
+        forest.apply(Action::Move(Motion::FirstRow));
+        forest.apply(Action::Move(Motion::NextRow));
+
+        assert_eq!(
+            crate::view::tail::target(&forest).pane(),
+            Some("w:p1"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    fn header_of<'a>(forest: &'a Forest, project: &str) -> &'a ProjectLine {
         forest
             .lines()
             .iter()
             .find_map(|line| match &line.content {
-                Content::Tree(header) if header.project == project => Some(header),
+                Content::Project(line) if line.project == project => Some(line),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("{project} has a header"))
+            .unwrap_or_else(|| panic!("{project} has a line"))
     }
 
     /// The defect: a group's lines were drawn and could not be reached, so
@@ -3086,7 +3240,9 @@ credential_command = "secret harbour"
                     // snapshot, so there is no count for it to reach.
                     Note::NoRoots => {}
                 },
-                Content::Tree(header) => found.loose_panes += header.panes.len(),
+                Content::Project(line) => {
+                    found.loose_panes += line.recovery.as_ref().map_or(0, |r| r.panes.len());
+                }
                 Content::Group(Group { kind, count, .. }) => match kind {
                     GroupKind::Conflicts => found.conflicts += count,
                     GroupKind::FailedProjects => found.failed_projects += count,
@@ -3202,20 +3358,21 @@ credential_command = "secret harbour"
         }
     }
 
-    /// A header drawing no marker holds no fold state either. The two say the
-    /// same thing about the same line, and a line offering a fold that
-    /// nothing could act on is how the marker got there in the first place.
+    /// A root that would not read has nothing under it, so it draws no marker
+    /// and holds no fold state either. The two say the same thing about the
+    /// same line, and a line offering a fold nothing could act on is how the
+    /// marker got there in the first place.
     #[test]
-    fn a_tree_header_with_nothing_under_it_holds_no_fold_to_set() {
+    fn an_unread_root_holds_no_fold_to_set() {
         let forest = flatten(&snapshot());
         let header = forest
             .lines()
             .iter()
-            .find(|line| matches!(&line.content, Content::Tree(header) if header.root == "fer-2"))
+            .find(|line| matches!(&line.content, Content::Unread(unread) if unread.root == "fer-2"))
             .expect("the shared snapshot draws a tree whose tracker refused");
 
         assert_eq!(header.folded, None, "{:#?}", sketch(&forest));
-        assert_eq!(columns(&header.prefix), columns(OPEN));
+        assert_eq!(columns(&header.prefix), columns(&prefix(&[], true, false)));
     }
 
     // ---- a forest with nothing in it --------------------------------------
@@ -3492,6 +3649,20 @@ credential_command = "secret harbour"
 
     /// Put the selection on a bead and fold it, the way a reader would with
     /// the keys they have.
+    /// Collapse-all shuts a project like every other fold, so a test that
+    /// wants to look inside one opens it again first.
+    fn toggle_fold_of_project(forest: &mut Forest, project: &str) {
+        let at = forest
+            .lines()
+            .iter()
+            .position(
+                |line| matches!(&line.content, Content::Project(line) if line.project == project),
+            )
+            .unwrap_or_else(|| panic!("{project} is not drawn: {:#?}", sketch(forest)));
+        step_onto(forest, at);
+        forest.apply(Action::ToggleFold);
+    }
+
     fn toggle_fold_of(forest: &mut Forest, id: &str) {
         let at = *lines_of(forest, id)
             .first()
@@ -3514,6 +3685,7 @@ credential_command = "secret harbour"
         toggle_fold_of(&mut forest, "tow-1.1");
 
         forest.apply(Action::CollapseAll);
+        toggle_fold_of_project(&mut forest, "orbital");
         toggle_fold_of(&mut forest, "tow-1");
         toggle_fold_of(&mut forest, "tow-1.1");
 

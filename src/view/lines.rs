@@ -12,7 +12,6 @@ use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     Counts, FailedProject, HiddenTree, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
 };
-use crate::model::types::Status;
 use crate::view::row::{Progress, Row};
 
 /// How many finished siblings it takes before a count reads better than their
@@ -117,9 +116,13 @@ impl Line {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Content {
-    /// A root: the line a whole tree collapses to.
-    Tree(Header),
+    /// A project: the line its roots hang under, and what collapses them.
+    Project(ProjectLine),
     Bead(Row),
+    /// A root whose tree would not read. It has no nodes, so it has no row —
+    /// and without a line of its own the root would leave the screen, which
+    /// is the one way a tree can be lost silently.
+    Unread(Unread),
     /// A run of closed siblings nobody is working, said as a count.
     Elided {
         count: usize,
@@ -136,33 +139,43 @@ pub enum Content {
     Item(Item),
 }
 
-/// A tree's own line, with the panes `bdi` could recover for it where its
-/// tracker could not be read at all.
+/// A project's own line: what it is, how much of it there is, and the panes
+/// `bdi` could recover for it where a root would not read.
 ///
-/// It holds the tree's own facts rather than the tree itself: a line is
-/// compared whole on every keystroke, and none of a tree's nodes are drawn on
-/// its header.
+/// It holds the project's own facts rather than its trees: a line is compared
+/// whole on every keystroke, and none of a tree's nodes are drawn here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Header {
+pub struct ProjectLine {
     pub project: String,
-    pub root: String,
-    pub title: String,
+    /// Every bead in the project's drawn trees, counted once. A bead standing
+    /// in several of them is still one bead, which is the rule a tree's own
+    /// counts already keep.
     pub counts: Counts,
-    pub tracker: TrackerState,
-    /// The root's own status. A root is a bead like any other and a reader
-    /// asks the same question of it, but it is the one bead whose line is a
-    /// header, so its status has to be carried here to be drawn at all.
-    ///
-    /// Absent on a tree whose tracker never answered: there are no nodes, so
-    /// there is no status to show, and the header says why instead.
-    pub status: Option<Status>,
-    /// Live panes working in this project, where no bead could be read to
-    /// attribute them to. Empty on a tree that was read.
+    /// What could still be found out about a project one of whose roots would
+    /// not read. Absent where every root read: there is nothing to recover,
+    /// and saying so on every healthy project would bury the ones where it
+    /// matters.
+    pub recovery: Option<Recovery>,
+}
+
+/// The live panes found working in a project no bead could be read to
+/// attribute them to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recovery {
     pub panes: Vec<LoosePane>,
     /// Whether `panes` is all of them. A pane working under no configured
     /// project could belong here and cannot be told, so one of those anywhere
     /// leaves every recovery partial.
-    pub panes_complete: bool,
+    pub complete: bool,
+}
+
+/// A root `bdi` was told about and drew no row for, and what its tracker
+/// said. The tracker is carried rather than the failure alone so that a root
+/// missing for a reason nobody has named is still a root on the screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unread {
+    pub root: String,
+    pub tracker: TrackerState,
 }
 
 /// A finding about a tree rather than about any bead in it, or about the
@@ -259,11 +272,6 @@ pub(crate) fn marker(open: bool) -> &'static str {
         SHUT
     }
 }
-
-/// What stands where a marker would, on a line with no fold to draw one for.
-/// The column is held so the line starts where every other one of its kind
-/// does.
-pub(crate) const NO_FOLD: &str = "  ";
 
 /// Where a line sits, in four columns a level of depth. A line resting shut
 /// says so inside its own elbow, so the fold state costs no width and every

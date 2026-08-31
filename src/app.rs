@@ -1219,6 +1219,39 @@ orbital = ["orb-4"]
         snap.trees.iter().filter(|t| t.project == project).collect()
     }
 
+    /// The view draws one project line over each run of a project's trees, so
+    /// a project split across two runs would draw two lines for it and a
+    /// second run would look like a second project.
+    ///
+    /// The order is the config's because the loop is over `cfg.projects` and
+    /// not over the `BTreeMap` beside it — iterating the map would keep every
+    /// project's trees together and quietly re-order the projects themselves
+    /// into alphabetical, which nothing else on the screen would show.
+    #[test]
+    fn every_projects_trees_arrive_together_and_in_the_order_the_config_names() {
+        let snap = collect(
+            &mut Collection::default(),
+            &colliding_trackers(PANES_IN_BOTH),
+            &Wanted::Everything,
+        );
+
+        let runs: Vec<&str> = snap
+            .trees
+            .chunk_by(|a, b| a.project == b.project)
+            .map(|run| run[0].project.as_str())
+            .collect();
+
+        let distinct: BTreeSet<&str> = runs.iter().copied().collect();
+
+        assert_eq!(runs, ["orbital", "ferry"], "{:#?}", snap.trees);
+        assert_eq!(
+            runs.len(),
+            distinct.len(),
+            "a project in two runs draws two project lines: {:#?}",
+            snap.trees
+        );
+    }
+
     /// The whole of the split, and the thing it would be worst to get wrong:
     /// reading one project on its own and rebuilding everything must not be
     /// able to disagree about what is on the screen.

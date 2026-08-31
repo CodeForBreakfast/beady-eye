@@ -74,6 +74,28 @@ impl Counts {
     fn unfinished(&self) -> usize {
         self.total - self.closed
     }
+
+    /// What these beads add up to, each counted once.
+    ///
+    /// A bead drawn once for every way down to it is still one bead, and every
+    /// count here is a count of beads: a line over the rows would name more
+    /// work than the tracker holds and send a reader hunting for copies. That
+    /// holds over one tree's nodes and over a project's trees alike — a root's
+    /// dangling children stand in every tree of its project, so a project line
+    /// that added its trees' counts would name them once per tree.
+    pub fn over<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> Self {
+        let mut counted = BTreeSet::new();
+        let once: Vec<&Node> = nodes
+            .into_iter()
+            .filter(|node| counted.insert(node.id.clone()))
+            .collect();
+        Counts {
+            total: once.len(),
+            closed: once.iter().filter(|n| n.status.is_closed()).count(),
+            live_agents: once.iter().filter(|n| n.agent.is_some()).count(),
+            anomalies: once.iter().filter(|n| !n.anomalies.is_empty()).count(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -273,20 +295,7 @@ pub fn build_tree(
         })
         .collect();
 
-    // A bead drawn once for every way down to it is still one bead, and every
-    // count here is a count of beads: a header over the rows would name more
-    // work than the tracker holds and send a reader hunting for copies.
-    let mut counted = BTreeSet::new();
-    let once: Vec<&Node> = nodes
-        .iter()
-        .filter(|node| counted.insert(node.id.clone()))
-        .collect();
-    let counts = Counts {
-        total: once.len(),
-        closed: once.iter().filter(|n| n.status.is_closed()).count(),
-        live_agents: once.iter().filter(|n| n.agent.is_some()).count(),
-        anomalies: once.iter().filter(|n| !n.anomalies.is_empty()).count(),
-    };
+    let counts = Counts::over(&nodes);
 
     let root = nodes.first();
     Tree {

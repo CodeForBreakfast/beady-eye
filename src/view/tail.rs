@@ -51,8 +51,8 @@ impl Target<'_> {
 /// Two roads reach a pane. A bead's row names one only by way of the join, so
 /// it is looked up from the key; a line in one of the groups below the forest
 /// carries the pane already, because the thing it stands for is the pane. A
-/// tree's own line takes neither road: it carries its root's key, and tailing
-/// whatever happens to be on the root would answer a question nobody asked.
+/// root is a bead row and takes the first road with every other bead — a
+/// project's own line takes neither, because a project is not a bead.
 pub fn target(forest: &Forest) -> Target<'_> {
     let Some(line) = forest.lines().get(forest.selected_line()) else {
         return Target::NotABead;
@@ -64,9 +64,11 @@ pub fn target(forest: &Forest) -> Target<'_> {
             .and_then(|key| agent(forest.snapshot(), key))
             .map_or(Target::NoAgent, |agent| Target::Pane(&agent.pane)),
         Content::Item(item) => named_pane(item).map_or(Target::NotABead, Target::Pane),
-        Content::Tree(_) | Content::Elided { .. } | Content::Note(_) | Content::Group(_) => {
-            Target::NotABead
-        }
+        Content::Project(_)
+        | Content::Unread(_)
+        | Content::Elided { .. }
+        | Content::Note(_)
+        | Content::Group(_) => Target::NotABead,
     }
 }
 
@@ -296,11 +298,19 @@ mod tests {
 
     /// The forest with the selection moved down `steps` rows from the header
     /// it starts on.
+    /// Steps down from where the forest opens, which is its first root.
     fn selecting(steps: usize, herdr: HerdrState) -> Forest {
         let mut forest = forest::flatten(&snapshot(herdr));
         for _ in 0..steps {
             forest.apply(Action::Move(Motion::NextRow));
         }
+        forest
+    }
+
+    /// The one line above the first root: its project.
+    fn on_the_project(herdr: HerdrState) -> Forest {
+        let mut forest = forest::flatten(&snapshot(herdr));
+        forest.apply(Action::Move(Motion::FirstRow));
         forest
     }
 
@@ -333,17 +343,19 @@ mod tests {
         assert_eq!(*panes.asked.borrow(), ["w:p1 6"]);
     }
 
+    /// A project is not a bead, so its line names no pane. Its roots do, and
+    /// each says so on its own row.
     #[test]
-    fn a_tree_header_has_no_pane_to_tail() {
+    fn a_project_line_has_no_pane_to_tail() {
         let panes = Fake::reading(&["nothing should reach the screen"]);
 
         assert_eq!(
-            tail(&selecting(0, HerdrState::Ok), &panes, LINES),
+            tail(&on_the_project(HerdrState::Ok), &panes, LINES),
             Tail::Silent(phrase::no_bead_to_tail())
         );
         assert!(
             panes.asked.borrow().is_empty(),
-            "a header names no pane, so herdr was never asked"
+            "a project names no pane, so herdr was never asked"
         );
     }
 
