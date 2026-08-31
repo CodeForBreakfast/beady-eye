@@ -251,13 +251,27 @@ impl Tree {
         }
     }
 
+    /// What the default filter keeps: a tree somebody is working in, a tree
+    /// carrying something `bdi` has already called wrong, or a tree it could
+    /// not read.
+    ///
+    /// An anomaly counts because a claim with no pane behind it is the only
+    /// sign that work is under way, and counting agents alone loses the whole
+    /// project rather than folding it. That is the same reckoning `quiet`
+    /// makes of one bead — an agent or an anomaly is something to show — so
+    /// the fold and the filter agree about what a claim means.
+    ///
     /// A tree we could not read has no agents to count, so the filter would
     /// hide it for the one reason it must not: an unreadable tracker and a
     /// tracker with no work would look the same.
     fn survives(&self, filter: Filter) -> bool {
         match filter {
             Filter::All => true,
-            Filter::LiveAgents => self.counts.live_agents > 0 || self.tracker != TrackerState::Ok,
+            Filter::LiveAgents => {
+                self.counts.live_agents > 0
+                    || self.counts.anomalies > 0
+                    || self.tracker != TrackerState::Ok
+            }
         }
     }
 }
@@ -591,13 +605,33 @@ render = "⏸ waiting"
         built(trees, Filter::LiveAgents)
     }
 
+    /// One project's tree with nothing claimed in it: a root waiting on work
+    /// elsewhere, over open and closed tasks. No pane can be on it and no
+    /// anomaly rule can fire on it, which is the one state the default filter
+    /// folds away.
+    const UNSTAFFED: &str = r#"[
+      {"id":"orb-2","title":"quiet work","status":"blocked",
+       "priority":2,"issue_type":"epic"},
+      {"id":"orb-2.1","title":"read the almanac","status":"open",
+       "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-2.2","title":"log the pass","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"}
+    ]"#;
+
     /// A tree nobody is working in, told apart from its neighbours by its root.
     fn quiet(root: &str, title: &str) -> Tree {
-        let mut t = tree();
+        let mut t = build_tree(
+            "orbital",
+            &assembled(UNSTAFFED),
+            &Joined::default(),
+            &Readiness::default(),
+            &cfg(),
+            now(),
+        );
         t.root = root.to_string();
         t.title = title.to_string();
-        t.counts.live_agents = 0;
-        t.nodes.iter_mut().for_each(|n| n.agent = None);
         t
     }
 
@@ -622,6 +656,28 @@ render = "⏸ waiting"
         build_tree(
             "orbital",
             &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &cfg(),
+            now(),
+        )
+    }
+
+    /// One project's tree whose only activity is a bead a seat has claimed
+    /// and no pane has joined yet: `orb-4.1` is `in_progress`, freshly
+    /// touched, and named by no pane.
+    const CLAIMED_WITH_NO_PANE: &str = r#"[
+      {"id":"orb-4","title":"raise the mast","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-4.1","title":"seat the guy wires","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"}],
+       "priority":1,"issue_type":"task","updated_at":"2026-08-30T11:00:00Z"}
+    ]"#;
+
+    fn claimed_with_no_pane() -> Tree {
+        build_tree(
+            "orbital",
+            &assembled(CLAIMED_WITH_NO_PANE),
             &Joined::default(),
             &Readiness::default(),
             &cfg(),
@@ -1003,13 +1059,7 @@ render = "⏸ waiting"
 
     #[test]
     fn a_tree_with_no_live_agent_is_hidden_and_reported() {
-        let mut quiet = tree();
-        quiet.root = "orb-2".to_string();
-        quiet.title = "quiet work".to_string();
-        quiet.counts.live_agents = 0;
-        quiet.nodes.iter_mut().for_each(|n| n.agent = None);
-
-        let snap = snapshot(vec![tree(), quiet]);
+        let snap = snapshot(vec![tree(), quiet("orb-2", "quiet work")]);
 
         assert_eq!(snap.trees.len(), 1);
         assert_eq!(snap.trees[0].root, "orb-7");
@@ -1023,6 +1073,23 @@ render = "⏸ waiting"
             }],
             "a filtered tree is reported, never dropped"
         );
+    }
+
+    /// `fleet-launch` makes a pane and boots for some time before the agent
+    /// in it writes `agent_pane`, and a bead whose agent never writes the key
+    /// stays that way for good. The claim is the only sign of the work, and a
+    /// filter that hides the project loses every trace of it.
+    #[test]
+    fn a_project_whose_only_claim_has_no_pane_is_still_drawn() {
+        let snap = snapshot(vec![claimed_with_no_pane()]);
+
+        assert!(
+            snap.hidden_trees.is_empty(),
+            "a claim bdi has already called an anomaly is not nothing: {:?}",
+            snap.hidden_trees
+        );
+        assert_eq!(snap.trees.len(), 1);
+        assert_eq!(snap.trees[0].root, "orb-4");
     }
 
     #[test]

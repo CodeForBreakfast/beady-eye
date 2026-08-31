@@ -36,6 +36,27 @@ const TREE: &str = r#"[
    "closed_at":"2026-08-28T09:00:00Z"}
 ]"#;
 
+/// The same tracker with nothing claimed in it: a root waiting on work
+/// elsewhere, over open tasks and a closed one. No pane can be on it and no
+/// anomaly rule can fire on it, which is the one state the default filter
+/// folds away.
+const UNSTAFFED_TREE: &str = r#"[
+  {"id":"orb-7","title":"lift the ground station","status":"blocked",
+   "priority":1,"issue_type":"epic"},
+  {"id":"orb-7.4","title":"file the licence","status":"open",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":3,"issue_type":"chore"},
+  {"id":"orb-7.2","title":"survey the mast","status":"closed",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":2,"issue_type":"task",
+   "closed_at":"2026-08-28T09:00:00Z"}
+]"#;
+
+const UNSTAFFED_ROWS: &str = r#"[
+  {"id":"orb-7","title":"lift the ground station","status":"blocked","parent":""},
+  {"id":"orb-7.4","title":"file the licence","status":"open","parent":"orb-7"}
+]"#;
+
 /// `w:p2` names a bead that named a different pane; `w:p9` names nothing.
 const PANES: &str = r#"{"id":"cli:agent:list","result":{"agents":[
   {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"},
@@ -550,7 +571,11 @@ fn without_herdr_the_json_says_so_and_still_carries_every_tree() {
 /// A filtered tree is reported, never dropped.
 #[test]
 fn a_tree_with_no_live_agent_is_reported_and_the_flag_shows_it() {
-    let runner = canned().answering("herdr agent list", r#"{"result":{"agents":[]}}"#);
+    let runner = canned()
+        .answering("herdr agent list", r#"{"result":{"agents":[]}}"#)
+        .answering(&spelled_in(ORBITAL_DIR, UNFINISHED_CALL), UNSTAFFED_ROWS)
+        .answering(&spelled_in(ORBITAL_DIR, TRACKER_CALL), UNSTAFFED_TREE)
+        .answering(&spelled_in(ORBITAL_DIR, "blocked --json"), "[]");
 
     let filtered = emit(&runner, Filter::LiveAgents);
     assert_eq!(filtered["trees"], json!([]));

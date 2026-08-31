@@ -449,6 +449,20 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// The same tracker with nothing claimed in it: a root waiting on work
+    /// elsewhere, over open tasks. No pane can be on it and no anomaly rule
+    /// can fire on it, which is the one state the default filter folds away.
+    const UNSTAFFED_TREE: &str = r#"[
+      {"id":"orb-7","title":"lift the ground station","status":"blocked",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-7.1","title":"re-point the dish","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// A second root, reached only because config names it.
     const MAST_TREE: &str = r#"[
       {"id":"orb-4","title":"survey the mast","status":"open",
@@ -1162,7 +1176,19 @@ orbital = ["orb-4"]
 
     #[test]
     fn a_tree_with_no_live_agent_is_reported_rather_than_dropped() {
-        let runner = orbital().with("herdr agent list", r#"{"result":{"agents":[]}}"#);
+        let runner = orbital()
+            .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
+            .with(
+                &spelled(UNFINISHED_CALL),
+                r#"[{"id":"orb-7","title":"lift the ground station","status":"blocked","parent":""},
+                    {"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7"},
+                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
+            )
+            .with(&spelled(TRACKER_CALL), UNSTAFFED_TREE)
+            .with(
+                &spelled("blocked --json"),
+                r#"[{"id":"orb-7","blocked_by":["orb-9"]}]"#,
+            );
 
         let filtered = run(&one_project(), &runner, Filter::LiveAgents, now());
         assert!(filtered.trees.is_empty());

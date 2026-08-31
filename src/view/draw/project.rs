@@ -120,7 +120,8 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use crate::model::snapshot::{HerdrState, LoosePane, TrackerFailure};
+    use crate::model::anomaly::Anomaly;
+    use crate::model::snapshot::{HerdrState, LoosePane, Node, TrackerFailure};
     use crate::model::types::{PaneStatus, Status};
     use crate::view::draw::tone::status_colour;
     use crate::view::draw::{fitted, tests::*};
@@ -179,6 +180,26 @@ mod tests {
         let drawn = drawn(project_line(&project("homelab", counts), SHUT), 40, 1);
 
         assert!(drawn[0].ends_with("2/7  1 agent"), "{drawn:?}");
+    }
+
+    /// `bdi-2bb.36`: the filter counts anomalies so a project whose only claim
+    /// has no pane still draws, and this is the line that must not pay for it.
+    /// `live_agents` is the number the header speaks for, so it is counted
+    /// here rather than written down: a fix that widened it to save the
+    /// project would put "1 agent" over a project nobody is in.
+    #[test]
+    fn a_project_whose_only_claim_has_no_pane_wears_the_warning_and_claims_no_agent() {
+        let claimed = Node {
+            status: Status::InProgress,
+            anomalies: vec![Anomaly::OrphanClaim { refused: None }],
+            ..node("orb-4.1", "seat the guy wires", Status::InProgress)
+        };
+        let counts = Counts::over(&[claimed]);
+
+        let drawn = drawn(project_line(&project("orbital", counts), OPEN), 40, 1);
+
+        says(&drawn[0], &format!("{WARNING} 1"));
+        does_not_say(&drawn[0], "agent");
     }
 
     /// Narrower than the identity itself there is nothing left to protect, and
