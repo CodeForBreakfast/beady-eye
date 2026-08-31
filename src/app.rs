@@ -1,3 +1,7 @@
+//! One run's reading of every project's tracker: the standing cache of what
+//! each tracker last said, and the policy deciding what a collection goes
+//! back for.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};

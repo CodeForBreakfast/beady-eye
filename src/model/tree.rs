@@ -1,3 +1,7 @@
+//! What nests what, in one answer's worth of bd rows: the tree a root draws,
+//! the beads no edge places, and where a tree that reaches one of those has
+//! to start.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::bail;

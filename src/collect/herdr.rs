@@ -1,3 +1,6 @@
+//! Everything `bdi` asks herdr: the panes on this machine, what one of them
+//! last drew, and putting the user in front of it.
+
 use serde::Deserialize;
 
 use crate::collect::run::{Env, RunFailure, Runner};

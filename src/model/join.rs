@@ -1,3 +1,6 @@
+//! Which pane is working which bead, and where the two directions of that
+//! question disagree.
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 

@@ -1,3 +1,6 @@
+//! What a setup tells `bdi`: the shape of the config file, what each setting
+//! means, and what `bdi` refuses to read.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;

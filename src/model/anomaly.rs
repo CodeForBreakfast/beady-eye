@@ -1,3 +1,5 @@
+//! The rules that say a bead's claim and the pane behind it have come apart.
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 

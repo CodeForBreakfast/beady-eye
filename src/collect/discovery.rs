@@ -1,3 +1,7 @@
+//! The parts of a configuration `bdi` measures rather than being told: the
+//! project the current directory sits in, where no config names one, and the
+//! working trees git lists for each project a config does name.
+
 use std::path::{Path, PathBuf};
 
 use crate::collect::run::{Env, FailureKind, Runner};

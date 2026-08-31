@@ -1,3 +1,6 @@
+//! What one collection saw, as the view is handed it: the trees it drew,
+//! and everything it could not.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};

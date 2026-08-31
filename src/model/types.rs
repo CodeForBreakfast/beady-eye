@@ -1,3 +1,5 @@
+//! The rows bd and herdr write, as `bdi` holds them.
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

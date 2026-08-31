@@ -1,3 +1,10 @@
+//! Everything `bdi` asks `bd`, and the environment each project's tracker is
+//! asked in.
+//!
+//! The questions are one per thing the model needs — a project's rows, the
+//! roots to draw them under, what is ready, what blocks what — and each
+//! answers in bd's own JSON, parsed here and nowhere else.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

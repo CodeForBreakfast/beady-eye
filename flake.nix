@@ -329,6 +329,60 @@
           touch $out
         '';
 
+        # A module that never says what it is for is where a second concern
+        # moves in unnoticed, so the sentence is what this holds each module
+        # to. Nothing stock asks for it: `missing_docs` fires on public items
+        # rather than on modules, and under the `testing` feature the module
+        # set itself changes.
+        modulesStateTheirConcern = pkgs.writeShellScriptBin "modules-state-their-concern" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+
+          silent="$(find src -name '*.rs' | sort | while IFS= read -r module; do
+            head -n 1 "$module" | grep -q '^//!' || printf '  %s\n' "$module"
+          done)"
+
+          if [ -n "$silent" ]; then
+            echo "These modules do not open by saying what they are for:"
+            printf '%s\n' "$silent"
+            echo
+            echo "Give each a //! on its first line, naming the one concern it holds."
+            exit 1
+          fi
+        '';
+
+        # Every module in this tree already speaks, so the check above passes
+        # whether or not it can still find a silent one. This is what says it
+        # can.
+        modulesStateTheirConcernTest = pkgs.runCommand "modules-state-their-concern-test"
+          { nativeBuildInputs = [ modulesStateTheirConcern ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree/src/layer"
+          printf '//! What this one is for.\n\nfn spoken() {}\n' > "$tree/src/spoken.rs"
+          printf '/// Not the module, only the item.\nfn quiet() {}\n' > "$tree/src/layer/silent.rs"
+
+          output="$( modules-state-their-concern "$tree" 2>&1 )" && status=0 || status=$?
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+          [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status:"
+          case "$output" in
+            *src/layer/silent.rs*) ;;
+            *) fail "the refusal did not name the silent module:" ;;
+          esac
+          case "$output" in
+            *spoken.rs*) fail "it named a module that does say what it is for:" ;;
+          esac
+
+          printf '//! What this one is for.\n' > "$tree/src/layer/silent.rs"
+          modules-state-their-concern "$tree" ||
+            fail "it refused a tree in which every module speaks:"
+
+          touch $out
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -428,6 +482,9 @@
           # build without them sees the narrow surface. See src/lib.rs.
           dead-code = checkOf "dead-code" [ pkgs.clippy ] "cargo clippy -- -D warnings";
           fmt = checkOf "fmt" [ pkgs.rustfmt ] "cargo fmt --check";
+          module-concerns = checkOf "module-concerns" [ modulesStateTheirConcern ]
+            "modules-state-their-concern";
+          module-concerns-test = modulesStateTheirConcernTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
           # and builds that tarball rather than the working tree. A crate that

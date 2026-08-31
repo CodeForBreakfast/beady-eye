@@ -1,3 +1,6 @@
+//! The boundary every subprocess crosses: what a child is told, what it
+//! answers with, and why a run that gave nothing usable did not.
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;

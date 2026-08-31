@@ -1,3 +1,6 @@
+//! What `bdi` does when it is run: the arguments it takes, the config those
+//! arguments resolve against, and whether the snapshot is drawn or printed.
+
 use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
