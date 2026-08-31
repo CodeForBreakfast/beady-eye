@@ -583,21 +583,38 @@ mod tests {
         }
     }
 
+    /// How many lines are on screen, which is what every loop below counts
+    /// out: a walk from the top reaches any row in at most that many presses,
+    /// and there is at most one group to open per line.
+    ///
+    /// They count rather than stopping when `apply` reports the screen no
+    /// longer moves, because a mutation can leave it moving honestly and
+    /// forever — `group_drawn -> false` puts the selection back on the first
+    /// line at every redraw. A loop waiting on `apply` then never ends, and
+    /// cargo-mutants scores the hang as a timeout, which reads exactly like a
+    /// mutant that does not terminate in production.
+    fn drawn_lines(forest: &Forest) -> usize {
+        forest.lines().len()
+    }
+
     /// That forest with every group open, as a reader who pressed the key on
     /// each of them in turn would have it.
     fn with_groups_open(herdr: HerdrState) -> Forest {
         let mut forest = forest::flatten(&snapshot_with_groups(herdr));
-        while let Some(shut) = forest.lines().iter().find_map(|line| match &line.content {
-            Content::Group(group) if line.folded == Some(false) => Some(group.kind),
-            _ => None,
-        }) {
+        for _ in 0..drawn_lines(&forest) {
+            let Some(shut) = forest.lines().iter().find_map(|line| match &line.content {
+                Content::Group(group) if line.folded == Some(false) => Some(group.kind),
+                _ => None,
+            }) else {
+                return forest;
+            };
             step_onto(
                 &mut forest,
                 |content| matches!(content, Content::Group(group) if group.kind == shut),
             );
             forest.apply(Action::ExpandOrChild);
         }
-        forest
+        panic!("a group was still shut after the key was pressed on it");
     }
 
     /// Move the selection down to the row `wanted` picks out, by pressing
@@ -609,12 +626,13 @@ mod tests {
     /// number.
     fn step_onto(forest: &mut Forest, wanted: impl Fn(&Content) -> bool) {
         forest.apply(Action::Move(Motion::FirstRow));
-        while !wanted(&forest.lines()[forest.selected_line()].content) {
-            assert!(
-                forest.apply(Action::Move(Motion::NextRow)),
-                "pressing down from the top never reached the row"
-            );
+        for _ in 0..drawn_lines(forest) {
+            if wanted(&forest.lines()[forest.selected_line()].content) {
+                return;
+            }
+            forest.apply(Action::Move(Motion::NextRow));
         }
+        panic!("pressing down from the top never reached the row");
     }
 
     fn onto(wanted: &Item) -> impl Fn(&Content) -> bool + use<'_> {
@@ -636,11 +654,12 @@ mod tests {
     fn rows(herdr: HerdrState) -> usize {
         let mut forest = with_groups_open(herdr);
         forest.apply(Action::Move(Motion::FirstRow));
-        let mut rows = 1;
-        while forest.apply(Action::Move(Motion::NextRow)) {
-            rows += 1;
+        for rows in 1..=drawn_lines(&forest) {
+            if !forest.apply(Action::Move(Motion::NextRow)) {
+                return rows;
+            }
         }
-        rows
+        panic!("pressing down from the top never reached the last row");
     }
 
     /// One line of every kind that names a pane no bead holds. Each is a live
