@@ -151,6 +151,7 @@ pub struct FailedProject {
 pub struct Collected {
     pub trees: Vec<Tree>,
     pub failed_projects: Vec<FailedProject>,
+    pub read_at: BTreeMap<String, DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -200,6 +201,16 @@ pub struct Snapshot {
     /// trackers again. Not part of the JSON contract.
     #[serde(skip)]
     pub collected: Vec<Tree>,
+    /// When each configured project's tracker was last read.
+    ///
+    /// Not `generated_at`, which is when the snapshot was drawn. A refresh
+    /// naming one project draws every project, and the ones it did not read
+    /// keep the rows of whatever read last touched them — so one time for the
+    /// whole snapshot would date those rows to a read that never saw them.
+    /// Not part of the JSON contract: `--json` is one whole collection and
+    /// nothing else, so `generated_at` answers this for a consumer.
+    #[serde(skip)]
+    pub read_at: BTreeMap<String, DateTime<Utc>>,
 }
 
 impl Snapshot {
@@ -393,6 +404,7 @@ pub fn build(
     let Collected {
         mut trees,
         failed_projects,
+        read_at,
     } = collected;
     in_flight_first(&mut trees);
     let (shown, hidden) = partition(&trees, herdr, filter);
@@ -426,6 +438,7 @@ pub fn build(
         unconfigured,
         conflicts: joined.conflicts.clone(),
         collected: trees,
+        read_at,
     }
 }
 
@@ -1164,6 +1177,7 @@ render = "⏸ waiting"
             Collected {
                 trees: Vec::new(),
                 failed_projects: failed.clone(),
+                ..Default::default()
             },
             &[],
             &Joined::default(),
@@ -1215,6 +1229,7 @@ render = "⏸ waiting"
                     project: "orbital".to_string(),
                     tracker: TrackerFailure::Parse,
                 }],
+                ..Default::default()
             },
             &[],
             &Joined::default(),

@@ -11,12 +11,14 @@
 //! that can settle the finding. The last two are quoted, so they read as
 //! somebody else's words rather than as `bdi`'s.
 
+use chrono::Local;
+
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::types::{PaneStatus, Status};
-use crate::view::Notice;
+use crate::view::{Freshness, Notice};
 
 pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     match failure {
@@ -36,6 +38,21 @@ pub fn notice(notice: Notice) -> &'static str {
         Notice::NoHerdr => "no herdr session · which agents are alive is unknown",
         Notice::NoInboundChannel => {
             "nothing can tell bdi a project changed · every project is polled instead"
+        }
+    }
+}
+
+/// How fresh the rows on the screen are.
+///
+/// The clock is the reader's own rather than the model's UTC: the question it
+/// answers is asked against the clock beside them, and an hour's offset would
+/// make a fresh view read as a stale one. To the second, because a refresh
+/// interval is measured in tens of them.
+pub fn freshness(freshness: Freshness) -> String {
+    match freshness {
+        Freshness::Collecting => "collecting".to_string(),
+        Freshness::Collected(at) => {
+            format!("collected {}", at.with_timezone(&Local).format("%H:%M:%S"))
         }
     }
 }
@@ -472,7 +489,51 @@ mod tests {
             said.extend(join_caveat(source).map(str::to_string));
         }
 
+        for how_fresh in [Freshness::Collecting, Freshness::Collected(an_instant())] {
+            said.push(freshness(how_fresh));
+        }
+
         said
+    }
+
+    fn an_instant() -> chrono::DateTime<chrono::Utc> {
+        use chrono::TimeZone;
+        chrono::Utc
+            .with_ymd_and_hms(2026, 8, 30, 10, 22, 14)
+            .unwrap()
+    }
+
+    /// The zone itself is the reader's and is deliberately not pinned: a test
+    /// asserting one would only pass in the zone it was written in, and CI
+    /// runs in another. What is pinned is that the clock is this instant's,
+    /// drawn to the second — the seconds survive every offset there is.
+    #[test]
+    fn a_collected_time_is_this_instants_clock_to_the_second() {
+        let said = freshness(Freshness::Collected(an_instant()));
+
+        let clock = said
+            .strip_prefix("collected ")
+            .unwrap_or_else(|| panic!("{said} names what the time is"));
+        assert_eq!(clock.len(), 8, "{said}");
+        assert!(clock.ends_with(":14"), "{said}");
+    }
+
+    /// An hour later is an hour later in every zone there is, so this pins
+    /// that the clock tracks the instant rather than being drawn from
+    /// anything else.
+    #[test]
+    fn an_hour_later_reads_an_hour_later() {
+        let hour = |said: String| said[10..12].to_string();
+
+        let first = hour(freshness(Freshness::Collected(an_instant())));
+        let next = hour(freshness(Freshness::Collected(
+            an_instant() + chrono::Duration::hours(1),
+        )));
+
+        assert_eq!(
+            (first.parse::<u32>().expect("two digits") + 1) % 24,
+            next.parse::<u32>().expect("two digits")
+        );
     }
 
     /// The collector's own account of a command that failed with `text`.

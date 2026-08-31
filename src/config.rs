@@ -84,18 +84,19 @@ pub struct Join {
 #[serde(default)]
 pub struct Tui {
     /// How long the fallback timer waits between collections, for the
-    /// projects nothing else reports changes for. A collection is dozens of
-    /// remote round trips per project, so this is measured in seconds.
+    /// projects nothing else reports changes for. A collection is several
+    /// `bd` subprocesses against each tracker's server, per instance
+    /// running, so this is measured in seconds.
     ///
-    /// The default is roughly three times what a collection costs, so a
-    /// `bdi` nothing reports to spends about a third of its time collecting:
-    /// dozens of queries against each tracker's server, for as long as it is
-    /// open, per instance running. Measured against one Dolt-backed tracker
-    /// of a hundred open beads, a whole collection took 9.4 to 11.2 seconds,
-    /// of which 5.2 to 6.3 was the one `bd dep tree` over the largest tree.
-    /// The cost follows the size of the biggest tree rather than the number
-    /// of them, so a config drawing two efforts that size collects most of
-    /// the time and wants a longer interval than this one.
+    /// Measured at `40f4eb5` against Dolt-backed trackers, one of 129 beads
+    /// and one larger: 1.1 to 1.5 seconds for the small one alone, 2.3 to
+    /// 2.4 for the larger alone, 3.5 to 4.1 for both together.
+    ///
+    /// Most of that is fixed per project rather than per row — a project
+    /// costs seven-plus processes before its rows are read at all — so the
+    /// cost follows the number of projects configured as much as the size of
+    /// any one tracker, and a config naming twice as many wants a longer
+    /// interval than this one.
     ///
     /// Setting it below a collection is allowed and is bounded. Collections
     /// never overlap: one runs, at most one waits behind it, and every

@@ -1150,6 +1150,7 @@ mod tests {
             Collected {
                 trees: vec![tree],
                 failed_projects: Vec::new(),
+                ..Default::default()
             },
             &panes,
             &joined,
@@ -1322,10 +1323,15 @@ credential_command = "secret harbour"
         let harbour = assembled(HARBOUR);
         let panes = panes();
         let joined = joined(&orbital, &harbour, &panes);
+        let read_at = trees
+            .iter()
+            .map(|tree| (tree.project.clone(), now()))
+            .collect();
         snapshot::build(
             Collected {
                 trees,
                 failed_projects: failed,
+                read_at,
             },
             &panes,
             &joined,
@@ -1615,6 +1621,7 @@ credential_command = "secret harbour"
             Collected {
                 trees: vec![tree],
                 failed_projects: Vec::new(),
+                ..Default::default()
             },
             panes,
             &joined,
@@ -1821,6 +1828,7 @@ credential_command = "secret harbour"
             Collected {
                 trees: vec![tree(&quarry), tree(&wharf)],
                 failed_projects: Vec::new(),
+                ..Default::default()
             },
             panes,
             &joined,
@@ -3109,6 +3117,7 @@ credential_command = "secret harbour"
             Collected {
                 trees: vec![tree_of("orbital", ORBITAL)],
                 failed_projects: Vec::new(),
+                ..Default::default()
             },
             &[],
             &Joined {
@@ -3514,6 +3523,7 @@ credential_command = "secret harbour"
                     Collected {
                         trees: vec![tree_of("orbital", ORBITAL)],
                         failed_projects: Vec::new(),
+                        ..Default::default()
                     },
                     &[],
                 ),
@@ -3524,6 +3534,7 @@ credential_command = "secret harbour"
                     Collected {
                         trees: vec![tree_of("harbour", HARBOUR)],
                         failed_projects: Vec::new(),
+                        ..Default::default()
                     },
                     &[],
                 ),
@@ -3537,6 +3548,7 @@ credential_command = "secret harbour"
                             project: "lunar".into(),
                             tracker: TrackerFailure::Exec,
                         }],
+                        ..Default::default()
                     },
                     &[],
                 ),

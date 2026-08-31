@@ -34,6 +34,8 @@ pub struct Fitted {
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
     whole: Style,
+    /// Whether the title is given up whole rather than cut.
+    title_or_nothing: bool,
 }
 
 impl Fitted {
@@ -47,7 +49,19 @@ impl Fitted {
             title,
             state,
             whole: Style::new(),
+            title_or_nothing: false,
         }
+    }
+
+    /// Give the title up whole rather than cut it.
+    ///
+    /// For a title that says nothing in part. A clock cut to `collected 1…`
+    /// names no time, so the columns it kept are spent saying that a time
+    /// exists — which the reader could already see.
+    #[must_use]
+    pub(crate) fn title_or_nothing(mut self) -> Self {
+        self.title_or_nothing = true;
+        self
     }
 
     /// The row under the cursor, drawn so the eye finds it without reading it.
@@ -82,7 +96,12 @@ impl Widget for Fitted {
             let mut room = width - identity;
             let state = cut_to(self.state, room.saturating_sub(GAP));
             room -= columns(&state) + if state.is_empty() { 0 } else { GAP };
-            let title = cut_to(self.title, room.saturating_sub(GAP));
+            let room_for_title = room.saturating_sub(GAP);
+            let title = if self.title_or_nothing && columns(&self.title) > room_for_title {
+                Vec::new()
+            } else {
+                cut_to(self.title, room_for_title)
+            };
 
             let mut spans = self.identity;
             if !title.is_empty() {
@@ -175,6 +194,43 @@ mod tests {
 
     fn blank(width: usize, height: usize) -> Vec<String> {
         vec![" ".repeat(width); height]
+    }
+
+    /// One row of what a widget puts on screen.
+    fn drawn(row: Fitted, width: u16) -> String {
+        let mut buf = Buffer::empty(Rect::new(0, 0, width, 1));
+        row.render(Rect::new(0, 0, width, 1), &mut buf);
+        rows(&buf).remove(0)
+    }
+
+    /// A title cut in half can still be worth its columns — half a bead's
+    /// title names the bead. A title that cannot is drawn whole or not at
+    /// all, and the columns go to the blocks that can use them.
+    #[test]
+    fn a_title_that_says_nothing_in_part_is_given_up_whole() {
+        let row = || {
+            Fitted::new(
+                vec![Span::raw("orb-7")],
+                vec![Span::raw("collected 10:22:14")],
+                vec![Span::raw("open")],
+            )
+            .title_or_nothing()
+        };
+
+        assert_eq!(drawn(row(), 31), "orb-7  collected 10:22:14  open");
+        assert_eq!(drawn(row(), 30), "orb-7                     open");
+    }
+
+    /// Only where it is asked for. Every other row keeps the cut it had.
+    #[test]
+    fn a_title_is_cut_like_any_other_block_unless_it_asks_not_to_be() {
+        let row = Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![Span::raw("collected 10:22:14")],
+            vec![Span::raw("open")],
+        );
+
+        assert_eq!(drawn(row, 30), "orb-7  collected 10:22:…  open");
     }
 
     /// A band of no rows is a band that was not asked for. Nothing on screen

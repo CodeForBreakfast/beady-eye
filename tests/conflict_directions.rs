@@ -136,6 +136,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
             })
             .collect(),
         failed_projects: Vec::new(),
+        ..Default::default()
     };
 
     Reading {

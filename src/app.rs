@@ -18,6 +18,17 @@ struct ProjectWork {
     roots: Vec<(String, Result<Assembled, TrackerFailure>)>,
 }
 
+/// What one project's tracker last said, and when it said it.
+///
+/// The time belongs to the read rather than to the collection that drew it:
+/// a collection naming one project leaves every other project's `Read`
+/// untouched, which is how a snapshot can say how fresh each project is
+/// rather than only when it was assembled.
+struct Read {
+    at: DateTime<Utc>,
+    work: Result<ProjectWork, TrackerFailure>,
+}
+
 /// What a collection is asked to read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Wanted {
@@ -28,7 +39,13 @@ pub enum Wanted {
 }
 
 impl Wanted {
-    fn names(&self, project: &str) -> bool {
+    /// Whether a collection asked for this names one project.
+    ///
+    /// Public because the screen asks it too: what a project line says is
+    /// being read now is decided by the very predicate the collector decides
+    /// what to read with, so the two agree by construction rather than by
+    /// argument.
+    pub fn names(&self, project: &str) -> bool {
         match self {
             Wanted::Everything => true,
             Wanted::Project(named) => named == project,
@@ -46,7 +63,7 @@ impl Wanted {
 /// argument.
 #[derive(Default)]
 pub struct Collection {
-    read: BTreeMap<String, Result<ProjectWork, TrackerFailure>>,
+    read: BTreeMap<String, Read>,
 }
 
 impl Collection {
@@ -72,9 +89,10 @@ impl Collection {
         };
 
         for project in cfg.projects.iter().filter(|p| wanted.names(&p.name)) {
-            let read = read_project(runner, project, cfg, &panes)
+            let work = read_project(runner, project, cfg, &panes)
                 .map_err(|failure| tracker_failure(failure.kind));
-            self.read.insert(project.name.clone(), read);
+            self.read
+                .insert(project.name.clone(), Read { at: now, work });
         }
 
         self.draw(cfg, &panes, herdr_state, filter, now)
@@ -121,17 +139,23 @@ impl Collection {
         let failed_projects = self
             .standing(cfg)
             .filter_map(|(project, read)| {
-                read.as_ref().err().map(|failure| FailedProject {
+                read.work.as_ref().err().map(|failure| FailedProject {
                     project: project.to_string(),
                     tracker: *failure,
                 })
             })
             .collect();
 
+        let read_at = self
+            .standing(cfg)
+            .map(|(project, read)| (project.to_string(), read.at))
+            .collect();
+
         snapshot::build(
             Collected {
                 trees,
                 failed_projects,
+                read_at,
             },
             panes,
             joined,
@@ -145,10 +169,7 @@ impl Collection {
     /// What has been read, in the order the config names the projects. The
     /// order a snapshot draws in belongs to the config, not to how a
     /// collection happened to store what it read.
-    fn standing<'a>(
-        &'a self,
-        cfg: &'a Config,
-    ) -> impl Iterator<Item = (&'a str, &'a Result<ProjectWork, TrackerFailure>)> {
+    fn standing<'a>(&'a self, cfg: &'a Config) -> impl Iterator<Item = (&'a str, &'a Read)> {
         cfg.projects
             .iter()
             .filter_map(|p| Some((p.name.as_str(), self.read.get(&p.name)?)))
@@ -160,7 +181,7 @@ impl Collection {
         cfg: &'a Config,
     ) -> impl Iterator<Item = (&'a str, &'a ProjectWork)> {
         self.standing(cfg)
-            .filter_map(|(project, read)| Some((project, read.as_ref().ok()?)))
+            .filter_map(|(project, read)| Some((project, read.work.as_ref().ok()?)))
     }
 }
 
@@ -1357,6 +1378,67 @@ orbital = ["orb-4"]
             node(tree_of(&after, "ferry"), "x-1.1").agent.is_some(),
             "the pane reached the project the refresh did not name"
         );
+    }
+
+    /// `generated_at` is when a snapshot was drawn, and a refresh naming one
+    /// project draws every project — including the ones it did not read. So
+    /// the freshness of a project's rows is its own fact, and reading it off
+    /// the snapshot's own clock would date rows nothing touched to a read
+    /// that never happened.
+    #[test]
+    fn a_refresh_naming_one_project_dates_that_project_and_leaves_the_rest_alone() {
+        let runner = colliding_trackers(PANES_IN_BOTH);
+        let mut standing = Collection::default();
+        let cfg = two_projects();
+        let earlier = now();
+        let later = earlier + chrono::Duration::seconds(30);
+
+        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, earlier);
+        let after = standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, later);
+
+        assert_eq!(
+            after.read_at,
+            BTreeMap::from([
+                ("orbital".to_string(), later),
+                ("ferry".to_string(), earlier),
+            ]),
+            "only the project the refresh named was read again"
+        );
+        assert_eq!(
+            after.generated_at, later,
+            "the snapshot is still drawn at the later instant"
+        );
+    }
+
+    /// A read that failed is stamped like any other, because a tracker that
+    /// refused takes its trees down with it — `after` has no rows of
+    /// orbital's left to be stale. Keeping the last read that *worked* would
+    /// drag the whole view's freshness back to it over rows nothing on the
+    /// screen came from, which is the same false claim as `generated_at` in
+    /// the other direction.
+    #[test]
+    fn a_read_that_failed_is_still_dated_by_the_attempt_that_failed() {
+        let mut standing = Collection::default();
+        let cfg = two_projects();
+        let earlier = now();
+        let later = earlier + chrono::Duration::seconds(30);
+        standing.collect(
+            &cfg,
+            &colliding_trackers(PANES_IN_BOTH),
+            &Wanted::Everything,
+            Filter::All,
+            earlier,
+        );
+
+        let refused = colliding_trackers(PANES_IN_BOTH)
+            .failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
+        let after = standing.collect(&cfg, &refused, &orbital_alone(), Filter::All, later);
+
+        assert!(
+            trees_of(&after, "orbital").is_empty(),
+            "nothing orbital's earlier read produced is still drawn"
+        );
+        assert_eq!(after.read_at["orbital"], later);
     }
 
     fn colliding_trackers(panes: &str) -> FakeRunner {

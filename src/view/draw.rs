@@ -15,7 +15,7 @@ use crate::view::lines::{
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 use crate::view::tail::{self, Tail};
-use crate::view::Notice;
+use crate::view::{Freshness, Notice};
 
 /// What the rule above the tail is drawn from.
 const RULE: char = '─';
@@ -51,7 +51,14 @@ const STAFFED: Color = Color::White;
 ///
 /// `keys` arrives already named. What a key is called belongs with the
 /// mapping that answers it, and this file has never known one.
-pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest, at_startup: &[Notice], keys: &str) {
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    forest: &Forest,
+    at_startup: &[Notice],
+    collecting: bool,
+    keys: &str,
+) {
     let bands = regions(area);
     let lines = forest.lines();
     let selected = forest.selected_line();
@@ -82,7 +89,11 @@ pub fn draw(frame: &mut Frame, area: Rect, forest: &Forest, at_startup: &[Notice
     }
 
     frame.render_widget(
-        status_bar(&notices(forest.snapshot().herdr, at_startup), keys),
+        status_bar(
+            &notices(forest.snapshot().herdr, at_startup),
+            Freshness::of(&forest.snapshot().read_at, collecting),
+            keys,
+        ),
         bands.keys,
     );
 }
@@ -604,8 +615,8 @@ pub fn line_at(forest: Rect, selected: usize, lines: usize, row: u16) -> Option<
     (at < lines).then_some(at)
 }
 
-/// The row at the foot of the screen: the keys, and every notice the view
-/// carries.
+/// The row at the foot of the screen: the keys, every notice the view
+/// carries, and how fresh what is above it is.
 ///
 /// The notices are drawn first and yield last: keys can be rediscovered, and
 /// a fact that is silently absent from the one row a reader can neither fold
@@ -613,13 +624,32 @@ pub fn line_at(forest: Rect, selected: usize, lines: usize, row: u16) -> Option<
 /// too narrow even for those, they yield from the end, so the caller's order
 /// is the order they are given up in.
 ///
+/// How fresh the view is follows whatever the row leads with — the notices
+/// where there are any, the keys where there are none — and yields before
+/// either of them. A notice is something to act on and the keys are the
+/// row's own subject; a clock is what a reader checks those against, so a
+/// screen with no room for it has spent the columns on the more useful
+/// things.
+///
 /// Nothing here knows what produced a notice. That is the point: a snapshot
 /// and this process both reach the screen through the same list, and the next
 /// thing that has something to say joins them by being one.
-pub fn status_bar(notices: &[Notice], keys: &str) -> Fitted {
+pub fn status_bar(notices: &[Notice], how_fresh: Option<Freshness>, keys: &str) -> Fitted {
     let keys = Span::raw(keys.to_string());
+    // Drawn plain and dim: it is what a reader glances at to place the rest,
+    // not one of the things the rest is asking them to look at.
+    let how_fresh = how_fresh
+        .map(|how_fresh| {
+            Span::styled(
+                phrase::freshness(how_fresh),
+                Style::new().fg(Color::DarkGray),
+            )
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+
     if notices.is_empty() {
-        return Fitted::new(vec![keys], Vec::new(), Vec::new());
+        return Fitted::new(vec![keys], how_fresh, Vec::new()).title_or_nothing();
     }
 
     let said = notices
@@ -630,9 +660,10 @@ pub fn status_bar(notices: &[Notice], keys: &str) -> Fitted {
 
     Fitted::new(
         vec![Span::styled(said, Style::new().fg(LOOK_AT_THIS))],
-        Vec::new(),
+        how_fresh,
         vec![keys],
     )
+    .title_or_nothing()
 }
 
 #[cfg(test)]
@@ -642,6 +673,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::widgets::Widget;
     use ratatui::Terminal;
+    use std::collections::BTreeMap;
 
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{AgentRef, Badged, BeadKey, JoinSource};
@@ -651,7 +683,7 @@ mod tests {
     use crate::model::types::PaneStatus;
     use crate::view::forest::flatten;
     use crate::view::{Action, Motion};
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
 
     const OPEN: &str = "▾ ";
     const SHUT: &str = "▸ ";
@@ -1655,7 +1687,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = drawn(status_bar(&[], A_KEY_ROW), 60, 1);
+        let drawn = drawn(status_bar(&[], None, A_KEY_ROW), 60, 1);
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -1666,7 +1698,7 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW), 90, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW), 90, 1);
 
         assert!(
             drawn[0].contains(phrase::notice(Notice::NoHerdr)),
@@ -1680,7 +1712,11 @@ mod tests {
     /// show that — no row is wrong — so the foot is the only place it can go.
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
-        let drawn = drawn(status_bar(&[Notice::NoInboundChannel], A_KEY_ROW), 90, 1);
+        let drawn = drawn(
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW),
+            90,
+            1,
+        );
 
         assert!(
             drawn[0].contains(phrase::notice(Notice::NoInboundChannel)),
@@ -1694,7 +1730,11 @@ mod tests {
     #[test]
     fn a_foot_with_room_says_every_notice_it_is_given() {
         let drawn = drawn(
-            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW),
+            status_bar(
+                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                None,
+                A_KEY_ROW,
+            ),
             200,
             1,
         );
@@ -1709,7 +1749,11 @@ mod tests {
     #[test]
     fn a_narrow_foot_gives_up_the_last_notice_first() {
         let drawn = drawn(
-            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW),
+            status_bar(
+                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                None,
+                A_KEY_ROW,
+            ),
             60,
             1,
         );
@@ -1721,6 +1765,97 @@ mod tests {
         assert!(
             !drawn[0].contains(phrase::notice(Notice::NoInboundChannel)),
             "{drawn:?}"
+        );
+    }
+
+    // ---- how fresh the screen is ------------------------------------------
+
+    /// The bead's second half: a refresh the timer started changes rows under
+    /// a reader with nothing to mark that it did. The foot is where a fact
+    /// about the whole view goes, and it is the row that cannot be scrolled
+    /// away from.
+    #[test]
+    fn the_foot_says_when_what_is_on_the_screen_was_collected() {
+        let at = Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap();
+
+        let drawn = drawn(
+            status_bar(&[], Some(Freshness::Collected(at)), A_KEY_ROW),
+            90,
+            1,
+        );
+
+        assert!(
+            drawn[0].contains(&phrase::freshness(Freshness::Collected(at))),
+            "{drawn:?}"
+        );
+    }
+
+    /// The bead's first half. `^R` and the timer both start a collection that
+    /// takes seconds, and until this the screen was byte-identical for every
+    /// one of them.
+    #[test]
+    fn the_foot_says_while_a_collection_is_running() {
+        let drawn = drawn(
+            status_bar(&[], Some(Freshness::Collecting), A_KEY_ROW),
+            90,
+            1,
+        );
+
+        assert!(
+            drawn[0].contains(&phrase::freshness(Freshness::Collecting)),
+            "{drawn:?}"
+        );
+    }
+
+    /// A notice is something a reader must act on and the keys are the row's
+    /// own subject; a clock is what they check those against. So the clock is
+    /// the first of the three a narrowing screen gives up, before the foot
+    /// starts cutting the keys as it already did.
+    #[test]
+    fn a_narrow_foot_gives_up_the_clock_before_a_notice_or_the_keys() {
+        let at = Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap();
+        let foot = || {
+            status_bar(
+                &[Notice::NoHerdr],
+                Some(Freshness::Collected(at)),
+                A_KEY_ROW,
+            )
+        };
+
+        let roomy = drawn(foot(), 130, 1);
+        assert!(roomy[0].contains("collected"), "{roomy:?}");
+
+        let narrow = drawn(foot(), 110, 1);
+        assert!(!narrow[0].contains("collected"), "{narrow:?}");
+        assert!(
+            narrow[0].contains(phrase::notice(Notice::NoHerdr)),
+            "{narrow:?}"
+        );
+        assert!(narrow[0].contains(A_KEY_ROW), "{narrow:?}");
+    }
+
+    /// The whole screen at a width with room for the foot's three parts, so
+    /// the clock is seen where it lands rather than only where it is cut.
+    /// The forest above it says nothing about freshness: which read the rows
+    /// came from is a fact about the view, and no row is any different for
+    /// it.
+    #[test]
+    fn a_frame_with_room_says_when_the_rows_on_it_were_collected() {
+        let forest = opened(&snapshot(vec![grove(1)], Vec::new(), HerdrState::Ok));
+
+        assert_eq!(
+            frame_of(&forest, 74, 4),
+            vec![
+                "▾ summit-works                                                         0/2",
+                "  └── ◐ nix-9670s  lift the ground station                             0/2",
+                "                                                                          ",
+                // Built from the phrase rather than written out, because the
+                // clock is the reader's own and CI reads it in another zone.
+                &format!(
+                    "{A_KEY_ROW}  {}    ",
+                    phrase::freshness(Freshness::Collected(read_at()))
+                ),
+            ]
         );
     }
 
@@ -1755,7 +1890,7 @@ mod tests {
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW), 60, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW), 60, 1);
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);
@@ -1908,7 +2043,15 @@ mod tests {
             unattributed,
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            read_at: BTreeMap::from([("summit-works".to_string(), read_at())]),
         }
+    }
+
+    /// When the fixture's tracker was read. Half a minute before the
+    /// snapshot was generated, so a frame quoting the wrong one of the two
+    /// says so rather than agreeing by coincidence.
+    fn read_at() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 30, 10, 21, 44).unwrap()
     }
 
     /// One tree of `children` open beads under an in-flight root.
@@ -1953,7 +2096,7 @@ mod tests {
     fn frame_with(forest: &Forest, at_startup: &[Notice], width: u16, height: u16) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| draw(frame, frame.area(), forest, at_startup, A_KEY_ROW))
+            .draw(|frame| draw(frame, frame.area(), forest, at_startup, false, A_KEY_ROW))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)

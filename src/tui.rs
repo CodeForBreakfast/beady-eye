@@ -108,6 +108,16 @@ trait View {
     /// Show a snapshot just collected, in place of the one on the screen.
     fn collected(&mut self, snapshot: Snapshot);
 
+    /// Say that a collection has started, reporting whether the screen has
+    /// changed.
+    ///
+    /// The view is told a collection began and told again when one comes
+    /// back, so what is on the screen and what the trackers are being asked
+    /// are never more than one event apart. Which projects it names is the
+    /// loop's business and not the view's: what is said is that the rows are
+    /// about to be replaced.
+    fn collecting(&mut self) -> bool;
+
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
 
@@ -151,8 +161,7 @@ fn drive(
                     true
                 }
                 Some(Action::Refresh) => {
-                    outstanding.ask(ask, Wanted::Everything);
-                    false
+                    outstanding.ask(ask, Wanted::Everything) && view.collecting()
                 }
                 Some(action) => view.apply(action),
                 None => false,
@@ -167,13 +176,13 @@ fn drive(
             Event::Clicked(row) => view.clicked(row),
             Event::Scrolled(motion) => view.apply(Action::Move(motion)),
             Event::Resize => true,
-            Event::Changed(wanted) => {
-                outstanding.ask(ask, wanted);
-                false
-            }
+            Event::Changed(wanted) => outstanding.ask(ask, wanted) && view.collecting(),
             Event::Collected(snapshot) => {
-                outstanding.came_back(ask);
+                let another = outstanding.came_back(ask);
                 view.collected(*snapshot);
+                if another {
+                    view.collecting();
+                }
                 true
             }
             // The same return 'q' takes, and for the same reason: it is
@@ -209,10 +218,14 @@ struct Outstanding {
 
 impl Outstanding {
     /// Ask for a collection, or keep it until the one running comes back.
-    fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) {
+    ///
+    /// Reports whether a collection started, which is not the same as whether
+    /// one was asked for: a request arriving mid-collection waits its turn,
+    /// and nothing on the screen changes for it.
+    fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) -> bool {
         if !self.collecting {
             self.collecting = ask.send(wanted).is_ok();
-            return;
+            return self.collecting;
         }
         match wanted {
             Wanted::Everything => {
@@ -225,19 +238,21 @@ impl Outstanding {
                 }
             }
         }
+        false
     }
 
     /// Take the collection that came back, asking for whatever waited behind
-    /// it.
-    fn came_back(&mut self, ask: &Sender<Wanted>) {
+    /// it and reporting whether that started another.
+    fn came_back(&mut self, ask: &Sender<Wanted>) -> bool {
         self.collecting = false;
         let next = if std::mem::take(&mut self.everything) {
             Some(Wanted::Everything)
         } else {
             self.projects.pop_first().map(Wanted::Project)
         };
-        if let Some(next) = next {
-            self.ask(ask, next);
+        match next {
+            Some(next) => self.ask(ask, next),
+            None => false,
         }
     }
 }
@@ -686,6 +701,10 @@ struct Shown {
     /// The pane the tail on screen was read from, so a selection moving
     /// within it does not spend a herdr call on the answer already drawn.
     tailing: Option<String>,
+    /// Whether a collection is in flight, so the foot can say the rows are
+    /// about to be replaced. No row of the forest is any different for it,
+    /// which is why it is here and not in the forest.
+    collecting: bool,
 }
 
 impl Shown {
@@ -699,7 +718,17 @@ impl Shown {
             panes,
             tail,
             tailing,
+            // The one collection nothing can say is running. It is
+            // synchronous and finishes before this exists — measured at 3.6
+            // to 3.9 seconds against real trackers, the longest wait a
+            // reader has, and there is no screen to announce it on.
+            collecting: false,
         }
+    }
+
+    /// Say that a collection has started.
+    fn collecting(&mut self) {
+        self.collecting = true;
     }
 
     /// Read the tail for whatever the selection is on now.
@@ -745,6 +774,10 @@ impl Shown {
     }
 
     fn collected(&mut self, snapshot: Snapshot) {
+        // The snapshot arriving is the end of the collection that produced
+        // it. Left standing, the foot would say a read was running over rows
+        // that had already landed, until the next one came back.
+        self.collecting = false;
         // A refresh keeps the folds and the selection, so the cursor stays on
         // the bead the user put it on however the new snapshot has moved it.
         self.forest.refresh(&snapshot);
@@ -822,10 +855,18 @@ fn paint(
     tail: &Tail,
     showing: Showing,
     at_startup: &[Notice],
+    collecting: bool,
 ) {
     let bands = draw::regions(frame.area());
     forest.set_half_screen(draw::half_screen(bands.forest));
-    draw::draw(frame, frame.area(), forest, at_startup, &key_row());
+    draw::draw(
+        frame,
+        frame.area(),
+        forest,
+        at_startup,
+        collecting,
+        &key_row(),
+    );
     draw::draw_tail(frame, bands.tail, tail);
     if showing == Showing::Bindings {
         key_bindings(frame, frame.area(), &bindings());
@@ -854,6 +895,11 @@ impl View for Screen {
         self.shown.collected(snapshot);
     }
 
+    fn collecting(&mut self) -> bool {
+        self.shown.collecting();
+        true
+    }
+
     fn apply(&mut self, action: Action) -> bool {
         self.shown.apply(action)
     }
@@ -879,8 +925,9 @@ impl View for Screen {
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
         let at_startup = &self.at_startup;
+        let collecting = self.shown.collecting;
         self.terminal
-            .draw(|frame| paint(frame, forest, tail, showing, at_startup))?;
+            .draw(|frame| paint(frame, forest, tail, showing, at_startup, collecting))?;
         Ok(())
     }
 }
@@ -901,6 +948,7 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::widgets::Block;
     use ratatui::Terminal;
+    use std::collections::BTreeMap;
 
     /// Long enough that a thread which was going to report has, and short
     /// enough that a test waiting in vain is not a hang.
@@ -940,6 +988,7 @@ mod tests {
         applied: Vec<Action>,
         clicked: Vec<u16>,
         collected: usize,
+        collecting: usize,
         drawn: usize,
         showing: Vec<Showing>,
         /// What a click reports back, for the tests about a click that lands
@@ -950,6 +999,11 @@ mod tests {
     impl View for Recorder {
         fn collected(&mut self, _snapshot: Snapshot) {
             self.collected += 1;
+        }
+
+        fn collecting(&mut self) -> bool {
+            self.collecting += 1;
+            true
         }
 
         fn apply(&mut self, action: Action) -> bool {
@@ -1039,6 +1093,7 @@ mod tests {
             unattributed: Vec::new(),
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            read_at: BTreeMap::new(),
             collected: vec![tree],
         }
     }
@@ -1522,6 +1577,91 @@ mod tests {
             [Action::Move(Motion::NextRow)],
             "the loop read on rather than waiting for the collection"
         );
+    }
+
+    /// The bead this came from: `^R` did nothing a reader could see. The
+    /// keystroke asked for a collection and then evaluated to no change at
+    /// all, so `view.draw` was never called and the screen stayed
+    /// byte-identical for the seconds the collection took.
+    #[test]
+    fn the_refresh_key_puts_something_on_the_screen_before_the_snapshot_lands() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![Event::Key(control('r'))]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(view.collecting, 1, "the view was told a collection began");
+        assert_eq!(view.drawn, 2, "the first frame, and one for the keystroke");
+    }
+
+    /// The timer and the inbound socket start collections nobody pressed a
+    /// key for, which is the case the bead calls worse: rows appear and
+    /// statuses flip under a reader with nothing to mark that they did.
+    #[test]
+    fn a_collection_nobody_asked_for_is_still_said_on_the_screen() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![Event::Changed(atlas())]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(view.collecting, 1);
+        assert_eq!(view.drawn, 2);
+    }
+
+    /// A request that arrived mid-collection is sent the moment the one in
+    /// flight comes back, from inside `came_back` rather than from an event.
+    /// A view told only about the collections an event started would say the
+    /// screen was resting while a second one ran.
+    #[test]
+    fn the_collection_that_starts_behind_another_is_said_too() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Changed(atlas()),
+            Event::Changed(ferry()),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(
+            view.collecting, 2,
+            "the one the event asked for, and the one that waited behind it"
+        );
+        assert_eq!(view.collected, 1);
+    }
+
+    /// A collection coming back with nothing waiting behind it leaves the
+    /// view resting. Saying otherwise would leave `collecting` on the screen
+    /// until the next refresh, over rows that had already arrived.
+    #[test]
+    fn a_collection_with_nothing_behind_it_leaves_the_view_resting() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Changed(atlas()),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(view.collecting, 1, "only the one the event asked for");
+    }
+
+    /// A request made while a collection is running is kept rather than sent,
+    /// so nothing new has started and there is nothing new to say.
+    #[test]
+    fn a_request_that_only_joins_the_queue_says_nothing() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![Event::Changed(atlas()), Event::Changed(ferry())]);
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert_eq!(view.collecting, 1, "the second only waited its turn");
+        assert_eq!(view.drawn, 2, "and the screen did not change for it");
     }
 
     #[test]
@@ -2232,6 +2372,7 @@ mod tests {
             unattributed: Vec::new(),
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            read_at: BTreeMap::new(),
             collected: trees,
         }
     }
@@ -2283,7 +2424,7 @@ mod tests {
     ) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| paint(frame, forest, tail, showing, &[]))
+            .draw(|frame| paint(frame, forest, tail, showing, &[], false))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -2354,6 +2495,29 @@ mod tests {
 
     fn shown(snapshot: Snapshot) -> Shown {
         Shown::of(snapshot, Box::new(NoPanes))
+    }
+
+    /// The screen opens on a snapshot already collected, so there is nothing
+    /// to say is running. Opening on `collecting` would put a word on the
+    /// foot that only the next refresh could take off.
+    #[test]
+    fn a_screen_opens_over_a_collection_that_has_already_finished() {
+        assert!(!shown(a_snapshot()).collecting);
+    }
+
+    /// The pair the foot rests on: a collection is said while it runs and
+    /// unsaid the moment its snapshot lands. Left standing it would claim a
+    /// read was running over rows that had already arrived, until the next
+    /// one came back.
+    #[test]
+    fn a_collection_is_said_while_it_runs_and_unsaid_when_it_lands() {
+        let mut shown = shown(a_snapshot());
+
+        shown.collecting();
+        assert!(shown.collecting);
+
+        shown.collected(a_snapshot());
+        assert!(!shown.collecting);
     }
 
     /// Where the cursor is, by the bead its line carries. `Forest` does not

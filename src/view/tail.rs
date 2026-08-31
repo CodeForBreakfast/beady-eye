@@ -168,6 +168,7 @@ mod tests {
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
 
     /// A herdr that answers however the test says, and remembers what it was
     /// asked.
@@ -292,6 +293,7 @@ mod tests {
             unattributed: Vec::new(),
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            read_at: BTreeMap::new(),
             collected: vec![tree],
         }
     }
