@@ -12,6 +12,7 @@ use ratatui::crossterm::event::{
     MouseButton, MouseEventKind,
 };
 use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{Clear, ClearType};
 use ratatui::{DefaultTerminal, Frame};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -836,6 +837,18 @@ impl Screen {
         // grabbed. So what is given up is drag-selection inside one pane,
         // and what is bought is the pointer working at all.
         execute!(io::stdout(), EnableMouseCapture)?;
+
+        // Nothing above has erased anything: entering the alternate screen is
+        // the terminal's business, and the first frame writes only the cells
+        // it has ink for, so every cell it leaves blank keeps whatever the
+        // terminal was showing there. Erasing here is what makes the screen
+        // `bdi`'s.
+        //
+        // Not `terminal.clear()`, which opens by asking the terminal where
+        // the cursor is and waiting for the reply. A terminal that does not
+        // answer costs a two-second stall and then an error out of here, so
+        // the one that never clears would become the one that never starts.
+        execute!(io::stdout(), Clear(ClearType::All))?;
 
         Ok(screen)
     }
