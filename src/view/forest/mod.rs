@@ -1,94 +1,30 @@
 //! The snapshot, flattened into the lines the screen shows.
+//!
+//! One module for what a line that folds or holds the selection is known by,
+//! and one for the lines a snapshot draws under those folds. What is left
+//! here is the forest itself: the folds the user has set, and where the
+//! selection sits.
+
+mod handle;
+mod layout;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::join::{BeadKey, Conflict};
-use crate::model::snapshot::{self, Counts, Filter, LoosePane, Snapshot, TrackerState, Tree};
-use crate::view::lines::{
-    beneath, children_of, first_copy, marker, notes_of, opens_a_fold, prefix, progress_of, quiet,
-    root_key, run_size, split, unfinished_beneath, Content, Group, GroupKind, Item, Line, Note,
-    Place, ProjectLine, Recovery, Unread,
-};
-use crate::view::row;
+use crate::model::join::BeadKey;
+use crate::model::snapshot::{self, Filter, Snapshot, Tree};
+use crate::view::lines::{beneath, children_of, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::{Action, Motion};
+
+use handle::{handle_of, selectable, Folds, Handle};
 
 /// How far a half-screen motion moves until the renderer says otherwise.
 const HALF_SCREEN: usize = 10;
-
-/// What a line that folds is known by, so both the fold and the selection
-/// survive a refresh that reorders or drops lines.
-///
-/// A bead can be drawn on more than one line, so a handle names the line and
-/// not the bead standing on it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Handle {
-    Bead(Place),
-    /// The run of quiet closed children under one drawn bead. A bead has at
-    /// most one run per copy of it, so the copy names it.
-    Elided(Place),
-    Group(GroupKind),
-    Item(ItemKey),
-    /// A project, by its name, which the config makes unique.
-    Project(String),
-}
-
-/// What one thing in a group is known by.
-///
-/// A handle has to be an identity the thing still has after the next collect,
-/// never its place in the group, or a group re-read in another order would
-/// move the selection to a neighbour with nothing on screen to say so.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum ItemKey {
-    /// A pane, by its id, which is unique in a herdr session. It serves both
-    /// groups that hold panes: `recovery` puts a pane in exactly one of them,
-    /// and an unconfigured pane is one under no configured project at all.
-    Pane(String),
-    Project(String),
-    /// A hidden tree, by the root it was hidden by.
-    Tree(BeadKey),
-    /// A disagreement, by the whole of what it says. No one field identifies
-    /// every arm — several panes naming one bead in another project make
-    /// several conflicts sharing that bead — and the value is made entirely
-    /// of pane and bead ids, sorted and deduplicated by the join, so two
-    /// collects that saw the same disagreement write the same one.
-    Conflict(Conflict),
-}
-
-/// What a thing in a group is known by. Every kind has an identity, so every
-/// one of them can hold the selection; a kind whose identity were only its
-/// place in the group would have to return `None` here and stay unreachable.
-fn item_key(item: &Item) -> Option<ItemKey> {
-    Some(match item {
-        Item::Loose(pane) => ItemKey::Pane(pane.pane.clone()),
-        Item::Unconfigured(pane) => ItemKey::Pane(pane.pane.clone()),
-        Item::Failed(failed) => ItemKey::Project(failed.project.clone()),
-        Item::Hidden(hidden) => ItemKey::Tree(BeadKey {
-            project: hidden.project.clone(),
-            id: hidden.root.clone(),
-        }),
-        Item::Conflict(conflict) => ItemKey::Conflict(conflict.clone()),
-    })
-}
-
-/// One entry in a parent's sequence of children, before it becomes a line.
-/// Notes and beads share the sequence because they share the box-drawing, and
-/// a note is a child of the header exactly as a bead is.
-enum Child {
-    Note(Note),
-    Node(usize),
-    /// The children a run stands for, in render order. Whose they are is the
-    /// parent the entries were drawn under, so it is not repeated here.
-    Elided(Vec<usize>),
-}
 
 /// One snapshot's lines in render order, with the fold state and the selection
 /// that decide which of them are visible and which one is current.
 pub struct Forest {
     snapshot: Snapshot,
-    /// The folds the user set by hand, over a default that follows the
-    /// selection. Keeping the two apart is what lets a fold outlive moving
-    /// away from it without freezing every other root at whatever it was.
-    folds: BTreeMap<Handle, bool>,
+    folds: Folds,
     cursor: Option<Handle>,
     half_screen: usize,
     lines: Vec<Line>,
@@ -99,7 +35,7 @@ pub struct Forest {
 pub fn flatten(snapshot: &Snapshot) -> Forest {
     let mut forest = Forest {
         snapshot: snapshot.clone(),
-        folds: BTreeMap::new(),
+        folds: Folds::default(),
         cursor: None,
         half_screen: HALF_SCREEN,
         lines: Vec::new(),
@@ -165,9 +101,8 @@ impl Forest {
     /// The live work each fold the user shut is currently shut over.
     fn folded_over(&self) -> BTreeMap<Handle, BTreeSet<BeadKey>> {
         self.folds
-            .iter()
-            .filter(|(_, open)| !**open)
-            .map(|(handle, _)| (handle.clone(), self.live_under(handle)))
+            .shut()
+            .map(|handle| (handle.clone(), self.live_under(handle)))
             .collect()
     }
 
@@ -185,9 +120,7 @@ impl Forest {
             .filter(|(handle, over)| !self.live_under(handle).is_subset(over))
             .map(|(handle, _)| handle.clone())
             .collect();
-        for handle in spent {
-            self.folds.remove(&handle);
-        }
+        self.folds.spend(&spent);
     }
 
     /// The beads beneath `handle` carrying live work. Empty for anything but
@@ -227,7 +160,7 @@ impl Forest {
             // held it, so a pane that goes away falls back to that group
             // rather than to the top of the forest.
             Some(Handle::Item(key)) => {
-                chain.extend(self.group_holding(key).map(Handle::Group));
+                chain.extend(layout::group_holding(&self.snapshot, key).map(Handle::Group));
                 return chain;
             }
             _ => return chain,
@@ -313,14 +246,13 @@ impl Forest {
     /// Point every fold on a drawn line at `open`, reporting whether any of
     /// them was pointing the other way.
     fn point_every_drawn_fold(&mut self, open: bool) -> bool {
-        let pointed: Vec<Handle> = self
-            .draw()
+        let pointed: Vec<Handle> = layout::draw(&self.snapshot, &self.folds)
             .iter()
             .filter(|line| line.folded == Some(!open))
             .filter_map(handle_of)
             .collect();
         for handle in &pointed {
-            self.folds.insert(handle.clone(), open);
+            self.folds.set(handle.clone(), open);
         }
         !pointed.is_empty()
     }
@@ -329,7 +261,7 @@ impl Forest {
         if let (Some(open), Some(handle)) =
             (self.fold_at(self.selected), self.handle_at(self.selected))
         {
-            self.folds.insert(handle, !open);
+            self.folds.set(handle, !open);
         }
     }
 
@@ -337,7 +269,7 @@ impl Forest {
     fn collapse_or_parent(&mut self) {
         match (self.fold_at(self.selected), self.handle_at(self.selected)) {
             (Some(true), Some(handle)) => {
-                self.folds.insert(handle, false);
+                self.folds.set(handle, false);
             }
             _ => self.step_to(self.parent_of(self.selected)),
         }
@@ -347,7 +279,7 @@ impl Forest {
     fn expand_or_child(&mut self) {
         match (self.fold_at(self.selected), self.handle_at(self.selected)) {
             (Some(false), Some(handle)) => {
-                self.folds.insert(handle, true);
+                self.folds.set(handle, true);
             }
             _ => self.step_to(self.first_child_of(self.selected)),
         }
@@ -451,7 +383,7 @@ impl Forest {
     /// without duplicating either.
     fn lay_out(&mut self) -> Vec<Line> {
         self.settle_cursor();
-        let drawn = self.draw();
+        let drawn = layout::draw(&self.snapshot, &self.folds);
         let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
@@ -487,10 +419,9 @@ impl Forest {
         if let Some(tree) = self.snapshot.trees.first() {
             return Some(Handle::Bead(Place::root(root_key(tree))));
         }
-        let (_, loose) = self.recovery();
         GroupKind::ALL
             .iter()
-            .find(|kind| !self.group_items(**kind, &loose).is_empty())
+            .find(|kind| layout::group_drawn(&self.snapshot, **kind))
             .copied()
             .map(Handle::Group)
     }
@@ -499,11 +430,8 @@ impl Forest {
     fn present(&self, handle: &Handle) -> bool {
         match handle {
             Handle::Bead(place) | Handle::Elided(place) => self.drawn(place),
-            Handle::Group(kind) => {
-                let (_, loose) = self.recovery();
-                !self.group_items(*kind, &loose).is_empty()
-            }
-            Handle::Item(key) => self.group_holding(key).is_some(),
+            Handle::Group(kind) => layout::group_drawn(&self.snapshot, *kind),
+            Handle::Item(key) => layout::group_holding(&self.snapshot, key).is_some(),
             Handle::Project(project) => self
                 .snapshot
                 .trees
@@ -521,372 +449,6 @@ impl Forest {
         }
         self.locate(place).is_some()
     }
-
-    /// The group one thing sits in, where the snapshot still holds it.
-    fn group_holding(&self, key: &ItemKey) -> Option<GroupKind> {
-        let (_, loose) = self.recovery();
-        GroupKind::ALL.into_iter().find(|kind| {
-            self.group_items(*kind, &loose)
-                .iter()
-                .any(|item| item_key(item).as_ref() == Some(key))
-        })
-    }
-
-    /// Whether a fold is open: what the user set it to, or how it rests when
-    /// they have not touched it. Only the caller knows the tree a line came
-    /// from, so it says where the line rests rather than being asked to
-    /// re-derive it here.
-    fn expanded(&self, handle: &Handle, resting: bool) -> bool {
-        self.folds.get(handle).copied().unwrap_or(resting)
-    }
-
-    /// Give each unreadable tree the live panes working in its project, and
-    /// keep the rest loose. A pane is one or the other and never both, so what
-    /// the headers show and what the group counts still add up to every pane.
-    fn recovery(&self) -> (Vec<Vec<LoosePane>>, Vec<LoosePane>) {
-        let mut recovered = vec![Vec::new(); self.snapshot.trees.len()];
-        let mut loose = Vec::new();
-        for pane in &self.snapshot.unattributed {
-            let home =
-                self.snapshot.trees.iter().position(|tree| {
-                    tree.tracker != TrackerState::Ok && tree.project == pane.project
-                });
-            match home {
-                Some(tree) => recovered[tree].push(pane.clone()),
-                None => loose.push(pane.clone()),
-            }
-        }
-        (recovered, loose)
-    }
-
-    fn group_items(&self, kind: GroupKind, loose: &[LoosePane]) -> Vec<Item> {
-        match kind {
-            GroupKind::FailedProjects => self
-                .snapshot
-                .failed_projects
-                .iter()
-                .cloned()
-                .map(Item::Failed)
-                .collect(),
-            GroupKind::Conflicts => self
-                .snapshot
-                .conflicts
-                .iter()
-                .cloned()
-                .map(Item::Conflict)
-                .collect(),
-            GroupKind::HiddenTrees => self
-                .snapshot
-                .hidden_trees
-                .iter()
-                .cloned()
-                .map(Item::Hidden)
-                .collect(),
-            GroupKind::Unattributed => loose.iter().cloned().map(Item::Loose).collect(),
-            GroupKind::Unconfigured => self
-                .snapshot
-                .unconfigured
-                .iter()
-                .cloned()
-                .map(Item::Unconfigured)
-                .collect(),
-        }
-    }
-
-    fn draw(&self) -> Vec<Line> {
-        let (recovered, loose) = self.recovery();
-        let mut lines = Vec::new();
-        let mut from = 0;
-        // A project's trees arrive together and in the order the config named
-        // the projects, so a run of them is a project.
-        for run in self.snapshot.trees.chunk_by(|a, b| a.project == b.project) {
-            let panes = &recovered[from..from + run.len()];
-            self.draw_project(run, panes, &mut lines);
-            from += run.len();
-        }
-        self.draw_groups(&loose, &mut lines);
-        // Asked of the drawn lines rather than of the snapshot's fields, so
-        // a later kind of line cannot be left out of the question.
-        if lines.is_empty() {
-            lines.push(nothing_to_draw());
-        }
-        lines
-    }
-
-    /// A project's own line, and the roots that hang under it.
-    ///
-    /// The project line says what is the project's — its name, how much work
-    /// it holds, and the panes recovered where a root would not read — and
-    /// every root below it is a bead row like any other. A root is a bead, and
-    /// a reader asks a bead's questions of it: what is its status, who is on
-    /// it, what is it doing. A line that answered those in a project's terms
-    /// answered none of them.
-    fn draw_project(&self, trees: &[Tree], panes: &[Vec<LoosePane>], lines: &mut Vec<Line>) {
-        let project = trees[0].project.clone();
-        let unread = trees.iter().any(|tree| tree.tracker != TrackerState::Ok);
-        // A project rests open: the forest is what is being worked, and a
-        // project shut over it says only that it exists.
-        let open = self.expanded(&Handle::Project(project.clone()), true);
-        let recovery = unread.then(|| Recovery {
-            panes: panes.iter().flatten().cloned().collect(),
-            complete: self.snapshot.unconfigured.is_empty(),
-        });
-
-        lines.push(Line {
-            prefix: marker(open).to_string(),
-            depth: 0,
-            folded: Some(open),
-            place: None,
-            content: Content::Project(ProjectLine {
-                project,
-                counts: Counts::over(trees.iter().flat_map(|tree| &tree.nodes)),
-                recovery,
-            }),
-        });
-
-        if !open {
-            return;
-        }
-        let count = trees.len();
-        for (n, tree) in trees.iter().enumerate() {
-            self.draw_tree(tree, n + 1 == count, lines);
-        }
-    }
-
-    fn draw_tree(&self, tree: &Tree, last: bool, lines: &mut Vec<Line>) {
-        let root = Place::root(root_key(tree));
-        let children = children_of(&tree.nodes);
-        let Some(node) = tree.nodes.first() else {
-            // No nodes, so no row: the root is named on a line of its own
-            // rather than left out, because a root that would not read is the
-            // one a reader most needs to see is there.
-            lines.push(Line {
-                prefix: prefix(&[], last, false),
-                depth: 1,
-                folded: None,
-                place: Some(root),
-                content: Content::Unread(Unread {
-                    root: tree.root.clone(),
-                    tracker: tree.tracker,
-                }),
-            });
-            return;
-        };
-        // A tree opens because of what is in it, not because the selection
-        // is in it: the first screen is meant to be the answer to what is
-        // being worked and what could be started.
-        let kids = self.children_entries(tree, &children, 0);
-        let open = !kids.is_empty()
-            && self.expanded(
-                &Handle::Bead(root.clone()),
-                opens_a_fold(tree, &children, 0),
-            );
-
-        lines.push(Line {
-            prefix: prefix(&[], last, !kids.is_empty() && !open),
-            depth: 1,
-            folded: (!kids.is_empty()).then_some(open),
-            place: Some(root.clone()),
-            content: Content::Bead(row::cells(
-                node,
-                &tree.root,
-                progress_of(tree, &children, 0),
-                None,
-            )),
-        });
-
-        let mut entries: Vec<Child> = notes_of(tree).into_iter().map(Child::Note).collect();
-        if open {
-            entries.extend(kids);
-        }
-        self.draw_children(tree, &children, entries, &root, &mut vec![!last], lines);
-    }
-
-    /// A node's children as they are drawn: the ones worth a line each, then
-    /// one line for the run that is not.
-    fn children_entries(&self, tree: &Tree, children: &[Vec<usize>], at: usize) -> Vec<Child> {
-        let (drawn, elided) = split(tree, children, at);
-        let mut entries: Vec<Child> = drawn.into_iter().map(Child::Node).collect();
-        if !elided.is_empty() {
-            entries.push(Child::Elided(elided));
-        }
-        entries
-    }
-
-    fn draw_children(
-        &self,
-        tree: &Tree,
-        children: &[Vec<usize>],
-        entries: Vec<Child>,
-        parent: &Place,
-        trunk: &mut Vec<bool>,
-        lines: &mut Vec<Line>,
-    ) {
-        let count = entries.len();
-        let depth = trunk.len() as u16 + 1;
-        for (n, entry) in entries.into_iter().enumerate() {
-            let last = n + 1 == count;
-            match entry {
-                Child::Note(note) => lines.push(Line {
-                    prefix: prefix(trunk, last, false),
-                    depth,
-                    folded: None,
-                    place: None,
-                    content: Content::Note(note),
-                }),
-                Child::Elided(members) => {
-                    // A run rests as the count it was drawn to be.
-                    let open = self.expanded(&Handle::Elided(parent.clone()), false);
-                    lines.push(Line {
-                        prefix: prefix(trunk, last, !open),
-                        depth,
-                        folded: Some(open),
-                        place: None,
-                        content: Content::Elided {
-                            count: run_size(tree, children, &members),
-                            under: parent.clone(),
-                        },
-                    });
-                    if open {
-                        // A run is always the last of its parent's entries, so
-                        // its beads hang under it rather than beside the
-                        // siblings they belong to: anything drawn after it at
-                        // that depth would follow an elbow that had already
-                        // said it was the last.
-                        trunk.push(!last);
-                        let entries = members.into_iter().map(Child::Node).collect();
-                        self.draw_children(tree, children, entries, parent, trunk, lines);
-                        trunk.pop();
-                    }
-                }
-                Child::Node(at) => {
-                    let node = &tree.nodes[at];
-                    let place = parent.step_to(BeadKey {
-                        project: tree.project.clone(),
-                        id: node.id.clone(),
-                    });
-                    let kids = self.children_entries(tree, children, at);
-                    let first = first_copy(tree, at);
-                    // Open the spine to the work a reader needs next and
-                    // nothing else. A branch with none rests as one line, its
-                    // glyph, its fraction and its marker saying what it holds.
-                    let open = !kids.is_empty()
-                        && self.expanded(
-                            &Handle::Bead(place.clone()),
-                            first && opens_a_fold(tree, children, at),
-                        );
-                    // A later line is shut over beads the first line is
-                    // already drawing, so counting them here would have a
-                    // reader adding up the ways down rather than the work.
-                    let holding = (node.status.is_closed() && !open && first)
-                        .then(|| unfinished_beneath(tree, children, at))
-                        .filter(|unfinished| *unfinished > 0);
-                    lines.push(Line {
-                        prefix: prefix(trunk, last, !kids.is_empty() && !open),
-                        depth,
-                        folded: (!kids.is_empty()).then_some(open),
-                        place: Some(place.clone()),
-                        content: Content::Bead(row::cells(
-                            node,
-                            &tree.root,
-                            progress_of(tree, children, at),
-                            holding,
-                        )),
-                    });
-                    if open {
-                        trunk.push(!last);
-                        self.draw_children(tree, children, kids, &place, trunk, lines);
-                        trunk.pop();
-                    }
-                }
-            }
-        }
-    }
-
-    /// The hidden trees whose findings went with them. `collected` still holds
-    /// every tree that was read, shown or hidden, so what the filter took out
-    /// of the forest is still countable here.
-    fn with_findings(&self, items: &[Item]) -> usize {
-        items
-            .iter()
-            .filter(|item| match item {
-                Item::Hidden(hidden) => self
-                    .snapshot
-                    .collected
-                    .iter()
-                    .filter(|tree| tree.project == hidden.project && tree.root == hidden.root)
-                    .any(|tree| !notes_of(tree).is_empty()),
-                _ => false,
-            })
-            .count()
-    }
-
-    fn draw_groups(&self, loose: &[LoosePane], lines: &mut Vec<Line>) {
-        for kind in GroupKind::ALL {
-            let items = self.group_items(kind, loose);
-            if items.is_empty() {
-                continue;
-            }
-            let open = self.expanded(&Handle::Group(kind), kind.live());
-            lines.push(Line {
-                prefix: marker(open).to_string(),
-                depth: 0,
-                folded: Some(open),
-                place: None,
-                content: Content::Group(Group {
-                    kind,
-                    count: items.len(),
-                    with_findings: self.with_findings(&items),
-                }),
-            });
-            if !open {
-                continue;
-            }
-            let count = items.len();
-            for (n, item) in items.into_iter().enumerate() {
-                let last = n + 1 == count;
-                lines.push(Line {
-                    prefix: prefix(&[], last, false),
-                    depth: 1,
-                    folded: None,
-                    place: None,
-                    content: Content::Item(item),
-                });
-            }
-        }
-    }
-}
-
-/// The one line of a forest with nothing in it. Under no tree and in no
-/// group, because there is neither: it stands for the whole screen.
-fn nothing_to_draw() -> Line {
-    Line {
-        prefix: String::new(),
-        depth: 0,
-        folded: None,
-        place: None,
-        content: Content::Note(Note::NoRoots),
-    }
-}
-
-/// What a line is known by, where it is one the selection can hold.
-///
-/// A note stands for a finding rather than for a thing, so it has none — and
-/// a line the forest cannot name could not be put back after a refresh, which
-/// is why this is the same question as whether the selection may sit there.
-fn handle_of(line: &Line) -> Option<Handle> {
-    match &line.content {
-        Content::Bead(_) | Content::Unread(_) => line.place.clone().map(Handle::Bead),
-        Content::Project(line) => Some(Handle::Project(line.project.clone())),
-        Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
-        Content::Group(group) => Some(Handle::Group(group.kind)),
-        Content::Item(item) => item_key(item).map(Handle::Item),
-        Content::Note(_) => None,
-    }
-}
-
-fn selectable(line: &Line) -> bool {
-    handle_of(line).is_some()
 }
 
 #[cfg(test)]
@@ -897,11 +459,14 @@ mod tests {
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::snapshot::{
-        build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure,
+        build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure, TrackerState,
     };
     use crate::model::tree::{assemble, Assembled};
     use crate::model::types::Pane;
-    use crate::view::lines::{OPEN, SHUT};
+    use crate::view::lines::{
+        marker, prefix, progress_of, run_size, split, unfinished_beneath, Group, Item, Note,
+        ProjectLine, OPEN, SHUT,
+    };
     use crate::view::phrase;
     use crate::view::row::{Progress, Row};
     use chrono::{DateTime, Utc};
@@ -3306,7 +2871,7 @@ credential_command = "secret harbour"
     fn every_kind_of_thing_a_group_holds_can_hold_the_selection() {
         let mut forest = flatten(&built(Filter::LiveAgents));
         for kind in GroupKind::ALL {
-            forest.folds.insert(Handle::Group(kind), true);
+            forest.folds.set(Handle::Group(kind), true);
         }
         forest.refresh(&built(Filter::LiveAgents));
 
@@ -3382,6 +2947,49 @@ credential_command = "secret harbour"
         snapshot
     }
 
+    /// A group the collect empties puts the selection back on the first root,
+    /// not on whatever line happened to sit above where the group was. The
+    /// two answers only differ once the forest is more than a row tall, which
+    /// is every forest a reader has.
+    ///
+    /// This is the only one of `group_drawn`'s two callers that can tell you
+    /// it is wrong. `first_handle` cannot: `lay_out` looks the handle it
+    /// returns up, does not find it drawn, and repairs the cursor from the
+    /// selected index — so a `group_drawn` that said yes to every kind would
+    /// go unnoticed down that road.
+    #[test]
+    fn a_selection_on_a_group_that_empties_goes_back_to_the_first_root() {
+        let mut forest = flatten(&snapshot());
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group)
+                    if group.kind == GroupKind::FailedProjects)
+            })
+            .expect("the shared snapshot draws a group for the project that failed");
+        step_onto(&mut forest, group);
+
+        forest.refresh(&built_without_the_failed_project());
+
+        assert_eq!(
+            forest.lines()[forest.selected_line()]
+                .bead()
+                .map(|bead| bead.id.clone()),
+            Some("orb-7".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The same snapshot with the project that failed before its roots were
+    /// known now reading, which empties the group it was the only member of.
+    fn built_without_the_failed_project() -> Snapshot {
+        let mut snapshot = snapshot();
+        snapshot.failed_projects.clear();
+        snapshot
+    }
+
     /// The same snapshot with the two panes that were fighting over `orb-7.1`
     /// gone, which empties the unattributed group of the one the tests hold.
     fn built_without_the_conflicting_panes() -> Snapshot {
@@ -3447,7 +3055,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(&snapshot());
         forest
             .folds
-            .insert(Handle::Group(GroupKind::Unconfigured), true);
+            .set(Handle::Group(GroupKind::Unconfigured), true);
         forest.refresh(&snapshot());
 
         let drawn = sketch(&forest);
@@ -3548,11 +3156,9 @@ credential_command = "secret harbour"
 
         for state in 0..1 << handles.len() {
             let mut forest = flatten(&snapshot);
-            forest.folds = handles
-                .iter()
-                .enumerate()
-                .map(|(bit, handle)| (handle.clone(), state & (1 << bit) == 0))
-                .collect();
+            for (bit, handle) in handles.iter().enumerate() {
+                forest.folds.set(handle.clone(), state & (1 << bit) == 0);
+            }
             forest.refresh(&snapshot);
 
             assert_eq!(on_screen(&forest), expected, "fold state {state:b}");
@@ -3654,7 +3260,7 @@ credential_command = "secret harbour"
                 return;
             }
             for handle in shut {
-                forest.folds.insert(handle, true);
+                forest.folds.set(handle, true);
             }
             forest.lay_out();
         }

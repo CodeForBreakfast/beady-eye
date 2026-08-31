@@ -54,7 +54,7 @@ switches Rust's own dead-code lint off across the crate.
 - `collect/` runs `bd` and `herdr` and parses what they say.
 - `model/` joins the two into a snapshot: the tree, its badges, and the
   anomalies where the two sources disagree.
-- `view/` turns a snapshot into rows and draws them — `forest.rs` is the
+- `view/` turns a snapshot into rows and draws them — `forest/` is the
   scrollable tree, `draw/` the widgets, `phrase.rs` every word `bdi` shows.
 - `tui/` and `app.rs` run the loop and own the terminal.
 
