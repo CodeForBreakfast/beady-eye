@@ -136,8 +136,12 @@
           GitHub makes one run per push, on the tip, so an empty run list is not
           a verdict and does not always mean wait:
 
-            not on main         CI runs on pushes to main. A commit anywhere
-                                else has no run and will never get one.
+            no run coming       CI runs on pushes to main and on pull requests
+                                against it. A commit that is on neither has no
+                                run and will never get one.
+            conflicted          A pull request is run on a merge of its head
+                                and its base, so one GitHub cannot merge gets
+                                no run until somebody resolves it.
             not the tip         The verdict belongs to a descendant. This reads
                                 that run instead and says whose it is, and a
                                 green one that contains your commit exits 0:
@@ -188,8 +192,35 @@
             fi
 
             if ! $git merge-base --is-ancestor "$sha" origin/main 2>/dev/null; then
-              echo "NO RUN, AND NONE IS COMING — $sha is not on origin/main."
-              echo "CI runs on pushes to main. Land it there and a run appears."
+              pr="$($gh pr list --state open --limit 100 \
+                  --json headRefOid,url,mergeable |
+                $jq -r --arg sha "$sha" \
+                  'first(.[] | select(.headRefOid == $sha)) |
+                   "\(.mergeable) \(.url)"')"
+              if [ -n "$pr" ]; then
+                url="''${pr#* }"
+
+                # GitHub builds a pull request's run on a merge of the head and
+                # the base, so a conflict leaves it with nothing to run and the
+                # wait never ends on its own. UNKNOWN is a mergeability it has
+                # not computed yet, which does.
+                if [ "''${pr%% *}" = CONFLICTING ]; then
+                  echo "NO RUN UNTIL YOU RESOLVE IT — $sha heads a pull request that"
+                  echo "conflicts with its base, and GitHub runs nothing it cannot merge."
+                  echo "  $url"
+                  echo "Merge origin/main, resolve, and push. The run follows the push."
+                  exit 1
+                fi
+
+                echo "NOT STARTED YET — $sha heads an open pull request and has no run."
+                echo "  $url"
+                echo "This one resolves on its own. Ask again."
+                exit 1
+              fi
+
+              echo "NO RUN, AND NONE IS COMING — $sha is neither on origin/main nor"
+              echo "the head of an open pull request, and CI runs on those two things"
+              echo "only. Open a pull request and a run appears."
               exit 1
             fi
 

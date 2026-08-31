@@ -56,6 +56,12 @@ somebody reads the caller for another reason, which is not something you can
 schedule — so when you change a caller, check what the arms below its early
 return are still reached by.
 
+## PR policy
+
+Changes reach `main` through a pull request, squash-merged — nothing is pushed
+to `main` directly. The pull request is what puts CI in front of a change
+before the branch everyone else works from carries it.
+
 ## Where things are
 
 `src/` is four layers:
