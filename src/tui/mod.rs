@@ -1627,14 +1627,26 @@ mod tests {
             to_the_loop.send(event).expect("the loop is listening");
         }
 
-        let mut view = Recorder::default();
-        drive(&mut view, &events, &ask).expect("the loop runs");
+        // The outstanding collection holds the channel open, so `q` reaching
+        // `Quit` is the only thing that ends this loop. A thread of its own is
+        // what lets the wait for that run out, rather than run on forever.
+        let (finished, ended) = mpsc::channel();
+        let driving = thread::spawn(move || {
+            let mut view = Recorder::default();
+            let outcome = drive(&mut view, &events, &ask);
+            let _ = finished.send(());
+            (view, outcome)
+        });
+        ended
+            .recv_timeout(A_MOMENT)
+            .expect("the loop ended on q with the collection still outstanding");
+        let (view, outcome) = driving.join().expect("the loop's thread ends");
+        outcome.expect("the loop runs");
 
         assert_eq!(view.applied, [Action::Move(Motion::NextRow)]);
         assert_eq!(view.collected, 0, "the collection is still outstanding");
 
         drop(release);
-        drop(ask);
         worker.join().expect("the collector ends with its channels");
     }
 
