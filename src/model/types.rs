@@ -117,9 +117,10 @@ impl Bead {
     }
 }
 
-/// `#[serde(default)]` covers a field bd omits, but not one written as an
-/// explicit null. A tracker is read whole, so the alternative is not a bead
-/// without its edges — it is every bead in that project, gone.
+/// bd omits a field it has nothing for, and `#[serde(default)]` covers that.
+/// It does not extend to an explicit null. A tracker is read whole, so a row
+/// bd wrote the other way costs not one bead's edges but every bead in that
+/// project.
 fn none_is_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Dependency>, D::Error> {
     Ok(Option::<Vec<Dependency>>::deserialize(d)?.unwrap_or_default())
 }

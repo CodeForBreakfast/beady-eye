@@ -471,10 +471,13 @@ mod tests {
         assert_eq!(beads.len(), 8, "both answers, neither replacing the other");
     }
 
-    /// A row naming no dependencies writes the field as null rather than
-    /// omitting it, and `#[serde(default)]` does not cover an explicit null.
-    /// A tracker is read whole, so such a row costs every bead in the
-    /// project, not just its own edges.
+    /// bd omits a field it has nothing for rather than writing it as null:
+    /// measured across the 73 ephemeral rows of a tracker on 2026-08-31,
+    /// eleven keys are universal and every other one is absent when empty.
+    /// So this row is not a shape bd writes today. It is covered because
+    /// `#[serde(default)]` does not extend to an explicit null, and a
+    /// tracker is read whole — a single row bd wrote differently would cost
+    /// every bead in that project rather than its own edges.
     #[test]
     fn a_row_naming_its_dependencies_as_null_still_parses() {
         let json = r#"[{"id":"nix-wisp-gvi","title":"t","status":"open",
