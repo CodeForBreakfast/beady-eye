@@ -1,5 +1,5 @@
-//! Which pane is working which bead, and where the two directions of that
-//! question disagree.
+//! Which pane is working which bead, read from the two directions that can
+//! disagree about it.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
