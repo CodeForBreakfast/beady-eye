@@ -76,8 +76,28 @@ pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>
         Some(cwd),
         env,
     )?;
-    rows(&out)
+    let mut beads = rows(&out)?;
+    beads.extend(rows(&wisps(runner, cwd, env, &["--all"])?)?);
+    Ok(beads)
 }
+
+/// A tracker's wisps, in whichever population `also` asks for.
+///
+/// A second call, because bd keeps its ephemeral beads in a table `bd list`
+/// does not read: measured against this project's own tracker on 2026-08-31,
+/// `bd list --all` answered 120 rows both before and after two wisps were
+/// written, and `bd list --wisp-type heartbeat` answered `[]` against a
+/// heartbeat wisp that existed. `bd query` is the one call that reads them,
+/// and it writes the same row `bd list` does.
+fn wisps(runner: &dyn Runner, cwd: &Path, env: &Env, also: &[&str]) -> Result<String, RunFailure> {
+    let mut args = vec!["query", EPHEMERAL];
+    args.extend_from_slice(also);
+    args.extend_from_slice(&["--limit", "0", "--json"]);
+    runner.run("bd", &args, Some(cwd), env)
+}
+
+/// The `bd query` expression that selects wisps and nothing else.
+const EPHEMERAL: &str = "ephemeral=true";
 
 /// The statuses bd stores for work that is not finished. `closed` is the only
 /// one of its five this leaves out, and that is the whole of the rule.
@@ -106,6 +126,11 @@ pub fn discover_roots(
         env,
     )?;
     note_parents(&out, &mut found)?;
+
+    // Without this a wisp with no parent is collected and then hung nowhere.
+    // Every step of a bd molecule hangs under it, so the one rootless row is
+    // the whole run.
+    note_parents(&wisps(runner, cwd, env, &[])?, &mut found)?;
 
     for key in metadata_keys {
         let out = runner.run(
@@ -401,16 +426,87 @@ mod tests {
     /// open beads.
     const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
 
+    /// The second call the same forest needs, because `bd list` answers
+    /// about the permanent table only.
+    const WISP_CALL: &str = "bd query ephemeral=true --all --limit 0 --json";
+
+    const WISPS: &str = include_str!("../../tests/fixtures/bd_wisps.json");
+
     #[test]
     fn the_tracker_is_read_in_the_projects_directory_with_its_credential() {
-        let runner = FakeRunner::default().with(TRACKER_CALL, FIXTURE);
+        let runner = FakeRunner::default()
+            .with(TRACKER_CALL, FIXTURE)
+            .with(WISP_CALL, "[]");
 
         let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
 
         assert_eq!(beads.len(), 6);
-        let call = runner.call(TRACKER_CALL);
-        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
-        assert_eq!(call.env, credentialled());
+        for argv in [TRACKER_CALL, WISP_CALL] {
+            let call = runner.call(argv);
+            assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
+            assert_eq!(call.env, credentialled());
+        }
+    }
+
+    /// `bd list` answers about the permanent table, so it returns no wisp at
+    /// all — not under `--all`, and not under its own `--wisp-type` filter.
+    /// A tracker read only that way draws none of them.
+    #[test]
+    fn a_tracker_answers_with_its_wisps_as_well_as_its_permanent_beads() {
+        let runner = FakeRunner::default()
+            .with(TRACKER_CALL, FIXTURE)
+            .with(WISP_CALL, WISPS);
+
+        let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
+
+        let ids: Vec<&str> = beads.iter().map(|bead| bead.id.as_str()).collect();
+        assert!(
+            ids.contains(&"bdi-7ao.17.2"),
+            "the wisp under a bead: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"bdi-wisp-w3m"),
+            "the free-standing wisp: {ids:?}"
+        );
+        assert_eq!(beads.len(), 8, "both answers, neither replacing the other");
+    }
+
+    /// A row naming no dependencies writes the field as null rather than
+    /// omitting it, and `#[serde(default)]` does not cover an explicit null.
+    /// A tracker is read whole, so such a row costs every bead in the
+    /// project, not just its own edges.
+    #[test]
+    fn a_row_naming_its_dependencies_as_null_still_parses() {
+        let json = r#"[{"id":"nix-wisp-gvi","title":"t","status":"open",
+                        "issue_type":"molecule","parent":null,"dependencies":null}]"#;
+
+        let bead = &parse_beads(json).expect("the row parses")[0];
+
+        assert_eq!(bead.depends_on(), vec![]);
+    }
+
+    /// A wisp bd writes under a parent is a child like any other: a dotted id
+    /// and a real parent-child edge. One written without a parent has neither,
+    /// so nothing but root discovery can place it.
+    #[test]
+    fn a_wisp_carries_the_edge_that_hangs_it_under_a_bead_where_it_has_one() {
+        let wisps = parse_beads(WISPS).expect("the captured wisps parse");
+        let by_id = |id: &str| {
+            wisps
+                .iter()
+                .find(|wisp| wisp.id == id)
+                .unwrap_or_else(|| panic!("{id} is in the fixture"))
+                .clone()
+        };
+
+        assert_eq!(
+            by_id("bdi-7ao.17.2").depends_on(),
+            vec![Dependency {
+                on: "bdi-7ao.17".to_string(),
+                edge: Edge::ParentChild,
+            }]
+        );
+        assert_eq!(by_id("bdi-wisp-w3m").depends_on(), vec![]);
     }
 
     #[test]
@@ -454,6 +550,10 @@ mod tests {
     const UNFINISHED_CALL: &str =
         "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
 
+    /// Discovery's wisp call. No `--all`, so it excludes closed wisps and
+    /// nothing else — the same population `UNFINISHED_CALL` asks for.
+    const UNFINISHED_WISP_CALL: &str = "bd query ephemeral=true --limit 0 --json";
+
     #[test]
     fn discovery_unions_the_unfinished_statuses_and_metadata_keys_without_duplicates() {
         let unfinished = r#"[{"id":"p-1.16","title":"a","status":"in_progress"},
@@ -463,6 +563,7 @@ mod tests {
 
         let runner = FakeRunner::default()
             .with(UNFINISHED_CALL, unfinished)
+            .with(UNFINISHED_WISP_CALL, "[]")
             .with(
                 "bd list --has-metadata-key working_topic --limit 0 --json",
                 carrying_the_key,
@@ -489,10 +590,12 @@ mod tests {
     /// was no root, so the effort was not drawn at all.
     #[test]
     fn a_bead_nobody_has_started_is_discovered() {
-        let runner = FakeRunner::default().with(
-            UNFINISHED_CALL,
-            r#"[{"id":"p-1.1","title":"the work that is left","status":"open"}]"#,
-        );
+        let runner = FakeRunner::default()
+            .with(
+                UNFINISHED_CALL,
+                r#"[{"id":"p-1.1","title":"the work that is left","status":"open"}]"#,
+            )
+            .with(UNFINISHED_WISP_CALL, "[]");
 
         let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
 
@@ -503,11 +606,13 @@ mod tests {
     /// carries the bead's own, and that is the one the walk to a root needs.
     #[test]
     fn discovery_keeps_each_beads_own_parent() {
-        let runner = FakeRunner::default().with(
-            UNFINISHED_CALL,
-            r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1"},
+        let runner = FakeRunner::default()
+            .with(
+                UNFINISHED_CALL,
+                r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1"},
                 {"id":"p-1","title":"b","status":"open","parent":""}]"#,
-        );
+            )
+            .with(UNFINISHED_WISP_CALL, "[]");
 
         let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
 
@@ -516,6 +621,25 @@ mod tests {
             got["p-1"], None,
             "bd writes the top of a chain as an empty parent"
         );
+    }
+
+    /// A free-standing wisp is the shape that passes a collection test and
+    /// still draws nothing: it has no parent, so unless discovery names it a
+    /// root of its own it is collected and then hung nowhere.
+    #[test]
+    fn a_free_standing_wisp_is_discovered_as_a_root_of_its_own() {
+        let runner = FakeRunner::default()
+            .with(UNFINISHED_CALL, "[]")
+            .with(UNFINISHED_WISP_CALL, WISPS);
+
+        let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
+
+        assert_eq!(got["bdi-wisp-w3m"], None);
+        assert_eq!(got["bdi-7ao.17.2"], Some("bdi-7ao.17".to_string()));
+
+        let call = runner.call(UNFINISHED_WISP_CALL);
+        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
+        assert_eq!(call.env, credentialled());
     }
 
     /// The rule is *not finished*, so the query names every status bd stores

@@ -90,11 +90,86 @@ fn canned() -> Canned {
             r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
         )
         .answering(TRACKER_CALL, TREE)
+        .answering(WISP_CALL, "[]")
+        .answering(UNFINISHED_WISP_CALL, "[]")
 }
 
 /// The one call a project's whole forest is drawn from, spelled as bd takes
 /// it.
 const TRACKER_CALL: &str = "bd list --all --limit 0 --json";
+
+/// The same two questions asked of bd's ephemeral table, which `bd list`
+/// does not read. Both trackers answer them with nothing unless a case
+/// stages wisps of its own.
+const WISP_CALL: &str = "bd query ephemeral=true --all --limit 0 --json";
+const UNFINISHED_WISP_CALL: &str = "bd query ephemeral=true --limit 0 --json";
+
+/// A run recorded as wisps, in the shape bd writes one: a `molecule` that is
+/// nobody's child, and its steps hanging under it by parent-child. The
+/// molecule is what costs the whole run — root discovery is the only thing
+/// that can place it, and without it every step hangs off a node the answer
+/// does not hold.
+const WISP_RUN: &str = r#"[
+  {"id":"orb-wisp-gvi","title":"re-point the dish","status":"in_progress","parent":null,
+   "priority":2,"issue_type":"molecule","ephemeral":true},
+  {"id":"orb-wisp-7dg","title":"slew the mount","status":"closed","parent":"orb-wisp-gvi",
+   "priority":2,"issue_type":"task","ephemeral":true,"dependencies":[
+     {"issue_id":"orb-wisp-7dg","depends_on_id":"orb-wisp-gvi","type":"parent-child"}]},
+  {"id":"orb-wisp-v4p","title":"sign off the alignment","status":"open","parent":"orb-wisp-gvi",
+   "priority":2,"issue_type":"gate","ephemeral":true,"dependencies":[
+     {"issue_id":"orb-wisp-v4p","depends_on_id":"orb-wisp-gvi","type":"parent-child"},
+     {"issue_id":"orb-wisp-v4p","depends_on_id":"orb-wisp-7dg","type":"blocks"}]}
+]"#;
+
+/// The run is a tree of its own beside the permanent work, and every step of
+/// it is drawn. A wisp bd discards is a step of the run that is invisible
+/// while it happens, which is the whole reason to draw them.
+#[test]
+fn a_run_recorded_as_wisps_is_drawn_beside_the_permanent_work() {
+    let runner = canned()
+        .answering(WISP_CALL, WISP_RUN)
+        .answering(UNFINISHED_WISP_CALL, WISP_RUN);
+
+    let emitted = emit(&runner, Filter::All);
+
+    let trees = emitted["trees"].as_array().expect("trees is an array");
+    let run = trees
+        .iter()
+        .find(|tree| tree["root"] == "orb-wisp-gvi")
+        .expect("the molecule is a root of its own");
+    assert_eq!(run["title"], "re-point the dish");
+
+    let drawn: Vec<(&str, u64)> = run["nodes"]
+        .as_array()
+        .expect("nodes is an array")
+        .iter()
+        .map(|node| {
+            (
+                node["id"].as_str().expect("an id"),
+                node["depth"].as_u64().expect("a depth"),
+            )
+        })
+        .collect();
+    // A step reached by two edges is drawn under both, as any bead is: the
+    // closed step hangs under the molecule, and again under the gate it
+    // blocks.
+    assert_eq!(
+        drawn,
+        vec![
+            ("orb-wisp-gvi", 0),
+            ("orb-wisp-v4p", 1),
+            ("orb-wisp-7dg", 2),
+            ("orb-wisp-7dg", 1),
+        ]
+    );
+    assert_eq!(node(run, "orb-wisp-v4p")["edge"], "parent-child");
+    assert_eq!(node(run, "orb-wisp-v4p")["issue_type"], "gate");
+
+    assert!(
+        trees.iter().any(|tree| tree["root"] == "orb-7"),
+        "the permanent work is still drawn"
+    );
+}
 
 fn cfg() -> Config {
     Config::from_toml(CONFIG).expect("the config parses")

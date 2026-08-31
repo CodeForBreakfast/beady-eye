@@ -448,6 +448,11 @@ credential_command = "secret ferry"
     const UNFINISHED_CALL: &str =
         "bd list --status open,in_progress,blocked,deferred --limit 0 --json";
 
+    /// The same two questions asked of bd's ephemeral table, which `bd list`
+    /// does not read.
+    const WISP_CALL: &str = "bd query ephemeral=true --all --limit 0 --json";
+    const UNFINISHED_WISP_CALL: &str = "bd query ephemeral=true --limit 0 --json";
+
     /// Every call a healthy single-project run makes. Discovery names each
     /// bead's own parent, so a healthy run climbs nothing.
     fn orbital() -> FakeRunner {
@@ -472,6 +477,8 @@ credential_command = "secret ferry"
                 r#"[{"id":"orb-7.1","blocked_by":["orb-9"]}]"#,
             )
             .with(TRACKER_CALL, ORBITAL_TREE)
+            .with(WISP_CALL, "[]")
+            .with(UNFINISHED_WISP_CALL, "[]")
     }
 
     fn failing(kind: FailureKind) -> RunFailure {
@@ -1243,5 +1250,7 @@ orbital = ["orb-4"]
             .with("bd ready --limit 0 --json", "[]")
             .with("bd blocked --json", "[]")
             .with(TRACKER_CALL, COLLIDING_TREE)
+            .with(WISP_CALL, "[]")
+            .with(UNFINISHED_WISP_CALL, "[]")
     }
 }

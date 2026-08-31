@@ -1,0 +1,45 @@
+[
+  {
+    "id": "bdi-7ao.17.2",
+    "title": "Establish what bd list returns for a wisp",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-31T07:39:43Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-31T07:39:43Z",
+    "dependencies": [
+      {
+        "issue_id": "bdi-7ao.17.2",
+        "depends_on_id": "bdi-7ao.17",
+        "type": "parent-child",
+        "created_at": "2026-08-31T07:39:43Z",
+        "created_by": "Graeme Foster",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "wisp_type": "patrol",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "bdi-7ao.17"
+  },
+  {
+    "id": "bdi-wisp-w3m",
+    "title": "beady-eye seat heartbeat",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "80714+GraemeF@users.noreply.github.com",
+    "created_at": "2026-08-31T07:39:44Z",
+    "created_by": "Graeme Foster",
+    "updated_at": "2026-08-31T07:39:44Z",
+    "ephemeral": true,
+    "wisp_type": "heartbeat",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  }
+]

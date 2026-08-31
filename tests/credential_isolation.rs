@@ -64,6 +64,8 @@ fn tracker(runner: Canned, cwd: &str, id: &str) -> Canned {
                 r#"[{{"id":"{id}.1","title":"the work","status":"in_progress","parent":"{id}"}}]"#
             ),
         )
+        .answering_in(cwd, "bd query ephemeral=true --limit 0 --json", "[]")
+        .answering_in(cwd, "bd query ephemeral=true --all --limit 0 --json", "[]")
         .answering_in(cwd, "bd ready --limit 0 --json", "[]")
         .answering_in(cwd, "bd blocked --json", "[]")
         .answering_in(

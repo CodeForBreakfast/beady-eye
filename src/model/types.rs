@@ -75,7 +75,7 @@ pub struct Bead {
     pub edge_from_parent: Option<Edge>,
     /// Every bead this one depends on, where the answer named them all.
     /// `bd list` does; `bd dep tree` does not — see `depends_on`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "none_is_empty")]
     pub dependencies: Vec<Dependency>,
     #[serde(default, deserialize_with = "text_of_each_value")]
     pub metadata: BTreeMap<String, String>,
@@ -115,6 +115,13 @@ impl Bead {
             })
             .collect()
     }
+}
+
+/// `#[serde(default)]` covers a field bd omits, but not one written as an
+/// explicit null. A tracker is read whole, so the alternative is not a bead
+/// without its edges — it is every bead in that project, gone.
+fn none_is_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Dependency>, D::Error> {
+    Ok(Option::<Vec<Dependency>>::deserialize(d)?.unwrap_or_default())
 }
 
 /// bd writes the root's absent parent as `""` rather than omitting the field.
