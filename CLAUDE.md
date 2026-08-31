@@ -14,14 +14,15 @@ whenever `src/` changes, so a copy left running in a terminal stays current
 without being quit and started again by hand. `cargo build` and `cargo test`
 work as usual inside the shell.
 
-`nix flake check` is the whole of CI, and it is what to run before you push.
-Everything CI runs comes from the flake's `checks` output — the build and tests,
-`clippy -D warnings`, `cargo fmt --check`, and a `cargo package` verify — so a
-check added there is a check CI runs, and nothing runs that is not there.
+`nix flake check` is the whole of CI, and `check-before-push` is what to run
+before you push: it runs the check, and refuses a dirty tree rather than check a
+source nix cannot see all of. Everything CI runs comes from the flake's `checks`
+output — the build and tests, `clippy -D warnings`, `cargo fmt --check`, and a
+`cargo package` verify — so a check added there is a check CI runs, and nothing
+runs that is not there.
 
-Commit before you run it. Untracked files are invisible to it, so a green check
-on a dirty tree has not compiled your new files, and `Git tree is dirty` is the
-only warning you get.
+Once it is pushed, `read-ci-verdict [<commit>]` says whether CI passed for it,
+and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
 
 The check needs `bd`, and not as a tracker client: `tests/no_config.rs` runs
 `bdi` the way a fresh machine would, and `bdi` asks `bd` where the tracker is.

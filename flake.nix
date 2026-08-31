@@ -77,6 +77,195 @@
             -- 'cargo build --quiet && exec target/debug/bdi'
         '';
 
+        # `nix flake check` reads the git index, so an untracked file is not in
+        # the source it checks and a green result has not compiled it. Refusing
+        # the tree the check cannot see all of is what puts that out of reach.
+        checkBeforePush = pkgs.writeShellScriptBin "check-before-push" ''
+          set -u
+
+          git=${pkgs.git}/bin/git
+
+          cd "$($git rev-parse --show-toplevel)" || exit 1
+
+          dirty="$($git status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo "check-before-push: this tree is dirty, so a check of it would not"
+            echo "be a check of what you are about to push."
+            echo
+            printf '%s\n' "$dirty"
+
+            untracked="$($git ls-files --others --exclude-standard)"
+            if [ -n "$untracked" ]; then
+              echo
+              echo "These are untracked, so the check would not see them at all:"
+              printf '%s\n' "$untracked"
+            fi
+
+            echo
+            echo "Commit, then run this again."
+            exit 1
+          fi
+
+          exec nix flake check -L "$@"
+        '';
+
+        # `gh run list` answers with an empty list for four different reasons
+        # and only one of them means "wait", so this has to tell them apart —
+        # `read-ci-verdict --help` says how.
+        #
+        # The fetch is load-bearing. Ancestry measured against a stale
+        # `origin/main` calls a superseded commit the tip and sends you back to
+        # wait for a run that will never exist, which is the wrong answer this
+        # command exists to prevent.
+        readCiVerdict = pkgs.writeShellScriptBin "read-ci-verdict" ''
+          set -u
+
+          git=${pkgs.git}/bin/git
+          gh=${pkgs.gh}/bin/gh
+          jq=${pkgs.jq}/bin/jq
+          grep=${pkgs.gnugrep}/bin/grep
+
+          case "''${1:-}" in
+            -h|--help)
+              cat <<'USAGE'
+          read-ci-verdict [<commit-ish>]        (default: HEAD)
+
+          Says whether CI passed for one commit, and exits 0 only for a run
+          whose own conclusion is "success".
+
+          GitHub makes one run per push, on the tip, so an empty run list is not
+          a verdict and does not always mean wait:
+
+            not on main         CI runs on pushes to main. A commit anywhere
+                                else has no run and will never get one.
+            not the tip         The verdict belongs to a descendant. This reads
+                                that run instead and says whose it is, and a
+                                green one that contains your commit exits 0:
+                                a run tests a tree rather than a commit, no
+                                run will ever test yours alone, and this is
+                                the strongest true claim available. It may be
+                                green because of what landed after you.
+            not started yet     Wait. This one resolves on its own.
+
+          A cancelled run is neither green nor red: the commit has no verdict
+          and the run wants starting again. Why runs get cancelled here has not
+          been established, so read no cause into one.
+          USAGE
+              exit 0
+              ;;
+          esac
+
+          cd "$($git rev-parse --show-toplevel)" || exit 1
+
+          ref="''${1:-HEAD}"
+          sha="$($git rev-parse --verify --quiet "$ref^{commit}")" || {
+            echo "read-ci-verdict: no such commit in this repository: $ref" >&2
+            exit 1
+          }
+
+          runs_for() {
+            $gh run list --commit "$1" --limit 50 \
+              --json databaseId,headSha,status,conclusion,workflowName,url,createdAt
+          }
+
+          runs="$(runs_for "$sha")" || exit 1
+          subject="$sha"
+
+          if [ "$(printf '%s' "$runs" | $jq 'length')" -eq 0 ]; then
+            $git fetch --quiet origin ||
+              echo "read-ci-verdict: could not reach origin, so what follows may be stale" >&2
+
+            # Silence is only readable against a known trigger, and this reads
+            # it against one. Say so rather than answer for a workflow this no
+            # longer describes.
+            workflow="$($git show "$sha:.github/workflows/ci.yml" 2>/dev/null)"
+            if ! printf '%s\n' "$workflow" | $grep -q 'branches: \[main\]' ||
+               printf '%s\n' "$workflow" | $grep -qE 'paths-ignore|^ *paths:'; then
+              echo "NO VERDICT — $sha has no run, and this cannot say why."
+              echo "ci.yml no longer triggers on a bare push to main, so silence can"
+              echo "now mean a filtered path too. Teach this command the new trigger."
+              exit 1
+            fi
+
+            if ! $git merge-base --is-ancestor "$sha" origin/main 2>/dev/null; then
+              echo "NO RUN, AND NONE IS COMING — $sha is not on origin/main."
+              echo "CI runs on pushes to main. Land it there and a run appears."
+              exit 1
+            fi
+
+            tip="$($git rev-parse origin/main)"
+            if [ "$tip" = "$sha" ]; then
+              echo "NOT STARTED YET — $sha is the tip of origin/main and has no run."
+              echo "This one resolves on its own. Ask again."
+              exit 1
+            fi
+
+            echo "No run for $sha, and there never will be:"
+            echo "it is on origin/main but not the tip, and GitHub makes one run per"
+            echo "push. Its verdict lives on the descendant that contains it:"
+            echo "  $tip"
+            echo
+            subject="$tip"
+            runs="$(runs_for "$tip")" || exit 1
+            if [ "$(printf '%s' "$runs" | $jq 'length')" -eq 0 ]; then
+              echo "NO VERDICT — $tip has no run either. Ask again once it does."
+              exit 1
+            fi
+          fi
+
+          stray="$(printf '%s' "$runs" |
+            $jq --arg sha "$subject" '[.[] | select(.headSha != $sha)] | length')"
+          if [ "$stray" != "0" ]; then
+            echo "read-ci-verdict: gh returned a run for another commit; refusing to guess." >&2
+            exit 1
+          fi
+
+          latest="$(printf '%s' "$runs" |
+            $jq -c 'group_by(.workflowName) | map(max_by(.createdAt))')"
+
+          printf '%s' "$latest" |
+            $jq -r '.[] | "  \(.workflowName): \(.status)/\(if .conclusion == null or .conclusion == "" then "-" else .conclusion end)  \(.url)"'
+          echo
+
+          verdict="$(printf '%s' "$latest" | $jq -r '
+            if   any(.[]; .status != "completed") then "running"
+            elif any(.[]; .conclusion == "failure" or .conclusion == "timed_out"
+                          or .conclusion == "startup_failure"
+                          or .conclusion == "action_required") then "failed"
+            elif any(.[]; .conclusion == "cancelled") then "cancelled"
+            elif all(.[]; .conclusion == "skipped") then "skipped"
+            elif all(.[]; .conclusion == "success") then "passed"
+            else "unclear" end')"
+
+          case "$verdict" in
+            passed)
+              echo "PASSED — $subject"
+              ;;
+            failed)
+              echo "FAILED — $subject"
+              exit 1
+              ;;
+            cancelled)
+              echo "NO VERDICT — a run for $subject was cancelled."
+              echo "Cancelled is neither green nor red. Start it again."
+              exit 1
+              ;;
+            skipped)
+              echo "NO VERDICT — every run for $subject was skipped, so nothing was checked."
+              exit 1
+              ;;
+            running)
+              echo "STILL RUNNING — $subject has no conclusion yet."
+              exit 1
+              ;;
+            *)
+              echo "NO VERDICT — $subject's runs concluded in a way this command does"
+              echo "not recognise. Read them above."
+              exit 1
+              ;;
+          esac
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -89,6 +278,8 @@
           pkgs.rust-analyzer
           pkgs.watchexec
           rerunBdiOnChange
+          checkBeforePush
+          readCiVerdict
         ];
 
         # A check runs against the same source and the same vendored crates as
