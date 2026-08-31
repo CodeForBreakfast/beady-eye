@@ -742,7 +742,8 @@ impl View for Screen {
 
 #[cfg(test)]
 mod tests {
-    use super::keys::{Key, BINDINGS};
+    use super::keys::tests::{control, key};
+    use super::keys::BINDINGS;
     use super::*;
     use crate::collect::run::RunFailure;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
@@ -861,14 +862,6 @@ mod tests {
         Wanted::Project("ferry".to_string())
     }
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn control(code: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL)
-    }
-
     /// An event source holding everything the loop will see, in order.
     fn waiting(events: Vec<Event>) -> Receiver<Event> {
         let (to, from) = mpsc::channel();
@@ -926,76 +919,6 @@ mod tests {
             [Action::Move(Motion::NextRow), Action::ToggleFold],
             "q ends the loop, so nothing after it is applied"
         );
-    }
-
-    /// Every action there is.
-    ///
-    /// The match is what makes it every one rather than every one anybody
-    /// remembered: an action or a motion added to the enums makes it
-    /// non-exhaustive, and the compiler names this function until the list
-    /// above it has grown too.
-    fn every_action() -> Vec<Action> {
-        let every = vec![
-            Action::Move(Motion::PreviousRow),
-            Action::Move(Motion::NextRow),
-            Action::Move(Motion::HalfScreenUp),
-            Action::Move(Motion::HalfScreenDown),
-            Action::Move(Motion::FirstRow),
-            Action::Move(Motion::LastRow),
-            Action::CollapseOrParent,
-            Action::ExpandOrChild,
-            Action::ToggleFold,
-            Action::ExpandAll,
-            Action::CollapseAll,
-            Action::RestoreDefault,
-            Action::ToggleFilter,
-            Action::Focus,
-            Action::ShowBindings,
-            Action::Refresh,
-            Action::Quit,
-        ];
-
-        for action in &every {
-            match action {
-                Action::Move(motion) => match motion {
-                    Motion::PreviousRow
-                    | Motion::NextRow
-                    | Motion::HalfScreenUp
-                    | Motion::HalfScreenDown
-                    | Motion::FirstRow
-                    | Motion::LastRow => (),
-                },
-                Action::CollapseOrParent
-                | Action::ExpandOrChild
-                | Action::ToggleFold
-                | Action::ExpandAll
-                | Action::CollapseAll
-                | Action::RestoreDefault
-                | Action::ToggleFilter
-                | Action::Focus
-                | Action::ShowBindings
-                | Action::Refresh
-                | Action::Quit => (),
-            }
-        }
-
-        every
-    }
-
-    /// An action no key reaches is one nobody can ask for, and it would have
-    /// no line in the key bindings view either.
-    ///
-    /// `Forest::apply` already fails the build on an action added to the enum
-    /// and matched nowhere. This is the other half: one that compiles
-    /// everywhere and is still unreachable.
-    #[test]
-    fn every_action_has_a_key_that_asks_for_it() {
-        for action in every_action() {
-            assert!(
-                BINDINGS.iter().any(|binding| binding.action == action),
-                "{action:?} is bound to no key"
-            );
-        }
     }
 
     /// The bead this view exists for: a binding added to the table and left
@@ -1157,42 +1080,6 @@ mod tests {
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
 
-    /// Graeme could not tell what `⏎` was, let alone press it. A key named
-    /// with anything but the characters on a keyboard is that bug again.
-    #[test]
-    fn no_key_is_named_with_anything_a_keyboard_does_not_carry() {
-        for binding in BINDINGS {
-            for bound in binding.keys {
-                assert!(!bound.named.is_empty(), "a key with no name");
-                assert!(
-                    bound
-                        .named
-                        .chars()
-                        .all(|glyph| glyph.is_ascii_graphic() || glyph == ' '),
-                    "{:?} is not a name anyone can press",
-                    bound.named
-                );
-            }
-        }
-    }
-
-    /// The row under the tail said `⏎` while the mapping said `Enter`, which
-    /// is the whole of the bug. Both now come off the one table.
-    #[test]
-    fn the_row_under_the_tail_names_its_keys_as_the_mapping_does() {
-        let row = key_row();
-
-        for binding in BINDINGS {
-            let Some(word) = binding.hint else { continue };
-            let named = binding.keys.first().expect("a key").named;
-            assert!(
-                row.contains(&format!("{named} {word}")),
-                "{named} {word} missing from {row:?}"
-            );
-        }
-        assert!(row.contains("? keys"), "the way to the rest: {row:?}");
-    }
-
     /// The row is cut from its own end, so one that outgrew the narrowest
     /// screen anyone uses would lose `q quit` — which is what a reader who
     /// cannot get out is looking for. `bdi-2bb.12` cut `^R` from it to make
@@ -1214,84 +1101,6 @@ mod tests {
             screen.last().expect("a screen with rows on it").trim_end(),
             key_row()
         );
-    }
-
-    /// A binding added as a match arm rather than to the table would answer a
-    /// key the view never mentions. Nothing is left that could do that.
-    #[test]
-    fn the_mapping_answers_no_key_the_table_does_not_name() {
-        let named: Vec<&Key> = BINDINGS.iter().flat_map(|binding| binding.keys).collect();
-        let swept = (' '..='~')
-            .flat_map(|glyph| [key(KeyCode::Char(glyph)), control(glyph)])
-            .chain([
-                key(KeyCode::Up),
-                key(KeyCode::Down),
-                key(KeyCode::Left),
-                key(KeyCode::Right),
-                key(KeyCode::Enter),
-                key(KeyCode::Tab),
-                key(KeyCode::Esc),
-                key(KeyCode::Backspace),
-                key(KeyCode::Home),
-                key(KeyCode::End),
-            ]);
-
-        for pressed in swept {
-            let control = pressed.modifiers.contains(KeyModifiers::CONTROL);
-            let expected = named
-                .iter()
-                .any(|bound| bound.code == pressed.code && (control || !bound.control));
-            assert_eq!(
-                action(pressed).is_some(),
-                expected,
-                "the table and the mapping disagree about {pressed:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_binding_reaches_the_action_it_names() {
-        let bound = [
-            (key(KeyCode::Char('j')), Action::Move(Motion::NextRow)),
-            (key(KeyCode::Down), Action::Move(Motion::NextRow)),
-            (key(KeyCode::Char('k')), Action::Move(Motion::PreviousRow)),
-            (key(KeyCode::Up), Action::Move(Motion::PreviousRow)),
-            (key(KeyCode::Char('h')), Action::CollapseOrParent),
-            (key(KeyCode::Left), Action::CollapseOrParent),
-            (key(KeyCode::Char('l')), Action::ExpandOrChild),
-            (key(KeyCode::Right), Action::ExpandOrChild),
-            (key(KeyCode::Char('g')), Action::Move(Motion::FirstRow)),
-            (key(KeyCode::Char('G')), Action::Move(Motion::LastRow)),
-            (control('d'), Action::Move(Motion::HalfScreenDown)),
-            (control('u'), Action::Move(Motion::HalfScreenUp)),
-            (key(KeyCode::Char(' ')), Action::ToggleFold),
-            (key(KeyCode::Enter), Action::Focus),
-            (key(KeyCode::Char('a')), Action::ToggleFilter),
-            (control('r'), Action::Refresh),
-            (key(KeyCode::Char('?')), Action::ShowBindings),
-            (key(KeyCode::Char('q')), Action::Quit),
-            (control('c'), Action::Quit),
-        ];
-
-        for (pressed, expected) in bound {
-            assert_eq!(action(pressed), Some(expected), "for {pressed:?}");
-        }
-    }
-
-    /// The letters that carry a binding only under control carry none on
-    /// their own, and a key nothing is bound to asks for nothing.
-    #[test]
-    fn a_key_bound_to_nothing_asks_for_nothing() {
-        for pressed in [
-            key(KeyCode::Char('d')),
-            key(KeyCode::Char('u')),
-            key(KeyCode::Char('r')),
-            key(KeyCode::Char('c')),
-            key(KeyCode::Char('z')),
-            key(KeyCode::Tab),
-        ] {
-            assert_eq!(action(pressed), None, "for {pressed:?}");
-        }
     }
 
     /// `?` puts the bindings up and holds them there, and the next keystroke
