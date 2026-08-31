@@ -121,6 +121,7 @@ impl Layout<'_> {
             folded: Some(open),
             place: None,
             content: Content::Project(ProjectLine {
+                every_root_read: self.snapshot.every_root_read(&project),
                 project,
                 counts: Counts::over(trees.iter().flat_map(|tree| &tree.nodes)),
                 recovery,

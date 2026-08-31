@@ -77,19 +77,55 @@ pub enum Notice {
 
 /// How fresh one project's rows are, said beside its name.
 ///
-/// A collection running is the whole answer while it runs: it says the rows
-/// are about to be replaced, which is what a reader watching them change
-/// needs, and the read behind them is seconds from being superseded anyway.
+/// Two things, and both of them are on the line at all times. The mark says
+/// what the collection is doing or how the last one went; the age says how
+/// old the rows under the name are. They answer different questions, and a
+/// cell that swapped one for the other left the reader watching a mark turn
+/// over rows of unknown age.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Freshness {
+pub struct Freshness {
+    pub mark: Mark,
+    /// When this project's tracker was last read, where it ever has been.
+    ///
+    /// Absent only while the first collection of it is still running: there
+    /// is no read to date the rows to, and no rows either.
+    pub read_at: Option<DateTime<Utc>>,
+}
+
+/// What the mark beside a project's name says.
+///
+/// One column in every state, so the cell beside the name does not change
+/// width for a collection starting or ending — which was the whole of what
+/// made the old cell jump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// A collection is reading this project now.
     Collecting,
-    /// When this project's tracker was last read.
-    Collected(DateTime<Utc>),
+    /// The last collection read every root of it.
+    Read,
+    /// The last collection found a root it could not read.
+    Refused,
+}
+
+impl Mark {
+    /// What the mark says with no collection reading this project.
+    ///
+    /// A project several of whose roots disagree resolves to one mark, and it
+    /// resolves to the worse of them: the rows in front of the reader are
+    /// short of the refused root's, and a mark saying the collection went
+    /// well would be a claim about work that is not on the screen.
+    fn at_rest(every_root_read: bool) -> Self {
+        if every_root_read {
+            Mark::Read
+        } else {
+            Mark::Refused
+        }
+    }
 }
 
 impl Freshness {
-    /// What to say about one project: when it was last read, and whether the
-    /// collection in flight is reading it now.
+    /// What to say about one project: how the collection of it went or is
+    /// going, and when it was last read.
     ///
     /// One project rather than the screen. A single indicator had to quote
     /// the *oldest* read of any project on it — the weakest claim that was
@@ -102,15 +138,27 @@ impl Freshness {
     /// A read that failed counts as a read. Its trees went down with the
     /// tracker that refused, so none of its rows are on the screen to be
     /// stale — and holding the line back to the last read that *worked*
-    /// would date rows nothing came from.
+    /// would date rows nothing came from. The mark is what says the read
+    /// failed.
     ///
     /// Nothing at all for a project neither read nor being read: there is no
     /// row on the screen for the claim to be about.
-    pub fn of(read_at: Option<DateTime<Utc>>, collecting: bool) -> Option<Self> {
-        if collecting {
-            return Some(Freshness::Collecting);
+    pub fn of(
+        read_at: Option<DateTime<Utc>>,
+        collecting: bool,
+        every_root_read: bool,
+    ) -> Option<Self> {
+        if read_at.is_none() && !collecting {
+            return None;
         }
-        read_at.map(Freshness::Collected)
+        Some(Freshness {
+            mark: if collecting {
+                Mark::Collecting
+            } else {
+                Mark::at_rest(every_root_read)
+            },
+            read_at,
+        })
     }
 }
 
@@ -131,18 +179,48 @@ mod tests {
     #[test]
     fn a_project_no_collection_is_reading_says_when_it_was_last_read() {
         assert_eq!(
-            Freshness::of(Some(at(22, 14)), false),
-            Some(Freshness::Collected(at(22, 14)))
+            Freshness::of(Some(at(22, 14)), false, true),
+            Some(Freshness {
+                mark: Mark::Read,
+                read_at: Some(at(22, 14)),
+            })
         );
     }
 
-    /// A collection running says the rows are about to move, which is what a
-    /// reader watching them needs; the read it is about to replace is not.
+    /// The bead: the rows on the screen during a collection are the previous
+    /// collection's rows, and their age is the only thing saying so. A cell
+    /// that gave the age up for the mark left a reader watching a mark turn
+    /// over rows of unknown age.
     #[test]
-    fn a_project_being_read_now_says_so_over_the_read_it_is_replacing() {
+    fn a_project_being_read_now_keeps_the_age_of_the_rows_still_on_the_screen() {
         assert_eq!(
-            Freshness::of(Some(at(22, 14)), true),
-            Some(Freshness::Collecting)
+            Freshness::of(Some(at(22, 14)), true, true),
+            Some(Freshness {
+                mark: Mark::Collecting,
+                read_at: Some(at(22, 14)),
+            })
+        );
+    }
+
+    /// A collection reading this project is the whole of what the mark says
+    /// while it runs. How the one before it went is about rows that are
+    /// seconds from being replaced.
+    #[test]
+    fn a_collection_in_flight_takes_the_mark_from_the_read_it_is_replacing() {
+        assert_eq!(
+            Freshness::of(Some(at(22, 14)), true, false).map(|it| it.mark),
+            Some(Mark::Collecting)
+        );
+    }
+
+    /// A project several of whose roots disagree resolves to one mark, and to
+    /// the worse of them: the rows in front of the reader are short of the
+    /// refused root's.
+    #[test]
+    fn a_project_with_a_root_that_would_not_read_rests_on_the_refused_mark() {
+        assert_eq!(
+            Freshness::of(Some(at(22, 14)), false, false).map(|it| it.mark),
+            Some(Mark::Refused)
         );
     }
 
@@ -151,11 +229,17 @@ mod tests {
     /// whole of what the line can say.
     #[test]
     fn a_project_never_read_but_being_read_now_still_says_it_is_collecting() {
-        assert_eq!(Freshness::of(None, true), Some(Freshness::Collecting));
+        assert_eq!(
+            Freshness::of(None, true, true),
+            Some(Freshness {
+                mark: Mark::Collecting,
+                read_at: None,
+            })
+        );
     }
 
     #[test]
     fn a_project_neither_read_nor_being_read_says_nothing_about_freshness() {
-        assert_eq!(Freshness::of(None, false), None);
+        assert_eq!(Freshness::of(None, false, true), None);
     }
 }

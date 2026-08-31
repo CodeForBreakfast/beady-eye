@@ -10,7 +10,7 @@ use crate::view::fitted::Fitted;
 use crate::view::lines::{ProjectLine, Recovery, Unread};
 use crate::view::phrase;
 use crate::view::row::WARNING;
-use crate::view::Freshness;
+use crate::view::{Freshness, Mark};
 
 use super::tone::{LIVE, LOOK_AT_THIS};
 use super::{beside, done, pane_marker, structure};
@@ -44,24 +44,50 @@ pub(super) fn project_line(
         Span::raw(project.project.clone()),
     ];
 
-    // Drawn plain and dim: it is what a reader glances at to place the rest,
-    // not one of the things the rest is asking them to look at.
-    let how_fresh = how_fresh
-        .map(|how_fresh| {
-            Span::styled(
-                phrase::freshness(how_fresh, now),
-                Style::new().fg(Color::DarkGray),
-            )
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
-
     let mut state = summary(&project.counts);
     if let Some(found) = &project.recovery {
         beside(&mut state, recovered(found));
     }
 
-    Fitted::new(identity, how_fresh, state).title_or_nothing()
+    Fitted::new(identity, freshness(how_fresh, now), state).title_or_nothing()
+}
+
+/// The mark and the age beside a project's name, in that order and both of
+/// them in every state the collection can be in.
+///
+/// The age is drawn plain and dim throughout: it is what a reader glances at
+/// to place the rest, not one of the things the rest is asking them to look
+/// at. The mark is dim for the same reason wherever the collection is going
+/// well, and wears the warning's colour where it is not — a project folded
+/// shut draws none of the `unread_line`s naming the root that refused, so
+/// this is then the only thing on the screen saying the rows are short of
+/// one.
+fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'static>> {
+    let Some(how_fresh) = how_fresh else {
+        return Vec::new();
+    };
+    let mark = match how_fresh.mark {
+        Mark::Refused => LOOK_AT_THIS,
+        Mark::Collecting | Mark::Read => Color::DarkGray,
+    };
+
+    let mut said = vec![Span::styled(
+        phrase::mark(how_fresh, now),
+        Style::new().fg(mark),
+    )];
+    said.extend(
+        phrase::last_read(how_fresh, now)
+            .map(|age| {
+                // One space rather than a `GAP`: the mark and the age are two
+                // halves of one claim about this project's rows, and a gap
+                // between them would read as two cells.
+                [" ".to_string(), age]
+                    .map(|said| Span::styled(said, Style::new().fg(Color::DarkGray)))
+            })
+            .into_iter()
+            .flatten(),
+    );
+    said
 }
 
 /// A root that drew no row, said where its row would have been.
@@ -183,6 +209,15 @@ mod tests {
     /// The same line, said at an instant, with one project's freshness on it.
     fn line_that_is(project: &ProjectLine, how_fresh: Freshness) -> Fitted {
         project_line(project, OPEN, Some(how_fresh), drawn_at())
+    }
+
+    /// A project read half a minute ago, in whichever state its collection is
+    /// in now.
+    fn half_a_minute_old(mark: Mark) -> Freshness {
+        Freshness {
+            mark,
+            read_at: Some(read_at()),
+        }
     }
 
     /// Two projects read at the same instant, so a mark on one of them is a
@@ -327,40 +362,78 @@ mod tests {
     fn a_project_says_how_long_ago_it_was_read_beside_its_own_name() {
         let line = line_that_is(
             &project("summit-works", counts(8, 21, 3, 3)),
-            Freshness::Collected(read_at()),
+            half_a_minute_old(Mark::Read),
         );
 
         assert_eq!(
             drawn(line, 60, 1),
-            vec!["▾ summit-works  30s ago                  8/21  3 agents  ⚠ 3"]
+            vec!["▾ summit-works  ✓ 30s ago                8/21  3 agents  ⚠ 3"]
         );
     }
 
-    /// A collection reading this project replaces its age with the mark that
-    /// says so: the rows are seconds from being superseded, and how stale the
-    /// ones about to go are is not what a reader watching them needs.
+    /// The bead, in one assertion. Graeme: *"while refreshing, the displayed
+    /// data continues to have an age. it should continue to be shown while
+    /// the spinner is going"*, and *"when not collecting, the spinner can be
+    /// replaced with something to indicate success/failure so that it doesn't
+    /// jump around"*.
+    ///
+    /// Three states, one shape: a mark, a space, the same age. Every column
+    /// after the mark holds the same thing in all three, so a collection
+    /// starting or ending moves nothing on the line. The old cell drew a mark
+    /// and no age while collecting and an age and no mark at rest, and every
+    /// column after the name shifted each way.
     #[test]
-    fn a_project_being_read_wears_the_turning_mark_in_place_of_its_age() {
-        let drawn = drawn(
-            line_that_is(
-                &project("summit-works", counts(8, 21, 0, 0)),
-                Freshness::Collecting,
-            ),
-            60,
-            1,
-        );
+    fn the_cell_says_a_mark_and_an_age_in_every_state_and_nothing_after_it_moves() {
+        let said = |mark| {
+            drawn(
+                line_that_is(
+                    &project("summit-works", counts(8, 21, 0, 0)),
+                    half_a_minute_old(mark),
+                ),
+                60,
+                1,
+            )
+            .remove(0)
+        };
 
-        does_not_say(&drawn[0], "ago");
-        says(
-            &drawn[0],
-            phrase::freshness(Freshness::Collecting, drawn_at()).as_str(),
+        assert_eq!(
+            [
+                said(Mark::Collecting),
+                said(Mark::Read),
+                said(Mark::Refused)
+            ],
+            [
+                "▾ summit-works  ⠴ 30s ago                               8/21",
+                "▾ summit-works  ✓ 30s ago                               8/21",
+                "▾ summit-works  ⚠ 30s ago                               8/21",
+            ]
+        );
+    }
+
+    /// The startup frame, and the one state with no age in it: nothing has
+    /// come back, so there is no read to date the rows to and no rows either.
+    #[test]
+    fn a_project_nothing_has_read_yet_shows_the_mark_over_no_age() {
+        let starting = Freshness {
+            mark: Mark::Collecting,
+            read_at: None,
+        };
+
+        assert_eq!(
+            drawn(
+                line_that_is(&project("summit-works", counts(0, 0, 0, 0)), starting),
+                60,
+                1
+            ),
+            vec!["▾ summit-works  ⠴                                           "]
         );
     }
 
     /// The bead: a refresh naming one project redrew every project's
     /// indicator, because there was one indicator and it spoke for the whole
     /// screen. Each line now answers for its own rows, so the project nothing
-    /// is reading keeps the age it has.
+    /// is reading keeps the age it has — and says, with its own mark, that
+    /// nothing is reading it.
     #[test]
     fn a_project_no_collection_names_keeps_its_age_while_another_is_read() {
         let forest = opened(&two_projects());
@@ -372,10 +445,8 @@ mod tests {
             12,
         );
 
-        let marked = phrase::freshness(Freshness::Collecting, drawn_at());
-        says(&frame[0], &marked);
-        says(project_row(&frame, "harbour"), "30s ago");
-        does_not_say(project_row(&frame, "harbour"), &marked);
+        says(&frame[0], "⠴ 30s ago");
+        says(project_row(&frame, "harbour"), "✓ 30s ago");
     }
 
     /// A collection over everything is reading every project, so every
@@ -386,13 +457,32 @@ mod tests {
 
         let frame = frame_collecting(&forest, Some(&Wanted::Everything), 74, 12);
 
-        let marked = phrase::freshness(Freshness::Collecting, drawn_at());
-        says(&frame[0], &marked);
-        says(project_row(&frame, "harbour"), &marked);
+        says(&frame[0], "⠴ 30s ago");
+        says(project_row(&frame, "harbour"), "⠴ 30s ago");
     }
 
-    /// The counts are what a reader came to the line for and the age is what
-    /// they check them against, so the age is the first thing a narrowing
+    /// The whole way through from the model: a project one of whose roots
+    /// would not read wears the refused mark, resolved over the roots by
+    /// `Snapshot::every_root_read`. Nothing between the tracker and the cell
+    /// is stubbed, which is what makes this different from the tests above.
+    #[test]
+    fn a_project_with_a_root_that_would_not_read_wears_the_refused_mark() {
+        let mut snapshot = two_projects();
+        snapshot.trees.push(Tree::tracker_unreachable(
+            "harbour",
+            "qua-9",
+            TrackerFailure::Auth,
+        ));
+        snapshot.collected.clone_from(&snapshot.trees);
+
+        let frame = frame_of(&opened(&snapshot), 74, 12);
+
+        says(project_row(&frame, "harbour"), "⚠ 30s ago");
+        says(&frame[0], "✓ 30s ago");
+    }
+
+    /// The counts are what a reader came to the line for and the cell is what
+    /// they check them against, so the cell is the first thing a narrowing
     /// line gives up.
     ///
     /// `bdi-2bb.21` rejected the project line for this indicator on a
@@ -401,65 +491,109 @@ mod tests {
     /// columns is that width, and it is here because the position changed and
     /// the measurement did not: the line at forty is what it always was.
     #[test]
-    fn a_narrow_project_line_gives_up_its_age_before_its_counts() {
-        let with_age = |width| {
+    fn a_narrow_project_line_gives_up_the_whole_cell_before_its_counts() {
+        let with_a_cell = |width| {
             drawn(
                 line_that_is(
                     &project("summit-works", counts(8, 21, 3, 3)),
-                    Freshness::Collected(read_at()),
+                    half_a_minute_old(Mark::Read),
                 ),
                 width,
                 1,
             )
         };
 
-        let roomy = with_age(60);
-        says(&roomy[0], "30s ago");
+        assert_eq!(
+            with_a_cell(46),
+            vec!["▾ summit-works  ✓ 30s ago  8/21  3 agents  ⚠ 3"]
+        );
 
-        for narrow in [43, 40] {
+        for narrow in [45, 40] {
             assert_eq!(
-                with_age(narrow),
+                with_a_cell(narrow),
                 drawn(
                     line(&project("summit-works", counts(8, 21, 3, 3)), OPEN),
                     narrow,
                     1
                 ),
-                "at {narrow} columns the age costs the line nothing"
+                "at {narrow} columns the cell costs the line nothing"
             );
         }
     }
 
-    /// An age is given up whole rather than cut. One column short of the
-    /// seven it needs, a cut line would read `30s a…` — a duration that names
-    /// no duration, spending the columns it kept to say the project has been
-    /// read, which its own rows already said.
+    /// The cell is given up whole rather than cut, and the mark goes with the
+    /// age rather than standing on alone.
+    ///
+    /// One column short of the nine it needs, a cut line would read `✓ 30s
+    /// a…` — a duration that names no duration. The mark alone would fit, but
+    /// a mark with no age beside it is the cell the bead exists to remove:
+    /// the reader would be back to a glyph over rows of unknown age, at the
+    /// one width where they can least afford to guess.
     #[test]
-    fn an_age_with_no_room_for_it_is_dropped_rather_than_cut() {
-        let drawn = drawn(
-            line_that_is(
-                &project("summit-works", counts(8, 21, 3, 3)),
-                Freshness::Collected(read_at()),
+    fn a_cell_with_no_room_for_it_is_dropped_whole_rather_than_cut_or_halved() {
+        assert_eq!(
+            drawn(
+                line_that_is(
+                    &project("summit-works", counts(8, 21, 3, 3)),
+                    half_a_minute_old(Mark::Read),
+                ),
+                45,
+                1
             ),
-            43,
-            1,
+            vec!["▾ summit-works            8/21  3 agents  ⚠ 3"]
         );
-
-        does_not_say(&drawn[0], "…");
-        says(&drawn[0], "8/21  3 agents  ⚠ 3");
     }
 
     /// Dim and plain: it is what a reader glances at to place the counts, not
-    /// one of the things the line is asking them to look at.
+    /// one of the things the line is asking them to look at. That holds while
+    /// a collection runs as much as at rest — a mark turning in colour would
+    /// pull the eye off the counts every eighty milliseconds.
     #[test]
     fn how_fresh_a_project_is_is_drawn_dim_so_the_counts_keep_the_eye() {
+        let dim = |mark, said: &str| {
+            let painted = painted(
+                line_that_is(
+                    &project("summit-works", counts(8, 21, 0, 0)),
+                    half_a_minute_old(mark),
+                ),
+                60,
+            );
+            assert!(
+                painted
+                    .iter()
+                    .any(|(drawn, colour)| drawn.contains(said) && *colour == Color::DarkGray),
+                "{said:?} is not dim: {painted:?}"
+            );
+        };
+
+        dim(Mark::Read, "✓ 30s ago");
+        dim(Mark::Collecting, "⠴ 30s ago");
+    }
+
+    /// The one part of the cell that is not dim. A project folded shut draws
+    /// none of the `unread_line`s naming the root that refused, so this mark
+    /// is then the only thing on the screen saying the rows are short of one
+    /// — and a dim glyph beside a dim age is not something a reader scanning
+    /// a screen of projects will stop at.
+    ///
+    /// The age beside it stays dim: how stale the rows are is the same kind
+    /// of fact whether the collection came back whole or not.
+    #[test]
+    fn a_mark_saying_a_root_refused_wears_the_colour_that_asks_to_be_looked_at() {
         let painted = painted(
             line_that_is(
                 &project("summit-works", counts(8, 21, 0, 0)),
-                Freshness::Collected(read_at()),
+                half_a_minute_old(Mark::Refused),
             ),
             60,
         );
 
+        assert!(
+            painted
+                .iter()
+                .any(|(said, colour)| said.contains(WARNING) && *colour == LOOK_AT_THIS),
+            "{painted:?}"
+        );
         assert!(
             painted
                 .iter()

@@ -151,6 +151,13 @@ pub struct ProjectLine {
     /// in several of them is still one bead, which is the rule a tree's own
     /// counts already keep.
     pub counts: Counts,
+    /// Whether every root of the project answered the last time it was read.
+    ///
+    /// One answer for a project whose roots can disagree, resolved to the
+    /// worse of them: the rows on the screen are short of a refused root's,
+    /// and the mark beside the name is the only thing that says so where the
+    /// project is folded shut over its roots.
+    pub every_root_read: bool,
     /// What could still be found out about a project one of whose roots would
     /// not read. Absent where every root read: there is nothing to recover,
     /// and saying so on every healthy project would bury the ones where it

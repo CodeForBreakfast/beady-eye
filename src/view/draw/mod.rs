@@ -26,7 +26,7 @@ use crate::app::Wanted;
 use crate::model::types::PaneStatus;
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::forest::Forest;
-use crate::view::lines::{self, Content, Note};
+use crate::view::lines::{self, Content, Note, ProjectLine};
 use crate::view::phrase;
 use crate::view::row::{AGENT, WARNING};
 use crate::view::{Freshness, Notice};
@@ -74,11 +74,15 @@ impl<'a> Reads<'a> {
     ///
     /// Whether it is being read now is asked with `Wanted::names`, the same
     /// predicate the collector picks what to read with, so the line and the
-    /// collection agree by construction rather than by argument.
-    fn of(&self, project: &str) -> Option<Freshness> {
+    /// collection agree by construction rather than by argument. How the last
+    /// collection of it went comes off the line, because it changes only when
+    /// the snapshot does.
+    fn of(&self, project: &ProjectLine) -> Option<Freshness> {
         Freshness::of(
-            self.read_at.get(project).copied(),
-            self.collecting.is_some_and(|wanted| wanted.names(project)),
+            self.read_at.get(&project.project).copied(),
+            self.collecting
+                .is_some_and(|wanted| wanted.names(&project.project)),
+            project.every_root_read,
         )
     }
 }
@@ -154,7 +158,7 @@ fn id_width(lines: &[lines::Line]) -> usize {
 pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitted {
     match &line.content {
         Content::Project(project) => {
-            project_line(project, &line.prefix, reads.of(&project.project), reads.now)
+            project_line(project, &line.prefix, reads.of(project), reads.now)
         }
         Content::Unread(unread) => unread_line(unread, &line.prefix, id_width),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
@@ -243,7 +247,6 @@ mod tests {
     };
     use crate::model::types::Status;
     use crate::view::forest::flatten;
-    use crate::view::lines::ProjectLine;
     use crate::view::row::{self, Row};
     use crate::view::{Action, Motion};
     use chrono::{DateTime, TimeZone, Utc};
@@ -418,6 +421,7 @@ mod tests {
         ProjectLine {
             project: name.into(),
             counts,
+            every_root_read: true,
             recovery: None,
         }
     }
@@ -622,7 +626,7 @@ mod tests {
         assert_eq!(
             frame_of(&forest, 60, 10),
             vec![
-                "▾ summit-works  30s ago                                  0/3",
+                "▾ summit-works  ✓ 30s ago                                0/3",
                 "  └── ◐ nix-9670s  lift the ground station               0/3",
                 "      ├── ○ .1         bead number 1                        ",
                 "      └── ○ .2         bead number 2                        ",
@@ -647,7 +651,7 @@ mod tests {
         assert_eq!(
             frame_with(&forest, &[Notice::NoInboundChannel], None, 80, 10),
             vec![
-                "▾ summit-works  30s ago                                                      0/3",
+                "▾ summit-works  ✓ 30s ago                                                    0/3",
                 "  └── ◐ nix-9670s  lift the ground station                                   0/3",
                 "      ├── ○ .1         bead number 1                                            ",
                 "      └── ○ .2         bead number 2                                            ",
@@ -724,7 +728,7 @@ mod tests {
         assert_eq!(
             frame[..2],
             [
-                "▾ summit-works  30s ago                                      ◍ wCM:p9 working",
+                "▾ summit-works  ⚠ 30s ago                                    ◍ wCM:p9 working",
                 "  └── ⚠ nix-9670s  the tracker did not answer                                ",
             ]
         );
@@ -744,9 +748,12 @@ mod tests {
             HerdrState::Ok,
         ));
         let frame = frame_of(&forest, 90, 5);
+        // The project's own line wears the warning too — one of its roots
+        // would not read, which is what this fixture is — so the root is
+        // found by the warning and its own id together.
         let unread = frame
             .iter()
-            .position(|row| row.contains(WARNING))
+            .position(|row| row.contains(WARNING) && row.contains("nix-9670s"))
             .expect("the root that would not read");
         let column = |row: &str| {
             let byte = row.find("nix-9670s").expect("the root on the row");

@@ -20,7 +20,7 @@ use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::types::{PaneStatus, Status};
-use crate::view::{Freshness, Notice};
+use crate::view::{Freshness, Mark, Notice};
 
 pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     match failure {
@@ -60,30 +60,61 @@ pub fn brief_notice(notice: Notice) -> &'static str {
 
 /// How long one frame of the collecting mark is on the screen.
 ///
-/// Public because the loop sets its own deadline by it: the mark turns
-/// because something redraws the screen while a collection runs, and how
-/// often that happens and how often the frame changes are the same number.
-pub const FRAME: Duration = Duration::from_millis(FRAME_MS as u64);
+/// Public because it is how often the mark turns, which is something about
+/// `bdi` that a caller driving the binary can otherwise only find out by
+/// watching. The screen can redraw sooner — an age beside the mark expires
+/// on a clock of its own — but never later while a collection runs.
+pub const FRAME: Duration = Duration::from_millis(80);
 
-const FRAME_MS: i64 = 80;
+/// The same length in the unit the clock arithmetic counts in, derived rather
+/// than written out again: a mark that turned on one length and expired on
+/// another would fall a little further behind every frame.
+const FRAME_MS: i64 = FRAME.as_millis() as i64;
 
 /// The frames the collecting mark turns through.
 const TURNING: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// How fresh one project's rows are, said beside its name.
+/// The mark a project wears when the last collection read every root of it.
+///
+/// As quiet as a glyph gets: it holds the column the turning mark turns in,
+/// and says the collection came back whole. A project where nothing is wrong
+/// should not be drawing the eye.
+const READ: &str = "✓";
+
+/// The mark a project wears when the last collection met a root it could not
+/// read. `bdi`'s own word for something to look at, which this is: the rows
+/// under the name are short of that root's.
+const REFUSED: &str = "⚠";
+
+/// The mark beside a project's name: how far the collection reading it has
+/// turned, or how the last one went.
+///
+/// One column in every state, so the cell does not change width for a
+/// collection starting or ending. It changing shape rather than content was
+/// the whole of what made it jump.
+pub fn mark(freshness: Freshness, now: DateTime<Utc>) -> &'static str {
+    match freshness.mark {
+        Mark::Collecting => turning(now),
+        Mark::Read => READ,
+        Mark::Refused => REFUSED,
+    }
+}
+
+/// How long ago a project's rows were read, said beside its name.
 ///
 /// A duration rather than a time of day. The reader's question is how stale
 /// the rows in front of them are, and a clock makes them subtract one time
 /// from another to answer it.
 ///
-/// `now` is the instant the frame is being drawn at, which is what both
-/// halves are measured against: how long ago the read was, and how far the
-/// mark has turned.
-pub fn freshness(freshness: Freshness, now: DateTime<Utc>) -> String {
-    match freshness {
-        Freshness::Collecting => turning(now).to_string(),
-        Freshness::Collected(at) => format!("{} ago", age(now - at)),
-    }
+/// Said while a collection runs as well as at rest. The rows on the screen
+/// during a collection are the previous collection's rows, and this is the
+/// only thing that says so — a cell that gave it up for the mark left a
+/// reader watching a mark turn over rows of unknown age.
+///
+/// Nothing at all before the first collection of a project comes back: there
+/// is no read to date the rows to, and no rows either.
+pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
+    freshness.read_at.map(|at| format!("{} ago", age(now - at)))
 }
 
 /// Which frame the collecting mark is on at this instant.
@@ -97,7 +128,7 @@ fn turning(now: DateTime<Utc>) -> &'static str {
     TURNING[frame.rem_euclid(TURNING.len() as i64) as usize]
 }
 
-/// How long what `freshness` says now goes on being true.
+/// How long what the cell beside a project's name says goes on being true.
 ///
 /// An age is a duration, so it stops being true with nothing having happened:
 /// a line saying `0s ago` is wrong a second later, under a reader who has not
@@ -110,16 +141,23 @@ fn turning(now: DateTime<Utc>) -> &'static str {
 /// than for a whole unit from whenever they were last drawn — a project read
 /// four days ago is redrawn when it becomes five, and a keystroke part way
 /// through a frame does not leave the mark late for every frame after it.
-pub fn holds_for(freshness: Freshness, now: DateTime<Utc>) -> Duration {
-    match freshness {
-        // The mark's frame is cut from the clock itself, so its boundaries
-        // are the clock's.
-        Freshness::Collecting => until_the_next(FRAME_MS, now.timestamp_millis()),
-        Freshness::Collected(at) => {
-            let elapsed = (now - at).num_milliseconds().max(0);
-            until_the_next(unit_of(elapsed), elapsed)
-        }
-    }
+///
+/// The cell says two things at once and holds only as long as the shorter of
+/// them: a frame of the turning mark is 80 ms and an age can be a day. A mark
+/// at rest is not one of them — it changes when a collection does something
+/// and never on its own — so a project nothing is reading holds for its age
+/// alone, and one never read and not being read holds for nothing at all.
+pub fn holds_for(freshness: Freshness, now: DateTime<Utc>) -> Option<Duration> {
+    // The mark's frame is cut from the clock itself, so its boundaries are
+    // the clock's.
+    let turning = matches!(freshness.mark, Mark::Collecting)
+        .then(|| until_the_next(FRAME_MS, now.timestamp_millis()));
+    let ageing = freshness.read_at.map(|at| {
+        let elapsed = (now - at).num_milliseconds().max(0);
+        until_the_next(unit_of(elapsed), elapsed)
+    });
+
+    turning.into_iter().chain(ageing).min()
 }
 
 const SECOND: i64 = 1_000;
@@ -493,7 +531,9 @@ fn saying(caption: &str) -> String {
 mod tests {
     use super::*;
     use crate::collect::run::{Env, RealRunner, Runner};
+    use crate::view::fitted::columns;
     use pretty_assertions::assert_eq;
+    use ratatui::text::Span;
 
     /// The two shapes bd writes when it cannot open a tracker, measured
     /// against this repo's own tracker on 2026-08-30. Both name a database, a
@@ -639,14 +679,20 @@ mod tests {
         // instant decides which of each is drawn, so the whole vocabulary
         // only appears if this walks them.
         for frame in 0..TURNING.len() as i64 {
-            said.push(freshness(
-                Freshness::Collecting,
-                an_instant() + TimeDelta::milliseconds(frame * FRAME_MS),
-            ));
+            said.push(
+                mark(
+                    collecting(),
+                    an_instant() + TimeDelta::milliseconds(frame * FRAME_MS),
+                )
+                .to_string(),
+            );
+        }
+        for at_rest in [Mark::Read, Mark::Refused] {
+            said.push(mark(resting(at_rest), an_instant()).to_string());
         }
         for ago in [1, 90, 5_000, 200_000] {
-            said.push(freshness(
-                Freshness::Collected(an_instant()),
+            said.extend(last_read(
+                resting(Mark::Read),
                 an_instant() + TimeDelta::seconds(ago),
             ));
         }
@@ -661,17 +707,63 @@ mod tests {
             .unwrap()
     }
 
+    /// A project being read now, with the read it is replacing still under
+    /// it.
+    fn collecting() -> Freshness {
+        Freshness {
+            mark: Mark::Collecting,
+            read_at: Some(an_instant()),
+        }
+    }
+
+    /// A project nothing is reading, wearing the mark its last collection
+    /// earned.
+    fn resting(at_rest: Mark) -> Freshness {
+        Freshness {
+            mark: at_rest,
+            read_at: Some(an_instant()),
+        }
+    }
+
+    /// The whole cell, as one string, for a test about when it changes
+    /// rather than about what it says.
+    fn cell(freshness: Freshness, now: chrono::DateTime<chrono::Utc>) -> String {
+        match last_read(freshness, now) {
+            Some(age) => format!("{} {age}", mark(freshness, now)),
+            None => mark(freshness, now).to_string(),
+        }
+    }
+
     /// Graeme asked for "ago" language, and the reason it is better than the
     /// clock it replaces is that the reader does no arithmetic: the line says
     /// how stale the rows are, not what time it was when they arrived.
     #[test]
     fn a_collected_project_says_how_long_ago_rather_than_at_what_time() {
-        let said = freshness(
-            Freshness::Collected(an_instant()),
-            an_instant() + TimeDelta::seconds(9),
-        );
+        let said = last_read(resting(Mark::Read), an_instant() + TimeDelta::seconds(9));
 
-        assert_eq!(said, "9s ago");
+        assert_eq!(said.as_deref(), Some("9s ago"));
+    }
+
+    /// The bead. A collection running says the rows are about to be replaced;
+    /// it does not say how old the ones being replaced are, and those are the
+    /// rows in front of the reader for as long as it runs.
+    #[test]
+    fn a_project_being_read_still_says_how_old_the_rows_under_it_are() {
+        let said = last_read(collecting(), an_instant() + TimeDelta::seconds(9));
+
+        assert_eq!(said.as_deref(), Some("9s ago"));
+    }
+
+    /// The startup frame is the one state with no age: nothing has come back,
+    /// so there is no read to date the rows to and no rows either.
+    #[test]
+    fn a_project_read_by_nothing_yet_has_no_age_to_say() {
+        let starting = Freshness {
+            mark: Mark::Collecting,
+            read_at: None,
+        };
+
+        assert_eq!(last_read(starting, an_instant()), None);
     }
 
     /// One unit, chosen by how old the read is. A minute is where seconds
@@ -680,10 +772,11 @@ mod tests {
     #[test]
     fn an_age_is_said_in_the_coarsest_unit_that_still_says_it() {
         let said = |seconds| {
-            freshness(
-                Freshness::Collected(an_instant()),
+            last_read(
+                resting(Mark::Read),
                 an_instant() + TimeDelta::seconds(seconds),
             )
+            .expect("a project that has been read has an age")
         };
 
         assert_eq!(
@@ -705,16 +798,60 @@ mod tests {
     /// arrive in the future.
     #[test]
     fn a_read_stamped_ahead_of_the_frame_reads_as_this_instant() {
-        let said = freshness(
-            Freshness::Collected(an_instant()),
-            an_instant() - TimeDelta::seconds(30),
-        );
+        let said = last_read(resting(Mark::Read), an_instant() - TimeDelta::seconds(30));
 
-        assert_eq!(said, "0s ago");
+        assert_eq!(said.as_deref(), Some("0s ago"));
     }
 
-    /// The whole of what `holds_for` promises, over both things the line can
-    /// say: what is drawn now is still what would be drawn at any instant
+    /// Graeme, on the mark at rest: *"when not collecting, the spinner can be
+    /// replaced with something to indicate success/failure so that it doesn't
+    /// jump around"*. Three states, three marks, and the mark is what tells
+    /// them apart — the age beside it says the same kind of thing in all
+    /// three.
+    #[test]
+    fn each_state_of_a_collection_wears_its_own_mark() {
+        assert_eq!(
+            [
+                mark(collecting(), an_instant()),
+                mark(resting(Mark::Read), an_instant()),
+                mark(resting(Mark::Refused), an_instant()),
+            ],
+            ["⠴", "✓", "⚠"]
+        );
+    }
+
+    /// The bead: the cell changed shape rather than content every time a
+    /// collection started and ended, so the words beside it jumped. Every
+    /// mark is one column, so nothing after it moves.
+    #[test]
+    fn every_mark_is_one_column_so_the_cell_never_changes_width() {
+        for state in [Mark::Collecting, Mark::Read, Mark::Refused] {
+            for frame in 0..TURNING.len() as i64 {
+                let at = an_instant() + TimeDelta::milliseconds(frame * FRAME_MS);
+                let drawn = mark(resting_or_turning(state), at);
+
+                // Measured the way `Fitted` measures, so the claim is about
+                // the columns the layout will give it rather than about
+                // bytes or characters.
+                assert_eq!(
+                    columns(&[Span::raw(drawn)]),
+                    1,
+                    "{state:?} draws {drawn:?} at frame {frame}"
+                );
+            }
+        }
+    }
+
+    /// A `Freshness` in whichever state `at_rest` names, turning included.
+    fn resting_or_turning(at_rest: Mark) -> Freshness {
+        Freshness {
+            mark: at_rest,
+            read_at: Some(an_instant()),
+        }
+    }
+
+    /// The whole of what `holds_for` promises, over every state the cell can
+    /// be in: what is drawn now is still what would be drawn at any instant
     /// before it runs out, and is not what would be drawn the instant it
     /// does. A deadline longer than that draws a line that has stopped being
     /// true; a shorter one wakes the loop to redraw what is already there.
@@ -722,19 +859,21 @@ mod tests {
     fn what_is_drawn_holds_exactly_as_long_as_holds_for_says() {
         for offset in [0, 1, 37, 79, 80, 500, 999, 1_500, 61_000, 3_601_000] {
             let now = an_instant() + TimeDelta::milliseconds(offset);
-            for state in [Freshness::Collecting, Freshness::Collected(an_instant())] {
-                let held = holds_for(state, now).as_millis() as i64;
+            for state in [collecting(), resting(Mark::Read), resting(Mark::Refused)] {
+                let held = holds_for(state, now)
+                    .expect("a project that has been read says something that expires")
+                    .as_millis() as i64;
                 let still = now + TimeDelta::milliseconds(held - 1);
                 let over = now + TimeDelta::milliseconds(held);
 
                 assert_eq!(
-                    freshness(state, now),
-                    freshness(state, still),
+                    cell(state, now),
+                    cell(state, still),
                     "{state:?} at +{offset}ms changed before its {held}ms was up"
                 );
                 assert_ne!(
-                    freshness(state, now),
-                    freshness(state, over),
+                    cell(state, now),
+                    cell(state, over),
                     "{state:?} at +{offset}ms said the same after its {held}ms was up"
                 );
             }
@@ -749,7 +888,7 @@ mod tests {
     fn an_age_holds_only_until_its_own_units_next_boundary() {
         let held = |seconds, millis| {
             holds_for(
-                Freshness::Collected(an_instant()),
+                resting(Mark::Read),
                 an_instant() + TimeDelta::seconds(seconds) + TimeDelta::milliseconds(millis),
             )
         };
@@ -764,12 +903,12 @@ mod tests {
                 held(86_400, 0),
             ],
             [
-                Duration::from_millis(750),
-                Duration::from_secs(1),
-                Duration::from_secs(60),
-                Duration::from_secs(1),
-                Duration::from_secs(3_600),
-                Duration::from_secs(86_400),
+                Some(Duration::from_millis(750)),
+                Some(Duration::from_secs(1)),
+                Some(Duration::from_secs(60)),
+                Some(Duration::from_secs(1)),
+                Some(Duration::from_secs(3_600)),
+                Some(Duration::from_secs(86_400)),
             ]
         );
     }
@@ -780,18 +919,69 @@ mod tests {
     fn an_age_always_holds_for_some_time_however_the_clocks_stand() {
         for seconds in [-30, 0, 1, 59, 60, 3_600, 86_400, 500_000] {
             let held = holds_for(
-                Freshness::Collected(an_instant()),
+                resting(Mark::Read),
                 an_instant() + TimeDelta::seconds(seconds),
             );
-            assert!(held > Duration::ZERO, "{seconds}s: {held:?}");
+            assert!(held > Some(Duration::ZERO), "{seconds}s: {held:?}");
         }
     }
 
+    /// The bead's own warning. The cell says two things and holds only as
+    /// long as the shorter: a project read half a second ago and being read
+    /// again is due a redraw when the age turns over, well inside the frame
+    /// the mark is on. A deadline of a whole frame would leave `0s ago` on
+    /// the screen into its second second.
+    #[test]
+    fn a_cell_saying_two_things_holds_only_as_long_as_the_shorter_of_them() {
+        let now = an_instant() + TimeDelta::milliseconds(960);
+
+        assert_eq!(
+            holds_for(collecting(), now),
+            Some(Duration::from_millis(40)),
+            "the age is 40ms from turning over and the frame is further off"
+        );
+        assert_eq!(
+            holds_for(resting(Mark::Read), now),
+            Some(Duration::from_millis(40))
+        );
+    }
+
+    /// The other way round: an age that is not going to change for another
+    /// day leaves the turning mark deciding when the screen is next due.
+    #[test]
+    fn a_day_old_project_being_read_is_redrawn_for_the_mark_rather_than_the_age() {
+        let now = an_instant() + TimeDelta::seconds(86_400);
+
+        assert_eq!(holds_for(collecting(), now), Some(FRAME));
+        assert_eq!(
+            holds_for(resting(Mark::Read), now),
+            Some(Duration::from_secs(86_400))
+        );
+    }
+
+    /// A mark at rest changes when a collection does something and never on
+    /// its own, so a project with no age under it puts no deadline on the
+    /// screen at all.
+    #[test]
+    fn a_resting_mark_over_a_project_never_read_asks_for_no_deadline() {
+        let never_read = Freshness {
+            mark: Mark::Read,
+            read_at: None,
+        };
+
+        assert_eq!(holds_for(never_read, an_instant()), None);
+    }
+
     /// A mark that is turning is one frame from being out of date whatever
-    /// else is on the screen, and it is the shortest answer there is.
+    /// else is on the screen.
     #[test]
     fn a_turning_mark_holds_for_exactly_one_frame() {
-        assert_eq!(holds_for(Freshness::Collecting, an_instant()), FRAME);
+        let starting = Freshness {
+            mark: Mark::Collecting,
+            read_at: None,
+        };
+
+        assert_eq!(holds_for(starting, an_instant()), Some(FRAME));
     }
 
     /// The mark turns, which is the whole of why it is a spinner and not a
@@ -799,7 +989,7 @@ mod tests {
     /// whether `bdi` is still alive.
     #[test]
     fn the_collecting_mark_is_on_a_different_frame_one_frame_later() {
-        let frame = |at| freshness(Freshness::Collecting, at);
+        let frame = |at| mark(collecting(), at);
 
         assert_ne!(
             frame(an_instant()),
@@ -811,22 +1001,22 @@ mod tests {
     /// evenly rather than resting on one of them.
     #[test]
     fn the_mark_turns_through_every_frame_before_it_comes_round_again() {
-        let frames: Vec<String> = (0..TURNING.len() as i64)
+        let frames: Vec<&str> = (0..TURNING.len() as i64)
             .map(|frame| {
-                freshness(
-                    Freshness::Collecting,
+                mark(
+                    collecting(),
                     an_instant() + TimeDelta::milliseconds(frame * FRAME_MS),
                 )
             })
             .collect();
 
         let mut distinct = frames.clone();
-        distinct.sort();
+        distinct.sort_unstable();
         distinct.dedup();
         assert_eq!(distinct.len(), frames.len(), "{frames:?}");
         assert_eq!(
-            freshness(
-                Freshness::Collecting,
+            mark(
+                collecting(),
                 an_instant() + TimeDelta::milliseconds(TURNING.len() as i64 * FRAME_MS)
             ),
             frames[0]
@@ -838,10 +1028,25 @@ mod tests {
     /// forward for one.
     #[test]
     fn a_redraw_within_one_frame_shows_the_frame_already_on_the_screen() {
-        let frame = |at| freshness(Freshness::Collecting, at);
+        let frame = |at| mark(collecting(), at);
         let at = an_instant() + TimeDelta::milliseconds(FRAME_MS / 2);
 
         assert_eq!(frame(at), frame(at + TimeDelta::milliseconds(1)));
+    }
+
+    /// A mark at rest is a still glyph and stays on whichever one its last
+    /// collection earned: a resting mark that turned would read as a
+    /// collection running.
+    #[test]
+    fn a_mark_at_rest_is_the_same_glyph_a_frame_later() {
+        for at_rest in [Mark::Read, Mark::Refused] {
+            let frame = |at| mark(resting(at_rest), at);
+
+            assert_eq!(
+                frame(an_instant()),
+                frame(an_instant() + TimeDelta::milliseconds(FRAME_MS))
+            );
+        }
     }
 
     /// The collector's own account of a command that failed with `text`.

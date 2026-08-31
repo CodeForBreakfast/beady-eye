@@ -215,6 +215,23 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Whether every root of a project answered the last time it was read.
+    ///
+    /// One answer for a project whose roots can disagree, and it is the worse
+    /// of them: a project with one root unreachable and three fine is on the
+    /// screen short of that root's rows, and saying the collection went well
+    /// would be a claim about work nothing drew.
+    ///
+    /// A project with no tree at all reads as whole. Nothing refused — its
+    /// tracker never answered for a root, which is a failed project and is
+    /// reported as one.
+    pub fn every_root_read(&self, project: &str) -> bool {
+        self.trees
+            .iter()
+            .filter(|tree| tree.project == project)
+            .all(|tree| tree.tracker == TrackerState::Ok)
+    }
+
     /// Where a key sits: the tree holding it and its place among that tree's
     /// nodes. Bead ids are unique only within a tracker, so both halves of
     /// the key are matched together here and neither is ever matched alone

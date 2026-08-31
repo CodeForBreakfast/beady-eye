@@ -27,7 +27,7 @@ use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::phrase;
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Motion, Notice};
+use crate::view::{draw, Action, Freshness, Mark, Motion, Notice};
 
 mod keys;
 
@@ -659,25 +659,37 @@ impl Shown {
 
     /// How long what is drawn goes on being true with nothing happening.
     ///
-    /// A collection in flight is the shortest answer there is and the same
-    /// for every project, so it is the whole of it while one runs. At rest it
-    /// is the soonest of the projects' own ages: the newest read is the one
-    /// whose words change first, and a screen of day-old projects is redrawn
-    /// about once a day rather than continuously.
+    /// The soonest deadline any project line on the screen sets. Each of them
+    /// says two things — a mark, and how old its rows are — and a collection
+    /// in flight does not silence the ages: they go on ticking under the mark
+    /// that is turning, so a project read a moment ago is due a redraw well
+    /// inside the frame.
     ///
     /// Asked of `read_at` rather than of the lines, so a project drawn under
     /// any rule the forest has is covered by it. A project that is read and
     /// not drawn costs a redraw nobody sees, which is cheaper than the line
     /// that quietly stops being true.
     fn holds_for(&self, now: DateTime<Utc>) -> Option<Duration> {
-        if self.collecting.is_some() {
-            return Some(phrase::FRAME);
-        }
-        self.forest
-            .snapshot()
-            .read_at
-            .values()
-            .map(|at| phrase::holds_for(Freshness::Collected(*at), now))
+        let snapshot = self.forest.snapshot();
+        let drawn = snapshot.read_at.iter().filter_map(|(project, at)| {
+            Freshness::of(
+                Some(*at),
+                self.collecting
+                    .as_ref()
+                    .is_some_and(|wanted| wanted.names(project)),
+                snapshot.every_root_read(project),
+            )
+        });
+        // A collection can be running before anything it names has come back,
+        // and the startup frame is nothing but marks turning over no rows.
+        let starting = self.collecting.as_ref().map(|_| Freshness {
+            mark: Mark::Collecting,
+            read_at: None,
+        });
+
+        drawn
+            .chain(starting)
+            .filter_map(|how_fresh| phrase::holds_for(how_fresh, now))
             .min()
     }
 
@@ -2616,14 +2628,50 @@ mod tests {
         );
     }
 
-    /// A collection in flight is the shortest answer there is and the same
-    /// for every project, so it is the whole of it while one runs.
+    /// With nothing read there is no age on the screen, so the mark turning
+    /// is the whole of what expires.
     #[test]
-    fn a_screen_with_a_collection_on_it_holds_for_one_frame() {
+    fn a_screen_with_a_collection_on_it_and_no_age_holds_for_one_frame() {
         let mut shown = shown(a_snapshot());
         shown.collecting(Some(&atlas()));
 
         assert_eq!(shown.holds_for(an_instant()), Some(phrase::FRAME));
+    }
+
+    /// `bdi-7ao.58`: the age stays on the line under the turning mark, so it
+    /// goes on expiring under it. A screen that held for a whole frame
+    /// whenever a collection ran would leave `0s ago` on it into its second
+    /// second — the mark turning the whole time and saying nothing about the
+    /// age beside it.
+    #[test]
+    fn a_collection_in_flight_does_not_stop_the_ages_beneath_it_running_out() {
+        let mut snapshot = a_snapshot();
+        let read = an_instant();
+        snapshot.read_at.insert("atlas".to_string(), read);
+        let mut shown = shown(snapshot);
+        shown.collecting(Some(&atlas()));
+
+        assert_eq!(
+            shown.holds_for(read + chrono::TimeDelta::milliseconds(970)),
+            Some(Duration::from_millis(30)),
+            "the age turns over inside the frame the mark is on"
+        );
+    }
+
+    /// And the other way: an age that is not going to change for another day
+    /// leaves the turning mark deciding when the screen is next due.
+    #[test]
+    fn a_collection_over_day_old_rows_is_redrawn_for_the_mark_rather_than_the_age() {
+        let mut snapshot = a_snapshot();
+        let read = an_instant();
+        snapshot.read_at.insert("atlas".to_string(), read);
+        let mut shown = shown(snapshot);
+        shown.collecting(Some(&atlas()));
+
+        assert_eq!(
+            shown.holds_for(read + chrono::TimeDelta::seconds(86_400)),
+            Some(phrase::FRAME)
+        );
     }
 
     /// Nothing read and nothing running: there is no age on the screen, so
