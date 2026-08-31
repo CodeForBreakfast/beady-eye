@@ -2036,6 +2036,42 @@ credential_command = "secret harbour"
         }
     }
 
+    /// The third case, and the one a claim makes: a seat has taken the bead
+    /// and no pane has joined it yet. `bd ready` drops a bead the moment it
+    /// goes `in_progress`, so nothing here is ready and nobody is staffed,
+    /// and the forebears open anyway.
+    ///
+    /// They open on the anomaly. A claim with no pane behind it is an
+    /// `orphan-claim` from the first collection, and that is what `quiet`
+    /// answers to — so the rule keeping a booting seat's bead on screen lives
+    /// in `model/anomaly.rs`, not in this file. Narrow that rule and this
+    /// goes red, which is the whole reason it is written down here.
+    #[test]
+    fn the_default_opens_every_forebear_of_a_bead_someone_has_claimed() {
+        let claimed = edited(
+            TOWER,
+            r#"{"id":"tow-1.1.1.1","title":"dress the cables","status":"open","#,
+            r#"{"id":"tow-1.1.1.1","title":"dress the cables","status":"in_progress",
+       "updated_at":"2026-08-30T11:00:00Z","#,
+        );
+        let forest = flatten(&ready_alone("orbital", &claimed, &[], &[]));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital",
+                "  └── ○ tow-1 raise the tower",
+                "      ├── ○ .1 stand the mast",
+                "      │   └── ○ .1.1 bolt the sections",
+                "      │       └── ◐ .1.1.1 dress the cables",
+                "      └─▸ ○ .2 pour the base",
+            ]
+        );
+        for forebear in ["tow-1", "tow-1.1", "tow-1.1.1"] {
+            assert_eq!(fold_of(&forest, forebear), Some(true), "{forebear} is shut");
+        }
+    }
+
     /// The other half of the same rule. A tree nobody is working holds no
     /// spine to open, so it rests as the one line saying it is there.
     #[test]
