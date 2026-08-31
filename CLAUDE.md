@@ -85,7 +85,7 @@ half — a non-terminating mutant reached 15.7 GiB, and with swap left available
 `MemoryMax` alone pushes it there instead of killing it. `ulimit -v` is the
 wrong tool: it caps address space, and the false kills it produces read exactly
 like killed mutants. cargo-mutants is not in the flake — `nix run
-nixpkgs#cargo-mutants` (`bdi-7ao.11`).
+nixpkgs#cargo-mutants -- mutants --in-diff <diff>` (`bdi-7ao.11`).
 
 `cancelled` is the third CI answer. A superseded push leaves a run `completed /
 cancelled`, which is neither green nor red, so assert `conclusion == "success"`
