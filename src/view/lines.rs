@@ -352,6 +352,17 @@ fn beads_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> Vec<usize> 
         .collect()
 }
 
+/// Whether the line at `at` is the first this tree draws of its bead.
+///
+/// A bead reached more than one way down gets a line for each way, and the
+/// first of them is the one that stands for the work. Asked of the model's
+/// render order rather than of the lines already drawn, so a fold the reader
+/// opens elsewhere cannot move which line that is.
+pub(crate) fn first_copy(tree: &Tree, at: usize) -> bool {
+    let id = &tree.nodes[at].id;
+    !tree.nodes[..at].iter().any(|node| node.id == *id)
+}
+
 /// Whether the line at `at` rests open: whether anything beneath it is work
 /// a reader needs on the first screen.
 ///

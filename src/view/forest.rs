@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{self, Counts, Filter, LoosePane, Snapshot, TrackerState, Tree};
 use crate::view::lines::{
-    beneath, children_of, marker, notes_of, opens_a_fold, prefix, progress_of, quiet, root_key,
-    run_size, split, unfinished_beneath, Content, Group, GroupKind, Item, Line, Note, Place,
-    ProjectLine, Recovery, Unread,
+    beneath, children_of, first_copy, marker, notes_of, opens_a_fold, prefix, progress_of, quiet,
+    root_key, run_size, split, unfinished_beneath, Content, Group, GroupKind, Item, Line, Note,
+    Place, ProjectLine, Recovery, Unread,
 };
 use crate::view::row;
 use crate::view::{Action, Motion};
@@ -766,15 +766,19 @@ impl Forest {
                         id: node.id.clone(),
                     });
                     let kids = self.children_entries(tree, children, at);
+                    let first = first_copy(tree, at);
                     // Open the spine to the work a reader needs next and
                     // nothing else. A branch with none rests as one line, its
                     // glyph, its fraction and its marker saying what it holds.
                     let open = !kids.is_empty()
                         && self.expanded(
                             &Handle::Bead(place.clone()),
-                            opens_a_fold(tree, children, at),
+                            first && opens_a_fold(tree, children, at),
                         );
-                    let holding = (node.status.is_closed() && !open)
+                    // A later line is shut over beads the first line is
+                    // already drawing, so counting them here would have a
+                    // reader adding up the ways down rather than the work.
+                    let holding = (node.status.is_closed() && !open && first)
                         .then(|| unfinished_beneath(tree, children, at))
                         .filter(|unfinished| *unfinished > 0);
                     lines.push(Line {
@@ -1107,17 +1111,59 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// A closed bead holding unfinished work, drawn twice in one tree. Both
+    /// copies rest shut, because nothing under either is live or ready, so
+    /// what each of them says about the work it is shut over is all that
+    /// tells them apart.
+    ///
+    /// `orb-5.1.1` and `orb-5.2.1` are here to be worked on: they are what
+    /// holds the two halves open, so both copies of `orb-4` are on the
+    /// screen at once.
+    const CLOSED_TWICE: &str = r#"[
+      {"id":"orb-5","title":"re-deck the bridge","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-5.1","title":"strip the north span","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-5.1.1","title":"cut the north deck","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-5.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-4","title":"close the towpath","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-5.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
+      {"id":"orb-4.1","title":"post the diversion","status":"open",
+       "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-5.2","title":"strip the south span","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-5.2.1","title":"cut the south deck","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-5.2","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
+    fn drawn_twice_in_one_tree() -> Snapshot {
+        drawn_twice(TWICE, "orb-9", &["orb-9.1"])
+    }
+
+    /// The same, over a closed bead that still holds unfinished work.
+    fn closed_bead_drawn_twice_in_one_tree() -> Snapshot {
+        drawn_twice(CLOSED_TWICE, "orb-4", &["orb-5.1.1", "orb-5.2.1"])
+    }
+
+    /// One tree, with the subtree at `id` put back on the end so the tree
+    /// draws it twice.
     ///
     /// `assemble` gives every bead one parent, so the second copy is put into
     /// the nodes here rather than read from a tracker. Everything else is
     /// built the way every other fixture is, and `children_of` reads the
     /// shape back out of the depths without caring who wrote them.
-    fn drawn_twice_in_one_tree() -> Snapshot {
-        let rows = assembled(TWICE);
+    fn drawn_twice(json: &str, id: &str, working: &[&str]) -> Snapshot {
+        let rows = assembled(json);
         let cfg = cfg();
-        let panes = panes_on(&["orb-9.1"]);
+        let panes = panes_on(working);
         let joined = join::resolve(
             &[ProjectRows {
                 project: "orbital",
@@ -1139,8 +1185,8 @@ mod tests {
         let at = tree
             .nodes
             .iter()
-            .position(|node| node.id == "orb-9")
-            .expect("the fixture draws orb-9 under the first half");
+            .position(|node| node.id == id)
+            .expect("the fixture draws the bead under the first half");
         let subtree = tree.nodes[at + 1..]
             .iter()
             .take_while(|node| node.depth > tree.nodes[at].depth)
@@ -1497,20 +1543,114 @@ credential_command = "secret harbour"
     /// The same bead under two parents in one tree, which is what a `blocks`
     /// edge drawn as nesting gives: the copies share a root as well as a key,
     /// so nothing but the way down to them tells them apart.
+    ///
+    /// Each copy is opened against the way the other one rests, so a fold
+    /// remembered against the bead rather than against the line would have to
+    /// give one of them the other's answer.
     #[test]
-    fn folding_one_copy_of_a_bead_drawn_twice_in_one_tree_leaves_the_other_open() {
+    fn folding_one_copy_of_a_bead_drawn_twice_in_one_tree_leaves_the_other_alone() {
         let mut forest = flatten(&drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "orb-9");
+
+        step_onto(&mut forest, lower);
+        forest.apply(Action::ToggleFold);
+        let [upper, _] = copies_of(&forest, "orb-9");
+        step_onto(&mut forest, upper);
+        forest.apply(Action::ToggleFold);
+
         let [upper, lower] = copies_of(&forest, "orb-9");
+        assert_eq!(
+            (forest.lines()[upper].folded, forest.lines()[lower].folded),
+            (Some(false), Some(true)),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A bead reached more than one way down is one piece of work with a line
+    /// each, and the first line is the one that stands for it. The rest are
+    /// shut, so the subtree is drawn once however many ways there are into it.
+    #[test]
+    fn a_bead_drawn_twice_in_one_tree_rests_open_on_the_first_line_and_shut_on_the_second() {
+        let forest = flatten(&drawn_twice_in_one_tree());
+        let [upper, lower] = copies_of(&forest, "orb-9");
+
+        assert_eq!(
+            (forest.lines()[upper].folded, forest.lines()[lower].folded),
+            (Some(true), Some(false)),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Shut, never absent: the later line is a way into the same subtree, and
+    /// opening it draws the subtree there too.
+    #[test]
+    fn the_second_line_of_a_bead_drawn_twice_opens_onto_the_same_subtree() {
+        let mut forest = flatten(&drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "orb-9");
+        assert_eq!(
+            lines_of(&forest, "orb-9.1").len(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
 
         step_onto(&mut forest, lower);
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
-            forest.lines()[upper].folded,
-            Some(true),
+            lines_of(&forest, "orb-9.1").len(),
+            2,
             "{:#?}",
             sketch(&forest)
         );
+    }
+
+    /// `D` lets go of every fold set by hand, so a reader who opened a later
+    /// line gets it back the way `bdi` would have drawn it.
+    #[test]
+    fn letting_go_of_the_folds_shuts_a_second_line_a_reader_opened() {
+        let mut forest = flatten(&drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "orb-9");
+        step_onto(&mut forest, lower);
+        forest.apply(Action::ToggleFold);
+
+        forest.apply(Action::RestoreDefault);
+
+        let [upper, lower] = copies_of(&forest, "orb-9");
+        assert_eq!(
+            (forest.lines()[upper].folded, forest.lines()[lower].folded),
+            (Some(true), Some(false)),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A shut closed line says what unfinished work it is shut over, because
+    /// those beads are then nowhere else on the screen. On a later line of the
+    /// same bead they are somewhere else on the screen — on the first line —
+    /// so it says nothing, and the count a reader reads is the work rather
+    /// than the ways down to it.
+    #[test]
+    fn only_the_first_line_of_a_bead_drawn_twice_says_what_it_is_shut_over() {
+        let forest = flatten(&closed_bead_drawn_twice_in_one_tree());
+        let [upper, lower] = copies_of(&forest, "orb-4");
+
+        assert_eq!(
+            (notes_at(&forest, upper), notes_at(&forest, lower)),
+            (vec![phrase::unfinished_beneath(1)], Vec::new()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// What a bead row says beyond its own fields, on one line.
+    fn notes_at(forest: &Forest, at: usize) -> Vec<String> {
+        match &forest.lines()[at].content {
+            Content::Bead(row) => row.notes.clone(),
+            content => panic!("line {at} is not a bead row: {content:?}"),
+        }
     }
 
     /// The two lines a bead is drawn on, asserted to be exactly two so a
