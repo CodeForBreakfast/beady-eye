@@ -471,10 +471,11 @@ depend on it.
 
 ### Degradation is the rule either way
 
-**A tracker that cannot be reached must degrade, not disappear**: the tree
-renders as a header with its live panes and a `tracker unreachable` marker. A
-tree shown without its beads beats a tree silently missing — the same principle
-as the default filter.
+**A root that cannot be read must degrade, not disappear**: it renders where
+its row would have been, named and marked with the reason it would not read,
+and the live panes recovered for its project render on that project's own
+line. A root shown without its beads beats a root silently missing — the same
+principle as the default filter.
 
 ### Bead ids are not unique across trackers
 
@@ -535,22 +536,32 @@ reported, not dropped.
 
 ## TUI
 
-One scrollable forest. Every root is a top-level node, collapsed to its header
-by default, expanded on the selected one. The selected bead's pane tails below.
+One scrollable forest. Each project owns a line, and the roots drawn for it
+hang under it as ordinary bead rows. The selected bead's pane tails below.
+
+A project's line says what only a project can answer — which project, how much
+work it holds, and, where a root would not read, the live panes still found
+working there. Everything else is a bead's, and a root is a bead: its status,
+its agent, its anomalies and its pane are drawn and reached exactly as any
+other row's are. A count on a project line is over its trees with each bead
+counted once, because a bead standing in several of them is still one bead.
 
 ```
-▾ summit-works · nix-9670s   DMS → noctalia v5      8/21   3 agents  ⚠ 3
-  ├── ● .20  wallpaper timer calls dms            ◍ wCM:p9  working
-  ├── ● .1   wire the niri theme include          ◍ wCM:p6  idle
-  │   ├── ○ .4   restore app theming
-  │   │   ├── ○ .8   make the switch permanent
-  │   │   │   └── ○ .9   confirm quickshell wedges gone
-  │   │   └── ○ .5   retire the DMS remnants
-  │   └── ○ .17  apply the two niri settings
-  ├── ◐ .16  guard a key in both layers          ⚠ claimed · no pane
-  └── … 13 more
+▾ summit-works                                     8/21   3 agents  ⚠ 3
+  └── ◐ nix-9670s  DMS → noctalia v5               8/21   ◍ shell selector  working
+      ├── ● .20  wallpaper timer calls dms                ◍ wCM:p9  working
+      ├── ● .1   wire the niri theme include              ◍ wCM:p6  idle
+      │   ├── ○ .4   restore app theming
+      │   │   ├── ○ .8   make the switch permanent
+      │   │   │   └── ○ .9   confirm quickshell wedges gone
+      │   │   └── ○ .5   retire the DMS remnants
+      │   └── ○ .17  apply the two niri settings
+      ├── ◐ .16  guard a key in both layers              ⚠ claimed · no pane
+      └── … 13 more
 
-▸ homelab · hl-sgqyv   heartbeat cadence            2/7    1 agent
+▾ homelab                                          2/7    1 agent
+  ├─▸ ◐ hl-sgqyv  heartbeat cadence                2/7    ◍ wCM:p4  idle
+  └── ⚠ hl-9d2c   the tracker refused the credential it was given
 
 ▸ 4 trees with no live agent                              a to show all
 ▸ ⚠ unattributed                                          2 panes
