@@ -10,8 +10,8 @@ use std::process::Command;
 /// parent's environment whatever its cwd, so reading a second tracker means
 /// changing this, not only the directory.
 ///
-/// `CREDENTIAL_VAR` is the exception to the inheritance: a subprocess holds
-/// one only if this names it.
+/// `NEVER_INHERITED` is the exception to the inheritance: a subprocess holds
+/// one of those only if this names it.
 pub type Env = BTreeMap<String, String>;
 
 /// The variable bd authenticates its Dolt server with.
@@ -20,6 +20,16 @@ pub type Env = BTreeMap<String, String>;
 /// own `credential_command` are all arbitrary programs that were never given
 /// a tracker's password and have no business holding one.
 pub const CREDENTIAL_VAR: &str = "BEADS_DOLT_PASSWORD";
+
+/// The variable bd reads to find a tracker. It outranks the working
+/// directory, so a project is read from the directory `bdi` chose only where
+/// no inherited value overrules it.
+pub const TRACKER_VAR: &str = "BEADS_DIR";
+
+/// Which tracker is read and what authenticates to it are one identity, and
+/// inheriting either half reaches another project's database. So a child is
+/// told both or neither.
+const NEVER_INHERITED: [&str; 2] = [CREDENTIAL_VAR, TRACKER_VAR];
 
 /// Why a command did not yield usable output. Each kind wants a different
 /// response from the caller, so they stay apart.
@@ -165,7 +175,9 @@ impl Runner for RealRunner {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        cmd.env_remove(CREDENTIAL_VAR);
+        for inherited in NEVER_INHERITED {
+            cmd.env_remove(inherited);
+        }
         cmd.envs(env);
 
         let out = cmd.output().map_err(|e| RunFailure::exec(program, e))?;
