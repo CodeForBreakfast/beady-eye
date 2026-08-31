@@ -577,6 +577,8 @@
           refused
           says "takes content away"
           says "peer.txt"
+          says "deleted"
+          says_nothing_of "rewound"
 
           # A descendant that deletes nothing and still hands back the peer's
           # work: the files were already there and the squash returns them to
@@ -591,6 +593,7 @@
           refused
           says "a.txt"
           says "b.txt"
+          says "rewound"
           says_nothing_of "deleted"
 
           # Naming a path acknowledges that path and no other.
