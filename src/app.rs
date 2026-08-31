@@ -9,8 +9,8 @@ use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
     self, Collected, FailedProject, Filter, HerdrState, Readiness, Snapshot, TrackerFailure, Tree,
 };
-use crate::model::tree::{assemble, Assembled};
-use crate::model::types::Pane;
+use crate::model::tree::{self, assemble, Assembled};
+use crate::model::types::{Bead, Pane};
 
 /// One project's roots in id order, each either read or unreadable.
 struct ProjectWork {
@@ -242,16 +242,51 @@ fn read_project(
 
     let beads = bd::all_beads(runner, &project.path, &env)?;
 
+    let mut read: Vec<(String, Result<Assembled, TrackerFailure>)> = roots
+        .into_iter()
+        .map(|root| {
+            let read = assemble(beads.clone(), &root).map_err(|_| TrackerFailure::Parse);
+            (root, read)
+        })
+        .collect();
+    read.extend(what_no_root_reached(&beads, &read));
+    read.sort_by(|(one, _), (two, _)| one.cmp(two));
+
     Ok(ProjectWork {
         readiness,
-        roots: roots
-            .into_iter()
-            .map(|root| {
-                let read = assemble(beads.clone(), &root).map_err(|_| TrackerFailure::Parse);
-                (root, read)
-            })
-            .collect(),
+        roots: read,
     })
+}
+
+/// The beads the discovered roots left off the screen, each drawn as the top
+/// of its own graph.
+///
+/// A bead depending on work the tracker no longer holds keeps no way down to
+/// it, and discovery only ever names the roots of unfinished work — so
+/// whether such a bead becomes a root of its own today turns on whether
+/// `bd show` still answers for the parent it lost, which says nothing about
+/// the bead. Where it does answer, `root_of` climbs past it to a root whose
+/// tree cannot then reach the bead, and a tree reports what it drew: absent
+/// from the picture and absent from the report both. Drawing it is what
+/// leaves it somewhere to be reported from.
+fn what_no_root_reached(
+    beads: &[Bead],
+    read: &[(String, Result<Assembled, TrackerFailure>)],
+) -> Vec<(String, Result<Assembled, TrackerFailure>)> {
+    let drawn: BTreeSet<&str> = read
+        .iter()
+        .filter_map(|(_, read)| read.as_ref().ok())
+        .flat_map(|assembled| assembled.rows.iter().map(|placed| placed.bead.id.as_str()))
+        .collect();
+
+    tree::adrift(beads)
+        .into_iter()
+        .filter(|id| !drawn.contains(id.as_str()))
+        .map(|id| {
+            let read = assemble(beads.to_vec(), &id).map_err(|_| TrackerFailure::Parse);
+            (id, read)
+        })
+        .collect()
 }
 
 /// What the live panes in this project's directory name. A pane placed in no
@@ -592,6 +627,13 @@ credential_command = "secret ferry"
             .unwrap_or_else(|| panic!("{id} is among the nodes"))
     }
 
+    fn rooted_at<'a>(snap: &'a Snapshot, root: &str) -> &'a Tree {
+        snap.trees
+            .iter()
+            .find(|t| t.root == root)
+            .unwrap_or_else(|| panic!("{root} is drawn"))
+    }
+
     fn tree_of<'a>(snap: &'a Snapshot, project: &str) -> &'a Tree {
         snap.trees
             .iter()
@@ -666,6 +708,171 @@ credential_command = "secret ferry"
             roots,
             vec!["orb-7", "orb-7.9"],
             "the readable roots are drawn, and the orphan is one of them"
+        );
+    }
+
+    /// The same bead, in the case bd answers for the parent it has lost.
+    ///
+    /// Discovery names `orb-404` as the parent, `root_of` climbs through it
+    /// to `orb-7`, and `orb-7.9` is not a root of its own — but `bd list
+    /// --all` does not hold `orb-404`, so nothing in the answer places
+    /// `orb-7.9` under anything, and `orb-7`'s tree never reaches it. Which
+    /// of the two cases a tracker is in turns only on whether `bd show`
+    /// still knows the parent, and that decides nothing about the bead.
+    #[test]
+    fn a_bead_bd_still_answers_for_the_absent_parent_of_is_drawn_too() {
+        let orphan_row = r#"[{"id":"orb-7.9","title":"its parent is a digest",
+                              "status":"open","parent":"orb-404"}]"#;
+        let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent is a digest",
+                               "status":"open",
+                               "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+                               "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital()
+            .merging(&spelled(UNFINISHED_CALL), orphan_row)
+            .merging(&spelled(TRACKER_CALL), orphan_bead)
+            .with(
+                &spelled("show orb-404 --json"),
+                r#"[{"id":"orb-404","parent":"orb-7"}]"#,
+            );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7", "orb-7.9"],
+            "the bead the answer holds no way down to is drawn as its own root"
+        );
+        assert_eq!(
+            rooted_at(&snap, "orb-7").dangling,
+            Vec::<String>::new(),
+            "the tree that never reached it does not report it either"
+        );
+        assert_eq!(
+            rooted_at(&snap, "orb-7.9").dangling,
+            vec!["orb-7.9".to_string()],
+            "its own tree names the work the tracker no longer holds"
+        );
+    }
+
+    /// A closed bead is never discovered — statuses, wisps and metadata keys
+    /// are all populations of unfinished work — so nothing makes it a root
+    /// and no `bd show` is asked about its parent. It is the same defect with
+    /// nothing else moving.
+    #[test]
+    fn a_closed_bead_the_answer_holds_no_way_down_to_is_still_drawn() {
+        let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
+                        "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+                        "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), lost);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        // The tree somebody is working leads, as it does whatever else is
+        // drawn beside it.
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-3"]);
+        assert_eq!(
+            rooted_at(&snap, "orb-3").dangling,
+            vec!["orb-3".to_string()]
+        );
+    }
+
+    /// An edge kind `bdi` does not know nests nothing, so a target it names
+    /// and the answer has lost takes no place away. The bead is where it
+    /// always was — nowhere, if nothing discovered it — and standing it up as
+    /// a root for having named a lost id would put a bead no rule found on
+    /// the screen.
+    #[test]
+    fn a_bead_whose_absent_dependency_would_have_nested_nothing_is_not_a_root() {
+        let unrelated = r#"[{"id":"orb-2","title":"found by work that is gone","status":"closed",
+                             "dependencies":[{"depends_on_id":"orb-404","type":"discovered-by"}],
+                             "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), unrelated);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7"]);
+    }
+
+    /// A blocker the answer has lost would have been drawn *under* the bead
+    /// waiting on it, not over it. So nothing about where that bead is drawn
+    /// went missing with it, and it is where it always was.
+    #[test]
+    fn a_bead_whose_absent_dependency_would_have_hung_beneath_it_is_not_a_root() {
+        let waiting = r#"[{"id":"orb-2","title":"waiting on work that is gone","status":"closed",
+                           "dependencies":[{"depends_on_id":"orb-404","type":"blocks"}],
+                           "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), waiting);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7"]);
+    }
+
+    /// The narrowing this rule turns on. A bead that lost one edge and kept
+    /// another is placed by the one it kept, and a tree already draws it —
+    /// so drawing it again as a root of its own would put it on the screen
+    /// twice and count it twice.
+    #[test]
+    fn a_bead_a_tree_already_draws_is_not_made_a_root_as_well() {
+        let also_waiting = r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+                                "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"},
+                                                {"depends_on_id":"orb-404","type":"parent-child"}],
+                                "priority":2,"issue_type":"task",
+                                "metadata":{"agent_pane":"w:p1"}}]"#;
+        let runner = orbital().with(
+            &spelled(TRACKER_CALL),
+            &ORBITAL_TREE.replace(
+                r#"{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task",
+       "metadata":{"agent_pane":"w:p1"}}"#,
+                also_waiting
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']'),
+            ),
+        );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7"],
+            "one tree draws it, so one tree reports it"
+        );
+        assert_eq!(snap.trees[0].dangling, vec!["orb-7.1".to_string()]);
+    }
+
+    /// A bead the lost bead's own tree draws is not a second root either,
+    /// however many edges it lost of its own.
+    #[test]
+    fn a_bead_under_a_lost_bead_is_drawn_under_it_rather_than_beside_it() {
+        let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
+                        "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+                        "priority":2,"issue_type":"task"},
+                       {"id":"orb-3.1","title":"under it, waiting on more","status":"closed",
+                        "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
+                                        {"depends_on_id":"orb-405","type":"parent-child"}],
+                        "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), lost);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-3"]);
+        let lost = rooted_at(&snap, "orb-3");
+        assert_eq!(
+            lost.nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            vec!["orb-3", "orb-3.1"]
+        );
+        assert_eq!(
+            lost.dangling,
+            vec!["orb-3".to_string(), "orb-3.1".to_string()]
         );
     }
 

@@ -168,6 +168,12 @@ Roots come from bd, unioned and deduped:
 4. Any bead named by a live pane's `display_agent` that the first three missed.
    This is the only root herdr contributes, and it exists so an agent working
    off-tree still appears.
+5. Any bead the answer holds that the first four leave no way down to: a
+   dependency that would have nested it names work the tracker no longer
+   holds, and no surviving edge nests it under anything. Such a bead is the
+   top of its own graph. A tree reports the beads it drew, so a bead no tree
+   draws is a bead no tree reports — drawing it is what leaves it somewhere to
+   be reported from.
 
 ## Conventions are configuration
 

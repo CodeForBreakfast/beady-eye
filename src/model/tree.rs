@@ -45,31 +45,11 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
         bail!("bd's answer holds no bead {root} to draw a tree from");
     }
 
-    let mut children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    // Every bead in the answer that depends on one the answer does not hold,
-    // which is a question about the whole tracker. Which of them this tree
-    // reports is a question about this tree, and is asked once the walk knows
-    // what it drew.
-    let mut waiting_on_the_absent: BTreeSet<String> = BTreeSet::new();
-    for bead in by_id.values() {
-        for edge in &bead.dependencies {
-            if !by_id.contains_key(&edge.on) {
-                waiting_on_the_absent.insert(bead.id.clone());
-                continue;
-            }
-            match edge.edge {
-                Edge::ParentChild => children
-                    .entry(edge.on.clone())
-                    .or_default()
-                    .insert(bead.id.clone()),
-                Edge::Blocks => children
-                    .entry(bead.id.clone())
-                    .or_default()
-                    .insert(edge.on.clone()),
-                Edge::Other(_) => false,
-            };
-        }
-    }
+    let Nesting {
+        children,
+        waiting_on_the_absent,
+        ..
+    } = nesting(&by_id);
 
     let ordered: BTreeMap<String, Vec<String>> = children
         .into_iter()
@@ -114,6 +94,85 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
         dangling: dangling.into_iter().collect(),
         cycles: cycles.into_iter().collect(),
     })
+}
+
+/// What the answer's edges do, asked once of the whole answer: the same edges
+/// nest the same beads whichever root is being drawn, and an edge naming a
+/// bead the answer does not hold is gone from every tree alike.
+struct Nesting {
+    /// Which beads sit under each bead.
+    children: BTreeMap<String, BTreeSet<String>>,
+    /// Beads naming a dependency the answer does not hold, of any kind.
+    waiting_on_the_absent: BTreeSet<String>,
+    /// Of those, the ones whose absent dependency would have placed them. An
+    /// edge kind that nests nothing takes no place away by going missing.
+    lost_their_place: BTreeSet<String>,
+}
+
+/// Read every edge in the answer once, in the one place that says which way
+/// each kind runs — so a kind beads adds later is answered here and nowhere
+/// else.
+fn nesting(by_id: &BTreeMap<String, Bead>) -> Nesting {
+    let mut found = Nesting {
+        children: BTreeMap::new(),
+        waiting_on_the_absent: BTreeSet::new(),
+        lost_their_place: BTreeSet::new(),
+    };
+
+    for bead in by_id.values() {
+        for edge in &bead.dependencies {
+            // Which bead this edge draws under which. An edge kind beads may
+            // add later has no settled direction against completion, so it
+            // nests nothing.
+            let nests: Option<(&String, &String)> = match edge.edge {
+                Edge::ParentChild => Some((&edge.on, &bead.id)),
+                Edge::Blocks => Some((&bead.id, &edge.on)),
+                Edge::Other(_) => None,
+            };
+
+            if by_id.contains_key(&edge.on) {
+                if let Some((over, under)) = nests {
+                    found
+                        .children
+                        .entry(over.clone())
+                        .or_default()
+                        .insert(under.clone());
+                }
+                continue;
+            }
+
+            found.waiting_on_the_absent.insert(bead.id.clone());
+            // Only the end that would have hung *under* the absent bead lost
+            // anything by it going. A blocker the answer no longer holds
+            // would have been drawn beneath the bead waiting on it, and takes
+            // nothing away from where that bead itself is drawn.
+            if let Some((_, under)) = nests.filter(|(over, _)| *over == &edge.on) {
+                found.lost_their_place.insert(under.clone());
+            }
+        }
+    }
+
+    found
+}
+
+/// The beads that lost the edge that would have placed them, and that no
+/// surviving edge places either.
+///
+/// No walk of this answer can reach such a bead from anywhere, so it is the
+/// top of its own graph — which is what the note on `dangling` above already
+/// calls it. A tree reports the beads it drew, so a bead no tree draws is a
+/// bead no tree reports: asking this of the whole answer, and drawing what it
+/// finds, is what leaves such a bead somewhere to be reported from.
+pub fn adrift(beads: &[Bead]) -> Vec<String> {
+    let by_id: BTreeMap<String, Bead> = beads.iter().map(|b| (b.id.clone(), b.clone())).collect();
+    let found = nesting(&by_id);
+    let nested: BTreeSet<&String> = found.children.values().flatten().collect();
+
+    found
+        .lost_their_place
+        .into_iter()
+        .filter(|id| !nested.contains(id))
+        .collect()
 }
 
 /// Emit a bead and everything that must finish before it, depth-first.
