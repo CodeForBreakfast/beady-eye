@@ -51,6 +51,32 @@
 
         beady-eye = beadyEyeFor pkgs;
 
+        # Starts bdi and puts it back whenever the source changes, so a copy
+        # left running in a terminal keeps up with what the other seats land.
+        #
+        # `--wrap-process=none` and the `exec` are load-bearing together.
+        # watchexec's default runs the command in a process group of its own,
+        # which is a background group on the terminal, and entering raw mode
+        # from a background group raises SIGTTOU: bdi stops before it draws
+        # anything. Sharing watchexec's own group lifts that — but then the
+        # signal that restarts goes to the process watchexec spawned, so that
+        # process has to be bdi itself rather than a `cargo run` holding it as
+        # a child it would not pass the signal on to.
+        #
+        # It watches the whole of src/, so a test-only edit restarts the view
+        # too. The tests sit in `#[cfg(test)]` modules inside the files they
+        # cover, and a filesystem event says which file changed, never which
+        # part of it, so nothing can separate them. A restart nobody asked for
+        # costs a redraw; a rebuild that never happens leaves the view showing
+        # yesterday's build, which is what this exists to prevent. tests/ is
+        # left out: an edit there cannot change what the running binary does.
+        rerunBdiOnChange = pkgs.writeShellScriptBin "rerun-bdi-on-change" ''
+          cd "$(${pkgs.git}/bin/git rev-parse --show-toplevel)" || exit 1
+          exec ${pkgs.watchexec}/bin/watchexec \
+            --watch src --watch Cargo.toml --restart --wrap-process=none \
+            -- 'cargo build --quiet && exec target/debug/bdi'
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -61,6 +87,8 @@
           pkgs.rustfmt
           pkgs.clippy
           pkgs.rust-analyzer
+          pkgs.watchexec
+          rerunBdiOnChange
         ];
 
         # A check runs against the same source and the same vendored crates as

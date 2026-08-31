@@ -50,6 +50,10 @@ parent, a truncated subtree — each is reported, never silently dropped.
 
 ## Working in this repo
 
+`rerun-bdi-on-change` starts `bdi` and puts it back whenever the source
+changes, so a copy left running in a terminal stays current without being
+quit and started again by hand.
+
 ### Staying in your own tree
 
 Take a worktree per seat, off `origin/main`. But run `bdi` itself from the
