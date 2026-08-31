@@ -10,7 +10,7 @@ use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 
 use super::tone::{fg, status_style, tone, DIM, LIVE, LOOK_AT_THIS};
-use super::{done, structure};
+use super::{beside, done, structure};
 
 /// A run of closed siblings said as a count, carrying the glyph each of them
 /// would carry on a line of its own.
@@ -53,10 +53,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 
     let mut state: Vec<Span<'static>> = Vec::new();
     let mut say = |text: &str, colour: Option<Color>| {
-        if !state.is_empty() {
-            state.push(Span::raw(" ".repeat(GAP)));
-        }
-        state.push(Span::styled(text.to_string(), fg(colour)));
+        beside(&mut state, Span::styled(text.to_string(), fg(colour)));
     };
     if let Some(progress) = row.progress {
         say(&done(progress.closed, progress.total), None);
@@ -137,6 +134,34 @@ mod tests {
         let count = drawn[0].find("3/8").expect("the count is drawn");
         let agent = drawn[0].find("wCM:p9").expect("the agent is drawn");
         assert!(count < agent, "{drawn:?}");
+    }
+
+    /// The gap goes *between* the cells. A row is read by where its columns
+    /// fall, and two cells that abut read as one — `3/8◍ wCM:p9` names no
+    /// fraction and no pane. In front of the first cell the same two columns
+    /// say nothing at all, because the block is set against the row's right
+    /// edge and the padding swallows them.
+    ///
+    /// The whole block is written out here rather than asked of `phrase` or
+    /// `done`, and read off the row's end rather than searched for, so the
+    /// only thing that satisfies it is those words in that order with those
+    /// two columns between them. A cut row ends in `…` and fails it too.
+    #[test]
+    fn a_bead_lines_state_cells_are_held_apart_rather_than_run_together() {
+        let mut epic = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        epic.progress = Some(row::Progress {
+            closed: 3,
+            total: 8,
+        });
+        epic.agent = Some(row::agent_marker(&a_pane()));
+
+        let drawn = drawn(bead_line(&epic, BRANCH, 3), 60, 1);
+
+        assert!(drawn[0].ends_with("3/8  ◍ wCM:p9 · working"), "{drawn:?}");
     }
 
     /// A shut row is the only thing on the screen standing for the beads

@@ -24,14 +24,14 @@ use ratatui::Frame;
 
 use crate::app::Wanted;
 use crate::model::types::PaneStatus;
-use crate::view::fitted::{columns, Fitted};
+use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note};
 use crate::view::phrase;
 use crate::view::row::{AGENT, WARNING};
 use crate::view::{Freshness, Notice};
 
-pub use bands::{half_screen, line_at, regions, Regions};
+pub use bands::{half_screen, line_at, regions};
 pub use tail::draw_tail;
 
 use bands::scroll_offset;
@@ -200,6 +200,20 @@ fn finding(note: Note) -> (String, Color) {
 /// question of different scopes, so they answer it in the same words.
 pub(super) fn done(closed: usize, total: usize) -> String {
     format!("{closed}/{total}")
+}
+
+/// Put a cell in a row's state block, beside the ones already there.
+///
+/// The gap belongs *between* the cells: two that abut read as one that names
+/// neither, and a gap in front of the first is spent rather than seen,
+/// because the block is set against the row's right edge and the padding
+/// swallows it. Every state block on a row is built this way, so there is one
+/// place to be right about it rather than one per kind of row.
+pub(super) fn beside(state: &mut Vec<Span<'static>>, cell: Span<'static>) {
+    if !state.is_empty() {
+        state.push(Span::raw(" ".repeat(GAP)));
+    }
+    state.push(cell);
 }
 
 pub(super) fn pane_marker(pane: &str, status: &PaneStatus) -> String {

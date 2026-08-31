@@ -6,14 +6,14 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
 use crate::model::snapshot::{Counts, TrackerState};
-use crate::view::fitted::{Fitted, GAP};
+use crate::view::fitted::Fitted;
 use crate::view::lines::{ProjectLine, Recovery, Unread};
 use crate::view::phrase;
 use crate::view::row::WARNING;
 use crate::view::Freshness;
 
 use super::tone::{LIVE, LOOK_AT_THIS};
-use super::{done, pane_marker, structure};
+use super::{beside, done, pane_marker, structure};
 
 /// A project's own line: what it is, how fresh it is, how much work it holds,
 /// and the live panes recovered for it where a root would not read.
@@ -58,10 +58,7 @@ pub(super) fn project_line(
 
     let mut state = summary(&project.counts);
     if let Some(found) = &project.recovery {
-        if !state.is_empty() {
-            state.push(Span::raw(" ".repeat(GAP)));
-        }
-        state.push(recovered(found));
+        beside(&mut state, recovered(found));
     }
 
     Fitted::new(identity, how_fresh, state).title_or_nothing()
@@ -94,30 +91,34 @@ pub(super) fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fit
 /// at. A count that is zero is left out rather than drawn as a zero: a row of
 /// noughts reads as something to check.
 fn summary(counts: &Counts) -> Vec<Span<'static>> {
+    let mut said = Vec::new();
     // Nothing counted means no root here read at all, and `0/0` would say the
     // opposite of what is true — that they were read and hold nothing.
-    let mut said = match counts.total {
-        0 => Vec::new(),
-        total => vec![Span::raw(done(counts.closed, total))],
-    };
+    if counts.total > 0 {
+        beside(&mut said, Span::raw(done(counts.closed, counts.total)));
+    }
     if counts.live_agents > 0 {
         let agent = if counts.live_agents == 1 {
             "agent"
         } else {
             "agents"
         };
-        said.push(Span::raw(" ".repeat(GAP)));
-        said.push(Span::styled(
-            format!("{} {agent}", counts.live_agents),
-            Style::new().fg(LIVE),
-        ));
+        beside(
+            &mut said,
+            Span::styled(
+                format!("{} {agent}", counts.live_agents),
+                Style::new().fg(LIVE),
+            ),
+        );
     }
     if counts.anomalies > 0 {
-        said.push(Span::raw(" ".repeat(GAP)));
-        said.push(Span::styled(
-            format!("{WARNING} {}", counts.anomalies),
-            Style::new().fg(LOOK_AT_THIS),
-        ));
+        beside(
+            &mut said,
+            Span::styled(
+                format!("{WARNING} {}", counts.anomalies),
+                Style::new().fg(LOOK_AT_THIS),
+            ),
+        );
     }
     said
 }
@@ -268,6 +269,29 @@ mod tests {
 
         says(&drawn[0], &format!("{WARNING} 1"));
         does_not_say(&drawn[0], "agent");
+    }
+
+    /// The gap goes *between* the counts and the panes recovered after them.
+    /// A project can have one root that read and another that refused, so
+    /// both cells are on the row at once — and run together they read as one
+    /// cell naming neither, `2/7◍ wCM:p9`. In front of the counts the same
+    /// two columns say nothing, because the block is set against the row's
+    /// right edge and the padding swallows them.
+    ///
+    /// The block is written out here rather than asked of the code that drew
+    /// it, and read off the row's end, so nothing satisfies it but those
+    /// words in that order with those two columns between them.
+    #[test]
+    fn a_projects_recovered_panes_are_held_apart_from_its_counts() {
+        let mut recovering = project("harbour", counts(2, 7, 0, 0));
+        recovering.recovery = Some(Recovery {
+            panes: vec![pane("wCM:p9", PaneStatus::Working)],
+            complete: true,
+        });
+
+        let drawn = drawn(line(&recovering, OPEN), 60, 1);
+
+        assert!(drawn[0].ends_with("2/7  ◍ wCM:p9 working"), "{drawn:?}");
     }
 
     /// Narrower than the identity itself there is nothing left to protect, and
