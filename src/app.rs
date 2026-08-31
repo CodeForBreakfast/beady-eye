@@ -371,25 +371,46 @@ mod tests {
         }
     }
 
-    /// The crate's own source, with each file's tests cut away.
-    fn source_outside_tests(except: &str) -> String {
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut walking = vec![src];
+    /// The crate's own source, with each file's tests cut away and this file
+    /// left out of it.
+    ///
+    /// This file is left out because it builds both kinds of `Wanted` itself,
+    /// in `Wanted::names` and in `run`. Counting it would satisfy the
+    /// assertion below with this file's own source and stop guarding anything.
+    ///
+    /// It names itself through `file!()` rather than by a spelling, and
+    /// checks that it found itself. A spelling stops matching the moment the
+    /// file is renamed or becomes a directory module — and the assertion
+    /// would then pass for the wrong reason with nothing on screen to say so.
+    fn source_outside_tests() -> String {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let itself = root.join(file!());
+        let mut walking = vec![root.join("src")];
         let mut read = String::new();
+        let mut left_itself_out = false;
 
         while let Some(path) = walking.pop() {
             for entry in std::fs::read_dir(&path).expect("the crate's own source") {
                 let found = entry.expect("a directory entry").path();
                 if found.is_dir() {
                     walking.push(found);
-                } else if found.extension().is_some_and(|kind| kind == "rs")
-                    && found.file_name().is_some_and(|name| name != except)
-                {
+                } else if found.extension().is_some_and(|kind| kind == "rs") {
+                    if found == itself {
+                        left_itself_out = true;
+                        continue;
+                    }
                     let text = std::fs::read_to_string(&found).expect("a source file");
                     read.push_str(text.split("\n#[cfg(test)]\n").next().unwrap_or_default());
                 }
             }
         }
+
+        assert!(
+            left_itself_out,
+            "{} was never met while walking the source, so this file was \
+             read into its own assertion and the check below proves nothing",
+            itself.display()
+        );
         read
     }
 
@@ -401,7 +422,7 @@ mod tests {
     /// rather than beside the code it guards.
     #[test]
     fn something_that_is_not_a_test_asks_for_each_kind_of_collection() {
-        let source = source_outside_tests("app.rs");
+        let source = source_outside_tests();
 
         for wanted in every_wanted() {
             assert!(
