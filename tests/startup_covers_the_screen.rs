@@ -19,14 +19,10 @@ mod terminal;
 
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::CommandExt;
-use std::path::Path;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
-use terminal::{
-    a_home_naming_one_project, a_pty, contains, own_the_terminal, ENTER_ALTERNATE_SCREEN,
-};
+use terminal::{a_home_naming_one_project, a_pty, bdi_on, contains, ENTER_ALTERNATE_SCREEN};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -294,21 +290,4 @@ impl Drop for Showing {
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.home);
     }
-}
-
-fn bdi_on(theirs: &std::fs::File, home: &Path) -> Child {
-    unsafe {
-        Command::new(env!("CARGO_BIN_EXE_bdi"))
-            .current_dir(home)
-            .env("HOME", home)
-            .env("TERM", "xterm-256color")
-            .env_remove("BEADS_DIR")
-            .env_remove("COMMY_PROJECT")
-            .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
-            .stdout(theirs.try_clone().expect("the pty is ours to hand over"))
-            .stderr(theirs.try_clone().expect("the pty is ours to hand over"))
-            .pre_exec(own_the_terminal)
-            .spawn()
-    }
-    .expect("bdi runs")
 }

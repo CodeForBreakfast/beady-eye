@@ -8,16 +8,13 @@
 
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 mod terminal;
 
-use terminal::{
-    a_home_naming_one_project, a_pty, contains, own_the_terminal, ENTER_ALTERNATE_SCREEN,
-};
+use terminal::{a_home_naming_one_project, a_pty, bdi_on, contains, ENTER_ALTERNATE_SCREEN};
 
 /// The pty the tests draw on.
 const ROWS: u16 = 40;
@@ -102,20 +99,7 @@ impl Session {
         let home = a_home_naming_one_project(named);
         let (ours, theirs) = a_pty(ROWS, COLS);
 
-        let child = unsafe {
-            Command::new(env!("CARGO_BIN_EXE_bdi"))
-                .current_dir(&home)
-                .env("HOME", &home)
-                .env("TERM", "xterm-256color")
-                .env_remove("BEADS_DIR")
-                .env_remove("COMMY_PROJECT")
-                .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
-                .stdout(theirs.try_clone().expect("the pty is ours to hand over"))
-                .stderr(theirs.try_clone().expect("the pty is ours to hand over"))
-                .pre_exec(own_the_terminal)
-                .spawn()
-        }
-        .expect("bdi runs");
+        let child = bdi_on(&theirs, &home);
         drop(theirs);
 
         let mut session = Self {

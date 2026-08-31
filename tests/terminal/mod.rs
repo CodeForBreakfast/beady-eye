@@ -6,7 +6,9 @@
 //! then reads it differs, and stays with the test.
 
 use std::os::fd::{FromRawFd, OwnedFd};
-use std::path::PathBuf;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 
 /// The terminal is on the alternate screen from here. Both tests wait for it
 /// rather than sleeping: `tui::run` makes its first collection *before* the
@@ -84,6 +86,24 @@ pub fn a_home_naming_one_project(named: &str) -> PathBuf {
     )
     .expect("the config is ours to write");
     home
+}
+
+/// A `bdi` drawing on the far end of a pty.
+pub fn bdi_on(theirs: &std::fs::File, home: &Path) -> Child {
+    unsafe {
+        Command::new(env!("CARGO_BIN_EXE_bdi"))
+            .current_dir(home)
+            .env("HOME", home)
+            .env("TERM", "xterm-256color")
+            .env_remove("BEADS_DIR")
+            .env_remove("COMMY_PROJECT")
+            .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
+            .stdout(theirs.try_clone().expect("the pty is ours to hand over"))
+            .stderr(theirs.try_clone().expect("the pty is ours to hand over"))
+            .pre_exec(own_the_terminal)
+            .spawn()
+    }
+    .expect("bdi runs")
 }
 
 pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
