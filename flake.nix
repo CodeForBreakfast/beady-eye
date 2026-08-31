@@ -266,6 +266,38 @@
           esac
         '';
 
+        # A guard nobody has watched fire is the shape this project keeps
+        # finding, and the dirty-tree refusal is the one guard here that is CI
+        # correctness rather than workflow: a green check of a tree nix cannot
+        # see all of is a false green.
+        checkBeforePushTest = pkgs.runCommand "check-before-push-test"
+          { nativeBuildInputs = [ pkgs.git checkBeforePush ]; } ''
+          set -u
+          export HOME="$TMPDIR"
+          export GIT_CONFIG_GLOBAL="$TMPDIR/gitconfig"
+          export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+          export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+          git config --global init.defaultBranch main
+
+          repo="$TMPDIR/repo"
+          git init --quiet "$repo"
+          printf 'one\n' > "$repo/a.txt"
+          git -C "$repo" add a.txt
+          git -C "$repo" commit --quiet -m base
+          printf 'scratch\n' > "$repo/notes.txt"
+
+          output="$( cd "$repo" && check-before-push 2>&1 )" && status=0 || status=$?
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+          [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status:"
+          case "$output" in
+            *notes.txt*) ;;
+            *) fail "the refusal did not name the untracked file:" ;;
+          esac
+
+          touch $out
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -355,6 +387,7 @@
         # here, not in the workflow that calls it.
         checks = {
           build-and-test = beady-eye;
+          check-before-push = checkBeforePushTest;
           clippy = checkOf "clippy" [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
           fmt = checkOf "fmt" [ pkgs.rustfmt ] "cargo fmt --check";
 
