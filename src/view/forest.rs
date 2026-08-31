@@ -1040,9 +1040,9 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
-    /// A closed bead standing over work that is still to do. `bdi` reads
-    /// `bd dep tree --direction=up`, so `sdg-4.1`'s descendants are the work
-    /// closing it unblocked — the ordinary shape of this tree, not a
+    /// A closed bead standing over work that is still to do. A blocker is
+    /// drawn beneath the bead it blocks, so `sdg-4.1`'s descendants are the
+    /// work closing it unblocked — the ordinary shape of this tree, not a
     /// malformed one. Nobody is on any of them and nothing is wrong with
     /// them, so the branch rests shut under a row whose own glyph says done.
     /// `sdg-4.2` is finished all the way down. `sdg-4.3` carries the only
@@ -1161,10 +1161,10 @@ mod tests {
     }
 
     /// Two of one project's roots whose trees overlap. `qua-1.2` blocks both
-    /// epics, and `bd dep tree --direction=up` walks dependents, so it comes
-    /// back under each of them. Roots are found by climbing the parent chain
-    /// and trees by walking dependents, so a bead standing in two trees is
-    /// the ordinary shape of shared work, not a malformed tracker.
+    /// epics, and a blocker is drawn beneath every bead it blocks, so it
+    /// comes back under each of them. Roots are found by climbing the parent
+    /// chain and trees by walking dependents, so a bead standing in two trees
+    /// is the ordinary shape of shared work, not a malformed tracker.
     const QUARRY: &str = r#"[
       {"id":"qua-1","title":"re-open the quarry","status":"in_progress",
        "priority":1,"issue_type":"epic"},
@@ -1255,7 +1255,7 @@ credential_command = "secret harbour"
     fn root_row(beads: &[crate::model::types::Bead]) -> String {
         beads
             .iter()
-            .find(|b| b.depends_on().is_empty())
+            .find(|b| b.dependencies.is_empty())
             .expect("a root row")
             .id
             .clone()
@@ -2437,8 +2437,8 @@ credential_command = "secret harbour"
         );
     }
 
-    /// `bdi` reads `bd dep tree --direction=up`, so a bead's children are the
-    /// work closing it unblocked. A closed bead standing over open ones is
+    /// A blocker is drawn beneath the bead it blocks, so a bead's children
+    /// are the work closing it unblocked. A closed bead standing over open ones is
     /// therefore the healthy shape of this tree, and where nobody is on them
     /// and `bd` will start none of them the branch rests shut under a row
     /// whose glyph says done. What it holds is out of sight either way, so

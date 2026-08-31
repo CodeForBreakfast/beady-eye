@@ -314,7 +314,7 @@ mod tests {
     use crate::model::tree::assemble;
     use pretty_assertions::assert_eq;
 
-    const BEADS: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
+    const BEADS: &str = include_str!("../../tests/fixtures/display_agent_bd_list.json");
     const PANES: &str = include_str!("../../tests/fixtures/herdr_agent_list.json");
 
     /// A tracker and a herdr session captured from the same live moment, so
@@ -346,7 +346,7 @@ mod tests {
     fn root_row(beads: &[Bead]) -> String {
         beads
             .iter()
-            .find(|b| b.depends_on().is_empty())
+            .find(|b| b.dependencies.is_empty())
             .expect("a root row")
             .id
             .clone()
@@ -680,12 +680,8 @@ mod tests {
     /// nothing coordinates them.
     #[test]
     fn colliding_prefixes_do_not_cross_attach_an_inferred_agent() {
-        let one = rows(
-            r#"[{"id":"x-1","title":"in project one","status":"in_progress"}]"#,
-        );
-        let two = rows(
-            r#"[{"id":"x-1","title":"in project two","status":"in_progress"}]"#,
-        );
+        let one = rows(r#"[{"id":"x-1","title":"in project one","status":"in_progress"}]"#);
+        let two = rows(r#"[{"id":"x-1","title":"in project two","status":"in_progress"}]"#);
         let live = panes(
             r#"{"pane_id":"w:p1","cwd":"/home/user/one/src","agent_status":"working",
                 "display_agent":"x-1"}"#,
@@ -1150,9 +1146,8 @@ mod tests {
     // ---- badges ---------------------------------------------------------
 
     fn bead_with(metadata: &str) -> Bead {
-        let json = format!(
-            r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#
-        );
+        let json =
+            format!(r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#);
         rows(&json).remove(0).bead
     }
 

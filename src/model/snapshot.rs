@@ -496,12 +496,11 @@ render = "⏸ waiting"
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
 
-    /// The root of a hand-written tree: the one row naming no parent, which
-    /// is how `bd dep tree` marks it.
+    /// The root of a hand-written tree: the one row that depends on nothing.
     fn root_row(beads: &[crate::model::types::Bead]) -> String {
         beads
             .iter()
-            .find(|b| b.parent_id.is_none())
+            .find(|b| b.dependencies.is_empty())
             .expect("a root row")
             .id
             .clone()

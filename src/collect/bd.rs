@@ -9,8 +9,7 @@ use crate::config::Project;
 use crate::model::types::Bead;
 
 /// Parse a flat array of bd rows, however the answer that carried them was
-/// asked for. `bd list`, `bd ready` and `bd dep tree` all write the same
-/// row.
+/// asked for. `bd list`, `bd ready` and `bd query` all write the same row.
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     serde_json::from_str(s).context("bd --json returned a shape we do not understand")
 }
@@ -303,7 +302,7 @@ pub fn parent_of(
     Ok(row.parent.filter(|parent| !parent.is_empty()))
 }
 
-/// `bd list`, `bd ready` and `bd dep tree` all answer with the same rows.
+/// `bd list`, `bd ready` and `bd query` all answer with the same rows.
 fn rows(out: &str) -> Result<Vec<Bead>, RunFailure> {
     parse_beads(out).map_err(|e| RunFailure::parse("bd", e))
 }
@@ -314,10 +313,10 @@ mod tests {
     use crate::collect::run::RealRunner;
     use crate::model::types::{Dependency, Edge, Status};
 
-    const FIXTURE: &str = include_str!("../../tests/fixtures/bd_dep_tree.json");
+    const FIXTURE: &str = include_str!("../../tests/fixtures/bd_list.json");
 
     fn fixture() -> Vec<Bead> {
-        parse_beads(FIXTURE).expect("the captured tree parses")
+        parse_beads(FIXTURE).expect("the captured rows parse")
     }
 
     fn row(id: &str) -> Bead {
@@ -329,29 +328,38 @@ mod tests {
 
     #[test]
     fn parses_every_row() {
-        assert_eq!(fixture().len(), 6);
+        assert_eq!(fixture().len(), 7);
     }
 
+    /// A captured row names every bead it depends on, and the kinds differ
+    /// within the one row: the tree cannot be built from the parent edges
+    /// alone.
     #[test]
-    fn the_root_has_no_parent_and_children_carry_their_edge() {
-        let root = row("bdi-3um");
-        assert_eq!(root.parent_id, None);
-        assert_eq!(root.edge_from_parent, None);
-
-        let child = row("bdi-3um.10");
-        assert_eq!(child.parent_id.as_deref(), Some("bdi-3um"));
-        assert_eq!(child.edge_from_parent, Some(Edge::ParentChild));
-
-        let blocker = row("bdi-3um.11");
-        assert_eq!(blocker.parent_id.as_deref(), Some("bdi-3um.10"));
-        assert_eq!(blocker.edge_from_parent, Some(Edge::Blocks));
+    fn a_captured_row_carries_every_edge_out_of_it() {
+        assert_eq!(
+            row("bdi-2bb.4").dependencies,
+            vec![
+                Dependency {
+                    on: "bdi-2bb".to_string(),
+                    edge: Edge::ParentChild,
+                },
+                Dependency {
+                    on: "bdi-2bb.3".to_string(),
+                    edge: Edge::Blocks,
+                },
+                Dependency {
+                    on: "bdi-2bb.9".to_string(),
+                    edge: Edge::Blocks,
+                },
+            ]
+        );
     }
 
     #[test]
     fn statuses_map_onto_the_enum() {
-        assert_eq!(row("bdi-3um").status, Status::InProgress);
-        assert_eq!(row("bdi-3um.10").status, Status::Open);
-        assert_eq!(row("bdi-3um.1").status, Status::Closed);
+        assert_eq!(row("bdi-r5l").status, Status::InProgress);
+        assert_eq!(row("bdi-2bb").status, Status::Open);
+        assert_eq!(row("bdi-2bb.9").status, Status::Closed);
     }
 
     #[test]
@@ -380,23 +388,27 @@ mod tests {
 
     #[test]
     fn an_edge_a_later_bd_invents_is_kept_rather_than_rejected() {
-        let json = r#"[{"id":"x","title":"t","status":"open","edge_from_parent":"discovered-by"}]"#;
+        let json = r#"[{"id":"x","title":"t","status":"open","dependencies":[
+          {"depends_on_id":"y","type":"discovered-by"}]}]"#;
         let beads = parse_beads(json).expect("an unknown edge still parses");
         assert_eq!(
-            beads[0].edge_from_parent,
-            Some(Edge::Other("discovered-by".to_string()))
+            beads[0].dependencies,
+            vec![Dependency {
+                on: "y".to_string(),
+                edge: Edge::Other("discovered-by".to_string()),
+            }]
         );
     }
 
     #[test]
     fn metadata_is_carried_inline_and_absent_metadata_is_an_empty_map() {
-        let carrying = row("bdi-3um.3");
+        let carrying = row("bdi-r5l");
         assert_eq!(
-            carrying.metadata.get("working_topic").map(String::as_str),
-            Some("beady-eye/core-json-bdi-3um.3")
+            carrying.metadata.get("agent_pane").map(String::as_str),
+            Some("wCW:p2M")
         );
 
-        assert!(row("bdi-3um.10").metadata.is_empty());
+        assert!(row("bdi-2bb.3").metadata.is_empty());
     }
 
     /// A tracker's metadata is arbitrary JSON, and bdi draws it as text. A
@@ -430,11 +442,11 @@ mod tests {
 
     #[test]
     fn the_timestamps_the_age_rules_need_follow_the_row() {
-        let closed = row("bdi-3um.1");
+        let closed = row("bdi-2bb.9");
         assert!(closed.started_at.is_some());
         assert!(closed.closed_at.is_some());
 
-        let open = row("bdi-3um.10");
+        let open = row("bdi-2bb");
         assert_eq!(open.started_at, None);
         assert_eq!(open.closed_at, None);
         assert!(open.updated_at.is_some());
@@ -442,14 +454,14 @@ mod tests {
 
     #[test]
     fn an_unclaimed_bead_has_no_assignee() {
-        assert_eq!(row("bdi-3um.3").assignee.as_deref(), Some("Graeme Foster"));
-        assert_eq!(row("bdi-3um.10").assignee, None);
+        assert_eq!(row("bdi-2bb.9").assignee.as_deref(), Some("Graeme Foster"));
+        assert_eq!(row("bdi-2bb").assignee, None);
     }
 
     #[test]
     fn issue_type_distinguishes_the_root_epic_from_its_tasks() {
-        assert_eq!(row("bdi-3um").issue_type, "epic");
-        assert_eq!(row("bdi-3um.10").issue_type, "task");
+        assert_eq!(row("bdi-2bb").issue_type, "epic");
+        assert_eq!(row("bdi-2bb.9").issue_type, "task");
     }
 
     #[test]
@@ -543,7 +555,7 @@ mod tests {
 
         let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
 
-        assert_eq!(beads.len(), 6);
+        assert_eq!(beads.len(), 7);
         for subcommand in [TRACKER_CALL, WISP_CALL] {
             let call = runner.call(&spelled(subcommand));
             assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
@@ -571,7 +583,7 @@ mod tests {
             ids.contains(&"bdi-wisp-w3m"),
             "the free-standing wisp: {ids:?}"
         );
-        assert_eq!(beads.len(), 8, "both answers, neither replacing the other");
+        assert_eq!(beads.len(), 9, "both answers, neither replacing the other");
     }
 
     /// bd omits a field it has nothing for rather than writing it as null:
@@ -588,7 +600,7 @@ mod tests {
 
         let bead = &parse_beads(json).expect("the row parses")[0];
 
-        assert_eq!(bead.depends_on(), vec![]);
+        assert_eq!(bead.dependencies, vec![]);
     }
 
     /// A wisp bd writes under a parent is a child like any other: a dotted id
@@ -606,13 +618,13 @@ mod tests {
         };
 
         assert_eq!(
-            by_id("bdi-7ao.17.2").depends_on(),
+            by_id("bdi-7ao.17.2").dependencies,
             vec![Dependency {
                 on: "bdi-7ao.17".to_string(),
                 edge: Edge::ParentChild,
             }]
         );
-        assert_eq!(by_id("bdi-wisp-w3m").depends_on(), vec![]);
+        assert_eq!(by_id("bdi-wisp-w3m").dependencies, vec![]);
     }
 
     #[test]
@@ -623,7 +635,7 @@ mod tests {
         let bead = &parse_beads(json).expect("the row parses")[0];
 
         assert_eq!(
-            bead.depends_on(),
+            bead.dependencies,
             vec![
                 Dependency {
                     on: "p-1".to_string(),
@@ -634,22 +646,6 @@ mod tests {
                     edge: Edge::Blocks,
                 },
             ]
-        );
-    }
-
-    #[test]
-    fn a_dep_tree_row_names_the_one_edge_the_walk_reached_it_by() {
-        // `bd dep tree` carries a spanning tree rather than an edge set, and
-        // the row shape says so: one parent, one kind, and no way to hold the
-        // second bead this one waits on.
-        let blocker = row("bdi-3um.11");
-
-        assert_eq!(
-            blocker.depends_on(),
-            vec![Dependency {
-                on: "bdi-3um.10".to_string(),
-                edge: Edge::Blocks,
-            }]
         );
     }
 

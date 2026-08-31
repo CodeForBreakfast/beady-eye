@@ -91,7 +91,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
             let beads = parse_beads(rows).expect("the rows parse");
             let root = beads
                 .iter()
-                .find(|b| b.parent_id.is_none())
+                .find(|b| b.dependencies.is_empty())
                 .expect("a root row")
                 .id
                 .clone();

@@ -69,12 +69,7 @@ pub struct Bead {
     pub priority: u8,
     #[serde(default)]
     pub issue_type: String,
-    #[serde(default, deserialize_with = "none_if_empty")]
-    pub parent_id: Option<String>,
-    #[serde(default)]
-    pub edge_from_parent: Option<Edge>,
-    /// Every bead this one depends on, where the answer named them all.
-    /// `bd list` does; `bd dep tree` does not — see `depends_on`.
+    /// Every bead this one depends on, and the kind of each dependency.
     #[serde(default, deserialize_with = "none_is_empty")]
     pub dependencies: Vec<Dependency>,
     #[serde(default, deserialize_with = "text_of_each_value")]
@@ -93,42 +88,12 @@ pub struct Bead {
     pub truncated: bool,
 }
 
-impl Bead {
-    /// Every bead this one depends on, however the answer said it.
-    ///
-    /// `bd list` names them all outright. `bd dep tree --direction=up` walks
-    /// dependents and dedupes, so it is a spanning tree: each row carries the
-    /// one edge the walk first reached it by, as `parent_id` with
-    /// `edge_from_parent` for its kind, and every other edge into that bead is
-    /// absent from the answer. bd names the kind on every row but the root's,
-    /// and the only kind that reaches a row from a bead it depends on without
-    /// saying so is parent-child.
-    pub fn depends_on(&self) -> Vec<Dependency> {
-        if !self.dependencies.is_empty() {
-            return self.dependencies.clone();
-        }
-        self.parent_id
-            .iter()
-            .map(|on| Dependency {
-                on: on.clone(),
-                edge: self.edge_from_parent.clone().unwrap_or(Edge::ParentChild),
-            })
-            .collect()
-    }
-}
-
 /// bd omits a field it has nothing for, and `#[serde(default)]` covers that.
 /// It does not extend to an explicit null. A tracker is read whole, so a row
 /// bd wrote the other way costs not one bead's edges but every bead in that
 /// project.
 fn none_is_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Dependency>, D::Error> {
     Ok(Option::<Vec<Dependency>>::deserialize(d)?.unwrap_or_default())
-}
-
-/// bd writes the root's absent parent as `""` rather than omitting the field.
-fn none_if_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    let raw = Option::<String>::deserialize(d)?;
-    Ok(raw.filter(|s| !s.is_empty()))
 }
 
 /// A bead's metadata is whatever JSON was written into it, and bdi draws it

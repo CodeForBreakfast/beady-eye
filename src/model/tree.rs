@@ -52,14 +52,20 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
     // what it drew.
     let mut waiting_on_the_absent: BTreeSet<String> = BTreeSet::new();
     for bead in by_id.values() {
-        for edge in bead.depends_on() {
+        for edge in &bead.dependencies {
             if !by_id.contains_key(&edge.on) {
                 waiting_on_the_absent.insert(bead.id.clone());
                 continue;
             }
             match edge.edge {
-                Edge::ParentChild => children.entry(edge.on).or_default().insert(bead.id.clone()),
-                Edge::Blocks => children.entry(bead.id.clone()).or_default().insert(edge.on),
+                Edge::ParentChild => children
+                    .entry(edge.on.clone())
+                    .or_default()
+                    .insert(bead.id.clone()),
+                Edge::Blocks => children
+                    .entry(bead.id.clone())
+                    .or_default()
+                    .insert(edge.on.clone()),
                 Edge::Other(_) => false,
             };
         }
@@ -139,7 +145,7 @@ fn walk(
     path.push(id.to_string());
     for child in children.get(id).into_iter().flatten() {
         let edge = if by_id[child]
-            .depends_on()
+            .dependencies
             .iter()
             .any(|d| d.on == id && d.edge == Edge::ParentChild)
         {
