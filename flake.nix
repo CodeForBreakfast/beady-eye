@@ -92,7 +92,7 @@
         # file GitHub issues instead, see CLAUDE.md — so `bd` and everything
         # that points it at a tracker live here rather than in `default`, and
         # entering this shell is opt-in. Select it locally with an untracked
-        # `.envrc.local` containing `use flake .#maintainer`.
+        # `.envrc.local` containing `devshell=maintainer`.
         devShells.maintainer = pkgs.mkShell {
           buildInputs = rustTools ++ [ beads.packages.${system}.bd ];
 

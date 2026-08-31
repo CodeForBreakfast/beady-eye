@@ -64,12 +64,15 @@ it and should use GitHub issues instead. `.beads/` is gitignored, and nothing
 tracked here names the tracker, its server or its credentials.
 
 A maintainer opts in with an untracked `.envrc.local` holding
-`use flake .#maintainer`. That shell adds the pinned `bd` and scopes
-`BEADS_DIR` to this repo, so a bare `bd` from an ambient shell cannot resolve a
-different binary or another project's tracker; the password comes from an
-untracked `.env.local`, 0600. Server coordinates, how to recover that password,
-and the tracker's operational notes live in `CLAUDE.local.md`, untracked
-alongside them.
+`devshell=maintainer` — a shell name, not a `use flake` call. `.envrc` runs
+`use flake` exactly once, on that name, because nix-direnv deletes every
+profile in `.direnv` before writing its own: a second call anywhere in the
+chain evicts the first and both rebuild on every load. The maintainer shell
+adds the pinned `bd` and scopes `BEADS_DIR` to this repo, so a bare `bd` from
+an ambient shell cannot resolve a different binary or another project's
+tracker; the password comes from an untracked `.env.local`, 0600. Server
+coordinates, how to recover that password, and the tracker's operational notes
+live in `CLAUDE.local.md`, untracked alongside them.
 
 `bd` is in the contributor path too, but only as a build input: `nix flake
 check` needs the binary because `tests/no_config.rs` runs `bdi` as a fresh
