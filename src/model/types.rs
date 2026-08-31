@@ -77,7 +77,7 @@ pub struct Bead {
     /// `bd list` does; `bd dep tree` does not — see `depends_on`.
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "text_of_each_value")]
     pub metadata: BTreeMap<String, String>,
     #[serde(default)]
     pub owner: Option<String>,
@@ -121,6 +121,25 @@ impl Bead {
 fn none_if_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     let raw = Option::<String>::deserialize(d)?;
     Ok(raw.filter(|s| !s.is_empty()))
+}
+
+/// A bead's metadata is whatever JSON was written into it, and bdi draws it
+/// as text. So each value is read as the text it prints as, and a value that
+/// is not a string costs nothing.
+///
+/// A tracker is read whole, so the alternative is not a bead without its
+/// badge — it is every bead in that project, gone.
+fn text_of_each_value<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
+    let raw = BTreeMap::<String, serde_json::Value>::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .map(|(key, value)| match value {
+            serde_json::Value::String(text) => (key, text),
+            written => (key, written.to_string()),
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

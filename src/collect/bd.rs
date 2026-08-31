@@ -288,6 +288,35 @@ mod tests {
         assert!(row("bdi-3um.10").metadata.is_empty());
     }
 
+    /// A tracker's metadata is arbitrary JSON, and bdi draws it as text. A
+    /// value that is not a string is read as the text it prints as, because
+    /// a tracker is read whole and refusing one value loses every bead in it.
+    ///
+    /// Measured on summit-works, 2026-08-31: two beads of 1886 carried
+    /// `blocks_backstop_removal: true`, and the whole project failed to read.
+    #[test]
+    fn a_metadata_value_that_is_not_a_string_is_read_as_its_text() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open",
+             "metadata":{"blocks_backstop_removal":true}},
+            {"id":"b","title":"t","status":"open",
+             "metadata":{"attempts":3,"working_topic":"x"}}
+        ]"#;
+
+        let beads = parse_beads(rows).expect("one non-string value does not lose a tracker");
+
+        assert_eq!(
+            beads[0].metadata.get("blocks_backstop_removal"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(beads[1].metadata.get("attempts"), Some(&"3".to_string()));
+        assert_eq!(
+            beads[1].metadata.get("working_topic"),
+            Some(&"x".to_string()),
+            "a string keeps its own text, without the quotes JSON writes it in"
+        );
+    }
+
     #[test]
     fn the_timestamps_the_age_rules_need_follow_the_row() {
         let closed = row("bdi-3um.1");
