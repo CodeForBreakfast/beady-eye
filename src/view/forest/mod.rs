@@ -464,7 +464,7 @@ mod tests {
     use crate::model::tree::{assemble, Assembled};
     use crate::model::types::Pane;
     use crate::view::lines::{
-        marker, prefix, progress_of, run_size, split, unfinished_beneath, Group, Item, Note,
+        counts_beneath, marker, prefix, progress_of, run_size, split, Group, Item, Note,
         ProjectLine, OPEN, SHUT,
     };
     use crate::view::phrase;
@@ -2327,9 +2327,10 @@ credential_command = "secret harbour"
 
     /// Asked of the branch, not of the bead: `sdg-4.3` is unfinished itself
     /// and holds one unfinished bead, and a walk that counted the bead it was
-    /// asked about would say two. Only closed nodes reach it from the
-    /// renderer today, where a self that is closed adds nothing and the
-    /// difference cannot show.
+    /// asked about would say two. Only closed nodes reach the note from the
+    /// renderer, where a self that is closed adds nothing and the difference
+    /// cannot show — but the same walk answers the agent count, which every
+    /// shut line asks whatever its own status is.
     #[test]
     fn what_a_branch_holds_never_counts_the_bead_it_was_asked_about() {
         let tree = tree_of("orbital", SIDING);
@@ -2340,7 +2341,7 @@ credential_command = "secret harbour"
             .position(|node| node.id == "sdg-4.3")
             .expect("the fixture has an unfinished branch");
 
-        assert_eq!(unfinished_beneath(&tree, &children, at), 1);
+        assert_eq!(counts_beneath(&tree, &children, at).unfinished(), 1);
     }
 
     /// Only a line whose own glyph says done. An unfinished bead resting shut
@@ -2400,6 +2401,166 @@ credential_command = "secret harbour"
         forest.apply(Action::ToggleFold);
 
         assert_eq!(row_of(&forest, "sdg-4.1").notes, Vec::<String>::new());
+    }
+
+    // ---- what a fold hides -----------------------------------------------
+
+    /// The bead this is for. A row shut over a branch is the only thing on
+    /// the screen standing for it, and until now it said its own fraction
+    /// and its own agent and nothing about the seats inside it.
+    ///
+    /// A fold `bdi` set itself never closes over an agent, so the row that
+    /// needs this is one the reader shut by hand — which is exactly when
+    /// they have stopped looking at the branch and most need to be told
+    /// somebody is still in it.
+    #[test]
+    fn a_branch_shut_over_a_working_agent_says_how_many_are_inside_it() {
+        let mut forest = flatten(&alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+        select(&mut forest, &key("orbital", "sdg-4.3"));
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(fold_of(&forest, "sdg-4.3"), Some(false));
+        assert_eq!(
+            row_of(&forest, "sdg-4.3")
+                .shut_over
+                .as_ref()
+                .map(|c| c.live_agents),
+            Some(1)
+        );
+    }
+
+    /// One rule at every depth, which is the principle the bead is about. A
+    /// root is a bead row like any other since `bdi-2bb.25`, and the aggregate
+    /// it lost went to the project line and widened over every root there. So
+    /// the root asks the same question a branch three levels down asks, and
+    /// gets the same answer about its own tree.
+    #[test]
+    fn a_root_shut_over_a_working_agent_says_it_exactly_as_a_branch_does() {
+        let mut forest = flatten(&alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+        select(&mut forest, &key("orbital", "sdg-4"));
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(fold_of(&forest, "sdg-4"), Some(false));
+        assert_eq!(
+            row_of(&forest, "sdg-4")
+                .shut_over
+                .as_ref()
+                .map(|c| c.live_agents),
+            Some(1)
+        );
+    }
+
+    /// Opened, the seats are on their own rows and counting them again above
+    /// would be the same fact twice. What a line says here is what it is
+    /// hiding, not a standing property of the bead.
+    #[test]
+    fn a_branch_opened_over_its_agents_stops_counting_them() {
+        let forest = flatten(&alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+
+        assert_eq!(fold_of(&forest, "sdg-4.3"), Some(true));
+        assert_eq!(row_of(&forest, "sdg-4.3").shut_over, None);
+    }
+
+    /// Counted over what the fold hides and not over the bead asking. The
+    /// row already says its own agent by name, and a count taking that one in
+    /// would have a reader add the name to the number and come out with one
+    /// agent too many.
+    #[test]
+    fn the_agents_a_line_counts_are_the_ones_it_hides_and_never_its_own() {
+        let mut forest = flatten(&alone(
+            "orbital",
+            SIDING,
+            &panes_on(&["sdg-4.3", "sdg-4.3.1"]),
+        ));
+        select(&mut forest, &key("orbital", "sdg-4.3"));
+
+        forest.apply(Action::ToggleFold);
+
+        let row = row_of(&forest, "sdg-4.3");
+        assert!(row.agent.is_some(), "the row names its own agent");
+        assert_eq!(row.shut_over.as_ref().map(|c| c.live_agents), Some(1));
+    }
+
+    /// The other half of what a fold hides, and the reason it is not agents
+    /// alone: `lines::live_beneath` — the whole of the fold default — is an
+    /// agent on a bead *or* an anomaly against it, so a row saying one and
+    /// not the other would leave a fresh exception where two were closed.
+    ///
+    /// A pane still on a closed bead is the stale-pane anomaly, and it
+    /// carries an agent too, so the two counts are read off the one bead and
+    /// cannot be answering with each other.
+    #[test]
+    fn a_branch_shut_over_a_bead_wanting_looking_at_says_how_many_are_inside_it() {
+        let stale = edited(
+            SIDING,
+            r#"{"id":"sdg-4.3.1","title":"prove the interlocking","status":"open"#,
+            r#"{"id":"sdg-4.3.1","title":"prove the interlocking","closed_at":"2026-08-28T09:00:00Z","status":"closed"#,
+        );
+        let mut forest = flatten(&alone("orbital", &stale, &panes_on(&["sdg-4.3.1"])));
+        select(&mut forest, &key("orbital", "sdg-4.3"));
+
+        forest.apply(Action::ToggleFold);
+
+        let shut_over = row_of(&forest, "sdg-4.3")
+            .shut_over
+            .clone()
+            .expect("a shut branch says what it hides");
+        assert_eq!(shut_over.anomalies, 1);
+        assert_eq!(shut_over.live_agents, 1);
+    }
+
+    /// Work, not rows — the rule every other count on this screen follows. A
+    /// blocker two of a branch's descendants share is drawn beneath each of
+    /// them and is one seat, and a line adding its rows would send a reader
+    /// hunting for a second agent that is not there.
+    #[test]
+    fn one_agent_reached_two_ways_down_is_counted_once() {
+        let mut forest = flatten(&alone("orbital", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
+        assert_eq!(
+            lines_of(&forest, "lck-2").len(),
+            2,
+            "{:#?}",
+            sketch(&forest)
+        );
+        select(&mut forest, &key("orbital", "lck-1"));
+
+        forest.apply(Action::ToggleFold);
+
+        assert_eq!(
+            row_of(&forest, "lck-1")
+                .shut_over
+                .as_ref()
+                .map(|c| c.live_agents),
+            Some(1)
+        );
+    }
+
+    /// The second depth exception the bead names, in the same place as the
+    /// first: a root shut over unfinished work said nothing, while a closed
+    /// branch one line down in the same state said how much. One rule, two
+    /// answers, and nothing about a root that earns the difference.
+    #[test]
+    fn a_closed_root_shut_over_unfinished_work_says_how_much_like_any_other_row() {
+        // `sdg-4.3` opens too: `in_progress` with no pane is an orphan claim,
+        // and no fold `bdi` sets itself closes over one.
+        let done = edited(
+            &edited(
+                SIDING,
+                r#"{"id":"sdg-4.3","title":"re-signal the box","status":"in_progress"#,
+                r#"{"id":"sdg-4.3","title":"re-signal the box","status":"open"#,
+            ),
+            r#"{"id":"sdg-4","title":"re-point the crossover","status":"in_progress"#,
+            r#"{"id":"sdg-4","title":"re-point the crossover","closed_at":"2026-08-29T09:00:00Z","status":"closed"#,
+        );
+        let forest = flatten(&alone("orbital", &done, &[]));
+
+        assert_eq!(fold_of(&forest, "sdg-4"), Some(false));
+        assert_eq!(
+            row_of(&forest, "sdg-4").notes,
+            vec![phrase::unfinished_beneath(5)]
+        );
     }
 
     fn siding() -> Snapshot {

@@ -287,6 +287,32 @@ pub fn unfinished_beneath(count: usize) -> String {
     format!("{count} unfinished {bead} beneath this")
 }
 
+/// The agents at work behind a line resting shut over them.
+///
+/// Said as a count where the line's own agent is said by name, because the
+/// two answer different questions: who is on this bead, and how much is going
+/// on out of sight. "beneath" is the word keeping a reader from adding the
+/// named one to the number.
+///
+/// A state cell rather than a note, so it is said in the register the
+/// fraction beside it is said in. Drawn out to a sentence it took the title
+/// off the row at the widths this is read at.
+pub fn agents_beneath(count: usize) -> String {
+    let agent = if count == 1 { "agent" } else { "agents" };
+    format!("{count} {agent} beneath")
+}
+
+/// The beads behind a line resting shut over them that want looking at.
+///
+/// Beads rather than rules fired, which is what the number counts and what a
+/// reader opening the fold would find rows of. What is wrong with them is on
+/// their own rows and not summarised here — the count's whole job is to say
+/// that opening this is worth it.
+pub fn anomalies_beneath(count: usize) -> String {
+    let bead = if count == 1 { "bead" } else { "beads" };
+    format!("{count} {bead} beneath")
+}
+
 /// Beads bd stopped at, counted for the tree they sit in.
 pub fn truncated_nodes(count: usize) -> String {
     let (bead, them) = if count == 1 {
@@ -581,6 +607,8 @@ mod tests {
         for count in [1, 3] {
             said.push(elided(count));
             said.push(unfinished_beneath(count));
+            said.push(agents_beneath(count));
+            said.push(anomalies_beneath(count));
             said.push(truncated_nodes(count));
             said.push(failed_projects(count));
             said.push(conflicts(count));
@@ -987,6 +1015,8 @@ mod tests {
             cycle(1),
             elided(1),
             unfinished_beneath(1),
+            agents_beneath(1),
+            anomalies_beneath(1),
             truncated_nodes(1),
             failed_projects(1),
             conflicts(1),
@@ -996,7 +1026,15 @@ mod tests {
             unconfigured(1),
             anomaly(&Anomaly::StaleClaim { days: 1 }),
         ] {
-            for plural in ["beads", "days", "projects", "trees", "panes", "conflicts"] {
+            for plural in [
+                "beads",
+                "days",
+                "projects",
+                "trees",
+                "panes",
+                "conflicts",
+                "agents",
+            ] {
                 assert!(!said.contains(plural), "{said}");
             }
         }

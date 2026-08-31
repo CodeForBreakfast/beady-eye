@@ -8,9 +8,9 @@
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, LoosePane, Snapshot, TrackerState, Tree};
 use crate::view::lines::{
-    children_of, first_copy, marker, notes_of, opens_a_fold, prefix, progress_of, root_key,
-    run_size, split, unfinished_beneath, Content, Group, GroupKind, Item, Line, Note, Place,
-    ProjectLine, Recovery, Unread,
+    children_of, counts_beneath, first_copy, marker, notes_of, opens_a_fold, prefix, progress_of,
+    root_key, run_size, split, Content, Group, GroupKind, Item, Line, Note, Place, ProjectLine,
+    Recovery, Unread,
 };
 use crate::view::row;
 
@@ -25,6 +25,26 @@ enum Child {
     /// The children a run stands for, in render order. Whose they are is the
     /// parent the entries were drawn under, so it is not repeated here.
     Elided(Vec<usize>),
+}
+
+/// The work a line resting shut is hiding: the beads under it that its fold
+/// keeps off the screen, counted once each.
+///
+/// Nothing where the line is open or has nothing under it, because what it
+/// stands over is then drawn on rows of its own. Nothing either on a later
+/// copy of a bead, whose first line is already saying it — a reader adding up
+/// what two copies hide is adding the ways down rather than the work.
+///
+/// Asked at every depth. A root is a bead row like any other, and the one
+/// question a fold raises — what did that just take off the screen — has one
+/// answer wherever it is asked.
+fn shut_over(
+    tree: &Tree,
+    children: &[Vec<usize>],
+    at: usize,
+    folded: Option<bool>,
+) -> Option<Counts> {
+    (folded == Some(false) && first_copy(tree, at)).then(|| counts_beneath(tree, children, at))
 }
 
 /// Every line the snapshot draws, in render order.
@@ -145,16 +165,17 @@ impl Layout<'_> {
                 opens_a_fold(tree, &children, 0),
             );
 
+        let folded = (!kids.is_empty()).then_some(open);
         lines.push(Line {
             prefix: prefix(&[], last, !kids.is_empty() && !open),
             depth: 1,
-            folded: (!kids.is_empty()).then_some(open),
+            folded,
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
                 node,
                 &tree.root,
                 progress_of(tree, &children, 0),
-                None,
+                shut_over(tree, &children, 0, folded),
             )),
         });
 
@@ -218,31 +239,25 @@ impl Layout<'_> {
                         id: node.id.clone(),
                     });
                     let kids = children_entries(tree, children, at);
-                    let first = first_copy(tree, at);
                     // Open the spine to the work a reader needs next and
                     // nothing else. A branch with none rests as one line, its
                     // glyph, its fraction and its marker saying what it holds.
                     let open = !kids.is_empty()
                         && self.folds.expanded(
                             &Handle::Bead(place.clone()),
-                            first && opens_a_fold(tree, children, at),
+                            first_copy(tree, at) && opens_a_fold(tree, children, at),
                         );
-                    // A later line is shut over beads the first line is
-                    // already drawing, so counting them here would have a
-                    // reader adding up the ways down rather than the work.
-                    let holding = (node.status.is_closed() && !open && first)
-                        .then(|| unfinished_beneath(tree, children, at))
-                        .filter(|unfinished| *unfinished > 0);
+                    let folded = (!kids.is_empty()).then_some(open);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open),
                         depth,
-                        folded: (!kids.is_empty()).then_some(open),
+                        folded,
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
                             &tree.root,
                             progress_of(tree, children, at),
-                            holding,
+                            shut_over(tree, children, at, folded),
                         )),
                     });
                     if open {

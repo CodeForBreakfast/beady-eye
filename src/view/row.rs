@@ -5,7 +5,7 @@
 
 use crate::model::anomaly::Anomaly;
 use crate::model::join::AgentRef;
-use crate::model::snapshot::Node;
+use crate::model::snapshot::{Counts, Node};
 use crate::model::types::Status;
 use crate::view::phrase;
 
@@ -39,21 +39,48 @@ pub struct Row {
     pub progress: Option<Progress>,
     pub agent: Option<String>,
     pub anomalies: Option<String>,
+    /// The work this line is shut over, where it is shut over any: the beads
+    /// its fold hides, counted once each.
+    ///
+    /// `progress` counts this line's own bead among its total; this does not,
+    /// and the difference is not an inconsistency. A fraction is the only
+    /// thing on the row saying how much work the line stands for, so it must
+    /// take the bead in. The agent on this bead is already on the row by
+    /// name, so a count taking it in would have a reader add the name to the
+    /// number and come out one too many.
+    pub shut_over: Option<Counts>,
     /// What is true of this bead beyond its own fields: a subtree the tracker
     /// stopped at, unfinished work the line is shut over, a status outside
     /// bd's own set.
     pub notes: Vec<String>,
 }
 
-/// `holding` is the unfinished work this line is shut over, where it is
-/// closed and there is any. The caller knows the branch and the fold; the
-/// bead's own fields say nothing about either.
-pub fn cells(node: &Node, root: &str, progress: Option<Progress>, holding: Option<usize>) -> Row {
+/// `shut_over` is what this line's fold hides, where it hides anything. The
+/// caller knows the branch and the fold; the bead's own fields say nothing
+/// about either.
+///
+/// Both of the things a shut line says come off that one set of counts. A
+/// closed line's glyph says done, and the unfinished beads it rests over are
+/// nowhere else on the screen to say otherwise — so it says how many, in
+/// words, beside the fraction saying it in arithmetic.
+pub fn cells(
+    node: &Node,
+    root: &str,
+    progress: Option<Progress>,
+    shut_over: Option<Counts>,
+) -> Row {
     let mut notes = Vec::new();
     if node.truncated {
         notes.push(phrase::truncated().to_string());
     }
-    notes.extend(holding.map(phrase::unfinished_beneath));
+    notes.extend(
+        shut_over
+            .as_ref()
+            .filter(|_| node.status.is_closed())
+            .map(Counts::unfinished)
+            .filter(|unfinished| *unfinished > 0)
+            .map(phrase::unfinished_beneath),
+    );
     notes.extend(phrase::unrecognised_status(&node.status));
 
     Row {
@@ -65,6 +92,7 @@ pub fn cells(node: &Node, root: &str, progress: Option<Progress>, holding: Optio
         progress,
         agent: node.agent.as_ref().map(agent_marker),
         anomalies: anomaly_marker(&node.anomalies),
+        shut_over,
         notes,
     }
 }

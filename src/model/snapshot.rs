@@ -72,7 +72,7 @@ pub struct Counts {
 impl Counts {
     /// The beads a tree still holds a call on. A closed one is a row on the
     /// screen and nothing anybody has left to do.
-    fn unfinished(&self) -> usize {
+    pub(crate) fn unfinished(&self) -> usize {
         self.total - self.closed
     }
 

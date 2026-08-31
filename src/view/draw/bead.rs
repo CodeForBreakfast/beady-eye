@@ -7,7 +7,7 @@ use ratatui::text::Span;
 use crate::model::types::Status;
 use crate::view::fitted::{Fitted, GAP};
 use crate::view::phrase;
-use crate::view::row::{self, Row};
+use crate::view::row::{self, Row, AGENT, WARNING};
 
 use super::tone::{fg, status_style, tone, DIM, LIVE, LOOK_AT_THIS};
 use super::{done, structure};
@@ -67,6 +67,26 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     if let Some(anomalies) = &row.anomalies {
         say(anomalies, Some(LOOK_AT_THIS));
     }
+    // After the row's own two, because those name one bead and these count
+    // several: a number met before the name it belongs beside reads as the
+    // total the name is an example of.
+    if let Some(shut_over) = &row.shut_over {
+        if shut_over.live_agents > 0 {
+            say(
+                &format!("{AGENT} {}", phrase::agents_beneath(shut_over.live_agents)),
+                Some(LIVE),
+            );
+        }
+        if shut_over.anomalies > 0 {
+            say(
+                &format!(
+                    "{WARNING} {}",
+                    phrase::anomalies_beneath(shut_over.anomalies)
+                ),
+                Some(LOOK_AT_THIS),
+            );
+        }
+    }
     for note in &row.notes {
         say(note, Some(LOOK_AT_THIS));
     }
@@ -117,6 +137,134 @@ mod tests {
         let count = drawn[0].find("3/8").expect("the count is drawn");
         let agent = drawn[0].find("wCM:p9").expect("the agent is drawn");
         assert!(count < agent, "{drawn:?}");
+    }
+
+    /// A shut row is the only thing on the screen standing for the beads
+    /// under it, so the agents on them are nowhere else to be read. The count
+    /// follows the row's own agent: that one is a name and this one is a
+    /// number, and a number met first reads as the total the name is one of.
+    #[test]
+    fn a_row_shut_over_working_agents_says_how_many_after_naming_its_own() {
+        let mut shut = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        shut.agent = Some(row::agent_marker(&a_pane()));
+        shut.shut_over = Some(counts(1, 5, 3, 0));
+
+        let drawn = drawn(bead_line(&shut, BRANCH, 3), 110, 1);
+
+        let own = drawn[0].find("wCM:p9").expect("its own agent is drawn");
+        let beneath = drawn[0]
+            .find("3 agents beneath")
+            .expect("what it is shut over is drawn");
+        assert!(own < beneath, "{drawn:?}");
+    }
+
+    /// The beads a fold hides that want looking at, said as beads rather than
+    /// as rules fired, because the number is how many rows opening it would
+    /// put in front of the reader.
+    #[test]
+    fn a_row_shut_over_beads_wanting_looking_at_says_how_many() {
+        let mut shut = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        shut.shut_over = Some(counts(1, 5, 0, 2));
+
+        let drawn = drawn(bead_line(&shut, BRANCH, 3), 110, 1);
+
+        says(&drawn[0], "2 beads beneath");
+    }
+
+    /// A count of nought is left out rather than drawn, exactly as the
+    /// project line leaves it out: a row of noughts reads as something to
+    /// check, and every shut row in a quiet tree would carry two.
+    #[test]
+    fn a_row_shut_over_nothing_live_says_nothing_about_it() {
+        let mut shut = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        shut.shut_over = Some(counts(4, 5, 0, 0));
+
+        let drawn = drawn(bead_line(&shut, BRANCH, 3), 110, 1);
+
+        does_not_say(&drawn[0], "beneath");
+    }
+
+    /// Live work is drawn in the colour live work is drawn in everywhere
+    /// else, and work wanting looking at in that one. Asked of `painted`:
+    /// `drawn` reads symbols only and would pass whatever colour these
+    /// reached the screen in, which is how a colour bug shipped here before.
+    #[test]
+    fn what_a_shut_row_hides_is_painted_live_and_look_at_this() {
+        let mut shut = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        shut.shut_over = Some(counts(1, 5, 3, 2));
+
+        let painted = painted(bead_line(&shut, BRANCH, 3), 120);
+        let colour_of = |words: &str| {
+            painted
+                .iter()
+                .find(|(said, _)| said.contains(words))
+                .map(|(_, colour)| *colour)
+        };
+
+        assert_eq!(colour_of("3 agents beneath"), Some(LIVE), "{painted:?}");
+        assert_eq!(
+            colour_of("2 beads beneath"),
+            Some(LOOK_AT_THIS),
+            "{painted:?}"
+        );
+    }
+
+    /// Width the row has not got comes off the note before it comes off the
+    /// seats. `Fitted` cuts the state block from its own end, so the order
+    /// these are said in is an order of importance, and this is which way it
+    /// runs.
+    ///
+    /// A cut and not a drop: `cut_to` keeps whole spans while they fit and
+    /// takes a character prefix of the next, so the note is still there in
+    /// part. Both halves are asserted, because a test that only said the
+    /// whole note was absent would pass on a row that had dropped it —
+    /// and would send the next reader looking for a mechanism this has not
+    /// got.
+    ///
+    /// The note is the right one to cut because the fraction beside it says
+    /// the same thing: a reader left with `21 unfinished beads beneath …` on
+    /// a row still reading `1/22` can do the subtraction. Nothing else on the
+    /// row says four people are inside this one, and no fold above it will
+    /// say so either.
+    #[test]
+    fn a_row_too_narrow_for_both_keeps_the_seats_whole_and_cuts_the_note() {
+        let mut shut = row(&node(
+            "nix-9670s.2",
+            "the noctalia widget",
+            Status::InProgress,
+        ));
+        shut.progress = Some(row::Progress {
+            closed: 1,
+            total: 22,
+        });
+        shut.shut_over = Some(counts(1, 22, 4, 0));
+        shut.notes = vec![phrase::unfinished_beneath(21)];
+
+        let wide = drawn(bead_line(&shut, BRANCH, 3), 120, 1);
+        let narrow = drawn(bead_line(&shut, BRANCH, 3), 68, 1);
+
+        says(&wide[0], "◍ 4 agents beneath");
+        says(&wide[0], "21 unfinished beads beneath this");
+
+        says(&narrow[0], "◍ 4 agents beneath");
+        does_not_say(&narrow[0], "21 unfinished beads beneath this");
+        says(&narrow[0], "21 unfinished beads beneath ");
     }
 
     /// A leaf stands for itself alone. A fraction over one bead would say

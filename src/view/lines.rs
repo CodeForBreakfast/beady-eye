@@ -403,18 +403,22 @@ fn ready_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
         .any(|node| tree.nodes[node].ready)
 }
 
-/// How many beads beneath `at` are not closed.
+/// What the beads beneath `at` add up to: how many there are, how many are
+/// finished, who is on them and how many want looking at.
 ///
-/// The mirror of `live_beneath`, which asks whether anyone is on the work
-/// rather than whether the work is done. `bdi` walks dependents, so a bead's
-/// children are the work closing it unblocked and a closed bead over open
-/// ones is the ordinary shape of this tree — but with nobody on any of them
-/// the branch rests shut, and the row above it says done.
-pub(crate) fn unfinished_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> usize {
-    beads_beneath(tree, children, at)
-        .into_iter()
-        .filter(|node| !tree.nodes[*node].status.is_closed())
-        .count()
+/// Strictly beneath, because every use of this is a line saying what it is
+/// shut over rather than what it is. The bead asking is on the screen with
+/// its own glyph, its own agent and its own warning already on it.
+///
+/// Counted as work rather than as rows, like every other statistic here: a
+/// blocker two of these branches share is one bead, one seat and one warning
+/// however many ways down reach it.
+pub(crate) fn counts_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> Counts {
+    Counts::over(
+        beads_beneath(tree, children, at)
+            .into_iter()
+            .map(|node| &tree.nodes[node]),
+    )
 }
 
 /// Whether the branch at `at` is finished: every bead in it closed, no agent
