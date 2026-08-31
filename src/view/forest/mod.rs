@@ -237,7 +237,51 @@ impl Forest {
     /// lay-out displaced — one in here would leave it comparing the new lines
     /// with themselves.
     fn fold_all(&mut self, open: bool) {
-        while self.point_every_drawn_fold(true) {}
+        self.fold_all_in(self.rounds_to_settle(), open);
+    }
+
+    /// The rounds a forest of this size can need, counted off the snapshot
+    /// before the walk starts.
+    ///
+    /// A round points every fold on a drawn line, so the next one reaches
+    /// the folds that round drew and no deeper: the walk spends a round per
+    /// level of fold rather than one per fold, and a round that points none
+    /// is the last. A fold nests inside another only where a bead hangs
+    /// under a bead, with at most the run of quiet children between the two,
+    /// so a tree holds two levels per bead it has — and the beads down one
+    /// path are all different, because `children_of` reads a list in depth
+    /// order and gives a bead only the beads after it. The two left over are
+    /// the fold a project or a group draws over what hangs beneath it, and
+    /// the round that finds nothing left to point.
+    ///
+    /// Generous on purpose: a level too many costs one draw that finds
+    /// nothing, a level too few stops a walk that was still working.
+    ///
+    /// Counted off the snapshot, and off nothing a fold or a drawn line
+    /// says, so it still counts out where the walk is wrong about what it
+    /// drew.
+    fn rounds_to_settle(&self) -> usize {
+        let beads: usize = self
+            .snapshot
+            .trees
+            .iter()
+            .map(|tree| tree.nodes.len())
+            .sum();
+        2 * beads + 2
+    }
+
+    /// Point every fold at `open`, in at most `rounds` of them.
+    ///
+    /// A walk that runs out has set a fold and drawn it again unchanged,
+    /// which is a defect: the forest is left at the level it reached, and
+    /// the folds it never got to are drawn shut like any other, so the
+    /// screen still says truthfully which way every fold points.
+    fn fold_all_in(&mut self, rounds: usize, open: bool) {
+        for _ in 0..rounds {
+            if !self.point_every_drawn_fold(true) {
+                break;
+            }
+        }
         if !open {
             self.point_every_drawn_fold(false);
         }
@@ -3564,6 +3608,20 @@ credential_command = "secret harbour"
         assert_eq!(sketch(&forest), vec!["! NoRoots"]);
     }
 
+    /// The fold keys reach a forest that holds nothing, and a walk over it is
+    /// given a count of rounds taken from beads there are none of. It has no
+    /// fold to point either way, so the screen does not move and still says
+    /// what it holds.
+    #[test]
+    fn the_fold_keys_on_a_forest_with_nothing_in_it_leave_it_saying_so() {
+        for action in [Action::ExpandAll, Action::CollapseAll] {
+            let mut forest = flatten(&only(Collected::default(), &[]));
+
+            assert!(!forest.apply(action), "{:#?}", sketch(&forest));
+            assert_eq!(sketch(&forest), vec!["! NoRoots"]);
+        }
+    }
+
     /// Everything that can stand alone in a forest. A conflict is not among
     /// them: a pane can only conflict over a bead a tracker answered for, so
     /// it never arrives without the tree that bead is in.
@@ -3751,6 +3809,26 @@ credential_command = "secret harbour"
                 "tow-1.2",
                 "tow-1.2.1"
             ],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A walk that runs out of rounds leaves the folds it never reached, so a
+    /// forest that will not settle disagrees with the key that was pressed
+    /// instead of never coming back. Tower is a spine four deep, and one
+    /// round reaches the level it drew and no further.
+    #[test]
+    fn a_walk_out_of_rounds_leaves_the_folds_it_did_not_reach() {
+        let mut forest = flatten(&tower_staffed(&[]));
+        assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
+
+        forest.fold_all_in(1, true);
+        forest.lay_out();
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2"],
             "{:#?}",
             sketch(&forest)
         );
