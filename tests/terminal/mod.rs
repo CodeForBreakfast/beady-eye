@@ -11,6 +11,8 @@
 //!
 //! * a sized pty and a `bdi` owning it — [`a_pty`], [`own_the_terminal`],
 //!   [`bdi_on`];
+//! * a `bdi` that dies with the binary that spawned it, so a test binary
+//!   killed before its `Drop` leaves nothing running — [`own_the_terminal`];
 //! * typing at it and timestamping what comes back — [`driver::Driven`];
 //! * making `bd` slow, so a stalled loop can be told from a slow one —
 //!   [`shims::ShimmedTracker`] and `tests/shims/`.
@@ -68,14 +70,16 @@ pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
     }
 }
 
-/// Between the fork and the exec: make the pty the child's controlling
-/// terminal, so crossterm finds one to read keys from.
+/// Between the fork and the exec: tie the child's life to the process that
+/// spawned it, and make the pty its controlling terminal so crossterm finds
+/// one to read keys from.
 ///
 /// # Safety
 ///
 /// Runs in the forked child before `exec`, so only async-signal-safe calls
-/// belong here. Both of these are.
-pub fn own_the_terminal() -> std::io::Result<()> {
+/// belong here. All of these are.
+pub fn own_the_terminal(spawned_by: u32) -> std::io::Result<()> {
+    die_with(spawned_by)?;
     unsafe {
         if libc::setsid() == -1 {
             return Err(std::io::Error::last_os_error());
@@ -84,6 +88,41 @@ pub fn own_the_terminal() -> std::io::Result<()> {
             return Err(std::io::Error::last_os_error());
         }
     }
+    Ok(())
+}
+
+/// Ask the kernel to kill this child when the process that spawned it dies.
+///
+/// Every harness here reaps its `bdi` from `Drop`, and a test binary that is
+/// killed runs no `Drop`. Nothing outside the process can pick up after it:
+/// the `setsid` above gives the child a session and a process group of its
+/// own, so a killer working by process group never sees it, and the child
+/// inherits a copy of the pty master, so closing the spawner's copy is no
+/// hangup either. Left to itself the child outlives everything and keeps
+/// whatever it bound, which is how `bdi` processes came to hold the inbound
+/// socket for a whole afternoon.
+///
+/// Linux only, because a parent-death signal is. On a system without one the
+/// `Drop` is all there is.
+#[cfg(target_os = "linux")]
+fn die_with(spawned_by: u32) -> std::io::Result<()> {
+    unsafe {
+        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // The signal fires on a death, so a spawner that died between the
+        // fork and the line above has already spent it and this child would
+        // be the leak. Nothing has been exec'd yet, so there is nothing to
+        // unwind.
+        if libc::getppid() != spawned_by as libc::pid_t {
+            libc::_exit(1);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn die_with(_spawned_by: u32) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -134,6 +173,7 @@ pub fn a_home_naming_one_project_read_without_direnv(named: &str) -> PathBuf {
 /// A `bdi` drawing on the far end of a pty, with `environment` on top of what
 /// the test binary carries.
 pub fn bdi_on(theirs: &std::fs::File, home: &Path, environment: &[(String, String)]) -> Child {
+    let spawned_by = std::process::id();
     unsafe {
         Command::new(env!("CARGO_BIN_EXE_bdi"))
             .current_dir(home)
@@ -145,7 +185,7 @@ pub fn bdi_on(theirs: &std::fs::File, home: &Path, environment: &[(String, Strin
             .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
             .stdout(theirs.try_clone().expect("the pty is ours to hand over"))
             .stderr(theirs.try_clone().expect("the pty is ours to hand over"))
-            .pre_exec(own_the_terminal)
+            .pre_exec(move || own_the_terminal(spawned_by))
             .spawn()
     }
     .expect("bdi runs")

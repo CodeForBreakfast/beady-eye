@@ -70,6 +70,12 @@ impl Driven {
         }
     }
 
+    /// The `bdi` being driven, for a test whose subject is the process rather
+    /// than what it draws.
+    pub fn pid(&self) -> libc::pid_t {
+        self.child.id() as libc::pid_t
+    }
+
     /// Read until `bdi` has said this, or give up and say what it did say.
     pub fn read_until(&mut self, said: &[u8], patience: Duration) {
         let giving_up = Instant::now() + patience;
