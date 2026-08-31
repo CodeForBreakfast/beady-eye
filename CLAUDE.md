@@ -78,7 +78,7 @@ what a metadata key *means*, it belongs in config, not in the model.
 **Degrade, never disappear.** An unreachable tracker, a filtered tree, a dangling
 parent, a truncated subtree — each is reported, never silently dropped.
 
-## Tracker and packaging
+## The tracker
 
 The maintainers track work in a [bd (beads)](https://github.com/gastownhall/beads)
 tracker that is not part of this repository — external contributors don't need
