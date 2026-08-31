@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-    MouseButton, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, KeyEvent, KeyEventKind, MouseButton,
+    MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
@@ -26,6 +26,10 @@ use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::tail::{self, Tail};
 use crate::view::{draw, Action, Motion, Notice};
+
+mod keys;
+
+use keys::{action, bindings, key_row};
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
 ///
@@ -256,215 +260,6 @@ impl Outstanding {
             None => false,
         }
     }
-}
-
-/// One key a reader can press, and the word for it they can read.
-///
-/// `control` is a requirement and not an exclusion: a key that does not ask
-/// for it answers whatever modifiers are held, which is what the arrows and
-/// the letters have always done.
-struct Key {
-    code: KeyCode,
-    control: bool,
-    named: &'static str,
-}
-
-const fn alone(code: KeyCode, named: &'static str) -> Key {
-    Key {
-        code,
-        control: false,
-        named,
-    }
-}
-
-const fn ctrl(code: char, named: &'static str) -> Key {
-    Key {
-        code: KeyCode::Char(code),
-        control: true,
-        named,
-    }
-}
-
-/// One thing the view does: the keys that ask for it, and what to call it.
-struct Binding {
-    keys: &'static [Key],
-    action: Action,
-    /// What pressing it does, for the key bindings view.
-    does: &'static str,
-    /// Its word in the row under the tail, for the few that earn a permanent
-    /// line there.
-    hint: Option<&'static str>,
-}
-
-/// Every binding there is.
-///
-/// The mapping and the key bindings view are this table read two ways, so a
-/// key is written down once and nothing on screen can disagree with what
-/// pressing it does. `^C` is an alias for `q`: raw mode swallows it, and the
-/// key everyone reaches for must not be inert.
-///
-/// The order is least guessable first, because a screen too short for the
-/// whole table shows the top of it. A reader who cannot see the arrows will
-/// press one anyway; one who cannot see `a` will not work out that the trees
-/// they are missing are being filtered.
-const BINDINGS: &[Binding] = &[
-    Binding {
-        keys: &[alone(KeyCode::Enter, "Enter")],
-        action: Action::Focus,
-        does: "focus the selected bead's pane in herdr",
-        hint: Some("focus"),
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char(' '), "Space")],
-        action: Action::ToggleFold,
-        does: "fold or unfold the selected node",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('a'), "a")],
-        action: Action::ToggleFilter,
-        does: "show every tree, not only those with a live agent",
-        hint: Some("all"),
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('?'), "?")],
-        action: Action::ShowBindings,
-        does: "show these key bindings",
-        hint: Some("keys"),
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('q'), "q"), ctrl('c', "^C")],
-        action: Action::Quit,
-        does: "quit",
-        hint: Some("quit"),
-    },
-    Binding {
-        keys: &[ctrl('r', "^R")],
-        action: Action::Refresh,
-        does: "collect from the trackers again now",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('E'), "E")],
-        action: Action::ExpandAll,
-        does: "expand every node",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('C'), "C")],
-        action: Action::CollapseAll,
-        does: "collapse every node",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('D'), "D")],
-        action: Action::RestoreDefault,
-        does: "restore the default view",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Down, "Down"), alone(KeyCode::Char('j'), "j")],
-        action: Action::Move(Motion::NextRow),
-        does: "move down one row",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Up, "Up"), alone(KeyCode::Char('k'), "k")],
-        action: Action::Move(Motion::PreviousRow),
-        does: "move up one row",
-        hint: None,
-    },
-    Binding {
-        keys: &[
-            alone(KeyCode::Right, "Right"),
-            alone(KeyCode::Char('l'), "l"),
-        ],
-        action: Action::ExpandOrChild,
-        does: "expand, or move to the first child when it is already expanded",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Left, "Left"), alone(KeyCode::Char('h'), "h")],
-        action: Action::CollapseOrParent,
-        does: "collapse, or move to the parent when it is already collapsed",
-        hint: None,
-    },
-    Binding {
-        keys: &[ctrl('d', "^D")],
-        action: Action::Move(Motion::HalfScreenDown),
-        does: "move down half a screen",
-        hint: None,
-    },
-    Binding {
-        keys: &[ctrl('u', "^U")],
-        action: Action::Move(Motion::HalfScreenUp),
-        does: "move up half a screen",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('g'), "g")],
-        action: Action::Move(Motion::FirstRow),
-        does: "move to the first row",
-        hint: None,
-    },
-    Binding {
-        keys: &[alone(KeyCode::Char('G'), "G")],
-        action: Action::Move(Motion::LastRow),
-        does: "move to the last row",
-        hint: None,
-    },
-];
-
-/// The action a key asks for, or nothing where it is bound to none.
-fn action(key: KeyEvent) -> Option<Action> {
-    let control = key.modifiers.contains(KeyModifiers::CONTROL);
-
-    BINDINGS
-        .iter()
-        .find(|binding| {
-            binding
-                .keys
-                .iter()
-                .any(|bound| bound.code == key.code && (control || !bound.control))
-        })
-        .map(|binding| binding.action)
-}
-
-/// Every binding named for a reader: the keys to press, and what pressing
-/// them does.
-fn bindings() -> Vec<(String, &'static str)> {
-    BINDINGS
-        .iter()
-        .map(|binding| {
-            (
-                binding
-                    .keys
-                    .iter()
-                    .map(|key| key.named)
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                binding.does,
-            )
-        })
-        .collect()
-}
-
-/// The row under the tail: the handful of bindings worth a permanent line,
-/// each named by the first key that reaches it.
-///
-/// Naming a key costs more columns than a glyph did, and a row that outgrew a
-/// forty-column terminal would lose its last words — which is `q quit`. So the
-/// row keeps the keys a reader reaches for and leaves the rest to `?`, which
-/// is the one it gains.
-fn key_row() -> String {
-    BINDINGS
-        .iter()
-        .filter_map(|binding| {
-            let word = binding.hint?;
-            Some(format!("{} {word}", binding.keys.first()?.named))
-        })
-        .collect::<Vec<_>>()
-        .join("   ")
 }
 
 /// The inbound channel, or nothing and the two things said in its place.
@@ -947,6 +742,7 @@ impl View for Screen {
 
 #[cfg(test)]
 mod tests {
+    use super::keys::{Key, BINDINGS};
     use super::*;
     use crate::collect::run::RunFailure;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
@@ -958,6 +754,7 @@ mod tests {
     use crate::view::Motion;
     use chrono::Utc;
     use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::layout::Rect;
     use ratatui::widgets::Block;
     use ratatui::Terminal;
