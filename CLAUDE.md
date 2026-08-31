@@ -56,9 +56,11 @@ quit and started again by hand.
 
 ### Staying in your own tree
 
-Take a worktree per seat, off `origin/main`. But run `bdi` itself from the
-shared checkout: a worktree resolves to a project no pane sits under, so every
-claim is refused and you see zero agents while nothing looks wrong (`bdi-9vm`).
+Take a worktree per seat, off `origin/main`, and run `bdi` from it too: a
+project's territory is all of its working trees, so a `bdi` started in a
+worktree sees the panes sitting in the shared checkout. Graeme keeps his own
+session running there, so a seat that works in the shared checkout contests his
+terminal for nothing.
 
 No crate-wide `cargo fmt` while other seats are live.
 
@@ -101,6 +103,14 @@ A test about colour asks `painted()` in `view/draw.rs`. Its neighbour `drawn()`
 reads `symbol()` only and is blind to styling, which is how a colour bug
 shipped. `tui.rs` has a `painted()` of its own that is no better: it is named
 for the `paint()` it calls, returns symbols, and sees no colour either.
+
+`assert!(drawn[0].contains(phrase::truncated()))` asks the function that drew
+the row what the row should say, so it holds for whatever words `phrase::`
+returns, and `contains("")` is true of every string, so an emptied phrase leaves
+it unable to fail at all. The phrases asserted that way are the ones carrying
+*degrade, never disappear* — the unreachable tracker, the root with no rows, the
+truncated subtree — so the rule ends up resting on the assertions least able to
+check it. Write the words the reader has to see.
 
 Ask the program, not the library under it. `fc-match` says `\e[1m` gets Bold;
 kitty resolves it to SemiBold, and `kitty +runpy` is what will tell you so. If
