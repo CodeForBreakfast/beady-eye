@@ -40,10 +40,7 @@ fn a_subprocess_is_given_its_tracker_and_never_inherits_one() {
         "the shell bdi was launched from reached a child that was given no tracker"
     );
 
-    let its_own = Env::from([(
-        TRACKER_VAR.to_string(),
-        "/this/projects/.beads".to_string(),
-    )]);
+    let its_own = Env::from([(TRACKER_VAR.to_string(), "/this/projects/.beads".to_string())]);
 
     assert_eq!(
         what_a_child_sees(&its_own),
