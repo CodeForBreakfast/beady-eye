@@ -627,6 +627,98 @@ mod tests {
         assert_eq!(by_id("bdi-wisp-w3m").dependencies, vec![]);
     }
 
+    /// One completed molecule and its sixteen steps, from a real wisp run on
+    /// another project's tracker. It is here as evidence of what bd writes,
+    /// which a constant somebody typed cannot be: the author of a constant
+    /// supplies the keys they remember, so a key absent from a capture is a
+    /// measurement and a key absent from a constant is authorship.
+    ///
+    /// Its two-row neighbour is not replaced by it. That one carries a
+    /// free-standing wisp under no parent, which a molecule run has none of.
+    ///
+    /// Every `title` in it is invented, and says so in its own value. The
+    /// capture arrived without the key: the redaction dropped `title`,
+    /// `description`, `notes`, `owner`, `created_by`, `assignee`,
+    /// `close_reason` and `dependencies[].created_by` whole, because one
+    /// close reason named a person. `Bead::title` is required, so the file
+    /// could not be parsed without one. Nothing else was touched — key order
+    /// is the capture's and no value it carried was rewritten. Assert on a
+    /// title and you are asserting on something we made up.
+    const MOLECULE: &str = include_str!("../../tests/fixtures/bd_wisp_molecule.json");
+
+    /// A row bd writes carries keys bdi does not read, and the ones bd will
+    /// write next are not knowable. `await_type`, on the gate step of this
+    /// run, is one nothing else in the tree has — which is the point of
+    /// keeping a capture rather than a constant, because a constant carries
+    /// only the keys its author already knew about.
+    ///
+    /// That `Bead` ignores such a key rather than rejecting the row is held
+    /// by most of this module already. What is held here is the evidence:
+    /// tidying the capture down to the fields bdi reads is what this refuses,
+    /// because the untidy keys are the measurement.
+    ///
+    /// The counts go with it so a file shortened by accident is noticed. They
+    /// are not evidence of anything — a run of any length can be typed.
+    #[test]
+    fn the_capture_keeps_a_field_bdi_does_not_read() {
+        let run = parse_beads(MOLECULE).expect("the captured molecule parses");
+
+        assert!(
+            MOLECULE.contains(r#""await_type""#),
+            "the capture still carries the key this is about"
+        );
+        assert_eq!(run.len(), 17, "the molecule and its steps");
+        assert_eq!(
+            run.iter()
+                .map(|bead| bead.dependencies.len())
+                .sum::<usize>(),
+            37,
+            "the edges bd wrote between them"
+        );
+        assert_eq!(
+            run.iter()
+                .filter(|bead| bead.issue_type == "molecule")
+                .count(),
+            1
+        );
+    }
+
+    /// bd omits a field it has nothing for rather than writing it as null,
+    /// which is what lets every field bdi reads carry `#[serde(default)]`.
+    /// That is a claim about a program we do not own, so this holds the
+    /// evidence for it: seventeen rows and their thirty-seven edges as bd
+    /// wrote them, with no null anywhere — including on the molecule, which
+    /// omits `parent` and `dependencies` rather than nulling them.
+    ///
+    /// It goes red if a later bd starts writing nulls, which is the day
+    /// `none_is_empty` stops being enough.
+    #[test]
+    fn bd_omits_what_it_has_nothing_for_rather_than_writing_null() {
+        let rows: serde_json::Value = serde_json::from_str(MOLECULE).expect("the capture is json");
+
+        fn nulls(value: &serde_json::Value, at: &str, found: &mut Vec<String>) {
+            match value {
+                serde_json::Value::Null => found.push(at.to_string()),
+                serde_json::Value::Object(fields) => {
+                    for (key, field) in fields {
+                        nulls(field, &format!("{at}.{key}"), found);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for (i, item) in items.iter().enumerate() {
+                        nulls(item, &format!("{at}[{i}]"), found);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut found = Vec::new();
+        nulls(&rows, "", &mut found);
+
+        assert_eq!(found, Vec::<String>::new(), "nulls bd wrote");
+    }
+
     #[test]
     fn a_row_carries_every_bead_it_depends_on_and_the_kind_of_each() {
         let json = r#"[{"id":"p-1.4","title":"t","status":"open","dependencies":[

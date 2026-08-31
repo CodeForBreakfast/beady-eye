@@ -1,0 +1,548 @@
+[
+  {
+    "id": "nix-wisp-056",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:27:55Z",
+    "closed_at": "2026-08-27T06:27:55Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-056",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-056",
+        "depends_on_id": "nix-wisp-d0c",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-056",
+        "depends_on_id": "nix-wisp-x08",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 2,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-0qd",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:14:43Z",
+    "closed_at": "2026-08-27T06:14:43Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-0qd",
+        "depends_on_id": "nix-wisp-bv0",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-0qd",
+        "depends_on_id": "nix-wisp-cwd",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-0qd",
+        "depends_on_id": "nix-wisp-i54",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-0qd",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 3,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-45a",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:22:10Z",
+    "closed_at": "2026-08-27T06:22:10Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-45a",
+        "depends_on_id": "nix-wisp-8te",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-45a",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-8te",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:21:47Z",
+    "closed_at": "2026-08-27T06:21:47Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-8te",
+        "depends_on_id": "nix-wisp-0qd",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-8te",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-bv0",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:10:49Z",
+    "closed_at": "2026-08-27T06:10:49Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-bv0",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 0,
+    "dependent_count": 3,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-cad",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:31:30Z",
+    "closed_at": "2026-08-27T06:31:30Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-cad",
+        "depends_on_id": "nix-wisp-v99",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-cad",
+        "depends_on_id": "nix-wisp-ijp",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-cad",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 2,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-cwd",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:10:50Z",
+    "closed_at": "2026-08-27T06:10:50Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-cwd",
+        "depends_on_id": "nix-wisp-bv0",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-cwd",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-d0c",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:27:28Z",
+    "closed_at": "2026-08-27T06:27:28Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-d0c",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-d0c",
+        "depends_on_id": "nix-wisp-x08",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-deg",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:26:43Z",
+    "closed_at": "2026-08-27T06:26:43Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-deg",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-deg",
+        "depends_on_id": "nix-wisp-uyf",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-hdi",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:25:00Z",
+    "closed_at": "2026-08-27T06:25:00Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-hdi",
+        "depends_on_id": "nix-wisp-8te",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-hdi",
+        "depends_on_id": "nix-wisp-45a",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-hdi",
+        "depends_on_id": "nix-wisp-vnm",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-hdi",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 3,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-i54",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:14:42Z",
+    "closed_at": "2026-08-27T06:14:42Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-i54",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-i54",
+        "depends_on_id": "nix-wisp-bv0",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-ijp",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:28:14Z",
+    "closed_at": "2026-08-27T06:28:14Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-ijp",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-ijp",
+        "depends_on_id": "nix-wisp-056",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-tix",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "molecule",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:31:30Z",
+    "closed_at": "2026-08-27T06:31:30Z",
+    "ephemeral": true,
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "nix-wisp-uyf",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:26:35Z",
+    "closed_at": "2026-08-27T06:26:35Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-uyf",
+        "depends_on_id": "nix-wisp-hdi",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-uyf",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-v99",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:29:46Z",
+    "closed_at": "2026-08-27T06:29:46Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-v99",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-v99",
+        "depends_on_id": "nix-wisp-056",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-vnm",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "gate",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:24:55Z",
+    "closed_at": "2026-08-27T06:24:55Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-vnm",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "await_type": "human",
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  },
+  {
+    "id": "nix-wisp-x08",
+    "title": "no title survived the redaction; this one is invented",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "created_at": "2026-08-27T06:10:28Z",
+    "updated_at": "2026-08-27T06:26:44Z",
+    "closed_at": "2026-08-27T06:26:44Z",
+    "dependencies": [
+      {
+        "issue_id": "nix-wisp-x08",
+        "depends_on_id": "nix-wisp-tix",
+        "type": "parent-child",
+        "created_at": "2026-08-27T06:10:28Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-x08",
+        "depends_on_id": "nix-wisp-uyf",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "nix-wisp-x08",
+        "depends_on_id": "nix-wisp-deg",
+        "type": "blocks",
+        "created_at": "2026-08-27T06:10:29Z",
+        "metadata": "{}"
+      }
+    ],
+    "ephemeral": true,
+    "dependency_count": 2,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "nix-wisp-tix"
+  }
+]
