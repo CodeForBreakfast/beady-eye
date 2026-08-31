@@ -155,24 +155,96 @@ fn nesting(by_id: &BTreeMap<String, Bead>) -> Nesting {
     found
 }
 
-/// The beads that lost the edge that would have placed them, and that no
-/// surviving edge places either.
+/// The beads that lost the edge that would have placed them.
 ///
-/// No walk of this answer can reach such a bead from anywhere, so it is the
-/// top of its own graph — which is what the note on `dangling` above already
-/// calls it. A tree reports the beads it drew, so a bead no tree draws is a
-/// bead no tree reports: asking this of the whole answer, and drawing what it
-/// finds, is what leaves such a bead somewhere to be reported from.
+/// A tree reports the beads it drew, so a bead no tree draws is a bead no tree
+/// reports. Each of these is the evidence that the answer lost something, and
+/// `top_of` says where a tree that reaches it starts.
 pub fn adrift(beads: &[Bead]) -> Vec<String> {
     let by_id: BTreeMap<String, Bead> = beads.iter().map(|b| (b.id.clone(), b.clone())).collect();
-    let found = nesting(&by_id);
-    let nested: BTreeSet<&String> = found.children.values().flatten().collect();
+    nesting(&by_id).lost_their_place.into_iter().collect()
+}
 
-    found
-        .lost_their_place
-        .into_iter()
-        .filter(|id| !nested.contains(id))
-        .collect()
+/// Where a tree that draws `id` has to start: climb every edge that still
+/// nests it, and answer with the roots that put everything the climb reached
+/// on the screen.
+///
+/// This is how far the roots rule goes, and the line is that it goes exactly
+/// as far as the damage. It climbs only from a bead the answer left with no
+/// way down to it, so a component holding no such bead is drawn only where
+/// discovery named a root in it — rules 1 to 4 still say what unfinished work
+/// is. Stopping instead at "is anything nesting it" left whole components off
+/// the screen: a bead that lost one placing edge and kept another is nested,
+/// and the bead that kept it lost nothing and so was never discovered either.
+///
+/// A bead can hang under more than one, so this is a set rather than one id.
+pub fn top_of(beads: &[Bead], id: &str) -> Vec<String> {
+    let by_id: BTreeMap<String, Bead> = beads.iter().map(|b| (b.id.clone(), b.clone())).collect();
+    let children = nesting(&by_id).children;
+    let mut over: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (parent, kids) in &children {
+        for kid in kids {
+            over.entry(kid.as_str()).or_default().push(parent.as_str());
+        }
+    }
+
+    let mut above: BTreeSet<&str> = BTreeSet::new();
+    let mut climbing: Vec<&str> = vec![id];
+    while let Some(reached) = climbing.pop() {
+        if !above.insert(reached) {
+            continue;
+        }
+        climbing.extend(over.get(reached).into_iter().flatten());
+    }
+
+    // A bead nothing nests is where a tree starts, and a loop has no such
+    // bead — so where a loop is all that stands over something the climb
+    // reached, one of its own beads has to stand for it. Any of them draws the
+    // whole loop, `assemble` cutting it where it comes back round, so which
+    // one is arbitrary and has only to be the same every time. Adding one and
+    // asking again covers a component with more than one loop over it.
+    let mut tops: BTreeSet<&str> = above
+        .iter()
+        .copied()
+        .filter(|reached| !over.contains_key(reached))
+        .collect();
+    loop {
+        let drawn = under(tops.iter().copied(), &children);
+        let Some(&left) = above.iter().find(|reached| !drawn.contains(*reached)) else {
+            break;
+        };
+        tops.insert(left);
+    }
+
+    // And the fewest of them that still does. A bead added to reach a loop
+    // can turn out to sit under one added after it, and a tree that another
+    // tree already draws puts every bead in it on the screen twice.
+    for top in tops.clone() {
+        let without: BTreeSet<&str> = tops.iter().copied().filter(|kept| *kept != top).collect();
+        let drawn = under(without.iter().copied(), &children);
+        if above.iter().all(|reached| drawn.contains(reached)) {
+            tops.remove(top);
+        }
+    }
+
+    tops.into_iter().map(str::to_string).collect()
+}
+
+/// Every bead a walk down from `from` reaches, a bead already reached ending
+/// the branch it repeats on.
+fn under<'a>(
+    from: impl IntoIterator<Item = &'a str>,
+    children: &'a BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<&'a str> {
+    let mut reached: BTreeSet<&str> = BTreeSet::new();
+    let mut going: Vec<&str> = from.into_iter().collect();
+    while let Some(bead) = going.pop() {
+        if !reached.insert(bead) {
+            continue;
+        }
+        going.extend(children.get(bead).into_iter().flatten().map(String::as_str));
+    }
+    reached
 }
 
 /// Emit a bead and everything that must finish before it, depth-first.

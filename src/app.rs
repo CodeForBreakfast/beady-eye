@@ -210,6 +210,16 @@ fn read_project(
         blocked_by: bd::blocked_by(runner, &project.path, &env)?,
     };
 
+    let beads = bd::all_beads(runner, &project.path, &env)?;
+    // Every bead this read of the tracker turned up. A parent chain that
+    // leaves it has run off the end of what `bdi` read, and there is no tree
+    // to draw from where it went — so the walk stops below that.
+    let held: BTreeSet<&str> = beads
+        .iter()
+        .map(|bead| bead.id.as_str())
+        .chain(discovered.keys().map(String::as_str))
+        .collect();
+
     let mut ancestors: BTreeMap<String, String> = BTreeMap::new();
     let mut roots: BTreeSet<String> = cfg
         .roots
@@ -226,6 +236,7 @@ fn read_project(
             &env,
             bead,
             &discovered,
+            &held,
             &mut ancestors,
         )?);
     }
@@ -235,12 +246,18 @@ fn read_project(
         // that apart from a tracker that has stopped answering — so there
         // is no failure kind to discriminate on. Propagating would cost a
         // whole tracker every time a pane was labelled with a sentence.
-        if let Ok(root) = root_of(runner, project, &env, named, &discovered, &mut ancestors) {
+        if let Ok(root) = root_of(
+            runner,
+            project,
+            &env,
+            named,
+            &discovered,
+            &held,
+            &mut ancestors,
+        ) {
             roots.insert(root);
         }
     }
-
-    let beads = bd::all_beads(runner, &project.path, &env)?;
 
     let mut read: Vec<(String, Result<Assembled, TrackerFailure>)> = roots
         .into_iter()
@@ -258,17 +275,20 @@ fn read_project(
     })
 }
 
-/// The beads the discovered roots left off the screen, each drawn as the top
-/// of its own graph.
+/// The beads the discovered roots left off the screen, each drawn from the
+/// top of its own component.
 ///
 /// A bead depending on work the tracker no longer holds keeps no way down to
-/// it, and discovery only ever names the roots of unfinished work — so
-/// whether such a bead becomes a root of its own today turns on whether
-/// `bd show` still answers for the parent it lost, which says nothing about
-/// the bead. Where it does answer, `root_of` climbs past it to a root whose
-/// tree cannot then reach the bead, and a tree reports what it drew: absent
-/// from the picture and absent from the report both. Drawing it is what
-/// leaves it somewhere to be reported from.
+/// it, and discovery only ever names the roots of unfinished work — so a bead
+/// that lost its place is drawn by no tree unless a rule reaches it, and a
+/// tree reports what it drew: absent from the picture and absent from the
+/// report both. Drawing its component is what leaves it somewhere to be
+/// reported from, and the top is where a tree that reaches it has to start:
+/// the edge it kept may nest it under a bead nothing discovered, and that bead
+/// lost nothing of its own to be found by.
+///
+/// Which is why `drawn` filters the bead and not the top. A bead a tree
+/// already draws needs nothing standing up over it.
 fn what_no_root_reached(
     beads: &[Bead],
     read: &[(String, Result<Assembled, TrackerFailure>)],
@@ -279,9 +299,13 @@ fn what_no_root_reached(
         .flat_map(|assembled| assembled.rows.iter().map(|placed| placed.bead.id.as_str()))
         .collect();
 
-    tree::adrift(beads)
+    let tops: BTreeSet<String> = tree::adrift(beads)
         .into_iter()
         .filter(|id| !drawn.contains(id.as_str()))
+        .flat_map(|id| tree::top_of(beads, &id))
+        .collect();
+
+    tops.into_iter()
         .map(|id| {
             let read = assemble(beads.to_vec(), &id).map_err(|_| TrackerFailure::Parse);
             (id, read)
@@ -314,20 +338,26 @@ fn panes_naming_a_bead_here<'a>(
 /// normal healthy shape of this tracker, and a bead a pane named. `ancestors`
 /// carries what earlier walks found, so those cost one call each rather than
 /// one per level each.
+///
+/// The climb stops below a parent `held` does not hold. `bd show` answers for
+/// beads that appear in neither `bd list --all` nor discovery — three of them
+/// were measured against summit-works on 2026-08-31 — and returning one names
+/// a root there is no tree to draw from, which reported a tracker that had
+/// answered every call as one whose answer could not be read. Nothing goes
+/// missing by stopping: the bead below still names the parent the answer lost,
+/// and its own tree reports that as work the tracker no longer holds.
 fn root_of(
     runner: &dyn Runner,
     project: &Project,
     env: &Env,
     id: &str,
     parents: &BTreeMap<String, Option<String>>,
+    held: &BTreeSet<&str>,
     ancestors: &mut BTreeMap<String, String>,
 ) -> Result<String, RunFailure> {
     let mut climbed: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut current = id.to_string();
-    // The last id the tracker has confirmed is a bead, which is what a
-    // refused ancestor falls back to.
-    let mut reached: Option<String> = None;
 
     let root = loop {
         if let Some(known) = ancestors.get(&current) {
@@ -339,30 +369,23 @@ fn root_of(
             break current;
         }
         climbed.push(current.clone());
+        // A refusal here propagates, and that is what `held` bought. Every id
+        // this asks about is one `held` holds, bar the free text a pane's
+        // `display_agent` may be — so bd refusing an id its own answer just
+        // listed is a tracker that has stopped answering, not one bead's chain
+        // stopping early. It used to be indistinguishable from the second, and
+        // the swallow was for that; the walk no longer reaches an id the
+        // answer does not hold. The pane's case is caught where a pane's root
+        // is asked for, which cannot tell a bead from a sentence either.
         let parent = match parents.get(&current) {
             Some(known) => known.clone(),
-            None => match bd::parent_of(runner, &project.path, env, &current) {
-                Ok(parent) => parent,
-                // Above the first step every id came from a bead that named it
-                // as its parent, so a refusal there is a parent the tracker no
-                // longer holds: one bead's chain that stops early, not a
-                // tracker that has gone away. bd answers the two the same way,
-                // and the calls around this walk are what catch the second —
-                // `all_beads` runs on the next line and propagates.
-                Err(failure) => match &reached {
-                    Some(reached) => break reached.clone(),
-                    // Nothing has confirmed the id this was asked about is a
-                    // bead at all: a pane's `display_agent` is free text, and
-                    // bd answers a sentence exactly as it answers a bead it
-                    // has lost.
-                    None => return Err(failure),
-                },
-            },
+            None => bd::parent_of(runner, &project.path, env, &current)?,
         };
-        reached = Some(current.clone());
         match parent {
-            Some(parent) => current = parent,
-            None => break current,
+            Some(parent) if held.contains(parent.as_str()) => current = parent,
+            // A parent this read does not hold, or no parent at all: either
+            // way the chain has nothing further this read can draw.
+            Some(_) | None => break current,
         }
     };
 
@@ -671,87 +694,125 @@ credential_command = "secret ferry"
         assert_eq!(snap.trees[0].root, "orb-7");
     }
 
-    /// bd exits non-zero on an id it does not hold, so the walk to a root
-    /// fails at a parent that was deleted — and `read_project` carries that
-    /// failure out, taking every other root in the tracker with it.
+    /// A bead whose parent the answer has lost is drawn the same way whatever
+    /// `bd show` says about that parent, because the walk never asks.
     ///
-    /// Measured against a live tracker on 2026-08-31: `bd show <missing-id>
-    /// --json` exits 1 saying `no issues found matching the provided IDs`,
-    /// which matches none of the classifier's phrases and so arrives as
-    /// `Unavailable` — the same kind a server that is down produces. That is
-    /// why the walk cannot simply swallow the failure.
+    /// It used to ask, and the two answers took the bead down two paths. Where
+    /// bd refused — measured against a live tracker on 2026-08-31, `bd show
+    /// <missing-id> --json` exits 1 saying `no issues found matching the
+    /// provided IDs`, which matches none of the classifier's phrases and so
+    /// arrives as `Unavailable`, the same kind a server that is down produces
+    /// — the walk stopped and the bead became its own root. Where bd answered,
+    /// the walk climbed past the parent to a root whose tree could not then
+    /// reach the bead. Which case a tracker is in says nothing about the bead,
+    /// so neither may the picture.
     #[test]
-    fn a_deleted_parent_costs_its_own_bead_rather_than_the_whole_tracker() {
-        let orphan_row = r#"[{"id":"orb-7.9","title":"its parent was deleted",
-                              "status":"open","parent":"orb-404"}]"#;
-        let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent was deleted",
-                               "status":"open",
-                               "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
-                               "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital()
-            .merging(&spelled(UNFINISHED_CALL), orphan_row)
-            .merging(&spelled(TRACKER_CALL), orphan_bead)
-            .failing(
-                &spelled("show orb-404 --json"),
-                failing(FailureKind::Unavailable),
-            );
-
-        let snap = run(&one_project(), &runner, Filter::All, now());
-
-        assert!(
-            snap.failed_projects.is_empty(),
-            "one bead bd cannot place must not take the tracker down: {:?}",
-            snap.failed_projects
-        );
-        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(
-            roots,
-            vec!["orb-7", "orb-7.9"],
-            "the readable roots are drawn, and the orphan is one of them"
-        );
-    }
-
-    /// The same bead, in the case bd answers for the parent it has lost.
-    ///
-    /// Discovery names `orb-404` as the parent, `root_of` climbs through it
-    /// to `orb-7`, and `orb-7.9` is not a root of its own — but `bd list
-    /// --all` does not hold `orb-404`, so nothing in the answer places
-    /// `orb-7.9` under anything, and `orb-7`'s tree never reaches it. Which
-    /// of the two cases a tracker is in turns only on whether `bd show`
-    /// still knows the parent, and that decides nothing about the bead.
-    #[test]
-    fn a_bead_bd_still_answers_for_the_absent_parent_of_is_drawn_too() {
+    fn whether_bd_answers_for_a_lost_parent_decides_nothing_about_the_bead() {
         let orphan_row = r#"[{"id":"orb-7.9","title":"its parent is a digest",
                               "status":"open","parent":"orb-404"}]"#;
         let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent is a digest",
                                "status":"open",
                                "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
                                "priority":2,"issue_type":"task"}]"#;
+        let orphaned = || {
+            orbital()
+                .merging(&spelled(UNFINISHED_CALL), orphan_row)
+                .merging(&spelled(TRACKER_CALL), orphan_bead)
+        };
+
+        for (answer, runner) in [
+            (
+                "bd refuses the parent",
+                orphaned().failing(
+                    &spelled("show orb-404 --json"),
+                    failing(FailureKind::Unavailable),
+                ),
+            ),
+            (
+                "bd names a grandparent",
+                orphaned().with(
+                    &spelled("show orb-404 --json"),
+                    r#"[{"id":"orb-404","parent":"orb-7"}]"#,
+                ),
+            ),
+        ] {
+            let snap = run(&one_project(), &runner, Filter::All, now());
+
+            assert!(
+                snap.failed_projects.is_empty(),
+                "one bead bd cannot place must not take the tracker down, {answer}: {:?}",
+                snap.failed_projects
+            );
+            let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+            assert_eq!(
+                roots,
+                vec!["orb-7", "orb-7.9"],
+                "the bead the answer holds no way down to is its own root, {answer}"
+            );
+            assert_eq!(
+                rooted_at(&snap, "orb-7").dangling,
+                Vec::<String>::new(),
+                "the tree that never reached it does not report it either, {answer}"
+            );
+            assert_eq!(
+                rooted_at(&snap, "orb-7.9").dangling,
+                vec!["orb-7.9".to_string()],
+                "its own tree names the work the tracker no longer holds, {answer}"
+            );
+            let asked: Vec<String> = runner
+                .calls()
+                .into_iter()
+                .map(|call| call.argv)
+                .filter(|argv| argv == &spelled("show orb-404 --json"))
+                .collect();
+            assert!(
+                asked.is_empty(),
+                "a parent this read does not hold is not climbed to, so it is not asked about: \
+                 {asked:?}"
+            );
+        }
+    }
+
+    /// A tracker that stops answering part-way through a read is reported,
+    /// not drawn around.
+    ///
+    /// `bd list --all` has just returned `orb-8`, so `bd show orb-8` refusing
+    /// is not a chain that ran off the end of the answer — the answer holds
+    /// it. The two calls disagree, which is the shape of a tracker that has
+    /// gone away, and the roots the walk would go on to guess at are the ones
+    /// the forest is drawn from. Swallowing it drew a forest with the wrong
+    /// roots and called the read a success.
+    #[test]
+    fn a_tracker_refusing_a_bead_its_own_answer_holds_takes_the_project_down() {
+        let under_it = r#"[{"id":"orb-8.1","title":"under a bead bd will not answer for",
+                            "status":"open","parent":"orb-8"}]"#;
+        let both = r#"[{"id":"orb-8","title":"the bead bd will not answer for","status":"closed",
+                        "priority":2,"issue_type":"epic"},
+                       {"id":"orb-8.1","title":"under a bead bd will not answer for",
+                        "status":"open",
+                        "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
+                        "priority":2,"issue_type":"task"}]"#;
         let runner = orbital()
-            .merging(&spelled(UNFINISHED_CALL), orphan_row)
-            .merging(&spelled(TRACKER_CALL), orphan_bead)
-            .with(
-                &spelled("show orb-404 --json"),
-                r#"[{"id":"orb-404","parent":"orb-7"}]"#,
+            .merging(&spelled(UNFINISHED_CALL), under_it)
+            .merging(&spelled(TRACKER_CALL), both)
+            .failing(
+                &spelled("show orb-8 --json"),
+                failing(FailureKind::Unavailable),
             );
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
-        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
-            roots,
-            vec!["orb-7", "orb-7.9"],
-            "the bead the answer holds no way down to is drawn as its own root"
+            snap.failed_projects,
+            vec![FailedProject {
+                project: "orbital".to_string(),
+                tracker: TrackerFailure::Unavailable,
+            }]
         );
-        assert_eq!(
-            rooted_at(&snap, "orb-7").dangling,
-            Vec::<String>::new(),
-            "the tree that never reached it does not report it either"
-        );
-        assert_eq!(
-            rooted_at(&snap, "orb-7.9").dangling,
-            vec!["orb-7.9".to_string()],
-            "its own tree names the work the tracker no longer holds"
+        assert!(
+            snap.trees.is_empty(),
+            "no root is guessed at from half a read: {:?}",
+            snap.trees
         );
     }
 
@@ -775,6 +836,209 @@ credential_command = "secret ferry"
         assert_eq!(
             rooted_at(&snap, "orb-3").dangling,
             vec!["orb-3".to_string()]
+        );
+    }
+
+    /// The digest case measured against summit-works on 2026-08-31. `bd show`
+    /// answers for the parent, says it has no parent of its own, and neither
+    /// `bd list --all` nor discovery holds it. Climbing to it named a root no
+    /// tree could be drawn from, and the project grew a tree reported as a
+    /// tracker that had answered with something `bdi` could not read — when
+    /// every call it made was answered correctly.
+    #[test]
+    fn a_parent_only_bd_show_holds_is_never_made_a_root() {
+        let orphan_row = r#"[{"id":"orb-7.9","title":"its parent is a digest",
+                              "status":"open","parent":"orb-404"}]"#;
+        let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent is a digest",
+                               "status":"open",
+                               "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+                               "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital()
+            .merging(&spelled(UNFINISHED_CALL), orphan_row)
+            .merging(&spelled(TRACKER_CALL), orphan_bead)
+            .with(
+                &spelled("show orb-404 --json"),
+                r#"[{"id":"orb-404","parent":null}]"#,
+            );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7", "orb-7.9"],
+            "the chain stops at the last bead this read holds, and names no root above it"
+        );
+        for tree in &snap.trees {
+            assert_eq!(
+                tree.tracker,
+                TrackerState::Ok,
+                "{} answered every call, so no tree of its calls it unreadable",
+                tree.root
+            );
+        }
+        assert_eq!(
+            rooted_at(&snap, "orb-7.9").dangling,
+            vec!["orb-7.9".to_string()],
+            "the parent chain running off the end of the answer is what is reported"
+        );
+    }
+
+    /// The gap `codex review` found in `bdi-7ao.49`, and the other end of the
+    /// same shortfall. A closed bead hangs under two parents: one the answer
+    /// has lost, one it holds. The edge it kept places it, so nothing nests
+    /// it *nowhere* — and the parent that kept it is closed, so no rule of
+    /// unfinished work discovers that either. The whole component sat off the
+    /// screen, drawn in no tree and reported in none.
+    #[test]
+    fn a_component_nothing_discovered_is_drawn_from_its_top() {
+        let component = r#"[{"id":"orb-5","title":"the parent it was moved to","status":"closed",
+                             "priority":2,"issue_type":"task"},
+                            {"id":"orb-5.1","title":"moved off a parent that is gone",
+                             "status":"closed",
+                             "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"},
+                                             {"depends_on_id":"orb-5","type":"parent-child"}],
+                             "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), component);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-5"]);
+        let component = rooted_at(&snap, "orb-5");
+        assert_eq!(
+            component
+                .nodes
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["orb-5", "orb-5.1"],
+            "the bead that lost its place is drawn where its surviving edge puts it"
+        );
+        assert_eq!(
+            component.dangling,
+            vec!["orb-5.1".to_string()],
+            "and the tree that draws it is the one that reports it"
+        );
+    }
+
+    /// The same component, with a loop in it above the bead that lost its
+    /// place. A loop has no top, and the bead the climb started from is not
+    /// one: a tree rooted there draws what is under it and leaves the loop it
+    /// hangs from off the screen — the whole thing this rule exists to stop.
+    #[test]
+    fn a_component_whose_top_is_a_loop_is_drawn_from_inside_the_loop() {
+        let looping = r#"[{"id":"orb-9","title":"each other's parent","status":"closed",
+                           "dependencies":[{"depends_on_id":"orb-9b","type":"parent-child"}],
+                           "priority":2,"issue_type":"epic"},
+                          {"id":"orb-9b","title":"and the other way round","status":"closed",
+                           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}],
+                           "priority":2,"issue_type":"epic"},
+                          {"id":"orb-9.1","title":"under the loop, and off a parent that is gone",
+                           "status":"closed",
+                           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"},
+                                           {"depends_on_id":"orb-404","type":"parent-child"}],
+                           "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), looping);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-9"]);
+        let component = rooted_at(&snap, "orb-9");
+        assert_eq!(
+            component
+                .nodes
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["orb-9", "orb-9.1", "orb-9b"],
+            "every bead in the component is drawn, loop included"
+        );
+        assert_eq!(
+            component.cycles,
+            vec!["orb-9".to_string()],
+            "and the loop is reported where it was cut"
+        );
+        assert_eq!(component.dangling, vec!["orb-9.1".to_string()]);
+    }
+
+    /// The same again, where the bead hangs under a loop *and* under
+    /// something with a top of its own. The top draws the bead, so the bead
+    /// is placed and reported — and the loop it also hangs from is still
+    /// nowhere, because a tree only ever walks downward. Every bead the climb
+    /// reached has to end up on the screen, not just the one it started at.
+    #[test]
+    fn a_loop_over_a_bead_is_drawn_even_where_another_parent_has_a_top() {
+        let both_ways = r#"[{"id":"orb-6","title":"a top of its own","status":"closed",
+                             "priority":2,"issue_type":"epic"},
+                            {"id":"orb-6c","title":"each other's parent","status":"closed",
+                             "dependencies":[{"depends_on_id":"orb-6d","type":"parent-child"}],
+                             "priority":2,"issue_type":"epic"},
+                            {"id":"orb-6d","title":"and the other way round","status":"closed",
+                             "dependencies":[{"depends_on_id":"orb-6c","type":"parent-child"}],
+                             "priority":2,"issue_type":"epic"},
+                            {"id":"orb-6.1","title":"under both, and off a parent that is gone",
+                             "status":"closed",
+                             "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
+                                             {"depends_on_id":"orb-6c","type":"parent-child"},
+                                             {"depends_on_id":"orb-404","type":"parent-child"}],
+                             "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), both_ways);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let ids = |root: &str| {
+            rooted_at(&snap, root)
+                .nodes
+                .iter()
+                .map(|n| n.id.to_string())
+                .collect::<Vec<_>>()
+        };
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-6", "orb-6c"]);
+        assert_eq!(ids("orb-6"), vec!["orb-6", "orb-6.1"]);
+        assert_eq!(
+            ids("orb-6c"),
+            vec!["orb-6c", "orb-6.1", "orb-6d"],
+            "the loop the top could not reach is drawn from inside itself"
+        );
+    }
+
+    /// And no more of them than that. Reaching a loop means standing a bead
+    /// up for it, and the bead the loop stands over can be the one reached
+    /// first — leaving two roots where the second's tree already draws the
+    /// first, and every bead in it on the screen twice.
+    #[test]
+    fn a_top_another_top_already_draws_is_not_a_root_as_well() {
+        let under_a_loop = r#"[{"id":"orb-2a","title":"under the loop, off a parent that is gone",
+                                "status":"closed",
+                                "dependencies":[{"depends_on_id":"orb-2c","type":"parent-child"},
+                                                {"depends_on_id":"orb-404","type":"parent-child"}],
+                                "priority":2,"issue_type":"task"},
+                               {"id":"orb-2c","title":"each other's parent","status":"closed",
+                                "dependencies":[{"depends_on_id":"orb-2d","type":"parent-child"}],
+                                "priority":2,"issue_type":"epic"},
+                               {"id":"orb-2d","title":"and the other way round","status":"closed",
+                                "dependencies":[{"depends_on_id":"orb-2c","type":"parent-child"}],
+                                "priority":2,"issue_type":"epic"}]"#;
+        let runner = orbital().merging(&spelled(TRACKER_CALL), under_a_loop);
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7", "orb-2c"],
+            "one root draws the whole component, so it is the only one"
+        );
+        assert_eq!(
+            rooted_at(&snap, "orb-2c")
+                .nodes
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["orb-2c", "orb-2a", "orb-2d"]
         );
     }
 
@@ -944,8 +1208,13 @@ credential_command = "secret ferry"
                 &spelled("show orb-7 --json"),
                 r#"[{"id":"orb-7","parent":"orb-7.1"}]"#,
             )
+            // Both ends of the loop, because a climb stops below a parent
+            // this read does not hold — and then the cycle guard, not the
+            // cycle, would be what this test never reaches.
             .with(&spelled(TRACKER_CALL),
-                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+                r#"[{"id":"orb-7","title":"lift the ground station","status":"in_progress",
+                     "priority":1,"issue_type":"epic"},
+                    {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
                      "priority":2,"issue_type":"task"}]"#,
             );
 
