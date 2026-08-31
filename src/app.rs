@@ -269,6 +269,9 @@ fn root_of(
     let mut climbed: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut current = id.to_string();
+    // The last id the tracker has confirmed is a bead, which is what a
+    // refused ancestor falls back to.
+    let mut reached: Option<String> = None;
 
     let root = loop {
         if let Some(known) = ancestors.get(&current) {
@@ -282,8 +285,25 @@ fn root_of(
         climbed.push(current.clone());
         let parent = match parents.get(&current) {
             Some(known) => known.clone(),
-            None => bd::parent_of(runner, &project.path, env, &current)?,
+            None => match bd::parent_of(runner, &project.path, env, &current) {
+                Ok(parent) => parent,
+                // Above the first step every id came from a bead that named it
+                // as its parent, so a refusal there is a parent the tracker no
+                // longer holds: one bead's chain that stops early, not a
+                // tracker that has gone away. bd answers the two the same way,
+                // and the calls around this walk are what catch the second —
+                // `all_beads` runs on the next line and propagates.
+                Err(failure) => match &reached {
+                    Some(reached) => break reached.clone(),
+                    // Nothing has confirmed the id this was asked about is a
+                    // bead at all: a pane's `display_agent` is free text, and
+                    // bd answers a sentence exactly as it answers a bead it
+                    // has lost.
+                    None => return Err(failure),
+                },
+            },
         };
+        reached = Some(current.clone());
         match parent {
             Some(parent) => current = parent,
             None => break current,
@@ -548,6 +568,45 @@ credential_command = "secret ferry"
 
         assert_eq!(snap.trees.len(), 1);
         assert_eq!(snap.trees[0].root, "orb-7");
+    }
+
+    /// bd exits non-zero on an id it does not hold, so the walk to a root
+    /// fails at a parent that was deleted — and `read_project` carries that
+    /// failure out, taking every other root in the tracker with it.
+    ///
+    /// Measured against a live tracker on 2026-08-31: `bd show <missing-id>
+    /// --json` exits 1 saying `no issues found matching the provided IDs`,
+    /// which matches none of the classifier's phrases and so arrives as
+    /// `Unavailable` — the same kind a server that is down produces. That is
+    /// why the walk cannot simply swallow the failure.
+    #[test]
+    fn a_deleted_parent_costs_its_own_bead_rather_than_the_whole_tracker() {
+        let orphan_row = r#"[{"id":"orb-7.9","title":"its parent was deleted",
+                              "status":"open","parent":"orb-404"}]"#;
+        let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent was deleted",
+                               "status":"open","parent_id":"orb-404",
+                               "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital()
+            .merging(&spelled(UNFINISHED_CALL), orphan_row)
+            .merging(&spelled(TRACKER_CALL), orphan_bead)
+            .failing(
+                &spelled("show orb-404 --json"),
+                failing(FailureKind::Unavailable),
+            );
+
+        let snap = run(&one_project(), &runner, Filter::All, now());
+
+        assert!(
+            snap.failed_projects.is_empty(),
+            "one bead bd cannot place must not take the tracker down: {:?}",
+            snap.failed_projects
+        );
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7", "orb-7.9"],
+            "the readable roots are drawn, and the orphan is one of them"
+        );
     }
 
     /// Discovery brings each bead's own parent back with it, so the walk to a
