@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::collect::bd;
+use crate::collect::environment;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::config::{Config, Project};
 use crate::model::join;
@@ -30,7 +31,11 @@ pub(super) fn read_project(
     cfg: &Config,
     panes: &[Pane],
 ) -> Result<ProjectWork, RunFailure> {
-    let env = bd::tracker_env(runner, project, bd::ambient_credential().as_deref())?;
+    let env = environment::tracker_env(
+        runner,
+        project,
+        environment::ambient_credential().as_deref(),
+    )?;
     let discovered = bd::discover_roots(runner, &project.path, &env, &cfg.roots.metadata_keys)?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
