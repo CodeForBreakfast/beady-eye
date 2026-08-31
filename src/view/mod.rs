@@ -2,8 +2,6 @@
 //! model found, the cells of one row, the forest those rows are drawn from, and
 //! the pane tail beneath it.
 
-use std::collections::BTreeMap;
-
 use chrono::{DateTime, Utc};
 
 pub mod bindings;
@@ -77,7 +75,7 @@ pub enum Notice {
     NoInboundChannel,
 }
 
-/// How fresh what is on the screen is, said at the foot beside the notices.
+/// How fresh one project's rows are, said beside its name.
 ///
 /// A collection running is the whole answer while it runs: it says the rows
 /// are about to be replaced, which is what a reader watching them change
@@ -85,33 +83,34 @@ pub enum Notice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Freshness {
     Collecting,
-    /// The oldest read behind anything on the screen.
+    /// When this project's tracker was last read.
     Collected(DateTime<Utc>),
 }
 
 impl Freshness {
-    /// What to say about a snapshot, given whether a collection is in flight.
+    /// What to say about one project: when it was last read, and whether the
+    /// collection in flight is reading it now.
     ///
-    /// The resting answer is the *oldest* of the projects' reads, not the
-    /// newest and not the snapshot's own clock. A refresh naming one project
-    /// redraws every project, so the newest read describes only the project
-    /// it named — and quoting it would tell a reader that rows nothing has
-    /// touched for an interval arrived just now. The oldest is the weakest
-    /// claim that is true of every row on the screen, so a reader is
-    /// under-promised rather than misled.
+    /// One project rather than the screen. A single indicator had to quote
+    /// the *oldest* read of any project on it — the weakest claim that was
+    /// true of every row — because a refresh naming one project redraws them
+    /// all, and the newest read describes only the project it named. That
+    /// under-promise was the cost of standing in the foot and speaking for
+    /// rows it could not tell apart. An indicator beside a project's own name
+    /// speaks for that project's rows alone, so it is exact.
     ///
     /// A read that failed counts as a read. Its trees went down with the
     /// tracker that refused, so none of its rows are on the screen to be
-    /// stale — and holding the view back to the last read that *worked*
+    /// stale — and holding the line back to the last read that *worked*
     /// would date rows nothing came from.
     ///
-    /// Nothing at all where no project has been read: there is no row on the
-    /// screen for the claim to be about.
-    pub fn of(read_at: &BTreeMap<String, DateTime<Utc>>, collecting: bool) -> Option<Self> {
+    /// Nothing at all for a project neither read nor being read: there is no
+    /// row on the screen for the claim to be about.
+    pub fn of(read_at: Option<DateTime<Utc>>, collecting: bool) -> Option<Self> {
         if collecting {
             return Some(Freshness::Collecting);
         }
-        read_at.values().min().copied().map(Freshness::Collected)
+        read_at.map(Freshness::Collected)
     }
 }
 
@@ -126,22 +125,13 @@ mod tests {
             .unwrap()
     }
 
-    fn read(times: &[(&str, DateTime<Utc>)]) -> BTreeMap<String, DateTime<Utc>> {
-        times
-            .iter()
-            .map(|(project, at)| ((*project).to_string(), *at))
-            .collect()
-    }
-
-    /// The screen holds rows from every project, so the claim it can make is
-    /// the one that is true of all of them. Taking the newest would date the
-    /// project a refresh did not name to a read that never saw it.
+    /// A project the collection in flight is not reading keeps the read it
+    /// has. The whole point of moving the indicator off the foot: one
+    /// project's collection used to say every project was collecting.
     #[test]
-    fn the_time_shown_is_the_oldest_read_behind_anything_on_the_screen() {
-        let read_at = read(&[("orbital", at(52, 9)), ("ferry", at(22, 14))]);
-
+    fn a_project_no_collection_is_reading_says_when_it_was_last_read() {
         assert_eq!(
-            Freshness::of(&read_at, false),
+            Freshness::of(Some(at(22, 14)), false),
             Some(Freshness::Collected(at(22, 14)))
         );
     }
@@ -149,14 +139,23 @@ mod tests {
     /// A collection running says the rows are about to move, which is what a
     /// reader watching them needs; the read it is about to replace is not.
     #[test]
-    fn a_collection_in_flight_is_the_whole_answer() {
-        let read_at = read(&[("orbital", at(22, 14))]);
+    fn a_project_being_read_now_says_so_over_the_read_it_is_replacing() {
+        assert_eq!(
+            Freshness::of(Some(at(22, 14)), true),
+            Some(Freshness::Collecting)
+        );
+    }
 
-        assert_eq!(Freshness::of(&read_at, true), Some(Freshness::Collecting));
+    /// The startup frame: every project drawn before any of them has been
+    /// read. There is no time to quote, and the collection under way is the
+    /// whole of what the line can say.
+    #[test]
+    fn a_project_never_read_but_being_read_now_still_says_it_is_collecting() {
+        assert_eq!(Freshness::of(None, true), Some(Freshness::Collecting));
     }
 
     #[test]
-    fn a_screen_no_project_has_been_read_for_says_nothing_about_freshness() {
-        assert_eq!(Freshness::of(&BTreeMap::new(), false), None);
+    fn a_project_neither_read_nor_being_read_says_nothing_about_freshness() {
+        assert_eq!(Freshness::of(None, false), None);
     }
 }

@@ -15,6 +15,7 @@ mod terminal;
 
 use std::time::Duration;
 
+use beady_eye::view::phrase::FRAME;
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{a_home_naming_one_project_read_without_direnv, contains};
@@ -25,6 +26,15 @@ const COLS: u16 = 120;
 /// A gap this long between bytes means the frame is over. `bdi` writes a
 /// frame in one burst.
 const A_SILENCE: Duration = Duration::from_millis(300);
+
+/// The same, for a screen with a collection running on it. There is no long
+/// quiet to wait for then: the project being read wears a mark that turns,
+/// and `bdi` redraws it every `FRAME`. Half a frame still lands between two
+/// bursts, which is all this wait was ever for — that what arrives next is an
+/// answer to the keystroke rather than the tail of the frame before it.
+fn between_frames() -> Duration {
+    FRAME / 2
+}
 
 /// How long a keystroke gets before waiting for it is called stalling.
 /// Nothing is asserted against it: it is what a stalled loop is reported in
@@ -62,7 +72,7 @@ fn a_keystroke_is_answered_while_a_collection_is_outstanding() {
     tracker.hang();
     bdi.send(REFRESH);
     tracker.wait_until_holding(LONG_ENOUGH_TO_ASK);
-    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.settle(between_frames(), GIVING_UP);
     let asked = bdi.send(SHOW_BINDINGS);
 
     let answer = bdi.answer_to(asked, LONG_ENOUGH_TO_ANSWER);

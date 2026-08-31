@@ -271,7 +271,7 @@ mod tests {
     /// and the beads it stands for cannot drift apart.
     #[test]
     fn an_elided_run_carries_the_closed_glyph_each_bead_it_stands_for_would() {
-        let painted = painted(fitted(&under(BRANCH, elided(15)), 0), 72);
+        let painted = painted(fitted(&under(BRANCH, elided(15)), 0, &at_rest()), 72);
 
         assert_eq!(
             painted[1],
@@ -288,7 +288,7 @@ mod tests {
     /// the words beside it are coloured.
     #[test]
     fn an_elided_run_leaves_its_box_drawing_in_the_terminals_own_colour() {
-        let painted = painted(fitted(&under(BRANCH, elided(3)), 0), 72);
+        let painted = painted(fitted(&under(BRANCH, elided(3)), 0, &at_rest()), 72);
 
         assert_eq!(painted[0], (BRANCH.to_string(), Color::Reset));
         assert_eq!(painted[2].1, DIM);

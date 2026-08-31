@@ -1,14 +1,14 @@
-//! The row at the foot of the screen: the keys, every notice the view
-//! carries, and how fresh what is above it is.
+//! The row at the foot of the screen: the keys and every notice the view
+//! carries.
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::model::snapshot::HerdrState;
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::phrase;
 use crate::view::row::WARNING;
-use crate::view::{Freshness, Notice};
+use crate::view::Notice;
 
 use super::tone::LOOK_AT_THIS;
 
@@ -31,8 +31,8 @@ pub(super) fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
         .collect()
 }
 
-/// The row at the foot of the screen: the keys, every notice the view
-/// carries, and how fresh what is above it is.
+/// The row at the foot of the screen: the keys and every notice the view
+/// carries.
 ///
 /// The notices are drawn first and yield last: keys can be rediscovered, and
 /// a fact that is silently absent from the one row a reader can neither fold
@@ -40,12 +40,9 @@ pub(super) fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
 /// too narrow even for those, they yield from the end, so the caller's order
 /// is the order they are given up in.
 ///
-/// How fresh the view is follows whatever the row leads with — the notices
-/// where there are any, the keys where there are none — and yields before
-/// either of them. A notice is something to act on and the keys are the
-/// row's own subject; a clock is what a reader checks those against, so a
-/// screen with no room for it has spent the columns on the more useful
-/// things.
+/// How fresh the rows are is not here. It was, while it was one claim about
+/// the whole screen; it is now a project's own fact, said beside the
+/// project's name where it is exact.
 ///
 /// `width` is what this row will be drawn into. Choosing which words to say
 /// is a different job from cutting the words chosen, and only the first of
@@ -54,27 +51,11 @@ pub(super) fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
 /// Nothing here knows what produced a notice. That is the point: a snapshot
 /// and this process both reach the screen through the same list, and the next
 /// thing that has something to say joins them by being one.
-pub(super) fn status_bar(
-    notices: &[Notice],
-    how_fresh: Option<Freshness>,
-    keys: &str,
-    width: usize,
-) -> Fitted {
+pub(super) fn status_bar(notices: &[Notice], keys: &str, width: usize) -> Fitted {
     let keys = Span::raw(keys.to_string());
-    // Drawn plain and dim: it is what a reader glances at to place the rest,
-    // not one of the things the rest is asking them to look at.
-    let how_fresh = how_fresh
-        .map(|how_fresh| {
-            Span::styled(
-                phrase::freshness(how_fresh),
-                Style::new().fg(Color::DarkGray),
-            )
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
 
     if notices.is_empty() {
-        return Fitted::new(vec![keys], how_fresh, Vec::new()).title_or_nothing();
+        return Fitted::new(vec![keys], Vec::new(), Vec::new());
     }
 
     Fitted::new(
@@ -82,10 +63,9 @@ pub(super) fn status_bar(
             said(notices, width),
             Style::new().fg(LOOK_AT_THIS),
         )],
-        how_fresh,
+        Vec::new(),
         vec![keys],
     )
-    .title_or_nothing()
 }
 
 /// Every notice the foot carries, in the fullest words that let all of them
@@ -133,7 +113,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::view::draw::tests::*;
-    use chrono::{Local, TimeZone, Utc};
 
     // ---- the key bar -----------------------------------------------------
 
@@ -141,7 +120,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = drawn(status_bar(&[], None, A_KEY_ROW, 60), 60, 1);
+        let drawn = drawn(status_bar(&[], A_KEY_ROW, 60), 60, 1);
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -152,7 +131,7 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 90), 90, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 90), 90, 1);
 
         says(
             &drawn[0],
@@ -167,7 +146,7 @@ mod tests {
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
         let drawn = drawn(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 90),
+            status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 90),
             90,
             1,
         );
@@ -184,12 +163,7 @@ mod tests {
     #[test]
     fn a_foot_with_room_says_every_notice_it_is_given() {
         let drawn = drawn(
-            status_bar(
-                &[Notice::NoHerdr, Notice::NoInboundChannel],
-                None,
-                A_KEY_ROW,
-                200,
-            ),
+            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 200),
             200,
             1,
         );
@@ -208,12 +182,7 @@ mod tests {
     #[test]
     fn a_narrow_foot_gives_up_the_last_notices_words_first() {
         let drawn = drawn(
-            status_bar(
-                &[Notice::NoHerdr, Notice::NoInboundChannel],
-                None,
-                A_KEY_ROW,
-                80,
-            ),
+            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 80),
             80,
             1,
         );
@@ -227,92 +196,17 @@ mod tests {
 
     // ---- how fresh the screen is ------------------------------------------
 
-    /// The bead's second half: a refresh the timer started changes rows under
-    /// a reader with nothing to mark that it did. The foot is where a fact
-    /// about the whole view goes, and it is the row that cannot be scrolled
-    /// away from.
+    /// `bdi-7ao.27`: the foot spoke for every project at once, so a refresh
+    /// naming one project said the whole screen was being read, and a
+    /// resting foot had to quote the oldest read on it to stay true. It is a
+    /// project's own fact and it is now said on the project's own line.
     #[test]
-    fn the_foot_says_when_what_is_on_the_screen_was_collected() {
-        let at = Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap();
-
-        let drawn = drawn(
-            status_bar(&[], Some(Freshness::Collected(at)), A_KEY_ROW, 90),
-            90,
-            1,
-        );
-
-        says(
-            &drawn[0],
-            &format!("collected {}", at.with_timezone(&Local).format("%H:%M:%S")),
-        );
-    }
-
-    /// The bead's first half. `^R` and the timer both start a collection that
-    /// takes seconds, and until this the screen was byte-identical for every
-    /// one of them.
-    #[test]
-    fn the_foot_says_while_a_collection_is_running() {
-        let drawn = drawn(
-            status_bar(&[], Some(Freshness::Collecting), A_KEY_ROW, 90),
-            90,
-            1,
-        );
-
-        says(&drawn[0], "collecting");
-    }
-
-    /// A notice is something a reader must act on and the keys are the row's
-    /// own subject; a clock is what they check those against. So the clock is
-    /// the first of the three a narrowing screen gives up, before the foot
-    /// starts cutting the keys as it already did.
-    #[test]
-    fn a_narrow_foot_gives_up_the_clock_before_a_notice_or_the_keys() {
-        let at = Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap();
-        let foot = |width| {
-            status_bar(
-                &[Notice::NoHerdr],
-                Some(Freshness::Collected(at)),
-                A_KEY_ROW,
-                width,
-            )
-        };
-
-        let roomy = drawn(foot(130), 130, 1);
-        says(&roomy[0], "collected");
-
-        let narrow = drawn(foot(110), 110, 1);
-        does_not_say(&narrow[0], "collected");
-        says(
-            &narrow[0],
-            "no herdr session · which agents are alive is unknown",
-        );
-        says(&narrow[0], A_KEY_ROW);
-    }
-
-    /// The whole screen at a width with room for the foot's three parts, so
-    /// the clock is seen where it lands rather than only where it is cut.
-    /// The forest above it says nothing about freshness: which read the rows
-    /// came from is a fact about the view, and no row is any different for
-    /// it.
-    #[test]
-    fn a_frame_with_room_says_when_the_rows_on_it_were_collected() {
+    fn the_foot_says_nothing_about_how_fresh_the_rows_above_it_are() {
         let forest = opened(&snapshot(vec![grove(1)], Vec::new(), HerdrState::Ok));
 
-        assert_eq!(
-            frame_of(&forest, 74, 4),
-            vec![
-                "▾ summit-works                                                         0/2",
-                "  └── ◐ nix-9670s  lift the ground station                             0/2",
-                "                                                                          ",
-                // The words are written out; only the clock is computed,
-                // because it is the reader's own and CI reads it in another
-                // zone.
-                &format!(
-                    "{A_KEY_ROW}  collected {}    ",
-                    read_at().with_timezone(&Local).format("%H:%M:%S")
-                ),
-            ]
-        );
+        let foot = frame_of(&forest, 74, 4).remove(3);
+
+        assert_eq!(foot.trim_end(), A_KEY_ROW);
     }
 
     /// The bead this was written for. On the narrowest supported screen
@@ -323,12 +217,7 @@ mod tests {
     #[test]
     fn the_narrowest_screen_still_says_the_view_is_polled() {
         let drawn = drawn(
-            status_bar(
-                &[Notice::NoHerdr, Notice::NoInboundChannel],
-                None,
-                A_KEY_ROW,
-                40,
-            ),
+            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 40),
             40,
             1,
         );
@@ -343,7 +232,7 @@ mod tests {
     #[test]
     fn a_lone_notice_too_wide_for_the_row_is_said_briefly() {
         let drawn = drawn(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
+            status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60),
             60,
             1,
         );
@@ -356,10 +245,7 @@ mod tests {
     /// symbols and is blind to styling, so this asks `painted`.
     #[test]
     fn a_notice_said_briefly_is_still_painted_as_a_warning() {
-        let painted = painted(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
-            60,
-        );
+        let painted = painted(status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60), 60);
 
         assert!(
             painted
@@ -401,7 +287,7 @@ mod tests {
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 60), 60, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 60), 60, 1);
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);

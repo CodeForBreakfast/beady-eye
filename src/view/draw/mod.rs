@@ -14,11 +14,15 @@ mod project;
 mod tail;
 mod tone;
 
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Utc};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::Frame;
 
+use crate::app::Wanted;
 use crate::model::types::PaneStatus;
 use crate::view::fitted::{columns, Fitted};
 use crate::view::forest::Forest;
@@ -37,6 +41,48 @@ use groups::{group_line, item_line};
 use project::{project_line, unread_line};
 use tone::LOOK_AT_THIS;
 
+/// What every project line's freshness is drawn from: when each project was
+/// last read, which projects the collection in flight is reading, and the
+/// instant this frame is being drawn at.
+///
+/// Gathered at the frame rather than held on the lines. A collection starting
+/// and ending changes what a project line says without changing the snapshot
+/// under it, and the mark turns between two collections' worth of events — so
+/// a line that carried its own answer would have to be flattened again to say
+/// anything new.
+pub(super) struct Reads<'a> {
+    read_at: &'a BTreeMap<String, DateTime<Utc>>,
+    /// What the collection in flight is reading, where one is running.
+    collecting: Option<&'a Wanted>,
+    now: DateTime<Utc>,
+}
+
+impl<'a> Reads<'a> {
+    pub(super) fn new(
+        read_at: &'a BTreeMap<String, DateTime<Utc>>,
+        collecting: Option<&'a Wanted>,
+        now: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            read_at,
+            collecting,
+            now,
+        }
+    }
+
+    /// How fresh one project is.
+    ///
+    /// Whether it is being read now is asked with `Wanted::names`, the same
+    /// predicate the collector picks what to read with, so the line and the
+    /// collection agree by construction rather than by argument.
+    fn of(&self, project: &str) -> Option<Freshness> {
+        Freshness::of(
+            self.read_at.get(project).copied(),
+            self.collecting.is_some_and(|wanted| wanted.names(project)),
+        )
+    }
+}
+
 /// Draw the forest and the key bar, leaving the tail's band to whoever holds
 /// a tail.
 ///
@@ -47,7 +93,8 @@ pub fn draw(
     area: Rect,
     forest: &Forest,
     at_startup: &[Notice],
-    collecting: bool,
+    collecting: Option<&Wanted>,
+    now: DateTime<Utc>,
     keys: &str,
 ) {
     let bands = regions(area);
@@ -55,6 +102,7 @@ pub fn draw(
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;
     let ids = id_width(lines);
+    let reads = Reads::new(&forest.snapshot().read_at, collecting, now);
 
     for (row, (at, line)) in lines
         .iter()
@@ -63,7 +111,7 @@ pub fn draw(
         .take(height)
         .enumerate()
     {
-        let drawn = fitted(line, ids);
+        let drawn = fitted(line, ids, &reads);
         let drawn = if at == selected {
             drawn.selected()
         } else {
@@ -82,7 +130,6 @@ pub fn draw(
     frame.render_widget(
         status_bar(
             &notices(forest.snapshot().herdr, at_startup),
-            Freshness::of(&forest.snapshot().read_at, collecting),
             keys,
             bands.keys.width as usize,
         ),
@@ -104,9 +151,11 @@ fn id_width(lines: &[lines::Line]) -> usize {
 }
 
 /// One line of the forest, whatever kind it is.
-pub(super) fn fitted(line: &lines::Line, id_width: usize) -> Fitted {
+pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitted {
     match &line.content {
-        Content::Project(project) => project_line(project, &line.prefix),
+        Content::Project(project) => {
+            project_line(project, &line.prefix, reads.of(&project.project), reads.now)
+        }
         Content::Unread(unread) => unread_line(unread, &line.prefix, id_width),
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
@@ -376,7 +425,11 @@ mod tests {
     #[test]
     fn a_note_leaves_its_box_drawing_in_the_terminals_own_colour() {
         let painted = painted(
-            fitted(&under(LAST, Content::Note(Note::Dangling(2))), 0),
+            fitted(
+                &under(LAST, Content::Note(Note::Dangling(2))),
+                0,
+                &at_rest(),
+            ),
             96,
         );
 
@@ -391,7 +444,11 @@ mod tests {
     #[test]
     fn a_note_names_the_beads_the_tracker_stopped_at() {
         let drawn = drawn(
-            fitted(&under(LAST, Content::Note(Note::Truncated(1))), 0),
+            fitted(
+                &under(LAST, Content::Note(Note::Truncated(1))),
+                0,
+                &at_rest(),
+            ),
             96,
             1,
         );
@@ -407,7 +464,10 @@ mod tests {
     /// — so it is drawn plain, in one colour the whole way across.
     #[test]
     fn the_line_for_an_empty_forest_is_drawn_in_the_terminals_own_colour() {
-        let painted = painted(fitted(&under("", Content::Note(Note::NoRoots)), 0), 96);
+        let painted = painted(
+            fitted(&under("", Content::Note(Note::NoRoots)), 0, &at_rest()),
+            96,
+        );
 
         assert_eq!(painted.len(), 1, "{painted:?}");
         assert_eq!(painted[0].1, Color::Reset);
@@ -441,6 +501,21 @@ mod tests {
     /// says so rather than agreeing by coincidence.
     pub(super) fn read_at() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, 30, 10, 21, 44).unwrap()
+    }
+
+    /// The instant a test frame is drawn at: the snapshot's own. The read
+    /// behind it is half a minute older, so a project line drawn from it is
+    /// half a minute stale.
+    pub(super) fn drawn_at() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap()
+    }
+
+    /// Nothing has been read and nothing is being read, for the lines that
+    /// say nothing about either.
+    static NOTHING_READ: BTreeMap<String, DateTime<Utc>> = BTreeMap::new();
+
+    pub(super) fn at_rest() -> Reads<'static> {
+        Reads::new(&NOTHING_READ, None, drawn_at())
     }
 
     /// One tree of `children` open beads under an in-flight root.
@@ -479,13 +554,40 @@ mod tests {
     }
 
     pub(super) fn frame_of(forest: &Forest, width: u16, height: u16) -> Vec<String> {
-        frame_with(forest, &[], width, height)
+        frame_collecting(forest, None, width, height)
     }
 
-    fn frame_with(forest: &Forest, at_startup: &[Notice], width: u16, height: u16) -> Vec<String> {
+    /// The same frame with a collection in flight, so a project line the
+    /// collection names says so.
+    pub(super) fn frame_collecting(
+        forest: &Forest,
+        collecting: Option<&Wanted>,
+        width: u16,
+        height: u16,
+    ) -> Vec<String> {
+        frame_with(forest, &[], collecting, width, height)
+    }
+
+    fn frame_with(
+        forest: &Forest,
+        at_startup: &[Notice],
+        collecting: Option<&Wanted>,
+        width: u16,
+        height: u16,
+    ) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| draw(frame, frame.area(), forest, at_startup, false, A_KEY_ROW))
+            .draw(|frame| {
+                draw(
+                    frame,
+                    frame.area(),
+                    forest,
+                    at_startup,
+                    collecting,
+                    drawn_at(),
+                    A_KEY_ROW,
+                )
+            })
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -506,7 +608,7 @@ mod tests {
         assert_eq!(
             frame_of(&forest, 60, 10),
             vec![
-                "▾ summit-works                                           0/3",
+                "▾ summit-works  30s ago                                  0/3",
                 "  └── ◐ nix-9670s  lift the ground station               0/3",
                 "      ├── ○ .1         bead number 1                        ",
                 "      └── ○ .2         bead number 2                        ",
@@ -529,9 +631,9 @@ mod tests {
         let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
 
         assert_eq!(
-            frame_with(&forest, &[Notice::NoInboundChannel], 80, 10),
+            frame_with(&forest, &[Notice::NoInboundChannel], None, 80, 10),
             vec![
-                "▾ summit-works                                                               0/3",
+                "▾ summit-works  30s ago                                                      0/3",
                 "  └── ◐ nix-9670s  lift the ground station                                   0/3",
                 "      ├── ○ .1         bead number 1                                            ",
                 "      └── ○ .2         bead number 2                                            ",
@@ -608,7 +710,7 @@ mod tests {
         assert_eq!(
             frame[..2],
             [
-                "▾ summit-works                                               ◍ wCM:p9 working",
+                "▾ summit-works  30s ago                                      ◍ wCM:p9 working",
                 "  └── ⚠ nix-9670s  the tracker did not answer                                ",
             ]
         );

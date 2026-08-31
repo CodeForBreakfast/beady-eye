@@ -11,7 +11,9 @@
 //! that can settle the finding. The last two are quoted, so they read as
 //! somebody else's words rather than as `bdi`'s.
 
-use chrono::Local;
+use std::time::Duration;
+
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
@@ -56,18 +58,112 @@ pub fn brief_notice(notice: Notice) -> &'static str {
     }
 }
 
-/// How fresh the rows on the screen are.
+/// How long one frame of the collecting mark is on the screen.
 ///
-/// The clock is the reader's own rather than the model's UTC: the question it
-/// answers is asked against the clock beside them, and an hour's offset would
-/// make a fresh view read as a stale one. To the second, because a refresh
-/// interval is measured in tens of them.
-pub fn freshness(freshness: Freshness) -> String {
+/// Public because the loop sets its own deadline by it: the mark turns
+/// because something redraws the screen while a collection runs, and how
+/// often that happens and how often the frame changes are the same number.
+pub const FRAME: Duration = Duration::from_millis(FRAME_MS as u64);
+
+const FRAME_MS: i64 = 80;
+
+/// The frames the collecting mark turns through.
+const TURNING: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// How fresh one project's rows are, said beside its name.
+///
+/// A duration rather than a time of day. The reader's question is how stale
+/// the rows in front of them are, and a clock makes them subtract one time
+/// from another to answer it.
+///
+/// `now` is the instant the frame is being drawn at, which is what both
+/// halves are measured against: how long ago the read was, and how far the
+/// mark has turned.
+pub fn freshness(freshness: Freshness, now: DateTime<Utc>) -> String {
     match freshness {
-        Freshness::Collecting => "collecting".to_string(),
+        Freshness::Collecting => turning(now).to_string(),
+        Freshness::Collected(at) => format!("{} ago", age(now - at)),
+    }
+}
+
+/// Which frame the collecting mark is on at this instant.
+///
+/// Taken from the clock rather than counted, so every redraw inside one
+/// collection agrees about which frame it is. A keystroke redraws the screen
+/// too, and a counter the redraw advanced would make the mark jump forward
+/// for a key that has nothing to do with the collection.
+fn turning(now: DateTime<Utc>) -> &'static str {
+    let frame = now.timestamp_millis().div_euclid(FRAME_MS);
+    TURNING[frame.rem_euclid(TURNING.len() as i64) as usize]
+}
+
+/// How long what `freshness` says now goes on being true.
+///
+/// An age is a duration, so it stops being true with nothing having happened:
+/// a line saying `0s ago` is wrong a second later, under a reader who has not
+/// touched anything. The clock this replaced was true for as long as it was on
+/// the screen, and a screen that never changed by itself needed nothing to
+/// redraw it.
+///
+/// So this is what the loop sleeps until. Both halves are drawn from a clock
+/// by dividing it, so both hold until that clock's own next boundary rather
+/// than for a whole unit from whenever they were last drawn — a project read
+/// four days ago is redrawn when it becomes five, and a keystroke part way
+/// through a frame does not leave the mark late for every frame after it.
+pub fn holds_for(freshness: Freshness, now: DateTime<Utc>) -> Duration {
+    match freshness {
+        // The mark's frame is cut from the clock itself, so its boundaries
+        // are the clock's.
+        Freshness::Collecting => until_the_next(FRAME_MS, now.timestamp_millis()),
         Freshness::Collected(at) => {
-            format!("collected {}", at.with_timezone(&Local).format("%H:%M:%S"))
+            let elapsed = (now - at).num_milliseconds().max(0);
+            until_the_next(unit_of(elapsed), elapsed)
         }
+    }
+}
+
+const SECOND: i64 = 1_000;
+const MINUTE: i64 = 60 * SECOND;
+const HOUR: i64 = 60 * MINUTE;
+const DAY: i64 = 24 * HOUR;
+
+/// The unit `age` says an elapsed time in.
+fn unit_of(elapsed: i64) -> i64 {
+    match elapsed {
+        0..MINUTE => SECOND,
+        MINUTE..HOUR => MINUTE,
+        HOUR..DAY => HOUR,
+        _ => DAY,
+    }
+}
+
+/// How long until `clock` crosses its next multiple of `unit`.
+///
+/// Never nothing: a deadline of no time at all would wake the loop, find
+/// what is drawn unchanged, and ask for no time again.
+fn until_the_next(unit: i64, clock: i64) -> Duration {
+    Duration::from_millis((unit - clock.rem_euclid(unit)) as u64)
+}
+
+/// How long ago a read was, in the coarsest unit that still says it.
+///
+/// One unit and no more: the question is how much to trust the rows, and a
+/// reader answers it from the order of magnitude. Seconds of precision on an
+/// hour-old read is precision about a number nobody is going to act on.
+///
+/// A read stamped ahead of the frame's own clock reads as this instant rather
+/// than as a negative age. Both times come from this process, so a step
+/// backwards in the system clock is the only thing that produces one, and
+/// `-3s ago` would say the rows arrive in the future.
+fn age(since: TimeDelta) -> String {
+    let elapsed = since.num_milliseconds().max(0);
+    let unit = unit_of(elapsed);
+    let said = elapsed / unit;
+    match unit {
+        SECOND => format!("{said}s"),
+        MINUTE => format!("{said}m"),
+        HOUR => format!("{said}h"),
+        _ => format!("{said}d"),
     }
 }
 
@@ -503,8 +599,20 @@ mod tests {
             said.extend(join_caveat(source).map(str::to_string));
         }
 
-        for how_fresh in [Freshness::Collecting, Freshness::Collected(an_instant())] {
-            said.push(freshness(how_fresh));
+        // Every frame of the mark and every unit an age is said in: the
+        // instant decides which of each is drawn, so the whole vocabulary
+        // only appears if this walks them.
+        for frame in 0..TURNING.len() as i64 {
+            said.push(freshness(
+                Freshness::Collecting,
+                an_instant() + TimeDelta::milliseconds(frame * FRAME_MS),
+            ));
+        }
+        for ago in [1, 90, 5_000, 200_000] {
+            said.push(freshness(
+                Freshness::Collected(an_instant()),
+                an_instant() + TimeDelta::seconds(ago),
+            ));
         }
 
         said
@@ -517,37 +625,187 @@ mod tests {
             .unwrap()
     }
 
-    /// The zone itself is the reader's and is deliberately not pinned: a test
-    /// asserting one would only pass in the zone it was written in, and CI
-    /// runs in another. What is pinned is that the clock is this instant's,
-    /// drawn to the second — the seconds survive every offset there is.
+    /// Graeme asked for "ago" language, and the reason it is better than the
+    /// clock it replaces is that the reader does no arithmetic: the line says
+    /// how stale the rows are, not what time it was when they arrived.
     #[test]
-    fn a_collected_time_is_this_instants_clock_to_the_second() {
-        let said = freshness(Freshness::Collected(an_instant()));
+    fn a_collected_project_says_how_long_ago_rather_than_at_what_time() {
+        let said = freshness(
+            Freshness::Collected(an_instant()),
+            an_instant() + TimeDelta::seconds(9),
+        );
 
-        let clock = said
-            .strip_prefix("collected ")
-            .unwrap_or_else(|| panic!("{said} names what the time is"));
-        assert_eq!(clock.len(), 8, "{said}");
-        assert!(clock.ends_with(":14"), "{said}");
+        assert_eq!(said, "9s ago");
     }
 
-    /// An hour later is an hour later in every zone there is, so this pins
-    /// that the clock tracks the instant rather than being drawn from
-    /// anything else.
+    /// One unit, chosen by how old the read is. A minute is where seconds
+    /// stop being worth counting, an hour where minutes do, and a day where
+    /// hours do.
     #[test]
-    fn an_hour_later_reads_an_hour_later() {
-        let hour = |said: String| said[10..12].to_string();
-
-        let first = hour(freshness(Freshness::Collected(an_instant())));
-        let next = hour(freshness(Freshness::Collected(
-            an_instant() + chrono::Duration::hours(1),
-        )));
+    fn an_age_is_said_in_the_coarsest_unit_that_still_says_it() {
+        let said = |seconds| {
+            freshness(
+                Freshness::Collected(an_instant()),
+                an_instant() + TimeDelta::seconds(seconds),
+            )
+        };
 
         assert_eq!(
-            (first.parse::<u32>().expect("two digits") + 1) % 24,
-            next.parse::<u32>().expect("two digits")
+            [
+                said(0),
+                said(59),
+                said(60),
+                said(3_599),
+                said(3_600),
+                said(86_399),
+                said(86_400)
+            ],
+            ["0s ago", "59s ago", "1m ago", "59m ago", "1h ago", "23h ago", "1d ago"]
         );
+    }
+
+    /// A system clock stepping backwards between the read and the frame is
+    /// the one thing that can produce this, and `-3s ago` would say the rows
+    /// arrive in the future.
+    #[test]
+    fn a_read_stamped_ahead_of_the_frame_reads_as_this_instant() {
+        let said = freshness(
+            Freshness::Collected(an_instant()),
+            an_instant() - TimeDelta::seconds(30),
+        );
+
+        assert_eq!(said, "0s ago");
+    }
+
+    /// The whole of what `holds_for` promises, over both things the line can
+    /// say: what is drawn now is still what would be drawn at any instant
+    /// before it runs out, and is not what would be drawn the instant it
+    /// does. A deadline longer than that draws a line that has stopped being
+    /// true; a shorter one wakes the loop to redraw what is already there.
+    #[test]
+    fn what_is_drawn_holds_exactly_as_long_as_holds_for_says() {
+        for offset in [0, 1, 37, 79, 80, 500, 999, 1_500, 61_000, 3_601_000] {
+            let now = an_instant() + TimeDelta::milliseconds(offset);
+            for state in [Freshness::Collecting, Freshness::Collected(an_instant())] {
+                let held = holds_for(state, now).as_millis() as i64;
+                let still = now + TimeDelta::milliseconds(held - 1);
+                let over = now + TimeDelta::milliseconds(held);
+
+                assert_eq!(
+                    freshness(state, now),
+                    freshness(state, still),
+                    "{state:?} at +{offset}ms changed before its {held}ms was up"
+                );
+                assert_ne!(
+                    freshness(state, now),
+                    freshness(state, over),
+                    "{state:?} at +{offset}ms said the same after its {held}ms was up"
+                );
+            }
+        }
+    }
+
+    /// An age says a different thing a second later with nothing having
+    /// happened, so the screen has to be redrawn for it. Held to the unit's
+    /// own boundary rather than a whole unit from now: a read four days old
+    /// is redrawn when it becomes five, not at some arbitrary offset from it.
+    #[test]
+    fn an_age_holds_only_until_its_own_units_next_boundary() {
+        let held = |seconds, millis| {
+            holds_for(
+                Freshness::Collected(an_instant()),
+                an_instant() + TimeDelta::seconds(seconds) + TimeDelta::milliseconds(millis),
+            )
+        };
+
+        assert_eq!(
+            [
+                held(0, 250),
+                held(59, 0),
+                held(60, 0),
+                held(3_599, 0),
+                held(3_600, 0),
+                held(86_400, 0),
+            ],
+            [
+                Duration::from_millis(750),
+                Duration::from_secs(1),
+                Duration::from_secs(60),
+                Duration::from_secs(1),
+                Duration::from_secs(3_600),
+                Duration::from_secs(86_400),
+            ]
+        );
+    }
+
+    /// Never nothing. A deadline of no time at all would wake the loop, find
+    /// the words unchanged, and ask for no time again.
+    #[test]
+    fn an_age_always_holds_for_some_time_however_the_clocks_stand() {
+        for seconds in [-30, 0, 1, 59, 60, 3_600, 86_400, 500_000] {
+            let held = holds_for(
+                Freshness::Collected(an_instant()),
+                an_instant() + TimeDelta::seconds(seconds),
+            );
+            assert!(held > Duration::ZERO, "{seconds}s: {held:?}");
+        }
+    }
+
+    /// A mark that is turning is one frame from being out of date whatever
+    /// else is on the screen, and it is the shortest answer there is.
+    #[test]
+    fn a_turning_mark_holds_for_exactly_one_frame() {
+        assert_eq!(holds_for(Freshness::Collecting, an_instant()), FRAME);
+    }
+
+    /// The mark turns, which is the whole of why it is a spinner and not a
+    /// word: a still mark says a collection is running and says nothing about
+    /// whether `bdi` is still alive.
+    #[test]
+    fn the_collecting_mark_is_on_a_different_frame_one_frame_later() {
+        let frame = |at| freshness(Freshness::Collecting, at);
+
+        assert_ne!(
+            frame(an_instant()),
+            frame(an_instant() + TimeDelta::milliseconds(FRAME_MS))
+        );
+    }
+
+    /// Every frame is drawn before any is drawn twice, so the mark turns
+    /// evenly rather than resting on one of them.
+    #[test]
+    fn the_mark_turns_through_every_frame_before_it_comes_round_again() {
+        let frames: Vec<String> = (0..TURNING.len() as i64)
+            .map(|frame| {
+                freshness(
+                    Freshness::Collecting,
+                    an_instant() + TimeDelta::milliseconds(frame * FRAME_MS),
+                )
+            })
+            .collect();
+
+        let mut distinct = frames.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), frames.len(), "{frames:?}");
+        assert_eq!(
+            freshness(
+                Freshness::Collecting,
+                an_instant() + TimeDelta::milliseconds(TURNING.len() as i64 * FRAME_MS)
+            ),
+            frames[0]
+        );
+    }
+
+    /// Two redraws inside one frame's worth of time show the same frame. A
+    /// keystroke redraws the screen, and a mark counted per redraw would jump
+    /// forward for one.
+    #[test]
+    fn a_redraw_within_one_frame_shows_the_frame_already_on_the_screen() {
+        let frame = |at| freshness(Freshness::Collecting, at);
+        let at = an_instant() + TimeDelta::milliseconds(FRAME_MS / 2);
+
+        assert_eq!(frame(at), frame(at + TimeDelta::milliseconds(1)));
     }
 
     /// The collector's own account of a command that failed with `text`.

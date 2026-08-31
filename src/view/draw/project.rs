@@ -1,7 +1,8 @@
-//! A project's own line — what it is and how much work it holds — and the
-//! roots beneath it that would not read.
+//! A project's own line — what it is, how fresh it is and how much work it
+//! holds — and the roots beneath it that would not read.
 
-use ratatui::style::Style;
+use chrono::{DateTime, Utc};
+use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
 use crate::model::snapshot::{Counts, TrackerState};
@@ -9,22 +10,51 @@ use crate::view::fitted::{Fitted, GAP};
 use crate::view::lines::{ProjectLine, Recovery, Unread};
 use crate::view::phrase;
 use crate::view::row::WARNING;
+use crate::view::Freshness;
 
 use super::tone::{LIVE, LOOK_AT_THIS};
 use super::{done, pane_marker, structure};
 
-/// A project's own line: what it is, how much work it holds, and the live
-/// panes recovered for it where a root would not read.
+/// A project's own line: what it is, how fresh it is, how much work it holds,
+/// and the live panes recovered for it where a root would not read.
 ///
 /// It says nothing about any one root, because every root below it says that
 /// for itself. What is left is what only a project can answer: which project,
-/// how much of it there is, and — where a root refused — which panes `bdi`
-/// found working here that no bead could be attributed to.
-pub(super) fn project_line(project: &ProjectLine, prefix: &str) -> Fitted {
+/// when it was last read, how much of it there is, and — where a root refused
+/// — which panes `bdi` found working here that no bead could be attributed
+/// to.
+///
+/// How fresh it is sits directly beside the name, because it is a claim about
+/// that name's rows and nothing else's. It is handed in rather than held on
+/// the line: a collection starting and ending changes it without changing the
+/// snapshot, and a line that carried it would have to be flattened again to
+/// turn the mark one frame.
+///
+/// It goes in the title, so it is the first thing a narrowing line gives up —
+/// whole rather than cut, because half a mark and half an age each say
+/// nothing — and the counts a reader came for outlast it.
+pub(super) fn project_line(
+    project: &ProjectLine,
+    prefix: &str,
+    how_fresh: Option<Freshness>,
+    now: DateTime<Utc>,
+) -> Fitted {
     let identity = vec![
         Span::raw(prefix.to_string()),
         Span::raw(project.project.clone()),
     ];
+
+    // Drawn plain and dim: it is what a reader glances at to place the rest,
+    // not one of the things the rest is asking them to look at.
+    let how_fresh = how_fresh
+        .map(|how_fresh| {
+            Span::styled(
+                phrase::freshness(how_fresh, now),
+                Style::new().fg(Color::DarkGray),
+            )
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
 
     let mut state = summary(&project.counts);
     if let Some(found) = &project.recovery {
@@ -34,7 +64,7 @@ pub(super) fn project_line(project: &ProjectLine, prefix: &str) -> Fitted {
         state.push(recovered(found));
     }
 
-    Fitted::new(identity, Vec::new(), state)
+    Fitted::new(identity, how_fresh, state).title_or_nothing()
 }
 
 /// A root that drew no row, said where its row would have been.
@@ -120,8 +150,9 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use crate::app::Wanted;
     use crate::model::anomaly::Anomaly;
-    use crate::model::snapshot::{HerdrState, LoosePane, Node, TrackerFailure};
+    use crate::model::snapshot::{HerdrState, LoosePane, Node, Snapshot, TrackerFailure, Tree};
     use crate::model::types::{PaneStatus, Status};
     use crate::view::draw::tone::status_colour;
     use crate::view::draw::{fitted, tests::*};
@@ -142,6 +173,43 @@ mod tests {
         }
     }
 
+    /// A project line with nothing to say about how fresh it is, which is
+    /// every line whose subject is something else.
+    fn line(project: &ProjectLine, prefix: &str) -> Fitted {
+        project_line(project, prefix, None, drawn_at())
+    }
+
+    /// The same line, said at an instant, with one project's freshness on it.
+    fn line_that_is(project: &ProjectLine, how_fresh: Freshness) -> Fitted {
+        project_line(project, OPEN, Some(how_fresh), drawn_at())
+    }
+
+    /// Two projects read at the same instant, so a mark on one of them is a
+    /// mark this collection put there rather than a difference in the
+    /// fixture.
+    fn two_projects() -> Snapshot {
+        let harbour = Tree {
+            counts: counts(0, 1, 0, 0),
+            nodes: vec![Node {
+                depth: 0,
+                ..node("qua-1", "moor the barge", Status::InProgress)
+            }],
+            ..tree("harbour", "qua-1", "moor the barge", counts(0, 0, 0, 0))
+        };
+
+        let mut snapshot = snapshot(vec![grove(1), harbour], Vec::new(), HerdrState::Ok);
+        snapshot.read_at.insert("harbour".to_string(), read_at());
+        snapshot
+    }
+
+    /// The row of a frame a project's line is on.
+    fn project_row<'a>(frame: &'a [String], project: &str) -> &'a str {
+        frame
+            .iter()
+            .find(|row| row.contains(project))
+            .unwrap_or_else(|| panic!("{project} is on the frame: {frame:?}"))
+    }
+
     fn unread(root: &str, tracker: TrackerState) -> Unread {
         Unread {
             root: root.into(),
@@ -156,7 +224,7 @@ mod tests {
         let counts = counts(8, 21, 3, 3);
 
         assert_eq!(
-            drawn(project_line(&project("summit-works", counts), OPEN), 40, 1),
+            drawn(line(&project("summit-works", counts), OPEN), 40, 1),
             vec!["▾ summit-works       8/21  3 agents  ⚠ 3"]
         );
     }
@@ -169,7 +237,7 @@ mod tests {
         let counts = counts(2, 7, 0, 0);
 
         assert_eq!(
-            drawn(project_line(&project("homelab", counts), SHUT), 30, 1),
+            drawn(line(&project("homelab", counts), SHUT), 30, 1),
             vec!["▸ homelab                  2/7"]
         );
     }
@@ -177,7 +245,7 @@ mod tests {
     #[test]
     fn one_agent_is_not_described_in_the_plural() {
         let counts = counts(2, 7, 1, 0);
-        let drawn = drawn(project_line(&project("homelab", counts), SHUT), 40, 1);
+        let drawn = drawn(line(&project("homelab", counts), SHUT), 40, 1);
 
         assert!(drawn[0].ends_with("2/7  1 agent"), "{drawn:?}");
     }
@@ -196,7 +264,7 @@ mod tests {
         };
         let counts = Counts::over(&[claimed]);
 
-        let drawn = drawn(project_line(&project("orbital", counts), OPEN), 40, 1);
+        let drawn = drawn(line(&project("orbital", counts), OPEN), 40, 1);
 
         says(&drawn[0], &format!("{WARNING} 1"));
         does_not_say(&drawn[0], "agent");
@@ -209,7 +277,7 @@ mod tests {
         let counts = counts(8, 21, 3, 3);
 
         assert_eq!(
-            drawn(project_line(&project("summit-works", counts), OPEN), 10, 1),
+            drawn(line(&project("summit-works", counts), OPEN), 10, 1),
             vec!["▾ nixos-c…"]
         );
     }
@@ -220,14 +288,160 @@ mod tests {
     #[test]
     fn a_cut_is_counted_in_columns_and_never_lands_inside_a_glyph() {
         let name = "→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→";
-        let drawn = drawn(
-            project_line(&project(name, counts(0, 1, 0, 0)), OPEN),
-            20,
-            1,
-        );
+        let drawn = drawn(line(&project(name, counts(0, 1, 0, 0)), OPEN), 20, 1);
 
         assert_eq!(drawn[0].chars().count(), 20);
         assert!(!drawn[0].contains('\u{fffd}'), "{drawn:?}");
+    }
+
+    // ---- how fresh a project is ------------------------------------------
+
+    /// Graeme, on where the indicator goes: *"positioned on the project line
+    /// next to the project name, not the footer"*. It is a claim about this
+    /// project's rows, so it stands beside the name those rows hang under.
+    #[test]
+    fn a_project_says_how_long_ago_it_was_read_beside_its_own_name() {
+        let line = line_that_is(
+            &project("summit-works", counts(8, 21, 3, 3)),
+            Freshness::Collected(read_at()),
+        );
+
+        assert_eq!(
+            drawn(line, 60, 1),
+            vec!["▾ summit-works  30s ago                  8/21  3 agents  ⚠ 3"]
+        );
+    }
+
+    /// A collection reading this project replaces its age with the mark that
+    /// says so: the rows are seconds from being superseded, and how stale the
+    /// ones about to go are is not what a reader watching them needs.
+    #[test]
+    fn a_project_being_read_wears_the_turning_mark_in_place_of_its_age() {
+        let drawn = drawn(
+            line_that_is(
+                &project("summit-works", counts(8, 21, 0, 0)),
+                Freshness::Collecting,
+            ),
+            60,
+            1,
+        );
+
+        does_not_say(&drawn[0], "ago");
+        says(
+            &drawn[0],
+            phrase::freshness(Freshness::Collecting, drawn_at()).as_str(),
+        );
+    }
+
+    /// The bead: a refresh naming one project redrew every project's
+    /// indicator, because there was one indicator and it spoke for the whole
+    /// screen. Each line now answers for its own rows, so the project nothing
+    /// is reading keeps the age it has.
+    #[test]
+    fn a_project_no_collection_names_keeps_its_age_while_another_is_read() {
+        let forest = opened(&two_projects());
+
+        let frame = frame_collecting(
+            &forest,
+            Some(&Wanted::Project("summit-works".to_string())),
+            74,
+            12,
+        );
+
+        let marked = phrase::freshness(Freshness::Collecting, drawn_at());
+        says(&frame[0], &marked);
+        says(project_row(&frame, "harbour"), "30s ago");
+        does_not_say(project_row(&frame, "harbour"), &marked);
+    }
+
+    /// A collection over everything is reading every project, so every
+    /// project's line says so.
+    #[test]
+    fn a_collection_over_everything_marks_every_project() {
+        let forest = opened(&two_projects());
+
+        let frame = frame_collecting(&forest, Some(&Wanted::Everything), 74, 12);
+
+        let marked = phrase::freshness(Freshness::Collecting, drawn_at());
+        says(&frame[0], &marked);
+        says(project_row(&frame, "harbour"), &marked);
+    }
+
+    /// The counts are what a reader came to the line for and the age is what
+    /// they check them against, so the age is the first thing a narrowing
+    /// line gives up.
+    ///
+    /// `bdi-2bb.21` rejected the project line for this indicator on a
+    /// measurement — at the narrowest supported width the design's worked
+    /// example is full to the column — and put it in the foot instead. Forty
+    /// columns is that width, and it is here because the position changed and
+    /// the measurement did not: the line at forty is what it always was.
+    #[test]
+    fn a_narrow_project_line_gives_up_its_age_before_its_counts() {
+        let with_age = |width| {
+            drawn(
+                line_that_is(
+                    &project("summit-works", counts(8, 21, 3, 3)),
+                    Freshness::Collected(read_at()),
+                ),
+                width,
+                1,
+            )
+        };
+
+        let roomy = with_age(60);
+        says(&roomy[0], "30s ago");
+
+        for narrow in [43, 40] {
+            assert_eq!(
+                with_age(narrow),
+                drawn(
+                    line(&project("summit-works", counts(8, 21, 3, 3)), OPEN),
+                    narrow,
+                    1
+                ),
+                "at {narrow} columns the age costs the line nothing"
+            );
+        }
+    }
+
+    /// An age is given up whole rather than cut. One column short of the
+    /// seven it needs, a cut line would read `30s a…` — a duration that names
+    /// no duration, spending the columns it kept to say the project has been
+    /// read, which its own rows already said.
+    #[test]
+    fn an_age_with_no_room_for_it_is_dropped_rather_than_cut() {
+        let drawn = drawn(
+            line_that_is(
+                &project("summit-works", counts(8, 21, 3, 3)),
+                Freshness::Collected(read_at()),
+            ),
+            43,
+            1,
+        );
+
+        does_not_say(&drawn[0], "…");
+        says(&drawn[0], "8/21  3 agents  ⚠ 3");
+    }
+
+    /// Dim and plain: it is what a reader glances at to place the counts, not
+    /// one of the things the line is asking them to look at.
+    #[test]
+    fn how_fresh_a_project_is_is_drawn_dim_so_the_counts_keep_the_eye() {
+        let painted = painted(
+            line_that_is(
+                &project("summit-works", counts(8, 21, 0, 0)),
+                Freshness::Collected(read_at()),
+            ),
+            60,
+        );
+
+        assert!(
+            painted
+                .iter()
+                .any(|(said, colour)| said.contains("30s ago") && *colour == Color::DarkGray),
+            "{painted:?}"
+        );
     }
 
     // ---- a root's own row ------------------------------------------------
@@ -244,8 +458,8 @@ mod tests {
         let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
         let root = &forest.lines()[1];
 
-        let painted = painted(fitted(root, 12), 60);
-        let drawn = drawn(fitted(root, 12), 60, 1);
+        let painted = painted(fitted(root, 12, &at_rest()), 60);
+        let drawn = drawn(fitted(root, 12, &at_rest()), 60, 1);
 
         assert!(
             drawn[0].contains(&format!(
@@ -316,7 +530,7 @@ mod tests {
 
         assert_eq!(
             drawn(
-                project_line(&recovering("summit-works", &panes, true), NO_FOLD),
+                line(&recovering("summit-works", &panes, true), NO_FOLD),
                 80,
                 1
             ),
@@ -329,11 +543,7 @@ mod tests {
 
     #[test]
     fn a_project_with_no_pane_to_show_says_that_rather_than_nothing() {
-        let drawn = drawn(
-            project_line(&recovering("summit-works", &[], true), OPEN),
-            120,
-            1,
-        );
+        let drawn = drawn(line(&recovering("summit-works", &[], true), OPEN), 120, 1);
 
         says(&drawn[0], "no live pane names this project");
     }
@@ -346,12 +556,12 @@ mod tests {
         let panes = [pane("wCM:p9", PaneStatus::Working)];
 
         let whole = drawn(
-            project_line(&recovering("summit-works", &panes, true), OPEN),
+            line(&recovering("summit-works", &panes, true), OPEN),
             200,
             1,
         );
         let partial = drawn(
-            project_line(&recovering("summit-works", &panes, false), OPEN),
+            line(&recovering("summit-works", &panes, false), OPEN),
             200,
             1,
         );

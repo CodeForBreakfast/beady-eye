@@ -299,7 +299,7 @@ mod tests {
     fn a_project_line_is_left_off_the_scale_a_bead_row_is_on() {
         let quiet = project("homelab", counts(7, 7, 0, 0));
 
-        let painted = painted(project_line(&quiet, OPEN), 60);
+        let painted = painted(project_line(&quiet, OPEN, None, drawn_at()), 60);
 
         assert!(
             painted.iter().all(|(_, colour)| *colour == Color::Reset),

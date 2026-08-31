@@ -55,9 +55,9 @@ impl Fitted {
 
     /// Give the title up whole rather than cut it.
     ///
-    /// For a title that says nothing in part. A clock cut to `collected 1…`
-    /// names no time, so the columns it kept are spent saying that a time
-    /// exists — which the reader could already see.
+    /// For a title that says nothing in part. An age cut to `30s a…` names no
+    /// duration, so the columns it kept are spent saying that the project has
+    /// been read — which its rows already said.
     #[must_use]
     pub(crate) fn title_or_nothing(mut self) -> Self {
         self.title_or_nothing = true;

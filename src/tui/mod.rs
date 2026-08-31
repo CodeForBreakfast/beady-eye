@@ -2,11 +2,12 @@
 
 use std::collections::{BTreeSet, VecDeque};
 use std::io;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, KeyEvent, KeyEventKind, MouseButton,
     MouseEventKind,
@@ -24,8 +25,9 @@ use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
+use crate::view::phrase;
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Motion, Notice};
+use crate::view::{draw, Action, Freshness, Motion, Notice};
 
 mod keys;
 
@@ -113,15 +115,24 @@ trait View {
     /// Show a snapshot just collected, in place of the one on the screen.
     fn collected(&mut self, snapshot: Snapshot);
 
-    /// Say that a collection has started, reporting whether the screen has
-    /// changed.
+    /// Say what the collection now in flight is reading, or that none is,
+    /// reporting whether the screen has changed.
     ///
     /// The view is told a collection began and told again when one comes
     /// back, so what is on the screen and what the trackers are being asked
-    /// are never more than one event apart. Which projects it names is the
-    /// loop's business and not the view's: what is said is that the rows are
+    /// are never more than one event apart. It is told *which* projects,
+    /// because each project's line says for itself whether its own rows are
     /// about to be replaced.
-    fn collecting(&mut self) -> bool;
+    fn collecting(&mut self, wanted: Option<&Wanted>) -> bool;
+
+    /// How long what is drawn goes on being true with nothing happening, or
+    /// nothing where it stays true however long the reader leaves it.
+    ///
+    /// The loop asks the view rather than deciding for itself, because what
+    /// goes stale is what is drawn: an age is a duration and says a different
+    /// thing a second later, and a mark part way through turning is a frame
+    /// behind by the time the next one is due.
+    fn holds_for(&self) -> Option<Duration>;
 
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
@@ -137,11 +148,36 @@ trait View {
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()>;
 }
 
-/// Read events until the user quits.
+/// What the loop waited for and got.
+enum Waited {
+    Event(Event),
+    /// What is drawn has stopped being true and nothing has happened: an age
+    /// has moved on, or the collecting mark is due its next frame.
+    Aged,
+}
+
+/// The next thing the loop answers, or nothing where there will never be
+/// another.
 ///
 /// Every wait in here is a wait on the one channel: a keystroke, a resize, a
 /// project reporting a change and a collection coming back are the same kind
-/// of thing to the loop, and none of them is a deadline it sleeps until.
+/// of thing to the loop. The one deadline it ever sleeps until is `holds_for`
+/// — how long what is drawn goes on being true — because the screen now says
+/// things that go stale on their own: an age, and a mark part way through
+/// turning. Where it says neither, there is no deadline and the loop waits as
+/// long as it has to.
+fn wait(events: &Receiver<Event>, holds_for: Option<Duration>) -> Option<Waited> {
+    let Some(holds_for) = holds_for else {
+        return events.recv().ok().map(Waited::Event);
+    };
+    match events.recv_timeout(holds_for) {
+        Ok(event) => Some(Waited::Event(event)),
+        Err(RecvTimeoutError::Timeout) => Some(Waited::Aged),
+        Err(RecvTimeoutError::Disconnected) => None,
+    }
+}
+
+/// Read events until the user quits.
 fn drive(
     view: &mut dyn View,
     events: &Receiver<Event>,
@@ -151,7 +187,20 @@ fn drive(
     view.draw(showing)?;
     let mut outstanding = Outstanding::default();
 
-    while let Ok(event) = events.recv() {
+    while let Some(waited) = wait(events, view.holds_for()) {
+        let event = match waited {
+            // Nothing has happened and what is drawn is out of date, which is
+            // the whole of what makes the mark turn and the ages advance: a
+            // collection is dozens of round trips and reports nothing until
+            // it is done, and a resting `bdi` whose projects are all reported
+            // for polls nothing at all.
+            Waited::Aged => {
+                view.draw(showing)?;
+                continue;
+            }
+            Waited::Event(event) => event,
+        };
+
         let changed = match event {
             // Any key at all, because a reader who opened the bindings by
             // accident must not have to find the one key that closes them.
@@ -166,7 +215,8 @@ fn drive(
                     true
                 }
                 Some(Action::Refresh) => {
-                    outstanding.ask(ask, Wanted::Everything) && view.collecting()
+                    outstanding.ask(ask, Wanted::Everything)
+                        && view.collecting(outstanding.in_flight())
                 }
                 Some(action) => view.apply(action),
                 None => false,
@@ -181,13 +231,17 @@ fn drive(
             Event::Clicked(row) => view.clicked(row),
             Event::Scrolled(motion) => view.apply(Action::Move(motion)),
             Event::Resize => true,
-            Event::Changed(wanted) => outstanding.ask(ask, wanted) && view.collecting(),
+            Event::Changed(wanted) => {
+                outstanding.ask(ask, wanted) && view.collecting(outstanding.in_flight())
+            }
             Event::Collected(snapshot) => {
-                let another = outstanding.came_back(ask);
+                outstanding.came_back(ask);
                 view.collected(*snapshot);
-                if another {
-                    view.collecting();
-                }
+                // Told after the rows land, and told whatever came of the
+                // collection that ended: another may have been waiting behind
+                // it, and where none was, a line left saying it was being
+                // read would say so over rows that had already arrived.
+                view.collecting(outstanding.in_flight());
                 true
             }
             // The same return 'q' takes, and for the same reason: it is
@@ -216,7 +270,11 @@ fn drive(
 /// is never more than one per project.
 #[derive(Default)]
 struct Outstanding {
-    collecting: bool,
+    /// What the collection in flight is reading, where one is running. What
+    /// it names rather than that it is running: a project line says for
+    /// itself whether its own rows are being read, so the screen needs to
+    /// know which projects and not only that some are.
+    in_flight: Option<Wanted>,
     everything: bool,
     projects: BTreeSet<String>,
 }
@@ -228,9 +286,11 @@ impl Outstanding {
     /// one was asked for: a request arriving mid-collection waits its turn,
     /// and nothing on the screen changes for it.
     fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) -> bool {
-        if !self.collecting {
-            self.collecting = ask.send(wanted).is_ok();
-            return self.collecting;
+        if self.in_flight.is_none() {
+            if ask.send(wanted.clone()).is_ok() {
+                self.in_flight = Some(wanted);
+            }
+            return self.in_flight.is_some();
         }
         match wanted {
             Wanted::Everything => {
@@ -247,18 +307,23 @@ impl Outstanding {
     }
 
     /// Take the collection that came back, asking for whatever waited behind
-    /// it and reporting whether that started another.
-    fn came_back(&mut self, ask: &Sender<Wanted>) -> bool {
-        self.collecting = false;
+    /// it.
+    fn came_back(&mut self, ask: &Sender<Wanted>) {
+        self.in_flight = None;
         let next = if std::mem::take(&mut self.everything) {
             Some(Wanted::Everything)
         } else {
             self.projects.pop_first().map(Wanted::Project)
         };
-        match next {
-            Some(next) => self.ask(ask, next),
-            None => false,
+        if let Some(next) = next {
+            self.ask(ask, next);
         }
+    }
+
+    /// What is being read now, for the screen to say beside the projects it
+    /// names.
+    fn in_flight(&self) -> Option<&Wanted> {
+        self.in_flight.as_ref()
     }
 }
 
@@ -497,10 +562,15 @@ struct Shown {
     /// The pane the tail on screen was read from, so a selection moving
     /// within it does not spend a herdr call on the answer already drawn.
     tailing: Option<String>,
-    /// Whether a collection is in flight, so the foot can say the rows are
-    /// about to be replaced. No row of the forest is any different for it,
-    /// which is why it is here and not in the forest.
-    collecting: bool,
+    /// What the collection in flight is reading, where one is running. Every
+    /// project line it names says its own rows are about to be replaced, and
+    /// the rest of the screen carries on saying how stale it is.
+    ///
+    /// Held here rather than on the lines because it changes without the
+    /// snapshot changing: a collection starts and ends between two
+    /// flattenings, and the mark on a line it names turns several times
+    /// inside one of them.
+    collecting: Option<Wanted>,
 }
 
 impl Shown {
@@ -518,13 +588,45 @@ impl Shown {
             // synchronous and finishes before this exists — measured at 3.6
             // to 3.9 seconds against real trackers, the longest wait a
             // reader has, and there is no screen to announce it on.
-            collecting: false,
+            collecting: None,
         }
     }
 
-    /// Say that a collection has started.
-    fn collecting(&mut self) {
-        self.collecting = true;
+    /// Say what the collection in flight is reading, or that none is,
+    /// reporting whether the screen is any different for it.
+    ///
+    /// Being told again what it already says is not a change: a collection
+    /// coming back with another waiting behind it names the same projects as
+    /// often as not, and a redraw that puts the same frame back is a redraw
+    /// for nothing.
+    fn collecting(&mut self, wanted: Option<&Wanted>) -> bool {
+        let changed = self.collecting.as_ref() != wanted;
+        self.collecting = wanted.cloned();
+        changed
+    }
+
+    /// How long what is drawn goes on being true with nothing happening.
+    ///
+    /// A collection in flight is the shortest answer there is and the same
+    /// for every project, so it is the whole of it while one runs. At rest it
+    /// is the soonest of the projects' own ages: the newest read is the one
+    /// whose words change first, and a screen of day-old projects is redrawn
+    /// about once a day rather than continuously.
+    ///
+    /// Asked of `read_at` rather than of the lines, so a project drawn under
+    /// any rule the forest has is covered by it. A project that is read and
+    /// not drawn costs a redraw nobody sees, which is cheaper than the line
+    /// that quietly stops being true.
+    fn holds_for(&self, now: DateTime<Utc>) -> Option<Duration> {
+        if self.collecting.is_some() {
+            return Some(phrase::FRAME);
+        }
+        self.forest
+            .snapshot()
+            .read_at
+            .values()
+            .map(|at| phrase::holds_for(Freshness::Collected(*at), now))
+            .min()
     }
 
     /// Read the tail for whatever the selection is on now.
@@ -570,10 +672,6 @@ impl Shown {
     }
 
     fn collected(&mut self, snapshot: Snapshot) {
-        // The snapshot arriving is the end of the collection that produced
-        // it. Left standing, the foot would say a read was running over rows
-        // that had already landed, until the next one came back.
-        self.collecting = false;
         // A refresh keeps the folds and the selection, so the cursor stays on
         // the bead the user put it on however the new snapshot has moved it.
         self.forest.refresh(&snapshot);
@@ -663,7 +761,8 @@ fn paint(
     tail: &Tail,
     showing: Showing,
     at_startup: &[Notice],
-    collecting: bool,
+    collecting: Option<&Wanted>,
+    now: DateTime<Utc>,
 ) {
     let bands = draw::regions(frame.area());
     forest.set_half_screen(draw::half_screen(bands.forest));
@@ -673,6 +772,7 @@ fn paint(
         forest,
         at_startup,
         collecting,
+        now,
         &key_row(),
     );
     draw::draw_tail(frame, bands.tail, tail);
@@ -703,9 +803,12 @@ impl View for Screen {
         self.shown.collected(snapshot);
     }
 
-    fn collecting(&mut self) -> bool {
-        self.shown.collecting();
-        true
+    fn collecting(&mut self, wanted: Option<&Wanted>) -> bool {
+        self.shown.collecting(wanted)
+    }
+
+    fn holds_for(&self) -> Option<Duration> {
+        self.shown.holds_for(Utc::now())
     }
 
     fn apply(&mut self, action: Action) -> bool {
@@ -733,9 +836,13 @@ impl View for Screen {
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
         let at_startup = &self.at_startup;
-        let collecting = self.shown.collecting;
+        let collecting = self.shown.collecting.as_ref();
+        // Read here rather than passed in: this is the instant the frame is
+        // drawn at, and both a project's age and the frame its mark is on are
+        // measured against it.
+        let now = Utc::now();
         self.terminal
-            .draw(|frame| paint(frame, forest, tail, showing, at_startup, collecting))?;
+            .draw(|frame| paint(frame, forest, tail, showing, at_startup, collecting, now))?;
         Ok(())
     }
 }
@@ -760,6 +867,7 @@ mod tests {
     use ratatui::widgets::Block;
     use ratatui::Terminal;
     use std::collections::BTreeMap;
+    use std::time::Instant;
 
     /// Long enough that a thread which was going to report has, and short
     /// enough that a test waiting in vain is not a hang.
@@ -799,7 +907,11 @@ mod tests {
         applied: Vec<Action>,
         clicked: Vec<u16>,
         collected: usize,
-        collecting: usize,
+        /// What the view was told is being read, in the order it was told.
+        /// What and not how many: a project line answers for its own rows, so
+        /// a test that only counted could not tell a refresh of one project
+        /// from a refresh of the lot.
+        collecting: Vec<Option<Wanted>>,
         drawn: usize,
         showing: Vec<Showing>,
         /// What a click reports back, for the tests about a click that lands
@@ -812,9 +924,16 @@ mod tests {
             self.collected += 1;
         }
 
-        fn collecting(&mut self) -> bool {
-            self.collecting += 1;
+        fn collecting(&mut self, wanted: Option<&Wanted>) -> bool {
+            self.collecting.push(wanted.cloned());
             true
+        }
+
+        /// The same rule `Shown` keeps, so a loop test is asking the loop
+        /// what it asks a real screen: a collection in flight is a frame
+        /// away from being out of date, and this view has no ages on it.
+        fn holds_for(&self) -> Option<Duration> {
+            self.collecting.last()?.as_ref().map(|_| phrase::FRAME)
         }
 
         fn apply(&mut self, action: Action) -> bool {
@@ -852,6 +971,14 @@ mod tests {
             reported,
             due: VecDeque::new(),
         }
+    }
+
+    /// The instant a test frame is drawn at. Nothing in these fixtures has
+    /// been read, so no line quotes it; it is here because a frame is always
+    /// drawn at some instant and a test must not pick a moving one.
+    fn an_instant() -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap()
     }
 
     fn atlas() -> Wanted {
@@ -1210,7 +1337,11 @@ mod tests {
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
-        assert_eq!(view.collecting, 1, "the view was told a collection began");
+        assert_eq!(
+            view.collecting,
+            [Some(Wanted::Everything)],
+            "the view was told a collection began, and over which projects"
+        );
         assert_eq!(view.drawn, 2, "the first frame, and one for the keystroke");
     }
 
@@ -1225,8 +1356,77 @@ mod tests {
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
-        assert_eq!(view.collecting, 1);
+        assert_eq!(view.collecting, [Some(atlas())]);
         assert_eq!(view.drawn, 2);
+    }
+
+    // ---- the mark on a collecting project turns ---------------------------
+
+    /// `bdi-7ao.43` drove the loop on a pty at `9cb221d`: with `bd` stubbed to
+    /// hang, `bdi` wrote 64 bytes once, at +0.018s, and never again in 35
+    /// seconds, while still answering keys in 21 ms. A collection reports
+    /// nothing until it is done, so nothing was ever going to redraw the mark
+    /// but a deadline of the loop's own.
+    #[test]
+    fn a_wait_gives_up_when_what_is_drawn_stops_being_true() {
+        // An event well after the deadline, so a wait that kept none answers
+        // with that instead of never answering at all: a loop that stopped
+        // redrawing must fail here rather than hang.
+        let (send, events) = mpsc::channel();
+        thread::spawn(move || {
+            thread::sleep(phrase::FRAME * 8);
+            let _ = send.send(Event::Resize);
+        });
+        let began = Instant::now();
+
+        let waited = wait(&events, Some(phrase::FRAME));
+
+        assert!(matches!(waited, Some(Waited::Aged)));
+        assert!(began.elapsed() >= phrase::FRAME, "{:?}", began.elapsed());
+    }
+
+    /// And only where something is going to go stale. A screen that says
+    /// nothing time can falsify is woken by events alone: this returns the
+    /// event rather than a deadline that would have come first.
+    #[test]
+    fn a_wait_on_a_screen_nothing_can_stale_sleeps_until_an_event() {
+        let (send, events) = mpsc::channel();
+        thread::spawn(move || {
+            thread::sleep(phrase::FRAME * 3);
+            let _ = send.send(Event::Resize);
+        });
+
+        assert!(matches!(
+            wait(&events, None),
+            Some(Waited::Event(Event::Resize))
+        ));
+    }
+
+    /// The deadline running out is not an event: nothing has happened, so the
+    /// loop draws the screen as it now is and asks the view nothing.
+    #[test]
+    fn a_frame_running_out_redraws_the_screen_and_nothing_else() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let (send, events) = mpsc::channel();
+        send.send(Event::Changed(atlas()))
+            .expect("the loop's end of the channel is open");
+        // Long enough for several frames, and bounded so a loop that never
+        // turned still ends rather than hanging the suite.
+        thread::spawn(move || {
+            thread::sleep(phrase::FRAME * 4);
+            let _ = send.send(Event::Key(key(KeyCode::Char('q'))));
+        });
+
+        drive(&mut view, &events, &ask).expect("the loop runs");
+
+        assert!(
+            view.drawn > 2,
+            "the first frame, the collection starting, and the mark turning: {}",
+            view.drawn
+        );
+        assert_eq!(view.collecting, [Some(atlas())], "no second collection");
+        assert_eq!(view.applied, [], "and no action for a frame running out");
     }
 
     /// A request that arrived mid-collection is sent the moment the one in
@@ -1246,15 +1446,22 @@ mod tests {
         drive(&mut view, &events, &ask).expect("the loop runs");
 
         assert_eq!(
-            view.collecting, 2,
+            view.collecting,
+            [Some(atlas()), Some(ferry())],
             "the one the event asked for, and the one that waited behind it"
         );
         assert_eq!(view.collected, 1);
     }
 
     /// A collection coming back with nothing waiting behind it leaves the
-    /// view resting. Saying otherwise would leave `collecting` on the screen
-    /// until the next refresh, over rows that had already arrived.
+    /// view resting. Saying otherwise would leave a mark turning on the
+    /// project's line until the next refresh, over rows that had already
+    /// arrived.
+    ///
+    /// The snapshot arriving is the end of the collection that produced it,
+    /// and this is where that is said. The view is told what is in flight
+    /// after every collection ends, so nothing it holds has to be unset by
+    /// the arrival of rows.
     #[test]
     fn a_collection_with_nothing_behind_it_leaves_the_view_resting() {
         let mut view = Recorder::default();
@@ -1266,7 +1473,11 @@ mod tests {
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
-        assert_eq!(view.collecting, 1, "only the one the event asked for");
+        assert_eq!(
+            view.collecting,
+            [Some(atlas()), None],
+            "the one the event asked for, and nothing once it landed"
+        );
     }
 
     /// A request made while a collection is running is kept rather than sent,
@@ -1279,7 +1490,11 @@ mod tests {
 
         drive(&mut view, &events, &ask).expect("the loop runs");
 
-        assert_eq!(view.collecting, 1, "the second only waited its turn");
+        assert_eq!(
+            view.collecting,
+            [Some(atlas())],
+            "the second only waited its turn"
+        );
         assert_eq!(view.drawn, 2, "and the screen did not change for it");
     }
 
@@ -2055,7 +2270,7 @@ mod tests {
     ) -> Vec<String> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
-            .draw(|frame| paint(frame, forest, tail, showing, &[], false))
+            .draw(|frame| paint(frame, forest, tail, showing, &[], None, an_instant()))
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
         (0..height)
@@ -2129,26 +2344,97 @@ mod tests {
     }
 
     /// The screen opens on a snapshot already collected, so there is nothing
-    /// to say is running. Opening on `collecting` would put a word on the
-    /// foot that only the next refresh could take off.
+    /// to say is running. Opening on a collection would set a mark turning on
+    /// every project line that only the next refresh could take off.
     #[test]
     fn a_screen_opens_over_a_collection_that_has_already_finished() {
-        assert!(!shown(a_snapshot()).collecting);
+        assert_eq!(shown(a_snapshot()).collecting, None);
     }
 
-    /// The pair the foot rests on: a collection is said while it runs and
-    /// unsaid the moment its snapshot lands. Left standing it would claim a
-    /// read was running over rows that had already arrived, until the next
-    /// one came back.
+    /// What is being read, not whether something is: each project line
+    /// answers for its own rows, so the screen is told the collection's own
+    /// `Wanted` and asks that which projects it names.
     #[test]
-    fn a_collection_is_said_while_it_runs_and_unsaid_when_it_lands() {
+    fn a_screen_holds_what_the_collection_in_flight_is_reading() {
         let mut shown = shown(a_snapshot());
 
-        shown.collecting();
-        assert!(shown.collecting);
+        shown.collecting(Some(&atlas()));
+        assert_eq!(shown.collecting, Some(atlas()));
 
-        shown.collected(a_snapshot());
-        assert!(!shown.collecting);
+        shown.collecting(None);
+        assert_eq!(shown.collecting, None);
+    }
+
+    /// The loop draws on a change and this is what it asks. Told again what
+    /// it already says, the screen is no different and a redraw would put
+    /// the same frame back — which a collection queued behind another does
+    /// whenever the two name the same projects.
+    #[test]
+    fn a_screen_told_again_what_it_already_says_reports_no_change() {
+        let mut shown = shown(a_snapshot());
+
+        assert!(shown.collecting(Some(&atlas())), "None to one project");
+        assert!(!shown.collecting(Some(&atlas())), "the same project again");
+        assert!(shown.collecting(Some(&ferry())), "one project to another");
+        assert!(shown.collecting(None), "and back to nothing running");
+        assert!(!shown.collecting(None), "which is also said only once");
+    }
+
+    /// `codex review` on this change, and it is right: the foot said
+    /// `collected 10:21:44`, which is true for as long as it is on the
+    /// screen. An age is not. A `bdi` whose projects are all reported for
+    /// polls nothing, so with no work moving it would sit saying `0s ago`
+    /// for as long as the reader left it.
+    #[test]
+    fn a_screen_at_rest_over_a_read_goes_stale_and_says_when() {
+        let mut snapshot = a_snapshot();
+        let read = an_instant();
+        snapshot.read_at.insert("orbital".to_string(), read);
+
+        let shown = shown(snapshot);
+
+        assert_eq!(
+            shown.holds_for(read + chrono::TimeDelta::milliseconds(250)),
+            Some(Duration::from_millis(750)),
+            "the second it is saying is three quarters over"
+        );
+    }
+
+    /// The soonest of them, because the newest read is the one whose words
+    /// change first and the line must not be wrong in between.
+    #[test]
+    fn a_screen_holds_only_as_long_as_its_newest_read_does() {
+        let mut snapshot = a_snapshot();
+        let read = an_instant();
+        snapshot.read_at.insert("ferry".to_string(), read);
+        snapshot
+            .read_at
+            .insert("orbital".to_string(), read - chrono::TimeDelta::hours(2));
+
+        let shown = shown(snapshot);
+
+        assert_eq!(
+            shown.holds_for(read + chrono::TimeDelta::seconds(4)),
+            Some(Duration::from_secs(1)),
+            "the four-second-old read, not the two-hour-old one"
+        );
+    }
+
+    /// A collection in flight is the shortest answer there is and the same
+    /// for every project, so it is the whole of it while one runs.
+    #[test]
+    fn a_screen_with_a_collection_on_it_holds_for_one_frame() {
+        let mut shown = shown(a_snapshot());
+        shown.collecting(Some(&atlas()));
+
+        assert_eq!(shown.holds_for(an_instant()), Some(phrase::FRAME));
+    }
+
+    /// Nothing read and nothing running: there is no age on the screen, so
+    /// there is nothing for time alone to falsify and no reason to wake.
+    #[test]
+    fn a_screen_no_project_has_been_read_for_stays_true_however_long_it_is_left() {
+        assert_eq!(shown(a_snapshot()).holds_for(an_instant()), None);
     }
 
     /// Where the cursor is, by the bead its line carries. `Forest` does not
