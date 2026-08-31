@@ -93,6 +93,7 @@ pub fn draw(
             &notices(forest.snapshot().herdr, at_startup),
             Freshness::of(&forest.snapshot().read_at, collecting),
             keys,
+            bands.keys.width as usize,
         ),
         bands.keys,
     );
@@ -631,10 +632,19 @@ pub fn line_at(forest: Rect, selected: usize, lines: usize, row: u16) -> Option<
 /// screen with no room for it has spent the columns on the more useful
 /// things.
 ///
+/// `width` is what this row will be drawn into. Choosing which words to say
+/// is a different job from cutting the words chosen, and only the first of
+/// them belongs here.
+///
 /// Nothing here knows what produced a notice. That is the point: a snapshot
 /// and this process both reach the screen through the same list, and the next
 /// thing that has something to say joins them by being one.
-pub fn status_bar(notices: &[Notice], how_fresh: Option<Freshness>, keys: &str) -> Fitted {
+pub fn status_bar(
+    notices: &[Notice],
+    how_fresh: Option<Freshness>,
+    keys: &str,
+    width: usize,
+) -> Fitted {
     let keys = Span::raw(keys.to_string());
     // Drawn plain and dim: it is what a reader glances at to place the rest,
     // not one of the things the rest is asking them to look at.
@@ -652,18 +662,54 @@ pub fn status_bar(notices: &[Notice], how_fresh: Option<Freshness>, keys: &str) 
         return Fitted::new(vec![keys], how_fresh, Vec::new()).title_or_nothing();
     }
 
-    let said = notices
-        .iter()
-        .map(|notice| format!("{WARNING} {}", phrase::notice(*notice)))
-        .collect::<Vec<_>>()
-        .join(&" ".repeat(GAP));
-
     Fitted::new(
-        vec![Span::styled(said, Style::new().fg(LOOK_AT_THIS))],
+        vec![Span::styled(
+            said(notices, width),
+            Style::new().fg(LOOK_AT_THIS),
+        )],
         how_fresh,
         vec![keys],
     )
     .title_or_nothing()
+}
+
+/// Every notice the foot carries, in the fullest words that let all of them
+/// still be said.
+///
+/// Words are given up before facts are, and from the end, which is the order
+/// the notices themselves are given up in: the notice the caller put first
+/// keeps its full phrase longest, because it is the one that costs the reader
+/// most. Neither phrase fits in full on a forty-column screen, so there they
+/// all speak briefly and all of them are still there.
+///
+/// Being cut is the one thing a notice must not be. The mark a cut leaves is
+/// the mark any long line gets, so a severed warning reads as a sentence that
+/// ran out of room rather than as a fact the reader has lost — and a foot with
+/// two notices on it can be cut before the second one has begun.
+fn said(notices: &[Notice], width: usize) -> String {
+    let mut words = notices
+        .iter()
+        .map(|notice| phrase::notice(*notice))
+        .collect::<Vec<_>>();
+
+    for (at, notice) in notices.iter().enumerate().rev() {
+        if columns(&[Span::raw(marked(&words))]) <= width {
+            break;
+        }
+        words[at] = phrase::brief_notice(*notice);
+    }
+
+    marked(&words)
+}
+
+/// The notices as one run of text, each behind the mark that says it is a
+/// warning and clear of the one before it.
+fn marked(words: &[&'static str]) -> String {
+    words
+        .iter()
+        .map(|said| format!("{WARNING} {said}"))
+        .collect::<Vec<_>>()
+        .join(&" ".repeat(GAP))
 }
 
 #[cfg(test)]
@@ -1687,7 +1733,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = drawn(status_bar(&[], None, A_KEY_ROW), 60, 1);
+        let drawn = drawn(status_bar(&[], None, A_KEY_ROW, 60), 60, 1);
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -1698,7 +1744,7 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW), 90, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 90), 90, 1);
 
         assert!(
             drawn[0].contains(phrase::notice(Notice::NoHerdr)),
@@ -1713,7 +1759,7 @@ mod tests {
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
         let drawn = drawn(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW),
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 90),
             90,
             1,
         );
@@ -1734,6 +1780,7 @@ mod tests {
                 &[Notice::NoHerdr, Notice::NoInboundChannel],
                 None,
                 A_KEY_ROW,
+                200,
             ),
             200,
             1,
@@ -1745,16 +1792,18 @@ mod tests {
     }
 
     /// The order the caller gives is the order the foot gives up, so a screen
-    /// with room for one keeps the one that costs the reader most.
+    /// with room for one full phrase keeps it for the notice that costs the
+    /// reader most. What the other gives up is its words, not its place.
     #[test]
-    fn a_narrow_foot_gives_up_the_last_notice_first() {
+    fn a_narrow_foot_gives_up_the_last_notices_words_first() {
         let drawn = drawn(
             status_bar(
                 &[Notice::NoHerdr, Notice::NoInboundChannel],
                 None,
                 A_KEY_ROW,
+                80,
             ),
-            60,
+            80,
             1,
         );
 
@@ -1762,10 +1811,7 @@ mod tests {
             drawn[0].contains(phrase::notice(Notice::NoHerdr)),
             "{drawn:?}"
         );
-        assert!(
-            !drawn[0].contains(phrase::notice(Notice::NoInboundChannel)),
-            "{drawn:?}"
-        );
+        assert!(drawn[0].contains("polled, not reported"), "{drawn:?}");
     }
 
     // ---- how fresh the screen is ------------------------------------------
@@ -1779,7 +1825,7 @@ mod tests {
         let at = Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap();
 
         let drawn = drawn(
-            status_bar(&[], Some(Freshness::Collected(at)), A_KEY_ROW),
+            status_bar(&[], Some(Freshness::Collected(at)), A_KEY_ROW, 90),
             90,
             1,
         );
@@ -1796,7 +1842,7 @@ mod tests {
     #[test]
     fn the_foot_says_while_a_collection_is_running() {
         let drawn = drawn(
-            status_bar(&[], Some(Freshness::Collecting), A_KEY_ROW),
+            status_bar(&[], Some(Freshness::Collecting), A_KEY_ROW, 90),
             90,
             1,
         );
@@ -1814,18 +1860,19 @@ mod tests {
     #[test]
     fn a_narrow_foot_gives_up_the_clock_before_a_notice_or_the_keys() {
         let at = Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap();
-        let foot = || {
+        let foot = |width| {
             status_bar(
                 &[Notice::NoHerdr],
                 Some(Freshness::Collected(at)),
                 A_KEY_ROW,
+                width,
             )
         };
 
-        let roomy = drawn(foot(), 130, 1);
+        let roomy = drawn(foot(130), 130, 1);
         assert!(roomy[0].contains("collected"), "{roomy:?}");
 
-        let narrow = drawn(foot(), 110, 1);
+        let narrow = drawn(foot(110), 110, 1);
         assert!(!narrow[0].contains("collected"), "{narrow:?}");
         assert!(
             narrow[0].contains(phrase::notice(Notice::NoHerdr)),
@@ -1856,6 +1903,61 @@ mod tests {
                     phrase::freshness(Freshness::Collected(read_at()))
                 ),
             ]
+        );
+    }
+
+    /// The bead this was written for. On the narrowest supported screen
+    /// neither phrase fits in full, so a foot that could only cut told the
+    /// reader nothing: `NoHerdr` was severed mid-sentence and `NoInboundChannel`
+    /// never began. The mark a cut leaves is the mark any long line gets, so
+    /// there was nothing on screen to say either fact had been lost.
+    #[test]
+    fn the_narrowest_screen_still_says_the_view_is_polled() {
+        let drawn = drawn(
+            status_bar(
+                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                None,
+                A_KEY_ROW,
+                40,
+            ),
+            40,
+            1,
+        );
+
+        assert_eq!(drawn[0], "⚠ agents unknown  ⚠ polled, not reported");
+    }
+
+    /// A second `bdi` on a machine whose herdr is well: one notice, and in
+    /// full it is wider than a side-by-side pane. The words a cut took were
+    /// the ones that say what it costs the reader, because a cut takes the
+    /// end.
+    #[test]
+    fn a_lone_notice_too_wide_for_the_row_is_said_briefly() {
+        let drawn = drawn(
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
+            60,
+            1,
+        );
+
+        assert!(drawn[0].starts_with("⚠ polled, not reported"), "{drawn:?}");
+    }
+
+    /// A notice is drawn in the colour that asks to be looked at, and saying
+    /// it in fewer words does not make it something else. `drawn` reads
+    /// symbols and is blind to styling, so this asks `painted`.
+    #[test]
+    fn a_notice_said_briefly_is_still_painted_as_a_warning() {
+        let painted = painted(
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
+            60,
+        );
+
+        assert!(
+            painted
+                .iter()
+                .any(|(said, colour)| said.contains("polled, not reported")
+                    && *colour == LOOK_AT_THIS),
+            "{painted:?}"
         );
     }
 
@@ -1890,7 +1992,7 @@ mod tests {
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW), 60, 1);
+        let drawn = drawn(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 60), 60, 1);
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);

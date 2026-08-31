@@ -42,6 +42,20 @@ pub fn notice(notice: Notice) -> &'static str {
     }
 }
 
+/// The same fact in the fewest words that still carry it, for a foot with no
+/// room to say it in full.
+///
+/// The narrowest supported screen is forty columns and neither full phrase
+/// fits in one on its own, so a foot without these has nothing to fall back
+/// to but a cut — and a cut takes the end, which is where both phrases keep
+/// what the fact costs the reader.
+pub fn brief_notice(notice: Notice) -> &'static str {
+    match notice {
+        Notice::NoHerdr => "agents unknown",
+        Notice::NoInboundChannel => "polled, not reported",
+    }
+}
+
 /// How fresh the rows on the screen are.
 ///
 /// The clock is the reader's own rather than the model's UTC: the question it
