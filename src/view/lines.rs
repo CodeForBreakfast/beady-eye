@@ -298,9 +298,16 @@ pub(crate) fn notes_of(tree: &Tree) -> Vec<Note> {
     if !tree.cycles.is_empty() {
         notes.push(Note::Cycle(tree.cycles.len()));
     }
-    let truncated = tree.nodes.iter().filter(|node| node.truncated).count();
-    if truncated > 0 {
-        notes.push(Note::Truncated(truncated));
+    // A bead the tracker stopped at is one bead however many ways down the
+    // tree draws it, and the note says beads.
+    let truncated: BTreeSet<&str> = tree
+        .nodes
+        .iter()
+        .filter(|node| node.truncated)
+        .map(|node| node.id.as_str())
+        .collect();
+    if !truncated.is_empty() {
+        notes.push(Note::Truncated(truncated.len()));
     }
     notes
 }

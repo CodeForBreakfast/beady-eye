@@ -1186,6 +1186,24 @@ mod tests {
        "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
     ]"#;
 
+    /// One bead the tracker stopped at, reached two ways. `wei-2` holds up
+    /// both soundings, so it is drawn beneath each of them and the tree holds
+    /// two rows over the one bead `bd` would not go past.
+    const SHARED_TRUNCATED: &str = r#"[
+      {"id":"wei-1","title":"rebuild the weir","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"wei-1.1","title":"sound the north sill","status":"open",
+       "dependencies":[{"depends_on_id":"wei-1","type":"parent-child"},
+                       {"depends_on_id":"wei-2","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"wei-1.2","title":"sound the south sill","status":"open",
+       "dependencies":[{"depends_on_id":"wei-1","type":"parent-child"},
+                       {"depends_on_id":"wei-2","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"wei-2","title":"gauge the flow","status":"open",
+       "priority":2,"issue_type":"task","truncated":true}
+    ]"#;
+
     /// One tree, with the subtree at `id` put back on the end so the tree
     /// draws it twice.
     ///
@@ -2658,6 +2676,27 @@ credential_command = "secret harbour"
         );
     }
 
+    /// The note under a tree counts the beads `bd` stopped at, and one it
+    /// stopped at is one bead however many ways down the tree draws it. The
+    /// count stands for work outside the tree, so counting the rows would say
+    /// there is more of it out there than there is.
+    ///
+    /// What the number is called is pinned where the note is drawn: this says
+    /// how many, `a_note_names_the_beads_the_tracker_stopped_at` says of what.
+    #[test]
+    fn a_bead_the_tracker_stopped_at_is_noted_once_however_often_it_is_drawn() {
+        let forest = flatten(&alone("orbital", SHARED_TRUNCATED, &[]));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital",
+                "  └─▸ ◐ wei-1 rebuild the weir",
+                "      └── ! Truncated(1)",
+            ]
+        );
+    }
+
     /// A branch that is finished all the way down is one line saying so: the
     /// glyph is its own closed status, the fraction says every bead beneath it
     /// is closed too, and the shut marker says it still holds them.
@@ -3537,12 +3576,16 @@ credential_command = "secret harbour"
         Reported {
             dangling: snapshot.trees.iter().map(|t| t.dangling.len()).sum(),
             cycles: snapshot.trees.iter().map(|t| t.cycles.len()).sum(),
+            // Beads, not rows: the screen counts a bead the tracker stopped
+            // at once however many ways down there are to it.
             truncated: snapshot
                 .trees
                 .iter()
                 .flat_map(|tree| &tree.nodes)
                 .filter(|node| node.truncated)
-                .count(),
+                .map(|node| node.id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
             conflicts: snapshot.conflicts.len(),
             failed_projects: snapshot.failed_projects.len(),
             loose_panes: snapshot.unattributed.len(),

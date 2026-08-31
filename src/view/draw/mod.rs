@@ -384,6 +384,24 @@ mod tests {
         assert_eq!(painted[1].1, LOOK_AT_THIS);
     }
 
+    /// A note's count is a count of beads, and the word is what says so. It
+    /// is written out here rather than asked of `phrase`, because a count
+    /// corrected by renaming what it counts would leave every test that reads
+    /// the number alone green.
+    #[test]
+    fn a_note_names_the_beads_the_tracker_stopped_at() {
+        let drawn = drawn(
+            fitted(&under(LAST, Content::Note(Note::Truncated(1))), 0),
+            96,
+            1,
+        );
+
+        says(
+            &drawn[0],
+            "1 bead the tracker stopped at · what hangs beneath it is not in this tree",
+        );
+    }
+
     /// Every other note is a fault and wears a warning. Nothing went wrong in
     /// a forest with no work left in it, and a warning over that reads as one
     /// — so it is drawn plain, in one colour the whole way across.
