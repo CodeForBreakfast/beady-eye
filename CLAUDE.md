@@ -36,7 +36,7 @@ query` and `herdr agent list` put on the wire.
 
 Two things to know before writing a test:
 
-A test about colour asks `painted()` in `view/draw.rs`. Its neighbour `drawn()`
+A test about colour asks `painted()` in `view/draw/`. Its neighbour `drawn()`
 reads `symbol()` only and is blind to styling, which is how a colour bug
 shipped. `tui/` has a `painted()` of its own that is no better: it is named
 for the `paint()` it calls, returns symbols, and sees no colour either.
@@ -54,7 +54,7 @@ switches Rust's own dead-code lint off across the crate.
 - `model/` joins the two into a snapshot: the tree, its badges, and the
   anomalies where the two sources disagree.
 - `view/` turns a snapshot into rows and draws them — `forest.rs` is the
-  scrollable tree, `draw.rs` the widgets, `phrase.rs` every word `bdi` shows.
+  scrollable tree, `draw/` the widgets, `phrase.rs` every word `bdi` shows.
 - `tui/` and `app.rs` run the loop and own the terminal.
 
 `docs/design.md` is the spec, and a starting point rather than gospel — we
