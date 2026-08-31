@@ -70,22 +70,8 @@ Commit before you run `nix flake check`. Untracked files are invisible to it, so
 a green check on a dirty tree has not compiled your new files, and `Git tree is
 dirty` is the only warning you get.
 
-Squash against a base SHA you recorded at the start, or `$(git merge-base HEAD
-origin/main)` if you did not, and read `git diff origin/main HEAD --stat` before
-pushing — every file in it must be yours. Never squash with `git reset --soft
-origin/main`: that ref moves under you in a shared `.git`, and it has silently
-reverted a landed feature while the ancestry was right, the rebase succeeded,
-the push fast-forwarded and the tests stayed green. The file list was the only
-signal. A fixed finding that reappears is a revert until proved otherwise.
-
-Fetch immediately before you read that `--stat`, not before the test run: the
-gate measures the moment you push, and a reading taken before a long job does
-not describe the state after it. If it then lists files you did not write,
-rebase onto what you just fetched and read it again before you go looking for
-what you broke: being behind and the `reset --soft` revert above make the same
-shape, every inverted file theirs and none of them yours, and only the rebase
-separates them. What survives it is the real thing, and a rejected push is the
-gate working.
+Keep up to date with `origin/main` as you go, and squash onto it when you are
+done.
 
 Mutation-test before you trust a green — every seat that has done so found a
 real hole. `--in-diff` scopes it to your own change, which is the difference
