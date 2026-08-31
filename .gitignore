@@ -8,11 +8,20 @@ result
 result-*
 .direnv/
 
-# beads: credentials never leave the machine
+# beads: the maintainers' tracker is not part of this repository. Contributors
+# file GitHub issues instead; see CLAUDE.md. This entry is tracked rather than
+# left to .git/info/exclude so it travels with the clone — `cargo publish`
+# uploads the git-tracked tree from a maintainer's machine, and that is exactly
+# the machine with a populated .beads/.
+/.beads/
+
+# Maintainer-local: credentials, the tracker-aware shell selection, and the
+# notes that go with them. Never leave the machine.
 .env.local
+.envrc.local
+CLAUDE.local.md
 .beads-credential-key
 
-# Beads / Dolt files (added by bd init)
+# Dolt files (added by bd init)
 .dolt/
 *.db
-.beads/proxieddb/

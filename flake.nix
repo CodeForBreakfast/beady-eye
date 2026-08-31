@@ -7,9 +7,10 @@
     # Beads ships its own flake. Do not add inputs.nixpkgs.follows here — beads
     # needs Go 1.26 and this flake's nixpkgs carries an older toolchain.
     #
-    # This tracker was created at 1.2.2 and is the only one on the shared server
-    # at that version; the others are v53 stores created at 1.1.2. Moving this
-    # pin moves the store, so treat it as a schema decision.
+    # Every check builds bd, so this pin is not maintainer-only the way it is in
+    # a repository that keeps bd out of its contributor path. It is also the
+    # schema version the maintainers' tracker was created at, so moving it moves
+    # that store — treat it as a schema decision, not a version bump.
     beads.url = "github:gastownhall/beads/v1.2.2";
   };
 
@@ -50,6 +51,18 @@
 
         beady-eye = beadyEyeFor pkgs;
 
+        # Everything needed to build, test and lint the crate. The tracker
+        # client is not here — that is a maintainer's tool, not a
+        # contributor's.
+        rustTools = [
+          pkgs.git
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.rustfmt
+          pkgs.clippy
+          pkgs.rust-analyzer
+        ];
+
         # A check runs against the same source and the same vendored crates as
         # the build, so the two cannot drift apart.
         checkOf = name: tools: command:
@@ -64,49 +77,54 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = [
-            pkgs.git
-
-            # Issue tracker. Pinned so every shell resolves the same binary as
-            # the tracker's schema; the ambient bd on PATH is a different build.
-            beads.packages.${system}.bd
-
-            pkgs.cargo
-            pkgs.rustc
-            pkgs.rustfmt
-            pkgs.clippy
-            pkgs.rust-analyzer
-          ];
+          buildInputs = rustTools;
 
           shellHook = ''
-            # Pin bd to this repo's .beads dir so it works from any
-            # subdirectory. $PWD snapshots at shell entry (nix develop launches
-            # in the project root), so this stays correct after cd elsewhere —
-            # and stops a bare bd from inheriting another project's BEADS_DIR.
-            export BEADS_DIR="$PWD/.beads"
-
-            # Disable bd's smart remote-migrate gate. It is the only verdict
-            # that can permit an in-place schema migration of a shared server,
-            # and nothing here should ever migrate one — the tracker's server
-            # is shared.
-            export BD_SMART_GATE=0
-
             # The banner is diagnostic, so it goes where nix puts its own
             # diagnostics. On stdout it corrupts every `nix develop -c … --json`
             # a caller pipes into a parser.
             echo "👁  beady-eye Development Shell" >&2
+          '';
+        };
+
+        # The default shell plus `bd`, the client for the maintainers' issue
+        # tracker. That tracker is not part of this repository — contributors
+        # file GitHub issues instead, see CLAUDE.md — so `bd` and everything
+        # that points it at a tracker live here rather than in `default`, and
+        # entering this shell is opt-in. Select it locally with an untracked
+        # `.envrc.local` containing `use flake .#maintainer`.
+        devShells.maintainer = pkgs.mkShell {
+          buildInputs = rustTools ++ [ beads.packages.${system}.bd ];
+
+          shellHook = ''
+            # Neither the tracker's coordinates nor its password are checked
+            # in any more, so a worktree has none of its own to find. Both live
+            # in the main checkout; resolve it once and read both from there.
+            main_checkout="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+
+            # Point every worktree at the one .beads/ — the same thing bd's own
+            # worktree support does with a redirect file — rather than let each
+            # keep a copy that can drift. Setting this at all is also what
+            # stops a bare bd from inheriting another project's BEADS_DIR.
+            export BEADS_DIR="$main_checkout/.beads"
+
+            # Disable bd's smart remote-migrate gate. It is the only verdict
+            # that can permit an in-place schema migration of a shared server,
+            # and nothing here should ever migrate one.
+            export BD_SMART_GATE=0
+
+            echo "👁  beady-eye maintainer shell" >&2
             # Print where bd resolved from, not just what it claims to be — a
             # version alone cannot distinguish this shell's bd from PATH's.
             echo "beads: $(bd --version) ($(command -v bd))" >&2
 
-            # BEADS_DOLT_PASSWORD lives here; the file is gitignored and 0600.
-            if [ -f .env.local ]; then
+            if [ -f "$main_checkout/.env.local" ]; then
               set -a
-              source .env.local
+              source "$main_checkout/.env.local"
               set +a
               echo "✅ Loaded environment from .env.local" >&2
             else
-              echo "⚠️  no .env.local — bd cannot authenticate to tracker.example.invalid" >&2
+              echo "⚠️  no .env.local — bd cannot authenticate to the tracker" >&2
             fi
           '';
         };

@@ -58,21 +58,24 @@ through that project's commy channel instead.
 
 ## Tracker and packaging
 
-The tracker is live: prefix `bdi`, database `beady-eye` on
-`tracker.example.invalid:3306`, a tenant on a shared Dolt
-server. Schema v53.
+The maintainers track work in a [bd (beads)](https://github.com/gastownhall/beads)
+tracker that is not part of this repository — external contributors don't need
+it and should use GitHub issues instead. `.beads/` is gitignored, and nothing
+tracked here names the tracker, its server or its credentials.
 
-Use the dev shell — `nix develop`, or direnv. It pins bd 1.2.2 and scopes
-`BEADS_DIR` to this repo, so a bare `bd` from an ambient shell may resolve a
-different binary or another project's tracker. `.envrc` loads `.env.local` for
-`BEADS_DOLT_PASSWORD` (0600, gitignored); recover it from the cluster with
-`kubectl --context admin@cluster -n dolt get secret tracker-sql-users -o jsonpath='{.data.beady-eye}' | base64 -d`.
+A maintainer opts in with an untracked `.envrc.local` holding
+`use flake .#maintainer`. That shell adds the pinned `bd` and scopes
+`BEADS_DIR` to this repo, so a bare `bd` from an ambient shell cannot resolve a
+different binary or another project's tracker; the password comes from an
+untracked `.env.local`, 0600. Server coordinates, how to recover that password,
+and the tracker's operational notes live in `CLAUDE.local.md`, untracked
+alongside them.
 
-bd's auto-backup is off: the tenant SQL user is DB-scoped and cannot register a
-server-side backup remote. Recovery is the cluster DB's own nightly backup.
+`bd` is in the contributor path too, but only as a build input: `nix flake
+check` needs the binary because `tests/no_config.rs` runs `bdi` as a fresh
+machine would. That is the tool under test, not a tracker.
 
-Packaging `bdi` into the NixOS config is tracked separately, in that project, as
-`nix-b8et4`.
+Packaging `bdi` into the NixOS config is tracked separately, in that project.
 
 ## Names, checked 2026-08-30
 

@@ -3,10 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    # The tracker writes to .beads on main constantly. Those commits change no
-    # code, so they must not spend a runner.
-    paths-ignore:
-      - '.beads/**'
 
 permissions:
   contents: read
