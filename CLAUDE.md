@@ -78,6 +78,15 @@ reverted a landed feature while the ancestry was right, the rebase succeeded,
 the push fast-forwarded and the tests stayed green. The file list was the only
 signal. A fixed finding that reappears is a revert until proved otherwise.
 
+Fetch immediately before you read that `--stat`, not before the test run: the
+gate measures the moment you push, and a reading taken before a long job does
+not describe the state after it. If it then lists files you did not write,
+rebase onto what you just fetched and read it again before you go looking for
+what you broke: being behind and the `reset --soft` revert above make the same
+shape, every inverted file theirs and none of them yours, and only the rebase
+separates them. What survives it is the real thing, and a rejected push is the
+gate working.
+
 Mutation-test before you trust a green — every seat that has done so found a
 real hole. `--in-diff` scopes it to your own change, which is the difference
 between two minutes and unrunnable, and it wants a cap: `systemd-run --user
