@@ -822,10 +822,10 @@ mod tests {
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
-    /// Orbital's tree as bd writes it. `orb-7.7` declares a parent no row
-    /// holds, so it is re-parented onto the root; `orb-7.1.2` is a node bd
-    /// stopped at; `orb-7.4` is closed with a pane still on it, and the other
-    /// three closed siblings are finished.
+    /// Orbital's tree as bd writes it. `orb-7.7` waits on a bead no row holds,
+    /// so the tree reports it; `orb-7.1.2` is a node bd stopped at; `orb-7.4`
+    /// is closed with a pane still on it, and the other three closed siblings
+    /// are finished.
     const ORBITAL: &str = r#"[
       {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent_id":"",
        "priority":1,"issue_type":"epic","updated_at":"2026-08-29T12:00:00Z",
@@ -845,8 +845,10 @@ mod tests {
        "metadata":{"agent_pane":"w:p2"}},
       {"id":"orb-7.5","title":"set the guard rail","status":"closed","parent_id":"orb-7",
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
-      {"id":"orb-7.7","title":"log the survey marks","status":"open","parent_id":"orb-6",
-       "priority":2,"issue_type":"task"}
+      {"id":"orb-7.7","title":"log the survey marks","status":"open",
+       "priority":2,"issue_type":"task",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"},
+                       {"depends_on_id":"orb-6","type":"blocks"}]}
     ]"#;
 
     /// Harbour's tree. Nobody is working in it, so the live-agent filter hides
@@ -2943,10 +2945,15 @@ credential_command = "secret harbour"
 
     /// The filter's choice holds — a hidden tree is not drawn — but a group
     /// that says only how many trees it hides reads like "nothing to see"
-    /// when one of them has a broken parent chain.
+    /// when one of them is waiting on work bd never returned.
     #[test]
     fn the_hidden_trees_group_says_how_many_of_them_have_findings() {
-        let broken = HARBOUR.replace(r#""parent_id":"hbr-3""#, r#""parent_id":"hbr-9""#);
+        let broken = HARBOUR.replace(
+            r#""parent_id":"hbr-3""#,
+            r#""parent_id":"hbr-3","dependencies":[
+                 {"depends_on_id":"hbr-3","type":"parent-child"},
+                 {"depends_on_id":"hbr-9","type":"blocks"}]"#,
+        );
         let snapshot = gather(
             vec![tree_of("orbital", ORBITAL), tree_of("harbour", &broken)],
             Vec::new(),

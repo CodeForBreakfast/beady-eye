@@ -17,8 +17,9 @@ pub struct Placed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembled {
     pub rows: Vec<Placed>,
-    /// Ids naming a bead they depend on that is not among the rows. Each is
-    /// kept in `rows`; one left with nowhere else to sit hangs off the root.
+    /// Ids in `rows` naming a bead they depend on that the answer does not
+    /// hold. A bead the root does not reach is in another tree and is not
+    /// reported here, however incomplete its own dependencies are.
     pub dangling: Vec<String>,
     /// Ids whose own descendants lead back to them. Each is kept in `rows`,
     /// drawn where the loop was cut.
@@ -45,16 +46,15 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
     }
 
     let mut children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut dangling: BTreeSet<String> = BTreeSet::new();
+    // Every bead in the answer that depends on one the answer does not hold,
+    // which is a question about the whole tracker. Which of them this tree
+    // reports is a question about this tree, and is asked once the walk knows
+    // what it drew.
+    let mut waiting_on_the_absent: BTreeSet<String> = BTreeSet::new();
     for bead in by_id.values() {
         for edge in bead.depends_on() {
             if !by_id.contains_key(&edge.on) {
-                // A root's own parent sits above the tree rather than missing
-                // from it, and every tree would report one.
-                let above = bead.id == root && edge.edge == Edge::ParentChild;
-                if !above {
-                    dangling.insert(bead.id.clone());
-                }
+                waiting_on_the_absent.insert(bead.id.clone());
                 continue;
             }
             match edge.edge {
@@ -63,18 +63,6 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
                 Edge::Other(_) => false,
             };
         }
-    }
-
-    // A bead depending only on beads the answer does not hold has nowhere to
-    // sit. Hanging it off the root is what keeps it drawn.
-    let placed: BTreeSet<&String> = children.values().flatten().collect();
-    let homeless: Vec<String> = dangling
-        .iter()
-        .filter(|id| *id != root && !placed.contains(id))
-        .cloned()
-        .collect();
-    for id in homeless {
-        children.entry(root.to_string()).or_default().insert(id);
     }
 
     let ordered: BTreeMap<String, Vec<String>> = children
@@ -105,6 +93,15 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
         &mut cycles,
         &mut rows,
     );
+
+    // Only what this tree drew. A bead whose parent the tracker no longer
+    // holds is top of its own graph, and reporting it against a root that
+    // never reached it names it in every tree there is.
+    let dangling: BTreeSet<String> = rows
+        .iter()
+        .map(|placed| placed.bead.id.clone())
+        .filter(|id| waiting_on_the_absent.contains(id))
+        .collect();
 
     Ok(Assembled {
         rows,
@@ -487,12 +484,38 @@ mod tests {
           {"id":"r","title":"root","status":"open","parent_id":""},
           {"id":"r.9","title":"orphan","status":"open","parent_id":"r.404"}
         ]"#;
-        let a = assembled(json, ROOT);
 
-        assert_eq!(a.dangling, vec!["r.9".to_string()]);
-        assert_eq!(ids(&a), vec!["r", "r.9"], "the orphan is kept, not dropped");
-        assert_eq!(depth_of(&a, "r.9"), 1, "the orphan hangs off the root");
-        assert!(a.cycles.is_empty(), "re-parenting made it reachable");
+        // Nothing above it survives, so the tree it belongs to is its own.
+        let its_own = assembled(json, "r.9");
+        assert_eq!(
+            ids(&its_own),
+            vec!["r.9"],
+            "the orphan is kept, not dropped"
+        );
+        assert_eq!(its_own.dangling, vec!["r.9".to_string()]);
+        assert_eq!(depth_of(&its_own, "r.9"), 0);
+        assert!(its_own.cycles.is_empty());
+
+        // And `r` never named it, so `r` neither draws it nor reports it.
+        let elsewhere = assembled(json, ROOT);
+        assert_eq!(ids(&elsewhere), vec!["r"]);
+        assert!(elsewhere.dangling.is_empty());
+    }
+
+    /// The answer is the whole tracker, so "hang it off the root" hangs it off
+    /// every root there is. Measured against summit-works on 2026-08-31: two
+    /// closed beads with a deleted parent reached all 562 trees, and each drew
+    /// a warning saying two beads were waiting on work outside that tree.
+    #[test]
+    fn an_orphan_does_not_join_a_tree_that_never_named_it() {
+        let json = r#"[
+          {"id":"one","title":"one","status":"open","parent_id":""},
+          {"id":"two","title":"two","status":"open","parent_id":""},
+          {"id":"lost","title":"its parent was deleted","status":"closed","parent_id":"gone"}
+        ]"#;
+
+        assert_eq!(ids(&assembled(json, "one")), vec!["one"]);
+        assert_eq!(ids(&assembled(json, "two")), vec!["two"]);
     }
 
     #[test]

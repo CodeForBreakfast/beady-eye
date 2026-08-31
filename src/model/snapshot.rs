@@ -105,8 +105,9 @@ pub struct Tree {
     pub counts: Counts,
     pub tracker: TrackerState,
     pub nodes: Vec<Node>,
-    /// Ids whose declared parent was absent from the tracker's answer. Each is
-    /// still in `nodes`, re-parented onto the root.
+    /// Ids in `nodes` naming work the tracker's answer does not hold — most
+    /// often a parent that was deleted. A bead this tree does not draw is not
+    /// reported here, whatever its own dependencies are missing.
     pub dangling: Vec<String>,
     /// Ids whose own descendants lead back to them. Each is still in
     /// `nodes`, drawn where the loop was cut.
@@ -574,14 +575,15 @@ render = "⏸ waiting"
         t
     }
 
-    /// A quiet tree that has something to report: a bead whose parent bd never
-    /// returned, a bead blocked by its own forebear, and a subtree bd cut
-    /// short.
+    /// A quiet tree that has something to report: a bead waiting on work bd
+    /// never returned, a bead blocked by its own forebear, and a subtree bd
+    /// cut short.
     fn quiet_with_reports() -> Tree {
         let json = r#"[
           {"id":"orb-6","title":"the far side","status":"open","parent_id":""},
-          {"id":"orb-6.2","title":"child of a bead bd did not return","status":"open",
-           "parent_id":"orb-6.1"},
+          {"id":"orb-6.2","title":"waiting on a bead bd did not return","status":"open",
+           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
+                           {"depends_on_id":"orb-6.1","type":"blocks"}]},
           {"id":"orb-6.3","title":"one","status":"open",
            "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
                            {"depends_on_id":"orb-6","type":"blocks"}]},
@@ -856,8 +858,9 @@ render = "⏸ waiting"
     fn a_bead_whose_parent_is_absent_is_reported_and_kept() {
         let json = r#"[
           {"id":"orb-4","title":"root","status":"open","parent_id":""},
-          {"id":"orb-4.2","title":"child of a bead bd did not return",
-           "status":"open","parent_id":"orb-4.1"}
+          {"id":"orb-4.2","title":"waiting on a bead bd did not return","status":"open",
+           "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"},
+                           {"depends_on_id":"orb-4.1","type":"blocks"}]}
         ]"#;
         let a = assembled(json);
         let t = build_tree(
