@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_string_parent_marks_the_root_rather_than_a_dangling_one() {
+    fn a_root_depending_on_nothing_is_not_reported_as_a_dangling_parent() {
         let json = r#"[
           {"id":"r","title":"root","status":"open"},
           {"id":"r.1","title":"child","status":"open",
