@@ -700,6 +700,19 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// A configured root that is a leaf. `[roots]` names a bead and nothing
+    /// requires that bead to have children, so a tracker whose root is one
+    /// bead deep draws a line that is a root and holds no fold. It is the
+    /// only shape here where being a root and having children come apart,
+    /// and every other fixture answers both questions the same way.
+    ///
+    /// It names no pane, like Depot, Tower and Siding, so a test staffs it by
+    /// naming the bead and one that does not gets the quiet shape.
+    const BEACON: &str = r#"[
+      {"id":"bcn-6","title":"re-lamp the beacon","status":"in_progress",
+       "priority":1,"issue_type":"task","updated_at":"2026-08-29T12:00:00Z"}
+    ]"#;
+
     /// One epic whose two halves are each held up by the same survey. Under
     /// the rule that a bead's descendants are what must finish before it,
     /// `orb-9` is drawn beneath both of them.
@@ -2165,7 +2178,7 @@ credential_command = "secret harbour"
     #[test]
     fn nothing_the_forest_folds_by_itself_hides_work_bd_would_start() {
         let mut asked = 0;
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
             let unstaffed = alone("orbital", json, &[]);
             let unfinished: Vec<String> = unstaffed.trees[0]
                 .nodes
@@ -3515,8 +3528,10 @@ credential_command = "secret harbour"
     /// no prefix at all.
     #[test]
     fn every_prefix_is_four_columns_a_level() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
-            let staffed = panes_on(&["orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1"]);
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
+            let staffed = panes_on(&[
+                "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6",
+            ]);
             let mut forest = flatten(&alone("orbital", json, &staffed));
             four_columns_a_level(&forest);
             open_everything(&mut forest);
@@ -3551,6 +3566,37 @@ credential_command = "secret harbour"
 
         assert_eq!(header.folded, None, "{:#?}", sketch(&forest));
         assert_eq!(columns(&header.prefix), columns(&prefix(&[], true, false)));
+    }
+
+    /// A root that read fine and has nothing under it holds no fold either.
+    /// The unread root above takes `draw_tree`'s arm for a tree with no nodes
+    /// and never reaches the fold, so this is the only place a bead that is
+    /// drawn and has no children is asked whether it offers one.
+    ///
+    /// The `folded` assertion is the one carrying the weight. A marker is
+    /// drawn off `!kids.is_empty() && !open`, which stays false here however
+    /// the fold state is decided, so the sketch reads the same whether this
+    /// line holds no fold or holds one pointing shut — and a line that holds
+    /// one pointing shut is a fold every walk over the forest keeps trying to
+    /// open. The screen is where that is invisible, which is why it is asked
+    /// of the state instead.
+    #[test]
+    fn a_root_with_no_children_holds_no_fold_to_set() {
+        let forest = flatten(&alone("orbital", BEACON, &panes_on(&["bcn-6"])));
+
+        assert_eq!(
+            sketch(&forest),
+            vec!["▾ orbital", "  └── ◐ bcn-6 re-lamp the beacon"]
+        );
+
+        let root = forest
+            .lines()
+            .iter()
+            .find(|line| matches!(&line.content, Content::Bead(row) if row.id == "bcn-6"))
+            .expect("the fixture draws its root");
+
+        assert_eq!(root.folded, None, "{:#?}", sketch(&forest));
+        assert_eq!(columns(&root.prefix), columns(&prefix(&[], true, false)));
     }
 
     // ---- a forest with nothing in it --------------------------------------
@@ -3836,7 +3882,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn expand_all_leaves_no_fold_shut() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
             let mut forest = flatten(&alone("orbital", json, &two_panes()));
             forest.apply(Action::ExpandAll);
 
@@ -3850,7 +3896,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn collapse_all_leaves_no_fold_open() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER] {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
             let mut forest = flatten(&alone("orbital", json, &two_panes()));
             forest.apply(Action::CollapseAll);
 
