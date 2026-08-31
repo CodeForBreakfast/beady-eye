@@ -6,12 +6,15 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
+use anyhow::Context;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
     MouseButton, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::{DefaultTerminal, Frame};
+use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
 use crate::collect::changes::{self, Reported, Socket, Uncovered};
@@ -28,15 +31,33 @@ use crate::view::{draw, Action, Motion, Notice};
 /// The first collection is made before the alternate screen opens, so the
 /// wait happens where the user can still see their own terminal; every one
 /// after it runs on a worker thread.
+///
+/// The signals are taken between the two, and that is the whole of what
+/// leaves a window in which one still kills `bdi` outright. Taking them
+/// earlier would be worse rather than better: a signal during that first
+/// collection would then be answered by finishing the collection, opening
+/// the screen and closing it again, where dying on the spot costs the reader
+/// nothing — the terminal has not been touched yet.
 pub fn run(
     refresh: Duration,
     projects: Vec<String>,
     mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
     let first = collect(&Wanted::Everything);
+    // Taken here rather than on the thread that waits on them, so that they
+    // are ours before the screen is opened on the line after next. A
+    // registration racing the screen would leave a moment in which the
+    // terminal is in raw mode and a signal still kills outright.
+    let asked_to_stop = Signals::new([SIGHUP, SIGINT, SIGTERM])
+        .context("asking to be told about the signals that would otherwise kill bdi")?;
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, _socket, at_startup) = wire(refresh, Reported::watching(projects), collect);
+    let (events, ask, _socket, at_startup) = wire(
+        refresh,
+        Reported::watching(projects),
+        collect,
+        asked_to_stop,
+    );
     let mut screen = Screen::showing(first, Box::new(Herdr::new(RealRunner)), at_startup)?;
 
     drive(&mut screen, &events, &ask)
@@ -58,6 +79,13 @@ enum Event {
     Changed(Wanted),
     /// A collection has come back.
     Collected(Box<Snapshot>),
+    /// Something outside has asked `bdi` to stop.
+    ///
+    /// Its own event rather than a keystroke standing in for one: the loop
+    /// answers any key at all by taking the bindings window away, so a
+    /// synthesised 'q' arriving while that window is up would close the
+    /// window and leave `bdi` running.
+    Signalled,
 }
 
 /// What the screen has on it.
@@ -148,6 +176,10 @@ fn drive(
                 view.collected(*snapshot);
                 true
             }
+            // The same return 'q' takes, and for the same reason: it is
+            // returning that drops the screen, and dropping the screen is
+            // what hands the terminal back.
+            Event::Signalled => return Ok(()),
         };
 
         if changed {
@@ -448,6 +480,7 @@ fn wire(
     refresh: Duration,
     reported: Reported,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    asked_to_stop: Signals,
 ) -> (Receiver<Event>, Sender<Wanted>, Option<Socket>, Vec<Notice>) {
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
@@ -457,6 +490,9 @@ fn wire(
 
     let typing = to_the_loop.clone();
     thread::spawn(move || keys(&typing));
+
+    let stopping = to_the_loop.clone();
+    thread::spawn(move || signalled(asked_to_stop, &stopping));
 
     let (changed, changes) = mpsc::channel();
     let (socket, refused) = inbound(changes::listen(
@@ -577,6 +613,20 @@ fn collector(
         {
             return;
         }
+    }
+}
+
+/// Wait to be told to stop, and tell the loop when we are.
+///
+/// A thread of its own, for the same reason `keys` is one: the loop blocks in
+/// `recv` with no deadline, so a flag for it to notice on its next pass would
+/// go unread through exactly the quiet the loop is waiting out. The handler
+/// itself does none of this — `Sender::send` allocates, which no signal
+/// handler may — so what runs in the handler is signal-hook's write to a pipe
+/// and the waiting happens here.
+fn signalled(mut asked_to_stop: Signals, to: &Sender<Event>) {
+    if asked_to_stop.forever().next().is_some() {
+        let _ = to.send(Event::Signalled);
     }
 }
 
@@ -719,7 +769,8 @@ impl Shown {
 /// mouse for as long as this lives, so dropping it puts the terminal back
 /// however the loop ended. `ratatui::init` hooks panics as well, and `Drop`
 /// runs as the panic unwinds, so a crash does not leave a wedged tty behind
-/// either.
+/// either. A signal arrives as an event the loop returns on, so it is the
+/// same drop again rather than a second way of restoring anything.
 struct Screen {
     terminal: DefaultTerminal,
     shown: Shown,
@@ -788,10 +839,11 @@ impl Drop for Screen {
         // whatever runs next for every cell the pointer crosses, and there
         // is nothing left running to ask it to stop.
         //
-        // A crash has to hand the terminal back too, and this is what does
-        // it — but only while the build unwinds. A profile that sets
-        // `panic = "abort"` runs no `Drop` at all and would take this with
-        // it, leaving exactly the terminal described above.
+        // Every way the run can end comes through here — the loop returning
+        // on 'q', a panic unwinding, and a signal, which the loop answers by
+        // returning. All three rest on the build unwinding: a profile that
+        // sets `panic = "abort"` runs no `Drop` at all and would take this
+        // with it, leaving exactly the terminal described above.
         let _ = execute!(io::stdout(), DisableMouseCapture);
         ratatui::restore();
     }
@@ -1790,6 +1842,59 @@ mod tests {
         drive(&mut view, &waiting(Vec::new()), &ask).expect("the loop runs");
 
         assert!(view.applied.is_empty());
+    }
+
+    /// The loop ends the way 'q' ends it, so the screen is dropped and the
+    /// terminal put back. Nothing else in the loop can do that.
+    ///
+    /// The signal is waiting in the channel before the loop starts, which is
+    /// also the case `run` produces: the signals are taken before the screen
+    /// is opened, so one arriving in between is read as the loop's first
+    /// event. The resize behind it is what makes a failure show — without it
+    /// the channel runs dry and the loop ends whatever the arm does.
+    #[test]
+    fn a_signal_ends_the_loop() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![Event::Signalled, Event::Resize]),
+            &ask,
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.drawn, 1,
+            "the first draw and no other: the loop returned rather than \
+             going on to the resize behind the signal"
+        );
+    }
+
+    /// The bindings window swallows any key at all, which is why a signal is
+    /// not one. A synthesised 'q' here would take the window away and leave
+    /// `bdi` running.
+    #[test]
+    fn a_signal_ends_the_loop_with_the_bindings_up() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Key(key(KeyCode::Char('?'))),
+                Event::Signalled,
+                Event::Resize,
+            ]),
+            &ask,
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.drawn, 2,
+            "the first draw and the bindings: the signal ended the run rather \
+             than closing the window"
+        );
     }
 
     #[test]

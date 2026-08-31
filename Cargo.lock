@@ -119,10 +119,12 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "libc",
  "pretty_assertions",
  "ratatui",
  "serde",
  "serde_json",
+ "signal-hook",
  "toml",
 ]
 
