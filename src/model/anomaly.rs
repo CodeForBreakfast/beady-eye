@@ -78,7 +78,7 @@ mod tests {
     /// real parser rather than a struct literal that can drift from it.
     fn bead(status: &str, updated_at: &str) -> Bead {
         parse_beads(&format!(
-            r#"[{{"id":"p-1","title":"work","status":"{status}","parent_id":"",
+            r#"[{{"id":"p-1","title":"work","status":"{status}",
                   "updated_at":"{updated_at}"}}]"#
         ))
         .expect("the row parses")

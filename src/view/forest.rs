@@ -904,23 +904,30 @@ mod tests {
     /// is closed with a pane still on it, and the other three closed siblings
     /// are finished.
     const ORBITAL: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent_id":"",
+      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic","updated_at":"2026-08-29T12:00:00Z",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.1","title":"re-point the dish","status":"open","parent_id":"orb-7",
+      {"id":"orb-7.1","title":"re-point the dish","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-7.1.1","title":"true the mount","status":"open","parent_id":"orb-7.1",
+      {"id":"orb-7.1.1","title":"true the mount","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-7.1.2","title":"seal the feed horn","status":"open","parent_id":"orb-7.1",
+      {"id":"orb-7.1.2","title":"seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7.1","type":"parent-child"}],
        "priority":3,"issue_type":"task","truncated":true},
-      {"id":"orb-7.2","title":"survey the mast","status":"closed","parent_id":"orb-7",
+      {"id":"orb-7.2","title":"survey the mast","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"orb-7.3","title":"pour the pad","status":"closed","parent_id":"orb-7",
+      {"id":"orb-7.3","title":"pour the pad","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"orb-7.4","title":"clear the access road","status":"closed","parent_id":"orb-7",
+      {"id":"orb-7.4","title":"clear the access road","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z",
        "metadata":{"agent_pane":"w:p2"}},
-      {"id":"orb-7.5","title":"set the guard rail","status":"closed","parent_id":"orb-7",
+      {"id":"orb-7.5","title":"set the guard rail","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
       {"id":"orb-7.7","title":"log the survey marks","status":"open",
        "priority":2,"issue_type":"task",
@@ -931,9 +938,10 @@ mod tests {
     /// Harbour's tree. Nobody is working in it, so the live-agent filter hides
     /// it.
     const HARBOUR: &str = r#"[
-      {"id":"hbr-3","title":"dredge the channel","status":"open","parent_id":"",
+      {"id":"hbr-3","title":"dredge the channel","status":"open",
        "priority":2,"issue_type":"epic"},
-      {"id":"hbr-3.1","title":"survey the silt","status":"open","parent_id":"hbr-3",
+      {"id":"hbr-3.1","title":"survey the silt","status":"open",
+       "dependencies":[{"depends_on_id":"hbr-3","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -941,21 +949,28 @@ mod tests {
     /// an opened run still has something left to count inside it. Three at each
     /// level, which is what it takes to make a run.
     const DEPOT: &str = r#"[
-      {"id":"dep-1","title":"re-lay the sidings","status":"in_progress","parent_id":"",
+      {"id":"dep-1","title":"re-lay the sidings","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"dep-1.1","title":"grade the bed","status":"open","parent_id":"dep-1",
+      {"id":"dep-1.1","title":"grade the bed","status":"open",
+       "dependencies":[{"depends_on_id":"dep-1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"dep-1.2","title":"lift the old rail","status":"closed","parent_id":"dep-1",
+      {"id":"dep-1.2","title":"lift the old rail","status":"closed",
+       "dependencies":[{"depends_on_id":"dep-1","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"dep-1.2.1","title":"cut the fishplates","status":"closed","parent_id":"dep-1.2",
+      {"id":"dep-1.2.1","title":"cut the fishplates","status":"closed",
+       "dependencies":[{"depends_on_id":"dep-1.2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"dep-1.2.2","title":"stack the chairs","status":"closed","parent_id":"dep-1.2",
+      {"id":"dep-1.2.2","title":"stack the chairs","status":"closed",
+       "dependencies":[{"depends_on_id":"dep-1.2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"dep-1.2.3","title":"draw the spikes","status":"closed","parent_id":"dep-1.2",
+      {"id":"dep-1.2.3","title":"draw the spikes","status":"closed",
+       "dependencies":[{"depends_on_id":"dep-1.2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"dep-1.3","title":"clear the ballast","status":"closed","parent_id":"dep-1",
+      {"id":"dep-1.3","title":"clear the ballast","status":"closed",
+       "dependencies":[{"depends_on_id":"dep-1","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
-      {"id":"dep-1.4","title":"burn the sleepers","status":"closed","parent_id":"dep-1",
+      {"id":"dep-1.4","title":"burn the sleepers","status":"closed",
+       "dependencies":[{"depends_on_id":"dep-1","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"}
     ]"#;
 
@@ -966,29 +981,39 @@ mod tests {
     /// warning under the other. `rly-2.3`, `rly-2.5` and `rly-2.6` are
     /// finished all the way down, and are what a run may honestly hold.
     const RELAY: &str = r#"[
-      {"id":"rly-2","title":"re-site the relay","status":"in_progress","parent_id":"",
+      {"id":"rly-2","title":"re-site the relay","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"rly-2.1","title":"trench the run","status":"open","parent_id":"rly-2",
+      {"id":"rly-2.1","title":"trench the run","status":"open",
+       "dependencies":[{"depends_on_id":"rly-2","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"rly-2.2","title":"strike the old mast","status":"closed","parent_id":"rly-2",
+      {"id":"rly-2.2","title":"strike the old mast","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"rly-2.2.1","title":"drop the guys","status":"closed","parent_id":"rly-2.2",
+      {"id":"rly-2.2.1","title":"drop the guys","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2.2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"rly-2.2.1.1","title":"cut the stays","status":"in_progress","parent_id":"rly-2.2.1",
+      {"id":"rly-2.2.1.1","title":"cut the stays","status":"in_progress",
+       "dependencies":[{"depends_on_id":"rly-2.2.1","type":"parent-child"}],
        "priority":2,"issue_type":"task","updated_at":"2026-08-29T12:00:00Z",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"rly-2.3","title":"back-fill the pad","status":"closed","parent_id":"rly-2",
+      {"id":"rly-2.3","title":"back-fill the pad","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
-      {"id":"rly-2.4","title":"lift the feeder","status":"closed","parent_id":"rly-2",
+      {"id":"rly-2.4","title":"lift the feeder","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
-      {"id":"rly-2.4.1","title":"coil the heliax","status":"closed","parent_id":"rly-2.4",
+      {"id":"rly-2.4.1","title":"coil the heliax","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2.4","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z",
        "metadata":{"agent_pane":"w:p2"}},
-      {"id":"rly-2.5","title":"seed the spoil","status":"closed","parent_id":"rly-2",
+      {"id":"rly-2.5","title":"seed the spoil","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
-      {"id":"rly-2.5.1","title":"rake the batter","status":"closed","parent_id":"rly-2.5",
+      {"id":"rly-2.5.1","title":"rake the batter","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2.5","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"},
-      {"id":"rly-2.6","title":"sign the handover","status":"closed","parent_id":"rly-2",
+      {"id":"rly-2.6","title":"sign the handover","status":"closed",
+       "dependencies":[{"depends_on_id":"rly-2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
     ]"#;
 
@@ -996,17 +1021,22 @@ mod tests {
     /// Nothing in it is closed, in progress or staffed, so the only thing
     /// that can open a fold in it is a pane the test puts on a bead.
     const TOWER: &str = r#"[
-      {"id":"tow-1","title":"raise the tower","status":"open","parent_id":"",
+      {"id":"tow-1","title":"raise the tower","status":"open",
        "priority":1,"issue_type":"epic"},
-      {"id":"tow-1.1","title":"stand the mast","status":"open","parent_id":"tow-1",
+      {"id":"tow-1.1","title":"stand the mast","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"tow-1.1.1","title":"bolt the sections","status":"open","parent_id":"tow-1.1",
+      {"id":"tow-1.1.1","title":"bolt the sections","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"tow-1.1.1.1","title":"dress the cables","status":"open","parent_id":"tow-1.1.1",
+      {"id":"tow-1.1.1.1","title":"dress the cables","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1.1.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"tow-1.2","title":"pour the base","status":"open","parent_id":"tow-1",
+      {"id":"tow-1.2","title":"pour the base","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"tow-1.2.1","title":"tie the rebar","status":"open","parent_id":"tow-1.2",
+      {"id":"tow-1.2.1","title":"tie the rebar","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1.2","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -1019,27 +1049,37 @@ mod tests {
     /// pane, which is what opens the root, and rests shut over unfinished
     /// work of its own without ever claiming to be done.
     const SIDING: &str = r#"[
-      {"id":"sdg-4","title":"re-point the crossover","status":"in_progress","parent_id":"",
+      {"id":"sdg-4","title":"re-point the crossover","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"sdg-4.1","title":"slew the up line","status":"closed","parent_id":"sdg-4",
+      {"id":"sdg-4.1","title":"slew the up line","status":"closed",
+       "dependencies":[{"depends_on_id":"sdg-4","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"sdg-4.1.1","title":"key the switch","status":"closed","parent_id":"sdg-4.1",
+      {"id":"sdg-4.1.1","title":"key the switch","status":"closed",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"sdg-4.1.1.1","title":"gauge the check rail","status":"open","parent_id":"sdg-4.1.1",
+      {"id":"sdg-4.1.1.1","title":"gauge the check rail","status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.1.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"sdg-4.1.1.2","title":"pack the timbers","status":"open","parent_id":"sdg-4.1.1",
+      {"id":"sdg-4.1.1.2","title":"pack the timbers","status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.1.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"sdg-4.1.2","title":"weld the closure rail","status":"open","parent_id":"sdg-4.1",
+      {"id":"sdg-4.1.2","title":"weld the closure rail","status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"sdg-4.1.3","title":"lift the old chairs","status":"closed","parent_id":"sdg-4.1",
+      {"id":"sdg-4.1.3","title":"lift the old chairs","status":"closed",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
-      {"id":"sdg-4.2","title":"clip the down line","status":"closed","parent_id":"sdg-4",
+      {"id":"sdg-4.2","title":"clip the down line","status":"closed",
+       "dependencies":[{"depends_on_id":"sdg-4","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
-      {"id":"sdg-4.2.1","title":"torque the fishbolts","status":"closed","parent_id":"sdg-4.2",
+      {"id":"sdg-4.2.1","title":"torque the fishbolts","status":"closed",
+       "dependencies":[{"depends_on_id":"sdg-4.2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
-      {"id":"sdg-4.3","title":"re-signal the box","status":"in_progress","parent_id":"sdg-4",
+      {"id":"sdg-4.3","title":"re-signal the box","status":"in_progress",
+       "dependencies":[{"depends_on_id":"sdg-4","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"sdg-4.3.1","title":"prove the interlocking","status":"open","parent_id":"sdg-4.3",
+      {"id":"sdg-4.3.1","title":"prove the interlocking","status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.3","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -1047,15 +1087,19 @@ mod tests {
     /// the rule that a bead's descendants are what must finish before it,
     /// `orb-9` is drawn beneath both of them.
     const TWICE: &str = r#"[
-      {"id":"orb-8","title":"lift the gantry","status":"in_progress","parent_id":"",
+      {"id":"orb-8","title":"lift the gantry","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-8.1","title":"pour the pad","status":"in_progress","parent_id":"orb-8",
+      {"id":"orb-8.1","title":"pour the pad","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-8.2","title":"rail the crane","status":"in_progress","parent_id":"orb-8",
+      {"id":"orb-8.2","title":"rail the crane","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-9","title":"survey the ground","status":"in_progress","parent_id":"orb-8.1",
+      {"id":"orb-9","title":"survey the ground","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-8.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-9.1","title":"drill the cores","status":"in_progress","parent_id":"orb-9",
+      {"id":"orb-9.1","title":"drill the cores","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -1122,12 +1166,14 @@ mod tests {
     /// and trees by walking dependents, so a bead standing in two trees is
     /// the ordinary shape of shared work, not a malformed tracker.
     const QUARRY: &str = r#"[
-      {"id":"qua-1","title":"re-open the quarry","status":"in_progress","parent_id":"",
+      {"id":"qua-1","title":"re-open the quarry","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"qua-1.2","title":"cut the haul road","status":"in_progress","parent_id":"qua-1",
+      {"id":"qua-1.2","title":"cut the haul road","status":"in_progress",
+       "dependencies":[{"depends_on_id":"qua-1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
       {"id":"qua-1.2.1","title":"strip the overburden","status":"in_progress",
-       "parent_id":"qua-1.2","priority":2,"issue_type":"task"}
+       "dependencies":[{"depends_on_id":"qua-1.2","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
     ]"#;
 
     /// The second of the pair, drawn below Quarry, so the shared bead's lower
@@ -1138,15 +1184,19 @@ mod tests {
     /// The shared bead has a child in each tree, and not the same one, so
     /// each copy is a line that folds over a list of its own.
     const WHARF: &str = r#"[
-      {"id":"wha-2","title":"re-face the wharf","status":"in_progress","parent_id":"",
+      {"id":"wha-2","title":"re-face the wharf","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"wha-2.1","title":"drive the piles","status":"in_progress","parent_id":"wha-2",
+      {"id":"wha-2.1","title":"drive the piles","status":"in_progress",
+       "dependencies":[{"depends_on_id":"wha-2","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"qua-1.2","title":"cut the haul road","status":"in_progress","parent_id":"wha-2",
+      {"id":"qua-1.2","title":"cut the haul road","status":"in_progress",
+       "dependencies":[{"depends_on_id":"wha-2","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"wha-2.2","title":"grout the cope","status":"in_progress","parent_id":"qua-1.2",
+      {"id":"wha-2.2","title":"grout the cope","status":"in_progress",
+       "dependencies":[{"depends_on_id":"qua-1.2","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"wha-2.3","title":"bed the fenders","status":"in_progress","parent_id":"wha-2",
+      {"id":"wha-2.3","title":"bed the fenders","status":"in_progress",
+       "dependencies":[{"depends_on_id":"wha-2","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -1190,12 +1240,22 @@ credential_command = "secret harbour"
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
 
-    /// The root of a hand-written tree: the one row naming no parent, which
-    /// is how `bd dep tree` marks it.
+    /// One tree with a row edited, where the edit is required to land.
+    ///
+    /// `str::replace` says nothing when it matches nothing, so a pattern that
+    /// drifts from the const it edits leaves the test asserting against the
+    /// untouched tree and still passing.
+    fn edited(json: &str, from: &str, to: &str) -> String {
+        let out = json.replace(from, to);
+        assert_ne!(out, json, "no row matched {from:?}");
+        out
+    }
+
+    /// The root of a hand-written tree: the one row that depends on nothing.
     fn root_row(beads: &[crate::model::types::Bead]) -> String {
         beads
             .iter()
-            .find(|b| b.parent_id.is_none())
+            .find(|b| b.depends_on().is_empty())
             .expect("a root row")
             .id
             .clone()
@@ -2030,7 +2090,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_fraction_counts_beads_rather_than_the_rows_they_are_drawn_on() {
         const SHARED: &str = r#"[
-          {"id":"shr-1","title":"root","status":"open","parent_id":""},
+          {"id":"shr-1","title":"root","status":"open"},
           {"id":"shr-1.1","title":"one","status":"open",
            "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"},
                            {"depends_on_id":"shr-1.9","type":"blocks"}]},
@@ -2038,7 +2098,7 @@ credential_command = "secret harbour"
            "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"},
                            {"depends_on_id":"shr-1.9","type":"blocks"}]},
           {"id":"shr-1.9","title":"what both wait on","status":"closed",
-           "parent_id":"shr-1"}
+           "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"}]}
         ]"#;
         let tree = tree_of("orbital", SHARED);
         let children = children_of(&tree.nodes);
@@ -2058,11 +2118,12 @@ credential_command = "secret harbour"
     #[test]
     fn a_closed_blocker_reports_no_fraction_over_the_beads_that_waited_on_it() {
         const WAITED: &str = r#"[
-          {"id":"wtd-1","title":"root","status":"open","parent_id":""},
+          {"id":"wtd-1","title":"root","status":"open"},
           {"id":"wtd-1.1","title":"waiting","status":"open",
            "dependencies":[{"depends_on_id":"wtd-1","type":"parent-child"},
                            {"depends_on_id":"wtd-1.9","type":"blocks"}]},
-          {"id":"wtd-1.9","title":"done","status":"closed","parent_id":"wtd-1"}
+          {"id":"wtd-1.9","title":"done","status":"closed",
+           "dependencies":[{"depends_on_id":"wtd-1","type":"parent-child"}]}
         ]"#;
         let tree = tree_of("orbital", WAITED);
         let children = children_of(&tree.nodes);
@@ -2147,7 +2208,7 @@ credential_command = "secret harbour"
         select_run(&mut forest);
         forest.apply(Action::ToggleFold);
 
-        let reordered = ORBITAL.replace(r#""priority":3"#, r#""priority":1"#);
+        let reordered = edited(ORBITAL, r#""priority":3"#, r#""priority":1"#);
         forest.refresh(&gather(
             vec![tree_of("orbital", &reordered)],
             Vec::new(),
@@ -2188,7 +2249,8 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_single_quiet_closed_sibling_is_drawn_rather_than_said_as_a_count() {
-        let one_closed = ORBITAL.replace(
+        let one_closed = edited(
+            ORBITAL,
             r#"{"id":"orb-7.3","title":"pour the pad","status":"closed"#,
             r#"{"id":"orb-7.3","title":"pour the pad","status":"open"#,
         );
@@ -2445,9 +2507,12 @@ credential_command = "secret harbour"
     /// immediate children would leave the row silent over both of them.
     #[test]
     fn unfinished_work_two_levels_under_a_closed_branch_is_still_counted() {
-        let deep = SIDING.replace(
-            r#""status":"open","parent_id":"sdg-4.1""#,
-            r#""status":"closed","closed_at":"2026-08-26T09:00:00Z","parent_id":"sdg-4.1""#,
+        let deep = edited(
+            SIDING,
+            r#""status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
+            r#""status":"closed","closed_at":"2026-08-26T09:00:00Z",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
         );
         let forest = flatten(&alone("orbital", &deep, &panes_on(&["sdg-4.3"])));
 
@@ -2532,15 +2597,19 @@ credential_command = "secret harbour"
     /// rests shut over all three exactly as it does over open ones.
     #[test]
     fn a_closed_branch_over_work_bd_will_not_start_rests_shut_and_says_how_much() {
-        let waiting = SIDING
-            .replace(
-                r#""status":"open","parent_id":"sdg-4.1.1""#,
-                r#""status":"blocked","parent_id":"sdg-4.1.1""#,
-            )
-            .replace(
-                r#""status":"open","parent_id":"sdg-4.1""#,
-                r#""status":"deferred","parent_id":"sdg-4.1""#,
-            );
+        let waiting = edited(
+            &edited(
+                SIDING,
+                r#""status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.1.1","type":"parent-child"}]"#,
+                r#""status":"blocked",
+       "dependencies":[{"depends_on_id":"sdg-4.1.1","type":"parent-child"}]"#,
+            ),
+            r#""status":"open",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
+            r#""status":"deferred",
+       "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
+        );
         let forest = flatten(&alone("orbital", &waiting, &panes_on(&["sdg-4.3"])));
 
         assert_eq!(fold_of(&forest, "sdg-4.1"), Some(false));
@@ -2577,7 +2646,8 @@ credential_command = "secret harbour"
     /// branches — under the threshold, so each keeps its own name rather than
     /// becoming a share of a count.
     fn finished_branches() -> Snapshot {
-        let json = DEPOT.replace(
+        let json = edited(
+            DEPOT,
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"closed"#,
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"open"#,
         );
@@ -2591,7 +2661,7 @@ credential_command = "secret harbour"
         select(&mut forest, &key("orbital", "orb-7.1.2"));
         let was = forest.selected_line();
 
-        let reordered = ORBITAL.replace(r#""priority":3"#, r#""priority":1"#);
+        let reordered = edited(ORBITAL, r#""priority":3"#, r#""priority":1"#);
         forest.refresh(&gather(
             vec![tree_of("orbital", &reordered)],
             Vec::new(),
@@ -2611,8 +2681,10 @@ credential_command = "secret harbour"
         open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
 
-        let without = ORBITAL.replace(
-            r#"{"id":"orb-7.1.2","title":"seal the feed horn","status":"open","parent_id":"orb-7.1",
+        let without = edited(
+            ORBITAL,
+            r#"{"id":"orb-7.1.2","title":"seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7.1","type":"parent-child"}],
        "priority":3,"issue_type":"task","truncated":true},"#,
             "",
         );
@@ -3102,11 +3174,11 @@ credential_command = "secret harbour"
     /// when one of them is waiting on work bd never returned.
     #[test]
     fn the_hidden_trees_group_says_how_many_of_them_have_findings() {
-        let broken = HARBOUR.replace(
-            r#""parent_id":"hbr-3""#,
-            r#""parent_id":"hbr-3","dependencies":[
-                 {"depends_on_id":"hbr-3","type":"parent-child"},
-                 {"depends_on_id":"hbr-9","type":"blocks"}]"#,
+        let broken = edited(
+            HARBOUR,
+            r#"{"depends_on_id":"hbr-3","type":"parent-child"}"#,
+            r#"{"depends_on_id":"hbr-3","type":"parent-child"},
+                       {"depends_on_id":"hbr-9","type":"blocks"}"#,
         );
         let snapshot = gather(
             vec![tree_of("orbital", ORBITAL), tree_of("harbour", &broken)],

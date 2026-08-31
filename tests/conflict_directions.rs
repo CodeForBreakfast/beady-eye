@@ -52,7 +52,7 @@ const WORKING_TREES: [(&str, &[&str]); 2] = [
 /// The other tracker exists so a pane can sit in a project that is not the one
 /// claiming it. Nothing in it claims anything.
 const FERRY_ROWS: &str = r#"[
-  {"id":"fry-1","title":"run the ferry","status":"open","parent_id":""}
+  {"id":"fry-1","title":"run the ferry","status":"open"}
 ]"#;
 
 fn config() -> Config {
@@ -217,15 +217,23 @@ fn arm(conflict: &Conflict) -> &'static str {
 fn a_claim_reaching_out_of_its_project() -> Reading {
     read(
         r#"[
-          {"id":"orb-1","title":"lift the ground station","status":"open","parent_id":""},
+          {"id":"orb-1","title":"lift the ground station","status":"open"},
           {"id":"orb-1.1","title":"its pane sits in the ferry's checkout",
-           "status":"in_progress","parent_id":"orb-1","metadata":{"agent_pane":"w:p1"}},
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p1"}},
           {"id":"orb-1.2","title":"its pane sits under no configured project",
-           "status":"in_progress","parent_id":"orb-1","metadata":{"agent_pane":"w:p2"}},
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p2"}},
           {"id":"orb-1.3","title":"its pane sits in another tree of its own repository",
-           "status":"in_progress","parent_id":"orb-1","metadata":{"agent_pane":"w:p3"}},
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p3"}},
           {"id":"orb-1.4","title":"its pane sits in the ferry's tree inside orbital's",
-           "status":"in_progress","parent_id":"orb-1","metadata":{"agent_pane":"w:p4"}}
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p4"}}
         ]"#,
         r#"{"pane_id":"w:p1","cwd":"/srv/ferry/src","agent_status":"working"},
            {"pane_id":"w:p2","cwd":"/tmp/nowhere","agent_status":"idle"},
@@ -238,10 +246,13 @@ fn a_claim_reaching_out_of_its_project() -> Reading {
 fn two_claims_on_one_pane() -> Reading {
     read(
         r#"[
-          {"id":"orb-2","title":"lay the feeder cable","status":"open","parent_id":""},
+          {"id":"orb-2","title":"lay the feeder cable","status":"open"},
           {"id":"orb-2.1","title":"one of two claims on the same pane",
-           "status":"in_progress","parent_id":"orb-2","metadata":{"agent_pane":"w:p1"}},
-          {"id":"orb-2.2","title":"the other","status":"in_progress","parent_id":"orb-2",
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p1"}},
+          {"id":"orb-2.2","title":"the other","status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p1"}}
         ]"#,
         r#"{"pane_id":"w:p1","cwd":"/srv/orbital/src","agent_status":"working"}"#,
@@ -253,11 +264,13 @@ fn two_claims_on_one_pane() -> Reading {
 fn disagreements_that_refuse_no_claim() -> Reading {
     read(
         r#"[
-          {"id":"orb-3","title":"survey the mast","status":"open","parent_id":""},
+          {"id":"orb-3","title":"survey the mast","status":"open"},
           {"id":"orb-3.1","title":"names one pane while another names it",
-           "status":"in_progress","parent_id":"orb-3","metadata":{"agent_pane":"w:p1"}},
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p1"}},
           {"id":"orb-3.2","title":"two panes name it and it names none",
-           "status":"in_progress","parent_id":"orb-3"}
+           "status":"in_progress","dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}]}
         ]"#,
         r#"{"pane_id":"w:p1","cwd":"/srv/orbital/src","agent_status":"working"},
            {"pane_id":"w:p2","cwd":"/srv/orbital/src","agent_status":"idle",

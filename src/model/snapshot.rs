@@ -441,17 +441,21 @@ mod tests {
     /// One project's tree as bd writes it. `orb-7.3` is claimed and long
     /// untouched with no pane; `orb-7.2` is closed with a pane still on it.
     const BEADS: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent_id":"",
+      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic","updated_at":"2026-08-29T12:00:00Z",
        "started_at":"2026-08-20T09:00:00Z","metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.1","title":"re-point the dish","status":"open","parent_id":"orb-7",
-       "priority":2,"issue_type":"task","edge_from_parent":"parent-child",
+      {"id":"orb-7.1","title":"re-point the dish","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task",
        "metadata":{"blocked_on":"human"}},
-      {"id":"orb-7.2","title":"survey the mast","status":"closed","parent_id":"orb-7",
+      {"id":"orb-7.2","title":"survey the mast","status":"closed",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress","parent_id":"orb-7",
+      {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":1,"issue_type":"task","updated_at":"2026-07-01T12:00:00Z"},
-      {"id":"orb-7.4","title":"file the licence","status":"open","parent_id":"orb-7",
+      {"id":"orb-7.4","title":"file the licence","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":3,"issue_type":"chore"}
     ]"#;
 
@@ -589,15 +593,17 @@ render = "⏸ waiting"
     /// cut short.
     fn quiet_with_reports() -> Tree {
         let json = r#"[
-          {"id":"orb-6","title":"the far side","status":"open","parent_id":""},
+          {"id":"orb-6","title":"the far side","status":"open"},
           {"id":"orb-6.2","title":"waiting on a bead bd did not return","status":"open",
            "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
                            {"depends_on_id":"orb-6.1","type":"blocks"}]},
           {"id":"orb-6.3","title":"one","status":"open",
            "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
                            {"depends_on_id":"orb-6","type":"blocks"}]},
-          {"id":"orb-6.4","title":"two","status":"open","parent_id":"orb-6.3"},
-          {"id":"orb-6.5","title":"cut short","status":"open","parent_id":"orb-6",
+          {"id":"orb-6.4","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"orb-6.3","type":"parent-child"}]},
+          {"id":"orb-6.5","title":"cut short","status":"open",
+           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
            "truncated":true}
         ]"#;
         build_tree(
@@ -866,7 +872,7 @@ render = "⏸ waiting"
     #[test]
     fn a_bead_whose_parent_is_absent_is_reported_and_kept() {
         let json = r#"[
-          {"id":"orb-4","title":"root","status":"open","parent_id":""},
+          {"id":"orb-4","title":"root","status":"open"},
           {"id":"orb-4.2","title":"waiting on a bead bd did not return","status":"open",
            "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"},
                            {"depends_on_id":"orb-4.1","type":"blocks"}]}
@@ -893,12 +899,12 @@ render = "⏸ waiting"
     #[test]
     fn a_node_carries_the_kind_of_edge_its_copy_was_reached_by() {
         let json = r#"[
-          {"id":"orb-9","title":"root","status":"open","parent_id":""},
+          {"id":"orb-9","title":"root","status":"open"},
           {"id":"orb-9.1","title":"waiting","status":"open",
            "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"},
                            {"depends_on_id":"orb-9.2","type":"blocks"}]},
           {"id":"orb-9.2","title":"what it waits on","status":"closed",
-           "parent_id":"orb-9"}
+           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}]}
         ]"#;
         let t = build_tree(
             "orbital",
@@ -932,7 +938,7 @@ render = "⏸ waiting"
         // times. A header saying five would send a reader looking for a bead
         // that is not there.
         let json = r#"[
-          {"id":"orb-8","title":"root","status":"open","parent_id":""},
+          {"id":"orb-8","title":"root","status":"open"},
           {"id":"orb-8.1","title":"one","status":"open",
            "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
                            {"depends_on_id":"orb-8.9","type":"blocks"}]},
@@ -940,7 +946,7 @@ render = "⏸ waiting"
            "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
                            {"depends_on_id":"orb-8.9","type":"blocks"}]},
           {"id":"orb-8.9","title":"what both wait on","status":"closed",
-           "parent_id":"orb-8"}
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]}
         ]"#;
         let t = build_tree(
             "orbital",
@@ -961,11 +967,12 @@ render = "⏸ waiting"
         // `orb-5.1` hangs under `orb-5` and is blocked by it, so each must
         // finish before the other.
         let json = r#"[
-          {"id":"orb-5","title":"root","status":"open","parent_id":""},
+          {"id":"orb-5","title":"root","status":"open"},
           {"id":"orb-5.1","title":"one","status":"open",
            "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"},
                            {"depends_on_id":"orb-5","type":"blocks"}]},
-          {"id":"orb-5.2","title":"two","status":"open","parent_id":"orb-5.1"}
+          {"id":"orb-5.2","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"orb-5.1","type":"parent-child"}]}
         ]"#;
         let a = assembled(json);
         let t = build_tree(
@@ -1373,9 +1380,11 @@ render = "⏸ waiting"
     /// two beads of one id apart, and `frr-1` belongs to this project alone.
     fn ferry() -> Tree {
         let json = r#"[
-          {"id":"orb-7","title":"berth the ferry","status":"open","parent_id":""},
-          {"id":"orb-7.1","title":"paint the hull","status":"open","parent_id":"orb-7"},
-          {"id":"frr-1","title":"lift the ramp","status":"open","parent_id":"orb-7"}
+          {"id":"orb-7","title":"berth the ferry","status":"open"},
+          {"id":"orb-7.1","title":"paint the hull","status":"open",
+           "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}]},
+          {"id":"frr-1","title":"lift the ramp","status":"open",
+           "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}]}
         ]"#;
         build_tree(
             "ferry",

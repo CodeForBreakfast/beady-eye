@@ -428,9 +428,11 @@ mod tests {
         // bd flattens `depth` under --max-depth, so these values are wrong on
         // purpose: an implementation that trusts them cannot pass.
         let json = r#"[
-          {"id":"r","title":"root","status":"open","parent_id":"","depth":7},
-          {"id":"r.1","title":"child","status":"open","parent_id":"r","depth":7},
-          {"id":"r.1.1","title":"grandchild","status":"open","parent_id":"r.1","depth":0}
+          {"id":"r","title":"root","status":"open","depth":7},
+          {"id":"r.1","title":"child","status":"open",
+           "dependencies":[{"depends_on_id":"r","type":"parent-child"}],"depth":7},
+          {"id":"r.1.1","title":"grandchild","status":"open",
+           "dependencies":[{"depends_on_id":"r.1","type":"parent-child"}],"depth":0}
         ]"#;
         let a = assembled(json, ROOT);
 
@@ -442,8 +444,9 @@ mod tests {
     #[test]
     fn an_empty_string_parent_marks_the_root_rather_than_a_dangling_one() {
         let json = r#"[
-          {"id":"r","title":"root","status":"open","parent_id":""},
-          {"id":"r.1","title":"child","status":"open","parent_id":"r"}
+          {"id":"r","title":"root","status":"open"},
+          {"id":"r.1","title":"child","status":"open",
+           "dependencies":[{"depends_on_id":"r","type":"parent-child"}]}
         ]"#;
         let a = assembled(json, ROOT);
 
@@ -457,13 +460,19 @@ mod tests {
         // priority, `c` and `a` share a state and differ only by priority,
         // `a` and `b` share both and differ only by id.
         let json = r#"[
-          {"id":"t","title":"root","status":"open","parent_id":""},
-          {"id":"t.a","title":"a","status":"open","priority":1,"parent_id":"t"},
-          {"id":"t.b","title":"b","status":"open","priority":1,"parent_id":"t"},
-          {"id":"t.c","title":"c","status":"open","priority":0,"parent_id":"t"},
-          {"id":"t.d","title":"d","status":"in_progress","priority":9,"parent_id":"t"},
-          {"id":"t.e","title":"e","status":"closed","priority":0,"parent_id":"t"},
-          {"id":"t.f","title":"f","status":"blocked","priority":5,"parent_id":"t"}
+          {"id":"t","title":"root","status":"open"},
+          {"id":"t.a","title":"a","status":"open","priority":1,
+           "dependencies":[{"depends_on_id":"t","type":"parent-child"}]},
+          {"id":"t.b","title":"b","status":"open","priority":1,
+           "dependencies":[{"depends_on_id":"t","type":"parent-child"}]},
+          {"id":"t.c","title":"c","status":"open","priority":0,
+           "dependencies":[{"depends_on_id":"t","type":"parent-child"}]},
+          {"id":"t.d","title":"d","status":"in_progress","priority":9,
+           "dependencies":[{"depends_on_id":"t","type":"parent-child"}]},
+          {"id":"t.e","title":"e","status":"closed","priority":0,
+           "dependencies":[{"depends_on_id":"t","type":"parent-child"}]},
+          {"id":"t.f","title":"f","status":"blocked","priority":5,
+           "dependencies":[{"depends_on_id":"t","type":"parent-child"}]}
         ]"#;
         let a = assembled(json, "t");
 
@@ -481,8 +490,9 @@ mod tests {
     #[test]
     fn a_bead_whose_parent_is_absent_is_reported_and_kept() {
         let json = r#"[
-          {"id":"r","title":"root","status":"open","parent_id":""},
-          {"id":"r.9","title":"orphan","status":"open","parent_id":"r.404"}
+          {"id":"r","title":"root","status":"open"},
+          {"id":"r.9","title":"orphan","status":"open",
+           "dependencies":[{"depends_on_id":"r.404","type":"parent-child"}]}
         ]"#;
 
         // Nothing above it survives, so the tree it belongs to is its own.
@@ -509,9 +519,10 @@ mod tests {
     #[test]
     fn an_orphan_does_not_join_a_tree_that_never_named_it() {
         let json = r#"[
-          {"id":"one","title":"one","status":"open","parent_id":""},
-          {"id":"two","title":"two","status":"open","parent_id":""},
-          {"id":"lost","title":"its parent was deleted","status":"closed","parent_id":"gone"}
+          {"id":"one","title":"one","status":"open"},
+          {"id":"two","title":"two","status":"open"},
+          {"id":"lost","title":"its parent was deleted","status":"closed",
+           "dependencies":[{"depends_on_id":"gone","type":"parent-child"}]}
         ]"#;
 
         assert_eq!(ids(&assembled(json, "one")), vec!["one"]);
@@ -521,8 +532,8 @@ mod tests {
     #[test]
     fn a_root_the_answer_does_not_hold_is_a_loud_failure() {
         let json = r#"[
-          {"id":"one","title":"one","status":"open","parent_id":""},
-          {"id":"two","title":"two","status":"open","parent_id":""}
+          {"id":"one","title":"one","status":"open"},
+          {"id":"two","title":"two","status":"open"}
         ]"#;
         let err = assemble(parse_beads(json).unwrap(), "three")
             .expect_err("no bead three to draw from")
@@ -541,10 +552,12 @@ mod tests {
         // whole tracker. Drawing `two` under `one` would put every other
         // effort's work inside this one.
         let json = r#"[
-          {"id":"one","title":"one","status":"open","parent_id":""},
-          {"id":"one.1","title":"child","status":"open","parent_id":"one"},
-          {"id":"two","title":"two","status":"open","parent_id":""},
-          {"id":"two.1","title":"child","status":"open","parent_id":"two"}
+          {"id":"one","title":"one","status":"open"},
+          {"id":"one.1","title":"child","status":"open",
+           "dependencies":[{"depends_on_id":"one","type":"parent-child"}]},
+          {"id":"two","title":"two","status":"open"},
+          {"id":"two.1","title":"child","status":"open",
+           "dependencies":[{"depends_on_id":"two","type":"parent-child"}]}
         ]"#;
         let a = assembled(json, "one");
 

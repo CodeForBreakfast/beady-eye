@@ -1,1 +1,168 @@
-{"id":"cli:agent:list","result":{"agents":[{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"127728c6-7333-44cb-8e97-36666b83b4da"},"agent_status":"working","cwd":"/tmp/bdi-ground/beady-eye","display_agent":"orch: v1","focused":true,"foreground_cwd":"/tmp/bdi-ground/beady-eye","pane_id":"wCW:pH","revision":3,"state_change_seq":1169,"tab_id":"wCW:t1","terminal_id":"term_65a4310d1f83c4a","terminal_title":"✳ Workers worktrees","terminal_title_stripped":"Workers worktrees","title":"orchestrating bdi-7ao","workspace_id":"wCW"},{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"9dd4196e-57ec-477d-93d5-3c4f96814f03"},"agent_status":"working","cwd":"/tmp/bdi-ground/beady-eye","display_agent":"bdi-d77 row-status","focused":false,"foreground_cwd":"/tmp/bdi-ground/beady-eye","pane_id":"wCW:p1T","revision":2,"state_change_seq":1167,"state_labels":{"idle":"bdi-d77: Row carries Status","working":"bdi-d77: Row carries Status"},"tab_id":"wCW:t1","terminal_id":"term_65a4734ac9b337d","terminal_title":"◑ Claude Code","terminal_title_stripped":"Claude Code","title":"bdi-d77: Row carries Status; delete the glyph inversion","workspace_id":"wCW"},{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"a87062db-7492-4dfc-81c8-55d149c04775"},"agent_status":"working","cwd":"/tmp/bdi-ground/beady-eye","display_agent":"bdi-9vm join","focused":false,"foreground_cwd":"/tmp/bdi-ground/beady-eye","pane_id":"wCW:p1S","revision":2,"state_change_seq":1166,"state_labels":{"idle":"bdi-9vm: diagnosing the agent join","working":"bdi-9vm: diagnosing the agent join"},"tab_id":"wCW:t1","terminal_id":"term_65a470d04b8587c","terminal_title":"◐ Claude Code","terminal_title_stripped":"Claude Code","title":"bdi-9vm: why every claimed bead draws no pane","workspace_id":"wCW"},{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"0af01c86-584d-41aa-8c54-35c2d42c9b63"},"agent_status":"idle","cwd":"/tmp/bdi-ground/beady-eye","display_agent":"tail-loose-panes","focused":false,"foreground_cwd":"/tmp/bdi-ground/beady-eye","pane_id":"wCW:p1Q","revision":2,"state_change_seq":1163,"state_labels":{"idle":"holding for bdi-2bb.19 (forest selectability)","working":"holding for bdi-2bb.19 (forest selectability)"},"tab_id":"wCW:t1","terminal_id":"term_65a46bd1e07b77a","terminal_title":"✳ Claude Code","terminal_title_stripped":"Claude Code","title":"bdi-2bb.18: half done, holding for bdi-2bb.19","workspace_id":"wCW"},{"agent":"claude","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"5fadb59f-6915-4b7e-82cf-db751b82bd39"},"agent_status":"working","cwd":"/tmp/bdi-ground/beady-eye","display_agent":"fold-default","focused":false,"foreground_cwd":"/tmp/bdi-ground/beady-eye","pane_id":"wCW:p1P","revision":2,"state_change_seq":1144,"tab_id":"wCW:t1","terminal_id":"term_65a46bcee66f079","terminal_title":"◑ Claude Code","terminal_title_stripped":"Claude Code","title":"bdi-xey: open the spine to every live agent","workspace_id":"wCW"}],"type":"agent_list"}}
+{
+  "id": "cli:agent:list",
+  "result": {
+    "agents": [
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "31e70746-4d75-42fc-ab67-6fadf0cbd36b"
+        },
+        "agent_status": "idle",
+        "cwd": "/tmp/bdi-ground/summit-works",
+        "display_agent": "nix-update",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/summit-works",
+        "pane_id": "wD4:p1",
+        "revision": 11,
+        "state_change_seq": 57,
+        "state_labels": {
+          "idle": "/nix-update run (wisp nix-wisp-gvi)",
+          "working": "/nix-update run (wisp nix-wisp-gvi)"
+        },
+        "tab_id": "wD4:t1",
+        "terminal_id": "term_65a521983654f2",
+        "terminal_title": "✳ Associate with a bead in CLAUDE.md",
+        "terminal_title_stripped": "Associate with a bead in CLAUDE.md",
+        "workspace_id": "wD4"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "475c1f96-df8b-4083-bbf9-12df42462a94"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "orch: v1",
+        "focused": true,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wD6:p1",
+        "revision": 7,
+        "state_change_seq": 137,
+        "tab_id": "wD6:t1",
+        "terminal_id": "term_65a529c0dc4404",
+        "terminal_title": "◑ agent_pane wD4:p1 claimed no pane",
+        "terminal_title_stripped": "agent_pane wD4:p1 claimed no pane",
+        "title": "orchestrating bdi-7ao",
+        "workspace_id": "wD6"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "d6c20f8f-dffa-4f17-adf9-60411dfd3870"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "watcher-shortcut",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wD6:pJ",
+        "revision": 2,
+        "state_change_seq": 152,
+        "tab_id": "wD6:t1",
+        "terminal_id": "term_65a5417e66f3c18",
+        "terminal_title": "◑ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "bdi-7ao.22: run bdi under a file watcher",
+        "workspace_id": "wD6"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "dc57cbf2-1897-4eee-982a-939261f9a6d1"
+        },
+        "agent_status": "idle",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "push-gate-doc",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wD6:pH",
+        "revision": 2,
+        "state_change_seq": 153,
+        "tab_id": "wD6:t1",
+        "terminal_id": "term_65a540c0a3a9d17",
+        "terminal_title": "✳ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "bdi-7ao.30: document the behind-signature in CLAUDE.md",
+        "workspace_id": "wD6"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "0a4419e0-05bc-4fae-9001-127391846423"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "display_agent": "dep-tree shape",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wD6:pG",
+        "revision": 2,
+        "state_change_seq": 145,
+        "tab_id": "wD6:t1",
+        "terminal_id": "term_65a5402e9094716",
+        "terminal_title": "◑ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "title": "bdi-7ao.12: retiring the dep-tree row shape from fixtures",
+        "workspace_id": "wD6"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "c8ef03ad-e67b-4d5b-904e-9985ec278135"
+        },
+        "agent_status": "working",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wD6:pC",
+        "revision": 2,
+        "state_change_seq": 123,
+        "tab_id": "wD6:t1",
+        "terminal_id": "term_65a53b59ad60f11",
+        "terminal_title": "◑ Claude Code",
+        "terminal_title_stripped": "Claude Code",
+        "workspace_id": "wD6"
+      },
+      {
+        "agent": "claude",
+        "agent_session": {
+          "agent": "claude",
+          "kind": "id",
+          "source": "herdr:claude",
+          "value": "693b3a9d-3410-495c-ba45-3fd03b98d3b7"
+        },
+        "agent_status": "idle",
+        "cwd": "/tmp/bdi-ground/beady-eye",
+        "focused": false,
+        "foreground_cwd": "/tmp/bdi-ground/beady-eye",
+        "pane_id": "wD8:p1",
+        "revision": 3,
+        "state_change_seq": 91,
+        "tab_id": "wD8:t1",
+        "terminal_id": "term_65a52ffbed388c",
+        "terminal_title": "✳ BDI cargo auto-run on changes",
+        "terminal_title_stripped": "BDI cargo auto-run on changes",
+        "workspace_id": "wD8"
+      }
+    ],
+    "type": "agent_list"
+  }
+}

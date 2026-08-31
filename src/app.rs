@@ -396,27 +396,30 @@ mod tests {
     /// One project's tracker as bd answers for the root: an epic over two
     /// tasks, one of them naming the pane working it.
     const ORBITAL_TREE: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent_id":"",
+      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent_id":"orb-7",
-       "priority":2,"issue_type":"task","edge_from_parent":"parent-child",
+      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent_id":"orb-7",
-       "priority":2,"issue_type":"task","edge_from_parent":"parent-child"}
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
     ]"#;
 
     /// A second root, reached only because config names it.
     const MAST_TREE: &str = r#"[
-      {"id":"orb-4","title":"survey the mast","status":"open","parent_id":"",
+      {"id":"orb-4","title":"survey the mast","status":"open",
        "priority":2,"issue_type":"task"}
     ]"#;
 
     /// Two trackers that chose the same id prefix, which no one coordinates.
     const COLLIDING_TREE: &str = r#"[
-      {"id":"x-1","title":"the shared prefix","status":"in_progress","parent_id":"",
+      {"id":"x-1","title":"the shared prefix","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent_id":"x-1",
-       "priority":2,"issue_type":"task","edge_from_parent":"parent-child"}
+      {"id":"x-1.1","title":"the colliding id","status":"in_progress",
+       "dependencies":[{"depends_on_id":"x-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
     ]"#;
 
     /// `w:p1` is on a bead; `w:p9` is a session on none.
@@ -584,7 +587,8 @@ credential_command = "secret ferry"
         let orphan_row = r#"[{"id":"orb-7.9","title":"its parent was deleted",
                               "status":"open","parent":"orb-404"}]"#;
         let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent was deleted",
-                               "status":"open","parent_id":"orb-404",
+                               "status":"open",
+                               "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
                                "priority":2,"issue_type":"task"}]"#;
         let runner = orbital()
             .merging(&spelled(UNFINISHED_CALL), orphan_row)
@@ -679,7 +683,7 @@ credential_command = "secret ferry"
             )
             .with(&spelled(TRACKER_CALL),
                 r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
-                     "parent_id":"","priority":2,"issue_type":"task"}]"#,
+                     "priority":2,"issue_type":"task"}]"#,
             );
 
         let snap = run(&one_project(), &runner, Filter::All, now());

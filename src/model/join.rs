@@ -319,9 +319,9 @@ mod tests {
 
     /// A tracker and a herdr session captured from the same live moment, so
     /// the pane a bead names is a pane the list reports. The pair the other
-    /// fixtures cannot make: `bd_dep_tree.json` was captured before any seat
-    /// wrote `agent_pane`, so nothing in it exercises the exact direction.
-    const JOINED_BEADS: &str = include_str!("../../tests/fixtures/joined_bd_dep_tree.json");
+    /// fixtures cannot make: nothing hand-written can show that the ids on
+    /// both sides agree, because whoever writes it makes them agree.
+    const JOINED_BEADS: &str = include_str!("../../tests/fixtures/joined_bd_list.json");
     const JOINED_PANES: &str = include_str!("../../tests/fixtures/joined_herdr_agent_list.json");
 
     const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/beady-eye";
@@ -342,12 +342,11 @@ mod tests {
         }
     }
 
-    /// The root of a hand-written tree: the one row naming no parent, which
-    /// is how `bd dep tree` marks it.
+    /// The root of a hand-written tree: the one row that depends on nothing.
     fn root_row(beads: &[Bead]) -> String {
         beads
             .iter()
-            .find(|b| b.parent_id.is_none())
+            .find(|b| b.depends_on().is_empty())
             .expect("a root row")
             .id
             .clone()
@@ -411,8 +410,8 @@ mod tests {
             &Join::default(),
         );
 
-        let a = pane_of(&joined, "beady-eye", "bdi-2bb.18");
-        assert_eq!(a.pane, "wCW:p1Q");
+        let a = pane_of(&joined, "beady-eye", "bdi-7ao.22");
+        assert_eq!(a.pane, "wD6:pJ");
         assert_eq!(a.source, JoinSource::AgentPane);
         assert_eq!(joined.conflicts, vec![]);
         assert_eq!(joined.refused, BTreeMap::new());
@@ -422,8 +421,9 @@ mod tests {
     fn the_bead_naming_its_pane_resolves_exactly() {
         let beads = rows(
             r#"[
-              {"id":"p-1","title":"root","status":"open","parent_id":""},
-              {"id":"p-1.1","title":"work","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1","title":"root","status":"open"},
+              {"id":"p-1.1","title":"work","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}}
             ]"#,
         );
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn an_agent_carries_the_panes_caption() {
         let beads = rows(
-            r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":"",
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(
@@ -487,7 +487,7 @@ mod tests {
     fn the_exact_direction_reads_the_configured_key() {
         let beads = rows(
             r#"[
-              {"id":"p-1","title":"root","status":"open","parent_id":"",
+              {"id":"p-1","title":"root","status":"open",
                "metadata":{"herdr_pane":"w:p1","agent_pane":"w:p2"}}
             ]"#,
         );
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn a_bead_naming_a_dead_pane_resolves_to_nothing() {
         let beads = rows(
-            r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":"",
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
                  "metadata":{"agent_pane":"w:pGONE"}}]"#,
         );
         let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle"}"#);
@@ -566,7 +566,7 @@ mod tests {
     /// `display_agent` is free text. Most of it is not a bead id.
     #[test]
     fn a_pane_whose_display_agent_names_no_bead_joins_nothing() {
-        let beads = rows(r#"[{"id":"p-1","title":"root","status":"open","parent_id":""}]"#);
+        let beads = rows(r#"[{"id":"p-1","title":"root","status":"open"}]"#);
         let live = panes(
             r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working",
                 "display_agent":"orch: some-effort"}"#,
@@ -681,10 +681,10 @@ mod tests {
     #[test]
     fn colliding_prefixes_do_not_cross_attach_an_inferred_agent() {
         let one = rows(
-            r#"[{"id":"x-1","title":"in project one","status":"in_progress","parent_id":""}]"#,
+            r#"[{"id":"x-1","title":"in project one","status":"in_progress"}]"#,
         );
         let two = rows(
-            r#"[{"id":"x-1","title":"in project two","status":"in_progress","parent_id":""}]"#,
+            r#"[{"id":"x-1","title":"in project two","status":"in_progress"}]"#,
         );
         let live = panes(
             r#"{"pane_id":"w:p1","cwd":"/home/user/one/src","agent_status":"working",
@@ -721,9 +721,9 @@ mod tests {
 
     #[test]
     fn colliding_prefixes_do_not_cross_attach_an_exact_agent() {
-        let one = rows(r#"[{"id":"x-1","title":"in project one","status":"open","parent_id":""}]"#);
+        let one = rows(r#"[{"id":"x-1","title":"in project one","status":"open"}]"#);
         let two = rows(
-            r#"[{"id":"x-1","title":"in project two","status":"in_progress","parent_id":"",
+            r#"[{"id":"x-1","title":"in project two","status":"in_progress",
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live =
@@ -779,8 +779,8 @@ mod tests {
     /// finding from the other direction.
     #[test]
     fn a_pane_naming_another_projects_bead_does_not_join_and_is_reported() {
-        let one = rows(r#"[{"id":"a-1","title":"only in one","status":"open","parent_id":""}]"#);
-        let two = rows(r#"[{"id":"b-1","title":"only in two","status":"open","parent_id":""}]"#);
+        let one = rows(r#"[{"id":"a-1","title":"only in one","status":"open"}]"#);
+        let two = rows(r#"[{"id":"b-1","title":"only in two","status":"open"}]"#);
         let live = panes(
             r#"{"pane_id":"w:p1","cwd":"/home/user/two","agent_status":"working",
                 "display_agent":"a-1"}"#,
@@ -826,7 +826,7 @@ mod tests {
     #[test]
     fn a_bead_naming_a_pane_in_no_configured_project_does_not_join_and_is_reported() {
         let beads = rows(
-            r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":"",
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(r#"{"pane_id":"w:p1","cwd":"/tmp","agent_status":"working"}"#);
@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn the_two_directions_naming_different_panes_is_reported_and_the_beads_key_wins() {
         let beads = rows(
-            r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":"",
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(
@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn the_two_directions_naming_one_pane_is_not_a_conflict() {
         let beads = rows(
-            r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":"",
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
                  "metadata":{"agent_pane":"w:p1"}}]"#,
         );
         let live = panes(
@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn several_panes_naming_one_bead_leaves_it_unclaimed_and_reported() {
-        let beads = rows(r#"[{"id":"p-1","title":"root","status":"in_progress","parent_id":""}]"#);
+        let beads = rows(r#"[{"id":"p-1","title":"root","status":"in_progress"}]"#);
         let live = panes(
             r#"{"pane_id":"w:p2","cwd":"/home/user/proj","agent_status":"working",
                 "display_agent":"p-1"},
@@ -961,10 +961,12 @@ mod tests {
     fn several_beads_naming_one_pane_leaves_them_all_unclaimed_and_reported() {
         let beads = rows(
             r#"[
-              {"id":"p-1","title":"root","status":"open","parent_id":""},
-              {"id":"p-1.1","title":"one","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1","title":"root","status":"open"},
+              {"id":"p-1.1","title":"one","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}},
-              {"id":"p-1.2","title":"two","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1.2","title":"two","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}}
             ]"#,
         );
@@ -1009,16 +1011,19 @@ mod tests {
     fn a_contested_pane_carries_its_own_account_of_what_it_is_working_on() {
         let beads = rows(
             r#"[
-              {"id":"bdi-7ao","title":"bdi v1","status":"open","parent_id":""},
+              {"id":"bdi-7ao","title":"bdi v1","status":"open"},
               {"id":"bdi-2bb.16","title":"a claim its seat moved on from",
-               "status":"in_progress","parent_id":"bdi-7ao",
-               "metadata":{"agent_pane":"wCW:p1P"}},
-              {"id":"bdi-xey","title":"open the spine to every live agent",
-               "status":"in_progress","parent_id":"bdi-7ao",
-               "metadata":{"agent_pane":"wCW:p1P"}},
+               "status":"in_progress",
+               "dependencies":[{"depends_on_id":"bdi-7ao","type":"parent-child"}],
+               "metadata":{"agent_pane":"wD6:pG"}},
+              {"id":"bdi-7ao.12","title":"retiring the dep-tree row shape",
+               "status":"in_progress",
+               "dependencies":[{"depends_on_id":"bdi-7ao","type":"parent-child"}],
+               "metadata":{"agent_pane":"wD6:pG"}},
               {"id":"bdi-2bb.19","title":"the other claim it moved on from",
-               "status":"in_progress","parent_id":"bdi-7ao",
-               "metadata":{"agent_pane":"wCW:p1P"}}
+               "status":"in_progress",
+               "dependencies":[{"depends_on_id":"bdi-7ao","type":"parent-child"}],
+               "metadata":{"agent_pane":"wD6:pG"}}
             ]"#,
         );
         let live = parse_agent_list(JOINED_PANES).expect("the fixture parses");
@@ -1038,12 +1043,14 @@ mod tests {
         assert_eq!(
             joined.conflicts,
             vec![Conflict::SeveralBeadsNameOnePane {
-                pane: "wCW:p1P".to_string(),
-                caption: Some("bdi-xey: open the spine to every live agent".to_string()),
+                pane: "wD6:pG".to_string(),
+                caption: Some(
+                    "bdi-7ao.12: retiring the dep-tree row shape from fixtures".to_string()
+                ),
                 beads: vec![
                     key("beady-eye", "bdi-2bb.16"),
                     key("beady-eye", "bdi-2bb.19"),
-                    key("beady-eye", "bdi-xey"),
+                    key("beady-eye", "bdi-7ao.12"),
                 ],
             }]
         );
@@ -1055,10 +1062,12 @@ mod tests {
     fn a_contested_pane_that_says_nothing_about_itself_carries_nothing() {
         let beads = rows(
             r#"[
-              {"id":"p-1","title":"root","status":"open","parent_id":""},
-              {"id":"p-1.1","title":"one","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1","title":"root","status":"open"},
+              {"id":"p-1.1","title":"one","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}},
-              {"id":"p-1.2","title":"two","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1.2","title":"two","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}}
             ]"#,
         );
@@ -1092,10 +1101,12 @@ mod tests {
     fn a_bead_whose_exact_claim_was_voided_still_takes_an_uncontested_inferred_pane() {
         let beads = rows(
             r#"[
-              {"id":"p-1","title":"root","status":"open","parent_id":""},
-              {"id":"p-1.1","title":"one","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1","title":"root","status":"open"},
+              {"id":"p-1.1","title":"one","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}},
-              {"id":"p-1.2","title":"two","status":"in_progress","parent_id":"p-1",
+              {"id":"p-1.2","title":"two","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
                "metadata":{"agent_pane":"w:p1"}}
             ]"#,
         );
@@ -1140,7 +1151,7 @@ mod tests {
 
     fn bead_with(metadata: &str) -> Bead {
         let json = format!(
-            r#"[{{"id":"p-1","title":"root","status":"open","parent_id":"","metadata":{metadata}}}]"#
+            r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#
         );
         rows(&json).remove(0).bead
     }

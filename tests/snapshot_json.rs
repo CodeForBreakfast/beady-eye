@@ -15,20 +15,24 @@ use canned::Canned;
 /// none, a claim nothing has touched in weeks, a task bd calls ready, and a
 /// closed task a pane is still sitting on.
 const TREE: &str = r#"[
-  {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent_id":"",
+  {"id":"orb-7","title":"lift the ground station","status":"in_progress",
    "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
    "started_at":"2026-08-20T09:00:00Z","metadata":{"agent_pane":"w:p1"}},
-  {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent_id":"orb-7",
-   "priority":2,"issue_type":"task","edge_from_parent":"parent-child",
+  {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":2,"issue_type":"task",
    "updated_at":"2026-08-29T10:00:00Z","started_at":"2026-08-29T10:00:00Z",
    "metadata":{"blocked_on":"human"}},
-  {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress","parent_id":"orb-7",
-   "priority":1,"issue_type":"task","edge_from_parent":"parent-child",
+  {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":1,"issue_type":"task",
    "updated_at":"2026-07-01T09:00:00Z","started_at":"2026-07-01T09:00:00Z"},
-  {"id":"orb-7.4","title":"file the licence","status":"open","parent_id":"orb-7",
-   "priority":3,"issue_type":"chore","edge_from_parent":"parent-child"},
-  {"id":"orb-7.2","title":"survey the mast","status":"closed","parent_id":"orb-7",
-   "priority":2,"issue_type":"task","edge_from_parent":"parent-child",
+  {"id":"orb-7.4","title":"file the licence","status":"open",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":3,"issue_type":"chore"},
+  {"id":"orb-7.2","title":"survey the mast","status":"closed",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":2,"issue_type":"task",
    "closed_at":"2026-08-28T09:00:00Z"}
 ]"#;
 
@@ -569,11 +573,12 @@ const HARBOUR_DIR: &str = "/srv/work/harbour";
 /// the case `(project, id)` exists for. Invented rather than captured — no
 /// other project's tracker was read to write it.
 const HARBOUR_TREE: &str = r#"[
-  {"id":"orb-7","title":"re-dredge the north channel","status":"in_progress","parent_id":"",
+  {"id":"orb-7","title":"re-dredge the north channel","status":"in_progress",
    "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
    "started_at":"2026-08-25T09:00:00Z","metadata":{"agent_pane":"w:p5"}},
-  {"id":"orb-7.1","title":"hire the dredger","status":"in_progress","parent_id":"orb-7",
-   "priority":2,"issue_type":"task","edge_from_parent":"parent-child",
+  {"id":"orb-7.1","title":"hire the dredger","status":"in_progress",
+   "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+   "priority":2,"issue_type":"task",
    "updated_at":"2026-08-29T11:00:00Z","started_at":"2026-08-29T11:00:00Z"}
 ]"#;
 
