@@ -145,14 +145,18 @@ impl Forest {
         self.half_screen = rows.max(1);
     }
 
-    /// Take a freshly collected snapshot, keeping the folds and the selection.
+    /// Take a freshly collected snapshot, keeping the folds, the filter and
+    /// the selection.
     pub fn refresh(&mut self, snapshot: &Snapshot) {
         // Only the snapshot the cursor was found in knows what stood above
         // it, so where the new one has dropped the bead the cursor falls to
         // the nearest of its forebears that survived.
         let ancestry = self.ancestry();
         let folded_over = self.folded_over();
-        self.snapshot = snapshot.clone();
+        // A collection carries the filter the command line asked for, which
+        // is nobody's answer to `a`. So the one in hand goes on the new
+        // snapshot, exactly as the folds and the cursor do.
+        self.snapshot = snapshot::refilter(snapshot, self.snapshot.filter);
         self.spend_folds(&folded_over);
         self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
         self.lay_out();
@@ -2710,11 +2714,14 @@ credential_command = "secret harbour"
         let mut forest = flatten(&snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
+        // Harbour has no live agent, so it is a tree only a reader showing
+        // every tree can be left standing on.
+        forest.apply(Action::ToggleFilter);
 
         forest.refresh(&gather(
             vec![tree_of("harbour", HARBOUR)],
             Vec::new(),
-            Filter::All,
+            Filter::LiveAgents,
         ));
 
         assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
@@ -3863,6 +3870,22 @@ credential_command = "secret harbour"
 
             assert_eq!(forest.snapshot().filter, Filter::All, "{action:?}");
         }
+    }
+
+    /// The filter is the reader's too, and a collection landing under them is
+    /// not them changing their mind. The one line that offers the key is the
+    /// hidden-trees group header, so a refresh that puts the filter back reads
+    /// on screen as that group shutting itself.
+    #[test]
+    fn a_refresh_leaves_the_filter_where_the_reader_put_it() {
+        let mut forest = flatten(&built(Filter::LiveAgents));
+        forest.apply(Action::ToggleFilter);
+        let before = sketch(&forest);
+
+        forest.refresh(&built(Filter::LiveAgents));
+
+        assert_eq!(forest.snapshot().filter, Filter::All);
+        assert_eq!(sketch(&forest), before);
     }
 
     /// `apply` reports whether the screen moved, and a forest already open
