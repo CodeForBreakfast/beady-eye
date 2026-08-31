@@ -31,7 +31,9 @@ installed" is what that test exists to check, so the binary has to be present.
 The flake supplies it.
 
 Unit tests live in `#[cfg(test)]` modules inside the file they cover; `tests/`
-holds the integration tests, which run the built binary. Fixtures under
+holds the integration tests, which either link the library or run the built
+binary. A test that reaches a module no test has reached before needs that
+module opening up in `src/lib.rs`, which says why. Fixtures under
 `tests/fixtures/` are faithful captures of what `bd list`, `bd dep tree`, `bd
 query` and `herdr agent list` put on the wire.
 
@@ -42,10 +44,17 @@ reads `symbol()` only and is blind to styling, which is how a colour bug
 shipped. `tui/` has a `painted()` of its own that is no better: it is named
 for the `paint()` it calls, returns symbols, and sees no colour either.
 
-A path with no non-test caller is described by its tests, not covered by them.
-The suite goes green, the reader sees green, and the product does something
-else — and nothing here warns you, because every module is `pub` and that
-switches Rust's own dead-code lint off across the crate.
+An item nothing calls is a compiler warning here: `src/lib.rs` keeps the
+library's modules private, so `dead_code` sees the whole crate and the
+`dead-code` check fails on one. It will not see a live item on a path
+production never takes — `dead_code` is item-level reachability and does no
+value-flow analysis, so a function reached only through an arm of a caller that
+short-circuits before it is invisible to the compiler. That one is still
+described by its tests rather than covered by them: the suite goes green, the
+reader sees green, and the product does something else. It surfaces when
+somebody reads the caller for another reason, which is not something you can
+schedule — so when you change a caller, check what the arms below its early
+return are still reached by.
 
 ## Where things are
 

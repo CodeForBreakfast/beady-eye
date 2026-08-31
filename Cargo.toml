@@ -43,7 +43,15 @@ serde_json = "1"
 signal-hook = "0.3"
 toml = "0.8"
 
+[features]
+# What `tests/` reaches that bdi does not. Cargo builds dev-dependencies only
+# for the targets that compile tests, so the package depending on itself here
+# is what turns this on for `cargo test` and leaves `cargo build` narrow. See
+# src/lib.rs.
+testing = []
+
 [dev-dependencies]
+beady-eye = { path = ".", features = ["testing"] }
 # A pty, so a test can drive bdi as a terminal would and read what it
 # writes on the way out. Already in the lock as signal-hook's own.
 libc = "0.2"

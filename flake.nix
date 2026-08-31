@@ -389,6 +389,13 @@
           build-and-test = beady-eye;
           check-before-push = checkBeforePushTest;
           clippy = checkOf "clippy" [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
+
+          # A second invocation rather than a flag on the one above, because
+          # `--all-targets` is what defeats it: building the test targets pulls
+          # in the dev-dependencies, which turns `testing` on, which makes the
+          # library's modules `pub` again and switches `dead_code` off. Only a
+          # build without them sees the narrow surface. See src/lib.rs.
+          dead-code = checkOf "dead-code" [ pkgs.clippy ] "cargo clippy -- -D warnings";
           fmt = checkOf "fmt" [ pkgs.rustfmt ] "cargo fmt --check";
 
           # cargo publish uploads only what Cargo.toml's include list selects,
