@@ -414,7 +414,7 @@ mod tests {
         read
     }
 
-    /// Per-project refresh is built in `tui.rs` and only consumed here, so a
+    /// Per-project refresh is built in `tui/mod.rs` and only consumed here, so a
     /// change that emptied that file would leave this one compiling, every
     /// test passing, and `bdi` reading every tracker on every message. That
     /// happened, in `8b227ab`, and stood for an hour behind a green suite: a
