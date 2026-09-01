@@ -345,7 +345,8 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::Shutdown;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
     use std::sync::mpsc::{self, Receiver};
@@ -377,10 +378,17 @@ mod tests {
         (socket, changes)
     }
 
+    /// Both ends of one connection to bdi: what messages go down, and what
+    /// its answers come back up.
+    fn connect(at: &Path) -> (UnixStream, BufReader<UnixStream>) {
+        let writing = UnixStream::connect(at).expect("bdi is listening");
+        let reading = BufReader::new(writing.try_clone().expect("both ends of the stream"));
+        (writing, reading)
+    }
+
     /// Send `lines` down one connection and read back what bdi said to each.
     fn say(at: &Path, lines: &[&str]) -> Vec<String> {
-        let mut writing = UnixStream::connect(at).expect("bdi is listening");
-        let mut reading = BufReader::new(writing.try_clone().expect("both ends of the stream"));
+        let (mut writing, mut reading) = connect(at);
 
         lines
             .iter()
@@ -557,6 +565,94 @@ mod tests {
             "the channel carried on from the bad line to the good one"
         );
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
+    }
+
+    /// A writer still building a line when the room runs out has stopped
+    /// speaking messages, and what bdi has read of it is a prefix rather
+    /// than a name — however much the prefix looks like one. Acting on it
+    /// would refresh a project on the strength of half a line, and reading
+    /// on would answer the rest of that line as if each piece were its own
+    /// message, so the writer is answered once and let go.
+    ///
+    /// The write half is closed after the line so that a bdi which reads on
+    /// runs out of bytes and answers rather than waiting: a test that hangs
+    /// where it should fail says nothing.
+    #[test]
+    fn a_line_that_never_ends_is_malformed_and_the_writer_is_let_go() {
+        let at = a_socket_path("never-ends");
+        let reported = watching(["atlas"]);
+        let (_socket, changes) = open(&at, &reported);
+
+        let (mut writing, mut reading) = connect(&at);
+        let unending = format!("atlas{}", " ".repeat(LONGEST_MESSAGE * 2));
+        write!(writing, "{unending}").expect("bdi takes the message");
+        writing
+            .shutdown(Shutdown::Write)
+            .expect("the writer has said all it is going to");
+
+        let mut said = String::new();
+        reading.read_line(&mut said).expect("bdi answers");
+        assert_eq!(
+            said.trim_end(),
+            "malformed",
+            "the prefix bdi read is not the name it spells"
+        );
+
+        let mut afterwards = String::new();
+        reading
+            .read_to_string(&mut afterwards)
+            .expect("bdi is done");
+        assert_eq!(
+            afterwards, "",
+            "bdi let the writer go rather than answering the rest of its line"
+        );
+        assert!(
+            changes.recv_timeout(Duration::from_millis(100)).is_err(),
+            "nothing bdi watches was named, so there is nothing to collect"
+        );
+    }
+
+    /// The line carries its own newline, so the longest name that still
+    /// fits in the room is one byte short of it. A writer sitting on that
+    /// boundary is heard, and the message after it is still read as the
+    /// next message rather than as the tail of this one.
+    ///
+    /// Each answer is read and asserted before the message after it is
+    /// sent. A bdi that hangs up on the boundary breaks the second write
+    /// as well as the first answer, and a broken pipe would fail this test
+    /// without saying which of the two it was.
+    #[test]
+    fn the_longest_message_that_still_ends_is_taken() {
+        let at = a_socket_path("longest-that-ends");
+        let brink = "a".repeat(LONGEST_MESSAGE - 1);
+        let reported = watching([brink.as_str(), "atlas"]);
+        let (_socket, changes) = open(&at, &reported);
+
+        let (mut writing, mut reading) = connect(&at);
+
+        writeln!(writing, "{brink}").expect("bdi takes the message");
+        let mut said = String::new();
+        reading.read_line(&mut said).expect("bdi answers");
+        assert_eq!(
+            said.trim_end(),
+            format!("ok {brink}"),
+            "the line ended inside the room it was given, so bdi took it"
+        );
+
+        writeln!(writing, "atlas").expect("bdi is still hearing this writer");
+        let mut next = String::new();
+        reading.read_line(&mut next).expect("bdi answers");
+        assert_eq!(
+            next.trim_end(),
+            "ok atlas",
+            "bdi read on from where the boundary message ended"
+        );
+
+        assert_eq!(
+            changes.recv_timeout(A_MOMENT).ok(),
+            Some(brink),
+            "the loop was told to collect for the name on the boundary"
+        );
     }
 
     /// The shape this interface is for: a producer that connects once and
