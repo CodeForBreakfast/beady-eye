@@ -659,11 +659,16 @@ mod tests {
     /// `bdi` that will never take it, which looks exactly like the fault
     /// they were trying to clear.
     ///
-    /// Held here rather than at the call site because this is the sentence
-    /// that makes the promise, and a sentence is what would quietly stop
-    /// being true if a retry were ever added and this went unchanged.
+    /// Only the sentence is asserted, and nothing holds it to the bind it
+    /// describes. A retry added to `wire` would make the restart a lie and
+    /// leave this green, and nothing else in the suite would go red either.
+    /// Tying the two means driving a `bdi` against a held socket, freeing it,
+    /// and waiting out a retry interval that does not exist — a timeout
+    /// standing in for an assertion, over a property that is true by
+    /// construction today. So a retry is a change to this sentence too, and
+    /// this paragraph is what says so.
     #[test]
-    fn the_remedy_says_to_restart_because_the_socket_is_asked_for_only_once() {
+    fn the_remedy_for_a_held_socket_says_to_restart_bdi() {
         let said = Refused::AlreadyListening(PathBuf::from("/run/user/1000/x.sock")).to_string();
 
         assert!(said.contains("restart bdi"), "{said}");
