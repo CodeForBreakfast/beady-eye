@@ -82,6 +82,15 @@ impl Canned {
     }
 }
 
+/// The one question a refresh asks before it decides whether to ask the other
+/// seven, spelled as bd takes it.
+pub const PROBE_CALL: &str = "sql --json SELECT dolt_hashof_db() AS h";
+
+/// One answer to it. No test here collects the same project twice, so which
+/// hash comes back does not matter — only that the probe is answered, because
+/// a refused one has the refresh read in full anyway and would prove nothing.
+pub const WORKING_ROOT: &str = r#"[{"h":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#;
+
 /// bd names the database and the SQL user when it turns a call away.
 fn refused(kind: FailureKind) -> RunFailure {
     RunFailure {

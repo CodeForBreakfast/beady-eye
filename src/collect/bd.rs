@@ -37,8 +37,14 @@ struct BlockedRow {
 /// nothing. Clearing the inherited variables stays as well; together they
 /// mean a misconfiguration fails loudly.
 ///
-/// `--readonly` has bd refuse the writes `bdi` never makes, so the rule is
-/// enforced by bd rather than resting on `bdi` being well behaved.
+/// `--readonly` has bd refuse the writes `bdi` never makes, so for every
+/// subcommand but one the rule is enforced by bd rather than resting on `bdi`
+/// being well behaved. `sql` is the exception: it is a general executor, bd's
+/// own help for it warns that direct database access bypasses the storage
+/// layer, and `--readonly` does not veto it — measured against this project's
+/// own tracker on 2026-09-01. What holds there instead is `WORKING_ROOT`, a
+/// constant nothing composes, reached from one function that takes no
+/// argument.
 fn asked(
     runner: &dyn Runner,
     tracker: &Path,
@@ -49,6 +55,46 @@ fn asked(
     let mut argv = vec!["-C", named.as_ref(), "--readonly"];
     argv.extend_from_slice(subcommand);
     runner.run("bd", &argv, Some(tracker), env)
+}
+
+/// The tracker's Dolt working root: one hash over everything the database
+/// holds, committed or not.
+///
+/// Not the committed head, because `bdi` reads wisps and the head cannot see
+/// them. `wisps` and `wisp_%` are in `dolt_ignore`, so they live in the
+/// working set and never reach `dolt_log` — measured against this project's
+/// own tracker on 2026-09-01, one `bd create --ephemeral` left
+/// `hashof('HEAD')` identical either side of it and moved this. A caller
+/// gating on the head would leave a wisp-only change off the screen until
+/// some unrelated write moved it.
+///
+/// A read does not move it: three of these with a whole cascade between them
+/// answered the same hash, measured the same day. That is what makes it worth
+/// asking, because a hash that moved on being read would report a change
+/// every time and cost 0.2s to learn nothing.
+pub fn working_root(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<String, RunFailure> {
+    let out = asked(runner, cwd, env, &["sql", "--json", WORKING_ROOT])?;
+    let rows: Vec<HashRow> = serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
+    rows.into_iter()
+        .next()
+        .map(|row| row.h)
+        .ok_or_else(|| RunFailure::parse("bd", "bd sql answered no row"))
+}
+
+/// The whole of the SQL `bdi` writes.
+///
+/// `dolt_hashof_db()` answers for the database bd is already connected to, as
+/// one row and one column. `SHOW VARIABLES LIKE '%_working'` reaches the same
+/// hash and is worse three ways: it answers for every attached database at
+/// once, `skip_networking` matches that pattern as well, and the `@@` form
+/// cannot be quoted through `bd sql` because a database name may hold a
+/// hyphen.
+const WORKING_ROOT: &str = "SELECT dolt_hashof_db() AS h";
+
+/// The one row `WORKING_ROOT` answers with.
+#[derive(Deserialize)]
+struct HashRow {
+    h: String,
 }
 
 /// Every bead one tracker holds, each carrying the beads it depends on and
@@ -449,6 +495,59 @@ mod tests {
     const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
 
     const WISPS: &str = include_str!("../../tests/fixtures/bd_wisps.json");
+
+    /// The whole invocation the probe makes, spelled out rather than built
+    /// from the constant it asserts about: this is the one place `bdi` writes
+    /// SQL, and a change to that statement should have to be made twice.
+    const PROBE_CALL: &str = "sql --json SELECT dolt_hashof_db() AS h";
+
+    /// A working root as this tracker's Dolt server answers with one,
+    /// captured 2026-09-01.
+    const A_WORKING_ROOT: &str = "24eg8eff89bggt3t50ft6lctiu9rlpts";
+
+    #[test]
+    fn the_working_root_is_one_hash_out_of_one_statement() {
+        let runner = FakeRunner::default().with(
+            &spelled(PROBE_CALL),
+            &format!(r#"[{{"h":"{A_WORKING_ROOT}"}}]"#),
+        );
+
+        let root = working_root(&runner, &project_dir(), &credentialled())
+            .expect("the tracker answered its working root");
+
+        assert_eq!(root, A_WORKING_ROOT);
+        assert_eq!(
+            runner.call(&spelled(PROBE_CALL)).env,
+            credentialled(),
+            "the probe reaches the tracker on the project's own credential"
+        );
+    }
+
+    /// An answer with no row is a tracker that cannot be compared against,
+    /// not a tracker that has not moved — so it fails rather than answering
+    /// something a caller would gate on.
+    #[test]
+    fn a_probe_that_answers_no_row_is_a_failure_rather_than_a_hash() {
+        let runner = FakeRunner::default().with(&spelled(PROBE_CALL), "[]");
+
+        let failure =
+            working_root(&runner, &project_dir(), &Env::new()).expect_err("no row is no answer");
+
+        assert_eq!(failure.kind, FailureKind::Parse);
+    }
+
+    /// A tracker with no `dolt_hashof_db` — a SQLite-backed one — answers
+    /// with something this cannot read, and that is a failure the caller has
+    /// to see rather than a hash it would compare against.
+    #[test]
+    fn a_probe_answering_something_else_is_a_failure_rather_than_a_hash() {
+        let runner = FakeRunner::default().with(&spelled(PROBE_CALL), "no such function");
+
+        let failure = working_root(&runner, &project_dir(), &Env::new())
+            .expect_err("an answer that is not the row is no answer");
+
+        assert_eq!(failure.kind, FailureKind::Parse);
+    }
 
     #[test]
     fn the_tracker_is_read_in_the_projects_directory_with_its_credential() {

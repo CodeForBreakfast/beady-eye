@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{DateTime, Utc};
+
 use crate::collect::bd;
 use crate::collect::environment;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
@@ -22,30 +24,140 @@ pub(super) struct ProjectWork {
     pub(super) roots: Vec<(String, Result<Assembled, TrackerFailure>)>,
 }
 
-/// Everything one project's tracker is asked for. A failure before the roots
-/// are known has no root to name, so it becomes the project's own failure
-/// rather than a tree; a failure on one root afterwards is that root's.
-pub(super) fn read_project(
+/// What a project's rows were last read against, and when they stop speaking
+/// for the tracker whatever anyone writes.
+///
+/// A skip is only allowed where the cascade would have answered the same, so
+/// this has to cover every input to that answer and not only the tracker.
+///
+/// The panes are one of the others: a root can come from a pane rather than
+/// from the tracker, because `panes_naming_a_bead_here` reaches beads
+/// discovery never names. Gating on the tracker alone would keep such a tree
+/// off the screen until some unrelated write moved the tracker, and the panes
+/// cost nothing to compare — they are already in hand when the refresh starts.
+///
+/// The clock is the last of them. `bd ready` does not name a bead before its
+/// `defer_until` and does after, and nothing is written when that instant
+/// passes — measured 2026-09-01 against this project's own tracker, a bead
+/// left `open` with `defer_until` two minutes out went from absent to present
+/// across it with its row untouched. So a read carries the soonest instant at
+/// which it stops being able to speak for the tracker.
+#[derive(Clone)]
+pub(super) struct ReadAt {
+    working_root: String,
+    named: BTreeSet<String>,
+    speaks_until: Option<DateTime<Utc>>,
+}
+
+impl ReadAt {
+    /// Whether a read taken against this still says what the tracker would
+    /// say now.
+    fn still_speaks_for(
+        &self,
+        working_root: &str,
+        named: &BTreeSet<String>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        self.working_root == working_root
+            && self.named == *named
+            && self.speaks_until.is_none_or(|until| now < until)
+    }
+}
+
+/// The soonest instant after `read_at` at which this tracker would answer
+/// differently with nothing written, or `None` where it holds nothing back.
+fn speaks_until(beads: &[Bead], read_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    beads
+        .iter()
+        .filter_map(|bead| bead.defer_until)
+        .filter(|until| *until > read_at)
+        .min()
+}
+
+/// What one refresh of one project did.
+pub(super) enum Refresh {
+    /// Nothing has moved since the read that is standing, so there is nothing
+    /// to replace it with.
+    Unchanged,
+    /// What the tracker says now, and what it was read against. `None` where
+    /// the probe could not answer, which has every later refresh read in full
+    /// rather than compare against a state nobody established.
+    Read {
+        at: Option<ReadAt>,
+        work: ProjectWork,
+    },
+}
+
+/// One project's refresh: what it looks like now, and the cascade only if
+/// that differs from what the standing read was taken against.
+///
+/// The probe cannot come first. It goes to the tracker, and reaching the
+/// tracker needs the credential the environment capture produces — so an
+/// unchanged project costs that capture and one `bd` invocation, against the
+/// seven a changed one still costs on top of them.
+///
+/// A tracker that cannot answer the probe is read the slow way.
+/// `dolt_hashof_db()` is Dolt's and a SQLite-backed tracker has no such
+/// function, so an error there means "read it the slow way", never "nothing
+/// changed".
+pub(super) fn refresh_project(
     runner: &dyn Runner,
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
-) -> Result<ProjectWork, RunFailure> {
+    standing: Option<&ReadAt>,
+    now: DateTime<Utc>,
+) -> Result<Refresh, RunFailure> {
     let env = environment::tracker_env(
         runner,
         project,
         environment::ambient_credential().as_deref(),
     )?;
-    let discovered = bd::discover_roots(runner, &project.path, &env, &cfg.roots.metadata_keys)?;
+
+    let probed = bd::working_root(runner, &project.path, &env).ok();
+    let named: BTreeSet<String> = panes_naming_a_bead_here(panes, project, cfg)
+        .map(str::to_string)
+        .collect();
+
+    if let (Some(working_root), Some(standing)) = (probed.as_deref(), standing) {
+        if standing.still_speaks_for(working_root, &named, now) {
+            return Ok(Refresh::Unchanged);
+        }
+    }
+
+    let (work, beads) = read_project(runner, project, cfg, panes, &env)?;
+    let at = probed.map(|working_root| ReadAt {
+        working_root,
+        named,
+        speaks_until: speaks_until(&beads, now),
+    });
+    Ok(Refresh::Read { at, work })
+}
+
+/// Everything one project's tracker is asked for, and every bead it said it
+/// with — the rows go back as well because what they hold decides how long
+/// this read speaks for the tracker, which is not a question about the trees.
+///
+/// A failure before the roots are known has no root to name, so it becomes
+/// the project's own failure rather than a tree; a failure on one root
+/// afterwards is that root's.
+fn read_project(
+    runner: &dyn Runner,
+    project: &Project,
+    cfg: &Config,
+    panes: &[Pane],
+    env: &Env,
+) -> Result<(ProjectWork, Vec<Bead>), RunFailure> {
+    let discovered = bd::discover_roots(runner, &project.path, env, &cfg.roots.metadata_keys)?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
     let readiness = Readiness {
-        ready: bd::ready_ids(runner, &project.path, &env)?,
-        blocked_by: bd::blocked_by(runner, &project.path, &env)?,
+        ready: bd::ready_ids(runner, &project.path, env)?,
+        blocked_by: bd::blocked_by(runner, &project.path, env)?,
     };
 
-    let beads = bd::all_beads(runner, &project.path, &env)?;
+    let beads = bd::all_beads(runner, &project.path, env)?;
     // Every bead this read of the tracker turned up. A parent chain that
     // leaves it has run off the end of what `bdi` read, and there is no tree
     // to draw from where it went — so the walk stops below that.
@@ -68,7 +180,7 @@ pub(super) fn read_project(
         roots.insert(root_of(
             runner,
             project,
-            &env,
+            env,
             bead,
             &discovered,
             &held,
@@ -84,7 +196,7 @@ pub(super) fn read_project(
         if let Ok(root) = root_of(
             runner,
             project,
-            &env,
+            env,
             named,
             &discovered,
             &held,
@@ -104,10 +216,13 @@ pub(super) fn read_project(
     read.extend(what_no_root_reached(&beads, &read));
     read.sort_by(|(one, _), (two, _)| one.cmp(two));
 
-    Ok(ProjectWork {
-        readiness,
-        roots: read,
-    })
+    Ok((
+        ProjectWork {
+            readiness,
+            roots: read,
+        },
+        beads,
+    ))
 }
 
 /// The beads the discovered roots left off the screen, each drawn from the

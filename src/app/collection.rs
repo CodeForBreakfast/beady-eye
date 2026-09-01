@@ -18,7 +18,7 @@ use crate::model::snapshot::{
 };
 use crate::model::types::Pane;
 
-use super::tracker::{read_project, tracker_failure, ProjectWork};
+use super::tracker::{refresh_project, tracker_failure, ProjectWork, ReadAt, Refresh};
 
 /// What one project's tracker last said, and when it said it.
 ///
@@ -29,6 +29,10 @@ use super::tracker::{read_project, tracker_failure, ProjectWork};
 struct Read {
     at: DateTime<Utc>,
     work: Result<ProjectWork, TrackerFailure>,
+    /// What `work` was read against, where that could be established. The
+    /// next refresh of this project skips the cascade only against this, so
+    /// a `None` here is what has a failure retried rather than kept.
+    taken_at: Option<ReadAt>,
 }
 
 /// What a collection is asked to read.
@@ -127,10 +131,46 @@ impl Collection {
         };
 
         for project in cfg.projects.iter().filter(|p| wanted.names(&p.name)) {
-            let work = read_project(runner, project, cfg, &panes)
-                .map_err(|failure| tracker_failure(failure.kind));
-            self.read
-                .insert(project.name.clone(), Read { at: now, work });
+            let standing = self
+                .read
+                .get(&project.name)
+                .and_then(|read| read.taken_at.clone());
+
+            match refresh_project(runner, project, cfg, &panes, standing.as_ref(), now) {
+                Ok(Refresh::Unchanged) => {
+                    // A skipped read is a successful read: `bdi` knows the
+                    // tracker has not moved, so the project is as fresh as if
+                    // the cascade had run and the foot must not draw it as
+                    // stale.
+                    if let Some(standing) = self.read.get_mut(&project.name) {
+                        standing.at = now;
+                    }
+                }
+                Ok(Refresh::Read { at, work }) => {
+                    self.read.insert(
+                        project.name.clone(),
+                        Read {
+                            at: now,
+                            work: Ok(work),
+                            taken_at: at,
+                        },
+                    );
+                }
+                Err(failure) => {
+                    // Storing what the probe just read would make this
+                    // failure sticky: the next probe would match it, the
+                    // cascade that would have recovered is skipped, and the
+                    // project keeps whatever partial state the failure left.
+                    self.read.insert(
+                        project.name.clone(),
+                        Read {
+                            at: now,
+                            work: Err(tracker_failure(failure.kind)),
+                            taken_at: None,
+                        },
+                    );
+                }
+            }
         }
 
         self.draw(cfg, &panes, herdr_state, filter, now)
@@ -235,6 +275,7 @@ mod tests {
     use crate::app::fixtures::*;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{FailureKind, RunFailure};
+    use crate::model::anomaly::Anomaly;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use std::path::PathBuf;
@@ -422,6 +463,376 @@ mod tests {
         Wanted::Project("orbital".to_string())
     }
 
+    /// Every `bd` invocation a runner was asked to make. What the refresh
+    /// gate costs is counted in these and in nothing else: the environment
+    /// capture beside them is a different program and a different bead.
+    fn bd_calls(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .iter()
+            .filter(|c| c.argv.starts_with("bd "))
+            .count()
+    }
+
+    /// The same tracker with its in-flight bead last touched 29 days before
+    /// `now()`, so nothing is a stale claim at that instant and everything is
+    /// two days later.
+    const AGEING_TREE: &str = r#"[
+      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+       "priority":1,"issue_type":"epic","metadata":{"agent_pane":"w:p1"}},
+      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task",
+       "metadata":{"agent_pane":"w:p1"},
+       "updated_at":"2026-08-01T12:00:00Z"},
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// Whether anything on the screen is drawn as a claim that has gone
+    /// stale, which is the one thing a node says that is derived from the
+    /// clock rather than from what the tracker said.
+    fn a_claim_is_drawn_as_stale(snap: &Snapshot) -> bool {
+        snap.trees.iter().flat_map(|tree| &tree.nodes).any(|node| {
+            node.anomalies
+                .iter()
+                .any(|fired| matches!(fired, Anomaly::StaleClaim { .. }))
+        })
+    }
+
+    /// The same tracker with one task bd is holding back until two hours
+    /// after `now()`. `bd ready` does not name it before that instant and
+    /// does after, and nothing is written when it passes.
+    const DEFERRED_TREE: &str = r#"[
+      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task",
+       "metadata":{"agent_pane":"w:p1"}},
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task",
+       "defer_until":"2026-08-30T14:00:00Z"}
+    ]"#;
+
+    /// The instant `DEFERRED_TREE`'s held bead is due, to the second.
+    fn when_it_is_due() -> DateTime<Utc> {
+        "2026-08-30T14:00:00Z".parse().expect("the instant parses")
+    }
+
+    /// A pane sitting in orbital with a bead's id on it, which is a root the
+    /// tracker was never asked about.
+    const PANE_ON_A_BEAD: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","display_agent":"orb-7.2"}
+    ]}}"#;
+
+    // ---- the refresh gate ----------------------------------------------
+
+    /// The whole trade: a tracker that has not moved is asked one question
+    /// instead of seven, and the one question is the probe.
+    #[test]
+    fn a_project_whose_tracker_has_not_moved_is_asked_once() {
+        let runner = orbital();
+        let cfg = one_project();
+        let mut standing = Collection::default();
+
+        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, now());
+        let first = bd_calls(&runner);
+        standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, now());
+
+        assert_eq!(first, 8, "a project read for the first time costs both");
+        assert_eq!(
+            bd_calls(&runner) - first,
+            1,
+            "and a project that has not moved since costs the probe alone"
+        );
+    }
+
+    /// The other half of the trade, and not a regression to fix: a tracker
+    /// that moved costs the probe on top of the seven rather than instead of
+    /// them.
+    #[test]
+    fn a_project_whose_tracker_has_moved_is_read_in_full() {
+        let cfg = one_project();
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+
+        let moved = orbital().with(&spelled(PROBE_CALL), MOVED);
+        let after = standing.collect(&cfg, &moved, &orbital_alone(), Filter::All, now());
+
+        assert_eq!(bd_calls(&moved), 8);
+        assert!(
+            !trees_of(&after, "orbital").is_empty(),
+            "and everything it read is drawn"
+        );
+    }
+
+    /// A cascade only fails where one ran, so the sequence that can go wrong
+    /// is a read that worked, a tracker that then moved, and the cascade that
+    /// move triggered failing. The working root the probe took must not
+    /// survive that: the interval after would match it, skip the cascade that
+    /// recovers, and leave the project holding whatever the failure left,
+    /// indefinitely.
+    #[test]
+    fn a_cascade_that_failed_leaves_nothing_for_the_next_interval_to_skip_against() {
+        let cfg = one_project();
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+
+        let refused = orbital()
+            .with(&spelled(PROBE_CALL), MOVED)
+            .failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
+        let failed = standing.collect(&cfg, &refused, &orbital_alone(), Filter::All, now());
+        assert_eq!(failed.failed_projects.len(), 1, "the cascade failed");
+
+        // The tracker has not moved since the failure — the same probe answer
+        // the failure was taken at — and this time it answers the cascade.
+        let recovered = orbital().with(&spelled(PROBE_CALL), MOVED);
+        let after = standing.collect(&cfg, &recovered, &orbital_alone(), Filter::All, now());
+
+        assert_eq!(
+            bd_calls(&recovered),
+            8,
+            "the cascade ran again rather than being skipped against the root the failure was probed at"
+        );
+        assert_eq!(after.failed_projects, vec![], "so the project recovered");
+    }
+
+    /// Degrade, never disappear. `dolt_hashof_db()` is Dolt's, and a
+    /// SQLite-backed tracker has no such function — so a probe that errors
+    /// means "read it the slow way", never "nothing changed", every interval
+    /// rather than only the first.
+    #[test]
+    fn a_tracker_that_cannot_answer_the_probe_is_read_in_full_every_interval() {
+        let cfg = one_project();
+        let blind = orbital().failing(&spelled(PROBE_CALL), failing(FailureKind::Unavailable));
+        let mut standing = Collection::default();
+
+        standing.collect(&cfg, &blind, &Wanted::Everything, Filter::All, now());
+        let first = bd_calls(&blind);
+        let after = standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
+
+        assert_eq!(first, 8, "the probe was asked and the cascade ran anyway");
+        assert_eq!(
+            bd_calls(&blind) - first,
+            8,
+            "and again, rather than settling into a skip against a root nobody established"
+        );
+        assert!(
+            !trees_of(&after, "orbital").is_empty(),
+            "a tracker blind to the probe still draws its trees"
+        );
+    }
+
+    /// The same rule where a root *is* standing to skip against, which is the
+    /// way round it can silently go wrong: a tracker read once and answering
+    /// the probe, then stopping. An unanswered probe is not the answer "the
+    /// root you hold is still current", and reading it as one would freeze
+    /// the project on that read for as long as the probe stayed broken.
+    #[test]
+    fn a_tracker_that_stops_answering_the_probe_is_read_in_full_again() {
+        let cfg = one_project();
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+
+        let blind = orbital().failing(&spelled(PROBE_CALL), failing(FailureKind::Unavailable));
+        standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
+        let first = bd_calls(&blind);
+        standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
+
+        assert_eq!(
+            first, 8,
+            "the probe went unanswered, so the cascade ran rather than the standing root being kept"
+        );
+        assert_eq!(
+            bd_calls(&blind) - first,
+            8,
+            "and the read it just took left nothing for the next interval to skip against either"
+        );
+    }
+
+    /// A skipped read is a successful read: `bdi` knows the tracker has not
+    /// moved, so the project is as fresh as the collection that skipped it
+    /// and the foot must not draw it as stale or as never-read.
+    #[test]
+    fn a_skipped_read_is_as_fresh_as_the_collection_that_skipped_it() {
+        let cfg = one_project();
+        let runner = orbital();
+        let earlier = now();
+        let later = earlier + chrono::Duration::seconds(30);
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, earlier);
+
+        let after = standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, later);
+
+        assert_eq!(after.read_at["orbital"], later);
+        assert!(
+            !trees_of(&after, "orbital").is_empty(),
+            "and everything the skipped read stood on is still drawn"
+        );
+    }
+
+    /// Skipping the read must not skip the drawing. What a node says about
+    /// its own age is derived from the clock at each collection rather than
+    /// from what the tracker said, so a claim goes stale on the screen while
+    /// the tracker it came from sits still — which is exactly when it matters.
+    #[test]
+    fn a_skipped_read_still_ages_what_the_screen_says_about_it() {
+        let cfg = one_project();
+        let runner = orbital().with(&spelled(TRACKER_CALL), AGEING_TREE);
+        let earlier = now();
+        let later = earlier + chrono::Duration::days(2);
+        let mut standing = Collection::default();
+
+        let before = standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, earlier);
+        let after = standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, later);
+
+        assert!(
+            !a_claim_is_drawn_as_stale(&before),
+            "29 days is inside the window at the first collection"
+        );
+        assert!(
+            a_claim_is_drawn_as_stale(&after),
+            "and 31 days is outside it at the second, which read nothing"
+        );
+        assert_eq!(
+            bd_calls(&runner),
+            9,
+            "the second collection cost the probe alone, so the ageing is the draw's and not the read's"
+        );
+    }
+
+    /// The last input to the cascade's answer that is neither the tracker nor
+    /// the panes is the clock, and a gate may only skip work whose answer
+    /// would have been the same. A read taken while bd was holding a bead
+    /// back cannot speak for the tracker once that bead is due, however still
+    /// the database has been in between.
+    #[test]
+    fn a_read_stops_speaking_for_the_tracker_once_a_held_bead_is_due() {
+        let cfg = one_project();
+        let runner = orbital().with(&spelled(TRACKER_CALL), DEFERRED_TREE);
+        let read_at = now();
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, read_at);
+        let first = bd_calls(&runner);
+
+        let hour = chrono::Duration::hours(1);
+        standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, read_at + hour);
+        let while_held = bd_calls(&runner);
+
+        standing.collect(
+            &cfg,
+            &runner,
+            &orbital_alone(),
+            Filter::All,
+            read_at + hour * 3,
+        );
+        let once_due = bd_calls(&runner);
+
+        standing.collect(
+            &cfg,
+            &runner,
+            &orbital_alone(),
+            Filter::All,
+            read_at + hour * 4,
+        );
+
+        assert_eq!(
+            while_held - first,
+            1,
+            "the probe alone while bd is still holding the bead back"
+        );
+        assert_eq!(
+            once_due - while_held,
+            8,
+            "and the whole cascade at the first refresh past the instant it is due"
+        );
+        assert_eq!(
+            bd_calls(&runner) - once_due,
+            1,
+            "after which nothing is held back, so the probe alone again rather than for ever"
+        );
+    }
+
+    /// The instant itself belongs to the refresh after it, not to the read
+    /// before it. A read taken while a bead was held back has already stopped
+    /// speaking for the tracker at the moment the bead is due, because that
+    /// is the moment `bd ready` starts naming it — waiting for the interval
+    /// after would draw one refresh's worth of an answer bd would no longer
+    /// give.
+    #[test]
+    fn a_read_has_stopped_speaking_at_the_instant_a_held_bead_is_due_rather_than_after_it() {
+        let cfg = one_project();
+        let runner = orbital().with(&spelled(TRACKER_CALL), DEFERRED_TREE);
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, now());
+        let first = bd_calls(&runner);
+
+        standing.collect(
+            &cfg,
+            &runner,
+            &orbital_alone(),
+            Filter::All,
+            when_it_is_due(),
+        );
+
+        assert_eq!(bd_calls(&runner) - first, 8);
+    }
+
+    /// The other side of the same instant. A bead due exactly as the read was
+    /// taken has nothing left to turn over: the read already saw bd naming
+    /// it, so recording that instant would have the project read in full for
+    /// ever after against a change that had already happened.
+    #[test]
+    fn a_bead_due_as_the_read_was_taken_leaves_nothing_to_turn_over() {
+        let cfg = one_project();
+        let runner = orbital().with(&spelled(TRACKER_CALL), DEFERRED_TREE);
+        let mut standing = Collection::default();
+        standing.collect(
+            &cfg,
+            &runner,
+            &Wanted::Everything,
+            Filter::All,
+            when_it_is_due(),
+        );
+        let first = bd_calls(&runner);
+
+        let hour = chrono::Duration::hours(1);
+        standing.collect(
+            &cfg,
+            &runner,
+            &orbital_alone(),
+            Filter::All,
+            when_it_is_due() + hour,
+        );
+
+        assert_eq!(bd_calls(&runner) - first, 1);
+    }
+
+    /// A root can come from a pane rather than from the tracker, so what the
+    /// panes name is part of what a read was taken against. A pane that
+    /// starts naming a bead has the project read again even though nothing
+    /// was written — otherwise that tree stays off the screen until some
+    /// unrelated write moves the tracker, which is a disappearance with
+    /// nothing said.
+    #[test]
+    fn a_pane_that_starts_naming_a_bead_has_the_project_read_again() {
+        let cfg = one_project();
+        let mut standing = Collection::default();
+        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+
+        let named = orbital().with("herdr agent list", PANE_ON_A_BEAD);
+        standing.collect(&cfg, &named, &orbital_alone(), Filter::All, now());
+
+        assert_eq!(
+            bd_calls(&named),
+            8,
+            "the tracker had not moved, but what the panes name had"
+        );
+    }
+
     /// What one project's tracker was asked, however it was reached.
     fn tracker_calls(runner: &FakeRunner, path: &str) -> usize {
         runner
@@ -543,7 +954,13 @@ mod tests {
             &Wanted::Everything,
         );
 
+        // The probe is refused as well, which is what a tracker that has
+        // stopped answering does: it is the same connection the cascade
+        // would have used. Refusing only the cascade would stage a tracker
+        // that answers one question and not the next, and the refresh would
+        // rightly never ask the second.
         let refused = colliding_trackers(PANES_IN_BOTH)
+            .failing(&spelled(PROBE_CALL), failing(FailureKind::Auth))
             .failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
         let after = collect(&mut standing, &refused, &orbital_alone());
 
@@ -644,7 +1061,13 @@ mod tests {
             earlier,
         );
 
+        // The probe is refused as well, which is what a tracker that has
+        // stopped answering does: it is the same connection the cascade
+        // would have used. Refusing only the cascade would stage a tracker
+        // that answers one question and not the next, and the refresh would
+        // rightly never ask the second.
         let refused = colliding_trackers(PANES_IN_BOTH)
+            .failing(&spelled(PROBE_CALL), failing(FailureKind::Auth))
             .failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
         let after = standing.collect(&cfg, &refused, &orbital_alone(), Filter::All, later);
 

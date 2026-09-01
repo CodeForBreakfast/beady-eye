@@ -109,6 +109,16 @@ credential_command = "secret ferry"
         .expect("the config parses")
     }
 
+    /// The one question a refresh asks before it decides whether to ask the
+    /// other seven, spelled as bd takes it.
+    pub(super) const PROBE_CALL: &str = "sql --json SELECT dolt_hashof_db() AS h";
+
+    /// One answer to `PROBE_CALL`, as a tracker that has not moved keeps
+    /// giving. A test that needs a tracker to have moved stages `MOVED`
+    /// against a second runner and collects again.
+    pub(super) const UNMOVED: &str = r#"[{"h":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#;
+    pub(super) const MOVED: &str = r#"[{"h":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]"#;
+
     /// The one call a project's whole forest is drawn from, spelled as bd
     /// takes it.
     pub(super) const TRACKER_CALL: &str = "list --all --limit 0 --json";
@@ -128,6 +138,7 @@ credential_command = "secret ferry"
         FakeRunner::default()
             .with("herdr agent list", PANES)
             .with(&entering(ORBITAL), "")
+            .with(&spelled(PROBE_CALL), UNMOVED)
             .with(&spelled(UNFINISHED_CALL),
                 r#"[{"id":"orb-7","title":"lift the ground station","status":"in_progress","parent":""},
                     {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
@@ -172,6 +183,7 @@ credential_command = "secret ferry"
             .with("sh -c secret ferry", "ferry-password");
         for tracker in [ORBITAL, FERRY] {
             runner = runner
+                .with(&spelled_in(tracker, PROBE_CALL), UNMOVED)
                 .with(&spelled_in(tracker, UNFINISHED_CALL),
                     r#"[{"id":"x-1","title":"the shared prefix","status":"in_progress","parent":""},
                         {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent":"x-1"}]"#,

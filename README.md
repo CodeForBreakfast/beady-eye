@@ -86,17 +86,24 @@ named in config and drawn as badges; `bdi` never learns what they mean.
 
 ## Telling `bdi` a project changed
 
-`bdi` polls, and almost every poll is wasted. One refresh of one project
-captures the environment its tracker is read in, then asks `bd` for the beads
-discovery starts from, what is ready, what is blocked, the ephemeral beads and
-every bead there is — seven processes before a row is read, plus one per
-metadata key roots are discovered by and one per bead the climb to a root
-steps onto that discovery did not name. That is repeated for every project,
-most of it against a remote Dolt server, and nearly always finds nothing has
-moved.
+`bdi` polls, and almost every poll finds nothing has moved. So a refresh asks
+the tracker whether it has, before asking it anything else: one `bd sql` for
+the Dolt working root, which covers everything the database holds including
+the ephemeral beads that are never committed. A project whose root is where
+the last read left it is done there.
 
-So `bdi` listens. Anything that already knows a tracker changed can say so, and
-the project it names stops being polled for as long as it keeps saying it.
+A project whose root has moved is read in full, and that is the cascade the
+poll used to run every time: `bd` for the beads discovery starts from, what is
+ready, what is blocked, the ephemeral beads and every bead there is — seven
+`bd` invocations, plus one per metadata key roots are discovered by and one
+per bead the climb to a root steps onto that discovery did not name. The
+environment its tracker is read in is captured before any of them, so the
+whole refresh is those seven plus the probe plus that capture, most of it
+against a remote Dolt server.
+
+So the poll is cheap, and `bdi` listens as well. Anything that already knows a
+tracker changed can say so, and the project it names stops being polled for as
+long as it keeps saying it.
 
 **The socket.** `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, a stream socket
 created mode `0600`. Under the runtime directory it is user-scoped: it needs no

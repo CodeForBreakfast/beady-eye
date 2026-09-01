@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 
 mod canned;
 
-use canned::{Call, Canned};
+use canned::{Call, Canned, PROBE_CALL, WORKING_ROOT};
 
 const ORBITAL_DIR: &str = "/srv/work/orbital";
 const HARBOUR_DIR: &str = "/srv/work/harbour";
@@ -63,6 +63,7 @@ fn spelled_in(tracker: &str, subcommand: &str) -> String {
 /// right credential does.
 fn tracker(runner: Canned, cwd: &str, id: &str) -> Canned {
     runner
+        .answering_in(cwd, &spelled_in(cwd, PROBE_CALL), WORKING_ROOT)
         .answering_in(
             cwd,
             &spelled_in(

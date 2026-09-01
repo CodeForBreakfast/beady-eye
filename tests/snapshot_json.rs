@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 mod canned;
 
-use canned::Canned;
+use canned::{Canned, PROBE_CALL, WORKING_ROOT};
 
 /// One project's tracker: an epic with a pane on it, a claimed task with
 /// none, a claim nothing has touched in weeks, a task bd calls ready, and a
@@ -112,6 +112,7 @@ fn canned_reading(tracker: &str) -> Canned {
         .answering("herdr agent list", PANES)
         // Named by a path alone, so its tracker is reached by entering it.
         .answering(&format!("direnv exec {tracker} env -0"), "")
+        .answering(&spelled_in(tracker, PROBE_CALL), WORKING_ROOT)
         .answering(&spelled_in(tracker, UNFINISHED_CALL), UNFINISHED_ROWS)
         .answering(
             &spelled_in(
@@ -649,6 +650,11 @@ fn across_two_projects() -> Canned {
         .answering("herdr agent list", PANES_ACROSS)
         .answering("sh -c pass show orbital/tracker", "orbital-secret\n")
         .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
+        .answering_in(
+            HARBOUR_DIR,
+            &spelled_in(HARBOUR_DIR, PROBE_CALL),
+            WORKING_ROOT,
+        )
         .answering_in(
             HARBOUR_DIR,
             &spelled_in(HARBOUR_DIR, UNFINISHED_CALL),

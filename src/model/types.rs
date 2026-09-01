@@ -86,6 +86,12 @@ pub struct Bead {
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub closed_at: Option<DateTime<Utc>>,
+    /// When bd stops holding this bead back. `bd ready` does not name a bead
+    /// before this instant and does name it after, and nothing is written
+    /// when it passes — so it is the one thing a tracker says that turns over
+    /// on the clock rather than on a write.
+    #[serde(default)]
+    pub defer_until: Option<DateTime<Utc>>,
     #[serde(default)]
     pub truncated: bool,
 }
