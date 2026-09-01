@@ -22,7 +22,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::Frame;
 
-use crate::app::InFlight;
+use crate::app::Awaited;
 use crate::model::types::PaneStatus;
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::forest::Forest;
@@ -42,27 +42,27 @@ use project::{project_line, unread_line};
 use tone::LOOK_AT_THIS;
 
 /// What every project line's freshness is drawn from: when each project was
-/// last read, which projects the collection in flight is reading, and the
-/// instant this frame is being drawn at.
+/// last read, which projects have a read outstanding, and the instant this
+/// frame is being drawn at.
 ///
-/// Gathered at the frame rather than held on the lines. A collection starting
-/// and ending changes what a project line says without changing the snapshot
-/// under it, and the mark turns between two collections' worth of events — so
-/// a line that carried its own answer would have to be flattened again to say
-/// anything new.
+/// Gathered at the frame rather than held on the lines. A read being asked
+/// for and coming back changes what a project line says without changing the
+/// snapshot under it, and the mark turns between two collections' worth of
+/// events — so a line that carried its own answer would have to be flattened
+/// again to say anything new.
 pub(super) struct Reads<'a> {
     read_at: &'a BTreeMap<String, DateTime<Utc>>,
-    /// What the collection in flight is reading and when it was asked for,
-    /// where one is running. The instant is what tells a collection that is
-    /// under way from one that has stopped answering.
-    collecting: Option<&'a InFlight>,
+    /// Every read outstanding — the collection in flight and whatever is
+    /// queued behind it — and when each was asked for. The instant is what
+    /// tells a read that is getting somewhere from one that has stopped.
+    collecting: &'a [Awaited],
     now: DateTime<Utc>,
 }
 
 impl<'a> Reads<'a> {
     pub(super) fn new(
         read_at: &'a BTreeMap<String, DateTime<Utc>>,
-        collecting: Option<&'a InFlight>,
+        collecting: &'a [Awaited],
         now: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -74,16 +74,24 @@ impl<'a> Reads<'a> {
 
     /// How fresh one project is.
     ///
-    /// Whether it is being read now is asked with `Wanted::names`, the same
-    /// predicate the collector picks what to read with, so the line and the
-    /// collection agree by construction rather than by argument. How the last
+    /// Whether a read of it is outstanding is asked with `Wanted::names`, of
+    /// the very sequence the collector is served from, so the line and the
+    /// collector agree by construction rather than by argument. How the last
     /// collection of it went comes off the line, because it changes only when
     /// the snapshot does.
+    ///
+    /// More than one outstanding read can name one project, and routinely
+    /// does: a whole collection names every project, so one queued behind a
+    /// single project — or with one queued behind it — names that project
+    /// twice over. The reader's question is how long this project's rows have
+    /// been on their way, so the answer is the earliest of them.
     fn of(&self, project: &ProjectLine) -> Option<Freshness> {
         Freshness::of(
             self.read_at.get(&project.project).copied(),
             self.collecting
-                .filter(|in_flight| in_flight.wanted.names(&project.project)),
+                .iter()
+                .filter(|awaited| awaited.wanted.names(&project.project))
+                .min_by_key(|awaited| awaited.asked_at),
             project.every_root_read,
             self.now,
         )
@@ -100,7 +108,7 @@ pub fn draw(
     area: Rect,
     forest: &Forest,
     at_startup: &[Notice],
-    collecting: Option<&InFlight>,
+    collecting: &[Awaited],
     now: DateTime<Utc>,
     keys: &str,
 ) {
@@ -520,7 +528,7 @@ mod tests {
     static NOTHING_READ: BTreeMap<String, DateTime<Utc>> = BTreeMap::new();
 
     pub(super) fn at_rest() -> Reads<'static> {
-        Reads::new(&NOTHING_READ, None, drawn_at())
+        Reads::new(&NOTHING_READ, &[], drawn_at())
     }
 
     /// One tree of `children` open beads under an in-flight root.
@@ -559,14 +567,14 @@ mod tests {
     }
 
     pub(super) fn frame_of(forest: &Forest, width: u16, height: u16) -> Painted {
-        frame_collecting(forest, None, width, height)
+        frame_collecting(forest, &[], width, height)
     }
 
     /// A collection reading `wanted`, asked for at the instant the frame is
     /// drawn — so it is a collection under way rather than one that has
     /// stopped answering.
-    pub(super) fn reading(wanted: Wanted) -> InFlight {
-        InFlight {
+    pub(super) fn reading(wanted: Wanted) -> Awaited {
+        Awaited {
             wanted,
             asked_at: drawn_at(),
             patience: PATIENCE,
@@ -583,7 +591,7 @@ mod tests {
     /// collection names says so.
     pub(super) fn frame_collecting(
         forest: &Forest,
-        collecting: Option<&InFlight>,
+        collecting: &[Awaited],
         width: u16,
         height: u16,
     ) -> Painted {
@@ -593,7 +601,7 @@ mod tests {
     fn frame_with(
         forest: &Forest,
         at_startup: &[Notice],
-        collecting: Option<&InFlight>,
+        collecting: &[Awaited],
         width: u16,
         height: u16,
     ) -> Painted {
@@ -646,7 +654,7 @@ mod tests {
         let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
 
         assert_eq!(
-            frame_with(&forest, &[Notice::NoInboundChannel], None, 80, 10).rows(),
+            frame_with(&forest, &[Notice::NoInboundChannel], &[], 80, 10).rows(),
             vec![
                 "▾ summit-works  ✓ 30s ago                                                    0/3",
                 "  └── ◐ nix-9670s  lift the ground station                                   0/3",

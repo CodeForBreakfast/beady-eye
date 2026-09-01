@@ -181,7 +181,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use crate::app::{InFlight, Wanted};
+    use crate::app::{Awaited, Wanted};
     use crate::model::anomaly::Anomaly;
     use crate::model::snapshot::{HerdrState, LoosePane, Node, Snapshot, TrackerFailure, Tree};
     use crate::model::types::{PaneStatus, Status};
@@ -446,7 +446,7 @@ mod tests {
 
         let frame = frame_collecting(
             &forest,
-            Some(&reading(Wanted::Project("summit-works".to_string()))),
+            &[reading(Wanted::Project("summit-works".to_string()))],
             74,
             12,
         )
@@ -462,7 +462,7 @@ mod tests {
     fn a_collection_over_everything_marks_every_project() {
         let forest = opened(&two_projects());
 
-        let frame = frame_collecting(&forest, Some(&reading(Wanted::Everything)), 74, 12).rows();
+        let frame = frame_collecting(&forest, &[reading(Wanted::Everything)], 74, 12).rows();
 
         says(&frame[0], "⠴ 30s ago");
         says(project_row(&frame, "harbour"), "⠴ 30s ago");
@@ -632,11 +632,11 @@ mod tests {
 
         let frame = frame_collecting(
             &forest,
-            Some(&InFlight {
+            &[Awaited {
                 wanted: Wanted::Everything,
                 asked_at,
                 patience: PATIENCE,
-            }),
+            }],
             74,
             12,
         )
@@ -644,6 +644,97 @@ mod tests {
 
         says(&frame[0], "⠿ 30s ago");
         says(project_row(&frame, "harbour"), "⠿ 30s ago");
+    }
+
+    /// `bdi-7ao.81`, which is `.51`'s defect one level up: a project queued
+    /// behind a tracker that has stopped answering has to be told apart from
+    /// one nothing has needed to read.
+    ///
+    /// The two are asserted from one frame, because the defect was never that
+    /// either line drew wrongly — it was that they drew the same. Both wear
+    /// `✓ 30s ago` under the old rule, and everything on both is true: their
+    /// rows really were read half a minute ago. What neither says is the
+    /// thing that matters, that one of them will go on ageing however long
+    /// the reader waits.
+    #[test]
+    fn a_project_queued_behind_a_stopped_tracker_is_drawn_apart_from_a_quiet_one() {
+        let forest = opened(&two_projects());
+        let stopped = drawn_at() - PATIENCE;
+
+        let frame = frame_collecting(
+            &forest,
+            &[
+                reading_since(Wanted::Project("summit-works".to_string()), stopped),
+                reading_since(Wanted::Project("harbour".to_string()), stopped),
+            ],
+            74,
+            12,
+        )
+        .rows();
+
+        says(project_row(&frame, "harbour"), "⠿ 30s ago");
+        says(&frame[0], "⠿ 30s ago");
+    }
+
+    /// And a project no read is outstanding for keeps its resting mark while
+    /// the one beside it says its reads have stopped — the other half of the
+    /// same claim, and the half that makes the mark worth reading.
+    #[test]
+    fn a_project_nothing_has_needed_to_read_rests_beside_one_that_has_stopped() {
+        let forest = opened(&two_projects());
+
+        let frame = frame_collecting(
+            &forest,
+            &[reading_since(
+                Wanted::Project("summit-works".to_string()),
+                drawn_at() - PATIENCE,
+            )],
+            74,
+            12,
+        )
+        .rows();
+
+        says(&frame[0], "⠿ 30s ago");
+        says(project_row(&frame, "harbour"), "✓ 30s ago");
+    }
+
+    /// Two outstanding reads naming one project is the ordinary case, not an
+    /// edge: a whole collection names every project, so one queued behind a
+    /// single project names that project a second time. What the line has to
+    /// answer is how long *its* rows have been on their way, which the older
+    /// of the two says — the newer one would have the project that has waited
+    /// longest report the shortest wait on the screen.
+    #[test]
+    fn a_project_two_outstanding_reads_name_is_drawn_against_the_older_of_them() {
+        let forest = opened(&two_projects());
+
+        let frame = frame_collecting(
+            &forest,
+            &[
+                reading_since(
+                    Wanted::Project("harbour".to_string()),
+                    drawn_at() - PATIENCE,
+                ),
+                reading_since(Wanted::Everything, drawn_at()),
+            ],
+            74,
+            12,
+        )
+        .rows();
+
+        says(project_row(&frame, "harbour"), "⠿ 30s ago");
+        says(&frame[0], "⠴ 30s ago");
+    }
+
+    /// A read of `wanted` outstanding since `asked_at`, whether it is the one
+    /// the collector has or one waiting behind it: the screen is told the
+    /// same thing about both, because the wait is the same wait.
+    fn reading_since(wanted: Wanted, asked_at: chrono::DateTime<Utc>) -> Awaited {
+        Awaited {
+            wanted,
+            asked_at,
+            patience: PATIENCE,
+        }
     }
 
     /// The colour is the other half of that claim, and the half `drawn()`

@@ -93,17 +93,17 @@ const READ: &str = "✓";
 /// under the name are short of that root's.
 const REFUSED: &str = "⚠";
 
-/// The mark a project wears when the collection reading it has stopped
-/// answering.
+/// The mark a project wears when the read of it has stopped getting
+/// anywhere.
 ///
 /// The turning mark held still. It is where the frames were and made of the
 /// same dots, so a reader who has been watching one turn sees it stop rather
-/// than sees a different thing appear — which is the fact: the collection is
-/// still running and no longer getting anywhere.
+/// than sees a different thing appear — which is the fact: the read has not
+/// been given up and is no longer getting anywhere.
 const UNANSWERED: &str = "⠿";
 
-/// The mark beside a project's name: how far the collection reading it has
-/// turned, or how the last one went.
+/// The mark beside a project's name: how far the read of it has turned, or
+/// how the last one went.
 ///
 /// One column in every state, so the cell does not change width for a
 /// collection starting or ending. It changing shape rather than content was

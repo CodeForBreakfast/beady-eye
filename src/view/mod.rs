@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::app::InFlight;
+use crate::app::Awaited;
 
 pub mod bindings;
 pub mod draw;
@@ -104,10 +104,10 @@ pub enum Notice {
 /// How fresh one project's rows are, said beside its name.
 ///
 /// Two things, and both of them are on the line at all times. The mark says
-/// what the collection is doing or how the last one went; the age says how
-/// old the rows under the name are. They answer different questions, and a
-/// cell that swapped one for the other left the reader watching a mark turn
-/// over rows of unknown age.
+/// how a read of this project is getting on, or how the last one went; the
+/// age says how old the rows under the name are. They answer different
+/// questions, and a cell that swapped one for the other left the reader
+/// watching a mark turn over rows of unknown age.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Freshness {
     pub mark: Mark,
@@ -121,18 +121,25 @@ pub struct Freshness {
 /// What the mark beside a project's name says.
 ///
 /// One column in every state, so the cell beside the name does not change
-/// width for a collection starting or ending — which was the whole of what
-/// made the old cell jump.
+/// width for a read starting or ending — which was the whole of what made
+/// the old cell jump.
+///
+/// The two marks a read outstanding produces answer *how long has it been
+/// outstanding*, and neither of them asks whether the collector has reached
+/// it yet. A read waiting its turn behind another is on its way as much as
+/// one being served, and the reader can do nothing differently for the
+/// difference — so `bdi` does not draw one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
-    /// A collection is reading this project now.
+    /// A read of this project is outstanding and getting somewhere: it has
+    /// been asked for, and not long enough ago for that to be worth saying.
     Collecting,
-    /// A collection has been reading this project for longer than one can
-    /// take and still be under way: the tracker has stopped answering.
+    /// A read of this project has been outstanding for longer than one may
+    /// be: whatever it is waiting on has stopped answering.
     ///
     /// Distinct from `Refused`, which is a collection that came back and said
-    /// no. Nothing has come back here and nothing may ever, and the
-    /// collection is still running — see `InFlight::patience`.
+    /// no. Nothing has come back here and nothing may ever, and the read has
+    /// not been given up — see `Awaited::patience`.
     Unanswered,
     /// The last collection read every root of it.
     Read,
@@ -141,7 +148,7 @@ pub enum Mark {
 }
 
 impl Mark {
-    /// What the mark says with no collection reading this project.
+    /// What the mark says with no read of this project outstanding.
     ///
     /// A project several of whose roots disagree resolves to one mark, and it
     /// resolves to the worse of them: the rows in front of the reader are
@@ -157,8 +164,8 @@ impl Mark {
 }
 
 impl Freshness {
-    /// What to say about one project: how the collection of it went or is
-    /// going, and when it was last read.
+    /// What to say about one project: how the read of it is getting on or
+    /// how the last one went, and when it was last read.
     ///
     /// One project rather than the screen. A single indicator had to quote
     /// the *oldest* read of any project on it — the weakest claim that was
@@ -174,17 +181,17 @@ impl Freshness {
     /// would date rows nothing came from. The mark is what says the read
     /// failed.
     ///
-    /// Nothing at all for a project neither read nor being read: there is no
-    /// row on the screen for the claim to be about.
+    /// Nothing at all for a project never read and with no read outstanding:
+    /// there is no row on the screen for the claim to be about.
     ///
-    /// `collecting` is the collection reading this project rather than a flag
-    /// saying one is, because a collection that has stopped answering is
-    /// drawn the same as one that has just started unless the mark can
-    /// measure the wait — and the collection is what carries how long it may
-    /// wait.
+    /// `collecting` is the read itself rather than a flag saying there is
+    /// one, because a read that has stopped getting anywhere is drawn the
+    /// same as one just asked for unless the mark can measure the wait — and
+    /// the read is what carries when it was asked for and how long it may go
+    /// unanswered.
     pub fn of(
         read_at: Option<DateTime<Utc>>,
-        collecting: Option<&InFlight>,
+        collecting: Option<&Awaited>,
         every_root_read: bool,
         now: DateTime<Utc>,
     ) -> Option<Self> {
@@ -193,7 +200,7 @@ impl Freshness {
         }
         Some(Freshness {
             mark: match collecting {
-                Some(in_flight) if in_flight.unanswered_at(now) => Mark::Unanswered,
+                Some(awaited) if awaited.unanswered_at(now) => Mark::Unanswered,
                 Some(_) => Mark::Collecting,
                 None => Mark::at_rest(every_root_read),
             },
@@ -222,8 +229,8 @@ mod tests {
 
     /// A collection asked for at `asked_at`, of whichever projects — every
     /// test here is about one project and the collection is reading it.
-    fn asked_at(asked_at: DateTime<Utc>) -> InFlight {
-        InFlight {
+    fn asked_at(asked_at: DateTime<Utc>) -> Awaited {
+        Awaited {
             wanted: Wanted::Everything,
             asked_at,
             patience: PATIENCE,
@@ -268,7 +275,7 @@ mod tests {
     /// while it runs. How the one before it went is about rows that are
     /// seconds from being replaced.
     #[test]
-    fn a_collection_in_flight_takes_the_mark_from_the_read_it_is_replacing() {
+    fn a_collection_being_awaited_takes_the_mark_from_the_read_it_is_replacing() {
         assert_eq!(
             Freshness::of(
                 Some(at(22, 14)),

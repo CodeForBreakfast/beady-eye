@@ -6,15 +6,14 @@
 //! terminal, a forest or a tail, and nothing that produces an event names
 //! the loop.
 
-use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
-use chrono::{TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::{InFlight, Wanted};
+use crate::app::{Awaited, Wanted};
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion};
@@ -77,17 +76,21 @@ pub(super) trait View {
     /// Show a snapshot just collected, in place of the one on the screen.
     fn collected(&mut self, snapshot: Snapshot);
 
-    /// Say what the collection now in flight is reading, or that none is,
-    /// reporting whether the screen has changed.
+    /// Say which reads are outstanding, or that none are, reporting whether
+    /// the screen has changed.
     ///
-    /// The view is told a collection began and told again when one comes
-    /// back, so what is on the screen and what the trackers are being asked
-    /// are never more than one event apart. It is told *which* projects,
-    /// because each project's line says for itself whether its own rows are
-    /// about to be replaced — and *when it was asked for*, because a
-    /// collection that has stopped answering is drawn exactly like one that
-    /// has just started until something measures the wait.
-    fn collecting(&mut self, in_flight: Option<&InFlight>) -> bool;
+    /// The view is told when a read is asked for and told again when one
+    /// comes back, so what is on the screen and what the trackers are being
+    /// asked are never more than one event apart. It is told *which
+    /// projects*, because each project's line says for itself whether its own
+    /// rows are about to be replaced — and *when each was asked for*, because
+    /// a read that has stopped getting anywhere is drawn exactly like one
+    /// just asked for until something measures the wait.
+    ///
+    /// A sequence rather than the one in flight: a read waiting its turn is
+    /// as outstanding as the one being served, and the projects it names have
+    /// nothing else on the screen to say so.
+    fn collecting(&mut self, awaited: &[Awaited]) -> bool;
 
     /// How long what is drawn goes on being true with nothing happening, or
     /// nothing where it stays true however long the reader leaves it.
@@ -190,8 +193,8 @@ pub(super) fn drive(
                     true
                 }
                 Some(Action::Refresh) => {
-                    outstanding.ask(ask, Wanted::Everything)
-                        && view.collecting(outstanding.in_flight())
+                    outstanding.ask(ask, Wanted::Everything, Utc::now())
+                        && view.collecting(outstanding.awaited())
                 }
                 Some(action) => view.apply(action),
                 None => false,
@@ -207,7 +210,7 @@ pub(super) fn drive(
             Event::Scrolled(motion) => view.apply(Action::Move(motion)),
             Event::Resize => true,
             Event::Changed(wanted) => {
-                outstanding.ask(ask, wanted) && view.collecting(outstanding.in_flight())
+                outstanding.ask(ask, wanted, Utc::now()) && view.collecting(outstanding.awaited())
             }
             Event::Collected(snapshot) => {
                 outstanding.came_back(ask);
@@ -216,7 +219,7 @@ pub(super) fn drive(
                 // collection that ended: another may have been waiting behind
                 // it, and where none was, a line left saying it was being
                 // read would say so over rows that had already arrived.
-                view.collecting(outstanding.in_flight());
+                view.collecting(outstanding.awaited());
                 true
             }
             Event::Tailed(answer) => view.tailed(answer),
@@ -245,84 +248,143 @@ pub(super) fn drive(
 /// collection absorbs the single projects it would read anyway, so what waits
 /// is never more than one per project.
 pub(super) struct Outstanding {
-    /// What the collection in flight is reading and when it was asked for,
-    /// where one is running. What it names rather than that it is running: a
-    /// project line says for itself whether its own rows are being read, so
-    /// the screen needs to know which projects and not only that some are.
+    /// Every read asked for and not yet come back, in the order they will be
+    /// served: the one the collector has, then whatever is waiting for it.
     ///
-    /// The instant is stamped here because here is where the ask happens.
-    /// Nothing downstream can recover it: the collector blocks in
+    /// What each names rather than that some read is running — a project line
+    /// says for itself whether its own rows are on their way, so the screen
+    /// needs to know which projects and not only that some are — and *when
+    /// each was asked for*, because that is the only measure of the wait
+    /// there is. Nothing downstream can recover it: the collector blocks in
     /// `Command::output()`, which has no deadline of its own, and reports
-    /// nothing until it is done — so a tracker hung for an hour and one asked
-    /// half a second ago look identical from every side but this one.
-    in_flight: Option<InFlight>,
-    /// How long a collection this asks for may go unanswered before the
-    /// tracker is reported as having stopped answering. Held here because
-    /// this is where a collection is asked for, and carried on each one so
-    /// that whoever draws it needs nothing else to decide.
+    /// nothing until it is done, so a tracker hung for an hour and one asked
+    /// half a second ago look identical from every side but this one. A read
+    /// that has not been sent yet is worse still, because there is nothing to
+    /// report from at all.
+    ///
+    /// One sequence rather than the one in flight beside a stash of what
+    /// waits. The question a project line asks is how long its rows have been
+    /// on their way, and being sent is a step along that wait rather than the
+    /// start of it — so the two belong to one list, ordered by when each was
+    /// asked for, which is also the order the collector takes them in.
+    awaited: Vec<Awaited>,
+    /// How long a read this asks for may go unanswered before the project it
+    /// names is reported as having stopped being read. Held here because this
+    /// is where a read is asked for, and carried on each one so that whoever
+    /// draws it needs nothing else to decide.
     patience: TimeDelta,
-    everything: bool,
-    projects: BTreeSet<String>,
 }
 
 impl Outstanding {
     pub(super) fn waiting(patience: TimeDelta) -> Self {
         Self {
-            in_flight: None,
+            awaited: Vec::new(),
             patience,
-            everything: false,
-            projects: BTreeSet::new(),
         }
     }
 
     /// Ask for a collection, or keep it until the one running comes back.
     ///
-    /// Reports whether a collection started, which is not the same as whether
-    /// one was asked for: a request arriving mid-collection waits its turn,
-    /// and nothing on the screen changes for it.
-    pub(super) fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) -> bool {
-        if self.in_flight.is_none() {
-            if ask.send(wanted.clone()).is_ok() {
-                self.in_flight = Some(InFlight {
-                    wanted,
-                    asked_at: Utc::now(),
-                    patience: self.patience,
-                });
+    /// Reports whether what is outstanding is any different for it, which is
+    /// not the same as whether a collection started: a request arriving
+    /// mid-collection waits its turn, and its project's line says so.
+    pub(super) fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted, now: DateTime<Utc>) -> bool {
+        if self.awaited.is_empty() {
+            if ask.send(wanted.clone()).is_err() {
+                return false;
             }
-            return self.in_flight.is_some();
+            self.awaited.push(self.stamped(wanted, now));
+            return true;
         }
-        match wanted {
-            Wanted::Everything => {
-                self.everything = true;
-                self.projects.clear();
-            }
-            Wanted::Project(project) => {
-                if !self.everything {
-                    self.projects.insert(project);
-                }
-            }
-        }
-        false
+        self.queue(wanted, now)
     }
 
-    /// Take the collection that came back, asking for whatever waited behind
+    /// Keep a request until its turn, where nothing already waiting covers
     /// it.
-    fn came_back(&mut self, ask: &Sender<Wanted>) {
-        self.in_flight = None;
-        let next = if std::mem::take(&mut self.everything) {
-            Some(Wanted::Everything)
-        } else {
-            self.projects.pop_first().map(Wanted::Project)
-        };
-        if let Some(next) = next {
-            self.ask(ask, next);
+    ///
+    /// Covered by what is *waiting* rather than by what is in flight: the
+    /// collection running may have passed the project before the change was
+    /// reported, so a change arriving mid-collection always earns a read of
+    /// its own. What it does not earn is a second one.
+    fn queue(&mut self, wanted: Wanted, now: DateTime<Utc>) -> bool {
+        match wanted {
+            // A whole collection reads every project, so it stands in for the
+            // single ones waiting with it — and its wait begins when it was
+            // asked for, not when the earliest of theirs did. It names every
+            // project on the screen, including the ones nothing had asked
+            // about, and one instant cannot be true of both: an inherited one
+            // would put a wait those projects never had beside their names,
+            // and a whole screen of marks saying the reads have stopped is
+            // what a reader gets for one project changing.
+            //
+            // What that costs is the projects it absorbs. Their wait was
+            // longer and this understates it, for one patience, after which
+            // the mark says what it said before. Understating a wait is what
+            // patience is: it is the length of not-saying-yet the project has
+            // already decided on, and it is bounded. Overstating one is a
+            // claim about a tracker nobody asked.
+            Wanted::Everything => {
+                if self.queued().any(|it| it.wanted == Wanted::Everything) {
+                    return false;
+                }
+                self.awaited.truncate(1);
+                self.awaited.push(self.stamped(Wanted::Everything, now));
+                true
+            }
+            // A project reported for again while it waits is the same wait: a
+            // project nothing reports for is polled every refresh interval,
+            // and the poll goes on naming it for as long as it is uncovered,
+            // so a stamp taken from the latest ask would be pushed forward by
+            // the very polling that proves nothing has been read.
+            Wanted::Project(project) => {
+                if self.queued().any(|it| it.wanted.names(&project)) {
+                    return false;
+                }
+                self.awaited
+                    .push(self.stamped(Wanted::Project(project), now));
+                true
+            }
         }
     }
 
-    /// What is being read now and since when, for the screen to say beside
-    /// the projects it names.
-    pub(super) fn in_flight(&self) -> Option<&InFlight> {
-        self.in_flight.as_ref()
+    /// The reads that have not been sent, which is every one but the first.
+    fn queued(&self) -> impl Iterator<Item = &Awaited> {
+        self.awaited.iter().skip(1)
+    }
+
+    fn stamped(&self, wanted: Wanted, asked_at: DateTime<Utc>) -> Awaited {
+        Awaited {
+            wanted,
+            asked_at,
+            patience: self.patience,
+        }
+    }
+
+    /// Take the read that came back, sending whatever waited behind it.
+    ///
+    /// The one that reaches the front keeps the stamp it queued at rather
+    /// than being stamped again. Its project's rows have been on their way
+    /// since the change that wanted them was reported, and a wait that
+    /// started over on reaching the front would tell a reader whose project
+    /// had been stranded ten minutes behind a hung tracker that its own
+    /// tracker had just been asked.
+    fn came_back(&mut self, ask: &Sender<Wanted>) {
+        if self.awaited.is_empty() {
+            return;
+        }
+        self.awaited.remove(0);
+        let Some(next) = self.awaited.first() else {
+            return;
+        };
+        if ask.send(next.wanted.clone()).is_err() {
+            self.awaited.clear();
+        }
+    }
+
+    /// Every read outstanding and since when, for the screen to say beside
+    /// the projects each of them names.
+    pub(super) fn awaited(&self) -> &[Awaited] {
+        &self.awaited
     }
 }
 
@@ -344,11 +406,11 @@ mod tests {
         applied: Vec<Action>,
         clicked: Vec<u16>,
         collected: usize,
-        /// What the view was told is being read, in the order it was told.
+        /// What the view was told is outstanding, in the order it was told.
         /// What and not how many: a project line answers for its own rows, so
         /// a test that only counted could not tell a refresh of one project
         /// from a refresh of the lot.
-        in_flight: Vec<Option<InFlight>>,
+        awaited: Vec<Vec<Awaited>>,
         drawn: usize,
         showing: Vec<Showing>,
         /// What a click reports back, for the tests about a click that lands
@@ -360,19 +422,22 @@ mod tests {
         /// Which projects the view was told about, in the order it was told,
         /// with the instants left out. Most of these tests are about which
         /// collections the loop starts and in what order; the ones about the
-        /// stamps read `in_flight` itself.
-        fn collecting(&self) -> Vec<Option<Wanted>> {
-            self.in_flight
+        /// stamps read `awaited` itself.
+        fn collecting(&self) -> Vec<Vec<Wanted>> {
+            self.awaited
                 .iter()
-                .map(|told| told.as_ref().map(|it| it.wanted.clone()))
+                .map(|told| told.iter().map(|it| it.wanted.clone()).collect())
                 .collect()
         }
 
-        /// When each collection the view was told about was asked for.
+        /// When each read the view was told about was asked for, in the order
+        /// it was told, flattened: the tests that read this are about how one
+        /// stamp compares with another rather than about which telling each
+        /// came in.
         fn asked_at(&self) -> Vec<chrono::DateTime<Utc>> {
-            self.in_flight
+            self.awaited
                 .iter()
-                .filter_map(|told| told.as_ref().map(|it| it.asked_at))
+                .flat_map(|told| told.iter().map(|it| it.asked_at))
                 .collect()
         }
     }
@@ -382,16 +447,17 @@ mod tests {
             self.collected += 1;
         }
 
-        fn collecting(&mut self, in_flight: Option<&InFlight>) -> bool {
-            self.in_flight.push(in_flight.cloned());
+        fn collecting(&mut self, awaited: &[Awaited]) -> bool {
+            self.awaited.push(awaited.to_vec());
             true
         }
 
         /// The same rule `Shown` keeps, so a loop test is asking the loop
-        /// what it asks a real screen: a collection in flight is a frame
-        /// away from being out of date, and this view has no ages on it.
+        /// what it asks a real screen: a read outstanding is a frame away
+        /// from being out of date, and this view has no ages on it.
         fn holds_for(&self) -> Option<Duration> {
-            self.in_flight.last()?.as_ref().map(|_| phrase::FRAME)
+            let told = self.awaited.last()?;
+            (!told.is_empty()).then_some(phrase::FRAME)
         }
 
         fn tailed(&mut self, _answer: Answer) -> bool {
@@ -558,7 +624,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [Some(Wanted::Everything)],
+            [vec![Wanted::Everything]],
             "the view was told a collection began, and over which projects"
         );
         assert_eq!(view.drawn, 2, "the first frame, and one for the keystroke");
@@ -575,7 +641,7 @@ mod tests {
 
         drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
-        assert_eq!(view.collecting(), [Some(atlas())]);
+        assert_eq!(view.collecting(), [vec![atlas()]]);
         assert_eq!(view.drawn, 2);
     }
 
@@ -644,7 +710,7 @@ mod tests {
             "the first frame, the collection starting, and the mark turning: {}",
             view.drawn
         );
-        assert_eq!(view.collecting(), [Some(atlas())], "no second collection");
+        assert_eq!(view.collecting(), [vec![atlas()]], "no second collection");
         assert_eq!(view.applied, [], "and no action for a frame running out");
     }
 
@@ -666,8 +732,9 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [Some(atlas()), Some(ferry())],
-            "the one the event asked for, and the one that waited behind it"
+            [vec![atlas()], vec![atlas(), ferry()], vec![ferry()]],
+            "the one the event asked for, then it with ferry waiting behind \
+             it, then ferry alone once the first came back"
         );
         assert_eq!(view.collected, 1);
     }
@@ -694,12 +761,13 @@ mod tests {
         );
     }
 
-    /// The reason the stamp is taken here and not inferred from being told a
-    /// collection is running: the second collection of the same projects is a
-    /// new wait, and one that inherited the first's stamp would be drawn as
-    /// having stopped answering the moment it began.
+    /// The reason the stamp is taken at the ask and not inherited from
+    /// whatever the project was last told about: a project reported for again
+    /// while it is being read is a new wait, and one that carried the running
+    /// collection's stamp would be drawn as having stopped answering the
+    /// moment it began.
     #[test]
-    fn a_second_collection_of_the_same_projects_is_stamped_again() {
+    fn a_project_reported_for_again_while_it_is_read_starts_a_wait_of_its_own() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![
@@ -712,13 +780,14 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [Some(atlas()), Some(atlas())],
-            "the one the event asked for, and the one that waited behind it"
+            [vec![atlas()], vec![atlas(), atlas()], vec![atlas()]],
+            "the one in flight, then it with the second waiting, then the \
+             second alone"
         );
-        let asked_at = view.asked_at();
+        let told = &view.awaited[1];
         assert!(
-            asked_at[1] > asked_at[0],
-            "the second collection kept the first's stamp: {asked_at:?}"
+            told[1].asked_at > told[0].asked_at,
+            "the waiting one kept the running one's stamp: {told:?}"
         );
     }
 
@@ -744,15 +813,19 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [Some(atlas()), None],
+            [vec![atlas()], vec![]],
             "the one the event asked for, and nothing once it landed"
         );
     }
 
-    /// A request made while a collection is running is kept rather than sent,
-    /// so nothing new has started and there is nothing new to say.
+    /// `bdi-7ao.81`: a request made while a collection is running is kept
+    /// rather than sent, and the project it names has to say so. Nothing else
+    /// on its line can — the rows under it are the last collection's and look
+    /// exactly as they did, so a line that waited for the request to be sent
+    /// would draw a resting mark over rows nothing is on its way to replace,
+    /// for as long as the collection in front of it takes.
     #[test]
-    fn a_request_that_only_joins_the_queue_says_nothing() {
+    fn a_request_waiting_its_turn_is_said_beside_the_one_in_flight() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas()), Event::Changed(ferry())]);
@@ -761,10 +834,10 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [Some(atlas())],
-            "the second only waited its turn"
+            [vec![atlas()], vec![atlas(), ferry()]],
+            "the one in flight, then it and the one behind it"
         );
-        assert_eq!(view.drawn, 2, "and the screen did not change for it");
+        assert_eq!(view.drawn, 3, "and the screen changed for it");
     }
 
     #[test]
@@ -1178,5 +1251,147 @@ mod tests {
             view.showing,
             [Showing::Forest, Showing::Bindings, Showing::Forest]
         );
+    }
+
+    /// What waits behind a collection, asked of `Outstanding` directly.
+    ///
+    /// The loop takes its instants from the clock, and every property here is
+    /// about one stamp against another — the deadline a queued read crosses
+    /// is thirty seconds away and the refresh that re-reports it is thirty
+    /// seconds apart, so a test that let real time supply the difference
+    /// would be deciding on scheduling jitter rather than on the rule.
+    mod what_waits {
+        use super::*;
+        use chrono::TimeZone;
+        use pretty_assertions::assert_eq;
+
+        /// `second` seconds into the run, which is how these are written: a
+        /// wait is a difference between two of them and the wall clock they
+        /// sit on says nothing.
+        fn at(second: i64) -> chrono::DateTime<Utc> {
+            Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap() + TimeDelta::seconds(second)
+        }
+
+        /// Asked at `at(0)` and never answered, so everything after it waits.
+        fn hung_on(project: Wanted) -> (Outstanding, Sender<Wanted>, Receiver<Wanted>) {
+            let (ask, asked) = mpsc::channel();
+            let mut outstanding = Outstanding::waiting(PATIENCE);
+            outstanding.ask(&ask, project, at(0));
+            (outstanding, ask, asked)
+        }
+
+        fn stamps(outstanding: &Outstanding) -> Vec<(Wanted, chrono::DateTime<Utc>)> {
+            outstanding
+                .awaited()
+                .iter()
+                .map(|it| (it.wanted.clone(), it.asked_at))
+                .collect()
+        }
+
+        /// The bead: a project queued behind a tracker that has stopped
+        /// answering has to be able to say its own reads have stopped, and
+        /// the only thing that can say it is how long the read has been
+        /// waiting.
+        #[test]
+        fn a_read_that_cannot_be_sent_yet_is_stamped_when_it_joins_the_queue() {
+            let (mut outstanding, ask, _asked) = hung_on(atlas());
+
+            outstanding.ask(&ask, ferry(), at(5));
+
+            assert_eq!(stamps(&outstanding), [(atlas(), at(0)), (ferry(), at(5))]);
+        }
+
+        /// A project with nothing reporting for it is polled every refresh
+        /// interval, and the poll goes on reporting it for as long as it is
+        /// uncovered — so a queued read is asked for again and again while it
+        /// waits. Its wait is how long its rows have been on their way, which
+        /// the first of those asks started; a stamp taken from the latest
+        /// would be reset by the very polling that proves nothing has been
+        /// read, and the mark would never turn.
+        #[test]
+        fn a_project_reported_for_again_while_it_waits_keeps_the_wait_it_has() {
+            let (mut outstanding, ask, _asked) = hung_on(atlas());
+
+            outstanding.ask(&ask, ferry(), at(5));
+            outstanding.ask(&ask, ferry(), at(35));
+
+            assert_eq!(stamps(&outstanding), [(atlas(), at(0)), (ferry(), at(5))]);
+        }
+
+        /// `codex review` on this change, and it is right: a whole collection
+        /// absorbing what waits must not inherit their wait.
+        ///
+        /// It names every project, including every one nothing had asked
+        /// about — so an inherited instant is a wait those projects never had,
+        /// and one project changing puts a mark saying the reads have stopped
+        /// beside every name on the screen. The first version of this took the
+        /// earliest absorbed wait, reasoning only about the projects being
+        /// absorbed and never about the ones the collection newly covers.
+        ///
+        /// What it costs the absorbed ones is a patience: ferry has been
+        /// waiting since :05 and this says :40, so its mark goes back from
+        /// stopped to turning and returns one patience later. That is the
+        /// length of not-saying-yet the project has already chosen, and it is
+        /// bounded. The other way round is unbounded and about trackers
+        /// nobody asked.
+        #[test]
+        fn a_whole_collection_absorbing_what_waits_starts_a_wait_of_its_own() {
+            let (mut outstanding, ask, _asked) = hung_on(atlas());
+
+            outstanding.ask(&ask, ferry(), at(5));
+            outstanding.ask(&ask, Wanted::Everything, at(40));
+
+            assert_eq!(
+                stamps(&outstanding),
+                [(atlas(), at(0)), (Wanted::Everything, at(40))],
+                "not :05, which would be every other project's wait too"
+            );
+        }
+
+        /// Reaching the front is not being asked for. A read carries the wait
+        /// it has had all along, so a project stranded ten minutes behind a
+        /// hung tracker does not tell the reader its tracker was asked a
+        /// moment ago the instant that tracker answers.
+        #[test]
+        fn a_read_that_reaches_the_front_keeps_the_stamp_it_queued_at() {
+            let (mut outstanding, ask, _asked) = hung_on(atlas());
+            outstanding.ask(&ask, ferry(), at(5));
+
+            outstanding.came_back(&ask);
+
+            assert_eq!(stamps(&outstanding), [(ferry(), at(5))]);
+        }
+
+        /// Every read outstanding, in the order they will be served, is what
+        /// the collector is served from — so the first is the one it is
+        /// working on and the rest follow in turn.
+        #[test]
+        fn the_reads_are_sent_in_the_order_they_were_asked_for() {
+            let (mut outstanding, ask, asked) = hung_on(atlas());
+            outstanding.ask(&ask, ferry(), at(5));
+            outstanding.ask(&ask, Wanted::Project("harbour".to_string()), at(6));
+
+            outstanding.came_back(&ask);
+            outstanding.came_back(&ask);
+
+            assert_eq!(
+                asked.try_iter().collect::<Vec<_>>(),
+                [atlas(), ferry(), Wanted::Project("harbour".to_string())]
+            );
+        }
+
+        /// A collection nothing is waiting for is nothing to take: the loop
+        /// answers whatever arrives on the one channel, in whatever order it
+        /// arrives, and a snapshot with no ask behind it must leave it as it
+        /// was rather than end the run.
+        #[test]
+        fn a_collection_nothing_asked_for_leaves_the_queue_alone() {
+            let (ask, _asked) = mpsc::channel();
+            let mut outstanding = Outstanding::waiting(PATIENCE);
+
+            outstanding.came_back(&ask);
+
+            assert_eq!(stamps(&outstanding), []);
+        }
     }
 }

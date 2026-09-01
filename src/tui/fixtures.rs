@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::app::{InFlight, Wanted};
+use crate::app::{Awaited, Wanted};
 use crate::model::snapshot::{Filter, HerdrState, Snapshot, TrackerFailure, Tree};
 
 /// Long enough that a thread which was going to report has, and short
@@ -29,8 +29,8 @@ pub(in crate::tui) fn ferry() -> Wanted {
 /// project line says about a collection turns on how long it has been waiting
 /// — so a test that could not place the ask against the instant it draws at
 /// could not say which mark it expected.
-pub(in crate::tui) fn reading(wanted: Wanted, asked_at: DateTime<Utc>) -> InFlight {
-    InFlight {
+pub(in crate::tui) fn reading(wanted: Wanted, asked_at: DateTime<Utc>) -> Awaited {
+    Awaited {
         wanted,
         asked_at,
         patience: PATIENCE,

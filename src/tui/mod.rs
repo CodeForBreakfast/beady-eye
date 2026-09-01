@@ -28,9 +28,9 @@ use wire::wire;
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
 ///
-/// `patience` is how long a collection may go unanswered before the project
-/// it is reading says the tracker has stopped answering rather than that it
-/// is being read.
+/// `patience` is how long a read may go unanswered before the project it
+/// names says its rows have stopped coming rather than that they are on
+/// their way.
 ///
 /// The screen opens on the projects the config names, before any of them has
 /// been read, and every collection — the first one included — runs on a
@@ -78,10 +78,10 @@ pub fn run(
     // of empty projects with no mark beside them would be a forest that looks
     // read and is not.
     let mut outstanding = Outstanding::waiting(patience);
-    outstanding.ask(&ask, Wanted::Everything);
+    outstanding.ask(&ask, Wanted::Everything, Utc::now());
 
     let mut screen = Screen::showing(awaiting, panes, at_startup)?;
-    screen.collecting(outstanding.in_flight());
+    screen.collecting(outstanding.awaited());
 
     drive(&mut screen, &events, &ask, outstanding)
 }

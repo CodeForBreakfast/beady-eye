@@ -77,7 +77,7 @@ fn the_forest_is_on_the_screen_before_the_first_collection_comes_back() {
 /// reader to work it out by killing the run.
 ///
 /// The wait before the first frame used to be the one wait nothing could
-/// report: there was no screen to draw a mark on and no `InFlight` to measure
+/// report: there was no screen to draw a mark on and no `Awaited` to measure
 /// it against, so a tracker that hung was a blank terminal for as long as the
 /// reader would stand it. Now it is a project line like any other, and the
 /// deadline the config sets applies to it like any other — which is what this

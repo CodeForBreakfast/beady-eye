@@ -14,7 +14,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::app::InFlight;
+use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
 use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
@@ -53,7 +53,7 @@ struct Shown {
     /// snapshot changing: a collection starts and ends between two
     /// flattenings, and the mark on a line it names turns several times
     /// inside one of them.
-    collecting: Option<InFlight>,
+    collecting: Vec<Awaited>,
 }
 
 /// Where the band under the forest is with the read it is waiting on.
@@ -88,7 +88,7 @@ impl Shown {
             // is already running by the time this exists — the run asks for
             // one before it opens the screen — and it reaches this the way
             // every one after it does, through `collecting`.
-            collecting: None,
+            collecting: Vec::new(),
         };
         // Asked for here rather than waited for: the first frame is drawn on
         // the answer to this arriving, not on herdr getting round to it.
@@ -103,9 +103,9 @@ impl Shown {
     /// coming back with another waiting behind it names the same projects as
     /// often as not, and a redraw that puts the same frame back is a redraw
     /// for nothing.
-    fn collecting(&mut self, in_flight: Option<&InFlight>) -> bool {
-        let changed = self.collecting.as_ref() != in_flight;
-        self.collecting = in_flight.cloned();
+    fn collecting(&mut self, awaited: &[Awaited]) -> bool {
+        let changed = self.collecting != awaited;
+        self.collecting = awaited.to_vec();
         changed
     }
 
@@ -138,8 +138,8 @@ impl Shown {
             .filter_map(|at| Freshness::of(Some(*at), None, true, now));
         let turning = self
             .collecting
-            .as_ref()
-            .and_then(|in_flight| Freshness::of(None, Some(in_flight), true, now));
+            .iter()
+            .filter_map(|awaited| Freshness::of(None, Some(awaited), true, now));
 
         turning
             .into_iter()
@@ -332,7 +332,7 @@ fn paint(
     tail: &Tail,
     showing: Showing,
     at_startup: &[Notice],
-    collecting: Option<&InFlight>,
+    collecting: &[Awaited],
     now: DateTime<Utc>,
 ) {
     let bands = draw::regions(frame.area());
@@ -374,8 +374,8 @@ impl View for Screen {
         self.shown.collected(snapshot);
     }
 
-    fn collecting(&mut self, in_flight: Option<&InFlight>) -> bool {
-        self.shown.collecting(in_flight)
+    fn collecting(&mut self, awaited: &[Awaited]) -> bool {
+        self.shown.collecting(awaited)
     }
 
     fn holds_for(&self) -> Option<Duration> {
@@ -411,7 +411,7 @@ impl View for Screen {
     fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
         let at_startup = &self.at_startup;
-        let collecting = self.shown.collecting.as_ref();
+        let collecting = self.shown.collecting.as_slice();
         // Read here rather than passed in: this is the instant the frame is
         // drawn at, and both a project's age and the frame its mark is on are
         // measured against it.
@@ -746,7 +746,7 @@ mod tests {
         showing: Showing,
     ) -> Painted {
         Painted::drawn_by(width, height, |frame| {
-            paint(frame, forest, tail, showing, &[], None, an_instant());
+            paint(frame, forest, tail, showing, &[], &[], an_instant());
         })
     }
 
@@ -755,7 +755,7 @@ mod tests {
     fn screen_collecting(
         forest: &mut Forest,
         tail: &Tail,
-        collecting: Option<&InFlight>,
+        collecting: &[Awaited],
         width: u16,
         height: u16,
     ) -> Painted {
@@ -792,7 +792,7 @@ mod tests {
             let row = screen_collecting(
                 &mut forest,
                 &Tail::Silent("nothing to tail"),
-                Some(&reading(Wanted::Everything, asked_at)),
+                &[reading(Wanted::Everything, asked_at)],
                 60,
                 10,
             )
@@ -974,7 +974,7 @@ mod tests {
     /// every project line that only the next refresh could take off.
     #[test]
     fn a_screen_opens_over_a_collection_that_has_already_finished() {
-        assert_eq!(shown(a_snapshot()).collecting, None);
+        assert_eq!(shown(a_snapshot()).collecting, []);
     }
 
     /// What is being read and since when, not whether something is: each
@@ -987,11 +987,11 @@ mod tests {
         let mut shown = shown(a_snapshot());
         let reading_atlas = reading(atlas(), an_instant());
 
-        shown.collecting(Some(&reading_atlas));
-        assert_eq!(shown.collecting, Some(reading_atlas));
+        shown.collecting(std::slice::from_ref(&reading_atlas));
+        assert_eq!(shown.collecting, [reading_atlas]);
 
-        shown.collecting(None);
-        assert_eq!(shown.collecting, None);
+        shown.collecting(&[]);
+        assert_eq!(shown.collecting, []);
     }
 
     /// The loop draws on a change and this is what it asks. Told again what
@@ -1004,19 +1004,19 @@ mod tests {
         let at = an_instant();
 
         assert!(
-            shown.collecting(Some(&reading(atlas(), at))),
+            shown.collecting(&[reading(atlas(), at)]),
             "None to one project"
         );
         assert!(
-            !shown.collecting(Some(&reading(atlas(), at))),
+            !shown.collecting(&[reading(atlas(), at)]),
             "the same collection again"
         );
         assert!(
-            shown.collecting(Some(&reading(ferry(), at))),
+            shown.collecting(&[reading(ferry(), at)]),
             "one project to another"
         );
-        assert!(shown.collecting(None), "and back to nothing running");
-        assert!(!shown.collecting(None), "which is also said only once");
+        assert!(shown.collecting(&[]), "and back to nothing running");
+        assert!(!shown.collecting(&[]), "which is also said only once");
     }
 
     /// A fresh collection of the projects the last one named is not the same
@@ -1028,8 +1028,8 @@ mod tests {
         let mut shown = shown(a_snapshot());
         let at = an_instant();
 
-        assert!(shown.collecting(Some(&reading(atlas(), at))));
-        assert!(shown.collecting(Some(&reading(atlas(), at + chrono::TimeDelta::seconds(1)))));
+        assert!(shown.collecting(&[reading(atlas(), at)]));
+        assert!(shown.collecting(&[reading(atlas(), at + chrono::TimeDelta::seconds(1))]));
     }
 
     /// `codex review` on this change, and it is right: the foot said
@@ -1077,7 +1077,7 @@ mod tests {
     #[test]
     fn a_screen_with_a_collection_on_it_and_no_age_holds_for_one_frame() {
         let mut shown = shown(a_snapshot());
-        shown.collecting(Some(&reading(atlas(), an_instant())));
+        shown.collecting(&[reading(atlas(), an_instant())]);
 
         assert_eq!(shown.holds_for(an_instant()), Some(phrase::FRAME));
     }
@@ -1091,7 +1091,7 @@ mod tests {
     fn a_screen_whose_first_collection_stopped_answering_has_nothing_left_to_expire() {
         let mut shown = shown(a_snapshot());
         let asked_at = an_instant();
-        shown.collecting(Some(&reading(atlas(), asked_at)));
+        shown.collecting(&[reading(atlas(), asked_at)]);
 
         assert_eq!(
             shown.holds_for(asked_at + chrono::TimeDelta::seconds(30)),
@@ -1109,7 +1109,7 @@ mod tests {
         let read = an_instant();
         snapshot.read_at.insert("atlas".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(Some(&reading(atlas(), read)));
+        shown.collecting(&[reading(atlas(), read)]);
 
         assert_eq!(
             shown.holds_for(read + chrono::TimeDelta::seconds(30)),
@@ -1129,7 +1129,7 @@ mod tests {
         let read = an_instant();
         snapshot.read_at.insert("atlas".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(Some(&reading(atlas(), read)));
+        shown.collecting(&[reading(atlas(), read)]);
 
         assert_eq!(
             shown.holds_for(read + chrono::TimeDelta::milliseconds(970)),
@@ -1147,7 +1147,7 @@ mod tests {
         let now = read + chrono::TimeDelta::seconds(86_400);
         snapshot.read_at.insert("atlas".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(Some(&reading(atlas(), now)));
+        shown.collecting(&[reading(atlas(), now)]);
 
         assert_eq!(shown.holds_for(now), Some(phrase::FRAME));
     }

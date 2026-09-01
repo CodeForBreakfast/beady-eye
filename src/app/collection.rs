@@ -40,30 +40,36 @@ pub enum Wanted {
     Project(String),
 }
 
-/// A collection that has been asked for and has not come back: what it is
-/// reading, when it was asked, and how long it may wait before that is worth
-/// saying.
+/// A read that has been asked for and has not come back: what it is to
+/// read, when it was asked for, and how long it may wait before that is
+/// worth saying.
+///
+/// Asked for rather than in flight, because only the first of them is being
+/// served. A read waiting its turn is on its way as much as the one the
+/// collector has, and its project's rows have been coming since it was asked
+/// for rather than since it was sent.
 ///
 /// The instant is the whole reason this is not a bare `Wanted`. A collection
 /// blocks in `Command::output()`, which has no deadline, so a tracker hung
 /// for an hour hands the same thing back as one asked half a second ago —
-/// nothing, for as long as it takes. Stamping the ask is what lets anything
-/// downstream tell those apart, and it is stamped where the ask happens
-/// rather than where its effects are drawn.
+/// nothing, for as long as it takes. A read still waiting its turn hands
+/// back less than that. Stamping the ask is what lets anything downstream
+/// tell those apart, and it is stamped where the ask happens rather than
+/// where its effects are drawn.
 ///
 /// The patience travels beside it rather than being looked up wherever the
 /// answer is wanted, so every reader of one collection answers the same way
 /// about it, and the config is read once at the edge as everything else is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InFlight {
+pub struct Awaited {
     pub wanted: Wanted,
     pub asked_at: DateTime<Utc>,
-    /// How long this may go unanswered before the tracker is reported as
-    /// having stopped answering rather than as being read.
+    /// How long this may go unanswered before the project it names is
+    /// reported as having stopped being read rather than as being read.
     pub patience: TimeDelta,
 }
 
-impl InFlight {
+impl Awaited {
     /// Whether this has gone unanswered for longer than it may.
     pub fn unanswered_at(&self, now: DateTime<Utc>) -> bool {
         now - self.asked_at >= self.patience
@@ -73,10 +79,10 @@ impl InFlight {
 impl Wanted {
     /// Whether a collection asked for this names one project.
     ///
-    /// Public because the screen asks it too: what a project line says is
-    /// being read now is decided by the very predicate the collector decides
-    /// what to read with, so the two agree by construction rather than by
-    /// argument.
+    /// Public because the screen asks it too, of the very sequence the
+    /// collector is served from: what a project line says about its rows and
+    /// what will be read are decided by one predicate over one list, so the
+    /// two agree by construction rather than by argument.
     pub fn names(&self, project: &str) -> bool {
         match self {
             Wanted::Everything => true,
