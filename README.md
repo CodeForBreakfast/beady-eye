@@ -133,7 +133,9 @@ a project nobody wires up simply carries on being polled.
 
 If the socket cannot be opened at all — no `XDG_RUNTIME_DIR`, another `bdi`
 already listening — `bdi` says so on stderr as it starts and polls everything,
-exactly as it did before.
+exactly as it did before. The socket is asked for once and never again, so a
+run that started without it goes on polling even after the path comes free —
+closing the other `bdi` frees the channel for the next run, not for this one.
 
 **A worked example.** The cheapest producer is the thing already making the
 changes. Wrap `bd` so that a command which wrote something tells `bdi` about it:

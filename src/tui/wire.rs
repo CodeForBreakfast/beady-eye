@@ -95,6 +95,18 @@ pub(super) fn wire(
     thread::spawn(move || signalled(asked_to_stop, &stopping));
 
     let (changed, changes) = mpsc::channel();
+    // Asked for once, for the life of the run. The socket is a singleton, so
+    // a retry cannot make a second channel — it can only move the one there
+    // is, at a moment nobody chose: whichever run asks first after the holder
+    // goes. What the run without it gives up is freshness and not function,
+    // since a project nothing reports for is polled and the foot says so.
+    //
+    // `reclaim` tells a live holder from litter by connecting, which the
+    // holder answers as it would a writer, so a run that keeps asking becomes
+    // a standing client of the run that has it. And the notice would stop
+    // being settled at startup: a channel arriving later has to retract it,
+    // and its `Socket` has to reach the loop, or nothing takes the socket off
+    // the filesystem when the run ends.
     let (socket, refused) = inbound(changes::listen(
         changes::where_writers_find_bdi(),
         &reported,
