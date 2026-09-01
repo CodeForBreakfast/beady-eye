@@ -62,12 +62,16 @@ pub(super) fn project_line(
 /// shut draws none of the `unread_line`s naming the root that refused, so
 /// this is then the only thing on the screen saying the rows are short of
 /// one.
+///
+/// A collection that has stopped answering wears it for the same reason: no
+/// row anywhere else on the screen says the tracker has gone quiet, because
+/// the rows are the last collection's and look exactly as they did.
 fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'static>> {
     let Some(how_fresh) = how_fresh else {
         return Vec::new();
     };
     let mark = match how_fresh.mark {
-        Mark::Refused => LOOK_AT_THIS,
+        Mark::Refused | Mark::Unanswered => LOOK_AT_THIS,
         Mark::Collecting | Mark::Read => Color::DarkGray,
     };
 
@@ -177,7 +181,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use crate::app::Wanted;
+    use crate::app::{InFlight, Wanted};
     use crate::model::anomaly::Anomaly;
     use crate::model::snapshot::{HerdrState, LoosePane, Node, Snapshot, TrackerFailure, Tree};
     use crate::model::types::{PaneStatus, Status};
@@ -442,7 +446,7 @@ mod tests {
 
         let frame = frame_collecting(
             &forest,
-            Some(&Wanted::Project("summit-works".to_string())),
+            Some(&reading(Wanted::Project("summit-works".to_string()))),
             74,
             12,
         )
@@ -458,7 +462,7 @@ mod tests {
     fn a_collection_over_everything_marks_every_project() {
         let forest = opened(&two_projects());
 
-        let frame = frame_collecting(&forest, Some(&Wanted::Everything), 74, 12).rows();
+        let frame = frame_collecting(&forest, Some(&reading(Wanted::Everything)), 74, 12).rows();
 
         says(&frame[0], "⠴ 30s ago");
         says(project_row(&frame, "harbour"), "⠴ 30s ago");
@@ -602,6 +606,67 @@ mod tests {
             painted
                 .iter()
                 .any(|run| run.said.contains(WARNING) && run.style.fg == Some(LOOK_AT_THIS)),
+            "{painted:?}"
+        );
+        assert!(
+            painted
+                .iter()
+                .any(|run| run.said.contains("30s ago") && run.style.fg == Some(Color::DarkGray)),
+            "{painted:?}"
+        );
+    }
+
+    /// `bdi-7ao.51`, the whole way through from the collection: a tracker
+    /// that has stopped answering is drawn as having stopped, rather than as
+    /// a collection that has just started. Nothing between the loop's stamp
+    /// and the cell is stubbed.
+    ///
+    /// The age is what makes this readable and it is why the mark alone is
+    /// not enough: `⠿ 30s ago` says the rows are half a minute old *and* that
+    /// nothing is going to replace them, which are the two facts a reader
+    /// needs and neither of which implies the other.
+    #[test]
+    fn a_tracker_that_has_stopped_answering_is_drawn_as_stopped_rather_than_as_starting() {
+        let forest = opened(&two_projects());
+        let asked_at = drawn_at() - PATIENCE;
+
+        let frame = frame_collecting(
+            &forest,
+            Some(&InFlight {
+                wanted: Wanted::Everything,
+                asked_at,
+                patience: PATIENCE,
+            }),
+            74,
+            12,
+        )
+        .rows();
+
+        says(&frame[0], "⠿ 30s ago");
+        says(project_row(&frame, "harbour"), "⠿ 30s ago");
+    }
+
+    /// The colour is the other half of that claim, and the half `drawn()`
+    /// cannot see. No row anywhere else on the screen says the tracker has
+    /// gone quiet — the rows are the last collection's and look exactly as
+    /// they did — so a dim glyph would leave the one thing saying so as the
+    /// one thing nobody stops at.
+    #[test]
+    fn a_mark_saying_a_tracker_stopped_answering_wears_the_colour_that_asks_to_be_looked_at() {
+        let painted = Painted::of(
+            line_that_is(
+                &project("summit-works", counts(8, 21, 0, 0)),
+                half_a_minute_old(Mark::Unanswered),
+            ),
+            60,
+            1,
+        )
+        .row(0);
+
+        assert!(
+            painted
+                .iter()
+                .any(|run| run.said.contains('⠿') && run.style.fg == Some(LOOK_AT_THIS)),
             "{painted:?}"
         );
         assert!(

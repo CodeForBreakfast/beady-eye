@@ -14,14 +14,14 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::app::Wanted;
+use crate::app::InFlight;
 use crate::collect::panes::{Answer, Panes};
 use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::phrase;
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Mark, Notice};
+use crate::view::{draw, Action, Freshness, Notice};
 
 use super::drive::{Showing, View};
 use super::keys::{bindings, key_row};
@@ -39,15 +39,21 @@ struct Shown {
     tailing: Option<String>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
-    /// What the collection in flight is reading, where one is running. Every
-    /// project line it names says its own rows are about to be replaced, and
-    /// the rest of the screen carries on saying how stale it is.
+    /// What the collection in flight is reading and when it was asked for,
+    /// where one is running. Every project line it names says its own rows
+    /// are about to be replaced, and the rest of the screen carries on saying
+    /// how stale it is.
+    ///
+    /// The instant is what tells a collection under way from one that has
+    /// stopped answering. It is stamped where the ask happens rather than
+    /// here, because being told a collection is running is not the same as
+    /// one having started, and only the loop knows which it is telling us.
     ///
     /// Held here rather than on the lines because it changes without the
     /// snapshot changing: a collection starts and ends between two
     /// flattenings, and the mark on a line it names turns several times
     /// inside one of them.
-    collecting: Option<Wanted>,
+    collecting: Option<InFlight>,
 }
 
 /// Where the band under the forest is with the read it is waiting on.
@@ -97,9 +103,9 @@ impl Shown {
     /// coming back with another waiting behind it names the same projects as
     /// often as not, and a redraw that puts the same frame back is a redraw
     /// for nothing.
-    fn collecting(&mut self, wanted: Option<&Wanted>) -> bool {
-        let changed = self.collecting.as_ref() != wanted;
-        self.collecting = wanted.cloned();
+    fn collecting(&mut self, in_flight: Option<&InFlight>) -> bool {
+        let changed = self.collecting.as_ref() != in_flight;
+        self.collecting = in_flight.cloned();
         changed
     }
 
@@ -111,30 +117,33 @@ impl Shown {
     /// that is turning, so a project read a moment ago is due a redraw well
     /// inside the frame.
     ///
-    /// Asked of `read_at` rather than of the lines, so a project drawn under
-    /// any rule the forest has is covered by it. A project that is read and
-    /// not drawn costs a redraw nobody sees, which is cheaper than the line
-    /// that quietly stops being true.
+    /// The ages are asked of `read_at` rather than of the lines, so a project
+    /// drawn under any rule the forest has is covered by it. A project that is
+    /// read and not drawn costs a redraw nobody sees, which is cheaper than
+    /// the line that quietly stops being true.
+    ///
+    /// The mark is asked once of the collection, where the ages are asked one
+    /// project at a time. Which projects a collection names decides which
+    /// *lines* turn, and cannot decide when the screen is next due: every line
+    /// a collection names turns on the one clock, so a frame falls due as soon
+    /// as any of them is turning. Asking it per project would be a second way
+    /// of reaching the same answer — and a collection running before anything
+    /// it names has come back has no project in `read_at` to be asked about
+    /// anyway, which is the startup frame.
     fn holds_for(&self, now: DateTime<Utc>) -> Option<Duration> {
         let snapshot = self.forest.snapshot();
-        let drawn = snapshot.read_at.iter().filter_map(|(project, at)| {
-            Freshness::of(
-                Some(*at),
-                self.collecting
-                    .as_ref()
-                    .is_some_and(|wanted| wanted.names(project)),
-                snapshot.every_root_read(project),
-            )
-        });
-        // A collection can be running before anything it names has come back,
-        // and the startup frame is nothing but marks turning over no rows.
-        let starting = self.collecting.as_ref().map(|_| Freshness {
-            mark: Mark::Collecting,
-            read_at: None,
-        });
+        let ageing = snapshot
+            .read_at
+            .values()
+            .filter_map(|at| Freshness::of(Some(*at), None, true, now));
+        let turning = self
+            .collecting
+            .as_ref()
+            .and_then(|in_flight| Freshness::of(None, Some(in_flight), true, now));
 
-        drawn
-            .chain(starting)
+        turning
+            .into_iter()
+            .chain(ageing)
             .filter_map(|how_fresh| phrase::holds_for(how_fresh, now))
             .min()
     }
@@ -323,7 +332,7 @@ fn paint(
     tail: &Tail,
     showing: Showing,
     at_startup: &[Notice],
-    collecting: Option<&Wanted>,
+    collecting: Option<&InFlight>,
     now: DateTime<Utc>,
 ) {
     let bands = draw::regions(frame.area());
@@ -365,8 +374,8 @@ impl View for Screen {
         self.shown.collected(snapshot);
     }
 
-    fn collecting(&mut self, wanted: Option<&Wanted>) -> bool {
-        self.shown.collecting(wanted)
+    fn collecting(&mut self, in_flight: Option<&InFlight>) -> bool {
+        self.shown.collecting(in_flight)
     }
 
     fn holds_for(&self) -> Option<Duration> {
@@ -416,11 +425,12 @@ impl View for Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Wanted;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{self, Counts, Filter, HerdrState, Node, TrackerState, Tree};
     use crate::model::types::{PaneStatus, Status};
-    use crate::tui::fixtures::{a_snapshot, atlas, ferry};
+    use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
     use crate::tui::keys::BINDINGS;
     use crate::view::bindings::bindings_window;
     use crate::view::painted::Painted;
@@ -739,6 +749,70 @@ mod tests {
         })
     }
 
+    /// The same screen with a collection in flight, so a project line the
+    /// collection names says what it is doing.
+    fn screen_collecting(
+        forest: &mut Forest,
+        tail: &Tail,
+        collecting: Option<&InFlight>,
+        width: u16,
+        height: u16,
+    ) -> Painted {
+        Painted::drawn_by(width, height, |frame| {
+            paint(
+                frame,
+                forest,
+                tail,
+                Showing::Forest,
+                &[],
+                collecting,
+                an_instant(),
+            );
+        })
+    }
+
+    /// `bdi-7ao.51`, on the screen a reader is looking at rather than in any
+    /// one of the cells beneath it: a collection that has stopped answering is
+    /// drawn as having stopped, where one still under way turns.
+    ///
+    /// The two are asserted together and from one fixture, because the defect
+    /// was never that either state drew wrongly — it was that they drew the
+    /// same, and a test that only knew what a hung tracker looks like could
+    /// not have told.
+    #[test]
+    fn a_screen_says_which_of_its_projects_have_stopped_answering() {
+        let mut snapshot = a_grove(2);
+        snapshot.read_at.insert(
+            "grove".to_string(),
+            an_instant() - chrono::TimeDelta::seconds(30),
+        );
+        let mark = |asked_at| {
+            let mut forest = forest::flatten(&snapshot);
+            let row = screen_collecting(
+                &mut forest,
+                &Tail::Silent("nothing to tail"),
+                Some(&reading(Wanted::Everything, asked_at)),
+                60,
+                10,
+            )
+            .rows()[0]
+                .clone();
+            assert!(row.contains("grove"), "the project's own line: {row:?}");
+            row
+        };
+
+        assert!(
+            mark(an_instant() - PATIENCE).contains("⠿ 30s ago"),
+            "a collection past its patience: {:?}",
+            mark(an_instant() - PATIENCE)
+        );
+        assert!(
+            !mark(an_instant()).contains('⠿'),
+            "a collection just asked for: {:?}",
+            mark(an_instant())
+        );
+    }
+
     /// Nothing on screen shows that `^D` moved by the wrong amount, so the
     /// frame is what says the forest was told how tall it is.
     #[test]
@@ -902,15 +976,18 @@ mod tests {
         assert_eq!(shown(a_snapshot()).collecting, None);
     }
 
-    /// What is being read, not whether something is: each project line
-    /// answers for its own rows, so the screen is told the collection's own
-    /// `Wanted` and asks that which projects it names.
+    /// What is being read and since when, not whether something is: each
+    /// project line answers for its own rows, so the screen is told the
+    /// collection's own `Wanted` and asks that which projects it names — and
+    /// the instant beside it, so a line can say the tracker has stopped
+    /// answering rather than that a collection is under way.
     #[test]
-    fn a_screen_holds_what_the_collection_in_flight_is_reading() {
+    fn a_screen_holds_what_the_collection_in_flight_is_reading_and_since_when() {
         let mut shown = shown(a_snapshot());
+        let reading_atlas = reading(atlas(), an_instant());
 
-        shown.collecting(Some(&atlas()));
-        assert_eq!(shown.collecting, Some(atlas()));
+        shown.collecting(Some(&reading_atlas));
+        assert_eq!(shown.collecting, Some(reading_atlas));
 
         shown.collecting(None);
         assert_eq!(shown.collecting, None);
@@ -923,12 +1000,35 @@ mod tests {
     #[test]
     fn a_screen_told_again_what_it_already_says_reports_no_change() {
         let mut shown = shown(a_snapshot());
+        let at = an_instant();
 
-        assert!(shown.collecting(Some(&atlas())), "None to one project");
-        assert!(!shown.collecting(Some(&atlas())), "the same project again");
-        assert!(shown.collecting(Some(&ferry())), "one project to another");
+        assert!(
+            shown.collecting(Some(&reading(atlas(), at))),
+            "None to one project"
+        );
+        assert!(
+            !shown.collecting(Some(&reading(atlas(), at))),
+            "the same collection again"
+        );
+        assert!(
+            shown.collecting(Some(&reading(ferry(), at))),
+            "one project to another"
+        );
         assert!(shown.collecting(None), "and back to nothing running");
         assert!(!shown.collecting(None), "which is also said only once");
+    }
+
+    /// A fresh collection of the projects the last one named is not the same
+    /// collection, whatever it names: its wait starts over, and a line that
+    /// went on counting from the first ask would report the tracker as having
+    /// stopped answering seconds into a collection that had only just begun.
+    #[test]
+    fn a_screen_told_of_a_new_collection_of_the_same_projects_reports_a_change() {
+        let mut shown = shown(a_snapshot());
+        let at = an_instant();
+
+        assert!(shown.collecting(Some(&reading(atlas(), at))));
+        assert!(shown.collecting(Some(&reading(atlas(), at + chrono::TimeDelta::seconds(1)))));
     }
 
     /// `codex review` on this change, and it is right: the foot said
@@ -976,9 +1076,45 @@ mod tests {
     #[test]
     fn a_screen_with_a_collection_on_it_and_no_age_holds_for_one_frame() {
         let mut shown = shown(a_snapshot());
-        shown.collecting(Some(&atlas()));
+        shown.collecting(Some(&reading(atlas(), an_instant())));
 
         assert_eq!(shown.holds_for(an_instant()), Some(phrase::FRAME));
+    }
+
+    /// The other end of the same case, and the one a reviewer reads as the
+    /// deadline failing to fire: a first collection that never answers leaves
+    /// a still mark over no rows, and there is nothing in that cell for time
+    /// alone to falsify. What carried the screen across the deadline was the
+    /// turning mark, which was still running up to it.
+    #[test]
+    fn a_screen_whose_first_collection_stopped_answering_has_nothing_left_to_expire() {
+        let mut shown = shown(a_snapshot());
+        let asked_at = an_instant();
+        shown.collecting(Some(&reading(atlas(), asked_at)));
+
+        assert_eq!(
+            shown.holds_for(asked_at + chrono::TimeDelta::seconds(30)),
+            None
+        );
+    }
+
+    /// And with rows on the screen, a hung tracker comes off the frame clock
+    /// and onto the age's. The mark has stopped moving, so redrawing it 12
+    /// times a second for however long the tracker stays quiet would be
+    /// wakeups for a screen that cannot change.
+    #[test]
+    fn a_hung_tracker_is_redrawn_for_its_rows_age_rather_than_for_a_still_mark() {
+        let mut snapshot = a_snapshot();
+        let read = an_instant();
+        snapshot.read_at.insert("atlas".to_string(), read);
+        let mut shown = shown(snapshot);
+        shown.collecting(Some(&reading(atlas(), read)));
+
+        assert_eq!(
+            shown.holds_for(read + chrono::TimeDelta::seconds(30)),
+            Some(Duration::from_secs(1)),
+            "the age turning over, not the frame the mark has stopped on"
+        );
     }
 
     /// `bdi-7ao.58`: the age stays on the line under the turning mark, so it
@@ -992,7 +1128,7 @@ mod tests {
         let read = an_instant();
         snapshot.read_at.insert("atlas".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(Some(&atlas()));
+        shown.collecting(Some(&reading(atlas(), read)));
 
         assert_eq!(
             shown.holds_for(read + chrono::TimeDelta::milliseconds(970)),
@@ -1007,14 +1143,12 @@ mod tests {
     fn a_collection_over_day_old_rows_is_redrawn_for_the_mark_rather_than_the_age() {
         let mut snapshot = a_snapshot();
         let read = an_instant();
+        let now = read + chrono::TimeDelta::seconds(86_400);
         snapshot.read_at.insert("atlas".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(Some(&atlas()));
+        shown.collecting(Some(&reading(atlas(), now)));
 
-        assert_eq!(
-            shown.holds_for(read + chrono::TimeDelta::seconds(86_400)),
-            Some(phrase::FRAME)
-        );
+        assert_eq!(shown.holds_for(now), Some(phrase::FRAME));
     }
 
     /// Nothing read and nothing running: there is no age on the screen, so

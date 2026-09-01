@@ -22,7 +22,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::Frame;
 
-use crate::app::Wanted;
+use crate::app::InFlight;
 use crate::model::types::PaneStatus;
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::forest::Forest;
@@ -52,15 +52,17 @@ use tone::LOOK_AT_THIS;
 /// anything new.
 pub(super) struct Reads<'a> {
     read_at: &'a BTreeMap<String, DateTime<Utc>>,
-    /// What the collection in flight is reading, where one is running.
-    collecting: Option<&'a Wanted>,
+    /// What the collection in flight is reading and when it was asked for,
+    /// where one is running. The instant is what tells a collection that is
+    /// under way from one that has stopped answering.
+    collecting: Option<&'a InFlight>,
     now: DateTime<Utc>,
 }
 
 impl<'a> Reads<'a> {
     pub(super) fn new(
         read_at: &'a BTreeMap<String, DateTime<Utc>>,
-        collecting: Option<&'a Wanted>,
+        collecting: Option<&'a InFlight>,
         now: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -81,8 +83,9 @@ impl<'a> Reads<'a> {
         Freshness::of(
             self.read_at.get(&project.project).copied(),
             self.collecting
-                .is_some_and(|wanted| wanted.names(&project.project)),
+                .filter(|in_flight| in_flight.wanted.names(&project.project)),
             project.every_root_read,
+            self.now,
         )
     }
 }
@@ -97,7 +100,7 @@ pub fn draw(
     area: Rect,
     forest: &Forest,
     at_startup: &[Notice],
-    collecting: Option<&Wanted>,
+    collecting: Option<&InFlight>,
     now: DateTime<Utc>,
     keys: &str,
 ) {
@@ -239,6 +242,7 @@ mod tests {
     use ratatui::style::Modifier;
     use std::collections::BTreeMap;
 
+    use crate::app::Wanted;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
         Counts, Filter, HerdrState, LoosePane, Node, Snapshot, TrackerFailure, TrackerState, Tree,
@@ -548,11 +552,28 @@ mod tests {
         frame_collecting(forest, None, width, height)
     }
 
+    /// A collection reading `wanted`, asked for at the instant the frame is
+    /// drawn — so it is a collection under way rather than one that has
+    /// stopped answering.
+    pub(super) fn reading(wanted: Wanted) -> InFlight {
+        InFlight {
+            wanted,
+            asked_at: drawn_at(),
+            patience: PATIENCE,
+        }
+    }
+
+    /// How long the collections these tests build may go unanswered. A round
+    /// number the instants are written against, rather than the configured
+    /// default: what they assert is which mark a wait produces, not what the
+    /// deadline is.
+    pub(super) const PATIENCE: chrono::TimeDelta = chrono::TimeDelta::seconds(30);
+
     /// The same frame with a collection in flight, so a project line the
     /// collection names says so.
     pub(super) fn frame_collecting(
         forest: &Forest,
-        collecting: Option<&Wanted>,
+        collecting: Option<&InFlight>,
         width: u16,
         height: u16,
     ) -> Painted {
@@ -562,7 +583,7 @@ mod tests {
     fn frame_with(
         forest: &Forest,
         at_startup: &[Notice],
-        collecting: Option<&Wanted>,
+        collecting: Option<&InFlight>,
         width: u16,
         height: u16,
     ) -> Painted {

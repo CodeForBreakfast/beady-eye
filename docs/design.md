@@ -60,6 +60,7 @@ coin one — and say so.**
 | **badge** | *coined* | a rendering of one metadata value. beads has `label`, but a label is a bead's own tag; this renders a `metadata` entry, which neither project has a display term for. |
 | **unattributed** | *coined* | a live pane resolving to no bead. Neither project names this, because neither knows about the other. |
 | **unconfigured** | *coined* | a directory no `[[projects]]` entry covers, and the panes working in it. `bdi` has not failed to attribute them; it was never told the project exists. |
+| **unanswered** | *coined* | a collection that has been running longer than one may and has said nothing. Neither project names it: the collection is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a collection that came back and said no. |
 
 ### Three different things are called "blocked"
 

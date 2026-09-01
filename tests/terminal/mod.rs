@@ -179,13 +179,23 @@ pub fn a_home_naming_one_project(named: &str) -> PathBuf {
 /// a collection does is run direnv, and on a machine without one the project
 /// fails there and `bd` is never reached at all.
 pub fn a_home_naming_one_project_read_without_direnv(named: &str) -> PathBuf {
+    a_home_naming_one_project_settled(named, "")
+}
+
+/// The same, with `settings` appended to the config — a `[tui]` table, say,
+/// for a test whose subject is something `bdi` is configured to wait for.
+///
+/// Handed as text rather than as fields because the config is what a reader
+/// of the test has to picture, and every one of these tests is about what
+/// `bdi` does with a config a person could have written.
+pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
             "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n\
-             credential_command = \"printf ''\"\n",
+             credential_command = \"printf ''\"\n{settings}",
             home.display()
         ),
     )

@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chrono::TimeDelta;
+
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -108,6 +110,26 @@ pub struct Tui {
     /// gap — one per collection, never one per interval — and a view as fresh
     /// as the collection allows rather than as the interval promised.
     pub refresh_seconds: u64,
+
+    /// How long a collection may go unanswered before `bdi` reports the
+    /// tracker as having stopped answering rather than as being read.
+    ///
+    /// A collection blocks in `Command::output()`, which has no deadline, and
+    /// reports nothing until it is done — so without this a tracker hung for
+    /// an hour is drawn exactly as one asked half a second ago.
+    ///
+    /// Configured rather than fixed for the same reason the interval above is,
+    /// and by the same measurement: what a healthy collection costs follows
+    /// the number of projects, so a config naming twice as many waits longer
+    /// before anything is wrong. The default is around eight times the 3.5 to
+    /// 4.1 seconds measured for the two projects that measurement was taken
+    /// on.
+    ///
+    /// Passing it abandons nothing. The collection runs on, and a tracker that
+    /// answers at last puts its rows up — a deadline that cut the collection
+    /// off would leave a merely slow tracker permanently unreadable, which is
+    /// the disappearance `bdi` is built not to do.
+    pub unanswered_after_seconds: u64,
 }
 
 impl Default for Anomalies {
@@ -130,6 +152,7 @@ impl Default for Tui {
     fn default() -> Self {
         Self {
             refresh_seconds: 30,
+            unanswered_after_seconds: 30,
         }
     }
 }
@@ -137,6 +160,11 @@ impl Default for Tui {
 impl Tui {
     pub fn refresh(&self) -> Duration {
         Duration::from_secs(self.refresh_seconds)
+    }
+
+    /// The same, as the clock arithmetic beside a project's name counts in.
+    pub fn unanswered_after(&self) -> TimeDelta {
+        TimeDelta::seconds(self.unanswered_after_seconds.try_into().unwrap_or(i64::MAX))
     }
 }
 
@@ -282,6 +310,7 @@ pane_key = "herdr_pane"
 
 [tui]
 refresh_seconds = 5
+unanswered_after_seconds = 90
 "#;
 
     const ONE_PROJECT: &str = r#"
@@ -370,6 +399,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.anomalies.stale_claim_days, 7);
         assert_eq!(cfg.join.pane_key, "herdr_pane");
         assert_eq!(cfg.tui.refresh_seconds, 5);
+        assert_eq!(cfg.tui.unanswered_after_seconds, 90);
     }
 
     #[test]
@@ -382,6 +412,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
         assert_eq!(cfg.tui.refresh_seconds, 30);
+        assert_eq!(cfg.tui.unanswered_after_seconds, 30);
     }
 
     /// The interval is written in seconds and read as a duration; nothing
@@ -392,6 +423,17 @@ path = "/home/user/dev/cinder"
 
         assert_eq!(cfg.tui.refresh(), Duration::from_secs(5));
         assert_eq!(Tui::default().refresh(), Duration::from_secs(30));
+    }
+
+    /// The same for how long a collection may go unanswered, which is counted
+    /// against a `chrono` clock rather than a `std` one because what it dates
+    /// is the instant the collection was asked for.
+    #[test]
+    fn how_long_a_collection_may_go_unanswered_is_read_as_a_duration() {
+        let cfg = Config::from_toml(EVERY_SECTION).expect("parses");
+
+        assert_eq!(cfg.tui.unanswered_after(), TimeDelta::seconds(90));
+        assert_eq!(Tui::default().unanswered_after(), TimeDelta::seconds(30));
     }
 
     /// The whole of a project entry: a path. Every tracker `bdi` reads is

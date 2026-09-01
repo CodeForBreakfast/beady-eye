@@ -4,6 +4,8 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::app::InFlight;
+
 pub mod bindings;
 pub mod draw;
 pub mod fitted;
@@ -125,6 +127,13 @@ pub struct Freshness {
 pub enum Mark {
     /// A collection is reading this project now.
     Collecting,
+    /// A collection has been reading this project for longer than one can
+    /// take and still be under way: the tracker has stopped answering.
+    ///
+    /// Distinct from `Refused`, which is a collection that came back and said
+    /// no. Nothing has come back here and nothing may ever, and the
+    /// collection is still running — see `InFlight::patience`.
+    Unanswered,
     /// The last collection read every root of it.
     Read,
     /// The last collection found a root it could not read.
@@ -167,19 +176,26 @@ impl Freshness {
     ///
     /// Nothing at all for a project neither read nor being read: there is no
     /// row on the screen for the claim to be about.
+    ///
+    /// `collecting` is the collection reading this project rather than a flag
+    /// saying one is, because a collection that has stopped answering is
+    /// drawn the same as one that has just started unless the mark can
+    /// measure the wait — and the collection is what carries how long it may
+    /// wait.
     pub fn of(
         read_at: Option<DateTime<Utc>>,
-        collecting: bool,
+        collecting: Option<&InFlight>,
         every_root_read: bool,
+        now: DateTime<Utc>,
     ) -> Option<Self> {
-        if read_at.is_none() && !collecting {
+        if read_at.is_none() && collecting.is_none() {
             return None;
         }
         Some(Freshness {
-            mark: if collecting {
-                Mark::Collecting
-            } else {
-                Mark::at_rest(every_root_read)
+            mark: match collecting {
+                Some(in_flight) if in_flight.unanswered_at(now) => Mark::Unanswered,
+                Some(_) => Mark::Collecting,
+                None => Mark::at_rest(every_root_read),
             },
             read_at,
         })
@@ -189,12 +205,29 @@ impl Freshness {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use crate::app::Wanted;
+    use chrono::{TimeDelta, TimeZone};
     use pretty_assertions::assert_eq;
 
     fn at(minute: u32, second: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, 30, 10, minute, second)
             .unwrap()
+    }
+
+    /// How long the collections below may go unanswered. A round number the
+    /// instants are written against, rather than the configured default: what
+    /// these assert is that the mark turns on the deadline, not what the
+    /// deadline is.
+    const PATIENCE: TimeDelta = TimeDelta::seconds(30);
+
+    /// A collection asked for at `asked_at`, of whichever projects — every
+    /// test here is about one project and the collection is reading it.
+    fn asked_at(asked_at: DateTime<Utc>) -> InFlight {
+        InFlight {
+            wanted: Wanted::Everything,
+            asked_at,
+            patience: PATIENCE,
+        }
     }
 
     /// A project the collection in flight is not reading keeps the read it
@@ -203,7 +236,7 @@ mod tests {
     #[test]
     fn a_project_no_collection_is_reading_says_when_it_was_last_read() {
         assert_eq!(
-            Freshness::of(Some(at(22, 14)), false, true),
+            Freshness::of(Some(at(22, 14)), None, true, at(22, 20)),
             Some(Freshness {
                 mark: Mark::Read,
                 read_at: Some(at(22, 14)),
@@ -218,7 +251,12 @@ mod tests {
     #[test]
     fn a_project_being_read_now_keeps_the_age_of_the_rows_still_on_the_screen() {
         assert_eq!(
-            Freshness::of(Some(at(22, 14)), true, true),
+            Freshness::of(
+                Some(at(22, 14)),
+                Some(&asked_at(at(22, 20))),
+                true,
+                at(22, 20)
+            ),
             Some(Freshness {
                 mark: Mark::Collecting,
                 read_at: Some(at(22, 14)),
@@ -232,7 +270,13 @@ mod tests {
     #[test]
     fn a_collection_in_flight_takes_the_mark_from_the_read_it_is_replacing() {
         assert_eq!(
-            Freshness::of(Some(at(22, 14)), true, false).map(|it| it.mark),
+            Freshness::of(
+                Some(at(22, 14)),
+                Some(&asked_at(at(22, 20))),
+                false,
+                at(22, 20)
+            )
+            .map(|it| it.mark),
             Some(Mark::Collecting)
         );
     }
@@ -243,7 +287,7 @@ mod tests {
     #[test]
     fn a_project_with_a_root_that_would_not_read_rests_on_the_refused_mark() {
         assert_eq!(
-            Freshness::of(Some(at(22, 14)), false, false).map(|it| it.mark),
+            Freshness::of(Some(at(22, 14)), None, false, at(22, 20)).map(|it| it.mark),
             Some(Mark::Refused)
         );
     }
@@ -254,7 +298,7 @@ mod tests {
     #[test]
     fn a_project_never_read_but_being_read_now_still_says_it_is_collecting() {
         assert_eq!(
-            Freshness::of(None, true, true),
+            Freshness::of(None, Some(&asked_at(at(22, 20))), true, at(22, 20)),
             Some(Freshness {
                 mark: Mark::Collecting,
                 read_at: None,
@@ -262,8 +306,107 @@ mod tests {
         );
     }
 
+    /// The bead. A collection that has stopped answering was drawn exactly
+    /// as one asked half a second ago, because nothing measured the wait.
+    /// Past the deadline the mark says the tracker has stopped answering
+    /// rather than that a collection is under way.
+    #[test]
+    fn a_collection_that_has_stopped_answering_is_said_to_have_rather_than_to_be_running() {
+        let since = at(22, 20);
+
+        assert_eq!(
+            Freshness::of(
+                Some(at(22, 14)),
+                Some(&asked_at(since)),
+                true,
+                since + PATIENCE
+            )
+            .map(|it| it.mark),
+            Some(Mark::Unanswered)
+        );
+    }
+
+    /// The other half of the same claim, and the half that keeps the mark
+    /// worth reading: a collection still inside the deadline is a collection
+    /// under way, however close to it the reader looks.
+    #[test]
+    fn a_collection_still_inside_the_deadline_is_said_to_be_running() {
+        let since = at(22, 20);
+
+        assert_eq!(
+            Freshness::of(
+                Some(at(22, 14)),
+                Some(&asked_at(since)),
+                true,
+                since + PATIENCE - TimeDelta::milliseconds(1)
+            )
+            .map(|it| it.mark),
+            Some(Mark::Collecting)
+        );
+    }
+
+    /// The rows on the screen are the last collection's, and a collection
+    /// that has stopped answering is the reason they will not be replaced —
+    /// so their age matters more than ever, not less. The mark is what
+    /// changed; the age is untouched by it.
+    #[test]
+    fn a_collection_that_has_stopped_answering_still_dates_the_rows_on_the_screen() {
+        let since = at(22, 20);
+
+        assert_eq!(
+            Freshness::of(
+                Some(at(22, 14)),
+                Some(&asked_at(since)),
+                true,
+                since + PATIENCE
+            ),
+            Some(Freshness {
+                mark: Mark::Unanswered,
+                read_at: Some(at(22, 14)),
+            })
+        );
+    }
+
+    /// A first collection that never answers: there is no read to date any
+    /// rows to, and no rows, but the reader is still told the tracker has
+    /// stopped answering. This is the startup frame gone wrong, and it is the
+    /// state a reader is likeliest to meet — `bdi` starting against a tracker
+    /// that is not there.
+    #[test]
+    fn a_first_collection_that_never_answers_says_so_over_no_rows_at_all() {
+        let since = at(22, 20);
+
+        assert_eq!(
+            Freshness::of(None, Some(&asked_at(since)), true, since + PATIENCE),
+            Some(Freshness {
+                mark: Mark::Unanswered,
+                read_at: None,
+            })
+        );
+    }
+
+    /// A collection that has stopped answering says nothing about how the one
+    /// before it went. The rows on the screen are that collection's and their
+    /// age is what speaks for them; the mark's column belongs to what is
+    /// happening now, which is nothing.
+    #[test]
+    fn a_collection_that_has_stopped_answering_takes_the_mark_from_the_read_it_is_replacing() {
+        let since = at(22, 20);
+
+        assert_eq!(
+            Freshness::of(
+                Some(at(22, 14)),
+                Some(&asked_at(since)),
+                false,
+                since + PATIENCE
+            )
+            .map(|it| it.mark),
+            Some(Mark::Unanswered)
+        );
+    }
+
     #[test]
     fn a_project_neither_read_nor_being_read_says_nothing_about_freshness() {
-        assert_eq!(Freshness::of(None, false, true), None);
+        assert_eq!(Freshness::of(None, None, true, at(22, 20)), None);
     }
 }

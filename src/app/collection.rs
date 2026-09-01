@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::collect::herdr;
 use crate::collect::run::Runner;
@@ -38,6 +38,36 @@ pub enum Wanted {
     Everything,
     /// One project. Every other keeps what its tracker last said.
     Project(String),
+}
+
+/// A collection that has been asked for and has not come back: what it is
+/// reading, when it was asked, and how long it may wait before that is worth
+/// saying.
+///
+/// The instant is the whole reason this is not a bare `Wanted`. A collection
+/// blocks in `Command::output()`, which has no deadline, so a tracker hung
+/// for an hour hands the same thing back as one asked half a second ago —
+/// nothing, for as long as it takes. Stamping the ask is what lets anything
+/// downstream tell those apart, and it is stamped where the ask happens
+/// rather than where its effects are drawn.
+///
+/// The patience travels beside it rather than being looked up wherever the
+/// answer is wanted, so every reader of one collection answers the same way
+/// about it, and the config is read once at the edge as everything else is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InFlight {
+    pub wanted: Wanted,
+    pub asked_at: DateTime<Utc>,
+    /// How long this may go unanswered before the tracker is reported as
+    /// having stopped answering rather than as being read.
+    pub patience: TimeDelta,
+}
+
+impl InFlight {
+    /// Whether this has gone unanswered for longer than it may.
+    pub fn unanswered_at(&self, now: DateTime<Utc>) -> bool {
+        now - self.asked_at >= self.patience
+    }
 }
 
 impl Wanted {

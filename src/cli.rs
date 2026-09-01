@@ -75,6 +75,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     }
 
     let refresh = cfg.tui.refresh();
+    let patience = cfg.tui.unanswered_after();
     // RealRunner is a unit struct, so the collection builds its own rather
     // than borrowing one across the thread it runs on.
     let projects = cfg
@@ -85,6 +86,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let mut collection = crate::app::Collection::default();
     crate::tui::run(
         refresh,
+        patience,
         projects,
         Box::new(move |wanted| collection.collect(&cfg, &RealRunner, wanted, filter, Utc::now())),
     )?;

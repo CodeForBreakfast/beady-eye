@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use chrono::TimeDelta;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
@@ -27,6 +28,10 @@ use wire::wire;
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
 ///
+/// `patience` is how long a collection may go unanswered before the project
+/// it is reading says the tracker has stopped answering rather than that it
+/// is being read.
+///
 /// The first collection is made before the alternate screen opens, so the
 /// wait happens where the user can still see their own terminal; every one
 /// after it runs on a worker thread.
@@ -39,6 +44,7 @@ use wire::wire;
 /// nothing — the terminal has not been touched yet.
 pub fn run(
     refresh: Duration,
+    patience: TimeDelta,
     projects: Vec<String>,
     mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
@@ -59,5 +65,5 @@ pub fn run(
     );
     let mut screen = Screen::showing(first, panes, at_startup)?;
 
-    drive(&mut screen, &events, &ask)
+    drive(&mut screen, &events, &ask, patience)
 }

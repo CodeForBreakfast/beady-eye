@@ -9,7 +9,7 @@
 mod collection;
 mod tracker;
 
-pub use collection::{run, Collection, Wanted};
+pub use collection::{run, Collection, InFlight, Wanted};
 
 /// The fake tracker both halves read in their tests.
 ///

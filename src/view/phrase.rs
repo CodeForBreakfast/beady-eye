@@ -93,6 +93,15 @@ const READ: &str = "✓";
 /// under the name are short of that root's.
 const REFUSED: &str = "⚠";
 
+/// The mark a project wears when the collection reading it has stopped
+/// answering.
+///
+/// The turning mark held still. It is where the frames were and made of the
+/// same dots, so a reader who has been watching one turn sees it stop rather
+/// than sees a different thing appear — which is the fact: the collection is
+/// still running and no longer getting anywhere.
+const UNANSWERED: &str = "⠿";
+
 /// The mark beside a project's name: how far the collection reading it has
 /// turned, or how the last one went.
 ///
@@ -102,6 +111,7 @@ const REFUSED: &str = "⚠";
 pub fn mark(freshness: Freshness, now: DateTime<Utc>) -> &'static str {
     match freshness.mark {
         Mark::Collecting => turning(now),
+        Mark::Unanswered => UNANSWERED,
         Mark::Read => READ,
         Mark::Refused => REFUSED,
     }
@@ -154,6 +164,14 @@ fn turning(now: DateTime<Utc>) -> &'static str {
 /// at rest is not one of them — it changes when a collection does something
 /// and never on its own — so a project nothing is reading holds for its age
 /// alone, and one never read and not being read holds for nothing at all.
+///
+/// A collection that has stopped answering rests too, and that is what takes
+/// a hung tracker off the frame clock: its age goes on redrawing on its own
+/// schedule, which is once a second under a minute and once a minute after
+/// it, rather than 12 times a second for a mark that has stopped moving. A
+/// *first* collection that never answers holds for nothing at all, because a
+/// still mark over no rows is a cell nothing in it can date. What fires the
+/// crossing either way is the turning mark still running up to it.
 pub fn holds_for(freshness: Freshness, now: DateTime<Utc>) -> Option<Duration> {
     // The mark's frame is cut from the clock itself, so its boundaries are
     // the clock's.
