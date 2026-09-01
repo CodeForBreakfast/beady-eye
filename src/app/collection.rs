@@ -502,6 +502,29 @@ mod tests {
         );
     }
 
+    /// The property scoping exists for, one layer up from the refresh: a
+    /// project the config no longer names is a project whose tracker is never
+    /// asked, however whole the collection asking is.
+    #[test]
+    fn a_project_a_scope_left_out_has_its_tracker_unasked() {
+        let runner = colliding_trackers(PANES_IN_BOTH);
+        let scoped = two_projects()
+            .scoped_to(&["orbital".to_string()])
+            .expect("orbital is configured");
+
+        Collection::default().collect(&scoped, &runner, &Wanted::Everything, Filter::All, now());
+
+        assert_eq!(
+            tracker_calls(&runner, FERRY),
+            0,
+            "ferry was scoped out, so nothing should have gone near its tracker"
+        );
+        assert!(
+            tracker_calls(&runner, ORBITAL) > 0,
+            "orbital was scoped in, so it was read"
+        );
+    }
+
     /// Degrade, never disappear, with further to reach than the whole-snapshot
     /// path ever had to: the projects already drawn are not the ones being
     /// read, so a tracker that fails mid-refresh cannot cost them anything.

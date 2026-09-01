@@ -176,6 +176,88 @@ Roots come from bd, unioned and deduped:
    draws is a bead no tree reports — drawing it is what leaves it somewhere to
    be reported from.
 
+## Scoping a run to fewer projects
+
+`--project <NAME>`, repeated for more than one, draws only those of the
+configured projects. It is not a view filter: the projects left out are never
+read. `Config.projects` is narrowed as the config is assembled — before git is
+asked where each project is worked, which is itself a subprocess in the
+project's own directory — and every site downstream reads that field — the collection loop, the order the trees are
+drawn in, the join, and the forest drawn before any tracker has answered — so
+one narrowing reaches all of them and none of them needs to know about it.
+
+That matters because a collection is most of what a run costs, and the cost
+follows the number of projects rather than the size of any one tracker: a
+project is seven-plus processes before its rows are read at all. Measured on
+2026-09-01 at `268ab2d`: `bdi --json`, which waits for the whole collection
+and draws no screen, took 8.2 seconds against a config naming three projects,
+and 3.5 to 4.1 seconds against two at `40f4eb5`.
+
+`bdi` itself no longer makes the reader wait that out — since `cfcbd80` the
+forest is on the screen in about 22 ms and fills in as trackers answer — so
+what scoping buys the reader is not the first frame but every collection after
+it, and the whole of `--json`. Nothing bounds how many projects a config
+names.
+
+**A scope naming no configured project is refused, and the refusal lists what
+is configured.** The likely cause is a typo, and the alternative is starting on
+an empty forest the reader cannot tell from a quiet one. This is what the file
+already does with an unknown project name in `[roots.explicit]` or in a
+`<project>:<bead-id>` argument.
+
+What decides whether a run is scoped is *whether a scope was asked for*, never
+how many projects one selected. A run with no `--project` reads everything, and
+a scope that selected nothing is refused rather than obeyed — the two must not
+be reached through the same emptiness test.
+
+**Scoping is silent, and this is a deviation from *degrade, never
+disappear*.** That principle governs a tree `bdi` could not draw: an
+unreachable tracker, a dangling parent, a truncated subtree. A project the
+reader excluded on the command line is not a failure to report, and a standing
+line about it would be noise on every run of a flag whose whole purpose is a
+smaller screen. The reader typed the scope; the screen does not need to tell
+them what they typed.
+
+**The positional `<project>:<bead-id>` still adds a root, and does not scope.**
+The two arguments do different jobs: `--project` decides which trackers are
+read, the positional adds a root inside a tracker already being read. Merging
+them would remove the ability to add a root while still reading everything,
+which is what the positional does today.
+
+Scoping is applied before the roots the command line names, so a positional
+under a project the scope left out is refused. The contradiction is inside one
+invocation — the same command line asking for `beta`'s root and asking not to
+read `beta` — and there is no reading of it under which both halves are meant.
+The other order accepts it and then draws nothing: `roots.explicit` is read
+only inside a project's own collection, so a root under a project no
+collection reaches is dropped with nothing said about it. Refusing is the
+degrade-never-disappear answer here rather than the price of it.
+
+A root the **config file** names under an excluded project is not that
+contradiction, and is silent. It is a standing preference the reader is
+overriding for one run, so its tree is one the reader excluded rather than one
+`bdi` could not draw — which is the rule that makes scoping silent in the
+first place, applied to a root instead of a project. The entry stays in
+`roots.explicit` rather than being pruned, because nothing consults it for a
+project no collection reaches.
+
+One consequence worth knowing: a scope that leaves exactly one project makes a
+bare bead id unambiguous, because what a bare id was ever ambiguous about is
+which of the trackers being read holds it. `bdi --project orbital orb-7` works
+against a config naming three.
+
+**Considered and rejected: scoping to the union of `--project` and the
+projects the positionals name.** It would let `bdi --project alpha beta:xyz`
+work by putting `beta` in the scope because a bead of `beta` was named. Two
+things sink it. It answers the question above by the back door — with no
+`--project` at all, `bdi beta:xyz` would scope to `beta` alone, which is a
+change to what the positional does today — and avoiding that needs the
+positional to mean different things depending on whether a `--project` is
+present. And it infers an opt-in the reader cannot see: `--project alpha`
+would read `beta`, and every project line on the screen looks like one they
+asked for, so there is nowhere to notice it. Refusing costs one word to
+recover from; reading an excluded tracker is not observable at all.
+
 ## Conventions are configuration
 
 Different setups encode different things in bead metadata. `bdi` hard-codes none

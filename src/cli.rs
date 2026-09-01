@@ -39,6 +39,11 @@ struct Cli {
     #[arg(long)]
     config: Option<String>,
 
+    /// Draw only the projects named, repeating the option for each. The ones
+    /// left out are not read at all, rather than read and hidden.
+    #[arg(long = "project", value_name = "NAME")]
+    projects: Vec<String>,
+
     /// Emit the snapshot as JSON.
     #[arg(long)]
     json: bool,
@@ -52,9 +57,12 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
 
     let home = std::env::var_os("HOME").map(PathBuf::from);
+    let scope = &cli.projects;
     let cfg = match &cli.config {
-        Some(named) => read_config(&RealRunner, &expand_tilde(named, home)),
-        None => config_for_wherever_bdi_was_run(&RealRunner, &expand_tilde(DEFAULT_CONFIG, home)),
+        Some(named) => read_config(&RealRunner, &expand_tilde(named, home), scope),
+        None => {
+            config_for_wherever_bdi_was_run(&RealRunner, &expand_tilde(DEFAULT_CONFIG, home), scope)
+        }
     }?;
     let cfg = cfg.with_roots_named_on_the_command_line(&cli.beads)?;
 
@@ -97,18 +105,29 @@ pub fn run() -> anyhow::Result<ExitCode> {
 
 /// A path the user named is read as written: a config that is not there is an
 /// error, never a reason to look somewhere else.
-fn read_config(runner: &dyn Runner, path: &Path) -> anyhow::Result<Config> {
+fn read_config(runner: &dyn Runner, path: &Path, scope: &[String]) -> anyhow::Result<Config> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading the config at {}", path.display()))?;
-    config_and_its_working_trees(&text, runner)
+    config_and_its_working_trees(&text, runner, scope)
 }
 
 /// A config file's text, as a config whose projects know their working trees.
 /// The file says where a project is; git says where else the same project is,
 /// because a seat working in a linked worktree is working in the project.
-fn config_and_its_working_trees(text: &str, runner: &dyn Runner) -> anyhow::Result<Config> {
+///
+/// Scoped before git is asked, because asking is a `git worktree list` in
+/// each project's own directory — a project the reader excluded would
+/// otherwise still be gone to, which is the gathering scoping exists to
+/// avoid. The whole config is parsed first either way: what `[roots.explicit]`
+/// is checked against is the config as written, not the part of it this run
+/// wants.
+fn config_and_its_working_trees(
+    text: &str,
+    runner: &dyn Runner,
+    scope: &[String],
+) -> anyhow::Result<Config> {
     Ok(discovery::with_the_working_trees_git_lists(
-        Config::from_toml(text)?,
+        Config::from_toml(text)?.scoped_to(scope)?,
         runner,
     ))
 }
@@ -116,20 +135,24 @@ fn config_and_its_working_trees(text: &str, runner: &dyn Runner) -> anyhow::Resu
 /// The config, or — where there is no config file at all — the repository the
 /// current directory sits in. Only an absent file falls back; one that is
 /// there and will not open is still an error.
-fn config_for_wherever_bdi_was_run(runner: &dyn Runner, path: &Path) -> anyhow::Result<Config> {
+fn config_for_wherever_bdi_was_run(
+    runner: &dyn Runner,
+    path: &Path,
+    scope: &[String],
+) -> anyhow::Result<Config> {
     match std::fs::read_to_string(path) {
-        Ok(text) => config_and_its_working_trees(&text, runner),
+        Ok(text) => config_and_its_working_trees(&text, runner, scope),
         Err(absent) if absent.kind() == ErrorKind::NotFound => {
             let cwd = std::env::current_dir().context("finding the current directory")?;
             let named = std::env::var(PROJECT_IN_THE_ENVIRONMENT).ok();
-            discovery::from_the_current_directory(runner, &cwd, named.as_deref()).with_context(
-                || {
+            discovery::from_the_current_directory(runner, &cwd, named.as_deref())
+                .with_context(|| {
                     format!(
                         "there is no config at {}, so bdi read the current directory",
                         path.display()
                     )
-                },
-            )
+                })?
+                .scoped_to(scope)
         }
         Err(unreadable) => {
             Err(unreadable).with_context(|| format!("reading the config at {}", path.display()))
@@ -149,6 +172,7 @@ fn expand_tilde(path: &str, home: Option<PathBuf>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{Env, RunFailure};
     use clap::CommandFactory;
 
@@ -158,6 +182,16 @@ mod tests {
 [[projects]]
 name = "orbital"
 path = "/srv/work/orbital"
+"#;
+
+    const TWO_PROJECTS: &str = r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+
+[[projects]]
+name = "ferry"
+path = "/srv/work/ferry"
 "#;
 
     const A_WORKTREE_PER_SEAT: &str = "\
@@ -173,8 +207,12 @@ detached
     /// A config file of our own, written where the test can hand its path to
     /// the thing that reads it.
     fn a_config_file(named: &str) -> PathBuf {
+        a_config_file_holding(named, ONE_PROJECT)
+    }
+
+    fn a_config_file_holding(named: &str, text: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("bdi-{named}-{}.toml", std::process::id()));
-        std::fs::write(&path, ONE_PROJECT).expect("the file is ours to write");
+        std::fs::write(&path, text).expect("the file is ours to write");
         path
     }
 
@@ -200,8 +238,8 @@ detached
     fn a_config_the_command_line_names_learns_its_working_trees() {
         let path = a_config_file("named-config");
 
-        let cfg =
-            read_config(&ARepositoryWorkedInTwoPlaces, &path).expect("the config is ours to read");
+        let cfg = read_config(&ARepositoryWorkedInTwoPlaces, &path, &[])
+            .expect("the config is ours to read");
 
         assert_eq!(
             cfg.projects[0].worktrees,
@@ -218,7 +256,7 @@ detached
     fn the_config_found_where_bdi_looks_learns_its_working_trees() {
         let path = a_config_file("default-config");
 
-        let cfg = config_for_wherever_bdi_was_run(&ARepositoryWorkedInTwoPlaces, &path)
+        let cfg = config_for_wherever_bdi_was_run(&ARepositoryWorkedInTwoPlaces, &path, &[])
             .expect("the config is ours to read");
 
         assert!(
@@ -238,14 +276,68 @@ detached
     fn a_config_that_will_not_open_is_an_error_rather_than_a_fallback() {
         let a_directory = std::env::temp_dir();
 
-        let refused = config_for_wherever_bdi_was_run(&ARepositoryWorkedInTwoPlaces, &a_directory)
-            .expect_err("a directory is not a config file");
+        let refused =
+            config_for_wherever_bdi_was_run(&ARepositoryWorkedInTwoPlaces, &a_directory, &[])
+                .expect_err("a directory is not a config file");
 
         assert!(
             format!("{refused:#}")
                 .contains(&format!("reading the config at {}", a_directory.display())),
             "a config that will not open should be reported as itself, not as \
              a missing one; said: {refused:#}"
+        );
+    }
+
+    /// Asking git where a project is worked is a subprocess in that project's
+    /// own directory, so it is gathering like any other and a scope has to
+    /// come first. It did not: `git worktree list` ran in every configured
+    /// project's path before the scope was applied, which the collection
+    /// tests could not see because they are handed a config that has already
+    /// been through this.
+    #[test]
+    fn a_project_the_scope_left_out_is_not_even_asked_where_it_is_worked() {
+        let path = a_config_file_holding("scoped-worktrees", TWO_PROJECTS);
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        read_config(&runner, &path, &["orbital".to_string()]).expect("the config is ours to read");
+
+        // The directory is what says which project a call was for: the argv
+        // is the same line whichever project it is asked about.
+        let asked: Vec<Option<PathBuf>> = runner.calls().into_iter().map(|c| c.cwd).collect();
+        assert!(
+            !asked.contains(&Some(PathBuf::from("/srv/work/ferry"))),
+            "ferry was scoped out, so nothing should have gone to its directory; asked {asked:?}"
+        );
+        assert!(
+            asked.contains(&Some(PathBuf::from("/srv/work/orbital"))),
+            "orbital was scoped in, so git was asked where it is worked; asked {asked:?}"
+        );
+
+        std::fs::remove_file(&path).expect("the file is ours to remove");
+    }
+
+    /// A run with no config file at all still has a scope to honour. The
+    /// project it discovers is one project, so a scope naming a different one
+    /// selects nothing and is refused — rather than starting on the project
+    /// the reader did not ask for, which is what a scope the fallback ignored
+    /// would do.
+    #[test]
+    fn a_scope_naming_no_discovered_project_is_refused_with_no_config_file() {
+        let absent = std::env::temp_dir().join(format!("bdi-absent-{}.toml", std::process::id()));
+        let runner = FakeRunner::default()
+            .with("bd where --json", "{}")
+            .with("git rev-parse --show-toplevel", "/srv/work/orbital")
+            .with("git worktree list --porcelain", A_WORKTREE_PER_SEAT)
+            .with("git remote get-url origin", "git@host:owner/orbital.git");
+
+        let refused =
+            config_for_wherever_bdi_was_run(&runner, &absent, &["nothing-of-the-sort".to_string()])
+                .expect_err("the scope names no project the current directory is in");
+
+        assert!(
+            format!("{refused:#}").contains("nothing-of-the-sort"),
+            "got: {refused:#}"
         );
     }
 
@@ -272,6 +364,18 @@ detached
 
         assert_eq!(cli.beads, ["orb-7", "ferry:fer-9"]);
         assert!(cli.json);
+    }
+
+    #[test]
+    fn the_projects_to_draw_are_taken_as_a_repeatable_option() {
+        let cli = Cli::parse_from(["bdi", "--project", "orbital", "--project", "ferry"]);
+
+        assert_eq!(cli.projects, ["orbital", "ferry"]);
+    }
+
+    #[test]
+    fn no_project_is_named_unless_one_is_asked_for() {
+        assert!(Cli::parse_from(["bdi"]).projects.is_empty());
     }
 
     #[test]

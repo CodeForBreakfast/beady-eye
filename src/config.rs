@@ -195,6 +195,49 @@ impl Config {
         Ok(cfg)
     }
 
+    /// The config narrowed to the projects named, or left whole where none
+    /// is. What decides that is whether a scope was asked for, never how many
+    /// projects one selected: a `bdi` run with no arguments reads everything,
+    /// and a scope that selected nothing is refused below rather than obeyed.
+    ///
+    /// Narrowing `projects` is the whole of scoping, because it is the field
+    /// every site downstream reads — the collection loop, the order the trees
+    /// are drawn in, the join, and the forest drawn before any tracker has
+    /// answered. So a project that leaves here is one nothing can go and
+    /// read, which is the property asked for: the projects left out are not
+    /// gathered, rather than gathered and hidden.
+    ///
+    /// Applied before the roots the command line names, so a *positional*
+    /// under a project the scope left out is refused: one command line asking
+    /// for a project's root and asking not to read that project contradicts
+    /// itself, and the other order would accept it and then draw nothing.
+    /// `roots.explicit` is read only inside a project's own collection, so a
+    /// root under a project no collection reaches is never consulted.
+    ///
+    /// A root the *config file* names under an excluded project is not that
+    /// contradiction and is left alone — see the test below.
+    pub fn scoped_to(mut self, names: &[String]) -> anyhow::Result<Self> {
+        if names.is_empty() {
+            return Ok(self);
+        }
+        let unknown: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|named| !self.is_configured(named))
+            .collect();
+        if !unknown.is_empty() {
+            anyhow::bail!(
+                "--project names {}, which is no project of this config; bdi is \
+                 configured for {}",
+                unknown.join(", "),
+                names_of(&self.projects).join(", ")
+            );
+        }
+        self.projects
+            .retain(|project| names.contains(&project.name));
+        Ok(self)
+    }
+
     /// Roots named on the command line join those named in config: discovery
     /// rule 3 has two spellings and one meaning. `<project>:<bead-id>` says
     /// whose tracker holds the bead; a bare id can only mean the one project
@@ -229,8 +272,8 @@ impl Config {
         }
         if !self.is_configured(project) {
             anyhow::bail!(
-                "{named} gives {id} to {project}, which is no project of this config; \
-                 bdi is reading {}",
+                "{named} gives {id} to {project}, which is not among the projects \
+                 bdi is reading: {}",
                 names_of(&self.projects).join(", ")
             );
         }
@@ -497,6 +540,21 @@ cinder = ["c-1"]
         assert!(err.contains("beacon"), "got: {err}");
     }
 
+    const ROOT_IN_A_SECOND_PROJECT: &str = r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+credential_command = "secret-tool lookup tracker atlas"
+
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+credential_command = "cat /home/user/dev/beacon/.beads-password"
+
+[roots.explicit]
+beacon = ["b-7"]
+"#;
+
     const ONE_NAME_ON_TWO_PROJECTS: &str = r#"
 [[projects]]
 name = "atlas"
@@ -616,6 +674,117 @@ path = "/home/user/dev/atlas-fork"
 
             assert!(err.contains(named), "got: {err}");
         }
+    }
+
+    /// Scoping is what stops a reader working in one project paying for the
+    /// others, and it works by taking the projects out of the config: every
+    /// site downstream reads this field, so a project that leaves here is one
+    /// nothing can go and read.
+    #[test]
+    fn a_scope_keeps_only_the_projects_it_names() {
+        let cfg = two_projects()
+            .scoped_to(&["beacon".to_string()])
+            .expect("beacon is configured");
+
+        assert_eq!(names_of(&cfg.projects), ["beacon"]);
+    }
+
+    /// The forest is drawn in the order the config names, so a scope is a
+    /// filter over the config rather than a running order of its own.
+    #[test]
+    fn a_scope_leaves_the_projects_it_keeps_in_the_order_the_config_names() {
+        let cfg = two_projects()
+            .scoped_to(&["beacon".to_string(), "atlas".to_string()])
+            .expect("both are configured");
+
+        assert_eq!(names_of(&cfg.projects), ["atlas", "beacon"]);
+    }
+
+    /// Asking for no particular project is not asking for none. What decides
+    /// it is whether a scope was requested, never how many projects one
+    /// selected — a `bdi` run with no arguments has to start.
+    #[test]
+    fn naming_no_project_leaves_every_project() {
+        let cfg = two_projects()
+            .scoped_to(&[])
+            .expect("a scope of nothing scopes nothing");
+
+        assert_eq!(names_of(&cfg.projects), ["atlas", "beacon"]);
+    }
+
+    /// A scope that quietly selected less than it named would start `bdi` on
+    /// a forest the reader did not ask for and could not tell from the one
+    /// they did, so a name matching nothing is refused the way every other
+    /// unknown project name here is.
+    #[test]
+    fn a_scope_naming_no_configured_project_is_rejected() {
+        let err = two_projects()
+            .scoped_to(&["cinder".to_string()])
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("cinder"), "got: {err}");
+        assert!(err.contains("atlas"), "got: {err}");
+        assert!(err.contains("beacon"), "got: {err}");
+    }
+
+    /// A root the *config* names under an excluded project is not the
+    /// contradiction the command line can state, and is allowed. What is
+    /// refused is a scope and a positional asking for opposite things in one
+    /// invocation; a config root is a standing preference this run overrides,
+    /// and a tree the reader excluded is silent by the same rule that makes
+    /// scoping itself silent.
+    ///
+    /// The entry stays where it is rather than being pruned. It is only ever
+    /// read inside a project's own collection, so an entry under a project no
+    /// collection reaches is never consulted, and taking it out would be work
+    /// to reach the state leaving it alone already gives.
+    #[test]
+    fn a_configured_root_under_a_project_the_scope_left_out_is_kept_and_unread() {
+        let cfg = Config::from_toml(ROOT_IN_A_SECOND_PROJECT)
+            .expect("the config parses")
+            .scoped_to(&["atlas".to_string()])
+            .expect("a config root elsewhere is not a contradiction");
+
+        assert_eq!(names_of(&cfg.projects), ["atlas"]);
+        assert_eq!(
+            cfg.roots.explicit["beacon"],
+            ["b-7"],
+            "nothing reads it, so nothing has to take it out"
+        );
+    }
+
+    /// A root in a project the scope left out asks `bdi` to draw a tree out
+    /// of a tracker it was told not to read. Refusing says so; keeping it
+    /// would put the root in `roots.explicit` under a project no collection
+    /// ever reaches, where nothing reads it and nothing reports it.
+    #[test]
+    fn a_root_naming_a_project_the_scope_left_out_is_rejected() {
+        let err = two_projects()
+            .scoped_to(&["atlas".to_string()])
+            .expect("atlas is configured")
+            .with_roots_named_on_the_command_line(&["beacon:b-7".to_string()])
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("beacon"), "got: {err}");
+        assert!(err.contains("atlas"), "got: {err}");
+    }
+
+    /// What a bare id was ever ambiguous about is which of the trackers being
+    /// read holds it, so a scope that leaves one project settles it.
+    #[test]
+    fn a_bare_root_belongs_to_the_only_project_a_scope_leaves() {
+        let cfg = two_projects()
+            .scoped_to(&["beacon".to_string()])
+            .expect("beacon is configured")
+            .with_roots_named_on_the_command_line(&["b-7".to_string()])
+            .expect("the scope leaves only beacon");
+
+        assert_eq!(
+            cfg.roots.explicit,
+            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+        );
     }
 
     #[test]
