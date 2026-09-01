@@ -476,12 +476,22 @@ mod tests {
         unattributed: Vec<LoosePane>,
         herdr: HerdrState,
     ) -> Snapshot {
+        // The projects a real collection would have named beside these trees,
+        // in the order the trees arrive in.
+        let mut projects: Vec<String> = Vec::new();
+        for tree in &trees {
+            if projects.last() != Some(&tree.project) {
+                projects.push(tree.project.clone());
+            }
+        }
+
         Snapshot {
             generated_at: Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap(),
             herdr,
             filter: Filter::All,
             collected: trees.clone(),
             trees,
+            projects,
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),
             unattributed,

@@ -146,15 +146,21 @@ fn wait(events: &Receiver<Event>, holds_for: Option<Duration>) -> Option<Waited>
 }
 
 /// Read events until the user quits.
+///
+/// The collection already in flight is handed in rather than started here.
+/// The run's first collection is asked for before the screen opens, so that
+/// the first frame this draws already carries the mark saying every project
+/// is being read — a forest with no rows and no mark would be a forest that
+/// looks read and is not. Where that ask happens is `run`'s business, which
+/// is where the order everything starts in is decided.
 pub(super) fn drive(
     view: &mut dyn View,
     events: &Receiver<Event>,
     ask: &Sender<Wanted>,
-    patience: TimeDelta,
+    mut outstanding: Outstanding,
 ) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
     view.draw(showing)?;
-    let mut outstanding = Outstanding::waiting(patience);
 
     while let Some(waited) = wait(events, view.holds_for()) {
         let event = match waited {
@@ -238,7 +244,7 @@ pub(super) fn drive(
 /// channel exists to prevent. So a request waits its turn instead. A whole
 /// collection absorbs the single projects it would read anyway, so what waits
 /// is never more than one per project.
-struct Outstanding {
+pub(super) struct Outstanding {
     /// What the collection in flight is reading and when it was asked for,
     /// where one is running. What it names rather than that it is running: a
     /// project line says for itself whether its own rows are being read, so
@@ -260,7 +266,7 @@ struct Outstanding {
 }
 
 impl Outstanding {
-    fn waiting(patience: TimeDelta) -> Self {
+    pub(super) fn waiting(patience: TimeDelta) -> Self {
         Self {
             in_flight: None,
             patience,
@@ -274,7 +280,7 @@ impl Outstanding {
     /// Reports whether a collection started, which is not the same as whether
     /// one was asked for: a request arriving mid-collection waits its turn,
     /// and nothing on the screen changes for it.
-    fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) -> bool {
+    pub(super) fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted) -> bool {
         if self.in_flight.is_none() {
             if ask.send(wanted.clone()).is_ok() {
                 self.in_flight = Some(InFlight {
@@ -315,7 +321,7 @@ impl Outstanding {
 
     /// What is being read now and since when, for the screen to say beside
     /// the projects it names.
-    fn in_flight(&self) -> Option<&InFlight> {
+    pub(super) fn in_flight(&self) -> Option<&InFlight> {
         self.in_flight.as_ref()
     }
 }
@@ -434,7 +440,7 @@ mod tests {
             key(KeyCode::Char('k')),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.applied,
@@ -457,7 +463,7 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -489,7 +495,7 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -510,7 +516,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -528,7 +534,7 @@ mod tests {
             Event::Key(key(KeyCode::Char('j'))),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [Wanted::Everything]);
         assert_eq!(
@@ -548,7 +554,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Key(control('r'))]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -567,7 +573,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(view.collecting(), [Some(atlas())]);
         assert_eq!(view.drawn, 2);
@@ -631,7 +637,7 @@ mod tests {
             let _ = send.send(Event::Key(key(KeyCode::Char('q'))));
         });
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert!(
             view.drawn > 2,
@@ -656,7 +662,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -676,7 +682,7 @@ mod tests {
         let before = Utc::now();
         let events = waiting(vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         let asked_at = view.asked_at();
         assert_eq!(asked_at.len(), 1, "one collection was started");
@@ -702,7 +708,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -734,7 +740,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -751,7 +757,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas()), Event::Changed(ferry())]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -771,7 +777,7 @@ mod tests {
             Event::Key(control('r')),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -794,7 +800,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), ferry()]);
     }
@@ -811,7 +817,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), atlas()]);
     }
@@ -832,7 +838,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -858,7 +864,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -877,7 +883,7 @@ mod tests {
             Event::Changed(ferry()),
         ]);
 
-        drive(&mut view, &events, &ask, PATIENCE).expect("the loop runs");
+        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -920,7 +926,7 @@ mod tests {
         let (finished, ended) = mpsc::channel();
         let driving = thread::spawn(move || {
             let mut view = Recorder::default();
-            let outcome = drive(&mut view, &events, &ask, PATIENCE);
+            let outcome = drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE));
             let _ = finished.send(());
             (view, outcome)
         });
@@ -942,7 +948,13 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
 
-        drive(&mut view, &waiting(Vec::new()), &ask, PATIENCE).expect("the loop runs");
+        drive(
+            &mut view,
+            &waiting(Vec::new()),
+            &ask,
+            Outstanding::waiting(PATIENCE),
+        )
+        .expect("the loop runs");
 
         assert!(view.applied.is_empty());
     }
@@ -964,7 +976,7 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Signalled, Event::Resize]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 
@@ -991,7 +1003,7 @@ mod tests {
                 Event::Resize,
             ]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 
@@ -1007,7 +1019,13 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
 
-        drive(&mut view, &waiting(vec![Event::Resize]), &ask, PATIENCE).expect("the loop runs");
+        drive(
+            &mut view,
+            &waiting(vec![Event::Resize]),
+            &ask,
+            Outstanding::waiting(PATIENCE),
+        )
+        .expect("the loop runs");
 
         assert!(view.applied.is_empty());
         assert_eq!(asked.try_iter().count(), 0);
@@ -1025,7 +1043,7 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Key(key(KeyCode::Char('z')))]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 
@@ -1039,7 +1057,13 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
 
-        drive(&mut view, &waiting(vec![Event::Clicked(9)]), &ask, PATIENCE).expect("the loop runs");
+        drive(
+            &mut view,
+            &waiting(vec![Event::Clicked(9)]),
+            &ask,
+            Outstanding::waiting(PATIENCE),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.clicked, [9]);
         assert!(view.applied.is_empty(), "a click asks for no action");
@@ -1060,7 +1084,7 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Clicked(21)]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 
@@ -1083,7 +1107,7 @@ mod tests {
                 Event::Scrolled(Motion::NextRow),
             ]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 
@@ -1113,7 +1137,7 @@ mod tests {
                 Event::Clicked(9),
             ]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 
@@ -1145,7 +1169,7 @@ mod tests {
                 Event::Scrolled(Motion::NextRow),
             ]),
             &ask,
-            PATIENCE,
+            Outstanding::waiting(PATIENCE),
         )
         .expect("the loop runs");
 

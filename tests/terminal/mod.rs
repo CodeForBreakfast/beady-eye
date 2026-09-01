@@ -34,9 +34,10 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
-/// The terminal is on the alternate screen from here. Both tests wait for it
-/// rather than sleeping: `tui::run` makes its first collection *before* the
-/// screen opens, so a fixed sleep watches a `bdi` that has not drawn.
+/// The terminal is on the alternate screen from here. Waited for rather than
+/// slept through: the screen opens in tens of milliseconds and every tracker
+/// is read after it, so a sleep long enough to be safe is a sleep spent
+/// watching a `bdi` that has been drawing for most of it.
 pub const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 
 /// A pty: the end the test reads, and the end `bdi` draws on.

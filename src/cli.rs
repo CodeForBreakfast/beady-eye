@@ -87,6 +87,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     crate::tui::run(
         refresh,
         patience,
+        filter,
         projects,
         Box::new(move |wanted| collection.collect(&cfg, &RealRunner, wanted, filter, Utc::now())),
     )?;

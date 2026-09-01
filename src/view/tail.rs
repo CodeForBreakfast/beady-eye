@@ -290,6 +290,7 @@ mod tests {
             conflicts: Vec::new(),
             read_at: BTreeMap::new(),
             collected: vec![tree],
+            projects: vec!["orbital".to_string()],
         }
     }
 

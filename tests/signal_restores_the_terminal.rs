@@ -14,7 +14,11 @@ use std::time::{Duration, Instant};
 
 mod terminal;
 
-use terminal::{a_home_naming_one_project, a_pty, bdi_on, contains, ENTER_ALTERNATE_SCREEN};
+use terminal::shims::ShimmedTracker;
+use terminal::{
+    a_home_naming_one_project, a_home_naming_one_project_settled, a_pty, bdi_on, contains,
+    ENTER_ALTERNATE_SCREEN,
+};
 
 /// The pty the tests draw on.
 const ROWS: u16 = 40;
@@ -61,7 +65,8 @@ fn a_hangup_puts_the_terminal_back() {
 /// Run `bdi` on a pty until it is drawing, signal it, and assert it handed
 /// the terminal back on the way out.
 fn assert_restored_after(signal: i32, named: &str) {
-    let mut session = Session::showing_the_forest(named);
+    let mut session = Session::on(a_home_naming_one_project(named), &[]);
+    session.read_until(ENTER_ALTERNATE_SCREEN);
 
     let restoring = session.signal_and_read(signal);
 
@@ -80,6 +85,51 @@ fn assert_restored_after(signal: i32, named: &str) {
     }
 }
 
+/// A refresh interval no test here will ever reach, so the only collection is
+/// the one `bdi` asks for at startup.
+const NOTHING_ELSE_WILL_COLLECT: &str = "[tui]\nrefresh_seconds = 600\n";
+
+/// A `^C` while the trackers are still being read puts the terminal back.
+///
+/// This is what `bdi` takes on for opening its screen before it has read
+/// anything, and the one place that trade can be looked at rather than
+/// argued about. During that wait there is now a screen to put back, so the
+/// interrupt has to be answered rather than obeyed — and everything that
+/// answers it is the same `Drop` the tests above drive, reached at the one
+/// moment nothing had ever reached it before.
+///
+/// `bd` is held for the life of the test, so the collection this interrupts
+/// cannot have come back: what is on the screen when the signal lands is the
+/// forest with its marks still turning.
+#[test]
+fn an_interrupt_while_the_first_collection_runs_puts_the_terminal_back() {
+    let home =
+        a_home_naming_one_project_settled("signal-mid-collection", NOTHING_ELSE_WILL_COLLECT);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.hang();
+
+    let mut session = Session::on(home, &tracker.environment());
+    session.read_until(ENTER_ALTERNATE_SCREEN);
+    tracker.wait_until_holding(LONG_ENOUGH_TO_DRAW);
+
+    let restoring = session.signal_and_read(libc::SIGINT);
+
+    let said = String::from_utf8_lossy(&restoring);
+    assert!(
+        contains(&restoring, LEAVE_ALTERNATE_SCREEN),
+        "a SIGINT during the first collection left the terminal on the \
+         alternate screen; it wrote {} bytes on the way out: {said:?}",
+        restoring.len()
+    );
+    for (mode, off) in MOUSE_OFF {
+        assert!(
+            contains(&restoring, off),
+            "a SIGINT during the first collection left the terminal \
+             reporting the mouse ({mode}): {said:?}"
+        );
+    }
+}
+
 /// A `bdi` drawing on a pty of our own.
 struct Session {
     child: Child,
@@ -88,27 +138,24 @@ struct Session {
 }
 
 impl Session {
-    /// Start `bdi` and wait until it is actually on the alternate screen.
+    /// Start `bdi` on a `HOME` of its own, and on the environment given.
     ///
-    /// The waiting is the part that matters. `tui::run` makes its first
-    /// collection *before* the screen opens, so a test that instead slept a
-    /// fixed time would signal a `bdi` that has not drawn anything, find no
-    /// restore sequences because there was nothing to restore, and pass
-    /// against a build that never restores at all.
-    fn showing_the_forest(named: &str) -> Self {
-        let home = a_home_naming_one_project(named);
+    /// Every test here then waits until `bdi` is actually on the alternate
+    /// screen, and a sleep cannot stand in for that however long it is: a
+    /// `bdi` signalled before it has drawn has nothing to put back, so it
+    /// writes no restore sequences — and a test that read that as a pass
+    /// would pass against a build that never restores at all.
+    fn on(home: PathBuf, environment: &[(String, String)]) -> Self {
         let (ours, theirs) = a_pty(ROWS, COLS);
 
-        let child = bdi_on(&theirs, &home, &[]);
+        let child = bdi_on(&theirs, &home, environment);
         drop(theirs);
 
-        let mut session = Self {
+        Self {
             child,
             terminal: ours,
             home,
-        };
-        session.read_until(ENTER_ALTERNATE_SCREEN);
-        session
+        }
     }
 
     /// Send a signal and collect everything written after it.

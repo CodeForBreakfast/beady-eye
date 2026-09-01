@@ -38,12 +38,19 @@ const BINDINGS_OPENED: &[u8] = "Key bindings".as_bytes();
 /// `view::phrase`. Written out rather than asked of `bdi`, so that a phrase
 /// changed by hand is a test to change by hand.
 const BEING_READ: &[u8] = "reading that pane".as_bytes();
-/// What the band says on the row `bdi` opens on, which is a project's and
-/// names no pane. Waited for rather than for the screen to fall quiet: the
-/// first frame is drawn after the terminal is in raw mode, so a key sent once
-/// it is on screen is a key the terminal passes on rather than one its line
-/// discipline holds until a newline that never comes.
-const NO_PANE_ON_THIS_ROW: &[u8] = "no pane · select a bead".as_bytes();
+/// Part of the heading over the panes working outside every configured
+/// project, from `view::phrase` — the group the one shimmed pane sits in, and
+/// so the group the key below aims at.
+///
+/// Waited for rather than the screen falling quiet, and waited for rather
+/// than the first frame. Two things have to have happened before a key means
+/// what these tests need it to mean: the terminal has to be in raw mode, so
+/// the key is passed on rather than held by the line discipline until a
+/// newline that never comes; and the collection has to have come back, so
+/// there is a pane row to land on. `bdi` opens its screen before its first
+/// collection returns, so the first frame satisfies only the first of those
+/// and this line satisfies both.
+const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
 /// One word of what the shimmed herdr says is on the pane, from
 /// `ShimmedHerdr`, and a word that is on the screen nowhere else.
 ///
@@ -67,7 +74,7 @@ fn the_band_says_it_is_reading_while_the_read_is_held() {
     herdr.hang();
 
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &herdr.environment());
-    bdi.read_until(NO_PANE_ON_THIS_ROW, GIVING_UP);
+    bdi.read_until(A_PANE_ROW_HAS_ARRIVED, GIVING_UP);
     bdi.send(LAST_ROW);
     herdr.wait_until_holding(GIVING_UP);
     let repainted = bdi.resize(ROWS + 1, COLS);
@@ -102,7 +109,7 @@ fn what_the_pane_said_reaches_the_band() {
     let herdr = ShimmedHerdr::beside(&home);
 
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &herdr.environment());
-    bdi.read_until(NO_PANE_ON_THIS_ROW, GIVING_UP);
+    bdi.read_until(A_PANE_ROW_HAS_ARRIVED, GIVING_UP);
     bdi.send(LAST_ROW);
     // herdr answers a read in milliseconds and nothing else on this screen
     // animates, so a quiet this long is the answer having landed and been

@@ -886,7 +886,7 @@ mod tests {
             Collected {
                 trees: vec![tree],
                 failed_projects: Vec::new(),
-                ..Default::default()
+                read_at: every_project_read(),
             },
             &panes,
             &joined,
@@ -1054,20 +1054,30 @@ credential_command = "secret harbour"
         )
     }
 
+    /// Every configured project, read at `now`.
+    ///
+    /// These fixtures are collections that have come back, so every project
+    /// has been read whether or not its tracker had a root to show for it.
+    /// That is what tells them from the first frame of a run, where nothing
+    /// has been read and every project is still waiting on one.
+    fn every_project_read() -> std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>> {
+        cfg()
+            .projects
+            .iter()
+            .map(|project| (project.name.clone(), now()))
+            .collect()
+    }
+
     fn gather(trees: Vec<Tree>, failed: Vec<FailedProject>, filter: Filter) -> Snapshot {
         let orbital = assembled(ORBITAL);
         let harbour = assembled(HARBOUR);
         let panes = panes();
         let joined = joined(&orbital, &harbour, &panes);
-        let read_at = trees
-            .iter()
-            .map(|tree| (tree.project.clone(), now()))
-            .collect();
         snapshot::build(
             Collected {
                 trees,
                 failed_projects: failed,
-                read_at,
+                read_at: every_project_read(),
             },
             &panes,
             &joined,
@@ -1462,7 +1472,7 @@ credential_command = "secret harbour"
             Collected {
                 trees: vec![tree],
                 failed_projects: Vec::new(),
-                ..Default::default()
+                read_at: every_project_read(),
             },
             panes,
             &joined,
@@ -1675,7 +1685,7 @@ credential_command = "secret harbour"
             Collected {
                 trees: vec![tree(&quarry), tree(&wharf)],
                 failed_projects: Vec::new(),
-                ..Default::default()
+                read_at: every_project_read(),
             },
             panes,
             &joined,
@@ -3258,7 +3268,7 @@ credential_command = "secret harbour"
             Collected {
                 trees: vec![tree_of("orbital", ORBITAL)],
                 failed_projects: Vec::new(),
-                ..Default::default()
+                read_at: every_project_read(),
             },
             &[],
             &Joined {
@@ -3672,7 +3682,10 @@ credential_command = "secret harbour"
         let cfg = cfg();
         let joined = join::resolve(&[], panes, &cfg.projects, &cfg.join);
         snapshot::build(
-            collected,
+            Collected {
+                read_at: every_project_read(),
+                ..collected
+            },
             panes,
             &joined,
             &cfg,
@@ -3687,6 +3700,64 @@ credential_command = "secret harbour"
             .lines()
             .iter()
             .any(|line| matches!(line.content, Content::Note(Note::NoRoots)))
+    }
+
+    /// The first frame of a run. Nothing has been read, so every project is
+    /// drawn from the name the config gave it and holds nothing yet — which
+    /// is the point: the reader sees the shape of their work in the time it
+    /// takes to draw a frame, rather than a blank terminal for as long as the
+    /// trackers take.
+    #[test]
+    fn a_run_that_has_read_nothing_yet_draws_a_line_for_every_configured_project() {
+        let awaiting = Snapshot::awaiting(
+            vec!["orbital".to_string(), "ferry".to_string()],
+            Filter::LiveAgents,
+            now(),
+        );
+
+        assert_eq!(sketch(&flatten(&awaiting)), vec!["▾ orbital", "▾ ferry"]);
+    }
+
+    /// A project whose tracker answered and held nothing draws no line, as it
+    /// always has.
+    ///
+    /// Only a project nothing has read is drawn empty, and `read_at` is the
+    /// whole of what tells the two apart. Without it a tracker that answered
+    /// with no roots would sit there looking forever about to produce some,
+    /// and the forest would never say what it says here instead.
+    #[test]
+    fn a_project_read_and_holding_nothing_draws_no_line() {
+        let read = Snapshot {
+            read_at: std::collections::BTreeMap::from([("orbital".to_string(), now())]),
+            ..Snapshot::awaiting(vec!["orbital".to_string()], Filter::LiveAgents, now())
+        };
+
+        assert_eq!(sketch(&flatten(&read)), vec!["! NoRoots"]);
+    }
+
+    /// Every tree a snapshot holds belongs to a project it names.
+    ///
+    /// The forest walks the projects and takes the trees that follow each
+    /// one, so a tree whose project is missing from the list is a tree that
+    /// vanishes off the screen with nothing said. Both come from the same
+    /// `cfg.projects` inside `build`, which is what makes it true — and this
+    /// is what says so, because nothing about the types does.
+    #[test]
+    fn every_tree_belongs_to_a_project_the_snapshot_names() {
+        let snapshot = built(Filter::All);
+
+        for tree in &snapshot.trees {
+            assert!(
+                snapshot.projects.contains(&tree.project),
+                "{} is not among {:?}",
+                tree.project,
+                snapshot.projects
+            );
+        }
+        // The config's three, and not the fixture's fourth: `lunar` is a
+        // failed project no `[[projects]]` entry names, so it is reported
+        // among the failures and has no line of its own to be drawn on.
+        assert_eq!(snapshot.projects, ["orbital", "ferry", "harbour"]);
     }
 
     /// Every tracker answered and none of them had a root. The screen has to
@@ -3724,7 +3795,7 @@ credential_command = "secret harbour"
                     Collected {
                         trees: vec![tree_of("orbital", ORBITAL)],
                         failed_projects: Vec::new(),
-                        ..Default::default()
+                        read_at: every_project_read(),
                     },
                     &[],
                 ),
@@ -3735,7 +3806,7 @@ credential_command = "secret harbour"
                     Collected {
                         trees: vec![tree_of("harbour", HARBOUR)],
                         failed_projects: Vec::new(),
-                        ..Default::default()
+                        read_at: every_project_read(),
                     },
                     &[],
                 ),
@@ -3749,7 +3820,7 @@ credential_command = "secret harbour"
                             project: "lunar".into(),
                             tracker: TrackerFailure::Exec,
                         }],
-                        ..Default::default()
+                        read_at: every_project_read(),
                     },
                     &[],
                 ),

@@ -125,6 +125,7 @@ pub fn build(
         conflicts: joined.conflicts.clone(),
         collected: trees,
         read_at,
+        projects: cfg.projects.iter().map(|p| p.name.clone()).collect(),
     }
 }
 

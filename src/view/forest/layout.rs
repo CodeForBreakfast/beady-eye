@@ -80,12 +80,33 @@ impl Layout<'_> {
         let (recovered, loose) = recovery(self.snapshot);
         let mut lines = Vec::new();
         let mut from = 0;
-        // A project's trees arrive together and in the order the config named
-        // the projects, so a run of them is a project.
-        for run in self.snapshot.trees.chunk_by(|a, b| a.project == b.project) {
-            let panes = &recovered[from..from + run.len()];
-            self.draw_project(run, panes, &mut lines);
-            from += run.len();
+        // Every project the config names, in that order — the ones with rows
+        // and the ones no collection has reached, which is every project on
+        // the first frame of a run. Walking the projects rather than the
+        // trees is what lets one be drawn before it has any: a project's
+        // trees arrive together, so the run of them at `from` is that
+        // project's, and so is the same run of the panes recovered for them.
+        //
+        // A project with no trees is drawn only where nothing has read it. A
+        // tracker that answered and held nothing, and one that refused, are
+        // both read: the first has nothing to draw and the second is reported
+        // among the failed projects, and a line here would say of either that
+        // its rows were still coming.
+        for project in &self.snapshot.projects {
+            let run = &self.snapshot.trees[from..];
+            let held = run
+                .iter()
+                .take_while(|tree| tree.project == *project)
+                .count();
+            if held > 0 || !self.snapshot.read_at.contains_key(project) {
+                self.draw_project(
+                    project,
+                    &run[..held],
+                    &recovered[from..from + held],
+                    &mut lines,
+                );
+                from += held;
+            }
         }
         self.draw_groups(&loose, &mut lines);
         // Asked of the drawn lines rather than of the snapshot's fields, so
@@ -104,8 +125,22 @@ impl Layout<'_> {
     /// a reader asks a bead's questions of it: what is its status, who is on
     /// it, what is it doing. A line that answered those in a project's terms
     /// answered none of them.
-    fn draw_project(&self, trees: &[Tree], panes: &[Vec<LoosePane>], lines: &mut Vec<Line>) {
-        let project = trees[0].project.clone();
+    ///
+    /// The project is named rather than taken from its first tree, because a
+    /// project waiting on the collection that will fill it in has no tree to
+    /// take it from and is exactly what the first frame of a run is made of.
+    /// Everything the line says of one falls out: no root refused, no work
+    /// counted, and nothing under it until the rows arrive. Its fold is kept
+    /// on the same handle as ever, so a reader who shuts a project while it
+    /// is still being read finds it shut when its rows land.
+    fn draw_project(
+        &self,
+        project: &str,
+        trees: &[Tree],
+        panes: &[Vec<LoosePane>],
+        lines: &mut Vec<Line>,
+    ) {
+        let project = project.to_string();
         let unread = trees.iter().any(|tree| tree.tracker != TrackerState::Ok);
         // A project rests open: the forest is what is being worked, and a
         // project shut over it says only that it exists.

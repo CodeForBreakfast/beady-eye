@@ -31,9 +31,19 @@ const CELLS: usize = ROWS as usize * COLS as usize;
 /// Long enough for a collection that has no tracker to fail and the screen to
 /// open. Only ever a giving-up point: nothing is asserted against the clock.
 const LONG_ENOUGH_TO_DRAW: Duration = Duration::from_secs(60);
-/// The frame is done when the terminal has been silent this many times over.
-/// `bdi` writes its first frame in one burst, so a gap this long between
-/// bytes means the burst is over.
+/// The screen is done when the terminal has been silent this many times over.
+///
+/// `bdi` writes one frame in one burst, and it writes several bursts here: it
+/// opens the screen before any tracker has answered, so it goes on drawing
+/// for as long as it is collecting — a mark turning beside each project every
+/// eighty milliseconds, and each project redrawn as its rows land. So a gap
+/// this long is not one frame ending but the collecting being over, which is
+/// the first moment `bdi` has nothing left to say.
+///
+/// That is later than this test needs and no worse for it, for the reason
+/// `first_frame` gives: a later frame accounts for cells the first already
+/// did, and it is reading too *little* that would count cells no frame had
+/// reached.
 const SILENCES_THAT_END_A_FRAME: u8 = 3;
 const A_SILENCE: Duration = Duration::from_millis(200);
 

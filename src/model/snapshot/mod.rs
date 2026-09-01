@@ -224,9 +224,55 @@ pub struct Snapshot {
     /// nothing else, so `generated_at` answers this for a consumer.
     #[serde(skip)]
     pub read_at: BTreeMap<String, DateTime<Utc>>,
+    /// Every project the config names, in the order it names them —
+    /// including the ones no collection has reached yet.
+    ///
+    /// The trees say which projects were read, and until one is read a
+    /// project has no tree to be found in. So this is what the first frame of
+    /// a run is drawn from: a forest of every project, each waiting on the
+    /// collection that will fill it in. It is also what fixes the order the
+    /// projects are drawn in, which the trees could only imply.
+    ///
+    /// Not part of the JSON contract. `--json` is one whole collection, and a
+    /// project drawn before its collection returns is a thing only the view
+    /// ever sees.
+    #[serde(skip)]
+    pub projects: Vec<String>,
 }
 
 impl Snapshot {
+    /// The projects a run is about, before any of them has been read.
+    ///
+    /// What the first frame of a run is drawn from. Every other field is
+    /// empty because nothing has answered yet, and `read_at` being empty is
+    /// what says so: a project absent from it has not been read, as against
+    /// read and found to hold nothing.
+    ///
+    /// The filter is carried in because `Forest::refresh` re-filters every
+    /// snapshot that arrives with the filter the forest already holds, so the
+    /// one this frame is built with is the one every later collection is
+    /// shown through.
+    ///
+    /// herdr reads as `Ok` because nothing has asked it. `Unavailable` is a
+    /// finding, and drawing it here would put a notice about herdr on the
+    /// screen before `bdi` had spoken to herdr at all.
+    pub fn awaiting(projects: Vec<String>, filter: Filter, now: DateTime<Utc>) -> Self {
+        Snapshot {
+            generated_at: now,
+            herdr: HerdrState::Ok,
+            filter,
+            trees: Vec::new(),
+            hidden_trees: Vec::new(),
+            failed_projects: Vec::new(),
+            unattributed: Vec::new(),
+            unconfigured: Vec::new(),
+            conflicts: Vec::new(),
+            collected: Vec::new(),
+            read_at: BTreeMap::new(),
+            projects,
+        }
+    }
+
     /// Whether every root of a project answered the last time it was read.
     ///
     /// One answer for a project whose roots can disagree, and it is the worse

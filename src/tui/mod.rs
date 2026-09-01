@@ -6,13 +6,13 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use chrono::TimeDelta;
+use chrono::{TimeDelta, Utc};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
 use crate::collect::changes::Reported;
-use crate::model::snapshot::Snapshot;
+use crate::model::snapshot::{Filter, Snapshot};
 
 #[cfg(test)]
 mod fixtures;
@@ -22,7 +22,7 @@ mod keys;
 mod screen;
 mod wire;
 
-use drive::drive;
+use drive::{drive, Outstanding, View};
 use screen::Screen;
 use wire::wire;
 
@@ -32,29 +32,38 @@ use wire::wire;
 /// it is reading says the tracker has stopped answering rather than that it
 /// is being read.
 ///
-/// The first collection is made before the alternate screen opens, so the
-/// wait happens where the user can still see their own terminal; every one
-/// after it runs on a worker thread.
+/// The screen opens on the projects the config names, before any of them has
+/// been read, and every collection — the first one included — runs on a
+/// worker thread and fills its project in when it comes back. So what the
+/// reader gets for typing `bdi` is the forest, in the time it takes to draw
+/// one, with a mark turning beside every project.
 ///
-/// The signals are taken between the two, and that is the whole of what
-/// leaves a window in which one still kills `bdi` outright. Taking them
-/// earlier would be worse rather than better: a signal during that first
-/// collection would then be answered by finishing the collection, opening
-/// the screen and closing it again, where dying on the spot costs the reader
-/// nothing — the terminal has not been touched yet.
+/// The signals are taken before the screen, and that is the whole of what
+/// leaves a window in which one still kills `bdi` outright — the window
+/// between this process starting and `Signals::new` returning, in which
+/// nothing has been drawn and nothing has to be put back. Taking them later
+/// would be worse: `Screen::showing` is what puts the terminal in raw mode,
+/// and a registration racing it would leave a moment in which a signal kills
+/// outright and the terminal stays as `bdi` left it.
+///
+/// So a `^C` while the trackers are being read is answered by closing a
+/// screen rather than by there being none to close, and putting the terminal
+/// back rests on `Screen`'s `Drop` — which rests in turn on the build
+/// unwinding, the condition `Drop for Screen` states.
 pub fn run(
     refresh: Duration,
     patience: TimeDelta,
+    filter: Filter,
     projects: Vec<String>,
-    mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
-    let first = collect(&Wanted::Everything);
     // Taken here rather than on the thread that waits on them, so that they
-    // are ours before the screen is opened on the line after next. A
-    // registration racing the screen would leave a moment in which the
-    // terminal is in raw mode and a signal still kills outright.
+    // are ours before the screen is opened below. A registration racing the
+    // screen would leave a moment in which the terminal is in raw mode and a
+    // signal still kills outright.
     let asked_to_stop = Signals::new([SIGHUP, SIGINT, SIGTERM])
         .context("asking to be told about the signals that would otherwise kill bdi")?;
+    let awaiting = Snapshot::awaiting(projects.clone(), filter, Utc::now());
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
     let (events, ask, panes, _socket, at_startup) = wire(
@@ -63,7 +72,16 @@ pub fn run(
         collect,
         asked_to_stop,
     );
-    let mut screen = Screen::showing(first, panes, at_startup)?;
+    // Asked for before the screen is opened, so the collection is under way
+    // while ratatui is still taking the terminal, and the first frame drawn
+    // already carries the mark saying every project is being read. A forest
+    // of empty projects with no mark beside them would be a forest that looks
+    // read and is not.
+    let mut outstanding = Outstanding::waiting(patience);
+    outstanding.ask(&ask, Wanted::Everything);
 
-    drive(&mut screen, &events, &ask, patience)
+    let mut screen = Screen::showing(awaiting, panes, at_startup)?;
+    screen.collecting(outstanding.in_flight());
+
+    drive(&mut screen, &events, &ask, outstanding)
 }

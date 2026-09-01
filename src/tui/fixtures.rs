@@ -65,5 +65,6 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         conflicts: Vec::new(),
         read_at: BTreeMap::new(),
         collected: vec![tree],
+        projects: vec!["atlas".to_string()],
     }
 }

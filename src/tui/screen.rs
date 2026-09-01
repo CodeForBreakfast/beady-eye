@@ -84,10 +84,10 @@ impl Shown {
             forest,
             panes,
             reading: Reading::Nothing,
-            // The one collection nothing can say is running. It is
-            // synchronous and finishes before this exists — measured at 3.6
-            // to 3.9 seconds against real trackers, the longest wait a
-            // reader has, and there is no screen to announce it on.
+            // Nothing in flight until the loop says otherwise. A collection
+            // is already running by the time this exists — the run asks for
+            // one before it opens the screen — and it reaches this the way
+            // every one after it does, through `collecting`.
             collecting: None,
         };
         // Asked for here rather than waited for: the first frame is drawn on
@@ -734,6 +734,7 @@ mod tests {
             conflicts: Vec::new(),
             read_at: BTreeMap::new(),
             collected: trees,
+            projects: vec!["grove".to_string()],
         }
     }
 
@@ -1274,6 +1275,7 @@ mod tests {
         snapshot::refilter(
             &Snapshot {
                 collected: both,
+                projects: vec!["grove".to_string(), "atlas".to_string()],
                 ..a_snapshot_of(Vec::new())
             },
             Filter::LiveAgents,
