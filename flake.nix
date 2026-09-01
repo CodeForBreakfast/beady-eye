@@ -489,7 +489,13 @@
               in_test = 1
               closer = sprintf("%*s}", ind, "")
             }
-            after_cfg_test = (line ~ /^ *#\[cfg\(test\)\]$/)
+            # Attributes stack on the item below them, so one written between
+            # the marker and the module it marks does not end the run.
+            if (line ~ /^ *#\[cfg\(test\)\]$/) {
+              after_cfg_test = 1
+            } else if (line !~ /^ *#\[/) {
+              after_cfg_test = 0
+            }
 
             if (in_test && line ~ /\.apply\(/) {
               if (loose(header)) {
@@ -516,11 +522,91 @@
           }
           '
 
+          # A test module can also live in a file of its own, declared
+          # `#[cfg(test)] mod name;` where an inline one would have opened a
+          # brace. That file is a test all through, and so is everything below
+          # it: Rust puts a module's descendants in a directory named after
+          # it, so the subtree is the module and a submodule added later
+          # arrives already covered.
+          declaring='
+          function moduledir(path,   dir) {
+            dir = path
+            if (!sub(/\/(mod|lib|main)\.rs$/, "", dir)) {
+              sub(/\.rs$/, "", dir)
+            }
+            return dir
+          }
+          function named(text,   name) {
+            name = text
+            sub(/^.*mod /, "", name)
+            sub(/[;{ ]*$/, "", name)
+            return name
+          }
+          # A declaration inside an inline module names a file below that
+          # module rather than below the file it is written in, so where it
+          # points is the declaration and everything open around it.
+          function enclosing(ind,   i, dir) {
+            dir = moduledir(FILENAME)
+            for (i = 0; i < ind; i++) {
+              if (opened[i] != "") {
+                dir = dir "/" opened[i]
+              }
+            }
+            return dir
+          }
+          {
+            if ($0 ~ /^[ \t]*$/ || $0 ~ /^ *\/\//) {
+              next
+            }
+
+            match($0, /^ */)
+            ind = RLENGTH
+
+            for (i = ind; i <= deepest; i++) {
+              opened[i] = ""
+            }
+
+            if ($0 ~ /^ *(pub(\([a-z]+\))? )?mod [A-Za-z_0-9]+ \{$/) {
+              opened[ind] = named($0)
+              if (ind > deepest) {
+                deepest = ind
+              }
+            } else if (after_cfg_test && $0 ~ /^ *(pub(\([a-z]+\))? )?mod [A-Za-z_0-9]+;$/) {
+              print enclosing(ind) "/" named($0)
+            }
+
+            if ($0 ~ /^ *#\[cfg\(test\)\]$/) {
+              after_cfg_test = 1
+            } else if ($0 !~ /^ *#\[/) {
+              after_cfg_test = 0
+            }
+          }
+          '
+
+          own_file="$(
+            find src -name '*.rs' | sort | while IFS= read -r module; do
+              ${pkgs.gawk}/bin/gawk "$declaring" "$module"
+            done | while IFS= read -r root; do
+              if [ -f "$root.rs" ]; then
+                echo "$root.rs"
+              fi
+              if [ -d "$root" ]; then
+                find "$root" -name '*.rs'
+              fi
+            done | sort -u
+          )"
+
           # Under src/ the tests are the `#[cfg(test)]` modules inside the file
-          # they cover; everything under tests/ is a test all through.
+          # they cover, and the files the ones above live in; everything under
+          # tests/ is a test all through.
           loose="$( {
             find src -name '*.rs' | sort | while IFS= read -r module; do
-              ${pkgs.gawk}/bin/gawk -v whole_file=0 "$reading" "$module"
+              if printf '%s\n' "$own_file" | grep -qxF -- "$module"; then
+                whole=1
+              else
+                whole=0
+              fi
+              ${pkgs.gawk}/bin/gawk -v whole_file="$whole" "$reading" "$module"
             done
             find tests -name '*.rs' | sort | while IFS= read -r module; do
               ${pkgs.gawk}/bin/gawk -v whole_file=1 "$reading" "$module"
@@ -645,6 +731,87 @@
             echo "}"
           } > "$tree/src/production.rs"
 
+          # A test module in a file of its own, which is what the check could
+          # not see into. `inline.rs` carries the same walk where the check has
+          # always reached, so a quiet `painted.rs` cannot be read as a check
+          # that stopped working; `live.rs` is the sibling in the same
+          # directory declared without `#[cfg(test)]`, which says the file is
+          # read as a test because of its declaration and not its neighbours.
+          mkdir -p "$tree/src/view"
+          {
+            echo "#[cfg(test)]"
+            echo "pub(crate) mod painted;"
+            echo ""
+            echo "#[cfg(test)]"
+            echo "#[allow(dead_code)]"
+            echo "pub(crate) mod stacked;"
+            echo ""
+            echo "pub(crate) mod inline;"
+            echo "pub(crate) mod live;"
+          } > "$tree/src/view/mod.rs"
+          {
+            echo "//! A test module that lives in a file of its own."
+            echo "fn walk(shown: &mut Shown) {"
+            echo "    while shown.apply(Action::Move(Motion::NextRow)) {}"
+            echo "}"
+          } > "$tree/src/view/painted.rs"
+          {
+            echo "//! The same walk, where the check has always reached."
+            echo "#[cfg(test)]"
+            echo "mod tests {"
+            echo "    fn walk(shown: &mut Shown) {"
+            echo "        while shown.apply(Action::Move(Motion::NextRow)) {}"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/view/inline.rs"
+          {
+            echo "//! A sibling declared without #[cfg(test)]: production."
+            echo "fn settle(&mut self) {"
+            echo "    while self.apply(Action::Refresh) {"
+            echo "        self.lay_out();"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/view/live.rs"
+
+          # Declared inside an inline module, so Rust looks for it below that
+          # module and not below the file the declaration is written in. A
+          # pass that read the declaration alone would name a file that is
+          # not there and leave the one that is unscanned.
+          mkdir -p "$tree/src/view/nested/outer"
+          {
+            echo "//! A file-backed test module declared inside an inline one."
+            echo "pub(crate) mod outer {"
+            echo "    #[cfg(test)]"
+            echo "    mod deep;"
+            echo "}"
+          } > "$tree/src/view/nested.rs"
+          {
+            echo "//! Below the inline module that declares it."
+            echo "fn walk(shown: &mut Shown) {"
+            echo "    while shown.apply(Action::Move(Motion::NextRow)) {}"
+            echo "}"
+          } > "$tree/src/view/nested/outer/deep.rs"
+
+          # An attribute of its own between the marker and the module it
+          # marks, which is legal on either kind and reads to a scanner as
+          # something else standing where the module should have been.
+          {
+            echo "//! An attribute between the marker and an inline module."
+            echo "#[cfg(test)]"
+            echo "#[allow(dead_code)]"
+            echo "mod tests {"
+            echo "    fn walk(shown: &mut Shown) {"
+            echo "        while shown.apply(Action::Move(Motion::NextRow)) {}"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/attributed.rs"
+          {
+            echo "//! An attribute between the marker and a file of its own."
+            echo "fn walk(shown: &mut Shown) {"
+            echo "    while shown.apply(Action::Move(Motion::NextRow)) {}"
+            echo "}"
+          } > "$tree/src/view/stacked.rs"
+
           output="$( screen-walks-are-bounded "$tree" 2>&1 )" && status=0 || status=$?
 
           fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
@@ -666,7 +833,30 @@
             *) fail "the refusal did not reach a press inside a deadline:" ;;
           esac
           case "$output" in
+            *"src/view/painted.rs:3"*) ;;
+            *) fail "the refusal did not reach a test module in a file of its own:" ;;
+          esac
+          case "$output" in
+            *"src/view/inline.rs:5"*) ;;
+            *) fail "the refusal did not reach the inline walk beside it:" ;;
+          esac
+          case "$output" in
+            *"src/view/nested/outer/deep.rs:3"*) ;;
+            *) fail "the refusal did not follow a declaration into an inline module:" ;;
+          esac
+          case "$output" in
+            *"src/attributed.rs:6"*) ;;
+            *) fail "an attribute after the marker hid an inline module:" ;;
+          esac
+          case "$output" in
+            *"src/view/stacked.rs:3"*) ;;
+            *) fail "an attribute after the marker hid a module in its own file:" ;;
+          esac
+          case "$output" in
             *counted.rs*) fail "it named a walk that is counted out before it starts:" ;;
+          esac
+          case "$output" in
+            *live.rs*) fail "it named a sibling declared without #[cfg(test)]:" ;;
           esac
           case "$output" in
             *production.rs*) fail "it named production, which this rule is not about:" ;;
@@ -687,8 +877,14 @@
             *) fail "the refusal did not reach a walk under tests/:" ;;
           esac
 
+          # `view/mod.rs` and `live.rs` stay, so the green below is also what
+          # says the check reads a declaration that no longer resolves to a
+          # file without complaint.
           rm "$tree/src/loose.rs" "$tree/src/split.rs"
           rm "$tree/src/deadline.rs" "$tree/tests/integration.rs"
+          rm "$tree/src/view/painted.rs" "$tree/src/view/inline.rs"
+          rm "$tree/src/view/nested/outer/deep.rs"
+          rm "$tree/src/attributed.rs" "$tree/src/view/stacked.rs"
           screen-walks-are-bounded "$tree" ||
             fail "it refused a tree in which every walk is counted out:"
 
