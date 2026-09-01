@@ -409,6 +409,292 @@
           touch $out
         '';
 
+        # A test that walks the selection down the screen has to stop
+        # somewhere. Stopping when the code under test reports the screen no
+        # longer moves is the form a mutation turns into a hang: cargo-mutants
+        # scores the hang as a timeout, and on the tally that reads exactly
+        # like a mutant which does not terminate in production. `walk::until`
+        # in src/view/walk.rs is the walk counted out before it starts, and
+        # this is what keeps the other kind from being written beside it —
+        # three seats wrote one anyway, each having read the rule.
+        #
+        # Scoped to a loop that presses a key rather than to every loop a
+        # test writes: a `while let` over a worklist, a test double's server
+        # thread, a wait on a deadline — each is left alone while it presses
+        # nothing, which is what all three do here. One that does press is
+        # refused whatever else bounds it. A bound worth sparing it for is a
+        # bound this check would have to trust, and it reads indentation
+        # rather than meaning; refusing a loop that had a real bound costs a
+        # round trip, sparing a walk costs the tally the defect this exists
+        # for. A round trip that was the wrong answer comes back here with a
+        # fixture. Production is left alone: the rule is about what a mutation
+        # does to a test.
+        screenWalksAreBounded = pkgs.writeShellScriptBin "screen-walks-are-bounded" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+
+          # Rust has no lint for this and nothing off the shelf reads block
+          # structure, so this does — by indentation, which rustfmt makes
+          # reliable and brace-counting is not, because a format string full
+          # of braces is what a test is mostly made of.
+          reading='
+          function loose(text) {
+            return text ~ /(^|[^A-Za-z_])(while|loop)([^A-Za-z_]|$)/
+          }
+          function trim(text) {
+            sub(/^ +/, "", text)
+            return text
+          }
+          function blame(at, text,   key) {
+            key = FILENAME ":" at
+            if (key in reported) {
+              return
+            }
+            reported[key] = 1
+            printf "  %s:%d: %s\n", FILENAME, at, trim(text)
+          }
+          BEGIN { in_test = whole_file }
+          {
+            line = $0
+
+            if (line ~ /^[ \t]*$/ || line ~ /^ *\/\//) {
+              next
+            }
+
+            match(line, /^ */)
+            ind = RLENGTH
+
+            # rustfmt breaks a long loop header over several lines and leaves
+            # the brace on one of its own, so the line that opens a block is
+            # not always the line that says what kind of block it is. The
+            # header is every line since the last one that ended something.
+            if (header == "") {
+              header = line
+              header_at = FNR
+            } else {
+              header = header " " trim(line)
+            }
+
+            # A line at this indent has closed every block opened inside it.
+            for (i = ind; i <= deepest; i++) {
+              openers[i] = ""
+            }
+
+            if (in_test && !whole_file && line == closer) {
+              in_test = 0
+            }
+
+            if (after_cfg_test && line ~ /^ *(pub(\([a-z]+\))? )?mod [A-Za-z_0-9]+ \{$/) {
+              in_test = 1
+              closer = sprintf("%*s}", ind, "")
+            }
+            after_cfg_test = (line ~ /^ *#\[cfg\(test\)\]$/)
+
+            if (in_test && line ~ /\.apply\(/) {
+              if (loose(header)) {
+                blame(header_at, header)
+              }
+              for (i = 0; i < ind; i++) {
+                if (loose(openers[i])) {
+                  blame(opened_at[i], openers[i])
+                }
+              }
+            }
+
+            if (line ~ /\{[ \t]*$/) {
+              openers[ind] = header
+              opened_at[ind] = header_at
+              if (ind > deepest) {
+                deepest = ind
+              }
+            }
+
+            if (line ~ /[;{},][ \t]*$/) {
+              header = ""
+            }
+          }
+          '
+
+          # Under src/ the tests are the `#[cfg(test)]` modules inside the file
+          # they cover; everything under tests/ is a test all through.
+          loose="$( {
+            find src -name '*.rs' | sort | while IFS= read -r module; do
+              ${pkgs.gawk}/bin/gawk -v whole_file=0 "$reading" "$module"
+            done
+            find tests -name '*.rs' | sort | while IFS= read -r module; do
+              ${pkgs.gawk}/bin/gawk -v whole_file=1 "$reading" "$module"
+            done
+          } )"
+
+          if [ -n "$loose" ]; then
+            echo "These tests press a key inside a loop nothing counts out:"
+            printf '%s\n' "$loose"
+            echo
+            echo "A loop that ends when the code under test says the screen stopped"
+            echo "moving is a loop a mutation can leave running for ever. The test"
+            echo "hangs, cargo-mutants scores a timeout, and the tally cannot tell"
+            echo "that from a mutant which does not terminate in production."
+            echo
+            echo "walk::until in src/view/walk.rs presses inside a count taken before"
+            echo "the walk starts, and says which row it never reached. Reach for it."
+            exit 1
+          fi
+        '';
+
+        # Every walk in this tree goes through walk::until, so the check above
+        # passes whether or not it can still find one that does not. This is
+        # what says it can — and what says it stays quiet about the loops a
+        # test is entitled to write.
+        screenWalksAreBoundedTest = pkgs.runCommand "screen-walks-are-bounded-test"
+          { nativeBuildInputs = [ screenWalksAreBounded ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree/src" "$tree/tests"
+
+          # bdi-7ao.52's own regression, and the same walk spelled as a bare
+          # loop — which is the spelling a check that only read `while` would
+          # hand the next seat.
+          {
+            echo "//! A walk production code decides the end of."
+            echo "#[cfg(test)]"
+            echo "mod tests {"
+            echo "    #[test]"
+            echo "    fn moving_faster_than_herdr_answers_costs_one_read_at_a_time() {"
+            echo "        while shown.apply(Action::Move(Motion::NextRow)) {"
+            echo "            moved += 1;"
+            echo "        }"
+            echo "    }"
+            echo "    #[test]"
+            echo "    fn the_same_walk_as_a_bare_loop() {"
+            echo "        loop {"
+            echo "            if !shown.apply(Action::Move(Motion::NextRow)) {"
+            echo "                break;"
+            echo "            }"
+            echo "        }"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/loose.rs"
+
+          # The same walk under a header rustfmt broke over three lines, which
+          # leaves the brace opening the block on one of its own. A check that
+          # read only the line carrying the brace would let this through.
+          {
+            echo "//! A loop header rustfmt split across lines."
+            echo "#[cfg(test)]"
+            echo "mod tests {"
+            echo "    #[test]"
+            echo "    fn a_walk_under_a_header_rustfmt_broke() {"
+            echo "        while shown.settling(Action::Refresh)"
+            echo "            && shown.forest.selected_line() < wanted"
+            echo "        {"
+            echo "            shown.apply(Action::Move(Motion::NextRow));"
+            echo "        }"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/split.rs"
+
+          # The counted walk, and a worklist loop — which this rule has
+          # nothing to say about, because it presses nothing.
+          {
+            echo "//! Walks counted out before they start."
+            echo "#[cfg(test)]"
+            echo "mod tests {"
+            echo "    #[test]"
+            echo "    fn a_counted_walk_reaches_the_last_row() {"
+            echo "        for _ in 0..shown.rows() {"
+            echo "            shown.apply(Action::Move(Motion::NextRow));"
+            echo "        }"
+            echo "    }"
+            echo "    #[test]"
+            echo "    fn a_worklist_the_test_owns_is_not_a_walk() {"
+            echo "        while let Some(node) = walking.pop() {"
+            echo "            walking.extend(children(node));"
+            echo "        }"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/counted.rs"
+
+          # A loop bounded by a deadline of the test's own, which still
+          # presses a key. The bound is real and the refusal is deliberate:
+          # this is the rule as it is, so that a seat meeting it reads a
+          # decision rather than an oversight.
+          {
+            echo "//! A press inside a bound the code under test cannot lie about."
+            echo "#[cfg(test)]"
+            echo "mod tests {"
+            echo "    #[test]"
+            echo "    fn a_press_waiting_on_a_deadline_is_refused_too() {"
+            echo "        while Instant::now() < deadline {"
+            echo "            shown.apply(Action::Refresh);"
+            echo "        }"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/deadline.rs"
+
+          # Production, which this rule says nothing about: a mutation that
+          # hangs it is a mutant that hangs in production, which is a finding
+          # rather than a false one.
+          {
+            echo "//! Production, which the rule says nothing about."
+            echo "fn settle(&mut self) {"
+            echo "    while self.apply(Action::Refresh) {"
+            echo "        self.lay_out();"
+            echo "    }"
+            echo "}"
+          } > "$tree/src/production.rs"
+
+          output="$( screen-walks-are-bounded "$tree" 2>&1 )" && status=0 || status=$?
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+          [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status:"
+          case "$output" in
+            *"src/loose.rs:6"*) ;;
+            *) fail "the refusal did not name the while walking the screen:" ;;
+          esac
+          case "$output" in
+            *"src/loose.rs:12"*) ;;
+            *) fail "the refusal did not name the same walk spelled as a loop:" ;;
+          esac
+          case "$output" in
+            *"src/split.rs:6"*) ;;
+            *) fail "the refusal did not reach under a header rustfmt broke:" ;;
+          esac
+          case "$output" in
+            *"src/deadline.rs:6"*) ;;
+            *) fail "the refusal did not reach a press inside a deadline:" ;;
+          esac
+          case "$output" in
+            *counted.rs*) fail "it named a walk that is counted out before it starts:" ;;
+          esac
+          case "$output" in
+            *production.rs*) fail "it named production, which this rule is not about:" ;;
+          esac
+
+          # A file under tests/ is a test all through, with no #[cfg(test)] to
+          # find, so the whole of it is read.
+          {
+            echo "fn walk_the_screen(forest: &mut Forest) {"
+            echo "    while forest.apply(Action::Move(Motion::NextRow)) {}"
+            echo "}"
+          } > "$tree/tests/integration.rs"
+
+          output="$( screen-walks-are-bounded "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status:"
+          case "$output" in
+            *"tests/integration.rs:2"*) ;;
+            *) fail "the refusal did not reach a walk under tests/:" ;;
+          esac
+
+          rm "$tree/src/loose.rs" "$tree/src/split.rs"
+          rm "$tree/src/deadline.rs" "$tree/tests/integration.rs"
+          screen-walks-are-bounded "$tree" ||
+            fail "it refused a tree in which every walk is counted out:"
+
+          touch $out
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -537,6 +823,9 @@
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;
+          screen-walks = checkOf "screen-walks" null [ screenWalksAreBounded ]
+            "screen-walks-are-bounded";
+          screen-walks-test = screenWalksAreBoundedTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
           # and builds that tarball rather than the working tree. A crate that

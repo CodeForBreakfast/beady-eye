@@ -13,6 +13,12 @@ pub mod phrase;
 pub mod row;
 pub mod tail;
 
+/// The one bounded walk over the rows on screen, reachable from every test
+/// that drives the selection — `view/` and `tui/` alike, which is why it sits
+/// here rather than inside the module that first needed it.
+#[cfg(test)]
+pub(crate) mod walk;
+
 /// Where a keystroke moves the selection.
 ///
 /// Named by the motion rather than the key: `bdi`'s bindings are vim-like, but

@@ -513,6 +513,7 @@ mod tests {
     };
     use crate::view::phrase;
     use crate::view::row::{Progress, Row};
+    use crate::view::walk::{self, Rows};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
@@ -1144,19 +1145,27 @@ credential_command = "secret harbour"
             .collect()
     }
 
-    /// Step down from the top until the selection stops moving, reporting
-    /// where it sat at each step.
+    /// Step down from the top to the last row, reporting where the selection
+    /// sat at each step.
     fn walk_down(forest: &mut Forest) -> Vec<usize> {
         forest.apply(Action::Move(Motion::FirstRow));
         let mut visited = vec![forest.selected_line()];
-        for _ in 0..forest.lines().len() {
-            forest.apply(Action::Move(Motion::NextRow));
-            let at = forest.selected_line();
-            if visited.last() == Some(&at) {
-                break;
-            }
-            visited.push(at);
-        }
+        walk::until(
+            forest,
+            |forest| forest.selected_line() + 1 == forest.rows(),
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+                visited.push(forest.selected_line());
+            },
+            |forest| {
+                format!(
+                    "stepping down stopped at row {} of {}: {:#?}",
+                    forest.selected_line(),
+                    forest.rows(),
+                    sketch(forest)
+                )
+            },
+        );
         visited
     }
 
@@ -1356,15 +1365,18 @@ credential_command = "secret harbour"
     /// only road a reader has to it.
     fn step_onto(forest: &mut Forest, at: usize) {
         forest.apply(Action::Move(Motion::FirstRow));
-        for _ in 0..forest.lines().len() {
-            if forest.selected_line() == at {
-                return;
-            }
-            forest.apply(Action::Move(Motion::NextRow));
-        }
-        panic!(
-            "the selection never reached line {at}: {:#?}",
-            sketch(forest)
+        walk::until(
+            forest,
+            |forest| forest.selected_line() == at,
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+            },
+            |forest| {
+                format!(
+                    "the selection never reached line {at}: {:#?}",
+                    sketch(forest)
+                )
+            },
         );
     }
 
@@ -1465,25 +1477,31 @@ credential_command = "secret harbour"
     /// carries no bead, so `select` cannot reach it.
     fn select_run(forest: &mut Forest) {
         forest.apply(Action::Move(Motion::FirstRow));
-        for _ in 0..=forest.lines().len() {
-            let line = &forest.lines()[forest.selected_line()];
-            if matches!(line.content, Content::Elided { .. }) {
-                return;
-            }
-            forest.apply(Action::Move(Motion::NextRow));
-        }
-        panic!("no elided run is reachable by moving down");
+        walk::until(
+            forest,
+            |forest| {
+                matches!(
+                    forest.lines()[forest.selected_line()].content,
+                    Content::Elided { .. }
+                )
+            },
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+            },
+            |_| "no elided run is reachable by moving down".to_string(),
+        );
     }
 
     fn select(forest: &mut Forest, bead: &BeadKey) {
         forest.apply(Action::Move(Motion::FirstRow));
-        for _ in 0..=forest.lines().len() {
-            if cursor(forest) == Some(bead) {
-                return;
-            }
-            forest.apply(Action::Move(Motion::NextRow));
-        }
-        panic!("{bead:?} is not reachable by moving down");
+        walk::until(
+            forest,
+            |forest| cursor(forest) == Some(bead),
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+            },
+            |_| format!("{bead:?} is not reachable by moving down"),
+        );
     }
 
     #[test]
@@ -3067,12 +3085,14 @@ credential_command = "secret harbour"
         assert_eq!(panes.len(), 2, "{:#?}", sketch(&forest));
         for at in panes {
             forest.apply(Action::Move(Motion::FirstRow));
-            for _ in 0..forest.lines().len() {
-                if forest.selected_line() >= at {
-                    break;
-                }
-                forest.apply(Action::Move(Motion::NextRow));
-            }
+            walk::until(
+                &mut forest,
+                |forest| forest.selected_line() >= at,
+                |forest| {
+                    forest.apply(Action::Move(Motion::NextRow));
+                },
+                |forest| format!("line {at} cannot be reached: {:#?}", sketch(forest)),
+            );
             assert_eq!(
                 forest.selected_line(),
                 at,
@@ -3158,13 +3178,14 @@ credential_command = "secret harbour"
     /// Put the selection on the line for one pane, by moving down to it.
     fn select_item(forest: &mut Forest, pane: &str) {
         forest.apply(Action::Move(Motion::FirstRow));
-        for _ in 0..=forest.lines().len() {
-            if selected_item(forest).as_deref() == Some(pane) {
-                return;
-            }
-            forest.apply(Action::Move(Motion::NextRow));
-        }
-        panic!("{pane} is not reachable by moving down");
+        walk::until(
+            forest,
+            |forest| selected_item(forest).as_deref() == Some(pane),
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+            },
+            |_| format!("{pane} is not reachable by moving down"),
+        );
     }
 
     /// The same snapshot with every group's items in the other order, which
@@ -3508,27 +3529,6 @@ credential_command = "secret harbour"
             .unwrap_or_else(|| panic!("{id} is not drawn"))
     }
 
-    /// Every fold in the forest open, so the prefixes deeper in it are drawn
-    /// rather than folded away.
-    fn open_everything(forest: &mut Forest) {
-        for _ in 0..=forest.lines().len() {
-            let shut: Vec<Handle> = forest
-                .lines()
-                .iter()
-                .filter(|line| line.folded == Some(false))
-                .filter_map(handle_of)
-                .collect();
-            if shut.is_empty() {
-                return;
-            }
-            for handle in shut {
-                forest.folds.set(handle, true);
-            }
-            forest.lay_out();
-        }
-        panic!("a fold would not open: {:#?}", sketch(forest));
-    }
-
     /// `sdg-4.3` rests shut over work of its own and `sdg-4.1` rests open
     /// beside it, both children of the root. A reader runs down the column
     /// the ids are in, and a line pushed right of its siblings is out of the
@@ -3578,7 +3578,7 @@ credential_command = "secret harbour"
             ]);
             let mut forest = flatten(&alone("orbital", json, &staffed));
             four_columns_a_level(&forest);
-            open_everything(&mut forest);
+            forest.apply(Action::ExpandAll);
             four_columns_a_level(&forest);
         }
     }

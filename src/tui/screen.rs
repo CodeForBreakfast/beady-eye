@@ -423,6 +423,7 @@ mod tests {
     use crate::tui::fixtures::{a_snapshot, atlas, ferry};
     use crate::tui::keys::BINDINGS;
     use crate::view::bindings::bindings_window;
+    use crate::view::walk::{self, Rows};
     use crate::view::Motion;
     use chrono::Utc;
     use ratatui::backend::TestBackend;
@@ -822,25 +823,31 @@ mod tests {
         }
     }
 
-    /// Press down until the selection stops moving, and say how many presses
-    /// moved it.
-    ///
-    /// Bounded by the rows on screen rather than by `apply` reporting the
-    /// screen stopped moving: a mutation can leave it reporting movement
-    /// honestly and for ever, and a test that cannot stop cannot report — it
-    /// hangs, and cargo-mutants scores the hang as a timeout, which reads
-    /// exactly like a mutant that does not terminate in production.
+    impl Rows for Shown {
+        fn rows(&self) -> usize {
+            self.forest.rows()
+        }
+    }
+
+    /// Press down until the selection is on the last row, and say how many
+    /// presses moved it.
     fn to_the_last_row(shown: &mut Shown) -> usize {
-        let rows = shown.forest.lines().len();
+        let rows = shown.rows();
         let from = shown.forest.selected_line();
 
-        let mut moved = 0;
-        for _ in 0..rows {
-            if !shown.apply(Action::Move(Motion::NextRow)) {
-                break;
-            }
-            moved += 1;
-        }
+        let moved = walk::until(
+            shown,
+            |shown| shown.forest.selected_line() + 1 == rows,
+            |shown| {
+                shown.apply(Action::Move(Motion::NextRow));
+            },
+            |shown| {
+                format!(
+                    "a walk from row {from} of {rows} stopped at row {}",
+                    shown.forest.selected_line()
+                )
+            },
+        );
 
         assert_eq!(
             moved,
