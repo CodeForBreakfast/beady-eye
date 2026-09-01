@@ -13,6 +13,12 @@ pub mod phrase;
 pub mod row;
 pub mod tail;
 
+/// The one way to ask what a widget drew, reachable from every test that
+/// renders to a buffer — `view/` and `tui/` alike, which is why it sits here
+/// rather than inside the module that first needed it.
+#[cfg(test)]
+pub(crate) mod painted;
+
 /// The one bounded walk over the rows on screen, reachable from every test
 /// that drives the selection — `view/` and `tui/` alike, which is why it sits
 /// here rather than inside the module that first needed it.

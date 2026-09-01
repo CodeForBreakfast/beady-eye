@@ -99,44 +99,15 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
-
+    use crate::view::painted::Painted;
     use crate::view::phrase;
 
     /// The tail drawn into a band that starts partway down the screen, which
     /// is the only place it ever is.
-    fn tail_frame(tail: &Tail, width: u16, height: u16, at: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
-        terminal
-            .draw(|frame| draw_tail(frame, Rect::new(0, at, width, height - at), tail))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
-    }
-
-    /// One row of the band, in runs of a colour. `tail_frame` beside this
-    /// reads symbols only, so a band whose words are right and whose colour
-    /// is wrong is a band it calls correct.
-    fn painted(tail: &Tail, width: u16, row: u16) -> Vec<(String, Color)> {
-        let height = row + 1;
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
-        terminal
-            .draw(|frame| draw_tail(frame, Rect::new(0, 0, width, height), tail))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-
-        let mut runs: Vec<(String, Color)> = Vec::new();
-        for x in 0..width {
-            let cell = &buffer[(x, row)];
-            match runs.last_mut() {
-                Some((said, colour)) if *colour == cell.fg => said.push_str(cell.symbol()),
-                _ => runs.push((cell.symbol().to_string(), cell.fg)),
-            }
-        }
-        runs
+    fn tail_frame(tail: &Tail, width: u16, height: u16, at: u16) -> Painted {
+        Painted::drawn_by(width, height, |frame| {
+            draw_tail(frame, Rect::new(0, at, width, height - at), tail);
+        })
     }
 
     fn tailing(pane: &str, lines: &[&str]) -> Tail {
@@ -151,7 +122,7 @@ mod tests {
         let tail = tailing("wCM:p9", &["rebuilt .#thinkpad, generation 541"]);
 
         assert_eq!(
-            tail_frame(&tail, 44, 5, 2),
+            tail_frame(&tail, 44, 5, 2).rows(),
             vec![
                 "                                            ",
                 "                                            ",
@@ -169,7 +140,7 @@ mod tests {
         let tail = tailing("w:p1", &["one", "two", "three", "four"]);
 
         assert_eq!(
-            tail_frame(&tail, 20, 3, 0),
+            tail_frame(&tail, 20, 3, 0).rows(),
             vec![
                 "─────── w:p1 ───────",
                 "  three             ",
@@ -181,7 +152,7 @@ mod tests {
     #[test]
     fn a_tail_with_no_pane_says_why_rather_than_leaving_the_band_blank() {
         assert_eq!(
-            tail_frame(&Tail::Silent(phrase::no_agent_to_tail()), 40, 3, 0),
+            tail_frame(&Tail::Silent(phrase::no_agent_to_tail()), 40, 3, 0).rows(),
             vec![
                 "────────────────────────────────────────",
                 "  no pane · nobody is working this bead ",
@@ -204,7 +175,8 @@ mod tests {
                 40,
                 3,
                 0
-            ),
+            )
+            .rows(),
             vec![
                 "──────────────── wCM:p9 ────────────────",
                 "  reading that pane                     ",
@@ -218,24 +190,27 @@ mod tests {
     /// pane's. Nothing in the symbols says which of the two a row is.
     #[test]
     fn what_bdi_says_in_the_band_is_drawn_dimmer_than_what_the_pane_says() {
-        let waiting = painted(
+        let waiting = tail_frame(
             &Tail::Reading {
                 pane: "w:p1".to_string(),
             },
             40,
-            1,
-        );
+            2,
+            0,
+        )
+        .row(1);
         assert!(
-            waiting.iter().any(|(said, colour)| {
-                said.contains(phrase::pane_being_read()) && *colour == Color::DarkGray
+            waiting.iter().any(|run| {
+                run.said.contains(phrase::pane_being_read())
+                    && run.style.fg == Some(Color::DarkGray)
             }),
             "the row saying the pane is being read: {waiting:?}"
         );
 
-        let said = painted(&tailing("w:p1", &["rebuilt .#thinkpad"]), 40, 1);
+        let said = tail_frame(&tailing("w:p1", &["rebuilt .#thinkpad"]), 40, 2, 0).row(1);
         assert!(
-            said.iter().any(|(said, colour)| {
-                said.contains("rebuilt .#thinkpad") && *colour == Color::Reset
+            said.iter().any(|run| {
+                run.said.contains("rebuilt .#thinkpad") && run.style.fg == Some(Color::Reset)
             }),
             "the pane's own line: {said:?}"
         );
@@ -246,7 +221,7 @@ mod tests {
         let tail = tailing("w:p1", &["a line with a great deal more to say than this"]);
 
         assert_eq!(
-            tail_frame(&tail, 20, 2, 0),
+            tail_frame(&tail, 20, 2, 0).rows(),
             vec!["─────── w:p1 ───────", "  a line with a gre…"]
         );
     }
@@ -257,9 +232,9 @@ mod tests {
     fn a_tail_with_barely_any_room_draws_what_it_can() {
         let tail = tailing("a-very-long-pane-identifier", &["never seen"]);
 
-        assert_eq!(tail_frame(&tail, 10, 1, 0), vec!["──────────"]);
+        assert_eq!(tail_frame(&tail, 10, 1, 0).rows(), vec!["──────────"]);
         assert_eq!(
-            tail_frame(&Tail::Silent(phrase::no_bead_to_tail()), 10, 1, 0),
+            tail_frame(&Tail::Silent(phrase::no_bead_to_tail()), 10, 1, 0).rows(),
             vec!["──────────"]
         );
     }
@@ -276,14 +251,12 @@ mod tests {
             },
             Tail::Silent(phrase::no_bead_to_tail()),
         ] {
-            let mut terminal = Terminal::new(TestBackend::new(20, 2)).expect("a test backend");
-            terminal
-                .draw(|frame| draw_tail(frame, Rect::new(0, 0, 20, 1), &tail))
-                .expect("a draw into memory");
+            let screen = Painted::drawn_by(20, 2, |frame| {
+                draw_tail(frame, Rect::new(0, 0, 20, 1), &tail);
+            });
 
-            let buffer = terminal.backend().buffer();
             assert_eq!(
-                (0..20).map(|x| buffer[(x, 1)].symbol()).collect::<String>(),
+                screen.rows()[1],
                 " ".repeat(20),
                 "the row under the band, for {tail:?}"
             );
@@ -292,15 +265,10 @@ mod tests {
 
     #[test]
     fn a_band_with_no_rows_draws_nothing() {
-        let mut terminal = Terminal::new(TestBackend::new(20, 1)).expect("a test backend");
-        terminal
-            .draw(|frame| draw_tail(frame, Rect::new(0, 0, 20, 0), &tailing("w:p1", &["x"])))
-            .expect("a draw into memory");
+        let screen = Painted::drawn_by(20, 1, |frame| {
+            draw_tail(frame, Rect::new(0, 0, 20, 0), &tailing("w:p1", &["x"]));
+        });
 
-        let buffer = terminal.backend().buffer();
-        assert_eq!(
-            (0..20).map(|x| buffer[(x, 0)].symbol()).collect::<String>(),
-            " ".repeat(20)
-        );
+        assert_eq!(screen.rows()[0], " ".repeat(20));
     }
 }

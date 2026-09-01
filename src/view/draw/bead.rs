@@ -108,7 +108,7 @@ mod tests {
         let node = node("nix-9670s.20", "wallpaper timer calls dms", Status::Blocked);
 
         assert_eq!(
-            drawn(bead_line(&row(&node), BRANCH, 4), 46, 1),
+            Painted::of(bead_line(&row(&node), BRANCH, 4), 46, 1).rows(),
             vec!["  ├── ● .20   wallpaper timer calls dms       "]
         );
     }
@@ -129,7 +129,7 @@ mod tests {
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
 
-        let drawn = drawn(bead_line(&epic, BRANCH, 3), 60, 1);
+        let drawn = Painted::of(bead_line(&epic, BRANCH, 3), 60, 1).rows();
 
         let count = drawn[0].find("3/8").expect("the count is drawn");
         let agent = drawn[0].find("wCM:p9").expect("the agent is drawn");
@@ -159,7 +159,7 @@ mod tests {
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
 
-        let drawn = drawn(bead_line(&epic, BRANCH, 3), 60, 1);
+        let drawn = Painted::of(bead_line(&epic, BRANCH, 3), 60, 1).rows();
 
         assert!(drawn[0].ends_with("3/8  ◍ wCM:p9 · working"), "{drawn:?}");
     }
@@ -178,7 +178,7 @@ mod tests {
         shut.agent = Some(row::agent_marker(&a_pane()));
         shut.shut_over = Some(counts(1, 5, 3, 0));
 
-        let drawn = drawn(bead_line(&shut, BRANCH, 3), 110, 1);
+        let drawn = Painted::of(bead_line(&shut, BRANCH, 3), 110, 1).rows();
 
         let own = drawn[0].find("wCM:p9").expect("its own agent is drawn");
         let beneath = drawn[0]
@@ -199,7 +199,7 @@ mod tests {
         ));
         shut.shut_over = Some(counts(1, 5, 0, 2));
 
-        let drawn = drawn(bead_line(&shut, BRANCH, 3), 110, 1);
+        let drawn = Painted::of(bead_line(&shut, BRANCH, 3), 110, 1).rows();
 
         says(&drawn[0], "2 beads beneath");
     }
@@ -216,15 +216,13 @@ mod tests {
         ));
         shut.shut_over = Some(counts(4, 5, 0, 0));
 
-        let drawn = drawn(bead_line(&shut, BRANCH, 3), 110, 1);
+        let drawn = Painted::of(bead_line(&shut, BRANCH, 3), 110, 1).rows();
 
         does_not_say(&drawn[0], "beneath");
     }
 
     /// Live work is drawn in the colour live work is drawn in everywhere
-    /// else, and work wanting looking at in that one. Asked of `painted`:
-    /// `drawn` reads symbols only and would pass whatever colour these
-    /// reached the screen in, which is how a colour bug shipped here before.
+    /// else, and work wanting looking at in that one.
     #[test]
     fn what_a_shut_row_hides_is_painted_live_and_look_at_this() {
         let mut shut = row(&node(
@@ -234,12 +232,12 @@ mod tests {
         ));
         shut.shut_over = Some(counts(1, 5, 3, 2));
 
-        let painted = painted(bead_line(&shut, BRANCH, 3), 120);
+        let painted = Painted::of(bead_line(&shut, BRANCH, 3), 120, 1).row(0);
         let colour_of = |words: &str| {
             painted
                 .iter()
-                .find(|(said, _)| said.contains(words))
-                .map(|(_, colour)| *colour)
+                .find(|run| run.said.contains(words))
+                .and_then(|run| run.style.fg)
         };
 
         assert_eq!(colour_of("3 agents beneath"), Some(LIVE), "{painted:?}");
@@ -281,8 +279,8 @@ mod tests {
         shut.shut_over = Some(counts(1, 22, 4, 0));
         shut.notes = vec![phrase::unfinished_beneath(21)];
 
-        let wide = drawn(bead_line(&shut, BRANCH, 3), 120, 1);
-        let narrow = drawn(bead_line(&shut, BRANCH, 3), 68, 1);
+        let wide = Painted::of(bead_line(&shut, BRANCH, 3), 120, 1).rows();
+        let narrow = Painted::of(bead_line(&shut, BRANCH, 3), 68, 1).rows();
 
         says(&wide[0], "◍ 4 agents beneath");
         says(&wide[0], "21 unfinished beads beneath this");
@@ -303,7 +301,7 @@ mod tests {
             Status::Open,
         ));
 
-        let drawn = drawn(bead_line(&leaf, BRANCH, 4), 60, 1);
+        let drawn = Painted::of(bead_line(&leaf, BRANCH, 4), 60, 1).rows();
 
         assert!(!drawn[0].contains('/'), "{drawn:?}");
     }
@@ -315,8 +313,8 @@ mod tests {
         let short = node("nix-9670s.1", "wire the niri theme include", Status::Open);
         let long = node("nix-9670s.20", "wallpaper timer calls dms", Status::Open);
 
-        let short = drawn(bead_line(&row(&short), BRANCH, 4), 60, 1);
-        let long = drawn(bead_line(&row(&long), BRANCH, 4), 60, 1);
+        let short = Painted::of(bead_line(&row(&short), BRANCH, 4), 60, 1).rows();
+        let long = Painted::of(bead_line(&row(&long), BRANCH, 4), 60, 1).rows();
 
         assert_eq!(
             short[0].find("wire the"),
@@ -334,7 +332,7 @@ mod tests {
         );
         staffed.agent = Some(a_pane());
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
-        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 100, 1);
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 100, 1).rows();
 
         assert!(drawn[0].contains("◍ wCM:p9 · working"), "{drawn:?}");
         assert!(drawn[0].contains("58"), "{drawn:?}");
@@ -360,7 +358,7 @@ mod tests {
     fn a_caption_too_long_for_the_row_is_cut_like_every_other_cell() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 50, 1);
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 50, 1).rows();
 
         assert_eq!(drawn[0].chars().count(), 50, "{drawn:?}");
         assert!(drawn[0].ends_with('…'), "{drawn:?}");
@@ -374,7 +372,7 @@ mod tests {
     fn a_caption_long_enough_takes_the_room_the_title_would_have_had() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 80, 1);
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 80, 1).rows();
 
         assert!(!drawn[0].contains("wallpaper"), "{drawn:?}");
         assert!(drawn[0].contains(".20"), "{drawn:?}");
@@ -386,7 +384,7 @@ mod tests {
     fn a_caption_with_no_room_left_takes_the_whole_agent_cell_with_it() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = drawn(bead_line(&row(&staffed), LAST, 4), 14, 1);
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 14, 1).rows();
 
         assert!(!drawn[0].contains(row::AGENT), "{drawn:?}");
         assert!(drawn[0].contains(".20"), "{drawn:?}");
@@ -405,7 +403,7 @@ mod tests {
                 text: "⏸ waiting".into(),
             },
         ];
-        let drawn = drawn(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let drawn = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1).rows();
         let first = drawn[0].find("⇢ #12").expect("the first badge");
         let second = drawn[0].find("⏸ waiting").expect("the second badge");
 
@@ -419,7 +417,7 @@ mod tests {
     fn a_bead_the_tracker_stopped_at_says_so_on_screen() {
         let mut stopped = node("nix-9670s.20", "a bead", Status::Open);
         stopped.truncated = true;
-        let drawn = drawn(bead_line(&row(&stopped), BRANCH, 4), 120, 1);
+        let drawn = Painted::of(bead_line(&row(&stopped), BRANCH, 4), 120, 1).rows();
 
         says(
             &drawn[0],
@@ -430,7 +428,7 @@ mod tests {
     #[test]
     fn a_bead_line_too_long_for_the_width_is_cut_rather_than_wrapped() {
         let long = node("nix-9670s.20", &"wallpaper ".repeat(20), Status::Open);
-        let drawn = drawn(bead_line(&row(&long), BRANCH, 4), 40, 3);
+        let drawn = Painted::of(bead_line(&row(&long), BRANCH, 4), 40, 3).rows();
 
         assert_eq!(drawn[0], "  ├── ○ .20   wallpaper wallpaper wallp…");
         assert_eq!(drawn[1].trim(), "");
@@ -444,15 +442,13 @@ mod tests {
     /// and the beads it stands for cannot drift apart.
     #[test]
     fn an_elided_run_carries_the_closed_glyph_each_bead_it_stands_for_would() {
-        let painted = painted(fitted(&under(BRANCH, elided(15)), 0, &at_rest()), 72);
+        let painted = Painted::of(fitted(&under(BRANCH, elided(15)), 0, &at_rest()), 72, 1).row(0);
 
         assert_eq!(
-            painted[1],
-            (
-                row::status_glyph(&Status::Closed).to_string(),
-                status_colour(&Status::Closed).expect("closed is one bd colours")
-            )
+            painted[1].said,
+            row::status_glyph(&Status::Closed).to_string()
         );
+        assert_eq!(painted[1].style.fg, status_colour(&Status::Closed));
     }
 
     /// A reader follows the vertical rules down a tree. A sentence that took
@@ -461,9 +457,10 @@ mod tests {
     /// the words beside it are coloured.
     #[test]
     fn an_elided_run_leaves_its_box_drawing_in_the_terminals_own_colour() {
-        let painted = painted(fitted(&under(BRANCH, elided(3)), 0, &at_rest()), 72);
+        let painted = Painted::of(fitted(&under(BRANCH, elided(3)), 0, &at_rest()), 72, 1).row(0);
 
-        assert_eq!(painted[0], (BRANCH.to_string(), Color::Reset));
-        assert_eq!(painted[2].1, DIM);
+        assert_eq!(painted[0].said, BRANCH);
+        assert_eq!(painted[0].style.fg, Some(Color::Reset));
+        assert_eq!(painted[2].style.fg, Some(DIM));
     }
 }

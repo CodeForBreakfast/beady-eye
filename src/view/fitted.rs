@@ -176,6 +176,8 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use crate::view::painted::Painted;
+
     /// A row with something in all three blocks, so any painting at all shows.
     fn a_row() -> Fitted {
         Fitted::new(
@@ -185,22 +187,13 @@ mod tests {
         )
     }
 
-    /// What a buffer holds, one string per row.
-    fn rows(buf: &Buffer) -> Vec<String> {
-        (0..buf.area.height)
-            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect())
-            .collect()
-    }
-
     fn blank(width: usize, height: usize) -> Vec<String> {
         vec![" ".repeat(width); height]
     }
 
     /// One row of what a widget puts on screen.
     fn drawn(row: Fitted, width: u16) -> String {
-        let mut buf = Buffer::empty(Rect::new(0, 0, width, 1));
-        row.render(Rect::new(0, 0, width, 1), &mut buf);
-        rows(&buf).remove(0)
+        Painted::of(row, width, 1).rows().remove(0)
     }
 
     /// A title cut in half can still be worth its columns — half a bead's
@@ -251,7 +244,7 @@ mod tests {
             &mut buf,
         );
 
-        assert_eq!(rows(&buf), blank(20, 3));
+        assert_eq!(Painted::read(&buf).rows(), blank(20, 3));
     }
 
     /// A band of no columns likewise.
@@ -269,7 +262,7 @@ mod tests {
             &mut buf,
         );
 
-        assert_eq!(rows(&buf), blank(20, 3));
+        assert_eq!(Painted::read(&buf).rows(), blank(20, 3));
     }
 
     /// One line is one row. The selection is an index into the forest's lines,
@@ -281,6 +274,6 @@ mod tests {
 
         a_row().render(Rect::new(0, 0, 20, 3), &mut buf);
 
-        assert_eq!(rows(&buf)[1..], blank(20, 2));
+        assert_eq!(Painted::read(&buf).rows()[1..], blank(20, 2));
     }
 }

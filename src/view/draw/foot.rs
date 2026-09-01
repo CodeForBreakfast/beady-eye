@@ -120,7 +120,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = drawn(status_bar(&[], A_KEY_ROW, 60), 60, 1);
+        let drawn = Painted::of(status_bar(&[], A_KEY_ROW, 60), 60, 1).rows();
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -131,7 +131,7 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 90), 90, 1);
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 90), 90, 1).rows();
 
         says(
             &drawn[0],
@@ -145,11 +145,12 @@ mod tests {
     /// show that — no row is wrong — so the foot is the only place it can go.
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 90),
             90,
             1,
-        );
+        )
+        .rows();
 
         says(
             &drawn[0],
@@ -162,11 +163,12 @@ mod tests {
     /// the second unsaid for the whole session.
     #[test]
     fn a_foot_with_room_says_every_notice_it_is_given() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 200),
             200,
             1,
-        );
+        )
+        .rows();
 
         for words in [
             "no herdr session · which agents are alive is unknown",
@@ -181,11 +183,12 @@ mod tests {
     /// reader most. What the other gives up is its words, not its place.
     #[test]
     fn a_narrow_foot_gives_up_the_last_notices_words_first() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 80),
             80,
             1,
-        );
+        )
+        .rows();
 
         says(
             &drawn[0],
@@ -204,7 +207,7 @@ mod tests {
     fn the_foot_says_nothing_about_how_fresh_the_rows_above_it_are() {
         let forest = opened(&snapshot(vec![grove(1)], Vec::new(), HerdrState::Ok));
 
-        let foot = frame_of(&forest, 74, 4).remove(3);
+        let foot = frame_of(&forest, 74, 4).rows().remove(3);
 
         assert_eq!(foot.trim_end(), A_KEY_ROW);
     }
@@ -216,11 +219,12 @@ mod tests {
     /// there was nothing on screen to say either fact had been lost.
     #[test]
     fn the_narrowest_screen_still_says_the_view_is_polled() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 40),
             40,
             1,
-        );
+        )
+        .rows();
 
         assert_eq!(drawn[0], "⚠ agents unknown  ⚠ polled, not reported");
     }
@@ -231,27 +235,32 @@ mod tests {
     /// end.
     #[test]
     fn a_lone_notice_too_wide_for_the_row_is_said_briefly() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60),
             60,
             1,
-        );
+        )
+        .rows();
 
         assert!(drawn[0].starts_with("⚠ polled, not reported"), "{drawn:?}");
     }
 
     /// A notice is drawn in the colour that asks to be looked at, and saying
-    /// it in fewer words does not make it something else. `drawn` reads
-    /// symbols and is blind to styling, so this asks `painted`.
+    /// it in fewer words does not make it something else.
     #[test]
     fn a_notice_said_briefly_is_still_painted_as_a_warning() {
-        let painted = painted(status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60), 60);
+        let painted = Painted::of(
+            status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60),
+            60,
+            1,
+        )
+        .row(0);
 
         assert!(
             painted
                 .iter()
-                .any(|(said, colour)| said.contains("polled, not reported")
-                    && *colour == LOOK_AT_THIS),
+                .any(|run| run.said.contains("polled, not reported")
+                    && run.style.fg == Some(LOOK_AT_THIS)),
             "{painted:?}"
         );
     }
@@ -264,11 +273,12 @@ mod tests {
     /// right.
     #[test]
     fn a_socket_another_bdi_holds_says_that_rather_than_only_what_it_cost() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(&[Notice::AnotherBdiHadTheInboundChannel], A_KEY_ROW, 100),
             100,
             1,
-        );
+        )
+        .rows();
 
         says(
             &drawn[0],
@@ -281,7 +291,7 @@ mod tests {
     /// say no more than the notice this bead replaced.
     #[test]
     fn the_narrowest_screen_still_says_another_bdi_took_the_channel() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             status_bar(
                 &[Notice::NoHerdr, Notice::AnotherBdiHadTheInboundChannel],
                 A_KEY_ROW,
@@ -289,7 +299,8 @@ mod tests {
             ),
             40,
             1,
-        );
+        )
+        .rows();
 
         assert_eq!(
             drawn[0].trim_end(),
@@ -298,19 +309,20 @@ mod tests {
     }
 
     /// A notice nobody looks at is a notice nobody has, and this one is
-    /// asking the reader to go and close something. `drawn` reads symbols and
-    /// is blind to styling, so this asks `painted`.
+    /// asking the reader to go and close something.
     #[test]
     fn a_socket_another_bdi_holds_is_painted_as_a_warning() {
-        let painted = painted(
+        let painted = Painted::of(
             status_bar(&[Notice::AnotherBdiHadTheInboundChannel], A_KEY_ROW, 100),
             100,
-        );
+            1,
+        )
+        .row(0);
 
         assert!(
             painted
                 .iter()
-                .any(|(said, colour)| said.contains("another bdi") && *colour == LOOK_AT_THIS),
+                .any(|run| run.said.contains("another bdi") && run.style.fg == Some(LOOK_AT_THIS)),
             "{painted:?}"
         );
     }
@@ -346,7 +358,7 @@ mod tests {
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = drawn(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 60), 60, 1);
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 60), 60, 1).rows();
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);

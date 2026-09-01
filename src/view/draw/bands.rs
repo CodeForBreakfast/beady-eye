@@ -223,7 +223,7 @@ mod tests {
         forest.set_half_screen(half_screen(band));
         forest.apply(Action::Move(Motion::HalfScreenDown));
 
-        let frame = frame_of(&forest, width, height);
+        let frame = frame_of(&forest, width, height).rows();
         let selected = forest.selected_line();
         let lines = forest.lines().len();
 

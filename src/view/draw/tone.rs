@@ -111,7 +111,7 @@ mod tests {
     fn no_status_is_told_apart_by_colour_alone() {
         for status in every_status() {
             let node = node("nix-9670s.1", "a bead", status.clone());
-            let drawn = drawn(bead_line(&row(&node), BRANCH, 3), 40, 1);
+            let drawn = Painted::of(bead_line(&row(&node), BRANCH, 3), 40, 1).rows();
 
             assert!(
                 drawn[0].contains(row::status_glyph(&status)),
@@ -157,13 +157,14 @@ mod tests {
 
         for (status, colour) in bds {
             let bead = node("nix-9670s.1", "a bead", status.clone());
-            let painted = painted(bead_line(&row(&bead), BRANCH, 3), 60);
+            let painted = Painted::of(bead_line(&row(&bead), BRANCH, 3), 60, 1).row(0);
 
             assert_eq!(
-                painted[1],
-                (row::status_glyph(&status).to_string(), colour),
+                painted[1].said,
+                row::status_glyph(&status).to_string(),
                 "{status:?}: {painted:?}"
             );
+            assert_eq!(painted[1].style.fg, Some(colour), "{status:?}: {painted:?}");
         }
     }
 
@@ -175,10 +176,10 @@ mod tests {
         let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
 
-        let painted = painted(bead_line(&row(&staffed), BRANCH, 3), 90);
+        let painted = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 90, 1).row(0);
 
-        assert!(painted[1].0.starts_with('○'), "{painted:?}");
-        assert_eq!(painted[1].1, Color::White, "{painted:?}");
+        assert!(painted[1].said.starts_with('○'), "{painted:?}");
+        assert_eq!(painted[1].style.fg, Some(Color::White), "{painted:?}");
     }
 
     /// The tier that earns the screen. `bd list` has no notion of a live
@@ -188,20 +189,23 @@ mod tests {
         let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
 
-        let bright = painted(bead_line(&row(&staffed), BRANCH, 3), 90);
-        let plain = painted(
+        let bright = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 90, 1).row(0);
+        let plain = Painted::of(
             bead_line(
                 &row(&node("nix-9670s.1", "a bead", Status::Open)),
                 BRANCH,
                 3,
             ),
             90,
-        );
+            1,
+        )
+        .row(0);
 
-        assert_eq!(bright[1].1, Color::White, "{bright:?}");
+        assert_eq!(bright[1].style.fg, Some(Color::White), "{bright:?}");
+        assert_eq!(plain.len(), 1, "{plain:?}");
         assert_eq!(
-            plain,
-            vec![(plain[0].0.clone(), Color::Reset)],
+            plain[0].style.fg,
+            Some(Color::Reset),
             "nobody on it, so the whole line is the terminal's own"
         );
     }
@@ -210,21 +214,27 @@ mod tests {
     /// side: a finished branch nobody is on falls back into the page.
     #[test]
     fn a_finished_row_nobody_is_on_is_dimmed_to_the_grey_bd_dims_one_to() {
-        let painted = painted(
+        let painted = Painted::of(
             bead_line(
                 &row(&node("nix-9670s.1", "a bead", Status::Closed)),
                 BRANCH,
                 3,
             ),
             60,
-        );
+            1,
+        )
+        .row(0);
 
         assert_eq!(
-            painted[1].1,
-            Color::Rgb(128, 144, 160),
+            painted[1].style.fg,
+            Some(Color::Rgb(128, 144, 160)),
             "the glyph keeps its own status colour: {painted:?}"
         );
-        assert_eq!(painted[2].1, Color::Rgb(108, 118, 128), "{painted:?}");
+        assert_eq!(
+            painted[2].style.fg,
+            Some(Color::Rgb(108, 118, 128)),
+            "{painted:?}"
+        );
     }
 
     /// Exactly the row worth looking at, and dimming it is how it would be
@@ -235,9 +245,9 @@ mod tests {
         alive.agent = Some(a_pane());
         alive.anomalies = vec![Anomaly::StalePane];
 
-        let painted = painted(bead_line(&row(&alive), BRANCH, 3), 110);
+        let painted = Painted::of(bead_line(&row(&alive), BRANCH, 3), 110, 1).row(0);
 
-        assert_eq!(painted[2].1, Color::White, "{painted:?}");
+        assert_eq!(painted[2].style.fg, Some(Color::White), "{painted:?}");
     }
 
     /// Finished means what it means in `lines::split` — closed, no agent, no
@@ -247,9 +257,9 @@ mod tests {
         let mut odd = node("nix-9670s.1", "a bead", Status::Closed);
         odd.anomalies = vec![Anomaly::StalePane];
 
-        let painted = painted(bead_line(&row(&odd), BRANCH, 3), 110);
+        let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 110, 1).row(0);
 
-        assert_eq!(painted[2].1, Color::Reset, "{painted:?}");
+        assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
     }
 
     /// The box-drawing says how the tree is shaped, not how a bead is going,
@@ -262,13 +272,10 @@ mod tests {
         let finished = node("nix-9670s.1", "a bead", Status::Closed);
 
         for bead in [staffed, finished] {
-            let painted = painted(bead_line(&row(&bead), BRANCH, 3), 90);
+            let painted = Painted::of(bead_line(&row(&bead), BRANCH, 3), 90, 1).row(0);
 
-            assert_eq!(
-                painted[0],
-                (BRANCH.to_string(), Color::Reset),
-                "{painted:?}"
-            );
+            assert_eq!(painted[0].said, BRANCH, "{painted:?}");
+            assert_eq!(painted[0].style.fg, Some(Color::Reset), "{painted:?}");
         }
     }
 
@@ -276,19 +283,25 @@ mod tests {
     /// cannot fall out of step and the palette holds one grey, not two.
     #[test]
     fn an_elided_run_is_dimmed_the_same_grey_a_finished_row_is() {
-        let run = painted(elided_run(BRANCH, 4), 60);
-        let finished = painted(
+        let run = Painted::of(elided_run(BRANCH, 4), 60, 1).row(0);
+        let finished = Painted::of(
             bead_line(
                 &row(&node("nix-9670s.1", "a bead", Status::Closed)),
                 BRANCH,
                 3,
             ),
             60,
-        );
+            1,
+        )
+        .row(0);
 
-        assert_eq!(run[0], (BRANCH.to_string(), Color::Reset), "{run:?}");
-        assert_eq!(run[1].1, finished[1].1, "the glyph: {run:?}");
-        assert_eq!(run[2].1, finished[2].1, "what follows it: {run:?}");
+        assert_eq!(run[0].said, BRANCH, "{run:?}");
+        assert_eq!(run[0].style.fg, Some(Color::Reset), "{run:?}");
+        assert_eq!(run[1].style.fg, finished[1].style.fg, "the glyph: {run:?}");
+        assert_eq!(
+            run[2].style.fg, finished[2].style.fg,
+            "what follows it: {run:?}"
+        );
     }
 
     /// A project line's counts are its whole project's and not any one bead's,
@@ -299,10 +312,10 @@ mod tests {
     fn a_project_line_is_left_off_the_scale_a_bead_row_is_on() {
         let quiet = project("homelab", counts(7, 7, 0, 0));
 
-        let painted = painted(project_line(&quiet, OPEN, None, drawn_at()), 60);
+        let painted = Painted::of(project_line(&quiet, OPEN, None, drawn_at()), 60, 1).row(0);
 
         assert!(
-            painted.iter().all(|(_, colour)| *colour == Color::Reset),
+            painted.iter().all(|run| run.style.fg == Some(Color::Reset)),
             "{painted:?}"
         );
     }
@@ -316,18 +329,18 @@ mod tests {
         staffed.agent = Some(a_pane());
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
 
-        let painted = painted(bead_line(&row(&staffed), BRANCH, 3), 120);
+        let painted = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 120, 1).row(0);
 
         assert!(
             painted
                 .iter()
-                .any(|(said, colour)| said.contains(AGENT) && *colour == LIVE),
+                .any(|run| run.said.contains(AGENT) && run.style.fg == Some(LIVE)),
             "{painted:?}"
         );
         assert!(
             painted
                 .iter()
-                .any(|(said, colour)| said.contains(WARNING) && *colour == LOOK_AT_THIS),
+                .any(|run| run.said.contains(WARNING) && run.style.fg == Some(LOOK_AT_THIS)),
             "{painted:?}"
         );
     }
@@ -338,8 +351,9 @@ mod tests {
     fn a_status_bd_never_had_is_painted_the_colour_of_the_note_beside_it() {
         let odd = node("nix-9670s.1", "a bead", Status::Other("triage".into()));
 
-        let painted = painted(bead_line(&row(&odd), BRANCH, 3), 120);
+        let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 120, 1).row(0);
 
-        assert_eq!(painted[1], ('?'.to_string(), LOOK_AT_THIS), "{painted:?}");
+        assert_eq!(painted[1].said, "?", "{painted:?}");
+        assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS), "{painted:?}");
     }
 }

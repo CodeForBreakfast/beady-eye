@@ -104,11 +104,11 @@ mod tests {
         };
 
         assert_eq!(
-            drawn(group_line(SHUT, quiet), 64, 1),
+            Painted::of(group_line(SHUT, quiet), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent                       a to show all"]
         );
         assert_eq!(
-            drawn(group_line(SHUT, broken), 64, 1),
+            Painted::of(group_line(SHUT, broken), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent · 2 with findings     a to show all"]
         );
     }
@@ -123,7 +123,7 @@ mod tests {
                 count: 2,
                 with_findings: 0,
             };
-            let drawn = drawn(group_line(SHUT, group), 80, 1);
+            let drawn = Painted::of(group_line(SHUT, group), 80, 1).rows();
             let marked = drawn[0].contains(WARNING);
 
             assert_eq!(
@@ -142,10 +142,11 @@ mod tests {
             project: "summit-works".into(),
             tracker: TrackerFailure::Auth,
         });
-        let painted = painted(item_line(LAST, &failed), 96);
+        let painted = Painted::of(item_line(LAST, &failed), 96, 1).row(0);
 
-        assert_eq!(painted[0], (LAST.to_string(), Color::Reset));
-        assert_eq!(painted[1].1, LOOK_AT_THIS);
+        assert_eq!(painted[0].said, LAST);
+        assert_eq!(painted[0].style.fg, Some(Color::Reset));
+        assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS));
     }
 
     /// The fold arrow is a control rather than a word, and every group has
@@ -159,10 +160,14 @@ mod tests {
                 count: 2,
                 with_findings: 0,
             };
-            let painted = painted(group_line(SHUT, group), 80);
+            let painted = Painted::of(group_line(SHUT, group), 80, 1).row(0);
 
-            assert_eq!(painted[0].1, Color::Reset, "{kind:?}: {painted:?}");
-            assert!(painted[0].0.starts_with(SHUT), "{kind:?}: {painted:?}");
+            assert_eq!(
+                painted[0].style.fg,
+                Some(Color::Reset),
+                "{kind:?}: {painted:?}"
+            );
+            assert!(painted[0].said.starts_with(SHUT), "{kind:?}: {painted:?}");
         }
     }
 }

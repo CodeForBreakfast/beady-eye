@@ -47,17 +47,12 @@ module opening up in `src/lib.rs`, which says why. Fixtures under
 `tests/fixtures/` are faithful captures of what `bd list`, `bd dep tree`, `bd
 query` and `herdr agent list` put on the wire.
 
-Three things to know before writing a test:
+Two things to know before writing a test:
 
 A test that walks the selection over the screen calls `walk::until` in
 `src/view/walk.rs`, which presses inside a count taken before the walk starts
 and says which row it never reached. The `screen-walks` check refuses the other
 kind, so writing one costs you a CI round trip rather than a wrong tally.
-
-A test about colour asks `painted()` in `view/draw/`. Its neighbour `drawn()`
-reads `symbol()` only and is blind to styling, which is how a colour bug
-shipped. `tui/` has a `painted()` of its own that is no better: it is named
-for the `paint()` it calls, returns symbols, and sees no colour either.
 
 An item nothing calls is a compiler warning here: `src/lib.rs` keeps the
 library's modules private, so `dead_code` sees the whole crate and the

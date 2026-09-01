@@ -236,9 +236,7 @@ pub(super) fn structure(prefix: &str) -> Span<'static> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use ratatui::backend::TestBackend;
-    use ratatui::widgets::Widget;
-    use ratatui::Terminal;
+    use ratatui::style::Modifier;
     use std::collections::BTreeMap;
 
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
@@ -251,44 +249,13 @@ mod tests {
     use crate::view::{Action, Motion};
     use chrono::{DateTime, TimeZone, Utc};
 
+    pub(super) use crate::view::painted::Painted;
+
     pub(super) const OPEN: &str = "▾ ";
     pub(super) const SHUT: &str = "▸ ";
     pub(super) const NO_FOLD: &str = "  ";
     pub(super) const BRANCH: &str = "  ├── ";
     pub(super) const LAST: &str = "  └── ";
-
-    /// What a widget puts on screen, one string per row.
-    pub(super) fn drawn<W: Widget>(widget: W, width: u16, height: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
-        terminal
-            .draw(|frame| frame.render_widget(widget, frame.area()))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
-    }
-
-    /// One row of what a widget puts on screen, in runs of a single
-    /// foreground colour. `drawn` reads symbols only and cannot see a colour
-    /// at all, so a test about which spans a colour reaches asks here.
-    pub(super) fn painted<W: Widget>(widget: W, width: u16) -> Vec<(String, Color)> {
-        let mut terminal = Terminal::new(TestBackend::new(width, 1)).expect("a test backend");
-        terminal
-            .draw(|frame| frame.render_widget(widget, frame.area()))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-
-        let mut runs: Vec<(String, Color)> = Vec::new();
-        for x in 0..width {
-            let cell = &buffer[(x, 0)];
-            match runs.last_mut() {
-                Some((said, colour)) if *colour == cell.fg => said.push_str(cell.symbol()),
-                _ => runs.push((cell.symbol().to_string(), cell.fg)),
-            }
-        }
-        runs
-    }
 
     /// A row says these words.
     ///
@@ -442,17 +409,20 @@ mod tests {
 
     #[test]
     fn a_note_leaves_its_box_drawing_in_the_terminals_own_colour() {
-        let painted = painted(
+        let painted = Painted::of(
             fitted(
                 &under(LAST, Content::Note(Note::Dangling(2))),
                 0,
                 &at_rest(),
             ),
             96,
-        );
+            1,
+        )
+        .row(0);
 
-        assert_eq!(painted[0], (LAST.to_string(), Color::Reset));
-        assert_eq!(painted[1].1, LOOK_AT_THIS);
+        assert_eq!(painted[0].said, LAST);
+        assert_eq!(painted[0].style.fg, Some(Color::Reset));
+        assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS));
     }
 
     /// A note's count is a count of beads, and the word is what says so. It
@@ -461,7 +431,7 @@ mod tests {
     /// the number alone green.
     #[test]
     fn a_note_names_the_beads_the_tracker_stopped_at() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             fitted(
                 &under(LAST, Content::Note(Note::Truncated(1))),
                 0,
@@ -469,7 +439,8 @@ mod tests {
             ),
             96,
             1,
-        );
+        )
+        .rows();
 
         says(
             &drawn[0],
@@ -482,14 +453,16 @@ mod tests {
     /// — so it is drawn plain, in one colour the whole way across.
     #[test]
     fn the_line_for_an_empty_forest_is_drawn_in_the_terminals_own_colour() {
-        let painted = painted(
+        let painted = Painted::of(
             fitted(&under("", Content::Note(Note::NoRoots)), 0, &at_rest()),
             96,
-        );
+            1,
+        )
+        .row(0);
 
         assert_eq!(painted.len(), 1, "{painted:?}");
-        assert_eq!(painted[0].1, Color::Reset);
-        assert!(!painted[0].0.contains(WARNING), "{painted:?}");
+        assert_eq!(painted[0].style.fg, Some(Color::Reset));
+        assert!(!painted[0].said.contains(WARNING), "{painted:?}");
     }
 
     // ---- the whole frame -------------------------------------------------
@@ -571,7 +544,7 @@ mod tests {
         forest
     }
 
-    pub(super) fn frame_of(forest: &Forest, width: u16, height: u16) -> Vec<String> {
+    pub(super) fn frame_of(forest: &Forest, width: u16, height: u16) -> Painted {
         frame_collecting(forest, None, width, height)
     }
 
@@ -582,7 +555,7 @@ mod tests {
         collecting: Option<&Wanted>,
         width: u16,
         height: u16,
-    ) -> Vec<String> {
+    ) -> Painted {
         frame_with(forest, &[], collecting, width, height)
     }
 
@@ -592,25 +565,18 @@ mod tests {
         collecting: Option<&Wanted>,
         width: u16,
         height: u16,
-    ) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
-        terminal
-            .draw(|frame| {
-                draw(
-                    frame,
-                    frame.area(),
-                    forest,
-                    at_startup,
-                    collecting,
-                    drawn_at(),
-                    A_KEY_ROW,
-                )
-            })
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
+    ) -> Painted {
+        Painted::drawn_by(width, height, |frame| {
+            draw(
+                frame,
+                frame.area(),
+                forest,
+                at_startup,
+                collecting,
+                drawn_at(),
+                A_KEY_ROW,
+            );
+        })
     }
 
     /// The whole screen, character for character: five rows of forest, four of
@@ -624,7 +590,7 @@ mod tests {
         ));
 
         assert_eq!(
-            frame_of(&forest, 60, 10),
+            frame_of(&forest, 60, 10).rows(),
             vec![
                 "▾ summit-works  ✓ 30s ago                                0/3",
                 "  └── ◐ nix-9670s  lift the ground station               0/3",
@@ -649,7 +615,7 @@ mod tests {
         let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
 
         assert_eq!(
-            frame_with(&forest, &[Notice::NoInboundChannel], None, 80, 10),
+            frame_with(&forest, &[Notice::NoInboundChannel], None, 80, 10).rows(),
             vec![
                 "▾ summit-works  ✓ 30s ago                                                    0/3",
                 "  └── ◐ nix-9670s  lift the ground station                                   0/3",
@@ -671,7 +637,7 @@ mod tests {
     #[test]
     fn a_narrow_frame_cuts_every_row_and_wraps_none() {
         let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
-        let frame = frame_of(&forest, 24, 10);
+        let frame = frame_of(&forest, 24, 10).rows();
 
         assert_eq!(
             frame[..4].to_vec(),
@@ -702,11 +668,42 @@ mod tests {
                 Content::Project(line) => line.project.clone(),
                 other => panic!("unexpected line under the selection: {other:?}"),
             };
-            let frame = frame_of(&forest, 60, 10);
+            let frame = frame_of(&forest, 60, 10).rows();
 
             assert!(
                 frame.iter().any(|row| row.contains(&said)),
                 "{motion:?} put line {at} ({said}) off screen: {frame:?}"
+            );
+        }
+    }
+
+    /// Which row the cursor is on, and only that one.
+    ///
+    /// `Fitted::selected` reverses the row's whole style and moves not one
+    /// word, so nothing in the symbols says where the cursor is: a frame that
+    /// drew every row selected but the selected one reads the same as a
+    /// correct one.
+    #[test]
+    fn the_row_under_the_cursor_is_the_only_one_drawn_reversed() {
+        let mut forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        forest.apply(Action::Move(Motion::FirstRow));
+        forest.apply(Action::Move(Motion::NextRow));
+        let selected = forest.selected_line();
+        let lines = forest.lines().len();
+
+        let frame = frame_of(&forest, 60, 10);
+
+        for at in 0..lines {
+            let reversed = frame
+                .row(at)
+                .iter()
+                .all(|run| run.style.add_modifier.contains(Modifier::REVERSED));
+
+            assert_eq!(
+                reversed,
+                at == selected,
+                "row {at} of {lines}, cursor on {selected}: {:?}",
+                frame.row(at)
             );
         }
     }
@@ -723,7 +720,7 @@ mod tests {
             vec![pane("wCM:p9", PaneStatus::Working)],
             HerdrState::Ok,
         ));
-        let frame = frame_of(&forest, 77, 4);
+        let frame = frame_of(&forest, 77, 4).rows();
 
         assert_eq!(
             frame[..2],
@@ -747,7 +744,7 @@ mod tests {
             Vec::new(),
             HerdrState::Ok,
         ));
-        let frame = frame_of(&forest, 90, 5);
+        let frame = frame_of(&forest, 90, 5).rows();
         // The project's own line wears the warning too — one of its roots
         // would not read, which is what this fixture is — so the root is
         // found by the warning and its own id together.

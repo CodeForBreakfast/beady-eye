@@ -260,7 +260,7 @@ mod tests {
         let counts = counts(8, 21, 3, 3);
 
         assert_eq!(
-            drawn(line(&project("summit-works", counts), OPEN), 40, 1),
+            Painted::of(line(&project("summit-works", counts), OPEN), 40, 1).rows(),
             vec!["▾ summit-works       8/21  3 agents  ⚠ 3"]
         );
     }
@@ -273,7 +273,7 @@ mod tests {
         let counts = counts(2, 7, 0, 0);
 
         assert_eq!(
-            drawn(line(&project("homelab", counts), SHUT), 30, 1),
+            Painted::of(line(&project("homelab", counts), SHUT), 30, 1).rows(),
             vec!["▸ homelab                  2/7"]
         );
     }
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn one_agent_is_not_described_in_the_plural() {
         let counts = counts(2, 7, 1, 0);
-        let drawn = drawn(line(&project("homelab", counts), SHUT), 40, 1);
+        let drawn = Painted::of(line(&project("homelab", counts), SHUT), 40, 1).rows();
 
         assert!(drawn[0].ends_with("2/7  1 agent"), "{drawn:?}");
     }
@@ -300,7 +300,7 @@ mod tests {
         };
         let counts = Counts::over(&[claimed]);
 
-        let drawn = drawn(line(&project("orbital", counts), OPEN), 40, 1);
+        let drawn = Painted::of(line(&project("orbital", counts), OPEN), 40, 1).rows();
 
         says(&drawn[0], &format!("{WARNING} 1"));
         does_not_say(&drawn[0], "agent");
@@ -324,7 +324,7 @@ mod tests {
             complete: true,
         });
 
-        let drawn = drawn(line(&recovering, OPEN), 60, 1);
+        let drawn = Painted::of(line(&recovering, OPEN), 60, 1).rows();
 
         assert!(drawn[0].ends_with("2/7  ◍ wCM:p9 working"), "{drawn:?}");
     }
@@ -336,7 +336,7 @@ mod tests {
         let counts = counts(8, 21, 3, 3);
 
         assert_eq!(
-            drawn(line(&project("summit-works", counts), OPEN), 10, 1),
+            Painted::of(line(&project("summit-works", counts), OPEN), 10, 1).rows(),
             vec!["▾ nixos-c…"]
         );
     }
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn a_cut_is_counted_in_columns_and_never_lands_inside_a_glyph() {
         let name = "→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→";
-        let drawn = drawn(line(&project(name, counts(0, 1, 0, 0)), OPEN), 20, 1);
+        let drawn = Painted::of(line(&project(name, counts(0, 1, 0, 0)), OPEN), 20, 1).rows();
 
         assert_eq!(drawn[0].chars().count(), 20);
         assert!(!drawn[0].contains('\u{fffd}'), "{drawn:?}");
@@ -366,7 +366,7 @@ mod tests {
         );
 
         assert_eq!(
-            drawn(line, 60, 1),
+            Painted::of(line, 60, 1).rows(),
             vec!["▾ summit-works  ✓ 30s ago                8/21  3 agents  ⚠ 3"]
         );
     }
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn the_cell_says_a_mark_and_an_age_in_every_state_and_nothing_after_it_moves() {
         let said = |mark| {
-            drawn(
+            Painted::of(
                 line_that_is(
                     &project("summit-works", counts(8, 21, 0, 0)),
                     half_a_minute_old(mark),
@@ -393,6 +393,7 @@ mod tests {
                 60,
                 1,
             )
+            .rows()
             .remove(0)
         };
 
@@ -420,11 +421,12 @@ mod tests {
         };
 
         assert_eq!(
-            drawn(
+            Painted::of(
                 line_that_is(&project("summit-works", counts(0, 0, 0, 0)), starting),
                 60,
                 1
-            ),
+            )
+            .rows(),
             vec!["▾ summit-works  ⠴                                           "]
         );
     }
@@ -443,7 +445,8 @@ mod tests {
             Some(&Wanted::Project("summit-works".to_string())),
             74,
             12,
-        );
+        )
+        .rows();
 
         says(&frame[0], "⠴ 30s ago");
         says(project_row(&frame, "harbour"), "✓ 30s ago");
@@ -455,7 +458,7 @@ mod tests {
     fn a_collection_over_everything_marks_every_project() {
         let forest = opened(&two_projects());
 
-        let frame = frame_collecting(&forest, Some(&Wanted::Everything), 74, 12);
+        let frame = frame_collecting(&forest, Some(&Wanted::Everything), 74, 12).rows();
 
         says(&frame[0], "⠴ 30s ago");
         says(project_row(&frame, "harbour"), "⠴ 30s ago");
@@ -475,7 +478,7 @@ mod tests {
         ));
         snapshot.collected.clone_from(&snapshot.trees);
 
-        let frame = frame_of(&opened(&snapshot), 74, 12);
+        let frame = frame_of(&opened(&snapshot), 74, 12).rows();
 
         says(project_row(&frame, "harbour"), "⚠ 30s ago");
         says(&frame[0], "✓ 30s ago");
@@ -493,7 +496,7 @@ mod tests {
     #[test]
     fn a_narrow_project_line_gives_up_the_whole_cell_before_its_counts() {
         let with_a_cell = |width| {
-            drawn(
+            Painted::of(
                 line_that_is(
                     &project("summit-works", counts(8, 21, 3, 3)),
                     half_a_minute_old(Mark::Read),
@@ -501,6 +504,7 @@ mod tests {
                 width,
                 1,
             )
+            .rows()
         };
 
         assert_eq!(
@@ -511,11 +515,12 @@ mod tests {
         for narrow in [45, 40] {
             assert_eq!(
                 with_a_cell(narrow),
-                drawn(
+                Painted::of(
                     line(&project("summit-works", counts(8, 21, 3, 3)), OPEN),
                     narrow,
                     1
-                ),
+                )
+                .rows(),
                 "at {narrow} columns the cell costs the line nothing"
             );
         }
@@ -532,14 +537,15 @@ mod tests {
     #[test]
     fn a_cell_with_no_room_for_it_is_dropped_whole_rather_than_cut_or_halved() {
         assert_eq!(
-            drawn(
+            Painted::of(
                 line_that_is(
                     &project("summit-works", counts(8, 21, 3, 3)),
                     half_a_minute_old(Mark::Read),
                 ),
                 45,
                 1
-            ),
+            )
+            .rows(),
             vec!["▾ summit-works            8/21  3 agents  ⚠ 3"]
         );
     }
@@ -551,17 +557,19 @@ mod tests {
     #[test]
     fn how_fresh_a_project_is_is_drawn_dim_so_the_counts_keep_the_eye() {
         let dim = |mark, said: &str| {
-            let painted = painted(
+            let painted = Painted::of(
                 line_that_is(
                     &project("summit-works", counts(8, 21, 0, 0)),
                     half_a_minute_old(mark),
                 ),
                 60,
-            );
+                1,
+            )
+            .row(0);
             assert!(
                 painted
                     .iter()
-                    .any(|(drawn, colour)| drawn.contains(said) && *colour == Color::DarkGray),
+                    .any(|run| run.said.contains(said) && run.style.fg == Some(Color::DarkGray)),
                 "{said:?} is not dim: {painted:?}"
             );
         };
@@ -580,24 +588,26 @@ mod tests {
     /// of fact whether the collection came back whole or not.
     #[test]
     fn a_mark_saying_a_root_refused_wears_the_colour_that_asks_to_be_looked_at() {
-        let painted = painted(
+        let painted = Painted::of(
             line_that_is(
                 &project("summit-works", counts(8, 21, 0, 0)),
                 half_a_minute_old(Mark::Refused),
             ),
             60,
-        );
+            1,
+        )
+        .row(0);
 
         assert!(
             painted
                 .iter()
-                .any(|(said, colour)| said.contains(WARNING) && *colour == LOOK_AT_THIS),
+                .any(|run| run.said.contains(WARNING) && run.style.fg == Some(LOOK_AT_THIS)),
             "{painted:?}"
         );
         assert!(
             painted
                 .iter()
-                .any(|(said, colour)| said.contains("30s ago") && *colour == Color::DarkGray),
+                .any(|run| run.said.contains("30s ago") && run.style.fg == Some(Color::DarkGray)),
             "{painted:?}"
         );
     }
@@ -616,8 +626,8 @@ mod tests {
         let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
         let root = &forest.lines()[1];
 
-        let painted = painted(fitted(root, 12, &at_rest()), 60);
-        let drawn = drawn(fitted(root, 12, &at_rest()), 60, 1);
+        let painted = Painted::of(fitted(root, 12, &at_rest()), 60, 1).row(0);
+        let drawn = Painted::of(fitted(root, 12, &at_rest()), 60, 1).rows();
 
         assert!(
             drawn[0].contains(&format!(
@@ -627,9 +637,10 @@ mod tests {
             "{drawn:?}"
         );
         assert!(
-            painted.iter().any(|(said, colour)| said
-                .contains(row::status_glyph(&Status::InProgress))
-                && Some(*colour) == status_colour(&Status::InProgress)),
+            painted.iter().any(
+                |run| run.said.contains(row::status_glyph(&Status::InProgress))
+                    && run.style.fg == status_colour(&Status::InProgress)
+            ),
             "{painted:?}"
         );
     }
@@ -645,7 +656,7 @@ mod tests {
             "nix-9670s",
             TrackerState::Unreachable(TrackerFailure::Unavailable),
         );
-        let drawn = drawn(unread_line(&unread, LAST, 9), 60, 1);
+        let drawn = Painted::of(unread_line(&unread, LAST, 9), 60, 1).rows();
 
         says(&drawn[0], "nix-9670s");
         says(&drawn[0], "the tracker did not answer");
@@ -656,7 +667,7 @@ mod tests {
     #[test]
     fn an_unread_root_never_shows_a_count_it_could_not_read() {
         let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
-        let drawn = drawn(unread_line(&unread, LAST, 9), 120, 1);
+        let drawn = Painted::of(unread_line(&unread, LAST, 9), 120, 1).rows();
 
         does_not_say(&drawn[0], "0/0");
     }
@@ -666,11 +677,12 @@ mod tests {
     /// anyway is still a root on the screen, which is the whole point.
     #[test]
     fn a_root_with_no_row_and_no_reason_still_says_it_is_there() {
-        let drawn = drawn(
+        let drawn = Painted::of(
             unread_line(&unread("nix-9670s", TrackerState::Ok), LAST, 9),
             90,
             1,
-        );
+        )
+        .rows();
 
         says(&drawn[0], "nix-9670s");
         says(&drawn[0], "this root drew no rows, and nothing said why");
@@ -687,11 +699,12 @@ mod tests {
         ];
 
         assert_eq!(
-            drawn(
+            Painted::of(
                 line(&recovering("summit-works", &panes, true), NO_FOLD),
                 80,
                 1
-            ),
+            )
+            .rows(),
             vec![
                 "  summit-works                                  ◍ wCM:p9 working · ◍ wCM:p6 idle"
                     .to_string()
@@ -701,7 +714,7 @@ mod tests {
 
     #[test]
     fn a_project_with_no_pane_to_show_says_that_rather_than_nothing() {
-        let drawn = drawn(line(&recovering("summit-works", &[], true), OPEN), 120, 1);
+        let drawn = Painted::of(line(&recovering("summit-works", &[], true), OPEN), 120, 1).rows();
 
         says(&drawn[0], "no live pane names this project");
     }
@@ -713,16 +726,18 @@ mod tests {
     fn a_pane_list_that_may_be_short_says_so_rather_than_reading_as_complete() {
         let panes = [pane("wCM:p9", PaneStatus::Working)];
 
-        let whole = drawn(
+        let whole = Painted::of(
             line(&recovering("summit-works", &panes, true), OPEN),
             200,
             1,
-        );
-        let partial = drawn(
+        )
+        .rows();
+        let partial = Painted::of(
             line(&recovering("summit-works", &panes, false), OPEN),
             200,
             1,
-        );
+        )
+        .rows();
 
         does_not_say(&whole[0], "and possibly more");
         says(
@@ -736,7 +751,7 @@ mod tests {
     #[test]
     fn a_narrow_unread_root_keeps_the_root_over_the_reason() {
         let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
-        let drawn = drawn(unread_line(&unread, LAST, 9), 24, 1);
+        let drawn = Painted::of(unread_line(&unread, LAST, 9), 24, 1).rows();
 
         says(&drawn[0], "nix-9670s");
         assert_eq!(drawn[0].chars().count(), 24);

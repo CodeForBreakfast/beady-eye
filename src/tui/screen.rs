@@ -423,13 +423,12 @@ mod tests {
     use crate::tui::fixtures::{a_snapshot, atlas, ferry};
     use crate::tui::keys::BINDINGS;
     use crate::view::bindings::bindings_window;
+    use crate::view::painted::Painted;
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
     use chrono::Utc;
-    use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::widgets::Block;
-    use ratatui::Terminal;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
@@ -438,13 +437,14 @@ mod tests {
     /// anything the window failed to clear survives into the assertion.
     fn window_inner(width: u16, height: u16) -> Vec<String> {
         let mut forest = forest::flatten(&a_grove(30));
-        let screen = painted(
+        let screen = screen_of(
             &mut forest,
             &Tail::Silent("nothing to tail"),
             width,
             height,
             Showing::Bindings,
-        );
+        )
+        .rows();
         let inner =
             Block::bordered().inner(bindings_window(Rect::new(0, 0, width, height), &bindings()));
 
@@ -523,13 +523,14 @@ mod tests {
         for height in [8, 24] {
             let window = bindings_window(Rect::new(0, 0, 80, height), &bindings());
             let mut forest = forest::flatten(&a_grove(30));
-            let screen = painted(
+            let screen = screen_of(
                 &mut forest,
                 &Tail::Silent("nothing to tail"),
                 80,
                 height,
                 Showing::Bindings,
-            );
+            )
+            .rows();
 
             assert!(
                 screen[window.y as usize].contains("Key bindings · press any key to close"),
@@ -546,8 +547,8 @@ mod tests {
     fn the_forest_is_still_drawn_around_the_bindings_window() {
         let mut forest = forest::flatten(&a_grove(30));
         let tail = Tail::Silent("nothing to tail");
-        let alone = painted(&mut forest, &tail, 80, 24, Showing::Forest);
-        let over = painted(&mut forest, &tail, 80, 24, Showing::Bindings);
+        let alone = screen_of(&mut forest, &tail, 80, 24, Showing::Forest).rows();
+        let over = screen_of(&mut forest, &tail, 80, 24, Showing::Bindings).rows();
         let window = bindings_window(Rect::new(0, 0, 80, 24), &bindings());
 
         assert!(
@@ -637,13 +638,14 @@ mod tests {
     #[test]
     fn the_row_under_the_tail_is_drawn_whole_on_the_narrowest_screen() {
         let mut forest = an_open_grove(30);
-        let screen = painted(
+        let screen = screen_of(
             &mut forest,
             &Tail::Silent("nothing to tail"),
             40,
             24,
             Showing::Forest,
-        );
+        )
+        .rows();
 
         assert_eq!(
             screen.last().expect("a screen with rows on it").trim_end(),
@@ -725,21 +727,16 @@ mod tests {
         }
     }
 
-    fn painted(
+    fn screen_of(
         forest: &mut Forest,
         tail: &Tail,
         width: u16,
         height: u16,
         showing: Showing,
-    ) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
-        terminal
-            .draw(|frame| paint(frame, forest, tail, showing, &[], None, an_instant()))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
+    ) -> Painted {
+        Painted::drawn_by(width, height, |frame| {
+            paint(frame, forest, tail, showing, &[], None, an_instant());
+        })
     }
 
     /// Nothing on screen shows that `^D` moved by the wrong amount, so the
@@ -756,13 +753,14 @@ mod tests {
         );
 
         let mut forest = an_open_grove(30);
-        painted(
+        screen_of(
             &mut forest,
             &Tail::Silent("nothing to tail"),
             60,
             24,
             Showing::Forest,
-        );
+        )
+        .rows();
         forest.apply(Action::Move(Motion::HalfScreenDown));
 
         assert_eq!(
@@ -1047,13 +1045,14 @@ mod tests {
     /// different hat, and only the rows show the difference.
     fn forest_band(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
         let bands = draw::regions(Rect::new(0, 0, width, height));
-        let rows = painted(
+        let rows = screen_of(
             &mut shown.forest,
             &shown.tail,
             width,
             height,
             Showing::Forest,
-        );
+        )
+        .rows();
         rows[..bands.forest.height as usize].to_vec()
     }
 
@@ -1396,7 +1395,7 @@ mod tests {
             lines: vec!["rebuilt .#thinkpad".to_string()],
         };
 
-        let rows = painted(&mut forest, &tail, 40, 12, Showing::Forest);
+        let rows = screen_of(&mut forest, &tail, 40, 12, Showing::Forest).rows();
         let bands = draw::regions(Rect::new(0, 0, 40, 12));
 
         assert!(
