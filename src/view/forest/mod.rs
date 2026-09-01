@@ -205,8 +205,8 @@ impl Forest {
             Action::CollapseOrParent => self.collapse_or_parent(),
             Action::ExpandOrChild => self.expand_or_child(),
             Action::ToggleFold => self.toggle_fold(),
-            Action::ExpandAll => self.fold_all(true),
-            Action::CollapseAll => self.fold_all(false),
+            Action::ExpandSubtree => self.fold_subtree(true),
+            Action::CollapseSubtree => self.fold_subtree(false),
             Action::RestoreDefault => self.folds.clear(),
             Action::ToggleFilter => self.toggle_filter(),
             Action::Focus | Action::ShowBindings | Action::Refresh | Action::Quit => return false,
@@ -223,21 +223,36 @@ impl Forest {
         self.snapshot = snapshot::refilter(&self.snapshot, next);
     }
 
-    /// `E` and `C`: point every fold in the forest, at every depth, one way.
+    /// `E` and `C`: point every fold in the selected node's subtree, at every
+    /// depth, one way.
+    ///
+    /// The subtree and not the forest, because a reader who has navigated to
+    /// one project, or to one bead with a deep subtree, is asking about that
+    /// and would lose their place among rows they never asked to see. `D` is
+    /// the key that still speaks for the whole forest.
     ///
     /// Opening a node draws children that were not there to be enumerated, so
-    /// the whole forest is opened a level at a time until a draw turns up
-    /// nothing left shut. Shutting goes the same way round first: a fold the
-    /// reader cannot see is still a fold, and one left open under a shut
-    /// parent would spring its subtree back the moment that parent was opened
-    /// again.
+    /// the subtree is opened a level at a time until a draw turns up nothing
+    /// left shut. Shutting goes the same way round first: a fold the reader
+    /// cannot see is still a fold, and one left open under a shut parent
+    /// would spring its subtree back the moment that parent was opened again.
+    /// That opening walk is scoped as well as the shutting one, or `C` on a
+    /// node would throw the rest of the forest open on the way past.
+    ///
+    /// The scope is named once and reused, because the walk redraws between
+    /// passes and a line's place in the draw moves under it. It is a handle
+    /// rather than a bead, so a bead reachable more than once puts only the
+    /// way down the selection took inside the scope.
     ///
     /// The walks draw without laying out, because `apply` tells the loop
     /// whether the screen moved by comparing against the lines its own
     /// lay-out displaced — one in here would leave it comparing the new lines
     /// with themselves.
-    fn fold_all(&mut self, open: bool) {
-        self.fold_all_in(self.rounds_to_settle(), open);
+    fn fold_subtree(&mut self, open: bool) {
+        let Some(scope) = self.handle_at(self.selected) else {
+            return;
+        };
+        self.fold_subtree_in(&scope, self.rounds_to_settle(), open);
     }
 
     /// The rounds a forest of this size can need, counted off the snapshot
@@ -255,7 +270,9 @@ impl Forest {
     /// the round that finds nothing left to point.
     ///
     /// Generous on purpose: a level too many costs one draw that finds
-    /// nothing, a level too few stops a walk that was still working.
+    /// nothing, a level too few stops a walk that was still working. Which is
+    /// also what lets a walk over one subtree take it — a count for the whole
+    /// snapshot is loose there and still an upper bound.
     ///
     /// Counted off the snapshot, and off nothing a fold or a drawn line
     /// says, so it still counts out where the walk is wrong about what it
@@ -270,27 +287,29 @@ impl Forest {
         2 * beads + 2
     }
 
-    /// Point every fold at `open`, in at most `rounds` of them.
+    /// Point every fold in `scope`'s subtree at `open`, in at most `rounds`
+    /// of them.
     ///
     /// A walk that runs out has set a fold and drawn it again unchanged,
-    /// which is a defect: the forest is left at the level it reached, and
+    /// which is a defect: the subtree is left at the level it reached, and
     /// the folds it never got to are drawn shut like any other, so the
     /// screen still says truthfully which way every fold points.
-    fn fold_all_in(&mut self, rounds: usize, open: bool) {
+    fn fold_subtree_in(&mut self, scope: &Handle, rounds: usize, open: bool) {
         for _ in 0..rounds {
-            if !self.point_every_drawn_fold(true) {
+            if !self.point_every_drawn_fold(scope, true) {
                 break;
             }
         }
         if !open {
-            self.point_every_drawn_fold(false);
+            self.point_every_drawn_fold(scope, false);
         }
     }
 
-    /// Point every fold on a drawn line at `open`, reporting whether any of
-    /// them was pointing the other way.
-    fn point_every_drawn_fold(&mut self, open: bool) -> bool {
-        let pointed: Vec<Handle> = layout::draw(&self.snapshot, &self.folds)
+    /// Point every fold drawn in `scope`'s subtree at `open`, reporting
+    /// whether any of them was pointing the other way.
+    fn point_every_drawn_fold(&mut self, scope: &Handle, open: bool) -> bool {
+        let drawn = layout::draw(&self.snapshot, &self.folds);
+        let pointed: Vec<Handle> = subtree_of(&drawn, scope)
             .iter()
             .filter(|line| line.folded == Some(!open))
             .filter_map(handle_of)
@@ -493,6 +512,30 @@ impl Forest {
         }
         self.locate(place).is_some()
     }
+}
+
+/// The line `scope` names, and everything drawn beneath it.
+///
+/// Beneath is depth: the lines after it, up to the first one standing at its
+/// own depth or shallower. A project is depth zero, the roots under it are
+/// one, and a group's things are one under a group that is also zero, so the
+/// scope of a project stops at the next project or the first group.
+///
+/// Nothing at all where `scope` is not drawn, which leaves the walk with no
+/// fold to point and stops it.
+fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
+    let Some(at) = drawn
+        .iter()
+        .position(|line| handle_of(line).as_ref() == Some(scope))
+    else {
+        return &[];
+    };
+    let depth = drawn[at].depth;
+    let end = drawn[at + 1..]
+        .iter()
+        .position(|line| line.depth <= depth)
+        .map_or(drawn.len(), |past| at + 1 + past);
+    &drawn[at..end]
 }
 
 #[cfg(test)]
@@ -3588,7 +3631,7 @@ credential_command = "secret harbour"
             ]);
             let mut forest = flatten(&alone("orbital", json, &staffed));
             four_columns_a_level(&forest);
-            forest.apply(Action::ExpandAll);
+            forest.apply(Action::ExpandSubtree);
             four_columns_a_level(&forest);
         }
     }
@@ -3775,7 +3818,7 @@ credential_command = "secret harbour"
     /// what it holds.
     #[test]
     fn the_fold_keys_on_a_forest_with_nothing_in_it_leave_it_saying_so() {
-        for action in [Action::ExpandAll, Action::CollapseAll] {
+        for action in [Action::ExpandSubtree, Action::CollapseSubtree] {
             let mut forest = flatten(&only(Collected::default(), &[]));
 
             assert!(!forest.apply(action), "{:#?}", sketch(&forest));
@@ -3954,11 +3997,11 @@ credential_command = "secret harbour"
     /// first level it opened. Tower is a spine four deep with nothing live
     /// in it, so every level below the header is a fold no reader could see.
     #[test]
-    fn expand_all_reaches_a_fold_that_was_not_drawn_when_it_was_pressed() {
+    fn expanding_reaches_a_fold_that_was_not_drawn_when_it_was_pressed() {
         let mut forest = flatten(&tower_staffed(&[]));
         assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
 
-        forest.apply(Action::ExpandAll);
+        forest.apply(Action::ExpandSubtree);
 
         assert_eq!(
             drawn_beads(&forest),
@@ -3976,15 +4019,16 @@ credential_command = "secret harbour"
     }
 
     /// A walk that runs out of rounds leaves the folds it never reached, so a
-    /// forest that will not settle disagrees with the key that was pressed
+    /// subtree that will not settle disagrees with the key that was pressed
     /// instead of never coming back. Tower is a spine four deep, and one
     /// round reaches the level it drew and no further.
     #[test]
     fn a_walk_out_of_rounds_leaves_the_folds_it_did_not_reach() {
         let mut forest = flatten(&tower_staffed(&[]));
         assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
+        let scope = forest.handle_at(forest.selected).expect("a selected line");
 
-        forest.fold_all_in(1, true);
+        forest.fold_subtree_in(&scope, 1, true);
         forest.lay_out();
 
         assert_eq!(
@@ -3995,39 +4039,138 @@ credential_command = "secret harbour"
         );
     }
 
+    /// The lines the selection stands over, and itself: everything from it to
+    /// the first line drawn shallower than it is.
+    ///
+    /// Read off the screen rather than asked of the forest, so a walk that
+    /// pointed the folds of the wrong lines is answered by the drawing and
+    /// not by the same reckoning that misplaced them.
+    fn from_the_selection_down(forest: &Forest) -> impl Iterator<Item = &Line> {
+        let at = forest.selected_line();
+        let depth = forest.lines()[at].depth;
+        forest.lines()[at..]
+            .iter()
+            .take_while(move |line| line.depth >= depth)
+    }
+
+    /// Six shapes of tree, each of them the one tree of its project, so the
+    /// root the selection opens on stands over every fold that tree has.
     #[test]
-    fn expand_all_leaves_no_fold_shut() {
+    fn expanding_from_a_root_leaves_no_fold_shut_under_it() {
         for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
             let mut forest = flatten(&alone("orbital", json, &two_panes()));
-            forest.apply(Action::ExpandAll);
+            forest.apply(Action::ExpandSubtree);
 
             assert!(
-                forest.lines().iter().all(|line| line.folded != Some(false)),
+                from_the_selection_down(&forest).all(|line| line.folded != Some(false)),
                 "{:#?}",
                 sketch(&forest)
             );
         }
     }
 
+    /// The mirror, and the project's own line is what says where the scope
+    /// stopped: `C` shuts the root it was pressed on and everything that root
+    /// stands over, and leaves the project above it as the reader had it.
     #[test]
-    fn collapse_all_leaves_no_fold_open() {
+    fn collapsing_from_a_root_shuts_it_and_leaves_the_project_above_it_open() {
         for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
             let mut forest = flatten(&alone("orbital", json, &two_panes()));
-            forest.apply(Action::CollapseAll);
+            forest.apply(Action::CollapseSubtree);
 
             assert!(
-                forest.lines().iter().all(|line| line.folded != Some(true)),
+                from_the_selection_down(&forest).all(|line| line.folded != Some(true)),
+                "{:#?}",
+                sketch(&forest)
+            );
+            assert_eq!(
+                forest.lines()[0].folded,
+                Some(true),
                 "{:#?}",
                 sketch(&forest)
             );
         }
     }
 
-    /// Put the selection on a bead and fold it, the way a reader would with
+    /// A run is the one line whose fold draws lines that are not its own
+    /// children by any other reckoning, so it is the one where opening the
+    /// scope could plausibly lose it. It does not: the run keeps its line
+    /// when it opens, and the beads it stood for hang a level under it.
+    #[test]
+    fn a_run_keeps_its_scope_through_being_opened_and_shut_again() {
+        let mut forest = flatten(&snapshot());
+        select_run(&mut forest);
+        let shut = drawn_beads(&forest);
+
+        assert!(
+            forest.apply(Action::ExpandSubtree),
+            "{:#?}",
+            sketch(&forest)
+        );
+        let opened = drawn_beads(&forest);
+        assert!(
+            opened.len() > shut.len(),
+            "the run drew nothing when it opened: {:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            matches!(
+                forest.lines()[forest.selected_line()].content,
+                Content::Elided { .. }
+            ),
+            "the selection came off the run: {:#?}",
+            sketch(&forest)
+        );
+
+        assert!(
+            forest.apply(Action::CollapseSubtree),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        assert_eq!(drawn_beads(&forest), shut, "{:#?}", sketch(&forest));
+    }
+
+    /// A project's line takes the scope as a bead's does, and a project is
+    /// the widest thing a reader can press these keys on. The others keep
+    /// what they had, which is what a reader who navigated to one project is
+    /// asking for.
+    #[test]
+    fn collapsing_from_a_project_leaves_the_other_projects_where_they_were() {
+        let mut forest = flatten(&built(Filter::All));
+        forest.apply(Action::ExpandSubtree);
+        select_project(&mut forest, "orbital");
+        let elsewhere: Vec<String> = drawn_beads(&forest)
+            .into_iter()
+            .filter(|id| !id.starts_with("orb-"))
+            .collect();
+        assert!(
+            !elsewhere.is_empty(),
+            "nothing outside orbital to be left alone: {:#?}",
+            sketch(&forest)
+        );
+
+        forest.apply(Action::CollapseSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest)
+                .into_iter()
+                .filter(|id| !id.starts_with("orb-"))
+                .collect::<Vec<_>>(),
+            elsewhere,
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            !drawn_beads(&forest).iter().any(|id| id.starts_with("orb-")),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Put the selection on a project's own line, the way a reader would with
     /// the keys they have.
-    /// Collapse-all shuts a project like every other fold, so a test that
-    /// wants to look inside one opens it again first.
-    fn toggle_fold_of_project(forest: &mut Forest, project: &str) {
+    fn select_project(forest: &mut Forest, project: &str) {
         let at = forest
             .lines()
             .iter()
@@ -4036,15 +4179,146 @@ credential_command = "secret harbour"
             )
             .unwrap_or_else(|| panic!("{project} is not drawn: {:#?}", sketch(forest)));
         step_onto(forest, at);
-        forest.apply(Action::ToggleFold);
     }
 
-    fn toggle_fold_of(forest: &mut Forest, id: &str) {
+    /// Put the selection on a bead and fold it, the way a reader would with
+    /// the keys they have.
+    fn select_bead(forest: &mut Forest, id: &str) {
         let at = *lines_of(forest, id)
             .first()
             .unwrap_or_else(|| panic!("{id} is not drawn: {:#?}", sketch(forest)));
         step_onto(forest, at);
+    }
+
+    fn toggle_fold_of(forest: &mut Forest, id: &str) {
+        select_bead(forest, id);
         forest.apply(Action::ToggleFold);
+    }
+
+    /// `E` folds from the selected node, so a sibling subtree keeps whatever
+    /// the reader left it at. `tow-1.2` is shut here and stays shut, which is
+    /// the assertion that tells a scoped fold from a global one.
+    ///
+    /// The scope is a `Handle`, and a handle names the way down to a line
+    /// rather than the bead standing on it, so exactly one line carries it —
+    /// which is what stops a fold set inside the window from also reaching a
+    /// second copy of that bead outside it.
+    #[test]
+    fn expanding_from_a_node_leaves_a_sibling_subtree_where_it_was() {
+        let mut forest = flatten(&tower_staffed(&[]));
+        toggle_fold_of(&mut forest, "tow-1");
+        select_bead(&mut forest, "tow-1.1");
+
+        forest.apply(Action::ExpandSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `C` the same way round: `tow-1.1` shuts over its subtree, `tow-1.2`
+    /// keeps the one the reader opened, and the node the selection sits on
+    /// is shut rather than left open over shut children.
+    #[test]
+    fn collapsing_from_a_node_leaves_a_sibling_subtree_where_it_was() {
+        let mut forest = flatten(&tower_staffed(&[]));
+        forest.apply(Action::ExpandSubtree);
+        select_bead(&mut forest, "tow-1.1");
+
+        forest.apply(Action::CollapseSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2", "tow-1.2.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Collapsing opens the subtree first, so that every fold in it lands on
+    /// a drawn line and one pass can shut them all. That opening walk is
+    /// scoped too: a sibling the reader left shut is not thrown open on the
+    /// way past and shut again a frame later.
+    ///
+    /// `tow-1.2` rests shut here and is never selected, so a walk that opened
+    /// the forest and narrowed only the shutting pass would leave `tow-1.2.1`
+    /// on screen.
+    #[test]
+    fn collapsing_from_a_node_does_not_open_a_sibling_on_the_way() {
+        let mut forest = flatten(&tower_staffed(&[]));
+        toggle_fold_of(&mut forest, "tow-1");
+        toggle_fold_of(&mut forest, "tow-1.1");
+        select_bead(&mut forest, "tow-1.1");
+
+        forest.apply(Action::CollapseSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `E` on a shut node opens the node itself and not only what hangs
+    /// beneath it, which is the ordinary case for `E`: a key that opened only
+    /// the children of a node the reader cannot see inside would leave the
+    /// screen exactly as it found it.
+    #[test]
+    fn expanding_from_a_shut_node_opens_that_node_too() {
+        let mut forest = flatten(&tower_staffed(&[]));
+        toggle_fold_of(&mut forest, "tow-1");
+        select_bead(&mut forest, "tow-1.2");
+        assert_eq!(
+            forest.fold_at(forest.selected_line()),
+            Some(false),
+            "the node this is about has to start shut: {:#?}",
+            sketch(&forest)
+        );
+
+        assert!(
+            forest.apply(Action::ExpandSubtree),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2", "tow-1.2.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A row carrying no fold has nothing drawn beneath it — a note, an
+    /// unread root, a thing in a group and a leaf bead are all of them — so
+    /// the scope taken from such a row is the row alone, and both keys find
+    /// nothing to point. The screen does not move and nothing is said.
+    ///
+    /// The implication runs one way only. A fold with nothing under it is
+    /// ordinary: a project waiting on its first collection draws a header
+    /// that folds over no trees at all.
+    #[test]
+    fn the_fold_keys_on_a_row_with_no_fold_leave_the_screen_where_it_was() {
+        for action in [Action::ExpandSubtree, Action::CollapseSubtree] {
+            let mut forest = flatten(&tower_staffed(&[]));
+            forest.apply(Action::ExpandSubtree);
+            select_bead(&mut forest, "tow-1.1.1.1");
+            assert_eq!(
+                forest.fold_at(forest.selected_line()),
+                None,
+                "the row this is about has to carry no fold: {:#?}",
+                sketch(&forest)
+            );
+            let before = sketch(&forest);
+
+            assert!(!forest.apply(action), "{action:?}: {:#?}", sketch(&forest));
+
+            assert_eq!(sketch(&forest), before, "{action:?}");
+        }
     }
 
     /// A fold shut over another fold hides it without settling it, so
@@ -4053,15 +4327,15 @@ credential_command = "secret harbour"
     /// from a forest they were told was collapsed.
     ///
     /// `tow-1.1` is shut by hand first, which puts `tow-1.1.1` out of sight
-    /// still resting open over the agent beneath it. Collapse-all has to
-    /// reach it there.
+    /// still resting open over the agent beneath it. `C` from the root above
+    /// has to reach it there.
     #[test]
-    fn collapse_all_shuts_a_fold_the_reader_cannot_see() {
+    fn collapsing_shuts_a_fold_the_reader_cannot_see() {
         let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
         toggle_fold_of(&mut forest, "tow-1.1");
+        select_bead(&mut forest, "tow-1");
 
-        forest.apply(Action::CollapseAll);
-        toggle_fold_of_project(&mut forest, "orbital");
+        forest.apply(Action::CollapseSubtree);
         toggle_fold_of(&mut forest, "tow-1");
         toggle_fold_of(&mut forest, "tow-1.1");
 
@@ -4084,7 +4358,7 @@ credential_command = "secret harbour"
     #[test]
     fn restoring_the_default_recomputes_it_rather_than_replaying_the_old_one() {
         let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
-        forest.apply(Action::CollapseAll);
+        forest.apply(Action::CollapseSubtree);
         forest.refresh(&tower_staffed(&["tow-1.2.1"]));
 
         forest.apply(Action::RestoreDefault);
@@ -4099,7 +4373,7 @@ credential_command = "secret harbour"
     /// rule: it survives a refresh that brings nothing new beneath it.
     #[test]
     fn the_folds_these_keys_set_survive_a_refresh() {
-        for action in [Action::ExpandAll, Action::CollapseAll] {
+        for action in [Action::ExpandSubtree, Action::CollapseSubtree] {
             let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
             forest.apply(action);
             let before = sketch(&forest);
@@ -4110,11 +4384,11 @@ credential_command = "secret harbour"
         }
     }
 
-    /// No fold `bdi` chooses hides a live agent. Collapse-all is the one
-    /// place a reader may override that, because they asked for it by name —
-    /// and restoring the default is how they get the agent back.
+    /// No fold `bdi` chooses hides a live agent. `C` is the one place a
+    /// reader may override that, because they asked for it by name — and
+    /// restoring the default is how they get the agent back.
     #[test]
-    fn collapse_all_may_shut_a_fold_over_a_live_agent_because_the_reader_asked() {
+    fn collapsing_may_shut_a_fold_over_a_live_agent_because_the_reader_asked() {
         let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
         let staffed = "tow-1.1.1.1".to_string();
         assert!(
@@ -4123,7 +4397,7 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
 
-        forest.apply(Action::CollapseAll);
+        forest.apply(Action::CollapseSubtree);
         assert!(
             !drawn_beads(&forest).contains(&staffed),
             "{:#?}",
@@ -4144,8 +4418,8 @@ credential_command = "secret harbour"
     #[test]
     fn the_fold_keys_leave_the_filter_where_the_reader_put_it() {
         for action in [
-            Action::ExpandAll,
-            Action::CollapseAll,
+            Action::ExpandSubtree,
+            Action::CollapseSubtree,
             Action::RestoreDefault,
         ] {
             let mut forest = flatten(&built(Filter::LiveAgents));
@@ -4173,13 +4447,21 @@ credential_command = "secret harbour"
         assert_eq!(sketch(&forest), before);
     }
 
-    /// `apply` reports whether the screen moved, and a forest already open
+    /// `apply` reports whether the screen moved, and a subtree already open
     /// has nowhere to go. The loop redraws on that answer.
     #[test]
-    fn expand_all_on_a_forest_already_open_moves_nothing() {
+    fn expanding_from_a_node_already_open_moves_nothing() {
         let mut forest = flatten(&tower_staffed(&[]));
 
-        assert!(forest.apply(Action::ExpandAll), "{:#?}", sketch(&forest));
-        assert!(!forest.apply(Action::ExpandAll), "{:#?}", sketch(&forest));
+        assert!(
+            forest.apply(Action::ExpandSubtree),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            !forest.apply(Action::ExpandSubtree),
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 }

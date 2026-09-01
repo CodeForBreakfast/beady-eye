@@ -97,14 +97,14 @@ pub(super) const BINDINGS: &[Binding] = &[
     },
     Binding {
         keys: &[alone(KeyCode::Char('E'), "E")],
-        action: Action::ExpandAll,
-        does: "expand every node",
+        action: Action::ExpandSubtree,
+        does: "expand the selected node and everything under it",
         hint: None,
     },
     Binding {
         keys: &[alone(KeyCode::Char('C'), "C")],
-        action: Action::CollapseAll,
-        does: "collapse every node",
+        action: Action::CollapseSubtree,
+        does: "collapse the selected node and everything under it",
         hint: None,
     },
     Binding {
@@ -141,13 +141,13 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
-        keys: &[ctrl('d', "^D")],
+        keys: &[ctrl('d', "^D"), alone(KeyCode::PageDown, "PgDn")],
         action: Action::Move(Motion::HalfScreenDown),
         does: "move down half a screen",
         hint: None,
     },
     Binding {
-        keys: &[ctrl('u', "^U")],
+        keys: &[ctrl('u', "^U"), alone(KeyCode::PageUp, "PgUp")],
         action: Action::Move(Motion::HalfScreenUp),
         does: "move up half a screen",
         hint: None,
@@ -255,8 +255,8 @@ pub(super) mod tests {
             Action::CollapseOrParent,
             Action::ExpandOrChild,
             Action::ToggleFold,
-            Action::ExpandAll,
-            Action::CollapseAll,
+            Action::ExpandSubtree,
+            Action::CollapseSubtree,
             Action::RestoreDefault,
             Action::ToggleFilter,
             Action::Focus,
@@ -278,8 +278,8 @@ pub(super) mod tests {
                 Action::CollapseOrParent
                 | Action::ExpandOrChild
                 | Action::ToggleFold
-                | Action::ExpandAll
-                | Action::CollapseAll
+                | Action::ExpandSubtree
+                | Action::CollapseSubtree
                 | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::Focus
@@ -362,6 +362,8 @@ pub(super) mod tests {
                 key(KeyCode::Backspace),
                 key(KeyCode::Home),
                 key(KeyCode::End),
+                key(KeyCode::PageUp),
+                key(KeyCode::PageDown),
             ]);
 
         for pressed in swept {
@@ -392,6 +394,8 @@ pub(super) mod tests {
             (key(KeyCode::Char('G')), Action::Move(Motion::LastRow)),
             (control('d'), Action::Move(Motion::HalfScreenDown)),
             (control('u'), Action::Move(Motion::HalfScreenUp)),
+            (key(KeyCode::PageDown), Action::Move(Motion::HalfScreenDown)),
+            (key(KeyCode::PageUp), Action::Move(Motion::HalfScreenUp)),
             (key(KeyCode::Char(' ')), Action::ToggleFold),
             (key(KeyCode::Enter), Action::Focus),
             (key(KeyCode::Char('a')), Action::ToggleFilter),

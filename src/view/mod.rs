@@ -55,10 +55,10 @@ pub enum Action {
     /// expanded.
     ExpandOrChild,
     ToggleFold,
-    /// Expand every node in the forest, at every depth.
-    ExpandAll,
-    /// Collapse every node in the forest, at every depth.
-    CollapseAll,
+    /// Expand the selected node and everything under it, at every depth.
+    ExpandSubtree,
+    /// Collapse the selected node and everything under it, at every depth.
+    CollapseSubtree,
     /// Let go of every fold set by hand, so the forest rests as `bdi` would
     /// have drawn it for the snapshot it is holding now.
     RestoreDefault,
