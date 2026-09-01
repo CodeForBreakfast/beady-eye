@@ -86,10 +86,13 @@ named in config and drawn as badges; `bdi` never learns what they mean.
 
 ## Telling `bdi` a project changed
 
-`bdi` polls, and almost every poll is wasted. One refresh of one project runs a
-credential command, discovery, `bd ready`, `bd blocked_by`, a `parent_of` per
-discovered bead and a `dep_tree` per root — dozens of round trips to a remote
-Dolt server, repeated for every project, and nearly always finding nothing has
+`bdi` polls, and almost every poll is wasted. One refresh of one project
+captures the environment its tracker is read in, then asks `bd` for the beads
+discovery starts from, what is ready, what is blocked, the ephemeral beads and
+every bead there is — seven processes before a row is read, plus one per
+metadata key roots are discovered by and one per bead the climb to a root
+steps onto that discovery did not name. That is repeated for every project,
+most of it against a remote Dolt server, and nearly always finds nothing has
 moved.
 
 So `bdi` listens. Anything that already knows a tracker changed can say so, and
