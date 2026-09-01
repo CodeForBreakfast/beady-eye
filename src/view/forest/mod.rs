@@ -562,6 +562,18 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// A second root, nobody working in it either, holding a bead that waits
+    /// on a row the tracker never returned. Whichever project files it, the
+    /// tree is hidden with a finding still in it.
+    const SLIPWAY: &str = r#"[
+      {"id":"hbr-9","title":"re-deck the slipway","status":"open",
+       "priority":2,"issue_type":"epic"},
+      {"id":"hbr-9.1","title":"strip the planking","status":"open",
+       "dependencies":[{"depends_on_id":"hbr-9","type":"parent-child"},
+                       {"depends_on_id":"hbr-4","type":"blocks"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// A tree whose run of finished siblings has a finished run of its own, so
     /// an opened run still has something left to count inside it. Three at each
     /// level, which is what it takes to make a run.
@@ -3303,15 +3315,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let forest = flatten(&snapshot);
-        let group = forest
-            .lines()
-            .iter()
-            .find_map(|line| match line.content {
-                Content::Group(group) if group.kind == GroupKind::HiddenTrees => Some(group),
-                _ => None,
-            })
-            .expect("harbour is hidden");
+        let group = hidden_trees_group(&flatten(&snapshot));
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 1);
@@ -3319,18 +3323,58 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_hidden_tree_with_nothing_wrong_in_it_is_only_counted_as_hidden() {
-        let forest = flatten(&snapshot());
-        let group = forest
+        let group = hidden_trees_group(&flatten(&snapshot()));
+
+        assert_eq!(group.count, 1);
+        assert_eq!(group.with_findings, 0);
+    }
+
+    /// A hidden tree's findings are the ones in its own tree. Harbour hides
+    /// two roots and only the slipway has anything wrong in it, so a match
+    /// that asked the project alone would report the channel as hiding a
+    /// finding that is not in it.
+    #[test]
+    fn a_hidden_tree_does_not_take_a_finding_from_another_root_in_its_project() {
+        let snapshot = gather(
+            vec![tree_of("harbour", HARBOUR), tree_of("harbour", SLIPWAY)],
+            Vec::new(),
+            Filter::LiveAgents,
+        );
+
+        let group = hidden_trees_group(&flatten(&snapshot));
+
+        assert_eq!(group.count, 2);
+        assert_eq!(group.with_findings, 1);
+    }
+
+    /// Bead ids are numbered per tracker and the trackers do not coordinate,
+    /// so two projects can each hold a root called `hbr-3` and they are
+    /// different beads. A match that asked the root alone would report
+    /// harbour as hiding the finding that is in orbital's.
+    #[test]
+    fn a_hidden_tree_does_not_take_a_finding_from_the_same_root_in_another_project() {
+        let colliding = edited(SLIPWAY, "hbr-9", "hbr-3");
+        let snapshot = gather(
+            vec![tree_of("harbour", HARBOUR), tree_of("orbital", &colliding)],
+            Vec::new(),
+            Filter::LiveAgents,
+        );
+
+        let group = hidden_trees_group(&flatten(&snapshot));
+
+        assert_eq!(group.count, 2);
+        assert_eq!(group.with_findings, 1);
+    }
+
+    fn hidden_trees_group(forest: &Forest) -> Group {
+        forest
             .lines()
             .iter()
             .find_map(|line| match line.content {
                 Content::Group(group) if group.kind == GroupKind::HiddenTrees => Some(group),
                 _ => None,
             })
-            .expect("harbour is hidden");
-
-        assert_eq!(group.count, 1);
-        assert_eq!(group.with_findings, 0);
+            .expect("the filter hid a tree")
     }
 
     /// Only a hidden tree takes findings out of the forest with it. Every
