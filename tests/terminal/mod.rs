@@ -40,6 +40,13 @@ use std::process::{Child, Command};
 pub const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 
 /// A pty: the end the test reads, and the end `bdi` draws on.
+///
+/// The master stays with whoever calls this, which is what decides who can
+/// hang the pty up: it hangs up when the last *master* handle closes, so a
+/// spawner whose child inherited a copy can never hang up on it. End of file
+/// on the master is a different question with a different answer — it arrives
+/// when the last *slave* handle closes, and every one of those is `bdi`'s own
+/// stdio, so a read here sees no end of file while `bdi` is alive.
 pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
     let mut ours = 0;
     let mut theirs = 0;
@@ -61,6 +68,16 @@ pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
         },
         0,
         "a pty is ours to open"
+    );
+    // `openpty` hands back a master with no close-on-exec, and `Command`
+    // closes only the fds it opened itself, so without this every `bdi` the
+    // suite spawns inherits a handle to the terminal it is the far end of.
+    // The slave is left as it comes: the child holds three dups of it as its
+    // stdio anyway, so a fourth copy is one more handle that dies with it.
+    assert_eq!(
+        unsafe { libc::fcntl(ours, libc::F_SETFD, libc::FD_CLOEXEC) },
+        0,
+        "the master is ours to keep to ourselves"
     );
     unsafe {
         (
@@ -96,11 +113,17 @@ pub fn own_the_terminal(spawned_by: u32) -> std::io::Result<()> {
 /// Every harness here reaps its `bdi` from `Drop`, and a test binary that is
 /// killed runs no `Drop`. Nothing outside the process can pick up after it:
 /// the `setsid` above gives the child a session and a process group of its
-/// own, so a killer working by process group never sees it, and the child
-/// inherits a copy of the pty master, so closing the spawner's copy is no
-/// hangup either. Left to itself the child outlives everything and keeps
-/// whatever it bound, which is how `bdi` processes came to hold the inbound
-/// socket for a whole afternoon.
+/// own, so a killer working by process group never sees it. Left to itself
+/// the child outlives everything and keeps whatever it bound, which is how
+/// `bdi` processes came to hold the inbound socket for a whole afternoon.
+///
+/// The pty hanging up is not a second answer to that. `a_pty` keeps the
+/// master to the spawner, so a spawner that dies does hang the pty up — but
+/// what that reaps the child by is `bdi`'s own `SIGHUP` handling, which is
+/// product code. These leaks happen under mutation, where product code is
+/// precisely what is being changed, so a guarantee resting on it is not one.
+/// This arming is done before the exec and depends on nothing a mutant can
+/// reach, which is why it holds whatever else does.
 ///
 /// Linux only, because a parent-death signal is. On a system without one the
 /// `Drop` is all there is.
