@@ -25,29 +25,43 @@ const CLOSED: Color = Color::Rgb(128, 144, 160);
 pub(super) const DIM: Color = Color::Rgb(108, 118, 128);
 
 /// The top of the brightness scale, and the one tier `bd list` could not
-/// draw: a row a live agent is on. Named rather than literal because it is
-/// `bdi`'s own and should follow the reader's terminal, not `bd`'s palette.
-const STAFFED: Color = Color::White;
+/// draw: a row a live agent is on. It is the terminal's own foreground, not a
+/// brighter colour, because a theme's default is already the brightest thing
+/// on its page and nothing can sit above it — `color15` and the default
+/// resolve to one hex on the theme this was measured against, and a staffed
+/// row painted `White` was indistinguishable from an unworked one. So the
+/// scale is shifted down from here rather than extended up.
+const STAFFED: Color = Color::Reset;
+
+/// Nobody on it and still going. One rung below the terminal's default, at
+/// the theme's colour 8, which every theme sets and few rows on the page
+/// otherwise use. Named rather than literal so it follows the reader's
+/// terminal, not `bd`'s palette.
+const UNSTAFFED: Color = Color::DarkGray;
 
 /// How live a row is, which is the one thing about a bead `bd list` has no
 /// way to know — and so the one this scale is spent on.
 ///
 /// | row | drawn |
 /// |---|---|
-/// | an agent is on it | brighter than the page |
-/// | nobody on it, still going | the terminal's default |
+/// | an agent is on it | the terminal's default |
+/// | nobody on it, still going | the theme's colour 8 |
 /// | finished, nobody on it | the grey `bd` dims a closed row to |
 ///
 /// Finished means what it means to `lines::split`: closed, no agent, no
 /// anomaly. A closed bead whose pane is still alive is exactly the row worth
 /// looking at, and dimming it is how it would be missed.
 pub(super) fn tone(row: &Row) -> Style {
-    if row.agent.is_some() {
-        return Style::new().fg(STAFFED);
-    }
     let finished = row.status.is_closed() && row.agent.is_none() && row.anomalies.is_none();
+    let tier = if row.agent.is_some() {
+        STAFFED
+    } else if finished {
+        DIM
+    } else {
+        UNSTAFFED
+    };
 
-    fg(finished.then_some(DIM))
+    Style::new().fg(tier)
 }
 
 /// The colour a bead's status is drawn in.
@@ -88,6 +102,7 @@ mod tests {
     use crate::view::draw::bead::{bead_line, elided_run};
     use crate::view::draw::project::project_line;
     use crate::view::draw::tests::*;
+    use crate::view::painted::Run;
     use crate::view::row::{self, AGENT, WARNING};
 
     // ---- styling ---------------------------------------------------------
@@ -170,22 +185,28 @@ mod tests {
 
     /// `bd` sends no escape at all for an open bead's glyph, and inheriting is
     /// what lets the row's own brightness reach it. A glyph pinned to the
-    /// terminal's default would leave a staffed row reading as two colours.
+    /// terminal's default would leave an unworked row reading as two colours.
     #[test]
     fn an_open_glyph_takes_the_brightness_of_the_row_it_sits_on() {
-        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
-        staffed.agent = Some(a_pane());
+        let unworked = node("nix-9670s.1", "a bead", Status::Open);
 
-        let painted = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 90, 1).row(0);
+        let painted = Painted::of(bead_line(&row(&unworked), BRANCH, 3), 90, 1).row(0);
 
         assert!(painted[1].said.starts_with('○'), "{painted:?}");
-        assert_eq!(painted[1].style.fg, Some(Color::White), "{painted:?}");
+        assert_eq!(painted[1].style.fg, Some(Color::DarkGray), "{painted:?}");
     }
 
     /// The tier that earns the screen. `bd list` has no notion of a live
     /// agent, so it has no way to say which row is the one you came for.
+    ///
+    /// The staffed row is the terminal's own foreground and the unworked one
+    /// sits below it, rather than the other way up: a theme's default is
+    /// already the brightest thing on its page, so there is nothing above it
+    /// for a staffed row to be painted — on the theme this was measured on,
+    /// `color15` and the default resolve to the same hex, and the two tiers
+    /// were one. The scale is shifted down instead of extended up.
     #[test]
-    fn a_row_with_an_agent_on_it_is_drawn_brighter_than_one_without() {
+    fn a_row_with_an_agent_on_it_is_the_terminals_own_and_one_without_falls_below_it() {
         let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
 
@@ -201,13 +222,26 @@ mod tests {
         )
         .row(0);
 
-        assert_eq!(bright[1].style.fg, Some(Color::White), "{bright:?}");
-        assert_eq!(plain.len(), 1, "{plain:?}");
         assert_eq!(
-            plain[0].style.fg,
+            the_words(&bright).style.fg,
             Some(Color::Reset),
-            "nobody on it, so the whole line is the terminal's own"
+            "an agent on it, so the row is the terminal's own: {bright:?}"
         );
+        assert_eq!(
+            the_words(&plain).style.fg,
+            Some(Color::DarkGray),
+            "nobody on it, so the row drops to the theme's colour 8: {plain:?}"
+        );
+    }
+
+    /// The run a row's own words are drawn in. Found by what it says rather
+    /// than where it falls, because a staffed row's box-drawing shares its
+    /// style and merges into it while an unworked row's stands apart.
+    fn the_words(painted: &[Run]) -> &Run {
+        painted
+            .iter()
+            .find(|run| run.said.contains("a bead"))
+            .expect("the title is drawn")
     }
 
     /// What `bd` already does to a closed row, arrived at from the other
@@ -247,11 +281,12 @@ mod tests {
 
         let painted = Painted::of(bead_line(&row(&alive), BRANCH, 3), 110, 1).row(0);
 
-        assert_eq!(painted[2].style.fg, Some(Color::White), "{painted:?}");
+        assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
     }
 
     /// Finished means what it means in `lines::split` — closed, no agent, no
     /// anomaly — so an anomaly alone is enough to keep a row out of the dim.
+    /// Nobody is on it, so it takes the middle tier, not the top.
     #[test]
     fn a_closed_bead_with_an_anomaly_against_it_is_not_dimmed() {
         let mut odd = node("nix-9670s.1", "a bead", Status::Closed);
@@ -259,7 +294,7 @@ mod tests {
 
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 110, 1).row(0);
 
-        assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
+        assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
     }
 
     /// The box-drawing says how the tree is shaped, not how a bead is going,
@@ -269,12 +304,13 @@ mod tests {
     fn the_box_drawing_a_row_hangs_under_never_takes_the_rows_brightness() {
         let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
+        let unworked = node("nix-9670s.1", "a bead", Status::Open);
         let finished = node("nix-9670s.1", "a bead", Status::Closed);
 
-        for bead in [staffed, finished] {
+        for bead in [staffed, unworked, finished] {
             let painted = Painted::of(bead_line(&row(&bead), BRANCH, 3), 90, 1).row(0);
 
-            assert_eq!(painted[0].said, BRANCH, "{painted:?}");
+            assert!(painted[0].said.starts_with(BRANCH), "{painted:?}");
             assert_eq!(painted[0].style.fg, Some(Color::Reset), "{painted:?}");
         }
     }

@@ -1258,9 +1258,16 @@ would place it under a root it does not belong to.
 
 **Three tiers of brightness say how live a row is**, which is the one thing
 about a bead `bd list` has no way to know and so the one thing this scale is
-spent on: an agent on it draws brighter than the page; nobody on it and still
-going keeps the terminal's default; finished and unworked takes the grey `bd`
-dims a closed row to, and a run dims with the rows it stands for. Finished
+spent on: an agent on it keeps the terminal's default foreground; nobody on it
+and still going drops to the theme's colour 8; finished and unworked takes the
+grey `bd` dims a closed row to, and a run dims with the rows it stands for.
+The scale runs down from the default rather than up from it because a theme's
+default is already the brightest thing on its page and nothing can sit above
+it: the first version painted a staffed row `White`, and on a theme where
+`color15` and the foreground are the same hex — the one it was built on — the
+top two tiers were one. Colour 8 is the rung every theme sets and few rows
+otherwise use, so the middle tier follows the reader's theme rather than a
+hardcoded grey; the cost, accepted, is that every ordinary row dims. Finished
 here means what it means to a run — closed, no agent, no anomaly — so a closed
 bead whose pane is still alive keeps its brightness, because that is exactly
 the row worth looking at. The box-drawing is held at the terminal's default
@@ -1273,8 +1280,8 @@ the rest, so a terminal with no colour loses nothing.
 has exactly two colour-carrying channels — the glyph carries the status,
 matching `bd`, and the row's own text carries how live it is — and priority as
 a hue wants the second one. The two cannot share it: a P1 bead with an agent on
-it would be either `bd`'s orange or bright white, and whichever won, the other
-fact would be gone. Liveness is the one only `bdi` can draw.
+it would be either `bd`'s orange or the terminal's default, and whichever won,
+the other fact would be gone. Liveness is the one only `bdi` can draw.
 
 **The state block, right-aligned, in this order:** the fraction where the line
 stands for more than itself; the agent; the anomalies; then, on a line shut
