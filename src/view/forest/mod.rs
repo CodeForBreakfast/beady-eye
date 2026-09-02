@@ -3334,6 +3334,31 @@ credential_command = "secret harbour"
         assert_eq!(group.with_findings, 0);
     }
 
+    /// What the group says of the trees it hides was settled when the filter
+    /// hid them. A count that had to go back to `collected` for it would
+    /// cost every press a walk over the whole forest, and a forest of
+    /// thousands of hidden trees was paying half its keystroke for that.
+    #[test]
+    fn the_hidden_trees_group_does_not_go_back_to_the_collected_trees_for_its_count() {
+        let broken = edited(
+            HARBOUR,
+            r#"{"depends_on_id":"hbr-3","type":"parent-child"}"#,
+            r#"{"depends_on_id":"hbr-3","type":"parent-child"},
+                       {"depends_on_id":"hbr-9","type":"blocks"}"#,
+        );
+        let mut snapshot = gather(
+            vec![tree_of("orbital", ORBITAL), tree_of("harbour", &broken)],
+            Vec::new(),
+            Filter::LiveAgents,
+        );
+        snapshot.collected.clear();
+
+        let group = hidden_trees_group(&flatten(&snapshot));
+
+        assert_eq!(group.count, 1);
+        assert_eq!(group.with_findings, 1);
+    }
+
     /// A hidden tree's findings are the ones in its own tree. Harbour hides
     /// two roots and only the slipway has anything wrong in it, so a match
     /// that asked the project alone would report the channel as hiding a

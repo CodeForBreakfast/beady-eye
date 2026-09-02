@@ -320,7 +320,7 @@ impl Layout<'_> {
                 content: Content::Group(Group {
                     kind,
                     count: items.len(),
-                    with_findings: with_findings(self.snapshot, &items),
+                    with_findings: with_findings(&items),
                 }),
             });
             if !open {
@@ -401,20 +401,12 @@ fn children_entries<'a>(tree: &'a Tree, at: usize, above: &[usize]) -> Vec<Child
     entries
 }
 
-/// The hidden trees whose findings went with them. `collected` still holds
-/// every tree that was read, shown or hidden, so what the filter took out
-/// of the forest is still countable here.
-fn with_findings(snapshot: &Snapshot, items: &[Item]) -> usize {
+/// The hidden trees whose findings went with them, which the filter noted
+/// on each as it hid it.
+fn with_findings(items: &[Item]) -> usize {
     items
         .iter()
-        .filter(|item| match item {
-            Item::Hidden(hidden) => snapshot
-                .collected
-                .iter()
-                .filter(|tree| tree.project == hidden.project && tree.root == hidden.root)
-                .any(|tree| !notes_of(tree).is_empty()),
-            _ => false,
-        })
+        .filter(|item| matches!(item, Item::Hidden(hidden) if hidden.findings))
         .count()
 }
 

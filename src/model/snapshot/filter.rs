@@ -83,6 +83,7 @@ pub(super) fn partition(
                 root: t.root.clone(),
                 title: t.title.clone(),
                 reason: "no-live-agent",
+                findings: !t.dangling.is_empty() || !t.cycles.is_empty(),
             })
             .collect(),
     )
@@ -296,9 +297,31 @@ mod tests {
                 root: "orb-2".to_string(),
                 title: "quiet work".to_string(),
                 reason: "no-live-agent",
+                findings: false,
             }],
             "a filtered tree is reported, never dropped"
         );
+    }
+
+    /// A hidden tree's findings leave the forest with it, and the group that
+    /// holds it admits to them. That is settled here, once, as the tree is
+    /// hidden: the view asks the hidden tree and never the forest.
+    #[test]
+    fn a_hidden_tree_waiting_on_a_bead_bd_never_returned_has_a_finding() {
+        let mut waiting = quiet("orb-2", "quiet work");
+        waiting.dangling = vec!["orb-2.9".to_string()];
+        let snap = snapshot(vec![tree(), waiting]);
+
+        assert!(snap.hidden_trees[0].findings);
+    }
+
+    #[test]
+    fn a_hidden_tree_blocked_by_its_own_forebear_has_a_finding() {
+        let mut looping = quiet("orb-2", "quiet work");
+        looping.cycles = vec!["orb-2".to_string()];
+        let snap = snapshot(vec![tree(), looping]);
+
+        assert!(snap.hidden_trees[0].findings);
     }
 
     /// `fleet-launch` makes a pane and boots for some time before the agent
