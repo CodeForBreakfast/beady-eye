@@ -43,13 +43,9 @@ const BEING_READ: &[u8] = "reading that pane".as_bytes();
 /// so the group the key below aims at.
 ///
 /// Waited for rather than the screen falling quiet, and waited for rather
-/// than the first frame. Two things have to have happened before a key means
-/// what these tests need it to mean: the terminal has to be in raw mode, so
-/// the key is passed on rather than held by the line discipline until a
-/// newline that never comes; and the collection has to have come back, so
-/// there is a pane row to land on. `bdi` opens its screen before its first
-/// collection returns, so the first frame satisfies only the first of those
-/// and this line satisfies both.
+/// than the first frame: the collection has to have come back before the key
+/// below has a pane row to land on, and `bdi` opens its screen before its
+/// first collection returns.
 const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
 /// One word of what the shimmed herdr says is on the pane, from
 /// `ShimmedHerdr`, and a word that is on the screen nowhere else.

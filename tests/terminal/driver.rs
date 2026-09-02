@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
-use super::{a_pty, bdi_on};
+use super::{a_pty, bdi_on, ENTER_ALTERNATE_SCREEN};
 
 /// Long enough that a wait reaching it means something is wrong, and short
 /// enough that a suite hitting it still finishes. Never asserted against:
@@ -116,7 +116,24 @@ impl Driven {
 
     /// Type at `bdi`, and mark the place in what it has said so far, so its
     /// answer can be told from everything that came before.
+    ///
+    /// Refused until the alternate screen has been read. Before `bdi` puts
+    /// the terminal into raw mode the pty's line discipline holds a key until
+    /// a newline that never comes, so a key typed then is not answered late
+    /// but never, and a test waiting for the answer waits its whole deadline
+    /// to say that nothing arrived. `bdi` enters raw mode and then opens the
+    /// screen, so the screen on the wire is the line discipline out of the
+    /// way — and a test that has waited for anything drawn after it has read
+    /// it too.
     pub fn send(&mut self, keys: &[u8]) -> Mark {
+        assert!(
+            super::contains(&self.everything(), ENTER_ALTERNATE_SCREEN),
+            "typed {:?} before bdi had opened its screen, when the line \
+             discipline would hold it and nothing would answer. Wait for \
+             `ENTER_ALTERNATE_SCREEN` first, or for anything drawn after it. {}",
+            String::from_utf8_lossy(keys),
+            self.timeline()
+        );
         let at = Mark(self.said.len());
         let mut terminal = self.as_file();
         terminal.write_all(keys).expect("the terminal takes keys");
