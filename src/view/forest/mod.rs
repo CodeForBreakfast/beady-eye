@@ -552,7 +552,7 @@ mod tests {
     use crate::model::snapshot::{
         build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure, TrackerState,
     };
-    use crate::model::tree::{self, assemble, Assembled};
+    use crate::model::tree::{self, Assembled, Nesting};
     use crate::model::types::Pane;
     use crate::view::lines::{
         counts_beneath, marker, prefix, progress_of, run_size, split, way_below, Group, Item, Note,
@@ -980,7 +980,9 @@ credential_command = "secret harbour"
     fn assembled(json: &str) -> Assembled {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        assemble(beads, &root).expect("the rows assemble")
+        Nesting::of(&beads)
+            .assemble(&root)
+            .expect("the rows assemble")
     }
 
     fn panes() -> Vec<Pane> {

@@ -293,7 +293,7 @@ mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
-    use crate::model::tree::assemble;
+    use crate::model::tree::Nesting;
     use crate::model::types::Bead;
     use pretty_assertions::assert_eq;
 
@@ -339,7 +339,10 @@ mod tests {
     fn rows(json: &str) -> Vec<Bead> {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        assemble(beads, &root).expect("the rows assemble").beads
+        Nesting::of(&beads)
+            .assemble(&root)
+            .expect("the rows assemble")
+            .beads
     }
 
     /// The bodies of `herdr agent list`'s `agents` array, wrapped in its

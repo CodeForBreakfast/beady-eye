@@ -432,7 +432,7 @@ mod tests {
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
-    use crate::model::tree::{assemble, Assembled};
+    use crate::model::tree::{Assembled, Nesting};
     use crate::model::types::{Bead, Pane};
     use pretty_assertions::assert_eq;
 
@@ -507,7 +507,9 @@ render = "⏸ waiting"
     pub(super) fn assembled(json: &str) -> Assembled {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        assemble(beads, &root).expect("the rows assemble")
+        Nesting::of(&beads)
+            .assemble(&root)
+            .expect("the rows assemble")
     }
 
     pub(super) fn panes(json: &str) -> Vec<Pane> {

@@ -15,7 +15,7 @@ use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::config::{Config, Project};
 use crate::model::join;
 use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
-use crate::model::tree::{self, assemble, Assembled};
+use crate::model::tree::{Assembled, Nesting};
 use crate::model::types::{Bead, Pane};
 
 /// One project's roots in id order, each either read or unreadable.
@@ -203,14 +203,15 @@ fn read_project(
     // A root the answer does not hold is one config named: every other root
     // came out of the answer itself, so a tree cannot fail to assemble on
     // it.
+    let nesting = Nesting::of(&beads);
     let mut read: Vec<(String, Result<Assembled, RootUnread>)> = roots
         .into_iter()
         .map(|root| {
-            let read = assemble(beads.clone(), &root).map_err(|_| RootUnread::NotFound);
+            let read = nesting.assemble(&root).map_err(|_| RootUnread::NotFound);
             (root, read)
         })
         .collect();
-    read.extend(what_no_root_reached(&beads, &read));
+    read.extend(what_no_root_reached(&nesting, &read));
     read.sort_by(|(one, _), (two, _)| one.cmp(two));
 
     Ok((
@@ -237,7 +238,7 @@ fn read_project(
 /// Which is why `drawn` filters the bead and not the top. A bead a tree
 /// already draws needs nothing standing up over it.
 fn what_no_root_reached(
-    beads: &[Bead],
+    nesting: &Nesting,
     read: &[(String, Result<Assembled, RootUnread>)],
 ) -> Vec<(String, Result<Assembled, RootUnread>)> {
     let drawn: BTreeSet<&str> = read
@@ -246,15 +247,17 @@ fn what_no_root_reached(
         .flat_map(|assembled| assembled.beads.iter().map(|bead| bead.id.as_str()))
         .collect();
 
-    let tops: BTreeSet<String> = tree::adrift(beads)
+    let tops: BTreeSet<String> = nesting
+        .adrift()
         .into_iter()
         .filter(|id| !drawn.contains(id.as_str()))
-        .flat_map(|id| tree::top_of(beads, &id))
+        .flat_map(|id| nesting.top_of(&id))
         .collect();
 
     tops.into_iter()
         .map(|id| {
-            let read = assemble(beads.to_vec(), &id)
+            let read = nesting
+                .assemble(&id)
                 .map_err(|_| RootUnread::Tracker(TrackerFailure::Parse));
             (id, read)
         })
@@ -377,6 +380,7 @@ mod tests {
     use crate::app::fixtures::*;
     use crate::app::run;
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
+    use crate::model::tree::nestings_on_this_thread;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -428,6 +432,39 @@ mod tests {
             })
             .collect();
         assert_eq!(listings, vec![spelled(TRACKER_CALL), spelled(WISP_CALL)]);
+    }
+
+    /// The same edges nest the same beads whichever root is walked, so one
+    /// read of a tracker reads them once, however many trees it draws from
+    /// them — three here: the discovered epic, a root only config names, and
+    /// the top of a component no root reached.
+    #[test]
+    fn one_read_nests_the_tracker_once_however_many_roots_it_draws() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+
+[roots.explicit]
+orbital = ["orb-4"]
+"#
+        ))
+        .expect("the config parses");
+        let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
+                        "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+                        "priority":2,"issue_type":"task"}]"#;
+        let runner = orbital()
+            .merging(&spelled(TRACKER_CALL), MAST_TREE)
+            .merging(&spelled(TRACKER_CALL), lost);
+
+        let before = nestings_on_this_thread();
+        let (work, _) = read_project(&runner, &cfg.projects[0], &cfg, &[], &Env::new())
+            .expect("the tracker answers every call");
+
+        let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-3", "orb-4", "orb-7"]);
+        assert_eq!(nestings_on_this_thread() - before, 1);
     }
 
     /// The whole point of the ancestor walk: an in-flight task is drawn as

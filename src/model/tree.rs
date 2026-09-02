@@ -51,7 +51,9 @@ pub struct Assembled {
     pub cycles: Vec<String>,
 }
 
-/// Order a flat set of bd rows into a tree under one root.
+/// What one answer's edges do, read once for every tree drawn from it: the
+/// same edges nest the same beads whichever root is being drawn, and an edge
+/// naming a bead the answer does not hold is gone from every tree alike.
 ///
 /// A bead's descendants are the things that must complete before it can, which
 /// beads says with two edge kinds running opposite ways: a parent cannot
@@ -59,217 +61,230 @@ pub struct Assembled {
 /// cannot finish until its blockers do, so a blocker sits under the bead it
 /// blocks. An edge kind beads may add later has no settled direction against
 /// completion, so it nests nothing.
-///
-/// So a bead has as many places as there are ways down to it, and is drawn at
-/// each — but it is held once, and each way down points at it. Depth is a
-/// property of a way down rather than of a bead, and is counted by whoever
-/// walks the tree rather than taken from bd, which flattens it under
-/// `--max-depth`.
-///
-/// Siblings sort by state, then priority, then id.
-pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
-    let by_id: BTreeMap<String, Bead> = beads.into_iter().map(|b| (b.id.clone(), b)).collect();
-    if !by_id.contains_key(root) {
-        bail!("bd's answer holds no bead {root} to draw a tree from");
-    }
-
-    let Nesting {
-        children,
-        waiting_on_the_absent,
-        ..
-    } = nesting(&by_id);
-
-    let ordered: BTreeMap<String, Vec<String>> = children
-        .into_iter()
-        .map(|(parent, kids)| {
-            let mut kids: Vec<String> = kids.into_iter().collect();
-            kids.sort_by(|a, b| {
-                let (a, b) = (&by_id[a], &by_id[b]);
-                a.status
-                    .rank()
-                    .cmp(&b.status.rank())
-                    .then(a.priority.cmp(&b.priority))
-                    .then_with(|| a.id.cmp(&b.id))
-            });
-            (parent, kids)
-        })
-        .collect();
-
-    let Reached {
-        order,
-        children,
-        looped,
-    } = reach(root, &ordered, &by_id);
-
-    // Only what this tree drew. A bead whose parent the tracker no longer
-    // holds is top of its own graph, and reporting it against a root that
-    // never reached it names it in every tree there is.
-    let dangling: Vec<String> = order
-        .iter()
-        .filter(|id| waiting_on_the_absent.contains(*id))
-        .cloned()
-        .collect();
-
-    // A walk that found no way back up found no loop to cut, and a tree
-    // with none is what most trees are — so saying where the loops are cut
-    // costs only the trees that have any.
-    let cycles = if looped {
-        cuts(&children)
-            .into_iter()
-            .map(|bead| order[bead].clone())
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let beads = order.iter().map(|id| by_id[id].clone()).collect();
-    Ok(Assembled {
-        beads,
-        children,
-        dangling,
-        cycles,
-    })
-}
-
-/// What the answer's edges do, asked once of the whole answer: the same edges
-/// nest the same beads whichever root is being drawn, and an edge naming a
-/// bead the answer does not hold is gone from every tree alike.
-struct Nesting {
-    /// Which beads sit under each bead.
-    children: BTreeMap<String, BTreeSet<String>>,
+pub struct Nesting<'a> {
+    by_id: BTreeMap<&'a str, &'a Bead>,
+    /// The beads beneath each bead, in render order: siblings sort by state,
+    /// then priority, then id.
+    children: BTreeMap<&'a str, Vec<&'a str>>,
     /// Beads naming a dependency the answer does not hold, of any kind.
-    waiting_on_the_absent: BTreeSet<String>,
+    waiting_on_the_absent: BTreeSet<&'a str>,
     /// Of those, the ones whose absent dependency would have placed them. An
     /// edge kind that nests nothing takes no place away by going missing.
-    lost_their_place: BTreeSet<String>,
+    lost_their_place: BTreeSet<&'a str>,
 }
 
-/// Read every edge in the answer once, in the one place that says which way
-/// each kind runs — so a kind beads adds later is answered here and nowhere
-/// else.
-fn nesting(by_id: &BTreeMap<String, Bead>) -> Nesting {
-    let mut found = Nesting {
-        children: BTreeMap::new(),
-        waiting_on_the_absent: BTreeSet::new(),
-        lost_their_place: BTreeSet::new(),
-    };
+#[cfg(test)]
+thread_local! {
+    static NESTINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
-    for bead in by_id.values() {
-        for edge in &bead.dependencies {
-            // Which bead this edge draws under which. An edge kind beads may
-            // add later has no settled direction against completion, so it
-            // nests nothing.
-            let nests: Option<(&String, &String)> = match edge.edge {
-                Edge::ParentChild => Some((&edge.on, &bead.id)),
-                Edge::Blocks => Some((&bead.id, &edge.on)),
-                Edge::Other(_) => None,
-            };
+/// How many times this thread has read an answer's edges, so a test can say
+/// what one read of a tracker costs.
+#[cfg(test)]
+pub(crate) fn nestings_on_this_thread() -> usize {
+    NESTINGS.with(std::cell::Cell::get)
+}
 
-            if by_id.contains_key(&edge.on) {
-                if let Some((over, under)) = nests {
-                    found
-                        .children
-                        .entry(over.clone())
-                        .or_default()
-                        .insert(under.clone());
+impl<'a> Nesting<'a> {
+    /// Read every edge in the answer once, in the one place that says which
+    /// way each kind runs — so a kind beads adds later is answered here and
+    /// nowhere else.
+    pub fn of(beads: &'a [Bead]) -> Self {
+        #[cfg(test)]
+        NESTINGS.with(|count| count.set(count.get() + 1));
+
+        let by_id: BTreeMap<&str, &Bead> = beads.iter().map(|b| (b.id.as_str(), b)).collect();
+        let mut children: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        let mut waiting_on_the_absent = BTreeSet::new();
+        let mut lost_their_place = BTreeSet::new();
+
+        for &bead in by_id.values() {
+            for edge in &bead.dependencies {
+                // Which bead this edge draws under which. An edge kind beads
+                // may add later has no settled direction against completion,
+                // so it nests nothing.
+                let nests: Option<(&'a str, &'a str)> = match edge.edge {
+                    Edge::ParentChild => Some((&edge.on, &bead.id)),
+                    Edge::Blocks => Some((&bead.id, &edge.on)),
+                    Edge::Other(_) => None,
+                };
+
+                if by_id.contains_key(edge.on.as_str()) {
+                    if let Some((over, under)) = nests {
+                        children.entry(over).or_default().insert(under);
+                    }
+                    continue;
                 }
+
+                waiting_on_the_absent.insert(bead.id.as_str());
+                // Only the end that would have hung *under* the absent bead
+                // lost anything by it going. A blocker the answer no longer
+                // holds would have been drawn beneath the bead waiting on it,
+                // and takes nothing away from where that bead itself is drawn.
+                if let Some((_, under)) = nests.filter(|(over, _)| *over == edge.on) {
+                    lost_their_place.insert(under);
+                }
+            }
+        }
+
+        let children = children
+            .into_iter()
+            .map(|(parent, kids)| {
+                let mut kids: Vec<&str> = kids.into_iter().collect();
+                kids.sort_by(|a, b| {
+                    let (a, b) = (by_id[a], by_id[b]);
+                    a.status
+                        .rank()
+                        .cmp(&b.status.rank())
+                        .then(a.priority.cmp(&b.priority))
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+                (parent, kids)
+            })
+            .collect();
+
+        Nesting {
+            by_id,
+            children,
+            waiting_on_the_absent,
+            lost_their_place,
+        }
+    }
+
+    /// Order the answer into a tree under one root.
+    ///
+    /// A bead has as many places as there are ways down to it, and is drawn
+    /// at each — but it is held once, and each way down points at it. Depth
+    /// is a property of a way down rather than of a bead, and is counted by
+    /// whoever walks the tree rather than taken from bd, which flattens it
+    /// under `--max-depth`.
+    pub fn assemble(&self, root: &str) -> anyhow::Result<Assembled> {
+        let Some((&root, _)) = self.by_id.get_key_value(root) else {
+            bail!("bd's answer holds no bead {root} to draw a tree from");
+        };
+
+        let Reached {
+            order,
+            children,
+            looped,
+        } = reach(root, &self.children, &self.by_id);
+
+        // Only what this tree drew. A bead whose parent the tracker no longer
+        // holds is top of its own graph, and reporting it against a root that
+        // never reached it names it in every tree there is.
+        let dangling: Vec<String> = order
+            .iter()
+            .filter(|id| self.waiting_on_the_absent.contains(*id))
+            .map(|id| id.to_string())
+            .collect();
+
+        // A walk that found no way back up found no loop to cut, and a tree
+        // with none is what most trees are — so saying where the loops are
+        // cut costs only the trees that have any.
+        let cycles = if looped {
+            cuts(&children)
+                .into_iter()
+                .map(|bead| order[bead].to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let beads = order.iter().map(|id| self.by_id[id].clone()).collect();
+        Ok(Assembled {
+            beads,
+            children,
+            dangling,
+            cycles,
+        })
+    }
+
+    /// The beads that lost the edge that would have placed them.
+    ///
+    /// A tree reports the beads it drew, so a bead no tree draws is a bead no
+    /// tree reports. Each of these is the evidence that the answer lost
+    /// something, and `top_of` says where a tree that reaches it starts.
+    pub fn adrift(&self) -> Vec<String> {
+        self.lost_their_place
+            .iter()
+            .map(|id| id.to_string())
+            .collect()
+    }
+
+    /// Where a tree that draws `id` has to start: climb every edge that still
+    /// nests it, and answer with the roots that put everything the climb
+    /// reached on the screen.
+    ///
+    /// This is how far the roots rule goes, and the line is that it goes
+    /// exactly as far as the damage. It climbs only from a bead the answer
+    /// left with no way down to it, so a component holding no such bead is
+    /// drawn only where discovery named a root in it — rules 1 to 4 still say
+    /// what unfinished work is. Stopping instead at "is anything nesting it"
+    /// left whole components off the screen: a bead that lost one placing
+    /// edge and kept another is nested, and the bead that kept it lost
+    /// nothing and so was never discovered either.
+    ///
+    /// A bead can hang under more than one, so this is a set rather than one
+    /// id.
+    pub fn top_of(&self, id: &str) -> Vec<String> {
+        let mut over: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (parent, kids) in &self.children {
+            for kid in kids {
+                over.entry(kid).or_default().push(parent);
+            }
+        }
+
+        let mut above: BTreeSet<&str> = BTreeSet::new();
+        let mut climbing: Vec<&str> = vec![id];
+        while let Some(reached) = climbing.pop() {
+            if !above.insert(reached) {
                 continue;
             }
+            climbing.extend(over.get(reached).into_iter().flatten());
+        }
 
-            found.waiting_on_the_absent.insert(bead.id.clone());
-            // Only the end that would have hung *under* the absent bead lost
-            // anything by it going. A blocker the answer no longer holds
-            // would have been drawn beneath the bead waiting on it, and takes
-            // nothing away from where that bead itself is drawn.
-            if let Some((_, under)) = nests.filter(|(over, _)| *over == &edge.on) {
-                found.lost_their_place.insert(under.clone());
+        // A bead nothing nests is where a tree starts, and a loop has no such
+        // bead — so where a loop is all that stands over something the climb
+        // reached, one of its own beads has to stand for it. Any of them
+        // draws the whole loop, `assemble` cutting it where it comes back
+        // round, so which one is arbitrary and has only to be the same every
+        // time. Adding one and asking again covers a component with more
+        // than one loop over it.
+        let mut tops: BTreeSet<&str> = above
+            .iter()
+            .copied()
+            .filter(|reached| !over.contains_key(reached))
+            .collect();
+        loop {
+            let drawn = under(tops.iter().copied(), &self.children);
+            let Some(&left) = above.iter().find(|reached| !drawn.contains(*reached)) else {
+                break;
+            };
+            tops.insert(left);
+        }
+
+        // And the fewest of them that still does. A bead added to reach a
+        // loop can turn out to sit under one added after it, and a tree that
+        // another tree already draws puts every bead in it on the screen
+        // twice.
+        for top in tops.clone() {
+            let without: BTreeSet<&str> =
+                tops.iter().copied().filter(|kept| *kept != top).collect();
+            let drawn = under(without.iter().copied(), &self.children);
+            if above.iter().all(|reached| drawn.contains(reached)) {
+                tops.remove(top);
             }
         }
+
+        tops.into_iter().map(str::to_string).collect()
     }
-
-    found
-}
-
-/// The beads that lost the edge that would have placed them.
-///
-/// A tree reports the beads it drew, so a bead no tree draws is a bead no tree
-/// reports. Each of these is the evidence that the answer lost something, and
-/// `top_of` says where a tree that reaches it starts.
-pub fn adrift(beads: &[Bead]) -> Vec<String> {
-    let by_id: BTreeMap<String, Bead> = beads.iter().map(|b| (b.id.clone(), b.clone())).collect();
-    nesting(&by_id).lost_their_place.into_iter().collect()
-}
-
-/// Where a tree that draws `id` has to start: climb every edge that still
-/// nests it, and answer with the roots that put everything the climb reached
-/// on the screen.
-///
-/// This is how far the roots rule goes, and the line is that it goes exactly
-/// as far as the damage. It climbs only from a bead the answer left with no
-/// way down to it, so a component holding no such bead is drawn only where
-/// discovery named a root in it — rules 1 to 4 still say what unfinished work
-/// is. Stopping instead at "is anything nesting it" left whole components off
-/// the screen: a bead that lost one placing edge and kept another is nested,
-/// and the bead that kept it lost nothing and so was never discovered either.
-///
-/// A bead can hang under more than one, so this is a set rather than one id.
-pub fn top_of(beads: &[Bead], id: &str) -> Vec<String> {
-    let by_id: BTreeMap<String, Bead> = beads.iter().map(|b| (b.id.clone(), b.clone())).collect();
-    let children = nesting(&by_id).children;
-    let mut over: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (parent, kids) in &children {
-        for kid in kids {
-            over.entry(kid.as_str()).or_default().push(parent.as_str());
-        }
-    }
-
-    let mut above: BTreeSet<&str> = BTreeSet::new();
-    let mut climbing: Vec<&str> = vec![id];
-    while let Some(reached) = climbing.pop() {
-        if !above.insert(reached) {
-            continue;
-        }
-        climbing.extend(over.get(reached).into_iter().flatten());
-    }
-
-    // A bead nothing nests is where a tree starts, and a loop has no such
-    // bead — so where a loop is all that stands over something the climb
-    // reached, one of its own beads has to stand for it. Any of them draws the
-    // whole loop, `assemble` cutting it where it comes back round, so which
-    // one is arbitrary and has only to be the same every time. Adding one and
-    // asking again covers a component with more than one loop over it.
-    let mut tops: BTreeSet<&str> = above
-        .iter()
-        .copied()
-        .filter(|reached| !over.contains_key(reached))
-        .collect();
-    loop {
-        let drawn = under(tops.iter().copied(), &children);
-        let Some(&left) = above.iter().find(|reached| !drawn.contains(*reached)) else {
-            break;
-        };
-        tops.insert(left);
-    }
-
-    // And the fewest of them that still does. A bead added to reach a loop
-    // can turn out to sit under one added after it, and a tree that another
-    // tree already draws puts every bead in it on the screen twice.
-    for top in tops.clone() {
-        let without: BTreeSet<&str> = tops.iter().copied().filter(|kept| *kept != top).collect();
-        let drawn = under(without.iter().copied(), &children);
-        if above.iter().all(|reached| drawn.contains(reached)) {
-            tops.remove(top);
-        }
-    }
-
-    tops.into_iter().map(str::to_string).collect()
 }
 
 /// Every bead a walk down from `from` reaches, a bead already reached ending
 /// the branch it repeats on.
 fn under<'a>(
     from: impl IntoIterator<Item = &'a str>,
-    children: &'a BTreeMap<String, BTreeSet<String>>,
+    children: &BTreeMap<&'a str, Vec<&'a str>>,
 ) -> BTreeSet<&'a str> {
     let mut reached: BTreeSet<&str> = BTreeSet::new();
     let mut going: Vec<&str> = from.into_iter().collect();
@@ -277,15 +292,15 @@ fn under<'a>(
         if !reached.insert(bead) {
             continue;
         }
-        going.extend(children.get(bead).into_iter().flatten().map(String::as_str));
+        going.extend(children.get(bead).into_iter().flatten().copied());
     }
     reached
 }
 
 /// What one walk down from the root found: every bead it reached, in the
 /// order it first reached them, and the ways down between them.
-struct Reached {
-    order: Vec<String>,
+struct Reached<'a> {
+    order: Vec<&'a str>,
     children: Vec<Vec<Link>>,
     /// Whether any way down led back to a bead still above it. A loop is
     /// cut there, and where this is false nothing is.
@@ -299,13 +314,13 @@ struct Reached {
 /// each is drawn in. A walk that drew a bead once for every way down to it
 /// would reach nothing new on the second way, because everything under the
 /// bead was reached under it the first time or was already above it.
-fn reach(
-    root: &str,
-    ordered: &BTreeMap<String, Vec<String>>,
-    by_id: &BTreeMap<String, Bead>,
-) -> Reached {
+fn reach<'a>(
+    root: &'a str,
+    ordered: &BTreeMap<&'a str, Vec<&'a str>>,
+    by_id: &BTreeMap<&'a str, &'a Bead>,
+) -> Reached<'a> {
     let mut found = Reached {
-        order: vec![root.to_string()],
+        order: vec![root],
         children: vec![Vec::new()],
         looped: false,
     };
@@ -325,14 +340,14 @@ fn reach(
 fn descend<'a>(
     id: &'a str,
     at: usize,
-    ordered: &'a BTreeMap<String, Vec<String>>,
-    by_id: &BTreeMap<String, Bead>,
+    ordered: &BTreeMap<&'a str, Vec<&'a str>>,
+    by_id: &BTreeMap<&'a str, &'a Bead>,
     placed: &mut BTreeMap<&'a str, usize>,
     above: &mut Vec<&'a str>,
-    found: &mut Reached,
+    found: &mut Reached<'a>,
 ) {
     above.push(id);
-    for child in ordered.get(id).into_iter().flatten() {
+    for &child in ordered.get(id).into_iter().flatten() {
         let edge = if by_id[child]
             .dependencies
             .iter()
@@ -342,12 +357,12 @@ fn descend<'a>(
         } else {
             Edge::Blocks
         };
-        found.looped |= above.contains(&child.as_str());
-        let (bead, first) = match placed.get(child.as_str()) {
+        found.looped |= above.contains(&child);
+        let (bead, first) = match placed.get(child) {
             Some(&bead) => (bead, false),
             None => {
                 let bead = found.order.len();
-                found.order.push(child.clone());
+                found.order.push(child);
                 found.children.push(Vec::new());
                 placed.insert(child, bead);
                 (bead, true)
@@ -360,7 +375,6 @@ fn descend<'a>(
     }
     above.pop();
 }
-
 /// The beads at which a walk drawing every way down cuts a loop: each is
 /// reached, then reached again from beneath itself, and the second time is
 /// where the walk stops rather than going round again.
@@ -516,7 +530,10 @@ mod tests {
     const FIXTURE_ROOT: &str = "bdi-2bb";
 
     fn assembled(json: &str, root: &str) -> Assembled {
-        assemble(parse_beads(json).expect("the rows parse"), root).expect("the rows assemble")
+        let beads = parse_beads(json).expect("the rows parse");
+        Nesting::of(&beads)
+            .assemble(root)
+            .expect("the rows assemble")
     }
 
     /// The tree as it is drawn: one row per way down to a bead.
@@ -1084,13 +1101,15 @@ mod tests {
           {"id":"one","title":"one","status":"open"},
           {"id":"two","title":"two","status":"open"}
         ]"#;
-        let err = assemble(parse_beads(json).unwrap(), "three")
+        let beads = parse_beads(json).unwrap();
+        let err = Nesting::of(&beads)
+            .assemble("three")
             .expect_err("no bead three to draw from")
             .to_string();
 
         assert!(err.contains("three"), "names the root asked for: {err}");
         assert!(
-            assemble(Vec::new(), "one").is_err(),
+            Nesting::of(&[]).assemble("one").is_err(),
             "an empty answer holds no root"
         );
     }

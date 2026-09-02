@@ -21,7 +21,7 @@ use beady_eye::config::Config;
 use beady_eye::model::anomaly::Anomaly;
 use beady_eye::model::join::{resolve, BeadKey, Conflict, ProjectRows};
 use beady_eye::model::snapshot::{self, Collected, Filter, HerdrState, Readiness, Snapshot};
-use beady_eye::model::tree::assemble;
+use beady_eye::model::tree::Nesting;
 use beady_eye::view::forest;
 use beady_eye::view::lines::{Content, Item};
 use beady_eye::view::tail;
@@ -95,7 +95,12 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
                 .expect("a root row")
                 .id
                 .clone();
-            (project, assemble(beads, &root).expect("the rows assemble"))
+            (
+                project,
+                Nesting::of(&beads)
+                    .assemble(&root)
+                    .expect("the rows assemble"),
+            )
         })
         .collect();
 
