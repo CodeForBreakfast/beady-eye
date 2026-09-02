@@ -27,6 +27,7 @@ use crate::view::{draw, Action, Freshness, Motion, Notice};
 
 use super::clipboard;
 use super::drive::{Showing, View};
+use super::due::due_after;
 use super::keys::{bindings, key_row};
 
 /// The forest on the alternate screen and the tail beneath it.
@@ -50,8 +51,9 @@ struct Shown {
     /// again.
     every: Duration,
     /// When the pane on the band is next asked for, or nothing while a read
-    /// of it is out or the band names no pane. Armed by the answer that
-    /// filled the band and disarmed by the ask it makes, as a project is.
+    /// of it is out, the band names no pane, or the interval is too long to
+    /// reach. Armed by the answer that filled the band and disarmed by the
+    /// ask it makes, as a project is.
     due: Option<DateTime<Utc>>,
     /// The id the reader has just put on the clipboard, said at the foot
     /// until their next key or click. Theirs and not the collector's: a
@@ -240,8 +242,8 @@ impl Shown {
     }
 
     /// How long until the pane on the band is asked for again, or nothing
-    /// where it is not going to be: no pane on the band, or a read still
-    /// out.
+    /// where it is not going to be: no pane on the band, a read still out,
+    /// or an interval too long to reach.
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
         self.due
             .map(|due| (due - now).to_std().unwrap_or(Duration::ZERO))
@@ -261,7 +263,7 @@ impl Shown {
                 let read = tail::read(pane, read);
                 let changed = read != self.tail;
                 self.tail = read;
-                self.due = Some(now + self.every);
+                self.due = due_after(now, self.every);
                 changed
             }
             // A focus that would not come says so where the tail is, and only
@@ -1243,13 +1245,19 @@ mod tests {
 
     /// The same, with the record of what the provider was asked kept beside it.
     fn shown_asking(snapshot: Snapshot) -> (Shown, Asking) {
+        shown_asking_every(snapshot, EVERY)
+    }
+
+    /// The same again, waiting a gap of the caller's choosing rather than the
+    /// one every other screen here waits.
+    fn shown_asking_every(snapshot: Snapshot, every: Duration) -> (Shown, Asking) {
         let panes = Asking::default();
         (
             Shown::of(
                 snapshot,
                 Box::new(panes.clone()),
                 Box::new(io::sink()),
-                EVERY,
+                every,
             ),
             panes,
         )
@@ -2144,6 +2152,53 @@ mod tests {
                 lines: vec!["second".to_string()],
             }
         );
+    }
+
+    /// The largest whole number of milliseconds — the unit
+    /// `tail_refresh_millis` is read in — that still lands inside the range
+    /// an instant can hold, read off chrono's own last instant rather than
+    /// quoted from its documentation. It shrinks as the clock advances,
+    /// which is why the answer is checked where the add happens rather than
+    /// bounded once at config load.
+    fn millis_to_the_end_of_time(from: DateTime<Utc>) -> u64 {
+        u64::try_from(
+            (DateTime::<Utc>::MAX_UTC - from)
+                .to_std()
+                .expect("the end of time is after this instant")
+                .as_millis(),
+        )
+        .expect("a gap an instant can hold counts in milliseconds a u64 holds")
+    }
+
+    /// The gap `tail_refresh_millis` can be given and still be waited out.
+    /// One millisecond more is the test below, and the two of them are what
+    /// pin the answer to the bound rather than to somewhere past it.
+    #[test]
+    fn a_band_whose_interval_reaches_the_end_of_time_still_rereads() {
+        let every = Duration::from_millis(millis_to_the_end_of_time(an_instant()));
+        let (mut shown, _) = shown_asking_every(a_staffed_grove(6), every);
+
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), an_instant());
+
+        assert_eq!(shown.rereads_in(an_instant()), Some(every));
+    }
+
+    /// A `tail_refresh_millis` past what an instant can hold is a gap
+    /// nothing waits out, rather than a panic on the first answer the
+    /// provider gives. Nothing is what this already says for a band with no
+    /// pane on it, so the answer is one the caller can already meet.
+    #[test]
+    fn a_band_whose_interval_outruns_time_rereads_no_more() {
+        let every = Duration::from_millis(millis_to_the_end_of_time(an_instant()) + 1);
+        let (mut shown, panes) = shown_asking_every(a_staffed_grove(6), every);
+
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), an_instant());
+        let asked_once = panes.reads();
+
+        assert_eq!(shown.rereads_in(an_instant()), None);
+        shown.reread(an_instant() + EVERY * 10);
+
+        assert_eq!(panes.reads(), asked_once);
     }
 
     /// A row with no pane has nothing to read again, so the band sets no

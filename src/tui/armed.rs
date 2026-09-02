@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
+use super::due::due_after;
 use crate::app::Wanted;
 
 /// One project's poll: how long after a read it asks to be read again, and
@@ -37,7 +38,8 @@ pub(crate) struct Armed {
     /// nothing where it does not poll at all.
     every: Option<Duration>,
     /// When it asks, or nothing while a read it is waiting on is still on its
-    /// way — and nothing for good on a project that does not poll.
+    /// way — and nothing for good on a project that does not poll, or whose
+    /// interval is too long to reach.
     at: Option<DateTime<Utc>>,
 }
 
@@ -82,7 +84,8 @@ impl Armed {
     }
 
     /// A read has come back. Where it read this project, that is when the
-    /// next ask is armed from.
+    /// next ask is armed from — unless the interval is too long to reach,
+    /// which arms nothing, as `due_after` says.
     ///
     /// Whatever asked for it: the socket, the refresh key and this project's
     /// own last ask all arm the next one the same way, which is what makes a
@@ -90,7 +93,7 @@ impl Armed {
     /// report's read pushes the poll out past the interval before it arrives.
     pub(super) fn came_back(&mut self, wanted: &Wanted, at: DateTime<Utc>) {
         if wanted.names(&self.project) {
-            self.at = self.every.map(|every| at + every);
+            self.at = self.every.and_then(|every| due_after(at, every));
         }
     }
 }
@@ -108,6 +111,63 @@ mod tests {
 
     fn polling() -> Armed {
         Armed::polling("atlas".to_string(), Some(EVERY))
+    }
+
+    /// The largest whole number of seconds — the unit `refresh_seconds` is
+    /// read in — that still lands inside the range an instant can hold, read
+    /// off chrono's own last instant rather than quoted from its
+    /// documentation. It shrinks as the clock advances, which is why the
+    /// answer is checked where the add happens rather than bounded once at
+    /// config load.
+    fn seconds_to_the_end_of_time(from: DateTime<Utc>) -> u64 {
+        (DateTime::<Utc>::MAX_UTC - from)
+            .to_std()
+            .expect("the end of time is after the epoch")
+            .as_secs()
+    }
+
+    /// The gap `refresh_seconds` can be given and still be waited out. One
+    /// second more is the test below, and the two of them are what pin the
+    /// answer to the bound rather than to somewhere past it.
+    #[test]
+    fn a_project_whose_interval_reaches_the_end_of_time_still_asks() {
+        let every = Duration::from_secs(seconds_to_the_end_of_time(at(100)));
+        let mut armed = Armed::polling("atlas".to_string(), Some(every));
+
+        armed.came_back(&atlas(), at(100));
+
+        assert_eq!(armed.asks_in(at(100)), Some(every));
+    }
+
+    /// A `refresh_seconds` past what an instant can hold is a gap nothing
+    /// waits out, rather than a panic on the first read that comes back.
+    /// Nothing is what this already says for a project that does not poll,
+    /// so the answer is one the caller can already meet.
+    #[test]
+    fn a_project_whose_interval_outruns_time_asks_no_more() {
+        let every = Duration::from_secs(seconds_to_the_end_of_time(at(100)) + 1);
+        let mut armed = Armed::polling("atlas".to_string(), Some(every));
+
+        armed.came_back(&atlas(), at(100));
+
+        assert_eq!(armed.asks_in(at(100)), None);
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// The largest `refresh_seconds` the key can hold at all, which is a
+    /// thousandfold past the reach an instant has — so what turns it away is
+    /// the conversion to an interval rather than the addition. It is the
+    /// same answer, reached the other way, and reaching it needs no
+    /// arithmetic on `MAX_UTC`: a `u64` full of ones is what a config that
+    /// has gone wrong hands over.
+    #[test]
+    fn a_project_whose_interval_fills_the_key_asks_no_more() {
+        let mut armed = Armed::polling("atlas".to_string(), Some(Duration::from_secs(u64::MAX)));
+
+        armed.came_back(&atlas(), at(100));
+
+        assert_eq!(armed.asks_in(at(100)), None);
+        assert_eq!(armed.asks(at(1_000_000)), None);
     }
 
     /// The whole of the design: the interval is a gap after the read rather

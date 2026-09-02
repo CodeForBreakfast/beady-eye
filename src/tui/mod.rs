@@ -23,6 +23,7 @@ mod fixtures;
 mod armed;
 mod clipboard;
 mod drive;
+mod due;
 mod keys;
 mod screen;
 mod wire;
