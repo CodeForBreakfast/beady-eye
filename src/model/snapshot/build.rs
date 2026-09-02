@@ -1,6 +1,8 @@
 //! One project's rows drawn as a tree, and every project's trees gathered
 //! into the snapshot, with the live panes that belong to none of them.
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 
 use crate::config::Config;
@@ -90,6 +92,7 @@ pub fn build(
         read_at,
     } = collected;
     in_flight_first(&mut trees);
+    let trees: Vec<Arc<Tree>> = trees.into_iter().map(Arc::new).collect();
     let (shown, hidden) = partition(&trees, herdr, filter);
 
     let (mut unattributed, mut unconfigured) = (Vec::new(), Vec::new());

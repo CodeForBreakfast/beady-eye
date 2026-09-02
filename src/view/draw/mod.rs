@@ -248,6 +248,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use ratatui::style::Modifier;
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use crate::app::Wanted;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
@@ -467,6 +468,7 @@ mod tests {
                 projects.push(tree.project.clone());
             }
         }
+        let trees: Vec<Arc<Tree>> = trees.into_iter().map(Arc::new).collect();
 
         Snapshot {
             generated_at: Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap(),
@@ -552,7 +554,7 @@ mod tests {
     /// is staffed, so the fold default rests every tree as its header, and
     /// what these tests are about is the rows under one.
     pub(super) fn opened(snapshot: &Snapshot) -> Forest {
-        let mut forest = flatten(snapshot);
+        let mut forest = flatten(snapshot.clone());
         forest.apply(Action::ToggleFold);
         forest
     }
@@ -688,7 +690,7 @@ mod tests {
     /// the row it is on is drawn.
     #[test]
     fn the_selected_row_is_drawn_wherever_the_selection_has_moved_to() {
-        let mut forest = flatten(&snapshot(vec![grove(40)], Vec::new(), HerdrState::Ok));
+        let mut forest = flatten(snapshot(vec![grove(40)], Vec::new(), HerdrState::Ok));
 
         for motion in [Motion::LastRow, Motion::FirstRow, Motion::HalfScreenDown] {
             forest.apply(Action::Move(motion));
@@ -745,7 +747,7 @@ mod tests {
     fn a_root_that_would_not_read_draws_its_reason_and_its_projects_panes() {
         let failed =
             Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
-        let forest = flatten(&snapshot(
+        let forest = flatten(snapshot(
             vec![failed],
             vec![pane("wCM:p9", PaneStatus::Working)],
             HerdrState::Ok,
@@ -769,7 +771,7 @@ mod tests {
     fn a_root_with_nothing_under_it_draws_no_marker_and_still_lines_up() {
         let unreadable =
             Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
-        let forest = flatten(&snapshot(
+        let forest = flatten(snapshot(
             vec![grove(2), unreadable],
             Vec::new(),
             HerdrState::Ok,

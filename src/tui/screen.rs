@@ -77,7 +77,7 @@ enum Reading {
 
 impl Shown {
     fn of(snapshot: Snapshot, panes: Box<dyn Panes>) -> Self {
-        let forest = forest::flatten(&snapshot);
+        let forest = forest::flatten(snapshot);
         let mut shown = Self {
             tail: tail::tail(&forest),
             tailing: tail::target(&forest).pane().map(str::to_string),
@@ -240,7 +240,7 @@ impl Shown {
     fn collected(&mut self, snapshot: Snapshot) {
         // A refresh keeps the folds and the selection, so the cursor stays on
         // the bead the user put it on however the new snapshot has moved it.
-        self.forest.refresh(&snapshot);
+        self.forest.refresh(snapshot);
         // The refresh tick is when the pane is re-read: the rows it has drawn
         // since the last one are exactly what has moved on.
         self.retail();
@@ -424,7 +424,7 @@ mod tests {
     use crate::app::Wanted;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
-    use crate::model::snapshot::{self, Counts, Filter, HerdrState, Node, TrackerState, Tree};
+    use crate::model::snapshot::{Counts, Filter, HerdrState, Node, TrackerState, Tree};
     use crate::model::tree::Link;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
@@ -443,7 +443,7 @@ mod tests {
     /// with the forest it sits over left out. Trailing blanks are trimmed, so
     /// anything the window failed to clear survives into the assertion.
     fn window_inner(width: u16, height: u16) -> Vec<String> {
-        let mut forest = forest::flatten(&a_grove(30));
+        let mut forest = forest::flatten(a_grove(30));
         let screen = screen_of(
             &mut forest,
             &Tail::Silent("nothing to tail"),
@@ -529,7 +529,7 @@ mod tests {
     fn the_way_out_is_the_windows_title_however_short_the_screen() {
         for height in [8, 24] {
             let window = bindings_window(Rect::new(0, 0, 80, height), &bindings());
-            let mut forest = forest::flatten(&a_grove(30));
+            let mut forest = forest::flatten(a_grove(30));
             let screen = screen_of(
                 &mut forest,
                 &Tail::Silent("nothing to tail"),
@@ -552,7 +552,7 @@ mod tests {
     /// this replaced took the whole forest away.
     #[test]
     fn the_forest_is_still_drawn_around_the_bindings_window() {
-        let mut forest = forest::flatten(&a_grove(30));
+        let mut forest = forest::flatten(a_grove(30));
         let tail = Tail::Silent("nothing to tail");
         let alone = screen_of(&mut forest, &tail, 80, 24, Showing::Forest).rows();
         let over = screen_of(&mut forest, &tail, 80, 24, Showing::Bindings).rows();
@@ -699,7 +699,7 @@ mod tests {
             .collect()];
         links.resize(beads.len(), Vec::new());
 
-        let tree = Tree {
+        let tree = Arc::new(Tree {
             project: "grove".to_string(),
             root: "grv-1".to_string(),
             title: "a tree with a great many beads".to_string(),
@@ -714,17 +714,17 @@ mod tests {
             children: links,
             dangling: Vec::new(),
             cycles: Vec::new(),
-        };
+        });
 
         Snapshot {
             filter: Filter::All,
-            trees: vec![tree.clone()],
+            trees: vec![Arc::clone(&tree)],
             collected: vec![tree],
             ..a_snapshot_of(Vec::new())
         }
     }
 
-    fn a_snapshot_of(trees: Vec<Tree>) -> Snapshot {
+    fn a_snapshot_of(trees: Vec<Arc<Tree>>) -> Snapshot {
         Snapshot {
             generated_at: Utc::now(),
             herdr: HerdrState::Ok,
@@ -791,7 +791,7 @@ mod tests {
             an_instant() - chrono::TimeDelta::seconds(30),
         );
         let mark = |asked_at| {
-            let mut forest = forest::flatten(&snapshot);
+            let mut forest = forest::flatten(snapshot.clone());
             let row = screen_collecting(
                 &mut forest,
                 &Tail::Silent("nothing to tail"),
@@ -953,7 +953,7 @@ mod tests {
     /// toggled, because a toggle over a tree already open shuts it and takes
     /// every row under the header with it.
     fn an_open_grove(beads: usize) -> forest::Forest {
-        let forest = forest::flatten(&a_grove(beads));
+        let forest = forest::flatten(a_grove(beads));
         assert_eq!(
             forest.lines()[0].folded,
             Some(true),
@@ -1201,11 +1201,8 @@ mod tests {
     /// selection changes which pane the tail is reading.
     fn a_staffed_grove(beads: usize) -> Snapshot {
         let mut snapshot = a_grove(beads);
-        for tree in snapshot
-            .trees
-            .iter_mut()
-            .chain(snapshot.collected.iter_mut())
-        {
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
             for (at, node) in tree.beads.iter_mut().enumerate() {
                 node.agent = Some(AgentRef {
                     pane: format!("w:p{at}"),
@@ -1215,6 +1212,7 @@ mod tests {
                 });
             }
         }
+        snapshot.trees = snapshot.collected.clone();
         snapshot
     }
 
@@ -1275,14 +1273,13 @@ mod tests {
         let atlas = a_snapshot().trees[0].clone();
         let both = vec![grove, atlas];
 
-        snapshot::refilter(
-            &Snapshot {
-                collected: both,
-                projects: vec!["grove".to_string(), "atlas".to_string()],
-                ..a_snapshot_of(Vec::new())
-            },
-            Filter::LiveAgents,
-        )
+        let mut snapshot = Snapshot {
+            collected: both,
+            projects: vec!["grove".to_string(), "atlas".to_string()],
+            ..a_snapshot_of(Vec::new())
+        };
+        snapshot.refilter(Filter::LiveAgents);
+        snapshot
     }
 
     #[test]

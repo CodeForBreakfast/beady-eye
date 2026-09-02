@@ -35,7 +35,7 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
 ratatui = "0.30"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 # Named directly, though crossterm already compiles it for its own resize
 # plumbing: a crate reached only through another crate's tree is not one

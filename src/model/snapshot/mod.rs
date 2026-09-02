@@ -10,9 +10,9 @@ mod build;
 mod filter;
 
 pub use build::{build, build_tree};
-pub use filter::refilter;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::ser::SerializeStruct;
@@ -291,7 +291,10 @@ pub struct Snapshot {
     pub generated_at: DateTime<Utc>,
     pub herdr: HerdrState,
     pub filter: Filter,
-    pub trees: Vec<Tree>,
+    /// The trees the filter shows, each shared with `collected` rather than
+    /// copied out of it: a filter is a display choice, and a shown tree is
+    /// held once however many lists point at it.
+    pub trees: Vec<Arc<Tree>>,
     pub hidden_trees: Vec<HiddenTree>,
     pub failed_projects: Vec<FailedProject>,
     pub unattributed: Vec<LoosePane>,
@@ -304,7 +307,7 @@ pub struct Snapshot {
     /// keeping it is what lets `refilter` change the filter without asking the
     /// trackers again. Not part of the JSON contract.
     #[serde(skip)]
-    pub collected: Vec<Tree>,
+    pub collected: Vec<Arc<Tree>>,
     /// When each configured project's tracker was last read.
     ///
     /// Not `generated_at`, which is when the snapshot was drawn. A refresh
@@ -391,7 +394,7 @@ impl Snapshot {
             .filter(|tree| tree.project == key.project)
             .find_map(|tree| {
                 let at = tree.beads.iter().position(|node| node.id == key.id)?;
-                Some((tree, at))
+                Some((tree.as_ref(), at))
             })
     }
 

@@ -10,9 +10,10 @@ mod handle;
 mod layout;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{self, Filter, Snapshot, Tree};
+use crate::model::snapshot::{Filter, Snapshot, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::{Action, Motion};
 
@@ -36,10 +37,10 @@ pub struct Forest {
 }
 
 /// Flatten a snapshot into its lines.
-pub fn flatten(snapshot: &Snapshot) -> Forest {
+pub fn flatten(snapshot: Snapshot) -> Forest {
     let mut forest = Forest {
-        snapshot: snapshot.clone(),
-        facts: Facts::of(snapshot),
+        facts: Facts::of(&snapshot),
+        snapshot,
         folds: Folds::default(),
         cursor: None,
         half_screen: HALF_SCREEN,
@@ -88,7 +89,7 @@ impl Forest {
 
     /// Take a freshly collected snapshot, keeping the folds, the filter and
     /// the selection.
-    pub fn refresh(&mut self, snapshot: &Snapshot) {
+    pub fn refresh(&mut self, mut snapshot: Snapshot) {
         // Only the snapshot the cursor was found in knows what stood above
         // it, so where the new one has dropped the bead the cursor falls to
         // the nearest of its forebears that survived.
@@ -97,7 +98,8 @@ impl Forest {
         // A collection carries the filter the command line asked for, which
         // is nobody's answer to `a`. So the one in hand goes on the new
         // snapshot, exactly as the folds and the cursor do.
-        self.take(snapshot::refilter(snapshot, self.snapshot.filter));
+        snapshot.refilter(self.snapshot.filter);
+        self.take(snapshot);
         self.spend_folds(&folded_over);
         self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
         self.lay_out();
@@ -201,6 +203,7 @@ impl Forest {
             .trees
             .iter()
             .find(|tree| root_key(tree) == place.tree)
+            .map(Arc::as_ref)
     }
 
     /// Apply one action, reporting whether it changed anything.
@@ -229,14 +232,20 @@ impl Forest {
             Filter::LiveAgents => Filter::All,
             Filter::All => Filter::LiveAgents,
         };
-        self.take(snapshot::refilter(&self.snapshot, next));
+        self.snapshot.refilter(next);
+        self.answer();
     }
 
-    /// Take a snapshot as the one drawn, with what layout reads of it
-    /// answered here and not per keystroke.
+    /// Take a snapshot as the one drawn.
     fn take(&mut self, snapshot: Snapshot) {
-        self.facts = Facts::of(&snapshot);
         self.snapshot = snapshot;
+        self.answer();
+    }
+
+    /// Answer what layout reads of the snapshot in hand, here and not per
+    /// keystroke.
+    fn answer(&mut self) {
+        self.facts = Facts::of(&self.snapshot);
     }
 
     /// `E` and `C`: point every fold in the selected node's subtree, at every
@@ -562,6 +571,7 @@ mod tests {
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
+    use crate::model::snapshot;
     use crate::model::snapshot::{
         build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure, TrackerState,
     };
@@ -1209,7 +1219,7 @@ credential_command = "secret harbour"
     /// the list below it could not be walked into at all.
     #[test]
     fn stepping_down_past_a_bead_drawn_twice_reaches_the_bottom_of_the_list() {
-        let mut forest = flatten(&overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
+        let mut forest = flatten(overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
         assert_eq!(
             lines_of(&forest, "qua-1.2").len(),
             2,
@@ -1232,7 +1242,7 @@ credential_command = "secret harbour"
     /// the forest knows a tree by its root rather than by a node.
     #[test]
     fn the_selection_holds_the_line_of_a_root_whose_tracker_refused() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let header = forest
             .lines()
             .iter()
@@ -1242,9 +1252,39 @@ credential_command = "secret harbour"
             .expect("the shared snapshot draws a tree whose tracker refused");
 
         step_onto(&mut forest, header);
-        forest.refresh(&snapshot());
+        forest.refresh(snapshot());
 
         assert_eq!(forest.selected_line(), header, "{:#?}", sketch(&forest));
+    }
+
+    /// The forest holds the trees it was handed, not copies of them. A
+    /// collection landing while the reader moves is a stall on top of the
+    /// keystroke it arrives beside, and copying every tree into the forest
+    /// was most of that stall.
+    #[test]
+    fn the_forest_holds_the_trees_it_was_handed_rather_than_copies() {
+        let handed = snapshot();
+        let trees = handed.trees.clone();
+        let mut forest = flatten(handed);
+        assert_held_exactly(&forest, &trees);
+
+        let again = snapshot();
+        let trees = again.trees.clone();
+        forest.refresh(again);
+        assert_held_exactly(&forest, &trees);
+    }
+
+    fn assert_held_exactly(forest: &Forest, trees: &[Arc<Tree>]) {
+        assert_eq!(forest.snapshot().trees.len(), trees.len());
+        for (held, was) in forest.snapshot().trees.iter().zip(trees) {
+            assert!(Arc::ptr_eq(held, was), "{} was copied", was.root);
+            assert_eq!(
+                Arc::strong_count(was),
+                3,
+                "{} is held by collected, trees and this test, and nothing else",
+                was.root
+            );
+        }
     }
 
     /// Each copy of a bead drawn twice folds over a list of its own, so
@@ -1253,7 +1293,7 @@ credential_command = "secret harbour"
     /// they had never been looking at.
     #[test]
     fn folding_one_copy_of_a_bead_drawn_twice_leaves_the_other_open() {
-        let mut forest = flatten(&overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
+        let mut forest = flatten(overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
         let [upper, lower] = copies_of(&forest, "qua-1.2");
 
         step_onto(&mut forest, lower);
@@ -1276,7 +1316,7 @@ credential_command = "secret harbour"
     /// give one of them the other's answer.
     #[test]
     fn folding_one_copy_of_a_bead_drawn_twice_in_one_tree_leaves_the_other_alone() {
-        let mut forest = flatten(&drawn_twice_in_one_tree());
+        let mut forest = flatten(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "orb-9");
 
         step_onto(&mut forest, lower);
@@ -1299,7 +1339,7 @@ credential_command = "secret harbour"
     /// shut, so the subtree is drawn once however many ways there are into it.
     #[test]
     fn a_bead_drawn_twice_in_one_tree_rests_open_on_the_first_line_and_shut_on_the_second() {
-        let forest = flatten(&drawn_twice_in_one_tree());
+        let forest = flatten(drawn_twice_in_one_tree());
         let [upper, lower] = copies_of(&forest, "orb-9");
 
         assert_eq!(
@@ -1314,7 +1354,7 @@ credential_command = "secret harbour"
     /// opening it draws the subtree there too.
     #[test]
     fn the_second_line_of_a_bead_drawn_twice_opens_onto_the_same_subtree() {
-        let mut forest = flatten(&drawn_twice_in_one_tree());
+        let mut forest = flatten(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "orb-9");
         assert_eq!(
             lines_of(&forest, "orb-9.1").len(),
@@ -1338,7 +1378,7 @@ credential_command = "secret harbour"
     /// line gets it back the way `bdi` would have drawn it.
     #[test]
     fn letting_go_of_the_folds_shuts_a_second_line_a_reader_opened() {
-        let mut forest = flatten(&drawn_twice_in_one_tree());
+        let mut forest = flatten(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "orb-9");
         step_onto(&mut forest, lower);
         forest.apply(Action::ToggleFold);
@@ -1361,7 +1401,7 @@ credential_command = "secret harbour"
     /// than the ways down to it.
     #[test]
     fn only_the_first_line_of_a_bead_drawn_twice_says_what_it_is_shut_over() {
-        let forest = flatten(&closed_bead_drawn_twice_in_one_tree());
+        let forest = flatten(closed_bead_drawn_twice_in_one_tree());
         let [upper, lower] = copies_of(&forest, "orb-4");
 
         assert_eq!(
@@ -1420,14 +1460,14 @@ credential_command = "secret harbour"
     #[test]
     fn a_refresh_between_steps_does_not_pull_the_selection_back_to_a_twin() {
         let panes = panes_on(&["qua-1.2", "wha-2.1"]);
-        let mut forest = flatten(&overlapping(&panes));
+        let mut forest = flatten(overlapping(&panes));
         let drawn = forest.lines().len();
 
         forest.apply(Action::Move(Motion::FirstRow));
         let mut visited = vec![forest.selected_line()];
         for _ in 1..drawn {
             forest.apply(Action::Move(Motion::NextRow));
-            forest.refresh(&overlapping(&panes));
+            forest.refresh(overlapping(&panes));
             visited.push(forest.selected_line());
         }
 
@@ -1539,7 +1579,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_snapshot_flattens_to_the_lines_the_design_draws() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert_eq!(
             sketch(&forest),
@@ -1571,7 +1611,7 @@ credential_command = "secret harbour"
     /// band saying there is nothing to show.
     #[test]
     fn the_selection_starts_on_the_first_root() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert_eq!(forest.selected_line(), 1);
         assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
@@ -1581,7 +1621,7 @@ credential_command = "secret harbour"
     /// neither: walking out of a tree leaves it exactly as it was drawn.
     #[test]
     fn a_root_stays_as_it_was_when_the_selection_walks_out_of_it() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let was = sketch(&forest);
 
         forest.apply(Action::Move(Motion::LastRow));
@@ -1594,7 +1634,7 @@ credential_command = "secret harbour"
     /// those is a line the fold removed.
     #[test]
     fn folding_a_root_removes_exactly_its_subtree() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let before = contents(&forest);
 
         assert!(forest.apply(Action::ToggleFold));
@@ -1625,7 +1665,7 @@ credential_command = "secret harbour"
     /// every one of them.
     #[test]
     fn a_trees_findings_are_drawn_whether_it_is_folded_or_not() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
@@ -1640,7 +1680,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_fold_made_by_hand_outlives_moving_away_from_it() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.apply(Action::ToggleFold);
         forest.apply(Action::Move(Motion::LastRow));
         forest.apply(Action::Move(Motion::FirstRow));
@@ -1758,8 +1798,8 @@ credential_command = "secret harbour"
             "      └─▸ ○ .2 pour the base",
         ];
 
-        let staffed = flatten(&tower_staffed(&["tow-1.1.1.1"]));
-        let ready = flatten(&tower_ready(&["tow-1.1.1.1"]));
+        let staffed = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        let ready = flatten(tower_ready(&["tow-1.1.1.1"]));
 
         assert_eq!(sketch(&staffed), opened);
         assert_eq!(sketch(&ready), opened);
@@ -1789,7 +1829,7 @@ credential_command = "secret harbour"
             r#"{"id":"tow-1.1.1.1","title":"dress the cables","status":"in_progress",
        "updated_at":"2026-08-30T11:00:00Z","#,
         );
-        let forest = flatten(&ready_alone("orbital", &claimed, &[], &[]));
+        let forest = flatten(ready_alone("orbital", &claimed, &[], &[]));
 
         assert_eq!(
             sketch(&forest),
@@ -1811,7 +1851,7 @@ credential_command = "secret harbour"
     /// spine to open, so it rests as the one line saying it is there.
     #[test]
     fn a_tree_with_nothing_live_in_it_rests_as_its_header() {
-        let forest = flatten(&tower_staffed(&[]));
+        let forest = flatten(tower_staffed(&[]));
 
         assert_eq!(
             sketch(&forest),
@@ -1824,11 +1864,11 @@ credential_command = "secret harbour"
     /// is what they folded away.
     #[test]
     fn a_fold_set_by_hand_survives_a_refresh_that_brings_nothing_new_under_it() {
-        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         select(&mut forest, &key("orbital", "tow-1.1"));
         forest.apply(Action::ToggleFold);
 
-        forest.refresh(&tower_staffed(&["tow-1.1.1.1"]));
+        forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
 
         assert_eq!(fold_of(&forest, "tow-1.1"), Some(false));
         assert!(
@@ -1843,11 +1883,11 @@ credential_command = "secret harbour"
     /// open for the shut one to still be drawn under.
     #[test]
     fn a_fold_set_by_hand_outlives_the_work_it_was_shut_over_going_away() {
-        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         select(&mut forest, &key("orbital", "tow-1.1"));
         forest.apply(Action::ToggleFold);
 
-        forest.refresh(&tower_staffed(&["tow-1.2.1"]));
+        forest.refresh(tower_staffed(&["tow-1.2.1"]));
 
         assert_eq!(fold_of(&forest, "tow-1.1"), Some(false));
     }
@@ -1858,11 +1898,11 @@ credential_command = "secret harbour"
     /// node back to the default.
     #[test]
     fn a_fold_set_by_hand_is_spent_when_live_work_arrives_beneath_it() {
-        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         select(&mut forest, &key("orbital", "tow-1.1"));
         forest.apply(Action::ToggleFold);
 
-        forest.refresh(&tower_staffed(&["tow-1.1.1.1", "tow-1.1.1"]));
+        forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.1.1"]));
 
         assert_eq!(fold_of(&forest, "tow-1.1"), Some(true));
         assert!(
@@ -1878,7 +1918,7 @@ credential_command = "secret harbour"
     /// the filter adds trees below and changes no fold above.
     #[test]
     fn dropping_the_filter_leaves_the_default_fold_state_alone() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let staffed: Vec<String> = sketch(&forest)
             .into_iter()
             .take_while(|line| !line.contains("ferry"))
@@ -1894,7 +1934,7 @@ credential_command = "secret harbour"
     /// are. What collection and the filter did is a report, and rests shut.
     #[test]
     fn a_group_rests_open_when_what_it_holds_is_live() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
         let markers: Vec<&str> = forest
             .lines()
             .iter()
@@ -1909,7 +1949,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert!(sketch(&forest).contains(&"      └─▸ … 3 more".to_string()));
     }
@@ -1918,7 +1958,7 @@ credential_command = "secret harbour"
     /// for, so the line has to be reachable to be worth anything.
     #[test]
     fn an_elided_run_can_hold_the_selection() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
 
         select_run(&mut forest);
 
@@ -1930,7 +1970,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn opening_an_elided_run_draws_the_beads_it_counted() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         select_run(&mut forest);
 
         forest.apply(Action::ToggleFold);
@@ -1954,7 +1994,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn shutting_an_open_elided_run_puts_the_count_back() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let was = sketch(&forest);
         select_run(&mut forest);
 
@@ -1974,7 +2014,7 @@ credential_command = "secret harbour"
     /// one of those nodes. One rule at every depth.
     #[test]
     fn a_bead_with_children_says_how_much_of_its_own_subtree_is_done() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert_eq!(
             row_of(&forest, "orb-7.1").progress,
@@ -2052,7 +2092,7 @@ credential_command = "secret harbour"
     /// through and a fraction over one bead would only repeat its glyph.
     #[test]
     fn a_bead_with_no_children_has_no_progress_to_report() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert_eq!(row_of(&forest, "orb-7.7").progress, None);
     }
@@ -2063,7 +2103,7 @@ credential_command = "secret harbour"
     /// takes the snapshot, and a keystroke asks nothing of the tree.
     #[test]
     fn a_keystroke_walks_no_subtree() {
-        let mut forest = flatten(&built(Filter::All));
+        let mut forest = flatten(built(Filter::All));
         assert!(
             forest
                 .lines()
@@ -2094,7 +2134,7 @@ credential_command = "secret harbour"
     /// tree holds once can be answered once only where no way down is cut.
     #[test]
     fn a_bead_on_a_loop_counts_what_the_way_down_leaves_beneath_it() {
-        let forest = flatten(&alone("orbital", LOOPED, &panes_on(&["cyc-1.1"])));
+        let forest = flatten(alone("orbital", LOOPED, &panes_on(&["cyc-1.1"])));
 
         assert_eq!(
             row_of(&forest, "cyc-1.1").progress,
@@ -2191,7 +2231,7 @@ credential_command = "secret harbour"
     /// the run, and then the finished branch that rests shut inside it.
     #[test]
     fn an_open_run_elides_again_inside_itself() {
-        let mut forest = flatten(&depot());
+        let mut forest = flatten(depot());
         select_run(&mut forest);
         forest.apply(Action::ToggleFold);
 
@@ -2216,12 +2256,12 @@ credential_command = "secret harbour"
     /// open one leaves it open and leaves the cursor on it.
     #[test]
     fn an_open_elided_run_survives_a_refresh() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         select_run(&mut forest);
         forest.apply(Action::ToggleFold);
 
         let reordered = edited(ORBITAL, r#""priority":3"#, r#""priority":1"#);
-        forest.refresh(&gather(
+        forest.refresh(gather(
             vec![tree_of("orbital", &reordered)],
             Vec::new(),
             Filter::LiveAgents,
@@ -2239,7 +2279,7 @@ credential_command = "secret harbour"
     /// report one: the loop picks the tail's pane from that field.
     #[test]
     fn a_selected_elided_run_stands_for_no_bead_of_its_own() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
 
         select_run(&mut forest);
 
@@ -2252,7 +2292,7 @@ credential_command = "secret harbour"
     /// eliding it would hide a live agent.
     #[test]
     fn a_closed_bead_with_a_live_agent_is_drawn_rather_than_elided() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert!(sketch(&forest)
             .iter()
@@ -2272,7 +2312,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let drawn = sketch(&flatten(&snapshot));
+        let drawn = sketch(&flatten(snapshot));
 
         assert!(
             drawn.iter().any(|line| line.contains("survey the mast")),
@@ -2293,7 +2333,7 @@ credential_command = "secret harbour"
         let mut worth_drawing = 0;
         for json in [ORBITAL, DEPOT, RELAY] {
             let snapshot = alone("orbital", json, &two_panes());
-            let forest = flatten(&snapshot);
+            let forest = flatten(snapshot.clone());
             let drawn: Vec<&str> = forest
                 .lines()
                 .iter()
@@ -2340,7 +2380,7 @@ credential_command = "secret harbour"
 
             for id in unfinished {
                 asked += 1;
-                let forest = flatten(&ready_alone("orbital", json, &[], &[&id]));
+                let forest = flatten(ready_alone("orbital", json, &[], &[&id]));
                 let drawn: Vec<&str> = forest
                     .lines()
                     .iter()
@@ -2364,7 +2404,7 @@ credential_command = "secret harbour"
     /// the beads it had just hidden the agent among.
     #[test]
     fn a_run_never_closes_over_a_subtree_with_a_live_agent_in_it() {
-        let forest = flatten(&alone("orbital", RELAY, &two_panes()));
+        let forest = flatten(alone("orbital", RELAY, &two_panes()));
 
         assert_eq!(
             sketch(&forest),
@@ -2441,7 +2481,7 @@ credential_command = "secret harbour"
     /// from the tree the count is about cannot disagree with it.
     #[test]
     fn a_run_counts_a_blocker_two_of_its_branches_share_once() {
-        let forest = flatten(&alone("orbital", SHARED_IN_A_RUN, &[]));
+        let forest = flatten(alone("orbital", SHARED_IN_A_RUN, &[]));
 
         assert_eq!(
             sketch(&forest),
@@ -2459,7 +2499,7 @@ credential_command = "secret harbour"
     /// is closed too, and the shut marker says it still holds them.
     #[test]
     fn a_wholly_finished_subtree_rests_as_one_line_that_says_it_is_finished() {
-        let forest = flatten(&finished_branches());
+        let forest = flatten(finished_branches());
 
         assert_eq!(
             sketch(&forest),
@@ -2489,7 +2529,7 @@ credential_command = "secret harbour"
     /// the line says how much.
     #[test]
     fn a_closed_branch_resting_over_unfinished_work_says_how_much_it_holds() {
-        let forest = flatten(&siding());
+        let forest = flatten(siding());
 
         assert_eq!(
             sketch(&forest),
@@ -2512,7 +2552,7 @@ credential_command = "secret harbour"
     /// say, and a count on it would be noise wherever the eye landed.
     #[test]
     fn a_closed_branch_that_is_finished_all_the_way_down_says_nothing_extra() {
-        let forest = flatten(&siding());
+        let forest = flatten(siding());
 
         assert_eq!(row_of(&forest, "sdg-4.2").notes, Vec::<String>::new());
     }
@@ -2537,7 +2577,7 @@ credential_command = "secret harbour"
     /// the closed ones being read.
     #[test]
     fn an_unfinished_branch_resting_shut_over_its_own_work_says_nothing_extra() {
-        let forest = flatten(&siding());
+        let forest = flatten(siding());
 
         assert_eq!(row_of(&forest, "sdg-4.3").notes, Vec::<String>::new());
     }
@@ -2554,7 +2594,7 @@ credential_command = "secret harbour"
             r#""status":"closed","closed_at":"2026-08-26T09:00:00Z",
        "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
         );
-        let forest = flatten(&alone("orbital", &deep, &panes_on(&["sdg-4.3"])));
+        let forest = flatten(alone("orbital", &deep, &panes_on(&["sdg-4.3"])));
 
         assert_eq!(
             row_of(&forest, "sdg-4.1").notes,
@@ -2567,7 +2607,7 @@ credential_command = "secret harbour"
     /// same fact twice, once as arithmetic and once in words.
     #[test]
     fn the_count_a_closed_branch_gives_is_the_remainder_of_its_own_fraction() {
-        let forest = flatten(&siding());
+        let forest = flatten(siding());
         let row = row_of(&forest, "sdg-4.1");
         let progress = row.progress.expect("a branch has a fraction");
 
@@ -2582,7 +2622,7 @@ credential_command = "secret harbour"
     /// property of the bead.
     #[test]
     fn a_closed_branch_opened_over_its_work_stops_counting_it() {
-        let mut forest = flatten(&siding());
+        let mut forest = flatten(siding());
         select(&mut forest, &key("orbital", "sdg-4.1"));
 
         forest.apply(Action::ToggleFold);
@@ -2602,7 +2642,7 @@ credential_command = "secret harbour"
     /// somebody is still in it.
     #[test]
     fn a_branch_shut_over_a_working_agent_says_how_many_are_inside_it() {
-        let mut forest = flatten(&alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+        let mut forest = flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
         select(&mut forest, &key("orbital", "sdg-4.3"));
 
         forest.apply(Action::ToggleFold);
@@ -2624,7 +2664,7 @@ credential_command = "secret harbour"
     /// gets the same answer about its own tree.
     #[test]
     fn a_root_shut_over_a_working_agent_says_it_exactly_as_a_branch_does() {
-        let mut forest = flatten(&alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+        let mut forest = flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
         select(&mut forest, &key("orbital", "sdg-4"));
 
         forest.apply(Action::ToggleFold);
@@ -2644,7 +2684,7 @@ credential_command = "secret harbour"
     /// hiding, not a standing property of the bead.
     #[test]
     fn a_branch_opened_over_its_agents_stops_counting_them() {
-        let forest = flatten(&alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+        let forest = flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
 
         assert_eq!(fold_of(&forest, "sdg-4.3"), Some(true));
         assert_eq!(row_of(&forest, "sdg-4.3").shut_over, None);
@@ -2656,7 +2696,7 @@ credential_command = "secret harbour"
     /// agent too many.
     #[test]
     fn the_agents_a_line_counts_are_the_ones_it_hides_and_never_its_own() {
-        let mut forest = flatten(&alone(
+        let mut forest = flatten(alone(
             "orbital",
             SIDING,
             &panes_on(&["sdg-4.3", "sdg-4.3.1"]),
@@ -2685,7 +2725,7 @@ credential_command = "secret harbour"
             r#"{"id":"sdg-4.3.1","title":"prove the interlocking","status":"open"#,
             r#"{"id":"sdg-4.3.1","title":"prove the interlocking","closed_at":"2026-08-28T09:00:00Z","status":"closed"#,
         );
-        let mut forest = flatten(&alone("orbital", &stale, &panes_on(&["sdg-4.3.1"])));
+        let mut forest = flatten(alone("orbital", &stale, &panes_on(&["sdg-4.3.1"])));
         select(&mut forest, &key("orbital", "sdg-4.3"));
 
         forest.apply(Action::ToggleFold);
@@ -2704,7 +2744,7 @@ credential_command = "secret harbour"
     /// hunting for a second agent that is not there.
     #[test]
     fn one_agent_reached_two_ways_down_is_counted_once() {
-        let mut forest = flatten(&alone("orbital", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
+        let mut forest = flatten(alone("orbital", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
         assert_eq!(
             lines_of(&forest, "lck-2").len(),
             2,
@@ -2741,7 +2781,7 @@ credential_command = "secret harbour"
             r#"{"id":"sdg-4","title":"re-point the crossover","status":"in_progress"#,
             r#"{"id":"sdg-4","title":"re-point the crossover","closed_at":"2026-08-29T09:00:00Z","status":"closed"#,
         );
-        let forest = flatten(&alone("orbital", &done, &[]));
+        let forest = flatten(alone("orbital", &done, &[]));
 
         assert_eq!(fold_of(&forest, "sdg-4"), Some(false));
         assert_eq!(
@@ -2763,7 +2803,7 @@ credential_command = "secret harbour"
     /// count moves down to the line that is now the one doing the hiding.
     #[test]
     fn a_closed_branch_over_ready_work_rests_open_down_the_spine_to_it() {
-        let forest = flatten(&ready_alone(
+        let forest = flatten(ready_alone(
             "orbital",
             SIDING,
             &panes_on(&["sdg-4.3"]),
@@ -2810,7 +2850,7 @@ credential_command = "secret harbour"
             r#""status":"deferred",
        "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
         );
-        let forest = flatten(&alone("orbital", &waiting, &panes_on(&["sdg-4.3"])));
+        let forest = flatten(alone("orbital", &waiting, &panes_on(&["sdg-4.3"])));
 
         assert_eq!(fold_of(&forest, "sdg-4.1"), Some(false));
         assert_eq!(
@@ -2823,7 +2863,7 @@ credential_command = "secret harbour"
     /// what it held under the same rules as anywhere else.
     #[test]
     fn opening_a_finished_subtree_draws_what_it_holds() {
-        let mut forest = flatten(&finished_branches());
+        let mut forest = flatten(finished_branches());
         select(&mut forest, &key("orbital", "dep-1.2"));
 
         forest.apply(Action::ToggleFold);
@@ -2856,13 +2896,13 @@ credential_command = "secret harbour"
 
     #[test]
     fn the_selection_survives_a_refresh_that_reorders_the_nodes() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
         let was = forest.selected_line();
 
         let reordered = edited(ORBITAL, r#""priority":3"#, r#""priority":1"#);
-        forest.refresh(&gather(
+        forest.refresh(gather(
             vec![tree_of("orbital", &reordered)],
             Vec::new(),
             Filter::LiveAgents,
@@ -2877,7 +2917,7 @@ credential_command = "secret harbour"
     /// on the parent, rather than going back to the top of the forest.
     #[test]
     fn a_refresh_that_drops_the_selected_bead_falls_back_to_its_parent() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
 
@@ -2888,7 +2928,7 @@ credential_command = "secret harbour"
        "priority":3,"issue_type":"task"},"#,
             "",
         );
-        forest.refresh(&gather(
+        forest.refresh(gather(
             vec![tree_of("orbital", &without)],
             Vec::new(),
             Filter::LiveAgents,
@@ -2899,14 +2939,14 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_refresh_that_drops_the_selected_bead_leaves_the_selection_somewhere_real() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.2"));
         // Harbour has no live agent, so it is a tree only a reader showing
         // every tree can be left standing on.
         forest.apply(Action::ToggleFilter);
 
-        forest.refresh(&gather(
+        forest.refresh(gather(
             vec![tree_of("harbour", HARBOUR)],
             Vec::new(),
             Filter::LiveAgents,
@@ -2920,7 +2960,7 @@ credential_command = "secret harbour"
     /// renders is the answer the trackers already gave.
     #[test]
     fn dropping_the_filter_re_renders_rather_than_re_collecting() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let generated_at = forest.snapshot().generated_at;
 
         assert!(forest.apply(Action::ToggleFilter));
@@ -2936,7 +2976,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn collapsing_an_expanded_node_and_then_collapsing_again_moves_to_its_parent() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
 
         assert!(forest.apply(Action::CollapseOrParent));
@@ -2949,7 +2989,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn expanding_a_collapsed_node_and_then_expanding_again_moves_to_its_first_child() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
         forest.apply(Action::CollapseOrParent);
 
@@ -2962,7 +3002,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_leaf_has_no_child_to_move_to_and_no_fold_to_collapse() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         open(&mut forest, &key("orbital", "orb-7.1"));
         select(&mut forest, &key("orbital", "orb-7.1.1"));
 
@@ -2973,7 +3013,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn moving_stops_at_the_ends() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.apply(Action::Move(Motion::FirstRow));
 
         assert!(!forest.apply(Action::Move(Motion::PreviousRow)));
@@ -2988,7 +3028,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_half_screen_moves_as_far_as_the_renderer_says_it_should() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.set_half_screen(3);
 
         forest.apply(Action::Move(Motion::HalfScreenDown));
@@ -3006,7 +3046,7 @@ credential_command = "secret harbour"
     /// must leave the lines identical.
     #[test]
     fn a_line_carries_nothing_the_screen_does_not_show() {
-        let drawn: BTreeSet<BeadKey> = flatten(&snapshot())
+        let drawn: BTreeSet<BeadKey> = flatten(snapshot())
             .lines()
             .iter()
             .filter_map(|line| line.bead().cloned())
@@ -3015,6 +3055,7 @@ credential_command = "secret harbour"
         let mut altered = snapshot();
         let mut retitled = 0;
         for tree in &mut altered.trees {
+            let tree = Arc::make_mut(tree);
             for node in &mut tree.beads {
                 let key = BeadKey {
                     project: tree.project.clone(),
@@ -3031,14 +3072,14 @@ credential_command = "secret harbour"
             "every node in the fixture is drawn, so nothing here is undrawn to hide"
         );
 
-        assert_eq!(flatten(&snapshot()).lines(), flatten(&altered).lines());
+        assert_eq!(flatten(snapshot()).lines(), flatten(altered).lines());
     }
 
     /// The forest cannot focus a pane, re-collect or quit; the loop does all
     /// three, and none of them changes what is on screen.
     #[test]
     fn focus_refresh_and_quit_change_nothing_in_the_forest() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let before = sketch(&forest);
 
         for action in [Action::Focus, Action::Refresh, Action::Quit] {
@@ -3053,7 +3094,7 @@ credential_command = "secret harbour"
     /// is where they were always heading.
     #[test]
     fn the_panes_of_a_project_whose_root_would_not_read_are_drawn_on_its_line() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
         let found = header_of(&forest, "ferry")
             .recovery
             .as_ref()
@@ -3076,7 +3117,7 @@ credential_command = "secret harbour"
     /// root's row would have been rather than on the line above.
     #[test]
     fn a_root_that_could_not_be_read_says_so_where_its_row_would_have_been() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
         let at = forest
             .lines()
             .iter()
@@ -3102,7 +3143,7 @@ credential_command = "secret harbour"
     /// that on every healthy line buries the one where it matters.
     #[test]
     fn a_project_whose_roots_all_read_recovers_nothing_and_says_nothing() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert_eq!(header_of(&forest, "orbital").recovery, None);
     }
@@ -3113,7 +3154,7 @@ credential_command = "secret harbour"
     /// own line, and the root beneath it is a bead like any other.
     #[test]
     fn a_project_owns_its_own_line_and_its_roots_are_ordinary_bead_rows() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
         let lines = forest.lines();
 
         assert!(
@@ -3133,7 +3174,7 @@ credential_command = "secret harbour"
     /// own agent cannot come out the same by chance.
     #[test]
     fn a_staffed_root_says_what_its_agent_is_doing_like_any_other_row() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
 
         assert_eq!(
             row_of(&forest, "orb-7").agent.as_deref(),
@@ -3146,7 +3187,7 @@ credential_command = "secret harbour"
     /// screen where the tail said there was no bead to show.
     #[test]
     fn the_tail_follows_a_staffed_root_as_it_follows_any_other_bead() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.apply(Action::Move(Motion::FirstRow));
         forest.apply(Action::Move(Motion::NextRow));
 
@@ -3163,7 +3204,7 @@ credential_command = "secret harbour"
     /// taken over the wrong run of trees shows on one line or the other.
     #[test]
     fn a_project_line_counts_its_own_trees_and_no_others() {
-        let forest = flatten(&built(Filter::All));
+        let forest = flatten(built(Filter::All));
 
         assert_eq!(
             header_of(&forest, "orbital").counts,
@@ -3190,7 +3231,7 @@ credential_command = "secret harbour"
     /// nothing the forest holds in a group could be looked at or acted on.
     #[test]
     fn the_selection_can_walk_onto_a_line_under_a_group() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let panes: Vec<usize> = forest
             .lines()
             .iter()
@@ -3224,10 +3265,10 @@ credential_command = "secret harbour"
     /// while everything on screen still looks right.
     #[test]
     fn a_selected_pane_survives_a_refresh_that_reorders_its_group() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         select_item(&mut forest, "w:p4");
 
-        forest.refresh(&reordered_groups());
+        forest.refresh(reordered_groups());
 
         assert_eq!(selected_item(&forest), Some("w:p4".to_string()));
     }
@@ -3236,11 +3277,11 @@ credential_command = "secret harbour"
     /// left behind: a group whose lines cannot be reached is the defect.
     #[test]
     fn every_kind_of_thing_a_group_holds_can_hold_the_selection() {
-        let mut forest = flatten(&built(Filter::LiveAgents));
+        let mut forest = flatten(built(Filter::LiveAgents));
         for kind in GroupKind::ALL {
             forest.folds.set(Handle::Group(kind), true);
         }
-        forest.refresh(&built(Filter::LiveAgents));
+        forest.refresh(built(Filter::LiveAgents));
 
         let items: Vec<usize> = forest
             .lines()
@@ -3265,10 +3306,10 @@ credential_command = "secret harbour"
     /// like the screen jumping.
     #[test]
     fn a_selection_on_a_pane_that_goes_away_falls_back_to_its_group() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         select_item(&mut forest, "w:p4");
 
-        forest.refresh(&built_without_the_conflicting_panes());
+        forest.refresh(built_without_the_conflicting_panes());
 
         assert!(
             matches!(
@@ -3327,7 +3368,7 @@ credential_command = "secret harbour"
     /// go unnoticed down that road.
     #[test]
     fn a_selection_on_a_group_that_empties_goes_back_to_the_first_root() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let group = forest
             .lines()
             .iter()
@@ -3338,7 +3379,7 @@ credential_command = "secret harbour"
             .expect("the shared snapshot draws a group for the project that failed");
         step_onto(&mut forest, group);
 
-        forest.refresh(&built_without_the_failed_project());
+        forest.refresh(built_without_the_failed_project());
 
         assert_eq!(
             forest.lines()[forest.selected_line()]
@@ -3389,14 +3430,14 @@ credential_command = "secret harbour"
             now(),
         );
 
-        assert!(!sketch(&flatten(&snapshot))
+        assert!(!sketch(&flatten(snapshot))
             .iter()
             .any(|line| line.contains('[')));
     }
 
     #[test]
     fn a_group_draws_one_line_for_each_thing_it_holds_when_it_is_opened() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let loose = |forest: &Forest| {
             sketch(forest)
                 .iter()
@@ -3420,11 +3461,11 @@ credential_command = "secret harbour"
     /// entry is missing and opening it says which one.
     #[test]
     fn opening_the_unconfigured_group_names_the_directories() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest
             .folds
             .set(Handle::Group(GroupKind::Unconfigured), true);
-        forest.refresh(&snapshot());
+        forest.refresh(snapshot());
 
         let drawn = sketch(&forest);
 
@@ -3453,7 +3494,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let group = hidden_trees_group(&flatten(&snapshot));
+        let group = hidden_trees_group(&flatten(snapshot));
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 1);
@@ -3461,7 +3502,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_hidden_tree_with_nothing_wrong_in_it_is_only_counted_as_hidden() {
-        let group = hidden_trees_group(&flatten(&snapshot()));
+        let group = hidden_trees_group(&flatten(snapshot()));
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 0);
@@ -3486,7 +3527,7 @@ credential_command = "secret harbour"
         );
         snapshot.collected.clear();
 
-        let group = hidden_trees_group(&flatten(&snapshot));
+        let group = hidden_trees_group(&flatten(snapshot));
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 1);
@@ -3504,7 +3545,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let group = hidden_trees_group(&flatten(&snapshot));
+        let group = hidden_trees_group(&flatten(snapshot));
 
         assert_eq!(group.count, 2);
         assert_eq!(group.with_findings, 1);
@@ -3523,7 +3564,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let group = hidden_trees_group(&flatten(&snapshot));
+        let group = hidden_trees_group(&flatten(snapshot));
 
         assert_eq!(group.count, 2);
         assert_eq!(group.with_findings, 1);
@@ -3545,7 +3586,7 @@ credential_command = "secret harbour"
     /// anything undrawn to admit to.
     #[test]
     fn no_other_group_claims_to_be_hiding_findings() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
         let others: Vec<Group> = forest
             .lines()
             .iter()
@@ -3580,11 +3621,11 @@ credential_command = "secret harbour"
         let expected = in_the_snapshot(&snapshot);
 
         for state in 0..1 << handles.len() {
-            let mut forest = flatten(&snapshot);
+            let mut forest = flatten(snapshot.clone());
             for (bit, handle) in handles.iter().enumerate() {
                 forest.folds.set(handle.clone(), state & (1 << bit) == 0);
             }
-            forest.refresh(&snapshot);
+            forest.refresh(snapshot.clone());
 
             assert_eq!(on_screen(&forest), expected, "fold state {state:b}");
         }
@@ -3669,7 +3710,7 @@ credential_command = "secret harbour"
     /// on both and said nothing about where they started.
     #[test]
     fn a_shut_node_starts_in_the_same_column_as_an_open_sibling() {
-        let forest = flatten(&ready_alone(
+        let forest = flatten(ready_alone(
             "orbital",
             SIDING,
             &panes_on(&["sdg-4.3"]),
@@ -3721,7 +3762,7 @@ credential_command = "secret harbour"
     /// on a child, and the width is the four columns a level every line has.
     #[test]
     fn a_bead_drawn_under_one_it_blocks_hangs_on_a_dashed_arm() {
-        let mut forest = flatten(&alone("orbital", SLUICE, &panes_on(&["slu-1.1"])));
+        let mut forest = flatten(alone("orbital", SLUICE, &panes_on(&["slu-1.1"])));
 
         assert_eq!(
             sketch(&forest),
@@ -3767,7 +3808,7 @@ credential_command = "secret harbour"
             let staffed = panes_on(&[
                 "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
             ]);
-            let mut forest = flatten(&alone("orbital", json, &staffed));
+            let mut forest = flatten(alone("orbital", json, &staffed));
             four_columns_a_level(&forest);
             forest.apply(Action::ExpandSubtree);
             four_columns_a_level(&forest);
@@ -3792,7 +3833,7 @@ credential_command = "secret harbour"
     /// marker got there in the first place.
     #[test]
     fn an_unread_root_holds_no_fold_to_set() {
-        let forest = flatten(&snapshot());
+        let forest = flatten(snapshot());
         let header = forest
             .lines()
             .iter()
@@ -3820,7 +3861,7 @@ credential_command = "secret harbour"
     /// of the state instead.
     #[test]
     fn a_root_with_no_children_holds_no_fold_to_set() {
-        let forest = flatten(&alone("orbital", BEACON, &panes_on(&["bcn-6"])));
+        let forest = flatten(alone("orbital", BEACON, &panes_on(&["bcn-6"])));
 
         assert_eq!(
             sketch(&forest),
@@ -3902,7 +3943,7 @@ credential_command = "secret harbour"
             now(),
         );
 
-        assert_eq!(sketch(&flatten(&awaiting)), vec!["▾ orbital", "▾ ferry"]);
+        assert_eq!(sketch(&flatten(awaiting)), vec!["▾ orbital", "▾ ferry"]);
     }
 
     /// A project whose tracker answered and held nothing draws no line, as it
@@ -3919,7 +3960,7 @@ credential_command = "secret harbour"
             ..Snapshot::awaiting(vec!["orbital".to_string()], Filter::LiveAgents, now())
         };
 
-        assert_eq!(sketch(&flatten(&read)), vec!["! NoRoots"]);
+        assert_eq!(sketch(&flatten(read)), vec!["! NoRoots"]);
     }
 
     /// Every tree a snapshot holds belongs to a project it names.
@@ -3951,7 +3992,7 @@ credential_command = "secret harbour"
     /// carry the reason, because a pane drawn blank reads as a crash.
     #[test]
     fn a_forest_with_nothing_in_it_says_so_rather_than_drawing_nothing() {
-        let forest = flatten(&only(Collected::default(), &[]));
+        let forest = flatten(only(Collected::default(), &[]));
 
         assert_eq!(sketch(&forest), vec!["! NoRoots"]);
     }
@@ -3963,7 +4004,7 @@ credential_command = "secret harbour"
     #[test]
     fn the_fold_keys_on_a_forest_with_nothing_in_it_leave_it_saying_so() {
         for action in [Action::ExpandSubtree, Action::CollapseSubtree] {
-            let mut forest = flatten(&only(Collected::default(), &[]));
+            let mut forest = flatten(only(Collected::default(), &[]));
 
             assert!(!forest.apply(action), "{:#?}", sketch(&forest));
             assert_eq!(sketch(&forest), vec!["! NoRoots"]);
@@ -4023,7 +4064,7 @@ credential_command = "secret harbour"
         ];
 
         for (held, snapshot) in cases {
-            let forest = flatten(&snapshot);
+            let forest = flatten(snapshot);
 
             assert!(
                 !forest.lines().is_empty(),
@@ -4039,14 +4080,14 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_forest_holding_trees_and_every_group_does_not_say_it_holds_nothing() {
-        assert!(!says_it_holds_nothing(&flatten(&snapshot())));
+        assert!(!says_it_holds_nothing(&flatten(snapshot())));
     }
 
     // ---- naming a line rather than stepping to it -------------------------
 
     #[test]
     fn selecting_a_line_puts_the_selection_on_it() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let reachable = walk_down(&mut forest);
 
         for at in reachable {
@@ -4066,7 +4107,7 @@ credential_command = "secret harbour"
     /// the reader did not point at.
     #[test]
     fn selecting_a_line_the_selection_cannot_rest_on_leaves_it_where_it_was() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         let unreachable: Vec<usize> = (0..forest.lines().len())
             .filter(|at| !selectable(&forest.lines()[*at]))
             .collect();
@@ -4087,7 +4128,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn selecting_a_line_that_is_not_drawn_leaves_the_selection_where_it_was() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.apply(Action::Move(Motion::FirstRow));
 
         assert!(!forest.select_line(forest.lines().len()));
@@ -4097,7 +4138,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn selecting_the_line_already_selected_changes_nothing() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         forest.apply(Action::Move(Motion::FirstRow));
         let at = forest.selected_line();
 
@@ -4112,14 +4153,14 @@ credential_command = "secret harbour"
     #[test]
     fn selecting_the_lower_copy_of_a_twin_keeps_the_selection_on_it_across_a_refresh() {
         let panes = panes_on(&["qua-1.2", "wha-2.1"]);
-        let mut forest = flatten(&overlapping(&panes));
+        let mut forest = flatten(overlapping(&panes));
         let copies = lines_of(&forest, "qua-1.2");
 
         assert_eq!(copies.len(), 2, "{:#?}", sketch(&forest));
         let lower = copies[1];
 
         assert!(forest.select_line(lower), "{:#?}", sketch(&forest));
-        forest.refresh(&overlapping(&panes));
+        forest.refresh(overlapping(&panes));
 
         assert_eq!(forest.selected_line(), lower, "{:#?}", sketch(&forest));
     }
@@ -4142,7 +4183,7 @@ credential_command = "secret harbour"
     /// in it, so every level below the header is a fold no reader could see.
     #[test]
     fn expanding_reaches_a_fold_that_was_not_drawn_when_it_was_pressed() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
         assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
 
         forest.apply(Action::ExpandSubtree);
@@ -4168,7 +4209,7 @@ credential_command = "secret harbour"
     /// round reaches the level it drew and no further.
     #[test]
     fn a_walk_out_of_rounds_leaves_the_folds_it_did_not_reach() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
         assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
         let scope = forest.handle_at(forest.selected).expect("a selected line");
 
@@ -4202,7 +4243,7 @@ credential_command = "secret harbour"
     #[test]
     fn expanding_from_a_root_leaves_no_fold_shut_under_it() {
         for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
-            let mut forest = flatten(&alone("orbital", json, &two_panes()));
+            let mut forest = flatten(alone("orbital", json, &two_panes()));
             forest.apply(Action::ExpandSubtree);
 
             assert!(
@@ -4219,7 +4260,7 @@ credential_command = "secret harbour"
     #[test]
     fn collapsing_from_a_root_shuts_it_and_leaves_the_project_above_it_open() {
         for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
-            let mut forest = flatten(&alone("orbital", json, &two_panes()));
+            let mut forest = flatten(alone("orbital", json, &two_panes()));
             forest.apply(Action::CollapseSubtree);
 
             assert!(
@@ -4242,7 +4283,7 @@ credential_command = "secret harbour"
     /// when it opens, and the beads it stood for hang a level under it.
     #[test]
     fn a_run_keeps_its_scope_through_being_opened_and_shut_again() {
-        let mut forest = flatten(&snapshot());
+        let mut forest = flatten(snapshot());
         select_run(&mut forest);
         let shut = drawn_beads(&forest);
 
@@ -4281,7 +4322,7 @@ credential_command = "secret harbour"
     /// asking for.
     #[test]
     fn collapsing_from_a_project_leaves_the_other_projects_where_they_were() {
-        let mut forest = flatten(&built(Filter::All));
+        let mut forest = flatten(built(Filter::All));
         forest.apply(Action::ExpandSubtree);
         select_project(&mut forest, "orbital");
         let elsewhere: Vec<String> = drawn_beads(&forest)
@@ -4349,7 +4390,7 @@ credential_command = "secret harbour"
     /// second copy of that bead outside it.
     #[test]
     fn expanding_from_a_node_leaves_a_sibling_subtree_where_it_was() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
         toggle_fold_of(&mut forest, "tow-1");
         select_bead(&mut forest, "tow-1.1");
 
@@ -4368,7 +4409,7 @@ credential_command = "secret harbour"
     /// is shut rather than left open over shut children.
     #[test]
     fn collapsing_from_a_node_leaves_a_sibling_subtree_where_it_was() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
         forest.apply(Action::ExpandSubtree);
         select_bead(&mut forest, "tow-1.1");
 
@@ -4392,7 +4433,7 @@ credential_command = "secret harbour"
     /// on screen.
     #[test]
     fn collapsing_from_a_node_does_not_open_a_sibling_on_the_way() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
         toggle_fold_of(&mut forest, "tow-1");
         toggle_fold_of(&mut forest, "tow-1.1");
         select_bead(&mut forest, "tow-1.1");
@@ -4413,7 +4454,7 @@ credential_command = "secret harbour"
     /// screen exactly as it found it.
     #[test]
     fn expanding_from_a_shut_node_opens_that_node_too() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
         toggle_fold_of(&mut forest, "tow-1");
         select_bead(&mut forest, "tow-1.2");
         assert_eq!(
@@ -4448,7 +4489,7 @@ credential_command = "secret harbour"
     #[test]
     fn the_fold_keys_on_a_row_with_no_fold_leave_the_screen_where_it_was() {
         for action in [Action::ExpandSubtree, Action::CollapseSubtree] {
-            let mut forest = flatten(&tower_staffed(&[]));
+            let mut forest = flatten(tower_staffed(&[]));
             forest.apply(Action::ExpandSubtree);
             select_bead(&mut forest, "tow-1.1.1.1");
             assert_eq!(
@@ -4475,7 +4516,7 @@ credential_command = "secret harbour"
     /// has to reach it there.
     #[test]
     fn collapsing_shuts_a_fold_the_reader_cannot_see() {
-        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         toggle_fold_of(&mut forest, "tow-1.1");
         select_bead(&mut forest, "tow-1");
 
@@ -4501,15 +4542,15 @@ credential_command = "secret harbour"
     /// the key did, and not something the refresh had already undone.
     #[test]
     fn restoring_the_default_recomputes_it_rather_than_replaying_the_old_one() {
-        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
         forest.apply(Action::CollapseSubtree);
-        forest.refresh(&tower_staffed(&["tow-1.2.1"]));
+        forest.refresh(tower_staffed(&["tow-1.2.1"]));
 
         forest.apply(Action::RestoreDefault);
 
         assert_eq!(
             sketch(&forest),
-            sketch(&flatten(&tower_staffed(&["tow-1.2.1"])))
+            sketch(&flatten(tower_staffed(&["tow-1.2.1"])))
         );
     }
 
@@ -4518,11 +4559,11 @@ credential_command = "secret harbour"
     #[test]
     fn the_folds_these_keys_set_survive_a_refresh() {
         for action in [Action::ExpandSubtree, Action::CollapseSubtree] {
-            let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+            let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
             forest.apply(action);
             let before = sketch(&forest);
 
-            forest.refresh(&tower_staffed(&["tow-1.1.1.1"]));
+            forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
 
             assert_eq!(sketch(&forest), before, "{action:?}");
         }
@@ -4533,7 +4574,7 @@ credential_command = "secret harbour"
     /// restoring the default is how they get the agent back.
     #[test]
     fn collapsing_may_shut_a_fold_over_a_live_agent_because_the_reader_asked() {
-        let mut forest = flatten(&tower_staffed(&["tow-1.1.1.1"]));
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         let staffed = "tow-1.1.1.1".to_string();
         assert!(
             drawn_beads(&forest).contains(&staffed),
@@ -4566,7 +4607,7 @@ credential_command = "secret harbour"
             Action::CollapseSubtree,
             Action::RestoreDefault,
         ] {
-            let mut forest = flatten(&built(Filter::LiveAgents));
+            let mut forest = flatten(built(Filter::LiveAgents));
             forest.apply(Action::ToggleFilter);
 
             forest.apply(action);
@@ -4581,11 +4622,11 @@ credential_command = "secret harbour"
     /// on screen as that group shutting itself.
     #[test]
     fn a_refresh_leaves_the_filter_where_the_reader_put_it() {
-        let mut forest = flatten(&built(Filter::LiveAgents));
+        let mut forest = flatten(built(Filter::LiveAgents));
         forest.apply(Action::ToggleFilter);
         let before = sketch(&forest);
 
-        forest.refresh(&built(Filter::LiveAgents));
+        forest.refresh(built(Filter::LiveAgents));
 
         assert_eq!(forest.snapshot().filter, Filter::All);
         assert_eq!(sketch(&forest), before);
@@ -4595,7 +4636,7 @@ credential_command = "secret harbour"
     /// has nowhere to go. The loop redraws on that answer.
     #[test]
     fn expanding_from_a_node_already_open_moves_nothing() {
-        let mut forest = flatten(&tower_staffed(&[]));
+        let mut forest = flatten(tower_staffed(&[]));
 
         assert!(
             forest.apply(Action::ExpandSubtree),

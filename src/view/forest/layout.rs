@@ -5,6 +5,8 @@
 //! nothing here moves a fold: it asks which way one points and draws what
 //! that says.
 
+use std::sync::Arc;
+
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, LoosePane, Snapshot, TrackerState, Tree};
 use crate::model::tree::Link;
@@ -142,7 +144,7 @@ impl Layout<'_> {
     fn draw_project(
         &self,
         project: &str,
-        trees: &[Tree],
+        trees: &[Arc<Tree>],
         facts: &[TreeFacts],
         panes: &[Vec<LoosePane>],
         lines: &mut Vec<Line>,

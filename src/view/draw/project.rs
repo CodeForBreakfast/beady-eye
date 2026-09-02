@@ -184,6 +184,8 @@ mod tests {
 
     use crate::app::{Awaited, Wanted};
     use crate::model::anomaly::Anomaly;
+    use std::sync::Arc;
+
     use crate::model::snapshot::{HerdrState, LoosePane, Node, Snapshot, TrackerFailure, Tree};
     use crate::model::types::{PaneStatus, Status};
     use crate::view::draw::tone::status_colour;
@@ -474,11 +476,11 @@ mod tests {
     #[test]
     fn a_project_with_a_root_that_would_not_read_wears_the_refused_mark() {
         let mut snapshot = two_projects();
-        snapshot.trees.push(Tree::tracker_unreachable(
+        snapshot.trees.push(Arc::new(Tree::tracker_unreachable(
             "harbour",
             "qua-9",
             TrackerFailure::Auth,
-        ));
+        )));
         snapshot.collected.clone_from(&snapshot.trees);
 
         let frame = frame_of(&opened(&snapshot), 74, 12).rows();
@@ -778,7 +780,7 @@ mod tests {
     /// out, so the mappings stay in the one place each owns.
     #[test]
     fn a_root_is_drawn_with_its_own_status_glyph_like_any_other_bead() {
-        let forest = flatten(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let forest = flatten(snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
         let root = &forest.lines()[1];
 
         let painted = Painted::of(fitted(root, 12, &at_rest()), 60, 1).row(0);

@@ -192,6 +192,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     /// A herdr that remembers what it was asked. It answers nothing, because
     /// nothing here waits for an answer: what herdr said arrives later, and
@@ -250,7 +251,7 @@ mod tests {
     /// on. The pairs are what tell a tail that stands apart from one that
     /// must be read again.
     fn snapshot(herdr: HerdrState) -> Snapshot {
-        let tree = Tree {
+        let tree = Arc::new(Tree {
             project: "orbital".to_string(),
             root: "orb-7".to_string(),
             title: "lift the ground station".to_string(),
@@ -283,13 +284,13 @@ mod tests {
             ],
             dangling: Vec::new(),
             cycles: Vec::new(),
-        };
+        });
 
         Snapshot {
             generated_at: Utc::now(),
             herdr,
             filter: Filter::All,
-            trees: vec![tree.clone()],
+            trees: vec![Arc::clone(&tree)],
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),
             unattributed: Vec::new(),
@@ -305,7 +306,7 @@ mod tests {
     /// it starts on.
     /// Steps down from where the forest opens, which is its first root.
     fn selecting(steps: usize, herdr: HerdrState) -> Forest {
-        let mut forest = forest::flatten(&snapshot(herdr));
+        let mut forest = forest::flatten(snapshot(herdr));
         for _ in 0..steps {
             forest.apply(Action::Move(Motion::NextRow));
         }
@@ -314,7 +315,7 @@ mod tests {
 
     /// The one line above the first root: its project.
     fn on_the_project(herdr: HerdrState) -> Forest {
-        let mut forest = forest::flatten(&snapshot(herdr));
+        let mut forest = forest::flatten(snapshot(herdr));
         forest.apply(Action::Move(Motion::FirstRow));
         forest
     }
@@ -593,7 +594,7 @@ mod tests {
     /// drawn line, and it puts a group's items in as `Content::Item`, so
     /// opening one can never produce another group to open.
     fn with_groups_open(herdr: HerdrState) -> Forest {
-        let mut forest = forest::flatten(&snapshot_with_groups(herdr));
+        let mut forest = forest::flatten(snapshot_with_groups(herdr));
         walk::until(
             &mut forest,
             |forest| shut_group(forest).is_none(),
@@ -864,7 +865,7 @@ mod tests {
         let mut reordered = snapshot_with_groups(HerdrState::Ok);
         reordered.unattributed.reverse();
         reordered.conflicts.reverse();
-        forest.refresh(&reordered);
+        forest.refresh(reordered);
 
         assert_eq!(
             target(&forest).pane(),

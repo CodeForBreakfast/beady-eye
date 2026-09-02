@@ -320,7 +320,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
-    use std::sync::{Condvar, Mutex};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     /// Every way a collection can be asked for, named where a test that reads
@@ -996,7 +996,11 @@ mod tests {
     }
 
     fn trees_of<'a>(snap: &'a Snapshot, project: &str) -> Vec<&'a Tree> {
-        snap.trees.iter().filter(|t| t.project == project).collect()
+        snap.trees
+            .iter()
+            .filter(|t| t.project == project)
+            .map(Arc::as_ref)
+            .collect()
     }
 
     /// The view draws one project line over each run of a project's trees, so

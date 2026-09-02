@@ -4,6 +4,7 @@
 //! in; these are the ones both sides want.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -46,18 +47,18 @@ pub(in crate::tui) const PATIENCE: TimeDelta = TimeDelta::seconds(30);
 /// A snapshot of one unremarkable tree. Nothing the loop does depends on
 /// what is in one, only on when it arrives.
 pub(in crate::tui) fn a_snapshot() -> Snapshot {
-    let tree = Tree {
+    let tree = Arc::new(Tree {
         project: "atlas".to_string(),
         root: "a-1".to_string(),
         title: "the only tree there is".to_string(),
         ..Tree::tracker_unreachable("atlas", "a-1", TrackerFailure::Unavailable)
-    };
+    });
 
     Snapshot {
         generated_at: Utc::now(),
         herdr: HerdrState::Ok,
         filter: Filter::LiveAgents,
-        trees: vec![tree.clone()],
+        trees: vec![Arc::clone(&tree)],
         hidden_trees: Vec::new(),
         failed_projects: Vec::new(),
         unattributed: Vec::new(),

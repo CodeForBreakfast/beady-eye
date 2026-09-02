@@ -1,6 +1,8 @@
 //! Which of a snapshot's trees are shown, and the order a reader meets them
 //! in.
 
+use std::sync::Arc;
+
 use super::{Filter, HerdrState, HiddenTree, Snapshot, TrackerState, Tree};
 
 impl Tree {
@@ -64,15 +66,16 @@ pub(super) fn in_flight_first(trees: &mut [Tree]) {
 /// hides. With no herdr there are no panes, so there is no agent to filter on
 /// and every tree renders.
 pub(super) fn partition(
-    trees: &[Tree],
+    trees: &[Arc<Tree>],
     herdr: HerdrState,
     filter: Filter,
-) -> (Vec<Tree>, Vec<HiddenTree>) {
+) -> (Vec<Arc<Tree>>, Vec<HiddenTree>) {
     let filter = match herdr {
         HerdrState::Ok => filter,
         HerdrState::Unavailable => Filter::All,
     };
-    let (shown, hidden): (Vec<&Tree>, Vec<&Tree>) = trees.iter().partition(|t| t.survives(filter));
+    let (shown, hidden): (Vec<&Arc<Tree>>, Vec<&Arc<Tree>>) =
+        trees.iter().partition(|t| t.survives(filter));
 
     (
         shown.into_iter().cloned().collect(),
@@ -89,17 +92,15 @@ pub(super) fn partition(
     )
 }
 
-/// Re-apply the filter to a snapshot already in hand. Which trees show is a
-/// display choice over what was collected, so nothing is read again and the
-/// answer is the one `build` would have given for that filter.
-pub fn refilter(snapshot: &Snapshot, filter: Filter) -> Snapshot {
-    let (trees, hidden_trees) = partition(&snapshot.collected, snapshot.herdr, filter);
-
-    Snapshot {
-        filter,
-        trees,
-        hidden_trees,
-        ..snapshot.clone()
+impl Snapshot {
+    /// Re-apply the filter to a snapshot already in hand. Which trees show is
+    /// a display choice over what was collected, so nothing is read again and
+    /// the answer is the one `build` would have given for that filter.
+    pub fn refilter(&mut self, filter: Filter) {
+        let (trees, hidden_trees) = partition(&self.collected, self.herdr, filter);
+        self.filter = filter;
+        self.trees = trees;
+        self.hidden_trees = hidden_trees;
     }
 }
 
@@ -112,6 +113,13 @@ mod tests {
         build, build_tree, Collected, Counts, FailedProject, Readiness, TrackerFailure,
     };
     use pretty_assertions::assert_eq;
+
+    /// The snapshot as `refilter` leaves it, with the one in hand kept.
+    fn refiltered(snapshot: &Snapshot, filter: Filter) -> Snapshot {
+        let mut refiltered = snapshot.clone();
+        refiltered.refilter(filter);
+        refiltered
+    }
 
     /// One project's tree with nothing claimed in it: a root waiting on work
     /// elsewhere, over open and closed tasks. No pane can be on it and no
@@ -411,7 +419,7 @@ mod tests {
         let filtered = built(interleaved(), Filter::LiveAgents);
 
         assert_eq!(
-            refilter(&filtered, Filter::All),
+            refiltered(&filtered, Filter::All),
             built(interleaved(), Filter::All),
             "a display change must not read differently from a collection"
         );
@@ -422,14 +430,14 @@ mod tests {
         let all = built(interleaved(), Filter::All);
 
         assert_eq!(
-            refilter(&all, Filter::LiveAgents),
+            refiltered(&all, Filter::LiveAgents),
             built(interleaved(), Filter::LiveAgents)
         );
     }
 
     #[test]
     fn a_lifted_filter_puts_the_hidden_trees_back_among_the_shown_ones() {
-        let lifted = refilter(&built(interleaved(), Filter::LiveAgents), Filter::All);
+        let lifted = refiltered(&built(interleaved(), Filter::LiveAgents), Filter::All);
 
         let roots: Vec<&str> = lifted.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
@@ -446,14 +454,36 @@ mod tests {
         let filtered = built(interleaved(), Filter::LiveAgents);
 
         assert_eq!(
-            refilter(&refilter(&filtered, Filter::All), Filter::LiveAgents),
+            refiltered(&refiltered(&filtered, Filter::All), Filter::LiveAgents),
             filtered
         );
     }
 
+    /// A filter is a display choice over what was collected, so what it
+    /// shows is the collected trees themselves. A copy of every shown tree
+    /// was most of what a collection cost to land, paid again on `a`.
+    #[test]
+    fn a_refilter_shows_the_collected_trees_themselves_rather_than_copies() {
+        let mut lifted = built(interleaved(), Filter::LiveAgents);
+        let collected: Vec<Arc<Tree>> = lifted.collected.clone();
+
+        lifted.refilter(Filter::All);
+
+        assert_eq!(lifted.trees.len(), collected.len());
+        for (shown, was) in lifted.trees.iter().zip(&collected) {
+            assert!(Arc::ptr_eq(shown, was), "{} was copied", shown.root);
+            assert_eq!(
+                Arc::strong_count(was),
+                3,
+                "{} is held by collected, trees and this test, and nothing else",
+                was.root
+            );
+        }
+    }
+
     #[test]
     fn a_hidden_tree_comes_back_whole() {
-        let lifted = refilter(&built(interleaved(), Filter::LiveAgents), Filter::All);
+        let lifted = refiltered(&built(interleaved(), Filter::LiveAgents), Filter::All);
         let back = lifted
             .trees
             .iter()
@@ -461,7 +491,7 @@ mod tests {
             .expect("the hidden tree is back");
 
         assert_eq!(
-            back,
+            back.as_ref(),
             &quiet_with_reports(),
             "what a filter hid it must be able to show again"
         );
@@ -486,7 +516,7 @@ mod tests {
         }];
         assert!(!before.unattributed.is_empty(), "there are panes to lose");
 
-        let after = refilter(&refilter(&before, Filter::All), Filter::LiveAgents);
+        let after = refiltered(&refiltered(&before, Filter::All), Filter::LiveAgents);
 
         assert_eq!(after.failed_projects, before.failed_projects);
         assert_eq!(after.unattributed, before.unattributed);
@@ -501,12 +531,12 @@ mod tests {
     fn a_tracker_that_could_not_be_read_is_never_hidden_by_a_refilter() {
         let broken = Tree::tracker_unreachable("ferry", "fry-3", TrackerFailure::Auth);
 
-        let filtered = refilter(
+        let filtered = refiltered(
             &built(vec![broken.clone()], Filter::All),
             Filter::LiveAgents,
         );
 
-        assert_eq!(filtered.trees, vec![broken]);
+        assert_eq!(filtered.trees, vec![Arc::new(broken)]);
         assert!(filtered.hidden_trees.is_empty());
     }
 
@@ -525,7 +555,7 @@ mod tests {
             now(),
         );
 
-        let filtered = refilter(&blind, Filter::LiveAgents);
+        let filtered = refiltered(&blind, Filter::LiveAgents);
 
         assert_eq!(
             filtered.trees.len(),

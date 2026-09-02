@@ -188,7 +188,7 @@ fn refusals(snapshot: &Snapshot) -> Vec<(BeadKey, Conflict)> {
 /// The pane the tail points at with the selection on this disagreement's row
 /// in the conflicts group. The conflict → pane direction, read the same way.
 fn pane_the_tail_points_at(snapshot: &Snapshot, conflict: &Conflict) -> Option<String> {
-    let mut forest = forest::flatten(snapshot);
+    let mut forest = forest::flatten(snapshot.clone());
     let at = forest
         .lines()
         .iter()

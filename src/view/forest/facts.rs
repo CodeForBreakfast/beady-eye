@@ -24,7 +24,11 @@ pub(super) struct Facts {
 impl Facts {
     pub(super) fn of(snapshot: &Snapshot) -> Self {
         Facts {
-            trees: snapshot.trees.iter().map(TreeFacts::of).collect(),
+            trees: snapshot
+                .trees
+                .iter()
+                .map(|tree| TreeFacts::of(tree))
+                .collect(),
             projects: snapshot
                 .trees
                 .chunk_by(|a, b| a.project == b.project)

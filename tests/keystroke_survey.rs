@@ -12,6 +12,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use beady_eye::app;
@@ -39,12 +40,12 @@ fn config() -> Config {
 
 /// What each tree holds, summed over the trees: the thing every subtree
 /// question the layout asks scales with.
-fn stored(trees: &[Tree]) -> usize {
+fn stored(trees: &[Arc<Tree>]) -> usize {
     trees.iter().map(|tree| tree.beads.len()).sum()
 }
 
 /// How many beads those are, each `(project, id)` counted once.
-fn distinct(trees: &[Tree]) -> usize {
+fn distinct(trees: &[Arc<Tree>]) -> usize {
     trees
         .iter()
         .flat_map(|tree| {
@@ -68,13 +69,49 @@ fn emitted(snapshot: &Snapshot) -> usize {
 }
 
 fn press(snapshot: &Snapshot) -> (usize, Duration) {
-    let mut forest = flatten(snapshot);
+    let mut forest = flatten(snapshot.clone());
     let lines = forest.lines().len();
     let started = Instant::now();
     for _ in 0..PRESSES {
         forest.apply(Action::Move(Motion::NextRow));
     }
     (lines, started.elapsed() / PRESSES as u32)
+}
+
+/// How many times a refresh is timed, so one reading is not one scheduler
+/// hiccup.
+const REFRESHES: u32 = 5;
+
+/// What landing a collection costs: re-applying the filter to a snapshot in
+/// hand, flattening one into a forest, and a forest taking a snapshot
+/// identical to the one it holds — the floor a refresh can never get under.
+fn landing(name: &str, snapshot: &Snapshot) {
+    let mut refiltered = snapshot.clone();
+    let started = Instant::now();
+    refiltered.refilter(snapshot.filter);
+    let refilter_alone = started.elapsed();
+    drop(refiltered);
+
+    let handed = snapshot.clone();
+    let started = Instant::now();
+    let mut forest = flatten(handed);
+    let flatten_alone = started.elapsed();
+
+    let mut spent = Duration::ZERO;
+    for _ in 0..REFRESHES {
+        let again = snapshot.clone();
+        let started = Instant::now();
+        forest.refresh(again);
+        spent += started.elapsed();
+    }
+
+    println!("[{name}: landing a collection]");
+    println!("  refilter alone                   {refilter_alone:?}");
+    println!("  flatten (first layout)           {flatten_alone:?}");
+    println!(
+        "  Forest::refresh, identical snapshot {:?}",
+        spent / REFRESHES
+    );
 }
 
 fn report(name: &str, snapshot: &Snapshot) {
@@ -95,6 +132,7 @@ fn report(name: &str, snapshot: &Snapshot) {
     println!("  rows --json writes for them      {}", emitted(snapshot));
     println!("  lines drawn                      {lines}");
     println!("  Forest::apply(Move) per press    {per_press:?}");
+    landing(name, snapshot);
 }
 
 #[test]
@@ -115,8 +153,7 @@ fn rows_and_keystrokes_over_the_configured_trackers() {
     }
 
     report("default filter", &snapshot);
-    report(
-        "--all",
-        &beady_eye::model::snapshot::refilter(&snapshot, Filter::All),
-    );
+    let mut all = snapshot;
+    all.refilter(Filter::All);
+    report("--all", &all);
 }
