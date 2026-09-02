@@ -79,15 +79,27 @@ somebody reads the caller for another reason, which is not something you can
 schedule — so when you change a caller, check what the arms below its early
 return are still reached by.
 
-Two things a mutation run will meet, so the tally does not send anyone
-building what is already correct:
+Two things a mutation run will meet, so a survivor is read as what it is:
 
-Every method of `impl View for Screen` in `src/tui/` survives mutation,
-because nothing without a tty reaches them. They are pure delegation and that
-is deliberate: the answers were moved into `Shown`, where a test reaches them,
-rather than a pty harness built to reach `Screen`. A mutant surviving in an
-untestable adapter usually means the behaviour is in the wrong layer, and the
-fix is to move it.
+`impl View for Screen` in `src/tui/` is half reached by mutation and half not,
+and the line runs where the pty harness under `tests/terminal/` happens to
+drive. Measured 2026-09-03 over all of `src/tui/` — 200 mutants, 150 caught,
+12 missed, 38 unviable, nothing timed out — the impl is 21 of them, and
+`collected`, `collecting`, `holds_for`, `tailed`, `apply` and `draw` are
+caught by tests that run a real `bdi` on a real terminal and assert on the
+cells it painted. `pressed`, `scroll`, `bead_still_shown` and `clicked`
+survive because nothing in the harness sends a mouse event, opens a bead
+window or copies an id; `reread` and `rereads_in` survive because the shimmed
+herdr answers every read with the same file, so a reread that does not happen
+leaves the frame the last one painted.
+
+So read a survivor there as a gap in `tests/terminal/`, and ask which path no
+pty test takes. `Shown`, in the same file, has no survivor at all: the unit
+tests around it catch every viable mutant in it, which is why the adapter has
+little of its own left to miss. `clicked` is where it has some, working out
+the forest's geometry itself instead of delegating, and a mutant surviving in
+an adapter that holds behaviour of its own says the behaviour is in the wrong
+layer, not that a test is missing.
 
 A `Timeout` is a third mutation answer and the tally cannot say which kind it
 is. Some are genuinely non-terminating in production and not gaps: the three
