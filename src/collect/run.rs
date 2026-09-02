@@ -35,6 +35,9 @@ pub enum FailureKind {
     Exec,
     /// The command ran and returned something we cannot read.
     Parse,
+    /// The tracker cannot run what it was asked at all, so asking it again
+    /// answers the same.
+    Unsupported,
 }
 
 /// A command that did not yield usable output, classified.
@@ -62,6 +65,13 @@ const NO_ANSWER: [&str; 4] = [
     "connection refused",
     "i/o timeout",
 ];
+
+/// What bd says to a statement its store cannot run: `bd sql` against its
+/// embedded Dolt, which has no server for the statement to reach. Measured
+/// 2026-09-02 on bd 1.2.2: `Error: 'bd sql' is not yet supported in embedded
+/// mode`, exit 1, nothing on stdout; the same words from 1.0.4, 1.1.0 and
+/// 1.1.2.
+const CANNOT_RUN: &str = "not yet supported";
 
 /// What herdr says when the pane a command names is not there, and when a
 /// pane is in the alternate screen and working so its history cannot be
@@ -101,6 +111,11 @@ impl RunFailure {
             (
                 FailureKind::Unavailable,
                 format!("{program} could not reach the tracker"),
+            )
+        } else if said.contains(CANNOT_RUN) {
+            (
+                FailureKind::Unsupported,
+                format!("{program} cannot run that against this tracker"),
             )
         } else if said.contains(NO_SUCH_PANE) {
             (
@@ -292,6 +307,10 @@ mod tests {
     const REFUSED: &str = r#"Error: failed to open database: failed to check if database "atlas" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'atlas'"#;
     const UNREACHABLE: &str = "Error: failed to open database: Dolt server unreachable at nosuchhost.invalid:3306: dial tcp: lookup nosuchhost.invalid: no such host";
 
+    /// bd's refusal of `bd sql` on its embedded Dolt, as `CANNOT_RUN` was
+    /// measured from.
+    const EMBEDDED: &str = "Error: 'bd sql' is not yet supported in embedded mode";
+
     /// The two shapes herdr writes when it cannot read a pane, measured
     /// against herdr 0.8.2 on 2026-08-30. Both name the pane and the command,
     /// and `focus` answers the first of them the same way bar its `id`.
@@ -352,6 +371,15 @@ mod tests {
     #[test]
     fn a_refused_credential_and_an_unreachable_server_are_told_apart() {
         assert_eq!(failing_command(REFUSED).kind, FailureKind::Auth);
+        assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
+    }
+
+    /// A statement the tracker cannot run at all is told apart from a
+    /// tracker that did not answer it: asking the first again answers the
+    /// same, where the second is worth asking again on the next refresh.
+    #[test]
+    fn a_statement_the_tracker_cannot_run_is_told_apart_from_an_unanswered_one() {
+        assert_eq!(failing_command(EMBEDDED).kind, FailureKind::Unsupported);
         assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
     }
 

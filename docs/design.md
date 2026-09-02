@@ -1026,7 +1026,15 @@ bead write moves both.
 Three things it has to get right. The root is stored only after the cascade
 that followed it succeeded, or a failed read would be sticky. A tracker that
 cannot answer the probe — a SQLite-backed one has no `dolt_hashof_db` — gets
-the cascade, never "nothing changed": degrade, never disappear. And where a
+the cascade, never "nothing changed": degrade, never disappear. Within that,
+a tracker that *refuses* the probe is told from a server that did not answer
+it, because the two want different next moves. bd's default store is its
+embedded Dolt, and `bd sql` there is refused with `'bd sql' is not yet
+supported in embedded mode` on every bd from 1.0.4 to 1.2.2 (measured
+2026-09-02): the adapter remembers that refusal per project for the run, and
+the tracker is read in full from then on with no probe process in front of
+it. A server that did not answer is asked again next refresh, so an outage
+never costs the fast path once the server is back. And where a
 producer's message arrives for a project whose root has not moved, the probe
 wins and the cascade is skipped: bd commits before it returns and a wrapper
 pings after, so a real write has already moved the root by the time the

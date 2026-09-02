@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -15,7 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserializer;
 
 use crate::collect::environment;
-use crate::collect::run::{Env, RunFailure, Runner};
+use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{Tracker, Trackers};
 use crate::config::Project;
 use crate::model::types::{Bead, Dependency, Edge, Status};
@@ -162,6 +163,11 @@ pub struct Cli<'r> {
     /// project configuring none reaches its tracker on. Read once: the shell
     /// `bdi` was launched from does not change while it runs.
     ambient: Option<String>,
+    /// The projects whose tracker refused the probe: bd's embedded Dolt has
+    /// no server for `bd sql` to reach, and says so the same way on every
+    /// refresh. Found out once per project, from the refusal itself, so the
+    /// probe is paid for once per run rather than once per refresh.
+    without_a_probe: Mutex<BTreeSet<String>>,
 }
 
 impl<'r> Cli<'r> {
@@ -169,6 +175,7 @@ impl<'r> Cli<'r> {
         Self {
             runner,
             ambient: environment::ambient_credential(),
+            without_a_probe: Mutex::default(),
         }
     }
 }
@@ -178,8 +185,10 @@ impl Trackers for Cli<'_> {
         let env = environment::tracker_env(self.runner, project, self.ambient.as_deref())?;
         Ok(Box::new(Reader {
             runner: self.runner,
+            name: project.name.clone(),
             path: project.path.clone(),
             env,
+            without_a_probe: &self.without_a_probe,
         }))
     }
 }
@@ -188,8 +197,12 @@ impl Trackers for Cli<'_> {
 /// environment its config asked for.
 struct Reader<'r> {
     runner: &'r dyn Runner,
+    name: String,
     path: PathBuf,
     env: Env,
+    /// The run's memory of which projects' trackers refused the probe,
+    /// shared with every reader the run opens.
+    without_a_probe: &'r Mutex<BTreeSet<String>>,
 }
 
 impl Reader<'_> {
@@ -256,9 +269,24 @@ impl Reader<'_> {
 }
 
 impl Tracker for Reader<'_> {
-    /// bd over Dolt always has a probe, so this is never `None` here.
+    /// bd over a Dolt server has a probe. bd over its embedded Dolt refuses
+    /// it, and that refusal is what tells a tracker with no probe from a
+    /// server that did not answer: the second is asked again next refresh,
+    /// the first is remembered and never asked again this run.
     fn fingerprint(&self) -> Option<Result<String, RunFailure>> {
-        Some(self.working_root())
+        if self.without_a_probe.lock().unwrap().contains(&self.name) {
+            return None;
+        }
+        match self.working_root() {
+            Err(failure) if failure.kind == FailureKind::Unsupported => {
+                self.without_a_probe
+                    .lock()
+                    .unwrap()
+                    .insert(self.name.clone());
+                None
+            }
+            answer => Some(answer),
+        }
     }
 
     /// One call per project rather than one per root, because a tree is
@@ -584,8 +612,10 @@ mod tests {
     fn opened(runner: &FakeRunner) -> Reader<'_> {
         Reader {
             runner,
+            name: "atlas".to_string(),
             path: project_dir(),
             env: credentialled(),
+            without_a_probe: Box::leak(Box::default()),
         }
     }
 
@@ -608,6 +638,7 @@ mod tests {
         Cli {
             runner,
             ambient: ambient.map(str::to_string),
+            without_a_probe: Mutex::default(),
         }
     }
 
@@ -735,6 +766,111 @@ mod tests {
             credentialled(),
             "the probe reaches the tracker on the project's own credential"
         );
+    }
+
+    /// bd's refusal of the probe on a store that cannot run it, as the runner
+    /// classifies it.
+    fn cannot_run_the_probe() -> RunFailure {
+        RunFailure {
+            kind: FailureKind::Unsupported,
+            program: "bd".to_string(),
+            detail: "bd cannot run that against this tracker".to_string(),
+        }
+    }
+
+    /// A Dolt server that did not answer the probe, as the runner classifies
+    /// it.
+    fn did_not_answer_the_probe() -> RunFailure {
+        RunFailure {
+            kind: FailureKind::Unavailable,
+            program: "bd".to_string(),
+            detail: "bd could not reach the tracker".to_string(),
+        }
+    }
+
+    /// How many times the probe was run against `project_dir()`.
+    fn probes(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .iter()
+            .filter(|call| call.argv == spelled(PROBE_CALL))
+            .count()
+    }
+
+    /// bd's default store is its embedded Dolt, which refuses `bd sql`, and
+    /// the refusal is the same on every refresh. So a tracker found to have
+    /// no probe is read in full from then on without the probe being paid
+    /// for again: one failing bd process per project per run, not per
+    /// refresh.
+    #[test]
+    fn a_tracker_found_to_have_no_probe_is_not_probed_again_that_run() {
+        let runner = FakeRunner::default().failing(&spelled(PROBE_CALL), cannot_run_the_probe());
+        let cli = launched_with(&runner, None);
+        let project = ambient_project();
+
+        let first = cli.of(&project).expect("opened").fingerprint();
+        let second = cli.of(&project).expect("opened").fingerprint();
+
+        assert!(
+            first.is_none(),
+            "the refusal is a tracker with no probe: {first:?}"
+        );
+        assert!(second.is_none(), "and stays one: {second:?}");
+        assert_eq!(probes(&runner), 1, "the probe was paid for once");
+    }
+
+    /// A Dolt server that is down answers the probe with nothing, and comes
+    /// back. That is a probe worth asking again, and it is not remembered:
+    /// a run that took an outage for "no probe" would never take the fast
+    /// path again once the server was up.
+    #[test]
+    fn a_server_that_did_not_answer_the_probe_is_probed_again_on_the_next_refresh() {
+        let runner =
+            FakeRunner::default().failing(&spelled(PROBE_CALL), did_not_answer_the_probe());
+        let cli = launched_with(&runner, None);
+        let project = ambient_project();
+
+        for refresh in 1..=2 {
+            let failure = cli
+                .of(&project)
+                .expect("opened")
+                .fingerprint()
+                .expect("a server has a probe")
+                .expect_err("the server did not answer");
+            assert_eq!(failure.kind, FailureKind::Unavailable);
+            assert_eq!(probes(&runner), refresh, "one probe per refresh");
+        }
+    }
+
+    /// What is remembered is which tracker has no probe, not that the run
+    /// has stopped probing: a second project on a Dolt server is probed as
+    /// ever alongside one that refused.
+    #[test]
+    fn no_probe_is_remembered_for_the_tracker_that_refused_and_not_its_neighbours() {
+        let harbour = Project {
+            name: "harbour".to_string(),
+            path: PathBuf::from("/tmp/harbour"),
+            ..ambient_project()
+        };
+        let harbours_probe = format!("bd -C {} --readonly {PROBE_CALL}", harbour.path.display());
+        let runner = FakeRunner::default()
+            .failing(&spelled(PROBE_CALL), cannot_run_the_probe())
+            .with(&harbours_probe, &format!(r#"[{{"h":"{A_WORKING_ROOT}"}}]"#));
+        let cli = launched_with(&runner, None);
+
+        assert!(cli
+            .of(&ambient_project())
+            .expect("opened")
+            .fingerprint()
+            .is_none());
+        let root = cli
+            .of(&harbour)
+            .expect("opened")
+            .fingerprint()
+            .expect("harbour's server has a probe")
+            .expect("and answered it");
+
+        assert_eq!(root, A_WORKING_ROOT);
     }
 
     /// An answer with no row is a tracker that cannot be compared against,

@@ -130,7 +130,10 @@ asking not to read that project contradicts itself.
 the tracker whether it has, before asking it anything else: one `bd sql` for
 the Dolt working root, which covers everything the database holds including
 the ephemeral beads that are never committed. A project whose root is where
-the last read left it is done there.
+the last read left it is done there. Only a Dolt server can answer that
+probe: bd's default store, its embedded Dolt, refuses it, and `bdi` takes the
+refusal as the answer for the rest of the run rather than asking again on
+every refresh.
 
 A project whose root has moved is read in full, and that is the cascade the
 poll used to run every time: `bd` for what is ready, what is blocked, the

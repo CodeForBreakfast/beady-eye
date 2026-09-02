@@ -399,6 +399,7 @@ mod tests {
             FailureKind::Busy,
             FailureKind::Exec,
             FailureKind::Parse,
+            FailureKind::Unsupported,
         ] {
             assert_eq!(
                 read("w:p1".to_string(), Err(failure(kind))),

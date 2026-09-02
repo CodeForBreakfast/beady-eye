@@ -493,9 +493,11 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
     match kind {
         FailureKind::Gone => "that pane has gone",
         FailureKind::Busy => "that pane is too busy to be read",
-        FailureKind::Auth | FailureKind::Unavailable | FailureKind::Exec | FailureKind::Parse => {
-            "that pane could not be read"
-        }
+        FailureKind::Auth
+        | FailureKind::Unavailable
+        | FailureKind::Exec
+        | FailureKind::Parse
+        | FailureKind::Unsupported => "that pane could not be read",
     }
 }
 
@@ -727,6 +729,7 @@ mod tests {
             FailureKind::Busy,
             FailureKind::Exec,
             FailureKind::Parse,
+            FailureKind::Unsupported,
         ] {
             said.push(pane_unreadable(kind).to_string());
         }

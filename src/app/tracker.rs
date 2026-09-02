@@ -364,9 +364,10 @@ fn root_of<'a>(
 pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
     match kind {
         FailureKind::Auth => TrackerFailure::Auth,
-        FailureKind::Unavailable | FailureKind::Gone | FailureKind::Busy => {
-            TrackerFailure::Unavailable
-        }
+        FailureKind::Unavailable
+        | FailureKind::Gone
+        | FailureKind::Busy
+        | FailureKind::Unsupported => TrackerFailure::Unavailable,
         FailureKind::Exec => TrackerFailure::Exec,
         FailureKind::Parse => TrackerFailure::Parse,
     }
@@ -1233,6 +1234,7 @@ orbital = ["bdi-404"]
             (FailureKind::Unavailable, TrackerFailure::Unavailable),
             (FailureKind::Exec, TrackerFailure::Exec),
             (FailureKind::Parse, TrackerFailure::Parse),
+            (FailureKind::Unsupported, TrackerFailure::Unavailable),
         ];
 
         for (kind, expected) in kinds {
