@@ -1422,19 +1422,117 @@ mod tests {
     /// around it left out.
     fn bead_window_inner(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
         let rows = bead_view(shown, width, height);
-        let top = rows
+        let window = window_of(&rows);
+        let (x, y) = (window.x as usize, window.y as usize);
+        rows[y + 1..y + window.height as usize - 1]
+            .iter()
+            .map(|row| {
+                row.chars()
+                    .skip(x + 1)
+                    .take(window.width as usize - 2)
+                    .collect::<String>()
+                    .trim()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// The bead window's rectangle, read off the screen by its corners.
+    fn bead_window(shown: &mut Shown, width: u16, height: u16) -> Rect {
+        window_of(&bead_view(shown, width, height))
+    }
+
+    /// The bead window's rectangle on the screen, by its corners: the title
+    /// row's `┌` and `┐`, and the `└` beneath the first in the rows below.
+    /// The forest's own `└──` connectors sit elsewhere on their rows.
+    fn window_of(rows: &[String]) -> Rect {
+        let y = rows
             .iter()
             .position(|row| row.contains("Esc to go back"))
-            .expect("the bead view's title is on the screen");
-        let bottom = rows[top + 1..]
+            .expect("the bead window's title is on the screen");
+        let top: Vec<char> = rows[y].chars().collect();
+        let x = top.iter().position(|c| *c == '┌').unwrap();
+        let right = top.iter().rposition(|c| *c == '┐').unwrap();
+        let bottom = rows[y + 1..]
             .iter()
-            .position(|row| row.contains('└'))
-            .map(|n| top + 1 + n)
-            .expect("the bead view's bottom edge is on the screen");
-        rows[top + 1..bottom]
-            .iter()
-            .map(|row| row.trim_matches(|c| c == '│' || c == ' ').to_string())
-            .collect()
+            .position(|row| row.chars().nth(x) == Some('└'))
+            .map(|n| y + 1 + n)
+            .expect("the bead window's bottom edge is on the screen");
+        Rect::new(
+            x as u16,
+            y as u16,
+            (right - x + 1) as u16,
+            (bottom - y + 1) as u16,
+        )
+    }
+
+    /// A grove whose first bead's description runs to `lines` lines, so the
+    /// bead is taller than any window a screen in these tests offers.
+    fn a_grove_with_a_tall_bead(lines: usize) -> Snapshot {
+        let mut snapshot = a_described_grove(6);
+        let tree = Arc::make_mut(&mut snapshot.collected[0]);
+        tree.beads[0].description = (1..=lines)
+            .map(|n| format!("line {n} of the description"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// `bdi-2bb.44`: the window follows the terminal rather than stopping at
+    /// eighty columns. Both sides are four fifths of the screen's, centred, so
+    /// a bigger terminal gets a bigger window and not the same box in the
+    /// middle of a bigger forest.
+    #[test]
+    fn the_bead_window_is_four_fifths_of_the_screen_on_either_side() {
+        let mut shown = shown(a_grove_with_a_tall_bead(100));
+        assert!(shown.apply(Action::ShowBead));
+
+        assert_eq!(bead_window(&mut shown, 120, 40), Rect::new(12, 4, 96, 32));
+        assert_eq!(bead_window(&mut shown, 200, 60), Rect::new(20, 6, 160, 48));
+    }
+
+    /// A bead shorter than four fifths of the screen keeps a window its own
+    /// height: the room is offered, not filled with nothing.
+    #[test]
+    fn a_short_bead_keeps_a_short_window_on_a_tall_screen() {
+        let mut shown = shown(a_described_grove(6));
+        assert!(shown.apply(Action::ShowBead));
+
+        let window = bead_window(&mut shown, 200, 60);
+        assert_eq!(window.width, 160);
+        assert!(window.height < 48, "{window:?}");
+        assert_eq!(
+            bead_window_inner(&mut shown, 200, 60).len() + 2,
+            window.height as usize,
+            "the window is as tall as the bead and its border"
+        );
+    }
+
+    /// A bead taller than four fifths of a big screen fills that height and
+    /// scrolls for the rest, the title saying so, the same as on a small one.
+    #[test]
+    fn a_bead_taller_than_the_window_scrolls_by_motion_on_a_big_screen() {
+        let mut shown = shown(a_grove_with_a_tall_bead(100));
+        assert!(shown.apply(Action::ShowBead));
+
+        let rows = bead_view(&mut shown, 200, 60);
+        assert!(
+            rows[6].contains("j, k to scroll"),
+            "the title says the bead scrolls: {:?}",
+            rows[6]
+        );
+        let top = bead_window_inner(&mut shown, 200, 60);
+        assert_eq!(top.len(), 46);
+
+        assert!(shown.scroll(Motion::NextRow));
+        let down_one = bead_window_inner(&mut shown, 200, 60);
+        assert_eq!(down_one[0], top[1]);
+
+        assert!(shown.scroll(Motion::LastRow));
+        let bottom = bead_window_inner(&mut shown, 200, 60);
+        assert_eq!(bottom[45], "line 100 of the description");
+        assert!(!shown.scroll(Motion::NextRow), "nothing below the last row");
     }
 
     /// The bead, with a bead row selected: Enter shows what `bd show` would

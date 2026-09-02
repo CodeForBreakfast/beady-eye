@@ -30,13 +30,33 @@ const UP: char = '↑';
 const OUT: char = '→';
 const BACK: char = '←';
 
-/// The widest the window is drawn, inside its border. `bd show` wraps its
-/// own prose at about this, and a line of prose much wider than it is hard
-/// to read back from the end of to the start of the next.
-const WIDE: u16 = 80;
+/// The share of the screen the window takes on either side: four fifths,
+/// so the forest still shows round it and a bigger terminal gets a bigger
+/// window rather than the same box in the middle of a bigger forest.
+const SHARE: (u16, u16) = (4, 5);
 
 /// The rows a bordered window spends on its own edges.
 const BORDERS: u16 = 2;
+
+/// The least the window is offered across: eighty columns inside its
+/// border, which is about where `bd show` wraps its own prose. Four fifths
+/// of a small screen would be a cramped box for no gain.
+const FLOOR_WIDTH: u16 = 80 + BORDERS;
+
+/// The least the window is offered down: a classic terminal's twenty-four
+/// rows, for the same reason.
+const FLOOR_HEIGHT: u16 = 24;
+
+/// `SHARE` of `screen` or `floor`, whichever is more, and never more than
+/// the screen: a screen no bigger than the floor gives the window the whole
+/// of itself.
+fn offered(screen: u16, floor: u16) -> u16 {
+    let share = u32::from(screen) * u32::from(SHARE.0) / u32::from(SHARE.1);
+    u16::try_from(share)
+        .unwrap_or(u16::MAX)
+        .max(floor)
+        .min(screen)
+}
 
 /// Where the bead view is looking: how far down the bead it has scrolled,
 /// and how much of it the last frame had room for.
@@ -104,15 +124,15 @@ pub fn selected(forest: &Forest) -> Option<&Node> {
         .and_then(|key| forest.snapshot().node(key))
 }
 
-/// Where the window sits: as wide as the screen up to `WIDE` inside the
-/// border, as tall as the bead up to the screen, centred over the forest.
-fn show_window(area: Rect, rows: usize) -> Rect {
-    let height = u16::try_from(rows)
+/// Where the window sits: `width` across, as tall as the bead up to what
+/// the screen offers, centred over the forest.
+fn show_window(area: Rect, width: u16, rows: usize) -> Rect {
+    let wanted = u16::try_from(rows)
         .unwrap_or(u16::MAX)
         .saturating_add(BORDERS);
     area.centered(
-        Constraint::Length(WIDE + BORDERS),
-        Constraint::Length(height),
+        Constraint::Length(width),
+        Constraint::Length(wanted.min(offered(area.height, FLOOR_HEIGHT))),
     )
 }
 
@@ -202,9 +222,9 @@ fn related_row(related: &Related) -> String {
 /// leave is stuck in a view they may have opened by accident. Where the bead
 /// is taller than the window, the title says how to see the rest.
 pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show) {
-    let width = area.width.min(WIDE + BORDERS).saturating_sub(BORDERS) as usize;
-    let rows = said(node, width);
-    let window = show_window(area, rows.len());
+    let width = offered(area.width, FLOOR_WIDTH);
+    let rows = said(node, width.saturating_sub(BORDERS) as usize);
+    let window = show_window(area, width, rows.len());
     if window.is_empty() {
         return;
     }
@@ -603,37 +623,76 @@ mod tests {
         );
     }
 
-    /// The window is never wider than `bd show`'s own prose: on a wide
-    /// screen it stops at eighty columns inside its border, centred, and the
-    /// prose wraps there rather than at the screen's edge.
+    /// The window follows the terminal: on a wide screen it is four fifths of
+    /// the width, centred, and the prose wraps to that rather than to eighty
+    /// columns or to the screen's edge.
     #[test]
-    fn on_a_wide_screen_the_window_stops_at_eighty_columns_inside_its_border() {
+    fn on_a_wide_screen_the_window_is_four_fifths_of_it_and_the_prose_wraps_there() {
         let long = Node {
-            description: "abcde ".repeat(30).trim().to_string(),
+            description: "abcde ".repeat(60).trim().to_string(),
             ..a_bead()
         };
-        let rows = drawn(&long, &mut Show::default(), 100, 30);
+        let rows = drawn(&long, &mut Show::default(), 200, 60);
 
         let top = rows
             .iter()
             .find(|row| row.contains('┌'))
             .expect("the window's top edge is drawn");
-        assert_eq!(top.chars().nth(9), Some('┌'), "{top:?}");
-        assert_eq!(top.chars().nth(90), Some('┐'), "{top:?}");
+        assert_eq!(top.chars().nth(20), Some('┌'), "{top:?}");
+        assert_eq!(top.chars().nth(179), Some('┐'), "{top:?}");
         let first = rows
             .iter()
             .find(|row| row.contains("abcde"))
             .expect("the prose is drawn");
         assert_eq!(
             first.matches("abcde").count(),
-            13,
-            "thirteen words of five, with a space between, is seventy-seven of the \
-             seventy-eight columns left inside the indent: {first:?}"
+            26,
+            "twenty-six words of five, with a space between, is a hundred and \
+             fifty-five of the hundred and fifty-six columns left inside the \
+             indent: {first:?}"
         );
         assert!(
             !first.contains('…'),
             "prose wrapped to the window is never cut at it: {first:?}"
         );
+    }
+
+    /// Four fifths of a small screen would be a cramped box, so the window
+    /// is never offered less than eighty columns inside its border: on a
+    /// screen a little wider than that, the floor wins over the proportion.
+    #[test]
+    fn a_screen_not_much_wider_than_eighty_columns_gives_the_window_eighty() {
+        let rows = drawn(&a_bead(), &mut Show::default(), 90, 30);
+        let top = rows
+            .iter()
+            .find(|row| row.contains('┌'))
+            .expect("the window's top edge is drawn");
+        assert_eq!(top.chars().nth(4), Some('┌'), "{top:?}");
+        assert_eq!(top.chars().nth(85), Some('┐'), "{top:?}");
+    }
+
+    /// The floor holds for the height too: on a screen a little taller than
+    /// twenty-four rows, a bead taller than that gets twenty-four rows of
+    /// window rather than four fifths of the screen.
+    #[test]
+    fn a_screen_not_much_taller_than_twenty_four_rows_gives_the_window_twenty_four() {
+        let tall = Node {
+            description: (1..=40)
+                .map(|n| format!("line {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ..a_bead()
+        };
+        let rows = drawn(&tall, &mut Show::default(), 44, 28);
+        let top = rows
+            .iter()
+            .position(|row| row.contains('┌'))
+            .expect("the window's top edge is drawn");
+        let bottom = rows
+            .iter()
+            .position(|row| row.contains('└'))
+            .expect("the window's bottom edge is drawn");
+        assert_eq!((top, bottom), (2, 25));
     }
 
     // ---- wrapping ----------------------------------------------------------

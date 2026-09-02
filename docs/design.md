@@ -1411,14 +1411,17 @@ left it, and a collection landing behind it refreshes the forest and leaves
 the view up — unless it moved the selection off the bead, because the bead
 closed into a run or left the tracker, in which case the view goes back to the
 forest rather than show the forebear the selection fell to under the title the
-reader opened. The window is as wide as the screen up to eighty columns inside
-its border, which is about where `bd show` wraps its own prose, and as tall as
-the bead up to the screen. Prose wraps to the window; every other row — the
-bead's own line, a related bead's — is cut to it the way a row of the forest
-is. Where the bead is taller than the window, the title says how to see the
-rest, and the motion keys move the bead rather than the selection: `j`, `k`
-and the arrows a row, `^D` and `^U` half the window, `g` and `G` to either end,
-and the wheel a row a notch.
+reader opened. The window follows the terminal: four fifths of the screen on
+either side, centred, so a bigger terminal gets a bigger window rather than
+the same box in the middle of a bigger forest, and never less than eighty
+columns inside its border — about where `bd show` wraps its own prose — by
+twenty-four rows, so a small screen is filled rather than cramped. A bead
+shorter than that height keeps a window its own height. Prose wraps to the
+window; every other row — the bead's own line, a related bead's — is cut to
+it the way a row of the forest is. Where the bead is taller than the window,
+the title says how to see the rest, and the motion keys move the bead rather
+than the selection: `j`, `k` and the arrows a row, `^D` and `^U` half the
+window, `g` and `G` to either end, and the wheel a row a notch.
 
 The view is the hub. From it, `Enter` and `f` focus the bead's pane in herdr,
 `y` copies its id, and the view stays up; `Esc` goes back to the forest, and
