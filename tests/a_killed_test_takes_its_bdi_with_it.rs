@@ -88,9 +88,12 @@ fn a_bdi_whose_parent_is_about_to_be_killed() {
 
     let home = a_home_naming_one_project("orphaned");
     let mut child = bdi_on(&theirs, &home, &[]);
+    // Read before anything can reap it: its pid is ours until we do, so what
+    // this names is the `bdi` and not a later holder of the number.
+    let bdi = Process::named(child.id() as libc::pid_t).expect("it was spawned");
 
     let mut told = std::io::stdout();
-    writeln!(told, "{PID_SAID}{}", child.id()).expect("stdout takes it");
+    writeln!(told, "{PID_SAID}{bdi}").expect("stdout takes it");
     writeln!(told, "{HOME_SAID}{}", home.display()).expect("stdout takes it");
     told.flush().expect("stdout takes it");
 
@@ -156,11 +159,11 @@ fn a_killed_test_leaves_no_bdi_behind() {
     // A `bdi` that never started would be reported gone by everything below,
     // and this would pass without the fix it is here to hold. Its parent
     // never reaps it, so one that died is a zombie and still says so.
-    let started = running(bdi);
+    let started = state_of(&bdi);
 
     parent.kill().expect("the kill is ours to send");
     parent.wait().expect("it is ours to reap");
-    let outlived = still_running_after(bdi, LONG_ENOUGH_TO_DIE);
+    let outlived = still_running_after(&bdi, LONG_ENOUGH_TO_DIE);
 
     // Held open until here on purpose — see the module doc. Let it go any
     // earlier and the pty hangs up, which reaps the `bdi` by the one path
@@ -168,19 +171,19 @@ fn a_killed_test_leaves_no_bdi_behind() {
     drop(ours);
 
     // Whichever way that went, do not become the leak this test is about.
-    if outlived {
-        unsafe { libc::kill(bdi, libc::SIGKILL) };
+    if outlived.is_running() {
+        unsafe { libc::kill(bdi.pid, libc::SIGKILL) };
     }
     let _ = std::fs::remove_dir_all(&home);
     assert!(
-        started,
-        "bdi {bdi} was never running, so nothing was killed"
+        started.is_running(),
+        "bdi {bdi} was never running — it was {started} — so nothing was killed"
     );
     assert!(
-        !outlived,
-        "bdi {bdi} was still running {}s after the test binary that started \
-         it was killed, which is how a mutation run leaves one holding the \
-         inbound socket",
+        !outlived.is_running(),
+        "bdi {bdi} was still {outlived} {}s after the test binary that \
+         started it was killed, which is how a mutation run leaves one \
+         holding the inbound socket",
         LONG_ENOUGH_TO_DIE.as_secs()
     );
 }
@@ -233,7 +236,7 @@ fn wait_until_drawn(terminal: &OwnedFd) -> Result<(), Vec<u8>> {
 /// The `bdi` the spawned half started, and the home it made for it. `None`
 /// where it never said, so a failure to start is not read as a process that
 /// died.
-fn what_it_started(parent: &mut Child) -> Option<(libc::pid_t, PathBuf)> {
+fn what_it_started(parent: &mut Child) -> Option<(Process, PathBuf)> {
     let told = BufReader::new(parent.stdout.take().expect("the pipe is ours"));
     let (said, heard) = mpsc::channel();
     std::thread::spawn(move || {
@@ -252,7 +255,7 @@ fn what_it_started(parent: &mut Child) -> Option<(libc::pid_t, PathBuf)> {
             continue;
         };
         if let Some(said) = line.strip_prefix(PID_SAID) {
-            pid = said.trim().parse().ok();
+            pid = Process::heard(said.trim());
         }
         if let Some(said) = line.strip_prefix(HOME_SAID) {
             home = Some(PathBuf::from(said.trim()));
@@ -261,25 +264,188 @@ fn what_it_started(parent: &mut Child) -> Option<(libc::pid_t, PathBuf)> {
     Some((pid?, home?))
 }
 
-/// Whether this process is still running, having waited this long for it to
-/// stop.
+/// What this process is, having waited this long for it to stop.
 ///
 /// A zombie counts as stopped. A killed orphan is reparented, and what reaps
 /// it — a subreaper, `init`, a build sandbox's stub — is the machine's choice
 /// and not this test's subject.
-fn still_running_after(pid: libc::pid_t, patience: Duration) -> bool {
+fn still_running_after(process: &Process, patience: Duration) -> State {
     let giving_up = Instant::now() + patience;
-    while running(pid) && Instant::now() < giving_up {
-        std::thread::sleep(Duration::from_millis(50));
+    while state_of(process).is_running() && Instant::now() < giving_up {
+        std::thread::sleep(A_GLANCE);
     }
-    running(pid)
+    state_of(process)
 }
 
-fn running(pid: libc::pid_t) -> bool {
-    let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
-        return false;
+/// One process, told apart from any later one the kernel hands its pid to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Process {
+    pid: libc::pid_t,
+    /// When it started, in clock ticks since boot — `starttime` in
+    /// `/proc/<pid>/stat`. A pid is handed on only once its holder is gone,
+    /// so no two holders of one pid start on the same tick.
+    started: u64,
+}
+
+impl Process {
+    /// The process this pid names now, or `None` where it names none.
+    fn named(pid: libc::pid_t) -> Option<Self> {
+        let (_, started) = state_and_start(pid)?;
+        Some(Self { pid, started })
+    }
+
+    /// The process a line of [`Display`](std::fmt::Display) output named.
+    fn heard(said: &str) -> Option<Self> {
+        let (pid, started) = said.split_once(STARTED_AT)?;
+        Some(Self {
+            pid: pid.parse().ok()?,
+            started: started.parse().ok()?,
+        })
+    }
+}
+
+const STARTED_AT: &str = ", started at tick ";
+
+impl std::fmt::Display for Process {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{STARTED_AT}{}", self.pid, self.started)
+    }
+}
+
+impl std::fmt::Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            State::Alive { in_state } => write!(f, "running, in state {in_state}"),
+            State::Zombie => write!(f, "a zombie"),
+            State::Replaced { by_one_started } => write!(
+                f,
+                "gone, its pid held by a process started at tick {by_one_started}"
+            ),
+            State::Gone => write!(f, "gone"),
+        }
+    }
+}
+
+/// What `/proc/<pid>/stat` says a pid's holder is doing, and when it
+/// started. The command name sits in parentheses and may hold spaces, so the
+/// fields are counted from the last closing one: `state` is the third field
+/// and `starttime` the twenty-second.
+fn state_and_start(pid: libc::pid_t) -> Option<(char, u64)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_name = stat.rsplit_once(')')?.1;
+    let mut fields = after_name.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let started = fields.nth(22 - 4)?.parse().ok()?;
+    Some((state, started))
+}
+
+/// What became of a process, as `/proc` tells it.
+#[derive(Debug, PartialEq, Eq)]
+enum State {
+    /// Still going, in the state `/proc` gives it — `D` for one the kernel
+    /// has signalled but cannot yet take out of an uninterruptible wait.
+    Alive { in_state: char },
+    /// Dead, and waiting for a parent to reap it.
+    Zombie,
+    /// Dead and reaped, its pid since handed to a process that started on
+    /// this tick.
+    Replaced { by_one_started: u64 },
+    /// Dead and reaped, its pid held by nobody.
+    Gone,
+}
+
+impl State {
+    fn is_running(&self) -> bool {
+        matches!(self, State::Alive { .. })
+    }
+}
+
+fn state_of(process: &Process) -> State {
+    match state_and_start(process.pid) {
+        None => State::Gone,
+        Some((_, started)) if started != process.started => State::Replaced {
+            by_one_started: started,
+        },
+        Some(('Z', _)) => State::Zombie,
+        Some((in_state, _)) => State::Alive { in_state },
+    }
+}
+
+/// A process that held our pid before we did is a process that has gone,
+/// whatever `/proc` says about the pid now.
+#[test]
+fn a_pid_handed_on_to_a_later_process_reads_as_gone() {
+    let ours = Process::named(std::process::id() as libc::pid_t).expect("we are running");
+    let before_us = Process {
+        started: ours.started - 1,
+        ..ours
     };
-    !status
-        .lines()
-        .any(|line| line.starts_with("State:") && line.contains('Z'))
+    assert_eq!(
+        state_of(&before_us),
+        State::Replaced {
+            by_one_started: ours.started
+        }
+    );
+}
+
+#[test]
+fn a_process_that_is_running_reads_as_alive() {
+    let ours = Process::named(std::process::id() as libc::pid_t).expect("we are running");
+    assert!(
+        state_of(&ours).is_running(),
+        "we are running: {:?}",
+        state_of(&ours)
+    );
+}
+
+/// A child that has exited and not been reaped keeps its pid, and reads as
+/// dead rather than as a process still holding it.
+#[test]
+fn a_zombie_reads_as_dead() {
+    let mut exited = Command::new("true").spawn().expect("true runs");
+    let child = Process::named(exited.id() as libc::pid_t).expect("it was spawned");
+    let giving_up = Instant::now() + LONG_ENOUGH_TO_DIE;
+    while state_of(&child).is_running() && Instant::now() < giving_up {
+        std::thread::sleep(A_GLANCE);
+    }
+    let seen = state_of(&child);
+    exited.wait().expect("it is ours to reap");
+    assert_eq!(seen, State::Zombie);
+}
+
+#[test]
+fn a_reaped_process_reads_as_gone() {
+    let mut exited = Command::new("true").spawn().expect("true runs");
+    let child = Process::named(exited.id() as libc::pid_t).expect("it was spawned");
+    exited.wait().expect("it is ours to reap");
+    assert_eq!(state_of(&child), State::Gone);
+}
+
+/// What tells two holders of a pid apart is when each started, so the tick
+/// read has to be one that a later process reads later.
+#[test]
+fn a_process_spawned_later_started_on_a_later_tick() {
+    let mut earlier = Command::new("true").spawn().expect("true runs");
+    let first = Process::named(earlier.id() as libc::pid_t).expect("it was spawned");
+    earlier.wait().expect("it is ours to reap");
+
+    std::thread::sleep(a_few_ticks());
+
+    let mut later = Command::new("true").spawn().expect("true runs");
+    let second = Process::named(later.id() as libc::pid_t).expect("it was spawned");
+    later.wait().expect("it is ours to reap");
+
+    assert!(
+        second.started > first.started,
+        "the later process read tick {}, the earlier tick {}",
+        second.started,
+        first.started
+    );
+}
+
+/// Long enough that the clock the kernel stamps a start with has moved on.
+fn a_few_ticks() -> Duration {
+    let ticks_a_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    assert!(ticks_a_second > 0, "the kernel says how fast it ticks");
+    Duration::from_secs(1) / ticks_a_second as u32 * 3
 }
