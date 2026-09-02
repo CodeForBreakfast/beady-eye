@@ -11,6 +11,7 @@ pub mod draw;
 pub mod fitted;
 pub mod forest;
 pub mod lines;
+pub mod markdown;
 pub mod phrase;
 pub mod row;
 pub mod show;

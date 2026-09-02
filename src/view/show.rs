@@ -12,6 +12,7 @@ use crate::model::snapshot::Node;
 use crate::model::types::Edge;
 use crate::view::fitted::{indent, Fitted};
 use crate::view::forest::Forest;
+use crate::view::markdown;
 use crate::view::phrase;
 use crate::view::row::{agent_marker, status_glyph};
 use crate::view::Motion;
@@ -160,7 +161,16 @@ pub fn said(node: &Node, width: usize) -> Vec<Vec<Span<'static>>> {
     }
 
     let room = width.saturating_sub(indent().len());
-    let prose = |text: &str| wrap(text, room).into_iter().map(plain).collect::<Vec<_>>();
+    let prose = |text: &str| {
+        markdown::rows(text, room)
+            .into_iter()
+            .map(|row| {
+                let mut said = vec![Span::raw(indent())];
+                said.extend(row);
+                said
+            })
+            .collect::<Vec<_>>()
+    };
     let tied = |arrow: char, related: &[Related]| {
         related
             .iter()
@@ -253,68 +263,6 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show) {
             },
         );
     }
-}
-
-/// Prose wrapped to `width` columns, at the spaces. Each line of the text
-/// keeps its own leading spaces on every row it wraps onto, so a list keeps
-/// its shape; a blank line stays a blank line; and a word too wide for a row
-/// is broken between glyphs rather than lost.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut rows = Vec::new();
-    for line in text.lines() {
-        let lead: String = line.chars().take_while(|c| *c == ' ').collect();
-        let body = &line[lead.len()..];
-        if body.is_empty() {
-            rows.push(String::new());
-            continue;
-        }
-        let room = width.saturating_sub(lead.len()).max(1);
-        let mut row = String::new();
-        for word in body.split_whitespace() {
-            let word = if row.is_empty() {
-                word.to_string()
-            } else if columns_of(&row) + 1 + columns_of(word) <= room {
-                row.push(' ');
-                row.push_str(word);
-                continue;
-            } else {
-                rows.push(format!("{lead}{row}"));
-                word.to_string()
-            };
-            row = word;
-            while columns_of(&row) > room {
-                let (head, rest) = split_at_columns(&row, room);
-                rows.push(format!("{lead}{head}"));
-                row = rest;
-            }
-        }
-        rows.push(format!("{lead}{row}"));
-    }
-    rows
-}
-
-/// What a piece of text takes up on screen, in columns.
-fn columns_of(text: &str) -> usize {
-    Span::raw(text).width()
-}
-
-/// `text` split after as many glyphs as fit in `limit` columns, never
-/// inside one. At least one glyph goes in the head, so a glyph wider than
-/// the limit is still drawn rather than looped over for ever.
-fn split_at_columns(text: &str, limit: usize) -> (String, String) {
-    let mut head = String::new();
-    let mut used = 0;
-    let mut glyphs = text.chars();
-    for glyph in glyphs.by_ref() {
-        let width = columns_of(&glyph.to_string());
-        if !head.is_empty() && used + width > limit {
-            let rest: String = std::iter::once(glyph).chain(glyphs).collect();
-            return (head, rest);
-        }
-        used += width;
-        head.push(glyph);
-    }
-    (head, String::new())
 }
 
 #[cfg(test)]
@@ -693,41 +641,6 @@ mod tests {
             .position(|row| row.contains('└'))
             .expect("the window's bottom edge is drawn");
         assert_eq!((top, bottom), (2, 25));
-    }
-
-    // ---- wrapping ----------------------------------------------------------
-
-    /// A word exactly as wide as the row is a word that fits, not one to
-    /// break.
-    #[test]
-    fn a_word_exactly_as_wide_as_the_row_is_not_broken() {
-        assert_eq!(wrap("abcd", 4), ["abcd"]);
-        assert_eq!(wrap("abcd efgh", 4), ["abcd", "efgh"]);
-    }
-
-    #[test]
-    fn prose_wraps_at_a_space_and_keeps_its_blank_lines() {
-        assert_eq!(
-            wrap("one two three\n\nfour", 9),
-            ["one two", "three", "", "four"]
-        );
-    }
-
-    /// A list in a description keeps its shape: the indent a line was
-    /// written with is the indent every row it wraps onto gets.
-    #[test]
-    fn an_indented_line_keeps_its_indent_on_every_row_it_wraps_onto() {
-        assert_eq!(
-            wrap("  one two three four", 12),
-            ["  one two", "  three four"]
-        );
-    }
-
-    /// A word wider than the window is the one thing that cannot wrap at a
-    /// space, and it is broken between glyphs rather than lost.
-    #[test]
-    fn a_word_wider_than_the_window_is_broken_rather_than_lost() {
-        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
     }
 
     #[test]

@@ -1424,9 +1424,16 @@ either side, centred, so a bigger terminal gets a bigger window rather than
 the same box in the middle of a bigger forest, and never less than eighty
 columns inside its border — about where `bd show` wraps its own prose — by
 twenty-four rows, so a small screen is filled rather than cramped. A bead
-shorter than that height keeps a window its own height. Prose wraps to the
-window; every other row — the bead's own line, a related bead's — is cut to
-it the way a row of the forest is. Where the bead is taller than the window,
+shorter than that height keeps a window its own height. The description and
+the notes are rendered as markdown, in the window's own styling rather than
+the forest's: a heading bold and clear of the prose, an item behind `bd`'s own
+bullet and hanging under its text, a code span or block in a tone of its own,
+emphasis italic and strong emphasis bold, a quote barred down its side, and a
+link followed by where it goes. A line break in the source stays a row break,
+so text that is not markdown draws as it always did, and text that is broken
+markdown is drawn as written: a renderer that drops text is worse than none.
+Prose wraps to the window; every other row — the bead's own line, a related
+bead's — is cut to it the way a row of the forest is. Where the bead is taller than the window,
 the title says how to see the rest, and the motion keys move the bead rather
 than the selection: `j`, `k` and the arrows a row, `^D` and `^U` half the
 window, `g` and `G` to either end, and the wheel a row a notch.

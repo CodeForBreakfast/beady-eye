@@ -540,13 +540,14 @@ mod tests {
     use crate::tui::keys::tests::key;
     use crate::tui::keys::{action, BINDINGS};
     use crate::view::bindings::bindings_window;
-    use crate::view::painted::Painted;
+    use crate::view::painted::{Painted, Run};
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     use chrono::Utc;
     use ratatui::crossterm::event::KeyCode;
     use ratatui::layout::Rect;
+    use ratatui::style::{Color, Modifier};
     use ratatui::widgets::Block;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
@@ -1477,6 +1478,43 @@ mod tests {
             .join("\n");
         snapshot.trees = snapshot.collected.clone();
         snapshot
+    }
+
+    /// A grove whose first bead's description carries a heading, an item, a
+    /// code span and emphasis.
+    fn a_grove_with_a_marked_up_bead() -> Snapshot {
+        let mut snapshot = a_described_grove(6);
+        let tree = Arc::make_mut(&mut snapshot.collected[0]);
+        tree.beads[0].description = "## Shape\n\n- keep `wrap` *soft*".to_string();
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// `bdi-2bb.45`: the description is rendered as markdown in the window's
+    /// own styling — a heading bold, an item behind a bullet, a code span in
+    /// a tone of its own, emphasis italic — as the screen paints it.
+    #[test]
+    fn the_bead_window_styles_the_descriptions_markdown() {
+        let mut shown = shown(a_grove_with_a_marked_up_bead());
+        assert!(shown.apply(Action::ShowBead));
+        let (forest, tail, show) = (&mut shown.forest, &shown.tail, &mut shown.show);
+        let painted = screen_of(forest, tail, 80, 24, Over::Bead(show));
+
+        let runs: Vec<Run> = (0..24).flat_map(|y| painted.row(y)).collect();
+        let run_of = |said: &str| {
+            runs.iter()
+                .find(|run| run.said == said)
+                .unwrap_or_else(|| panic!("{said:?} is drawn in a run of its own: {runs:#?}"))
+                .clone()
+        };
+        assert!(run_of("Shape").style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(run_of("wrap").style.fg, Some(Color::Cyan));
+        assert!(run_of("soft").style.add_modifier.contains(Modifier::ITALIC));
+        assert!(
+            painted.rows().iter().any(|row| row.contains("• keep")),
+            "{:#?}",
+            painted.rows()
+        );
     }
 
     /// `bdi-2bb.44`: the window follows the terminal rather than stopping at
