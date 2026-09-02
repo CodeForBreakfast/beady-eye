@@ -57,13 +57,20 @@ pub(super) struct Binding {
 /// The order is least guessable first, because a screen too short for the
 /// whole table shows the top of it. A reader who cannot see the arrows will
 /// press one anyway; one who cannot see `a` will not work out that the trees
-/// they are missing are being filtered.
+/// they are missing are being filtered. `Esc` sits below `q`: the bead view
+/// names it in its own title, so nobody has to find it here.
 pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: &[alone(KeyCode::Enter, "Enter")],
+        action: Action::ShowBead,
+        does: "show the selected bead, or focus its pane from the bead view",
+        hint: Some("show"),
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('f'), "f")],
         action: Action::Focus,
         does: "focus the selected bead's pane in herdr",
-        hint: Some("focus"),
+        hint: None,
     },
     Binding {
         keys: &[alone(KeyCode::Char(' '), "Space")],
@@ -88,6 +95,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         action: Action::Quit,
         does: "quit",
         hint: Some("quit"),
+    },
+    Binding {
+        keys: &[alone(KeyCode::Esc, "Esc")],
+        action: Action::Back,
+        does: "go back to the forest from the bead view",
+        hint: None,
     },
     Binding {
         keys: &[ctrl('r', "^R")],
@@ -266,6 +279,8 @@ pub(super) mod tests {
             Action::RestoreDefault,
             Action::ToggleFilter,
             Action::Focus,
+            Action::ShowBead,
+            Action::Back,
             Action::CopyId,
             Action::ShowBindings,
             Action::Refresh,
@@ -290,6 +305,8 @@ pub(super) mod tests {
                 | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::Focus
+                | Action::ShowBead
+                | Action::Back
                 | Action::CopyId
                 | Action::ShowBindings
                 | Action::Refresh
@@ -407,7 +424,9 @@ pub(super) mod tests {
             (key(KeyCode::PageDown), Action::Move(Motion::HalfScreenDown)),
             (key(KeyCode::PageUp), Action::Move(Motion::HalfScreenUp)),
             (key(KeyCode::Char(' ')), Action::ToggleFold),
-            (key(KeyCode::Enter), Action::Focus),
+            (key(KeyCode::Enter), Action::ShowBead),
+            (key(KeyCode::Char('f')), Action::Focus),
+            (key(KeyCode::Esc), Action::Back),
             (key(KeyCode::Char('y')), Action::CopyId),
             (key(KeyCode::Char('a')), Action::ToggleFilter),
             (control('r'), Action::Refresh),

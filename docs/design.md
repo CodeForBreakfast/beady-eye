@@ -1214,7 +1214,7 @@ says only that it exists.
   └── ◍ wCM:pE idle                                  /tmp/bdi-ground/summit-works
 ────────────────────────────────── wCM:p9 ──────────────────────────────────
   · rebuilt .#thinkpad, generation 541
-⚠ no herdr session · which agents are alive is unknown   Enter focus   a all   ? keys   q quit
+⚠ no herdr session · which agents are alive is unknown   Enter show   a all   ? keys   q quit
 ```
 
 (The last line shows a notice and the keys together for the sake of the
@@ -1337,10 +1337,11 @@ its answer is thrown away when it finally arrives, and none is asked while one
 is still out, so a wedged herdr costs one waiting thread rather than one per
 poll.
 
-`Enter` focuses the selected pane in herdr — the only write `bdi` performs,
-and it writes to herdr rather than to any system of record. On a row with no
-pane it is a no-op, not an error: there is nothing to focus and nothing has
-gone wrong. On a pane that will not come, the tail says so where the tail is.
+`f` focuses the selected pane in herdr — the only write `bdi` performs, and
+it writes to herdr rather than to any system of record. On a row with no pane
+it is a no-op, not an error: there is nothing to focus and nothing has gone
+wrong. On a pane that will not come, the tail says so where the tail is. From
+the bead view, `Enter` does the same — see *The bead*.
 
 `y` puts the selected bead's id on the clipboard — the id alone, exactly as
 `bd` takes it — and the foot says *copied bdi-2bb.42* until the reader's next
@@ -1356,6 +1357,57 @@ does nothing and says nothing, as `Enter` does.
 
 The band yields its rows before the forest yields any: on a short screen the
 forest is the thing this tool exists to show.
+
+### The bead
+
+`Enter` on a bead row shows that bead whole, as `bd show` would: its glyph,
+id and title; its status, priority, type and owner; the agent the join put on
+it, with its pane and state; then, under the names `bd show` prints and in its
+order, the description, the notes, the parent, what it depends on and what it
+blocks — each related bead with its glyph, id and title, and one the tracker's
+answer no longer holds named by its id alone and said to be *not in the
+tracker's answer*. A section the bead has nothing in is left out, as `bd show`
+leaves it out. Everything drawn comes from the rows `bdi` already holds: the
+description and the notes are in the `bd list --json` rows, and the related
+beads' statuses and titles, with the reverse edge that says what a bead
+blocks, are read once over the whole answer when a project is collected. No
+key costs a call to `bd`.
+
+It is a window over the forest, like the key bindings, rather than a screen in
+place of it: the row it was opened from is untouched beneath it, so leaving
+the view puts the reader back on the same row with the forest exactly as they
+left it, and a collection landing behind it refreshes the forest and leaves
+the view up — unless it moved the selection off the bead, because the bead
+closed into a run or left the tracker, in which case the view goes back to the
+forest rather than show the forebear the selection fell to under the title the
+reader opened. The window is as wide as the screen up to eighty columns inside
+its border, which is about where `bd show` wraps its own prose, and as tall as
+the bead up to the screen. Prose wraps to the window; every other row — the
+bead's own line, a related bead's — is cut to it the way a row of the forest
+is. Where the bead is taller than the window, the title says how to see the
+rest, and the motion keys move the bead rather than the selection: `j`, `k`
+and the arrows a row, `^D` and `^U` half the window, `g` and `G` to either end,
+and the wheel a row a notch.
+
+The view is the hub. From it, `Enter` and `f` focus the bead's pane in herdr,
+`y` copies its id, and the view stays up; `Esc` goes back to the forest, and
+so does `q`, as it does from the bindings, so the forest a reader was looking
+at is still there to quit from. *Back* rather than *close*, because closing is
+what `bd close`
+does to a bead and this does nothing to one. `?` puts the bindings up over the
+forest, `^R` collects behind the view, and every other key does nothing there.
+The title — *`<id>` · Esc to go back* — is the line that survives every cut,
+because a reader who cannot see how to leave is stuck in a view they may have
+opened by accident.
+
+`Enter` on a row that is not a bead — a project's line, a group, a thing in
+one, a root whose tree would not read — has nothing to show, and does nothing
+and says nothing, as before.
+
+Until this view, `Enter` focused the pane. Graeme moved focus to `f` (15:05
+BST 2026-09-02) so that `Enter` shows the bead and focus stays one key from
+the row for anyone who learns `f`; the forty-column rule below is why `f` is
+in `?` and not on the keys row.
 
 ### The groups below the trees
 
@@ -1410,10 +1462,12 @@ there is no filter to apply and every tree renders.
 ### Keys
 
 The row under the tail names the handful of bindings worth a permanent line,
-each by a key a reader can press — `Enter focus   a all   ? keys   q quit`,
-thirty-seven columns, which is what fits a forty-column terminal without
-losing its last words, and the last words are `q quit`. `?` opens the full
-table in a window over the forest; any key closes it. `^R` came off the row to
+each by a key a reader can press — `Enter show   a all   ? keys   q quit`,
+thirty-six columns, which is what fits a forty-column terminal without
+losing its last words, and the last words are `q quit`. `f focus` beside
+`Enter show` would overrun that, so `f` lives in `?` and not on the row. `?`
+opens the full table in a window over the forest; any key closes it. `^R`
+came off the row to
 make room for `?`: refresh is the most skippable of the five, since `bdi`
 collects on a timer and on change reports anyway, so `^R` only ever means
 *now*, and `?` is one key from the full list.
@@ -1422,11 +1476,13 @@ The bindings are vim-like, with the arrows as aliases:
 
 | key | does |
 |---|---|
-| `Enter` | focus the selected bead's pane in herdr |
+| `Enter` | show the selected bead, or focus its pane from the bead view |
+| `f` | focus the selected bead's pane in herdr |
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
 | `q`, `^C` | quit |
+| `Esc` | go back to the forest from the bead view |
 | `^R` | collect from the trackers again now |
 | `E` | expand the selected node and everything under it |
 | `C` | collapse the selected node and everything under it |
@@ -1447,8 +1503,8 @@ with what pressing it does; a build-time check refuses an action no key
 reaches. The table is ordered least guessable first, not naturally, because a
 screen too short for the whole of it shows the top: ordered naturally, an
 eight-row window gave a reader six motion keys and *8 more* — the arrows, which
-they would have pressed anyway. Ordered this way they get `Enter`, `Space`,
-`a`, `?`, `q`, `^R` and a count. A reader who cannot see the arrows presses one
+they would have pressed anyway. Ordered this way they get `Enter`, `f`,
+`Space`, `a`, `?` and a count. A reader who cannot see the arrows presses one
 regardless; one who cannot see `a` never works out that the trees they are
 missing are being filtered. A window too short for every binding counts the
 ones it left off rather than stopping, and the title — *press any key to

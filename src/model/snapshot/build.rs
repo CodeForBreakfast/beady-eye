@@ -1,6 +1,7 @@
 //! One project's rows drawn as a tree, and every project's trees gathered
 //! into the snapshot, with the live panes that belong to none of them.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -8,6 +9,7 @@ use chrono::{DateTime, Utc};
 use crate::config::Config;
 use crate::model::anomaly;
 use crate::model::badges;
+use crate::model::edges::Relations;
 use crate::model::join::{self, BeadKey, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::Pane;
@@ -20,11 +22,16 @@ use super::{
 
 /// Draw one project's assembled rows as a tree, with the agents already
 /// resolved across every project.
+///
+/// `relations` is read for the whole answer rather than for this tree: what
+/// a bead blocks is found on the beads that wait on it, and those can sit in
+/// another tree.
 pub fn build_tree(
     project: &str,
     assembled: &Assembled,
     joined: &Joined,
     readiness: &Readiness,
+    relations: &BTreeMap<String, Relations>,
     cfg: &Config,
     now: DateTime<Utc>,
 ) -> Tree {
@@ -38,6 +45,7 @@ pub fn build_tree(
             };
             let agent = joined.agents.get(&key).cloned();
             let refused = joined.refused.get(&key);
+            let tied = relations.get(&bead.id).cloned().unwrap_or_default();
             Node {
                 id: bead.id.clone(),
                 title: bead.title.clone(),
@@ -55,6 +63,12 @@ pub fn build_tree(
                 badges: badges::badges_for(bead, &cfg.badges),
                 anomalies: anomaly::detect(bead, agent.as_ref(), refused, &cfg.anomalies, now),
                 agent,
+                description: bead.description.clone().unwrap_or_default(),
+                notes: bead.notes.clone().unwrap_or_default(),
+                owner: bead.owner.clone(),
+                parent: tied.parent,
+                depends_on: tied.depends_on,
+                blocks: tied.blocks,
             }
         })
         .collect();
@@ -136,9 +150,11 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::bd::parse_beads;
     use crate::config::Scope;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
+    use crate::model::edges::relations;
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource};
     use crate::model::snapshot::tests::*;
     use crate::model::snapshot::{FailedProject, TrackerFailure};
@@ -272,6 +288,69 @@ mod tests {
         );
     }
 
+    /// What `bd show` says of a bead, carried on the node so the screen can
+    /// say it without asking the tracker again: the words the row holds, and
+    /// what the answer ties the bead to — each with the status and title the
+    /// answer gave it, including a bead in no tree of its own.
+    #[test]
+    fn the_bead_as_bd_show_gives_it_reaches_the_node() {
+        let json = r#"[
+          {"id":"orb-6","title":"root","status":"open","owner":"kim",
+           "description":"lift the whole station","notes":"the crane is booked"},
+          {"id":"orb-6.1","title":"waiting","status":"open",
+           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
+                           {"depends_on_id":"orb-6.2","type":"blocks"}]},
+          {"id":"orb-6.2","title":"what it waits on","status":"closed",
+           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}]}
+        ]"#;
+        let beads = parse_beads(json).expect("the rows parse");
+        let relations = relations(&beads);
+        let t = build_tree(
+            "orbital",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &relations,
+            &cfg(),
+            now(),
+        );
+
+        let root = node(&t, "orb-6");
+        assert_eq!(root.description, "lift the whole station");
+        assert_eq!(root.notes, "the crane is booked");
+        assert_eq!(root.owner.as_deref(), Some("kim"));
+        assert_eq!(root.parent, None);
+        assert_eq!(root.depends_on, vec![]);
+        assert_eq!(root.blocks, vec![]);
+
+        let waiting = node(&t, "orb-6.1");
+        assert_eq!(waiting.description, "", "a row with nothing to say");
+        assert_eq!(waiting.notes, "");
+        assert_eq!(waiting.owner, None);
+        assert_eq!(
+            waiting.parent.as_ref().map(|p| p.id.as_str()),
+            Some("orb-6")
+        );
+        assert_eq!(
+            waiting
+                .depends_on
+                .iter()
+                .map(|r| (r.id.as_str(), r.status.clone(), r.title.as_deref()))
+                .collect::<Vec<_>>(),
+            [("orb-6.2", Some(Status::Closed), Some("what it waits on"))]
+        );
+
+        let waited_on = node(&t, "orb-6.2");
+        assert_eq!(
+            waited_on
+                .blocks
+                .iter()
+                .map(|r| (r.id.as_str(), r.status.clone(), r.title.as_deref()))
+                .collect::<Vec<_>>(),
+            [("orb-6.1", Some(Status::Open), Some("waiting"))]
+        );
+    }
+
     #[test]
     fn the_badges_reach_the_node() {
         let t = tree();
@@ -322,7 +401,15 @@ mod tests {
             },
         );
 
-        let t = build_tree("orbital", &a, &j, &readiness(), &cfg(), now());
+        let t = build_tree(
+            "orbital",
+            &a,
+            &j,
+            &readiness(),
+            &BTreeMap::new(),
+            &cfg(),
+            now(),
+        );
 
         assert!(
             node(&t, "orb-7.4").agent.is_none(),
@@ -345,6 +432,7 @@ mod tests {
             &a,
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         );
@@ -373,6 +461,7 @@ mod tests {
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         );
@@ -409,6 +498,7 @@ mod tests {
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         );
@@ -437,6 +527,7 @@ mod tests {
             &a,
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         );

@@ -548,6 +548,45 @@ pub fn unrecognised_status(status: &Status) -> Option<String> {
     }
 }
 
+/// bd's own word for a status, spelled as `bd list --json` writes it. One
+/// outside bd's set is quoted, the way every borrowed word is.
+pub fn status_word(status: &Status) -> String {
+    match status {
+        Status::Open => "open".to_string(),
+        Status::InProgress => "in_progress".to_string(),
+        Status::Blocked => "blocked".to_string(),
+        Status::Closed => "closed".to_string(),
+        Status::Deferred => "deferred".to_string(),
+        Status::Other(status) => quoted(status),
+    }
+}
+
+/// The title of the bead view: the bead, the way back out, and — where the
+/// window is too short for the whole bead — how to see the rest. The way
+/// back comes first, because a title too long for the screen is cut from
+/// its end.
+///
+/// *Back* rather than *close*: closing is what `bd close` does to a bead,
+/// and leaving this view does nothing to one.
+pub fn way_back_from_bead(id: &str, scrolls: bool) -> String {
+    let mut said = format!("{id} · Esc to go back");
+    if scrolls {
+        said.push_str(" · j, k to scroll");
+    }
+    said
+}
+
+/// A bead an edge names that the tracker's answer does not hold, which is
+/// all the answer can say of it.
+pub fn not_in_the_answer() -> &'static str {
+    "not in the tracker's answer"
+}
+
+/// A kind of edge outside the two `bdi` knows, said as bd's word for it.
+pub fn edge_kind(kind: &str) -> String {
+    quoted(kind)
+}
+
 /// Vocabulary from bd or herdr that neither project's own set covers: marked
 /// as theirs rather than said in `bdi`'s voice.
 fn quoted(word: &str) -> String {

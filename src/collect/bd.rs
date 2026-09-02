@@ -203,6 +203,50 @@ mod tests {
         assert_eq!(fixture().len(), 7);
     }
 
+    const JOINED: &str = include_str!("../../tests/fixtures/joined_bd_list.json");
+
+    /// The bead as `bd show` gives it is in the rows `bd list` already
+    /// writes, so showing one costs no further call. Asserted on a capture
+    /// rather than a row typed here, because a key a capture carries is a
+    /// measurement of what bd writes.
+    #[test]
+    fn a_captured_row_carries_the_description_the_notes_and_the_owner() {
+        let rows = parse_beads(JOINED).expect("the captured rows parse");
+        let bead = rows
+            .iter()
+            .find(|b| b.id == "bdi-7ao")
+            .expect("bdi-7ao is in the capture");
+
+        assert!(
+            bead.description
+                .as_deref()
+                .is_some_and(|said| said.starts_with("`bdi` joins a beads tracker")),
+            "{:?}",
+            bead.description
+        );
+        assert!(
+            bead.notes
+                .as_deref()
+                .is_some_and(|said| said.starts_with("Ready and unstaffed at 17:37 BST")),
+            "{:?}",
+            bead.notes
+        );
+        assert_eq!(
+            bead.owner.as_deref(),
+            Some("80714+GraemeF@users.noreply.github.com")
+        );
+    }
+
+    /// bd leaves both out of a row that has neither, and a row it writes
+    /// that way is a bead with nothing to say, not one that will not parse.
+    #[test]
+    fn a_row_without_a_description_or_notes_parses_with_neither() {
+        let bead = row("bdi-2bb.4");
+
+        assert_eq!(bead.description, None);
+        assert_eq!(bead.notes, None);
+    }
+
     /// A captured row names every bead it depends on, and the kinds differ
     /// within the one row: the tree cannot be built from the parent edges
     /// alone.

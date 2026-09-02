@@ -208,9 +208,9 @@ impl Forest {
 
     /// Apply one action, reporting whether it changed anything.
     ///
-    /// Focusing a pane, copying a bead's id, showing the key bindings,
-    /// re-collecting and quitting are the loop's to do, and none of them
-    /// changes what is on screen here.
+    /// Focusing a pane, copying a bead's id, showing a bead or the key
+    /// bindings and going back from them, re-collecting and quitting are the
+    /// loop's to do, and none of them changes what is on screen here.
     pub fn apply(&mut self, action: Action) -> bool {
         let selected = self.selected;
         match action {
@@ -223,6 +223,8 @@ impl Forest {
             Action::RestoreDefault => self.folds.clear(),
             Action::ToggleFilter => self.toggle_filter(),
             Action::Focus
+            | Action::ShowBead
+            | Action::Back
             | Action::CopyId
             | Action::ShowBindings
             | Action::Refresh
@@ -1057,6 +1059,7 @@ credential_command = "secret harbour"
             &assembled(json),
             &joined,
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         )
@@ -1534,7 +1537,15 @@ credential_command = "secret harbour"
             ready: ready.iter().map(|id| (*id).to_string()).collect(),
             ..Readiness::default()
         };
-        let tree = build_tree(project, &rows, &joined, &readiness, &cfg, now());
+        let tree = build_tree(
+            project,
+            &rows,
+            &joined,
+            &readiness,
+            &BTreeMap::new(),
+            &cfg,
+            now(),
+        );
         snapshot::build(
             Collected {
                 trees: vec![tree],
@@ -1744,7 +1755,15 @@ credential_command = "secret harbour"
             &cfg,
         );
         let tree = |rows: &Assembled| {
-            build_tree("orbital", rows, &joined, &Readiness::default(), &cfg, now())
+            build_tree(
+                "orbital",
+                rows,
+                &joined,
+                &Readiness::default(),
+                &BTreeMap::new(),
+                &cfg,
+                now(),
+            )
         };
         snapshot::build(
             Collected {

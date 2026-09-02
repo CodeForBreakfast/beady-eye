@@ -245,9 +245,15 @@ impl Collection {
             .that_answered(cfg)
             .flat_map(|(project, work)| {
                 work.roots.iter().map(move |(root, read)| match read {
-                    Ok(assembled) => {
-                        snapshot::build_tree(project, assembled, joined, &work.readiness, cfg, now)
-                    }
+                    Ok(assembled) => snapshot::build_tree(
+                        project,
+                        assembled,
+                        joined,
+                        &work.readiness,
+                        &work.relations,
+                        cfg,
+                        now,
+                    ),
                     Err(why) => Tree::unread(project, root, TrackerState::from(*why)),
                 })
             })

@@ -21,6 +21,7 @@ use serde::{Serialize, Serializer};
 use crate::config::Scope;
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
+use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link};
 use crate::model::types::{Edge, PaneStatus, Status};
@@ -140,6 +141,21 @@ pub struct Node {
     pub badges: Vec<Badged>,
     pub agent: Option<AgentRef>,
     pub anomalies: Vec<Anomaly>,
+    /// What `bd show` says of the bead beyond its row, carried so the screen
+    /// can show a bead without asking the tracker again. Not part of the JSON
+    /// contract, which is the forest and not the beads' prose.
+    #[serde(skip)]
+    pub description: String,
+    #[serde(skip)]
+    pub notes: String,
+    #[serde(skip)]
+    pub owner: Option<String>,
+    #[serde(skip)]
+    pub parent: Option<Related>,
+    #[serde(skip)]
+    pub depends_on: Vec<Related>,
+    #[serde(skip)]
+    pub blocks: Vec<Related>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -448,6 +464,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
+    use crate::model::edges;
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::tree::{Assembled, Nesting};
     use crate::model::types::{Bead, Pane};
@@ -562,7 +579,16 @@ render = "⏸ waiting"
         let assembled = assembled(BEADS);
         let panes = panes(PANES);
         let joined = joined(&assembled.beads, &panes);
-        build_tree("orbital", &assembled, &joined, &readiness(), &cfg(), now())
+        let relations = edges::relations(&assembled.beads);
+        build_tree(
+            "orbital",
+            &assembled,
+            &joined,
+            &readiness(),
+            &relations,
+            &cfg(),
+            now(),
+        )
     }
 
     pub(super) fn built(trees: Vec<Tree>, filter: Filter) -> Snapshot {
@@ -716,6 +742,7 @@ render = "⏸ waiting"
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         )

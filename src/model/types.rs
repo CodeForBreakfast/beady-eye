@@ -84,6 +84,13 @@ pub struct Bead {
     pub owner: Option<String>,
     #[serde(default)]
     pub assignee: Option<String>,
+    /// The bead's own account of itself, as `bd show` prints it. bd leaves
+    /// the field out of a row that has none.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Everything `bd note` has added, as one text. Left out the same way.
+    #[serde(default)]
+    pub notes: Option<String>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
     #[serde(default)]

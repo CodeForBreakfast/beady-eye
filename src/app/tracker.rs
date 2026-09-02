@@ -13,14 +13,17 @@ use crate::collect::bd;
 use crate::collect::environment;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::config::{Config, Project};
+use crate::model::edges::{self, Relations};
 use crate::model::join;
 use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{Assembled, Nesting};
 use crate::model::types::{Bead, Pane};
 
-/// One project's roots in id order, each either read or unreadable.
+/// One project's roots in id order, each either read or unreadable, and
+/// what every bead in the answer is tied to.
 pub(super) struct ProjectWork {
     pub(super) readiness: Readiness,
+    pub(super) relations: BTreeMap<String, Relations>,
     pub(super) roots: Vec<(String, Result<Assembled, RootUnread>)>,
 }
 
@@ -217,6 +220,7 @@ fn read_project(
     Ok((
         ProjectWork {
             readiness,
+            relations: edges::relations(&beads),
             roots: read,
         },
         beads,

@@ -246,6 +246,12 @@ mod tests {
             badges: Vec::new(),
             agent,
             anomalies: Vec::new(),
+            description: String::new(),
+            notes: String::new(),
+            owner: None,
+            parent: None,
+            depends_on: Vec::new(),
+            blocks: Vec::new(),
         }
     }
 

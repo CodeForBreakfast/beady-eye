@@ -122,6 +122,7 @@ mod tests {
         build, build_tree, Collected, Counts, FailedProject, Readiness, TrackerFailure,
     };
     use pretty_assertions::assert_eq;
+    use std::collections::BTreeMap;
 
     /// The snapshot as `refilter` leaves it, with the one in hand kept.
     fn refiltered(snapshot: &Snapshot, filter: Filter) -> Snapshot {
@@ -152,6 +153,7 @@ mod tests {
             &assembled(UNSTAFFED),
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         );
@@ -179,6 +181,7 @@ mod tests {
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         )
@@ -201,6 +204,7 @@ mod tests {
             &assembled(CLAIMED_WITH_NO_PANE),
             &Joined::default(),
             &Readiness::default(),
+            &BTreeMap::new(),
             &cfg(),
             now(),
         )

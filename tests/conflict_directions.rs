@@ -137,7 +137,15 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
         trees: assembled
             .iter()
             .map(|(project, a)| {
-                snapshot::build_tree(project, a, &joined, &Readiness::default(), &cfg, now())
+                snapshot::build_tree(
+                    project,
+                    a,
+                    &joined,
+                    &Readiness::default(),
+                    &BTreeMap::new(),
+                    &cfg,
+                    now(),
+                )
             })
             .collect(),
         failed_projects: Vec::new(),

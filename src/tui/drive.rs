@@ -60,12 +60,15 @@ impl From<Answer> for Event {
 /// What the screen has on it.
 ///
 /// The loop holds this rather than the view because it decides what a
-/// keystroke means, and while the bindings are up every keystroke means "take
-/// them away".
+/// keystroke means: while the bindings are up every keystroke means "take
+/// them away", and while a bead is up a motion moves the bead rather than
+/// the selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Showing {
     Forest,
     Bindings,
+    /// The selected bead, whole, in a window over the forest.
+    Bead,
 }
 
 /// The rows on the screen and what the user has done to them.
@@ -126,6 +129,20 @@ pub(super) trait View {
 
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
+
+    /// Move the bead view by one motion, reporting whether the screen has
+    /// changed. The selection under it does not move: the view is what the
+    /// motion is about while a bead is up, and the loop is what knows one is.
+    fn scroll(&mut self, motion: Motion) -> bool;
+
+    /// Whether the bead view is still on the bead it was opened on.
+    ///
+    /// A collection can move the selection off it — the bead closed and
+    /// folded into a run, or left the tracker — and a view drawn from the
+    /// selection would then show another bead, or nothing, under a title the
+    /// reader did not open. The loop asks after every collection, and takes
+    /// the view down when the answer is no.
+    fn bead_still_shown(&self) -> bool;
 
     /// Select whatever is drawn on one row of the screen, reporting whether
     /// the screen has changed.
@@ -305,11 +322,51 @@ fn answered(
             *showing = Showing::Forest;
             true
         }
+        // The bead view is the hub: a motion moves the bead, Enter and `f`
+        // focus its pane, and Esc goes back. `q` goes back too, as it does
+        // from the bindings, so the forest a reader was looking at is still
+        // there to quit from. A refresh lands behind it and leaves it up;
+        // the bindings go up over the forest, since the key that takes them
+        // away lands there.
+        Event::Key(key) if *showing == Showing::Bead => match action(key) {
+            Some(Action::Back | Action::Quit) => {
+                *showing = Showing::Forest;
+                true
+            }
+            Some(Action::Move(motion)) => view.scroll(motion),
+            Some(Action::Focus | Action::ShowBead) => view.apply(Action::Focus),
+            Some(Action::CopyId) => view.apply(Action::CopyId),
+            Some(Action::ShowBindings) => {
+                *showing = Showing::Bindings;
+                true
+            }
+            Some(Action::Refresh) => asked_for(view, outstanding, Wanted::Everything),
+            Some(
+                Action::CollapseOrParent
+                | Action::ExpandOrChild
+                | Action::ToggleFold
+                | Action::ExpandSubtree
+                | Action::CollapseSubtree
+                | Action::RestoreDefault
+                | Action::ToggleFilter,
+            )
+            | None => false,
+        },
         Event::Key(key) => match action(key) {
             Some(Action::Quit) => return None,
             Some(Action::ShowBindings) => {
                 *showing = Showing::Bindings;
                 true
+            }
+            // Up only where there is a bead to show: the view says whether
+            // the selection is on one, and a row that is not a bead leaves
+            // the forest exactly as it was.
+            Some(Action::ShowBead) => {
+                let opened = view.apply(Action::ShowBead);
+                if opened {
+                    *showing = Showing::Bead;
+                }
+                opened
             }
             // The same line the inbound channel's arm is, and that is
             // Graeme's ruling rather than a tidy-up: the refresh key acts
@@ -327,6 +384,13 @@ fn answered(
             *showing = Showing::Forest;
             true
         }
+        // The same over the bead view for a click; a notch moves the bead
+        // the way a key does.
+        Event::Clicked(_) if *showing == Showing::Bead => {
+            *showing = Showing::Forest;
+            true
+        }
+        Event::Scrolled(motion) if *showing == Showing::Bead => view.scroll(motion),
         Event::Clicked(row) => view.clicked(row),
         Event::Scrolled(motion) => view.apply(Action::Move(motion)),
         Event::Resize => true,
@@ -344,6 +408,14 @@ fn answered(
                 }
             }
             view.collected(*snapshot);
+            // A collection that moved the selection off the bead the view
+            // was opened on takes the view down with it: drawn from the
+            // selection, it would show another bead, or nothing, under a
+            // title the reader did not open, and a forest that looked
+            // ordinary would go on answering keys as a bead.
+            if *showing == Showing::Bead && !view.bead_still_shown() {
+                *showing = Showing::Forest;
+            }
             // Told after the rows land, and told whatever came of the
             // collection that ended: another may have been waiting behind
             // it, and where none was, a line left saying it was being
@@ -644,7 +716,16 @@ mod tests {
     #[derive(Default)]
     struct Recorder {
         applied: Vec<Action>,
+        /// The motions the bead view was moved by, apart from the actions,
+        /// because the whole question is which of the two a key reached.
+        scrolled: Vec<Motion>,
         clicked: Vec<u16>,
+        /// Whether the selection is on a row with no bead to show, for the
+        /// tests about Enter on one.
+        not_a_bead: bool,
+        /// Whether a collection takes the selection off the bead the view
+        /// was opened on, for the tests about one landing behind the view.
+        collection_moves_the_selection: bool,
         collected: usize,
         /// What the view was told is outstanding, in the order it was told.
         /// What and not how many: a project line answers for its own rows, so
@@ -728,7 +809,16 @@ mod tests {
 
         fn apply(&mut self, action: Action) -> bool {
             self.applied.push(action);
+            !(action == Action::ShowBead && self.not_a_bead)
+        }
+
+        fn scroll(&mut self, motion: Motion) -> bool {
+            self.scrolled.push(motion);
             true
+        }
+
+        fn bead_still_shown(&self) -> bool {
+            !(self.collection_moves_the_selection && self.collected > 0)
         }
 
         fn clicked(&mut self, row: u16) -> bool {
@@ -869,6 +959,244 @@ mod tests {
         assert_eq!(
             view.showing,
             [Showing::Forest, Showing::Bindings, Showing::Bindings]
+        );
+    }
+
+    /// Enter puts the selected bead up and Esc takes it away, and the row it
+    /// was opened from is untouched: nothing but the opening reached the
+    /// forest, so the reader is back where they were.
+    #[test]
+    fn enter_shows_the_bead_and_esc_goes_back_to_the_forest() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = typing([
+            key(KeyCode::Enter),
+            key(KeyCode::Esc),
+            key(KeyCode::Char('j')),
+            key(KeyCode::Char('q')),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Bead,
+                Showing::Forest,
+                Showing::Forest
+            ]
+        );
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::Move(Motion::NextRow)],
+            "j after Esc moved the selection, so the forest was back"
+        );
+    }
+
+    /// A row with no bead on it has nothing to show, so Enter there puts no
+    /// view up and the next key reaches the forest as it always did.
+    #[test]
+    fn enter_on_a_row_that_is_not_a_bead_leaves_the_forest_up() {
+        let mut view = Recorder {
+            not_a_bead: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let events = typing([
+            key(KeyCode::Enter),
+            key(KeyCode::Char('j')),
+            key(KeyCode::Char('q')),
+            key(KeyCode::Char('k')),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Forest],
+            "nothing was drawn for the Enter, and j drew the forest"
+        );
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::Move(Motion::NextRow)]
+        );
+        assert!(view.scrolled.is_empty(), "{:?}", view.scrolled);
+    }
+
+    /// While a bead is up a motion moves the bead, and the selection under
+    /// it stays where the view was opened from.
+    #[test]
+    fn a_motion_in_the_bead_view_scrolls_the_bead_and_not_the_forest() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = typing([
+            key(KeyCode::Enter),
+            key(KeyCode::Char('j')),
+            control('d'),
+            key(KeyCode::Esc),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(view.scrolled, [Motion::NextRow, Motion::HalfScreenDown]);
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead],
+            "no motion reached the forest"
+        );
+    }
+
+    /// The view is the hub: Enter and `f` from inside it focus the bead's
+    /// pane, `y` copies its id, and the view stays up for the reader to come
+    /// back to.
+    #[test]
+    fn enter_f_and_y_in_the_bead_view_act_on_the_bead_and_leave_the_view_up() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Char('f'))),
+            Event::Key(key(KeyCode::Char('y'))),
+            Event::Key(key(KeyCode::Char('q'))),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(
+            view.applied,
+            [
+                Action::ShowBead,
+                Action::Focus,
+                Action::Focus,
+                Action::CopyId
+            ]
+        );
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Bead,
+                Showing::Bead,
+                Showing::Bead,
+                Showing::Bead,
+                Showing::Forest
+            ]
+        );
+    }
+
+    /// `q` in the bead view goes back, as it does from the bindings: the
+    /// forest a reader was looking at is still there to quit from.
+    #[test]
+    fn quitting_from_the_bead_view_takes_two_presses_and_the_first_goes_back() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = typing([
+            key(KeyCode::Enter),
+            key(KeyCode::Char('q')),
+            key(KeyCode::Char('q')),
+            key(KeyCode::Char('j')),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Forest],
+            "the second q ended the loop, so nothing was drawn after it"
+        );
+        assert_eq!(view.applied, [Action::ShowBead]);
+    }
+
+    /// A collection landing behind the bead view is taken, and the view
+    /// stays up: one that vanished under the refresh tick would be one a
+    /// reader could not finish reading.
+    #[test]
+    fn a_collection_arriving_behind_the_bead_view_leaves_it_up() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Collected(Box::new(a_snapshot())),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(view.collected, 1);
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Bead]
+        );
+    }
+
+    /// `codex review` on this change, and it is right: a collection that
+    /// moved the selection off the bead left the loop in the bead view with
+    /// nothing drawn in it, so a forest that looked ordinary ignored every
+    /// motion and answered `q` by leaving a view nobody could see. The view
+    /// comes down instead, and the next key reaches the forest.
+    #[test]
+    fn a_collection_that_moves_the_selection_off_the_bead_takes_the_view_down() {
+        let mut view = Recorder {
+            collection_moves_the_selection: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Collected(Box::new(a_snapshot())),
+            Event::Key(key(KeyCode::Char('j'))),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Bead,
+                Showing::Forest,
+                Showing::Forest
+            ]
+        );
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::Move(Motion::NextRow)],
+            "j after the collection moved the selection rather than the bead"
+        );
+        assert!(view.scrolled.is_empty(), "{:?}", view.scrolled);
+    }
+
+    /// The pointer over the bead view: a notch moves the bead as a key
+    /// would, and a click goes back, for the same reason a click closes the
+    /// bindings — the rows under the pointer are rows nobody can see.
+    #[test]
+    fn a_notch_over_the_bead_view_scrolls_it_and_a_click_goes_back() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Scrolled(Motion::NextRow),
+            Event::Clicked(3),
+            Event::Key(key(KeyCode::Char('q'))),
+        ]);
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+
+        assert_eq!(view.scrolled, [Motion::NextRow]);
+        assert!(
+            view.clicked.is_empty(),
+            "the click reached no row: {:?}",
+            view.clicked
+        );
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Bead,
+                Showing::Bead,
+                Showing::Forest
+            ]
         );
     }
 

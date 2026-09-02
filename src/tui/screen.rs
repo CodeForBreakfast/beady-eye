@@ -21,8 +21,9 @@ use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::phrase;
+use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Notice};
+use crate::view::{draw, Action, Freshness, Motion, Notice};
 
 use super::clipboard;
 use super::drive::{Showing, View};
@@ -65,6 +66,12 @@ struct Shown {
     /// flattenings, and the mark on a line it names turns several times
     /// inside one of them.
     collecting: Vec<Awaited>,
+    /// Where the bead view is looking, while one is up. Held here and not on
+    /// the forest because it is about a window over the rows, not the rows.
+    show: Show,
+    /// The bead the view was opened on, so a collection that moves the
+    /// selection off it can be told from one that leaves it there.
+    viewing: Option<BeadKey>,
 }
 
 /// Where the band under the forest is with the read it is waiting on.
@@ -102,6 +109,8 @@ impl Shown {
             // one before it opens the screen — and it reaches this the way
             // every one after it does, through `collecting`.
             collecting: Vec::new(),
+            show: Show::default(),
+            viewing: None,
         };
         // Asked for here rather than waited for: the first frame is drawn on
         // the answer to this arriving, not on herdr getting round to it.
@@ -276,6 +285,17 @@ impl Shown {
             tail::focus(&self.forest, self.panes.as_ref());
             return false;
         }
+        // Showing a bead changes the screen where there is one to show, and
+        // starts from its top: the view a reader scrolled to the end of was
+        // another bead's. A row with no bead behind it changes nothing.
+        if action == Action::ShowBead {
+            let opened = show::selected(&self.forest).is_some();
+            if opened {
+                self.show = Show::default();
+                self.viewing = self.selected_bead().cloned();
+            }
+            return opened;
+        }
         if action == Action::CopyId {
             return self.copy_id();
         }
@@ -284,10 +304,20 @@ impl Shown {
         self.moved(changed)
     }
 
+    /// Move the bead view, leaving the selection under it where it is.
+    fn scroll(&mut self, motion: Motion) -> bool {
+        self.show.scroll(motion)
+    }
+
+    /// Whether the selection is still on the bead the view was opened on.
+    fn bead_still_shown(&self) -> bool {
+        self.viewing.is_some() && self.viewing.as_ref() == self.selected_bead()
+    }
+
     /// Put the selected bead's id on the terminal's clipboard and say so at
     /// the foot, where the selection is on a bead. Most rows are beads; on one
     /// that is not there is nothing to copy and nothing has gone wrong, as
-    /// with `Enter`. A write the terminal would not take is not said either:
+    /// with `f`. A write the terminal would not take is not said either:
     /// the foot would be the one line on the screen that was untrue.
     fn copy_id(&mut self) -> bool {
         let Some(key) = self.selected_bead() else {
@@ -364,18 +394,18 @@ impl Screen {
 }
 
 /// One frame: the forest, the tail beneath it, the height the forest is told
-/// it has, and the bindings window when one is up.
+/// it has, and the window over it when one is up — the bindings, or a bead.
 ///
 /// Outside the `terminal.draw` closure so a test backend can drive the whole
 /// frame. This is the only place the three bands are agreed on, and `^D` and
 /// `^U` are the part of that agreement nothing on screen would show was
-/// broken. The bindings go on last because they sit over the forest rather
+/// broken. A window goes on last because it sits over the forest rather
 /// than in place of it.
 fn paint(
     frame: &mut Frame,
     forest: &mut Forest,
     tail: &Tail,
-    showing: Showing,
+    over: Over<'_>,
     foot: draw::Foot,
     collecting: &[Awaited],
     now: DateTime<Utc>,
@@ -384,9 +414,23 @@ fn paint(
     forest.set_half_screen(draw::half_screen(bands.forest));
     draw::draw(frame, frame.area(), forest, collecting, now, foot);
     draw::draw_tail(frame, bands.tail, tail);
-    if showing == Showing::Bindings {
-        key_bindings(frame, frame.area(), &bindings());
+    match over {
+        Over::Nothing => {}
+        Over::Bindings => key_bindings(frame, frame.area(), &bindings()),
+        Over::Bead(show) => {
+            if let Some(node) = show::selected(forest) {
+                show::show(frame, frame.area(), node, show);
+            }
+        }
     }
+}
+
+/// The window over the forest, where one is up, with what drawing it needs:
+/// the loop's `Showing`, met by the view the screen holds for it.
+enum Over<'a> {
+    Nothing,
+    Bindings,
+    Bead(&'a mut Show),
 }
 
 impl Drop for Screen {
@@ -431,6 +475,14 @@ impl View for Screen {
         self.shown.apply(action)
     }
 
+    fn scroll(&mut self, motion: Motion) -> bool {
+        self.shown.scroll(motion)
+    }
+
+    fn bead_still_shown(&self) -> bool {
+        self.shown.bead_still_shown()
+    }
+
     fn clicked(&mut self, row: u16) -> bool {
         let bands = draw::regions(self.terminal.get_frame().area());
         let forest = &self.shown.forest;
@@ -450,15 +502,26 @@ impl View for Screen {
     }
 
     fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
-        let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
+        let Shown {
+            forest,
+            tail,
+            show,
+            collecting,
+            copied,
+            ..
+        } = &mut self.shown;
+        let over = match showing {
+            Showing::Forest => Over::Nothing,
+            Showing::Bindings => Over::Bindings,
+            Showing::Bead => Over::Bead(show),
+        };
         let foot = draw::Foot {
             at_startup: &self.at_startup,
-            copied: self.shown.copied.as_deref(),
+            copied: copied.as_deref(),
             keys: &key_row(),
         };
-        let collecting = self.shown.collecting.as_slice();
         self.terminal
-            .draw(|frame| paint(frame, forest, tail, showing, foot, collecting, now))?;
+            .draw(|frame| paint(frame, forest, tail, over, foot, collecting, now))?;
         Ok(())
     }
 }
@@ -498,7 +561,7 @@ mod tests {
             &Tail::Silent("nothing to tail"),
             width,
             height,
-            Showing::Bindings,
+            Over::Bindings,
         )
         .rows();
         let inner =
@@ -561,12 +624,12 @@ mod tests {
         assert_eq!(
             window_inner(80, 8),
             vec![
-                "  Enter     focus the selected bead's pane in herdr",
+                "  Enter     show the selected bead, or focus its pane from the bead view",
+                "  f         focus the selected bead's pane in herdr",
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  q, ^C     quit",
-                "  … 13 more bindings · no room on a screen this short",
+                "  … 15 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -584,7 +647,7 @@ mod tests {
                 &Tail::Silent("nothing to tail"),
                 80,
                 height,
-                Showing::Bindings,
+                Over::Bindings,
             )
             .rows();
 
@@ -603,8 +666,8 @@ mod tests {
     fn the_forest_is_still_drawn_around_the_bindings_window() {
         let mut forest = forest::flatten(a_grove(30));
         let tail = Tail::Silent("nothing to tail");
-        let alone = screen_of(&mut forest, &tail, 80, 24, Showing::Forest).rows();
-        let over = screen_of(&mut forest, &tail, 80, 24, Showing::Bindings).rows();
+        let alone = screen_of(&mut forest, &tail, 80, 24, Over::Nothing).rows();
+        let over = screen_of(&mut forest, &tail, 80, 24, Over::Bindings).rows();
         let window = bindings_window(Rect::new(0, 0, 80, 24), &bindings());
 
         assert!(
@@ -643,11 +706,13 @@ mod tests {
         assert_eq!(
             window_inner(80, 24),
             vec![
-                "  Enter     focus the selected bead's pane in herdr",
+                "  Enter     show the selected bead, or focus its pane from the bead view",
+                "  f         focus the selected bead's pane in herdr",
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
                 "  q, ^C     quit",
+                "  Esc       go back to the forest from the bead view",
                 "  ^R        collect from the trackers again now",
                 "  E         expand the selected node and everything under it",
                 "  C         collapse the selected node and everything under it",
@@ -678,11 +743,12 @@ mod tests {
 
         let drawn = window_inner(40, 24);
 
-        assert_eq!(drawn[4], "  q, ^C     quit");
+        assert_eq!(drawn[5], "  q, ^C     quit");
         assert_eq!(
-            drawn[12], "  Right, l  expand, or move to the fi…",
-            "the one line too long for forty columns, cut with the cut marked"
+            drawn[0], "  Enter     show the selected bead, o…",
+            "a line too long for forty columns, cut with the cut marked"
         );
+        assert_eq!(drawn[14], "  Right, l  expand, or move to the fi…");
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
 
@@ -700,7 +766,7 @@ mod tests {
             &Tail::Silent("nothing to tail"),
             40,
             24,
-            Showing::Forest,
+            Over::Nothing,
         )
         .rows();
 
@@ -736,6 +802,12 @@ mod tests {
             badges: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
+            description: String::new(),
+            notes: String::new(),
+            owner: None,
+            parent: None,
+            depends_on: Vec::new(),
+            blocks: Vec::new(),
         };
 
         let mut beads = vec![bead("grv-1".to_string())];
@@ -797,7 +869,7 @@ mod tests {
     fn painted(
         forest: &mut Forest,
         tail: &Tail,
-        showing: Showing,
+        over: Over<'_>,
         copied: Option<&str>,
         collecting: &[Awaited],
         width: u16,
@@ -810,7 +882,7 @@ mod tests {
             keys: &keys,
         };
         Painted::drawn_by(width, height, |frame| {
-            paint(frame, forest, tail, showing, foot, collecting, an_instant());
+            paint(frame, forest, tail, over, foot, collecting, an_instant());
         })
     }
 
@@ -819,9 +891,17 @@ mod tests {
         tail: &Tail,
         width: u16,
         height: u16,
-        showing: Showing,
+        over: Over<'_>,
     ) -> Painted {
-        painted(forest, tail, showing, None, &[], width, height)
+        painted(forest, tail, over, None, &[], width, height)
+    }
+
+    /// The screen with the bead view up, drawn from the view the screen is
+    /// holding rather than a fresh one, so a motion between two draws is a
+    /// motion of the same view.
+    fn bead_view(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
+        let (forest, tail, show) = (&mut shown.forest, &shown.tail, &mut shown.show);
+        screen_of(forest, tail, width, height, Over::Bead(show)).rows()
     }
 
     /// The same screen with a collection in flight, so a project line the
@@ -833,15 +913,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        painted(
-            forest,
-            tail,
-            Showing::Forest,
-            None,
-            collecting,
-            width,
-            height,
-        )
+        painted(forest, tail, Over::Nothing, None, collecting, width, height)
     }
 
     /// `bdi-7ao.51`, on the screen a reader is looking at rather than in any
@@ -905,7 +977,7 @@ mod tests {
             &Tail::Silent("nothing to tail"),
             60,
             24,
-            Showing::Forest,
+            Over::Nothing,
         )
         .rows();
         forest.apply(Action::Move(Motion::HalfScreenDown));
@@ -1325,19 +1397,207 @@ mod tests {
     /// different hat, and only the rows show the difference.
     fn forest_band(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
         let bands = draw::regions(Rect::new(0, 0, width, height));
-        let rows = screen_of(
-            &mut shown.forest,
-            &shown.tail,
-            width,
-            height,
-            Showing::Forest,
-        )
-        .rows();
+        let rows = screen_of(&mut shown.forest, &shown.tail, width, height, Over::Nothing).rows();
         rows[..bands.forest.height as usize].to_vec()
     }
 
     /// The pane on the row a staffed grove opens with.
     const A_SELECTED_PANE: &str = "w:p0";
+
+    /// The same grove with every bead saying something of itself, so the
+    /// bead view has something to show that no row of the forest carries.
+    fn a_described_grove(beads: usize) -> Snapshot {
+        let mut snapshot = a_grove(beads);
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                node.description = format!("what {} is about", node.id);
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// The rows inside the bead window's border, trimmed, with the forest
+    /// around it left out.
+    fn bead_window_inner(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
+        let rows = bead_view(shown, width, height);
+        let top = rows
+            .iter()
+            .position(|row| row.contains("Esc to go back"))
+            .expect("the bead view's title is on the screen");
+        let bottom = rows[top + 1..]
+            .iter()
+            .position(|row| row.contains('└'))
+            .map(|n| top + 1 + n)
+            .expect("the bead view's bottom edge is on the screen");
+        rows[top + 1..bottom]
+            .iter()
+            .map(|row| row.trim_matches(|c| c == '│' || c == ' ').to_string())
+            .collect()
+    }
+
+    /// The bead, with a bead row selected: Enter shows what `bd show` would
+    /// say of it, from the rows `bdi` already holds — the fields the bead
+    /// lists, and nothing a row of the forest could have carried.
+    #[test]
+    fn enter_on_a_bead_row_shows_the_bead() {
+        let mut shown = shown(a_described_grove(6));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+
+        assert!(shown.apply(Action::ShowBead));
+
+        let inner = bead_window_inner(&mut shown, 80, 24);
+        assert_eq!(inner[0], "◐ grv-1  a bead in the grove");
+        assert!(inner.contains(&"DESCRIPTION".to_string()), "{inner:#?}");
+        assert!(
+            inner.contains(&"what grv-1 is about".to_string()),
+            "{inner:#?}"
+        );
+    }
+
+    /// A project's line is not a bead, so there is nothing to show: Enter
+    /// there does nothing and says nothing, the same as before.
+    #[test]
+    fn enter_on_a_row_that_is_not_a_bead_does_nothing() {
+        let mut shown = shown(a_described_grove(6));
+        assert!(shown.select(0), "onto the project's own line");
+        assert_eq!(cursor(&shown), None);
+        let before = forest_band(&mut shown, 80, 24);
+
+        assert!(!shown.apply(Action::ShowBead));
+
+        assert_eq!(forest_band(&mut shown, 80, 24), before);
+    }
+
+    /// Leaving the view puts the reader back on the row it was opened from,
+    /// with the forest exactly as they left it: the motions that moved the
+    /// bead moved nothing under it.
+    #[test]
+    fn leaving_the_bead_view_puts_the_reader_back_on_the_same_row() {
+        let mut shown = shown(a_described_grove(30));
+        forest_band(&mut shown, 80, 12);
+        for _ in 0..4 {
+            assert!(shown.apply(Action::Move(Motion::NextRow)));
+        }
+        let at = shown.forest.selected_line();
+        let on = cursor(&shown).cloned();
+        let before = forest_band(&mut shown, 80, 12);
+
+        assert!(shown.apply(Action::ShowBead));
+        bead_view(&mut shown, 80, 5);
+        assert!(shown.scroll(Motion::NextRow), "the view had rows to scroll");
+        assert!(shown.scroll(Motion::LastRow));
+        bead_view(&mut shown, 80, 5);
+
+        assert_eq!(shown.forest.selected_line(), at);
+        assert_eq!(cursor(&shown).cloned(), on);
+        assert_eq!(forest_band(&mut shown, 80, 12), before);
+    }
+
+    /// A motion while the bead is up moves the bead, and a motion that would
+    /// move it nowhere reports no change: the row under it is not what the
+    /// key is about.
+    #[test]
+    fn a_motion_in_the_bead_view_moves_the_bead_and_not_the_selection() {
+        let mut shown = shown(a_described_grove(6));
+        let at = shown.forest.selected_line();
+        assert!(shown.apply(Action::ShowBead));
+        let top = bead_window_inner(&mut shown, 80, 6);
+
+        assert!(shown.scroll(Motion::NextRow));
+        let down_one = bead_window_inner(&mut shown, 80, 6);
+
+        assert_ne!(down_one, top);
+        assert_eq!(down_one[0], top[1]);
+        assert_eq!(shown.forest.selected_line(), at);
+        assert!(shown.scroll(Motion::PreviousRow), "back to the top");
+        assert!(
+            !shown.scroll(Motion::PreviousRow),
+            "and nowhere further, so nothing to redraw"
+        );
+        assert_eq!(shown.forest.selected_line(), at);
+    }
+
+    /// Opening the view again starts it from the top: a reader who scrolled
+    /// one bead to the end and opened another wants the other's start.
+    #[test]
+    fn opening_the_bead_view_starts_it_at_the_top() {
+        let mut shown = shown(a_described_grove(6));
+        assert!(shown.apply(Action::ShowBead));
+        bead_view(&mut shown, 80, 6);
+        assert!(shown.scroll(Motion::LastRow));
+
+        assert!(shown.apply(Action::Move(Motion::NextRow)));
+        assert!(shown.apply(Action::ShowBead));
+
+        let inner = bead_window_inner(&mut shown, 80, 6);
+        assert_eq!(inner[0], "◐ grv-1.1  a bead in the grove");
+    }
+
+    /// A collection that leaves the selection on its bead leaves the view
+    /// on it too, however the rows around it moved.
+    #[test]
+    fn a_collection_that_keeps_the_selection_on_its_bead_keeps_the_view_on_it() {
+        let mut shown = shown(a_described_grove(6));
+        shown.apply(Action::ExpandOrChild);
+        shown.apply(Action::Move(Motion::LastRow));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
+        assert!(shown.apply(Action::ShowBead));
+
+        let mut reordered = a_grove_reordered(6);
+        for tree in &mut reordered.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                node.description = format!("what {} is about", node.id);
+            }
+        }
+        reordered.trees = reordered.collected.clone();
+        shown.collected(reordered);
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
+        assert!(shown.bead_still_shown());
+        assert!(
+            bead_window_inner(&mut shown, 80, 24).contains(&"what grv-1.6 is about".to_string())
+        );
+    }
+
+    /// A collection that drops the bead the view was opened on moves the
+    /// selection onto the nearest forebear that survived — which is another
+    /// bead, and not the one the reader opened. The view says it is no
+    /// longer on its bead, so the loop can take it down rather than draw
+    /// the forebear under the title the reader opened.
+    #[test]
+    fn a_collection_that_drops_the_bead_the_view_is_on_says_the_view_is_off_it() {
+        let mut shown = shown(a_described_grove(6));
+        shown.apply(Action::ExpandOrChild);
+        shown.apply(Action::Move(Motion::LastRow));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
+        assert!(shown.apply(Action::ShowBead));
+
+        shown.collected(a_described_grove(3));
+
+        assert_ne!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
+        assert!(!shown.bead_still_shown());
+    }
+
+    /// `Clear` is what stops the trees showing between the rows. Every row
+    /// inside the border is asserted to hold nothing of the forest.
+    #[test]
+    fn no_forest_shows_through_the_bead_window() {
+        let mut shown = shown(a_described_grove(30));
+        assert!(shown.apply(Action::ShowBead));
+
+        let rows = bead_view(&mut shown, 80, 24);
+        let inside = rows.iter().filter(|row| row.starts_with('│'));
+
+        for row in inside {
+            assert!(
+                !row.contains("grv-1."),
+                "a row of the forest shows through the window: {row:?}"
+            );
+        }
+    }
 
     /// The same grove with a live agent on every bead, so that moving the
     /// selection changes which pane the tail is reading.
@@ -1745,7 +2005,7 @@ mod tests {
         painted(
             &mut shown.forest,
             &shown.tail,
-            Showing::Forest,
+            Over::Nothing,
             shown.copied.as_deref(),
             &[],
             width,
@@ -1837,7 +2097,7 @@ mod tests {
             lines: vec!["rebuilt .#thinkpad".to_string()],
         };
 
-        let rows = screen_of(&mut forest, &tail, 40, 12, Showing::Forest).rows();
+        let rows = screen_of(&mut forest, &tail, 40, 12, Over::Nothing).rows();
         let bands = draw::regions(Rect::new(0, 0, 40, 12));
 
         assert!(

@@ -13,6 +13,7 @@ pub mod forest;
 pub mod lines;
 pub mod phrase;
 pub mod row;
+pub mod show;
 pub mod tail;
 
 /// The one way to ask what a widget drew, reachable from every test that
@@ -66,6 +67,11 @@ pub enum Action {
     ToggleFilter,
     /// Focus the selected bead's pane in herdr.
     Focus,
+    /// Show the selected bead whole, as `bd show` would.
+    ShowBead,
+    /// Go back to the forest from the bead view, onto the row it was opened
+    /// from.
+    Back,
     /// Put the selected bead's id on the terminal's clipboard.
     CopyId,
     /// Show every binding the view answers to.
