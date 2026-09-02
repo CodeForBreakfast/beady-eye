@@ -230,6 +230,27 @@ mod tests {
         }
     }
 
+    /// Every way a read can fail, walked rather than listed: each arm names
+    /// the kind after it, so a `FailureKind` added to the enum stops this
+    /// compiling until it has been given a place in the chain.
+    ///
+    /// The compiler asks; it does not prove. An arm answering `None` early
+    /// drops everything after it. Proving it wants `strum`'s `EnumIter`,
+    /// which is a dependency for one roster, and stable Rust has no
+    /// `variant_count`.
+    fn every_failure_kind() -> impl Iterator<Item = FailureKind> {
+        std::iter::successors(Some(FailureKind::Auth), |kind| match kind {
+            FailureKind::Auth => Some(FailureKind::Unavailable),
+            FailureKind::Unavailable => Some(FailureKind::Gone),
+            FailureKind::Gone => Some(FailureKind::Busy),
+            FailureKind::Busy => Some(FailureKind::Exec),
+            FailureKind::Exec => Some(FailureKind::Parse),
+            FailureKind::Parse => Some(FailureKind::Unsupported),
+            FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
+            FailureKind::UnknownFlag => None,
+        })
+    }
+
     fn agent_on(pane: &str) -> AgentRef {
         AgentRef {
             pane: pane.to_string(),
@@ -413,23 +434,22 @@ mod tests {
         );
     }
 
+    /// The roster is [`every_failure_kind`] rather than a list, so the name
+    /// stays true of what the test covers when a kind is added.
+    ///
+    /// A band with nothing in it is the blank the name rules out. `phrase`
+    /// checks its own words for that as well; this is the one place a kind
+    /// added tomorrow is reached whatever the rosters there cover.
     #[test]
     fn every_way_a_read_can_fail_is_said_rather_than_drawn_blank() {
-        for kind in [
-            FailureKind::Auth,
-            FailureKind::Unavailable,
-            FailureKind::Gone,
-            FailureKind::Busy,
-            FailureKind::Exec,
-            FailureKind::Parse,
-            FailureKind::Unsupported,
-            FailureKind::UnknownFlag,
-        ] {
-            assert_eq!(
-                read("w:p1".to_string(), Err(failure(kind))),
-                Tail::Silent(phrase::pane_unreadable(kind)),
-                "for {kind:?}"
-            );
+        for kind in every_failure_kind() {
+            let band = read("w:p1".to_string(), Err(failure(kind)));
+
+            let Tail::Silent(said) = band else {
+                panic!("{kind:?} left the band drawing a pane rather than saying so")
+            };
+            assert_eq!(said, phrase::pane_unreadable(kind), "for {kind:?}");
+            assert!(!said.trim().is_empty(), "for {kind:?}");
         }
     }
 
