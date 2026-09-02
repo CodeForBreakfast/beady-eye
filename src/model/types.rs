@@ -71,6 +71,10 @@ pub struct Bead {
     pub priority: u8,
     #[serde(default)]
     pub issue_type: String,
+    /// The bead this one hangs under. bd writes the top of a chain as an
+    /// empty parent, or leaves the field out; either reads as none.
+    #[serde(default, deserialize_with = "empty_is_none")]
+    pub parent: Option<String>,
     /// Every bead this one depends on, and the kind of each dependency.
     #[serde(default, deserialize_with = "none_is_empty")]
     pub dependencies: Vec<Dependency>,
@@ -100,6 +104,12 @@ pub struct Bead {
 /// project.
 fn none_is_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Dependency>, D::Error> {
     Ok(Option::<Vec<Dependency>>::deserialize(d)?.unwrap_or_default())
+}
+
+/// bd spells an absent parent three ways — `""`, `null`, or no field — and
+/// they all mean the top of a chain.
+fn empty_is_none<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.filter(|parent| !parent.is_empty()))
 }
 
 /// A bead's metadata is whatever JSON was written into it, and bdi draws it

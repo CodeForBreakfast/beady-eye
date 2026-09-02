@@ -30,7 +30,7 @@ const TREE: &str = r#"[
   {"id":"orb-7.4","title":"file the licence","status":"open",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":3,"issue_type":"chore"},
-  {"id":"orb-7.2","title":"survey the mast","status":"closed",
+  {"id":"orb-7.2","title":"survey the mast","status":"closed","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":2,"issue_type":"task",
    "closed_at":"2026-08-28T09:00:00Z"}
@@ -46,7 +46,7 @@ const UNSTAFFED_TREE: &str = r#"[
   {"id":"orb-7.4","title":"file the licence","status":"open",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":3,"issue_type":"chore"},
-  {"id":"orb-7.2","title":"survey the mast","status":"closed",
+  {"id":"orb-7.2","title":"survey the mast","status":"closed","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":2,"issue_type":"task",
    "closed_at":"2026-08-28T09:00:00Z"}
@@ -128,11 +128,6 @@ fn canned_reading(tracker: &str) -> Canned {
         .answering(
             &spelled_in(tracker, "blocked --json"),
             r#"[{"id":"orb-7.1","blocked_by":["orb-9"],"blocked_by_count":1}]"#,
-        )
-        // Closed, so discovery never saw it, and a pane names it.
-        .answering(
-            &spelled_in(tracker, "show orb-7.2 --json"),
-            r#"[{"id":"orb-7.2","parent":"orb-7"}]"#,
         )
         .answering(&spelled_in(tracker, TRACKER_CALL), TREE)
         .answering(&spelled_in(tracker, WISP_CALL), "[]")
@@ -248,6 +243,9 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(emitted["hidden_trees"], json!([]));
     assert_eq!(emitted["failed_projects"], json!([]));
 
+    // `w:p3` sits on a closed bead the one tree already draws, so a second
+    // tree here is that pane rooting the bead beside its own tree.
+    assert_eq!(emitted["trees"].as_array().map(Vec::len), Some(1));
     let tree = &emitted["trees"][0];
     assert_eq!(tree["project"], "orbital");
     assert_eq!(tree["root"], "orb-7");
@@ -676,11 +674,6 @@ fn across_two_projects() -> Canned {
             HARBOUR_DIR,
             &spelled_in(HARBOUR_DIR, "blocked --json"),
             "[]",
-        )
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, "show orb-7 --json"),
-            r#"[{"id":"orb-7","parent":null}]"#,
         )
         .answering_in(
             HARBOUR_DIR,

@@ -97,8 +97,8 @@ struct HashRow {
     h: String,
 }
 
-/// Every bead one tracker holds, each carrying the beads it depends on and
-/// the kind of each dependency.
+/// Every bead one tracker holds, each carrying the beads it depends on, the
+/// kind of each dependency, and the bead it hangs under.
 ///
 /// One call per project rather than one per root, because a tree is drawn
 /// from dependency edges and `bd dep tree` cannot carry them: it walks
@@ -106,8 +106,7 @@ struct HashRow {
 /// with the one edge the walk first reached it by, and every other edge into
 /// it missing. Measured against this project's own tracker on 2026-08-30,
 /// that walk carried 93 of the 176 edges among the beads it returned. It is
-/// also the reason `blocked_by` is asked for separately and `parent_of`
-/// exists at all.
+/// also the reason `blocked_by` is asked for separately.
 ///
 /// `--all` is load-bearing: without it bd answers about open beads only, and
 /// a smaller correct-looking answer about a different population is the kind
@@ -190,8 +189,8 @@ pub fn discover_roots(
 }
 
 fn note_parents(out: &str, into: &mut BTreeMap<String, Option<String>>) -> Result<(), RunFailure> {
-    for row in parent_rows(out)? {
-        into.insert(row.id, row.parent.filter(|parent| !parent.is_empty()));
+    for bead in rows(out)? {
+        into.insert(bead.id, bead.parent);
     }
     Ok(())
 }
@@ -225,41 +224,6 @@ pub fn blocked_by(
         .into_iter()
         .map(|row| (row.id, row.blocked_by))
         .collect())
-}
-
-/// One row of `bd show <id> --json`, which is the only call carrying a bead's
-/// real parent.
-/// One row of `bd show --json` or `bd list --json`. Both carry `parent`,
-/// which is the bead's own — the field a dep-tree row does not have.
-#[derive(Deserialize)]
-struct ParentRow {
-    id: String,
-    #[serde(default)]
-    parent: Option<String>,
-}
-
-fn parent_rows(out: &str) -> Result<Vec<ParentRow>, RunFailure> {
-    serde_json::from_str(out).map_err(|e| RunFailure::parse("bd", e))
-}
-
-/// The bead a bead hangs under, or `None` at the top of a parent-child chain.
-///
-/// A dep-tree row cannot answer this. `bd dep tree --direction=up` walks
-/// dependents, so whatever bead it is asked about comes back as its own root,
-/// and the `parent_id` on every other row is that traversal's parent rather
-/// than the bead's own.
-pub fn parent_of(
-    runner: &dyn Runner,
-    cwd: &Path,
-    env: &Env,
-    id: &str,
-) -> Result<Option<String>, RunFailure> {
-    let out = asked(runner, cwd, env, &["show", id, "--json"])?;
-    let row = parent_rows(&out)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| RunFailure::parse("bd", "bd show named no bead"))?;
-    Ok(row.parent.filter(|parent| !parent.is_empty()))
 }
 
 /// `bd list`, `bd ready` and `bd query` all answer with the same rows.
@@ -948,17 +912,12 @@ mod tests {
         }
     }
 
+    /// A captured row carries the bead's own parent, which is the one the
+    /// walk to a root needs: a dep-tree row's `parent_id` is the traversal's.
     #[test]
-    fn the_parent_comes_from_bd_show_because_the_dep_tree_cannot_carry_it() {
-        let out = r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1.4"}]"#;
-        let runner = FakeRunner::default().with(&spelled("show p-1.16 --json"), out);
-
-        let parent = parent_of(&runner, &project_dir(), &credentialled(), "p-1.16").unwrap();
-
-        assert_eq!(parent.as_deref(), Some("p-1.4"));
-        let call = runner.call(&spelled("show p-1.16 --json"));
-        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
-        assert_eq!(call.env, credentialled());
+    fn a_captured_row_carries_the_bead_it_hangs_under() {
+        assert_eq!(row("bdi-2bb.4").parent.as_deref(), Some("bdi-2bb"));
+        assert_eq!(row("bdi-2bb").parent.as_deref(), Some("bdi-7ao"));
     }
 
     /// bd writes a root's absent parent as `null`; the dep tree writes the
@@ -968,22 +927,12 @@ mod tests {
     fn a_root_has_no_parent_however_bd_spells_the_absence() {
         for spelling in [r#","parent":null"#, r#","parent":"""#, ""] {
             let out = format!(r#"[{{"id":"p-1","title":"a","status":"open"{spelling}}}]"#);
-            let runner = FakeRunner::default().with(&spelled("show p-1 --json"), &out);
 
             assert_eq!(
-                parent_of(&runner, &project_dir(), &credentialled(), "p-1").unwrap(),
+                parse_beads(&out).expect("the row parses")[0].parent,
                 None,
                 "on {spelling:?}"
             );
         }
-    }
-
-    #[test]
-    fn bd_show_naming_no_bead_is_a_parse_failure() {
-        let runner = FakeRunner::default().with(&spelled("show p-9 --json"), "[]");
-
-        let failure = parent_of(&runner, &project_dir(), &credentialled(), "p-9").unwrap_err();
-
-        assert_eq!(failure.kind, FailureKind::Parse);
     }
 }

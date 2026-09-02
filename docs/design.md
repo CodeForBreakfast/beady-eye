@@ -326,8 +326,8 @@ Verified against a live session, 2026-08-30.
 ### bd
 
 Every call `bdi` makes to bd is spelled in one place, `collect::bd::asked`, and
-the roster is short: `bd list`, `bd query`, `bd ready`, `bd blocked`, `bd show`
-and one `bd sql` probe. `bd dep tree` is not among them. An earlier draft of
+the roster is short: `bd list`, `bd query`, `bd ready`, `bd blocked` and one
+`bd sql` probe. `bd dep tree` is not among them. An earlier draft of
 this section described a per-root `bd dep tree <root> --direction=up --json`
 walk as the tree source; that call was replaced and its row shape survives
 nowhere in `bdi` (`bdi-r95`, `bdi-7ao.12`).
@@ -382,9 +382,10 @@ with the tree's ids.
 
 **`bd list --status <unfinished> --limit 0 --json` and `bd list
 --has-metadata-key <key> --limit 0 --json` supply discovery**, one call for
-the statuses and one per configured key; **`bd show <id> --json` climbs to a
-root** where the climb steps onto a bead discovery did not name. `bd show`
-returns an **array**, not an object, so a consumer indexing it as a map fails.
+the statuses and one per configured key. **The climb to a root is answered
+from the rows already read**: every `bd list` row carries the bead's own
+`parent`, so a closed bead above open work — the shape discovery never
+names — costs no further call.
 
 **`bd sql --json "SELECT dolt_hashof_db() AS h"` is the probe** that gates all
 of the above — see *Reading a tracker only when it has changed*.
