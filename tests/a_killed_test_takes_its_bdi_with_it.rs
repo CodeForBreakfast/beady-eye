@@ -163,7 +163,7 @@ fn a_killed_test_leaves_no_bdi_behind() {
 
     parent.kill().expect("the kill is ours to send");
     parent.wait().expect("it is ours to reap");
-    let outlived = still_running_after(&bdi, LONG_ENOUGH_TO_DIE);
+    let outlived = still_running_after(LONG_ENOUGH_TO_DIE, || state_of(&bdi));
 
     // Held open until here on purpose — see the module doc. Let it go any
     // earlier and the pty hangs up, which reaps the `bdi` by the one path
@@ -264,17 +264,20 @@ fn what_it_started(parent: &mut Child) -> Option<(Process, PathBuf)> {
     Some((pid?, home?))
 }
 
-/// What this process is, having waited this long for it to stop.
+/// What a process is, having waited this long for it to stop.
 ///
 /// A zombie counts as stopped. A killed orphan is reparented, and what reaps
 /// it — a subreaper, `init`, a build sandbox's stub — is the machine's choice
 /// and not this test's subject.
-fn still_running_after(process: &Process, patience: Duration) -> State {
+fn still_running_after(patience: Duration, mut read: impl FnMut() -> State) -> State {
     let giving_up = Instant::now() + patience;
-    while state_of(process).is_running() && Instant::now() < giving_up {
+    loop {
+        let state = read();
+        if !state.is_running() || Instant::now() >= giving_up {
+            return state;
+        }
         std::thread::sleep(A_GLANCE);
     }
-    state_of(process)
 }
 
 /// One process, told apart from any later one the kernel hands its pid to.
@@ -290,7 +293,7 @@ struct Process {
 impl Process {
     /// The process this pid names now, or `None` where it names none.
     fn named(pid: libc::pid_t) -> Option<Self> {
-        let (_, started) = state_and_start(pid)?;
+        let (_, started) = state_and_start(&stat_of(pid)?)?;
         Some(Self { pid, started })
     }
 
@@ -317,6 +320,7 @@ impl std::fmt::Display for State {
         match self {
             State::Alive { in_state } => write!(f, "running, in state {in_state}"),
             State::Zombie => write!(f, "a zombie"),
+            State::Dead => write!(f, "dead, in state X, its pid not yet let go of"),
             State::Replaced { by_one_started } => write!(
                 f,
                 "gone, its pid held by a process started at tick {by_one_started}"
@@ -326,12 +330,17 @@ impl std::fmt::Display for State {
     }
 }
 
-/// What `/proc/<pid>/stat` says a pid's holder is doing, and when it
+/// The line `/proc/<pid>/stat` holds for this pid, or `None` where it holds
+/// none.
+fn stat_of(pid: libc::pid_t) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
+}
+
+/// What a line of `/proc/<pid>/stat` says its holder is doing, and when it
 /// started. The command name sits in parentheses and may hold spaces, so the
 /// fields are counted from the last closing one: `state` is the third field
 /// and `starttime` the twenty-second.
-fn state_and_start(pid: libc::pid_t) -> Option<(char, u64)> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+fn state_and_start(stat: &str) -> Option<(char, u64)> {
     let after_name = stat.rsplit_once(')')?.1;
     let mut fields = after_name.split_whitespace();
     let state = fields.next()?.chars().next()?;
@@ -347,6 +356,11 @@ enum State {
     Alive { in_state: char },
     /// Dead, and waiting for a parent to reap it.
     Zombie,
+    /// Dead and being reaped: `X`, which `/proc` shows from the moment the
+    /// kernel takes a zombie for reaping until it lets the pid go, a few
+    /// lines later in `wait_task_zombie`. A window of microseconds, and a
+    /// read can land in it.
+    Dead,
     /// Dead and reaped, its pid since handed to a process that started on
     /// this tick.
     Replaced { by_one_started: u64 },
@@ -354,20 +368,27 @@ enum State {
     Gone,
 }
 
+fn state_of(process: &Process) -> State {
+    State::read(process, stat_of(process.pid).as_deref())
+}
+
 impl State {
     fn is_running(&self) -> bool {
         matches!(self, State::Alive { .. })
     }
-}
 
-fn state_of(process: &Process) -> State {
-    match state_and_start(process.pid) {
-        None => State::Gone,
-        Some((_, started)) if started != process.started => State::Replaced {
-            by_one_started: started,
-        },
-        Some(('Z', _)) => State::Zombie,
-        Some((in_state, _)) => State::Alive { in_state },
+    /// What one reading of `/proc/<pid>/stat` says became of this process,
+    /// `None` being a pid the file system no longer has a line for.
+    fn read(process: &Process, stat: Option<&str>) -> State {
+        match stat.and_then(state_and_start) {
+            None => State::Gone,
+            Some((_, started)) if started != process.started => State::Replaced {
+                by_one_started: started,
+            },
+            Some(('Z', _)) => State::Zombie,
+            Some(('X', _)) => State::Dead,
+            Some((in_state, _)) => State::Alive { in_state },
+        }
     }
 }
 
@@ -398,18 +419,53 @@ fn a_process_that_is_running_reads_as_alive() {
     );
 }
 
+/// `X` is a process past its exit whose pid has not yet been let go of.
+/// Nothing is running there, and the letter is what a failure has to show.
+#[test]
+fn a_process_past_its_exit_reads_as_dead() {
+    let ours = Process::named(std::process::id() as libc::pid_t).expect("we are running");
+    let stat = stat_of(ours.pid).expect("we are running");
+    let read = State::read(&ours, Some(&in_state(&stat, 'X')));
+    assert!(!read.is_running(), "past its exit, it was read as {read}");
+    assert!(
+        read.to_string().contains('X'),
+        "the letter is what the run reports, and it is missing from {read:?}: {read}"
+    );
+}
+
+/// The same line of `/proc/<pid>/stat`, its state letter swapped. The letter
+/// is the first field after the closing parenthesis of the name.
+fn in_state(stat: &str, letter: char) -> String {
+    let (name, after_name) = stat.rsplit_once(')').expect("a name in parentheses");
+    let mut fields = after_name.split_whitespace();
+    fields.next().expect("a state letter");
+    let rest: Vec<&str> = fields.collect();
+    format!("{name}) {letter} {}", rest.join(" "))
+}
+
 /// A child that has exited and not been reaped keeps its pid, and reads as
 /// dead rather than as a process still holding it.
 #[test]
 fn a_zombie_reads_as_dead() {
     let mut exited = Command::new("true").spawn().expect("true runs");
     let child = Process::named(exited.id() as libc::pid_t).expect("it was spawned");
-    let giving_up = Instant::now() + LONG_ENOUGH_TO_DIE;
-    while state_of(&child).is_running() && Instant::now() < giving_up {
-        std::thread::sleep(A_GLANCE);
-    }
-    let seen = state_of(&child);
+    let seen = still_running_after(LONG_ENOUGH_TO_DIE, || state_of(&child));
     exited.wait().expect("it is ours to reap");
+    assert_eq!(seen, State::Zombie);
+}
+
+/// A process that has stopped keeps moving — a zombie is claimed and its pid
+/// let go — so a read made after the one that found it stopped is a read of
+/// a different instant, and can find it dead. The wait reports the read that
+/// ended it.
+#[test]
+fn the_wait_reports_the_read_that_ended_it() {
+    let mut reads = [State::Alive { in_state: 'S' }, State::Zombie, State::Dead].into_iter();
+    let seen = still_running_after(LONG_ENOUGH_TO_DIE, || {
+        reads
+            .next()
+            .expect("the wait ends at the first read that finds it stopped")
+    });
     assert_eq!(seen, State::Zombie);
 }
 
