@@ -309,9 +309,7 @@ impl Screen {
         // `bdi`'s.
         //
         // Not `terminal.clear()`, which opens by asking the terminal where
-        // the cursor is and waiting for the reply. A terminal that does not
-        // answer costs a two-second stall and then an error out of here, so
-        // the one that never clears would become the one that never starts.
+        // the cursor is and waiting for the reply.
         execute!(io::stdout(), Clear(ClearType::All))?;
 
         Ok(screen)

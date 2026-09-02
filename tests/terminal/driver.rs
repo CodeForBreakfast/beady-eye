@@ -206,7 +206,9 @@ impl Driven {
         told
     }
 
-    fn everything(&self) -> Vec<u8> {
+    /// Everything `bdi` has written so far, for a test whose subject is what
+    /// was never written — a wait can only say what arrived.
+    pub fn everything(&self) -> Vec<u8> {
         self.said
             .iter()
             .flat_map(|said| said.bytes.iter().copied())
