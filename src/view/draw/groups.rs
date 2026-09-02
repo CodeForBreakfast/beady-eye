@@ -102,8 +102,13 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use crate::model::snapshot::{FailedProject, TrackerFailure};
+    use crate::model::anomaly::Anomaly;
+    use crate::model::snapshot::{
+        Counts, FailedProject, Filter, HerdrState, HiddenTree, TrackerFailure,
+    };
+    use crate::model::types::Status;
     use crate::view::draw::tests::*;
+    use crate::view::forest::flatten;
 
     /// The filter hides trees, and it takes their findings with them. Saying
     /// only how many trees are hidden would read as "nothing to see here"
@@ -127,6 +132,35 @@ mod tests {
         assert_eq!(
             Painted::of(group_line(SHUT, broken), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent · 2 with findings     a to show all"]
+        );
+    }
+
+    /// A claim with no pane behind it is a finding, and a tree hidden with one
+    /// in it has taken that finding off the screen. No filter today hides such
+    /// a tree, so it is hidden here the way the filter hides one: the line
+    /// under test is the one that counts, not the one that chooses.
+    #[test]
+    fn a_hidden_tree_whose_only_finding_is_an_anomaly_is_said_to_have_one() {
+        let mut claimed = node("nix-9670s.1", "seat the guy wires", Status::InProgress);
+        claimed.anomalies = vec![Anomaly::OrphanClaim { refused: None }];
+        let beads = vec![node("nix-9670s", "raise the mast", Status::Open), claimed];
+        let mut hidden = tree(
+            "summit-works",
+            "nix-9670s",
+            "raise the mast",
+            Counts::over(&beads),
+        );
+        hidden.children = under_the_root(&beads);
+        hidden.beads = beads;
+
+        let mut snapshot = snapshot(Vec::new(), Vec::new(), HerdrState::Ok);
+        snapshot.filter = Filter::LiveAgents;
+        snapshot.hidden_trees = vec![HiddenTree::of(&hidden)];
+        let frame = frame_of(&flatten(snapshot), 64, 2).rows();
+
+        assert!(
+            frame[0].contains("1 tree with no live agent · 1 with findings"),
+            "{frame:#?}"
         );
     }
 

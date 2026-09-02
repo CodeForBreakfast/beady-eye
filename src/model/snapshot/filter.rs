@@ -79,17 +79,26 @@ pub(super) fn partition(
 
     (
         shown.into_iter().cloned().collect(),
-        hidden
-            .into_iter()
-            .map(|t| HiddenTree {
-                project: t.project.clone(),
-                root: t.root.clone(),
-                title: t.title.clone(),
-                reason: "no-live-agent",
-                findings: !t.dangling.is_empty() || !t.cycles.is_empty(),
-            })
-            .collect(),
+        hidden.into_iter().map(|t| HiddenTree::of(t)).collect(),
     )
+}
+
+impl HiddenTree {
+    /// What the filter leaves of a tree it hides: enough to name it, why it
+    /// went, and whether it took findings out of the forest with it — counted
+    /// off the whole tree, because the hidden tree draws nothing and this is
+    /// all a reader gets of it.
+    pub(crate) fn of(tree: &Tree) -> Self {
+        HiddenTree {
+            project: tree.project.clone(),
+            root: tree.root.clone(),
+            title: tree.title.clone(),
+            reason: "no-live-agent",
+            findings: !tree.dangling.is_empty()
+                || !tree.cycles.is_empty()
+                || tree.counts.anomalies > 0,
+        }
+    }
 }
 
 impl Snapshot {
@@ -330,6 +339,18 @@ mod tests {
         let snap = snapshot(vec![tree(), looping]);
 
         assert!(snap.hidden_trees[0].findings);
+    }
+
+    /// No filter today hides a tree with an anomaly in it, so the tree is
+    /// hidden here the way `partition` hides one. What is under test is what
+    /// the hidden tree admits to, not which trees get hidden.
+    #[test]
+    fn a_hidden_tree_whose_only_finding_is_an_anomaly_has_a_finding() {
+        let claimed = claimed_with_no_pane();
+        assert!(claimed.dangling.is_empty() && claimed.cycles.is_empty());
+        assert_eq!(claimed.counts.anomalies, 1);
+
+        assert!(HiddenTree::of(&claimed).findings);
     }
 
     /// `fleet-launch` makes a pane and boots for some time before the agent

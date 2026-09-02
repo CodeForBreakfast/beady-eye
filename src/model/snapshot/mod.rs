@@ -259,8 +259,9 @@ pub struct HiddenTree {
     pub title: String,
     pub reason: &'static str,
     /// Whether the tree took findings out of the forest with it — a bead
-    /// waiting on work the tracker never returned, or a loop. Hidden, the
-    /// tree draws neither, so the group holding it admits to them instead.
+    /// waiting on work the tracker never returned, a loop, or a bead with an
+    /// anomaly on it. Hidden, the tree draws none of them, so the group
+    /// holding it admits to them instead.
     /// Not part of the JSON contract, whose `hidden_trees` rows say which
     /// trees were hidden and why.
     #[serde(skip)]

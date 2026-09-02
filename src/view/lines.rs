@@ -229,8 +229,9 @@ pub struct Group {
     /// not drawing, because the group holds them rather than showing them.
     ///
     /// Only a hidden tree has any: the filter took its dangling and looping
-    /// counts out of the forest with it, and that choice should hold — but a group that says only how many trees it hides reads like
-    /// "nothing to see" when some of them are broken.
+    /// counts and its anomalies out of the forest with it, and that choice
+    /// should hold — but a group that says only how many trees it hides
+    /// reads like "nothing to see" when some of them are broken.
     pub with_findings: usize,
 }
 
