@@ -1349,6 +1349,18 @@ and it writes to herdr rather than to any system of record. On a row with no
 pane it is a no-op, not an error: there is nothing to focus and nothing has
 gone wrong. On a pane that will not come, the tail says so where the tail is.
 
+`y` puts the selected bead's id on the clipboard — the id alone, exactly as
+`bd` takes it — and the foot says *copied bdi-2bb.42* until the reader's next
+key or click, because nothing else on the screen changes for it. It is written
+with OSC 52, the terminal's own escape sequence for a clipboard write, and with
+nothing else: the sequence travels through herdr and ssh the way the rest of
+`bdi`'s output does and needs no program outside it, where `wl-copy` or `xclip`
+would be a new one with a new seam. A terminal that does not honour OSC 52
+drops the sequence, so there the key does nothing — and the foot still says
+*copied*, because `bdi` cannot tell. That is the degrade this accepts. On a row
+that is not a bead — a project's line, a group, the hidden-trees line — `y`
+does nothing and says nothing, as `Enter` does.
+
 The band yields its rows before the forest yields any: on a short screen the
 forest is the thing this tool exists to show.
 
@@ -1426,6 +1438,7 @@ The bindings are vim-like, with the arrows as aliases:
 | `E` | expand the selected node and everything under it |
 | `C` | collapse the selected node and everything under it |
 | `D` | restore the default view |
+| `y` | copy the selected bead's id to the clipboard |
 | `Down`, `j` | move down one row |
 | `Up`, `k` | move up one row |
 | `Right`, `l` | expand, or move to the first child when it is already expanded |

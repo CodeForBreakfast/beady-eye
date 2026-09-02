@@ -16,6 +16,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
+use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
@@ -23,6 +24,7 @@ use crate::view::phrase;
 use crate::view::tail::{self, Tail};
 use crate::view::{draw, Action, Freshness, Notice};
 
+use super::clipboard;
 use super::drive::{Showing, View};
 use super::keys::{bindings, key_row};
 
@@ -33,12 +35,21 @@ use super::keys::{bindings, key_row};
 struct Shown {
     forest: Forest,
     panes: Box<dyn Panes>,
+    /// Where the terminal's clipboard is written: the terminal itself, by
+    /// escape sequence, so the write travels the way every other byte `bdi`
+    /// puts on the screen does and needs no program outside it.
+    clipboard: Box<dyn io::Write>,
     tail: Tail,
     /// The pane the band on screen is about, so a selection moving within it
     /// does not spend a herdr call on the answer already drawn.
     tailing: Option<String>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
+    /// The id the reader has just put on the clipboard, said at the foot
+    /// until their next key or click. Theirs and not the collector's: a
+    /// collection landing a moment after the key would otherwise take the
+    /// one line that says it fired off before anyone had read it.
+    copied: Option<String>,
     /// What the collection in flight is reading and when it was asked for,
     /// where one is running. Every project line it names says its own rows
     /// are about to be replaced, and the rest of the screen carries on saying
@@ -76,14 +87,16 @@ enum Reading {
 }
 
 impl Shown {
-    fn of(snapshot: Snapshot, panes: Box<dyn Panes>) -> Self {
+    fn of(snapshot: Snapshot, panes: Box<dyn Panes>, clipboard: Box<dyn io::Write>) -> Self {
         let forest = forest::flatten(snapshot);
         let mut shown = Self {
             tail: tail::tail(&forest),
             tailing: tail::target(&forest).pane().map(str::to_string),
             forest,
             panes,
+            clipboard,
             reading: Reading::Nothing,
+            copied: None,
             // Nothing in flight until the loop says otherwise. A collection
             // is already running by the time this exists — the run asks for
             // one before it opens the screen — and it reaches this the way
@@ -237,6 +250,14 @@ impl Shown {
         self.moved(changed)
     }
 
+    /// Take a copied id off the foot, reporting whether one was on it. The
+    /// reader's next press is what takes it off, whatever the press turns
+    /// out to mean — it was feedback on a keystroke, not a fact about the
+    /// screen.
+    fn pressed(&mut self) -> bool {
+        self.copied.take().is_some()
+    }
+
     fn collected(&mut self, snapshot: Snapshot) {
         // A refresh keeps the folds and the selection, so the cursor stays on
         // the bead the user put it on however the new snapshot has moved it.
@@ -255,9 +276,35 @@ impl Shown {
             tail::focus(&self.forest, self.panes.as_ref());
             return false;
         }
+        if action == Action::CopyId {
+            return self.copy_id();
+        }
 
         let changed = self.forest.apply(action);
         self.moved(changed)
+    }
+
+    /// Put the selected bead's id on the terminal's clipboard and say so at
+    /// the foot, where the selection is on a bead. Most rows are beads; on one
+    /// that is not there is nothing to copy and nothing has gone wrong, as
+    /// with `Enter`. A write the terminal would not take is not said either:
+    /// the foot would be the one line on the screen that was untrue.
+    fn copy_id(&mut self) -> bool {
+        let Some(key) = self.selected_bead() else {
+            return false;
+        };
+        let id = key.id.clone();
+        if clipboard::copy(self.clipboard.as_mut(), &id).is_err() {
+            return false;
+        }
+        self.copied = Some(id);
+        true
+    }
+
+    /// The bead the selection is on: a bead's own row, or a tree's header,
+    /// which carries its root.
+    fn selected_bead(&self) -> Option<&BeadKey> {
+        self.forest.lines().get(self.forest.selected_line())?.bead()
     }
 }
 
@@ -288,7 +335,7 @@ impl Screen {
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
             terminal,
-            shown: Shown::of(snapshot, panes),
+            shown: Shown::of(snapshot, panes, Box::new(io::stdout())),
             at_startup,
         };
 
@@ -329,21 +376,13 @@ fn paint(
     forest: &mut Forest,
     tail: &Tail,
     showing: Showing,
-    at_startup: &[Notice],
+    foot: draw::Foot,
     collecting: &[Awaited],
     now: DateTime<Utc>,
 ) {
     let bands = draw::regions(frame.area());
     forest.set_half_screen(draw::half_screen(bands.forest));
-    draw::draw(
-        frame,
-        frame.area(),
-        forest,
-        at_startup,
-        collecting,
-        now,
-        &key_row(),
-    );
+    draw::draw(frame, frame.area(), forest, collecting, now, foot);
     draw::draw_tail(frame, bands.tail, tail);
     if showing == Showing::Bindings {
         key_bindings(frame, frame.area(), &bindings());
@@ -384,6 +423,10 @@ impl View for Screen {
         self.shown.tailed(answer)
     }
 
+    fn pressed(&mut self) -> bool {
+        self.shown.pressed()
+    }
+
     fn apply(&mut self, action: Action) -> bool {
         self.shown.apply(action)
     }
@@ -408,10 +451,14 @@ impl View for Screen {
 
     fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
-        let at_startup = &self.at_startup;
+        let foot = draw::Foot {
+            at_startup: &self.at_startup,
+            copied: self.shown.copied.as_deref(),
+            keys: &key_row(),
+        };
         let collecting = self.shown.collecting.as_slice();
         self.terminal
-            .draw(|frame| paint(frame, forest, tail, showing, at_startup, collecting, now))?;
+            .draw(|frame| paint(frame, forest, tail, showing, foot, collecting, now))?;
         Ok(())
     }
 }
@@ -433,6 +480,7 @@ mod tests {
     use crate::view::painted::Painted;
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
+    use base64::prelude::{Engine as _, BASE64_STANDARD};
     use chrono::Utc;
     use ratatui::crossterm::event::KeyCode;
     use ratatui::layout::Rect;
@@ -518,7 +566,7 @@ mod tests {
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
                 "  q, ^C     quit",
-                "  … 12 more bindings · no room on a screen this short",
+                "  … 13 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -604,6 +652,7 @@ mod tests {
                 "  E         expand the selected node and everything under it",
                 "  C         collapse the selected node and everything under it",
                 "  D         restore the default view",
+                "  y         copy the selected bead's id to the clipboard",
                 "  Down, j   move down one row",
                 "  Up, k     move up one row",
                 "  Right, l  expand, or move to the first child when it is already expanded",
@@ -631,7 +680,7 @@ mod tests {
 
         assert_eq!(drawn[4], "  q, ^C     quit");
         assert_eq!(
-            drawn[11], "  Right, l  expand, or move to the fi…",
+            drawn[12], "  Right, l  expand, or move to the fi…",
             "the one line too long for forty columns, cut with the cut marked"
         );
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
@@ -743,6 +792,28 @@ mod tests {
         }
     }
 
+    /// One frame, drawn as `paint` draws it, on a session with nothing to
+    /// say at its foot but the keys and whatever the reader just copied.
+    fn painted(
+        forest: &mut Forest,
+        tail: &Tail,
+        showing: Showing,
+        copied: Option<&str>,
+        collecting: &[Awaited],
+        width: u16,
+        height: u16,
+    ) -> Painted {
+        let keys = key_row();
+        let foot = draw::Foot {
+            at_startup: &[],
+            copied,
+            keys: &keys,
+        };
+        Painted::drawn_by(width, height, |frame| {
+            paint(frame, forest, tail, showing, foot, collecting, an_instant());
+        })
+    }
+
     fn screen_of(
         forest: &mut Forest,
         tail: &Tail,
@@ -750,9 +821,7 @@ mod tests {
         height: u16,
         showing: Showing,
     ) -> Painted {
-        Painted::drawn_by(width, height, |frame| {
-            paint(frame, forest, tail, showing, &[], &[], an_instant());
-        })
+        painted(forest, tail, showing, None, &[], width, height)
     }
 
     /// The same screen with a collection in flight, so a project line the
@@ -764,17 +833,15 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        Painted::drawn_by(width, height, |frame| {
-            paint(
-                frame,
-                forest,
-                tail,
-                Showing::Forest,
-                &[],
-                collecting,
-                an_instant(),
-            );
-        })
+        painted(
+            forest,
+            tail,
+            Showing::Forest,
+            None,
+            collecting,
+            width,
+            height,
+        )
     }
 
     /// `bdi-7ao.51`, on the screen a reader is looking at rather than in any
@@ -1035,13 +1102,16 @@ mod tests {
     }
 
     fn shown(snapshot: Snapshot) -> Shown {
-        Shown::of(snapshot, Box::new(Asking::default()))
+        Shown::of(snapshot, Box::new(Asking::default()), Box::new(io::sink()))
     }
 
     /// The same, with the record of what herdr was asked kept beside it.
     fn shown_asking(snapshot: Snapshot) -> (Shown, Asking) {
         let panes = Asking::default();
-        (Shown::of(snapshot, Box::new(panes.clone())), panes)
+        (
+            Shown::of(snapshot, Box::new(panes.clone()), Box::new(io::sink())),
+            panes,
+        )
     }
 
     /// The screen opens on a snapshot already collected, so there is nothing
@@ -1593,6 +1663,170 @@ mod tests {
         assert!(!shown.tailed(refused(A_SELECTED_PANE)));
 
         assert_eq!(shown.tail, was);
+    }
+
+    /// What the terminal was handed for its clipboard, byte for byte.
+    #[derive(Clone, Default)]
+    struct Clipboard(Arc<Mutex<Vec<u8>>>);
+
+    impl Clipboard {
+        fn written(&self) -> Vec<u8> {
+            self.0.lock().expect("no test panics holding this").clone()
+        }
+    }
+
+    impl io::Write for Clipboard {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("no test panics holding this")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The same, with what was written to the terminal's clipboard kept
+    /// beside it.
+    fn shown_copying(snapshot: Snapshot) -> (Shown, Clipboard) {
+        let clipboard = Clipboard::default();
+        (
+            Shown::of(
+                snapshot,
+                Box::new(Asking::default()),
+                Box::new(clipboard.clone()),
+            ),
+            clipboard,
+        )
+    }
+
+    /// The text one OSC 52 sequence carries, where the bytes are exactly one
+    /// such sequence and nothing else. Decoded rather than matched, so the
+    /// test says what the terminal will paste and not what `bdi` wrote.
+    fn on_the_clipboard(written: &[u8]) -> String {
+        let payload = written
+            .strip_prefix(b"\x1b]52;c;")
+            .and_then(|rest| rest.strip_suffix(b"\x07"))
+            .unwrap_or_else(|| panic!("not one OSC 52 sequence and nothing else: {written:?}"));
+        String::from_utf8(BASE64_STANDARD.decode(payload).expect("base64")).expect("utf-8")
+    }
+
+    /// `y` on a bead row puts that bead's id — the id alone, exactly as `bd`
+    /// takes it — on the terminal's clipboard, and writes nothing else.
+    #[test]
+    fn y_on_a_bead_row_puts_its_id_on_the_clipboard_and_nothing_else() {
+        let (mut shown, clipboard) = shown_copying(a_grove(6));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+
+        press(&mut shown, KeyCode::Char('y'));
+
+        assert_eq!(on_the_clipboard(&clipboard.written()), "grv-1");
+    }
+
+    /// A project line, a group and the hidden-trees line name no bead, so
+    /// there is nothing to copy and nothing has gone wrong — the same as
+    /// Enter there.
+    #[test]
+    fn y_on_a_row_that_is_not_a_bead_writes_nothing() {
+        let (mut shown, clipboard) = shown_copying(a_hidden_grove_above_a_shown_tree());
+        shown.apply(Action::Move(Motion::LastRow));
+        assert_eq!(cursor(&shown), None, "the hidden-trees line names no bead");
+
+        assert!(!shown.apply(Action::CopyId));
+
+        assert_eq!(clipboard.written(), b"");
+    }
+
+    /// The row at the foot of a frame of this screen, as drawn.
+    fn foot_of(shown: &mut Shown, width: u16, height: u16) -> String {
+        painted(
+            &mut shown.forest,
+            &shown.tail,
+            Showing::Forest,
+            shown.copied.as_deref(),
+            &[],
+            width,
+            height,
+        )
+        .rows()
+        .pop()
+        .expect("a screen with rows on it")
+    }
+
+    /// Nothing else on the screen changes for a copy, so the foot is where a
+    /// reader learns the key fired — and which id it took, on a row whose id
+    /// may be abbreviated.
+    #[test]
+    fn after_y_the_foot_says_which_id_was_copied() {
+        let (mut shown, _) = shown_copying(a_grove(6));
+
+        assert!(shown.apply(Action::CopyId), "the foot has changed");
+
+        assert!(
+            foot_of(&mut shown, 80, 24).contains("copied grv-1"),
+            "{:?}",
+            foot_of(&mut shown, 80, 24)
+        );
+    }
+
+    /// The reader's next press takes it off, whatever the press turns out to
+    /// mean: it was feedback on a keystroke, not a fact about the screen. The
+    /// screen has changed for that alone, so the press is one to redraw on.
+    #[test]
+    fn the_readers_next_press_takes_the_copied_id_off_the_foot() {
+        let (mut shown, _) = shown_copying(a_grove(6));
+        shown.apply(Action::CopyId);
+
+        assert!(shown.pressed(), "the foot has changed");
+
+        assert!(!foot_of(&mut shown, 80, 24).contains("copied"));
+    }
+
+    /// With nothing on the foot to take off, a press changes nothing here,
+    /// so a key bound to nothing goes on costing no redraw.
+    #[test]
+    fn a_press_with_nothing_copied_changes_nothing() {
+        assert!(!shown(a_grove(6)).pressed());
+    }
+
+    /// What happens behind the reader's back is not the reader's next
+    /// action: a collection landing a moment after `y` would otherwise take
+    /// the feedback off before anyone had read it.
+    #[test]
+    fn a_collection_landing_leaves_the_copied_id_on_the_foot() {
+        let (mut shown, _) = shown_copying(a_grove(6));
+        shown.apply(Action::CopyId);
+
+        shown.collected(a_grove(6));
+
+        assert!(foot_of(&mut shown, 80, 24).contains("copied grv-1"));
+    }
+
+    /// A terminal that will not take the write.
+    struct Refusing;
+
+    impl io::Write for Refusing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A foot that said *copied* over a write that never reached the terminal
+    /// would be the one line on the screen that was untrue.
+    #[test]
+    fn a_write_the_terminal_refused_is_not_reported_as_copied() {
+        let mut shown = Shown::of(a_grove(6), Box::new(Asking::default()), Box::new(Refusing));
+
+        assert!(!shown.apply(Action::CopyId));
+
+        assert!(!foot_of(&mut shown, 80, 24).contains("copied"));
     }
 
     #[test]

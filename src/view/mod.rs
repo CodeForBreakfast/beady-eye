@@ -66,6 +66,8 @@ pub enum Action {
     ToggleFilter,
     /// Focus the selected bead's pane in herdr.
     Focus,
+    /// Put the selected bead's id on the terminal's clipboard.
+    CopyId,
     /// Show every binding the view answers to.
     ShowBindings,
     Refresh,

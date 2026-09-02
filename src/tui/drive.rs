@@ -113,6 +113,17 @@ pub(super) trait View {
     /// reporting whether the screen has changed.
     fn tailed(&mut self, answer: Answer) -> bool;
 
+    /// Take note that the reader has pressed something — a key, a button, a
+    /// wheel notch — before the loop works out what it means, reporting
+    /// whether the screen has changed for the press alone.
+    ///
+    /// The loop's business rather than the view's, because the loop is where
+    /// every press arrives and the view hears only the ones the mapping
+    /// answers: a key bound to nothing, `?`, `^R` and the key that closes
+    /// the bindings never reach `apply`, and what the view says until the
+    /// reader's next press has to go on their next press.
+    fn pressed(&mut self) -> bool;
+
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
 
@@ -281,7 +292,13 @@ fn answered(
     showing: &mut Showing,
     event: Event,
 ) -> Option<bool> {
-    Some(match event {
+    // Heard before the press is read, so a `y` pressed twice sets its line
+    // on the foot after the first press has taken it off, not before.
+    let pressed = matches!(
+        event,
+        Event::Key(_) | Event::Clicked(_) | Event::Scrolled(_)
+    ) && view.pressed();
+    let changed = match event {
         // Any key at all, because a reader who opened the bindings by
         // accident must not have to find the one key that closes them.
         Event::Key(_) if *showing == Showing::Bindings => {
@@ -339,7 +356,8 @@ fn answered(
         // returning that drops the screen, and dropping the screen is
         // what hands the terminal back.
         Event::Signalled => return None,
-    })
+    };
+    Some(pressed || changed)
 }
 
 /// Ask for a read, and say so on the screen at the instant it was asked for
@@ -642,6 +660,13 @@ mod tests {
         /// What a click reports back, for the tests about a click that lands
         /// on no row.
         nothing_under_the_pointer: bool,
+        /// What a press reports back, for the tests about a screen that
+        /// changes for the press alone.
+        pressing_changes: bool,
+        /// How many actions had been applied when each press was heard, in
+        /// the order they were heard: the order the view hears things in is
+        /// the whole of what these record.
+        pressed_after: Vec<usize>,
     }
 
     impl Recorder {
@@ -694,6 +719,11 @@ mod tests {
 
         fn tailed(&mut self, _answer: Answer) -> bool {
             true
+        }
+
+        fn pressed(&mut self) -> bool {
+            self.pressed_after.push(self.applied.len());
+            self.pressing_changes
         }
 
         fn apply(&mut self, action: Action) -> bool {
@@ -1683,6 +1713,63 @@ mod tests {
         .expect("the loop runs");
 
         assert_eq!(view.drawn(), 1, "the first draw and no other");
+    }
+
+    /// The foot says what the reader copied until their next press, and a
+    /// key bound to nothing is a press. A screen that changed for the press
+    /// alone is redrawn for it.
+    #[test]
+    fn a_key_bound_to_nothing_redraws_where_the_press_alone_changed_the_screen() {
+        let mut view = Recorder {
+            pressing_changes: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![Event::Key(key(KeyCode::Char('z')))]),
+            &ask,
+            at_once(),
+            nothing_armed(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.drawn(), 2, "the first draw and one for the press");
+    }
+
+    /// Every press reaches the view before what it means does, so a `y`
+    /// pressed twice says *copied* rather than taking its own line off.
+    /// Keys, clicks and wheel notches alike: each is the reader's doing.
+    #[test]
+    fn the_view_hears_a_press_before_it_hears_what_the_press_means() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Key(key(KeyCode::Char('y'))),
+                Event::Clicked(3),
+                Event::Scrolled(Motion::NextRow),
+                Event::Key(key(KeyCode::Char('?'))),
+            ]),
+            &ask,
+            at_once(),
+            nothing_armed(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.applied,
+            [Action::CopyId, Action::Move(Motion::NextRow)]
+        );
+        assert_eq!(view.clicked, [3]);
+        assert_eq!(
+            view.pressed_after,
+            [0, 1, 1, 2],
+            "a press is heard before the action it turns out to be"
+        );
     }
 
     /// `bdi-6so`: every deadline the loop sleeps on is measured from the

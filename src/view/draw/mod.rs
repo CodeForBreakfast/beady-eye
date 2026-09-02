@@ -98,19 +98,28 @@ impl<'a> Reads<'a> {
     }
 }
 
-/// Draw the forest and the key bar, leaving the tail's band to whoever holds
-/// a tail.
+/// What the row at the foot of the screen is handed: what this run could not
+/// do, what the reader has just copied, and the keys.
 ///
 /// `keys` arrives already named. What a key is called belongs with the
 /// mapping that answers it, and this file has never known one.
+pub struct Foot<'a> {
+    pub at_startup: &'a [Notice],
+    /// The id the reader has just put on the clipboard, until their next
+    /// key or click.
+    pub copied: Option<&'a str>,
+    pub keys: &'a str,
+}
+
+/// Draw the forest and the foot, leaving the tail's band to whoever holds a
+/// tail.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
     forest: &Forest,
-    at_startup: &[Notice],
     collecting: &[Awaited],
     now: DateTime<Utc>,
-    keys: &str,
+    foot: Foot,
 ) {
     let bands = regions(area);
     let lines = forest.lines();
@@ -144,8 +153,9 @@ pub fn draw(
 
     frame.render_widget(
         status_bar(
-            &notices(forest.snapshot().herdr, at_startup),
-            keys,
+            &notices(forest.snapshot().herdr, foot.at_startup),
+            foot.copied,
+            foot.keys,
             bands.keys.width as usize,
         ),
         bands.keys,
@@ -606,10 +616,13 @@ mod tests {
                 frame,
                 frame.area(),
                 forest,
-                at_startup,
                 collecting,
                 drawn_at(),
-                A_KEY_ROW,
+                Foot {
+                    at_startup,
+                    copied: None,
+                    keys: A_KEY_ROW,
+                },
             );
         })
     }

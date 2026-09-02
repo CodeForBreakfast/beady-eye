@@ -17,6 +17,7 @@ use crate::model::snapshot::{Filter, Snapshot};
 mod fixtures;
 
 mod armed;
+mod clipboard;
 mod drive;
 mod keys;
 mod screen;

@@ -44,6 +44,11 @@ pub(super) fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
 /// the whole screen; it is now a project's own fact, said beside the
 /// project's name where it is exact.
 ///
+/// `copied` is the id the reader has just put on the clipboard, where they
+/// have. It is the first thing the row gives up and it goes whole or not at
+/// all: half an id names nothing, and the keys were there before the reader
+/// pressed anything, so they are never the thing that moves to make room.
+///
 /// `width` is what this row will be drawn into. Choosing which words to say
 /// is a different job from cutting the words chosen, and only the first of
 /// them belongs here.
@@ -51,11 +56,20 @@ pub(super) fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
 /// Nothing here knows what produced a notice. That is the point: a snapshot
 /// and this process both reach the screen through the same list, and the next
 /// thing that has something to say joins them by being one.
-pub(super) fn status_bar(notices: &[Notice], keys: &str, width: usize) -> Fitted {
+pub(super) fn status_bar(
+    notices: &[Notice],
+    copied: Option<&str>,
+    keys: &str,
+    width: usize,
+) -> Fitted {
     let keys = Span::raw(keys.to_string());
+    let copied: Vec<Span<'static>> = copied
+        .map(|id| Span::raw(phrase::copied(id)))
+        .into_iter()
+        .collect();
 
     if notices.is_empty() {
-        return Fitted::new(vec![keys], Vec::new(), Vec::new());
+        return Fitted::new(vec![keys], Vec::new(), copied).state_or_nothing();
     }
 
     Fitted::new(
@@ -63,9 +77,10 @@ pub(super) fn status_bar(notices: &[Notice], keys: &str, width: usize) -> Fitted
             said(notices, width),
             Style::new().fg(LOOK_AT_THIS),
         )],
-        Vec::new(),
+        copied,
         vec![keys],
     )
+    .title_or_nothing()
     .state_or_nothing()
 }
 
@@ -121,7 +136,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = Painted::of(status_bar(&[], A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(status_bar(&[], None, A_KEY_ROW, 60), 60, 1).rows();
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -132,7 +147,7 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 90), 90, 1).rows();
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 90), 90, 1).rows();
 
         says(
             &drawn[0],
@@ -147,7 +162,7 @@ mod tests {
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 90),
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 90),
             90,
             1,
         )
@@ -165,7 +180,12 @@ mod tests {
     #[test]
     fn a_foot_with_room_says_every_notice_it_is_given() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 200),
+            status_bar(
+                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                None,
+                A_KEY_ROW,
+                200,
+            ),
             200,
             1,
         )
@@ -185,7 +205,12 @@ mod tests {
     #[test]
     fn a_narrow_foot_gives_up_the_last_notices_words_first() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 80),
+            status_bar(
+                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                None,
+                A_KEY_ROW,
+                80,
+            ),
             80,
             1,
         )
@@ -196,6 +221,49 @@ mod tests {
             "no herdr session · which agents are alive is unknown",
         );
         says(&drawn[0], "polled, not reported");
+    }
+
+    // ---- what the reader just copied ---------------------------------------
+
+    /// The keys stay where they are and the id joins them: a reader looking
+    /// for the legend must not find it moved by a key they pressed a moment
+    /// ago.
+    #[test]
+    fn a_copied_id_is_said_after_the_keys_where_nothing_is_wrong() {
+        let drawn = Painted::of(status_bar(&[], Some("grv-1"), A_KEY_ROW, 80), 80, 1).rows();
+
+        assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
+        assert!(drawn[0].trim_end().ends_with("copied grv-1"), "{drawn:?}");
+    }
+
+    /// Beside a notice the keys keep their place at the end of the row, and
+    /// the id goes between.
+    #[test]
+    fn a_copied_id_is_said_between_a_notice_and_the_keys() {
+        let drawn = Painted::of(
+            status_bar(&[Notice::NoHerdr], Some("grv-1"), A_KEY_ROW, 120),
+            120,
+            1,
+        )
+        .rows();
+
+        assert_eq!(
+            drawn[0].trim_end(),
+            format!(
+                "⚠ no herdr session · which agents are alive is unknown  copied grv-1{}{A_KEY_ROW}",
+                " ".repeat(120 - 54 - 2 - 12 - A_KEY_ROW.chars().count())
+            )
+        );
+    }
+
+    /// Half an id pastes as nothing anyone asked for, so a row with no room
+    /// for the whole of it says none of it — and keeps the keys, which were
+    /// there before the reader pressed anything.
+    #[test]
+    fn a_copied_id_the_row_has_no_room_for_is_dropped_whole_and_the_keys_stay() {
+        let drawn = Painted::of(status_bar(&[], Some("grv-1"), A_KEY_ROW, 50), 50, 1).rows();
+
+        assert_eq!(drawn[0].trim_end(), A_KEY_ROW);
     }
 
     // ---- how fresh the screen is ------------------------------------------
@@ -221,7 +289,12 @@ mod tests {
     #[test]
     fn the_narrowest_screen_still_says_the_view_is_polled() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoHerdr, Notice::NoInboundChannel], A_KEY_ROW, 40),
+            status_bar(
+                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                None,
+                A_KEY_ROW,
+                40,
+            ),
             40,
             1,
         )
@@ -237,7 +310,7 @@ mod tests {
     #[test]
     fn a_lone_notice_too_wide_for_the_row_is_said_briefly() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60),
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
             60,
             1,
         )
@@ -251,7 +324,7 @@ mod tests {
     #[test]
     fn a_notice_said_briefly_is_still_painted_as_a_warning() {
         let painted = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], A_KEY_ROW, 60),
+            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
             60,
             1,
         )
@@ -275,7 +348,12 @@ mod tests {
     #[test]
     fn a_socket_another_bdi_holds_says_that_rather_than_only_what_it_cost() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AnotherBdiHadTheInboundChannel], A_KEY_ROW, 100),
+            status_bar(
+                &[Notice::AnotherBdiHadTheInboundChannel],
+                None,
+                A_KEY_ROW,
+                100,
+            ),
             100,
             1,
         )
@@ -295,6 +373,7 @@ mod tests {
         let drawn = Painted::of(
             status_bar(
                 &[Notice::NoHerdr, Notice::AnotherBdiHadTheInboundChannel],
+                None,
                 A_KEY_ROW,
                 40,
             ),
@@ -314,7 +393,12 @@ mod tests {
     #[test]
     fn a_socket_another_bdi_holds_is_painted_as_a_warning() {
         let painted = Painted::of(
-            status_bar(&[Notice::AnotherBdiHadTheInboundChannel], A_KEY_ROW, 100),
+            status_bar(
+                &[Notice::AnotherBdiHadTheInboundChannel],
+                None,
+                A_KEY_ROW,
+                100,
+            ),
             100,
             1,
         )
@@ -359,7 +443,7 @@ mod tests {
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 60), 60, 1).rows();
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);
@@ -371,7 +455,7 @@ mod tests {
     /// row that cannot be drawn whole is not drawn.
     #[test]
     fn a_foot_too_narrow_for_the_whole_key_row_draws_none_of_it() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 60), 60, 1).rows();
 
         assert_eq!(
             drawn[0].trim_end(),
@@ -384,7 +468,7 @@ mod tests {
     /// a reader could press.
     #[test]
     fn the_narrowest_screen_draws_no_part_of_the_key_row_beside_a_notice() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 40), 40, 1).rows();
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 40), 40, 1).rows();
 
         assert_eq!(drawn[0].trim_end(), "⚠ agents unknown");
     }
@@ -396,7 +480,7 @@ mod tests {
         let fits = notice.chars().count() + GAP + A_KEY_ROW.chars().count();
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[Notice::NoHerdr], A_KEY_ROW, width),
+                status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, width),
                 width as u16,
                 1,
             )

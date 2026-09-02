@@ -508,6 +508,13 @@ pub fn join_caveat(source: JoinSource) -> Option<&'static str> {
     }
 }
 
+/// That a bead's id has just gone on the clipboard, and which. Said at the
+/// foot, where a reader whose key changed nothing else looks to learn that
+/// it fired.
+pub fn copied(id: &str) -> String {
+    format!("copied {id}")
+}
+
 /// A bead, named the only way a bead can be named across trackers.
 pub fn bead_key(key: &BeadKey) -> String {
     format!("{} · {}", key.project, key.id)

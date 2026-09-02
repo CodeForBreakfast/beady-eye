@@ -208,8 +208,9 @@ impl Forest {
 
     /// Apply one action, reporting whether it changed anything.
     ///
-    /// Focusing a pane, showing the key bindings, re-collecting and quitting
-    /// are the loop's to do, and none of them changes what is on screen here.
+    /// Focusing a pane, copying a bead's id, showing the key bindings,
+    /// re-collecting and quitting are the loop's to do, and none of them
+    /// changes what is on screen here.
     pub fn apply(&mut self, action: Action) -> bool {
         let selected = self.selected;
         match action {
@@ -221,7 +222,11 @@ impl Forest {
             Action::CollapseSubtree => self.fold_subtree(false),
             Action::RestoreDefault => self.folds.clear(),
             Action::ToggleFilter => self.toggle_filter(),
-            Action::Focus | Action::ShowBindings | Action::Refresh | Action::Quit => return false,
+            Action::Focus
+            | Action::CopyId
+            | Action::ShowBindings
+            | Action::Refresh
+            | Action::Quit => return false,
         }
         let was = self.lay_out();
         self.selected != selected || self.lines != was

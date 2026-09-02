@@ -32,6 +32,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
 ratatui = "0.30"

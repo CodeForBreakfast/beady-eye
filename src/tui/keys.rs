@@ -114,6 +114,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
+        keys: &[alone(KeyCode::Char('y'), "y")],
+        action: Action::CopyId,
+        does: "copy the selected bead's id to the clipboard",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Down, "Down"), alone(KeyCode::Char('j'), "j")],
         action: Action::Move(Motion::NextRow),
         does: "move down one row",
@@ -260,6 +266,7 @@ pub(super) mod tests {
             Action::RestoreDefault,
             Action::ToggleFilter,
             Action::Focus,
+            Action::CopyId,
             Action::ShowBindings,
             Action::Refresh,
             Action::Quit,
@@ -283,6 +290,7 @@ pub(super) mod tests {
                 | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::Focus
+                | Action::CopyId
                 | Action::ShowBindings
                 | Action::Refresh
                 | Action::Quit => (),
@@ -400,6 +408,7 @@ pub(super) mod tests {
             (key(KeyCode::PageUp), Action::Move(Motion::HalfScreenUp)),
             (key(KeyCode::Char(' ')), Action::ToggleFold),
             (key(KeyCode::Enter), Action::Focus),
+            (key(KeyCode::Char('y')), Action::CopyId),
             (key(KeyCode::Char('a')), Action::ToggleFilter),
             (control('r'), Action::Refresh),
             (key(KeyCode::Char('?')), Action::ShowBindings),
