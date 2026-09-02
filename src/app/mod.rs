@@ -85,9 +85,6 @@ mod fixtures {
 [[projects]]
 name = "orbital"
 path = "{ORBITAL}"
-
-[roots]
-metadata_keys = ["working_topic"]
 "#
         ))
         .expect("the config parses")

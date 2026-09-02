@@ -67,9 +67,6 @@ const CONFIG: &str = r#"
 name = "orbital"
 path = "/srv/work/orbital"
 
-[roots]
-metadata_keys = ["working_topic"]
-
 [[badges]]
 key = "blocked_on"
 match = "human"
@@ -592,9 +589,6 @@ credential_command = "pass show orbital/tracker"
 name = "harbour"
 path = "/srv/work/harbour"
 credential_command = "pass show harbour/tracker"
-
-[roots]
-metadata_keys = ["working_topic"]
 
 [[badges]]
 key = "blocked_on"

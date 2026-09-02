@@ -482,10 +482,7 @@ orbital = ["orb-4"]
     /// The shapes this project's own tracker held on 2026-09-02, drawn from
     /// the one listing: a closed epic over open work, an epic finished whole,
     /// a deferred bead, a wisp left open under no parent, a wisp closed, and
-    /// a closed bead still carrying a `working_topic`. That tracker held
-    /// seventy-four of the last, and bd's own `--has-metadata-key` named none
-    /// of them: it answers about unfinished beads, so a key is never what
-    /// makes a closed bead a root.
+    /// a closed bead still carrying a `working_topic`.
     #[test]
     fn discovery_names_every_unfinished_bead_and_wisp_and_nothing_closed() {
         let listing = r#"[

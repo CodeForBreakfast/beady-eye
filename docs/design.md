@@ -143,8 +143,8 @@ to run.
 **bd discovers the trees. herdr filters and enriches them.**
 
 An earlier draft had herdr enumerate the roots. That is wrong, and the evidence
-is concrete: `bd list --has-metadata-key working_topic` turned up a root with no
-pane in herdr at all. Herdr-first enumeration drops it silently.
+is concrete: the tracker held a root with no pane in herdr at all. Herdr-first
+enumeration drops it silently.
 
 So `bdi` runs in two tiers:
 
@@ -192,10 +192,7 @@ Roots come from bd, unioned and deduped:
    `in_progress` and `blocked`, which turned a tracker into a handful of
    roots; since `dd2c3b5` the climb starts from every unfinished bead, so
    every tree with anything left to do is drawn.
-2. Beads carrying any metadata key named in `roots.metadata_keys` (see
-   *Conventions are configuration*), likewise walked to their root. Empty by
-   default.
-3. Roots named explicitly in config, or as `bdi <bead-id>` arguments. Both
+2. Roots named explicitly in config, or as `bdi <bead-id>` arguments. Both
    carry the project whose tracker holds the bead, because the key is
    `(project, id)`: config lists the ids under the project, and an argument is
    written `<project>:<bead-id>` — bare where there is only one project, which
@@ -272,8 +269,8 @@ whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
 ephemeral=true --all` — all of them after the capture of the environment its
 tracker is read in, which is a process of its own. Counted off `collect::bd`
 once discovery read the listing rather than three subsets of it (`bdi-9jj.8`);
-before that it was six, plus one `list --has-metadata-key` per configured key
-and one `show` per closed parent the climb stepped onto. A project whose
+before that it was six, plus one `show` per closed parent the climb stepped
+onto. A project whose
 tracker has not moved pays one `bd sql` probe and none of the rest — see
 *Reading a tracker only when it has changed*. Measured on 2026-09-01 at
 `268ab2d`, before that gate landed: `bdi --json`, which waits for the whole
@@ -383,9 +380,6 @@ Different setups encode different things in bead metadata. `bdi` hard-codes none
 of them. Its config names which keys to notice:
 
 ```toml
-[roots]
-metadata_keys = ["working_topic"]      # presence marks a bead as live work
-
 [roots.explicit]                        # roots named outright, per tracker
 orbital = ["orb-7"]
 
@@ -464,12 +458,11 @@ Active and Blocked, so a viewer that collapsed Ready into plain "open" would be
 throwing away a distinction beads makes. One call each per project, intersected
 with the tree's ids.
 
-**`bd list --status <unfinished> --limit 0 --json` and `bd list
---has-metadata-key <key> --limit 0 --json` supply discovery**, one call for
-the statuses and one per configured key. **The climb to a root is answered
-from the rows already read**: every `bd list` row carries the bead's own
-`parent`, so a closed bead above open work — the shape discovery never
-names — costs no further call.
+**`bd list --all --limit 0 --json` and `bd query ephemeral=true --all --limit
+0 --json` supply discovery**: every unfinished row of either is a root
+candidate. **The climb to a root is answered from the rows already read**:
+every `bd list` row carries the bead's own `parent`, so a closed bead above
+open work — the shape discovery never names — costs no further call.
 
 **`bd sql --json "SELECT dolt_hashof_db() AS h"` is the probe** that gates all
 of the above — see *Reading a tracker only when it has changed*.

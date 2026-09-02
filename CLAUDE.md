@@ -119,7 +119,7 @@ terminology table in `docs/design.md` marked *coined*.
 
 **No coupling to any agent workflow.** `bdi` knows nothing about how agents are
 organised — no roles, no orchestration model, no skill names. A convention a
-setup encodes in bead metadata is named in config (`[roots]`, `[[badges]]`,
+setup encodes in bead metadata is named in config (`[[badges]]`,
 `join.pane_key`) and drawn without interpretation. If a feature needs to know
 what a metadata key *means*, it belongs in config, not in the model.
 

@@ -116,7 +116,6 @@ impl Project {
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Roots {
-    pub metadata_keys: Vec<String>,
     /// The roots named outright, under the project whose tracker holds each.
     /// Bead prefixes are per-tracker and uncoordinated, so an id on its own
     /// names nothing bdi can go and read.
@@ -249,7 +248,18 @@ impl Config {
     }
 
     pub fn from_toml(s: &str) -> anyhow::Result<Self> {
-        let cfg: Config = toml::from_str(s)?;
+        let table: toml::Table = toml::from_str(s)?;
+        if table
+            .get("roots")
+            .and_then(|roots| roots.get("metadata_keys"))
+            .is_some()
+        {
+            anyhow::bail!(
+                "[roots] metadata_keys is gone: every unfinished bead is a root, so a key \
+                 could name nothing bd's statuses do not; remove it"
+            );
+        }
+        let cfg: Config = table.try_into()?;
         if cfg.projects.is_empty() {
             anyhow::bail!("config names no projects; bdi has nothing to read");
         }
@@ -467,9 +477,6 @@ name = "beacon"
 path = "/home/user/dev/beacon"
 credential_command = "cat /home/user/dev/beacon/.beads-password"
 
-[roots]
-metadata_keys = ["working_topic", "delivery_pr"]
-
 [roots.explicit]
 atlas  = ["a-1", "a-9"]
 beacon = ["b-1"]
@@ -554,7 +561,6 @@ path = "/home/user/dev/cinder"
         assert_eq!(
             cfg.roots,
             Roots {
-                metadata_keys: vec!["working_topic".to_string(), "delivery_pr".to_string()],
                 explicit: BTreeMap::from([
                     (
                         "atlas".to_string(),
@@ -1041,8 +1047,30 @@ path = "/home/user/dev/inner"
 
     #[test]
     fn config_without_projects_is_rejected() {
-        let err = Config::from_toml("[roots]\nmetadata_keys = []\n").unwrap_err();
+        let err = Config::from_toml("[roots]\n").unwrap_err();
         assert!(err.to_string().contains("no projects"), "got: {err}");
+    }
+
+    /// `[roots] metadata_keys` marked live work while discovery took only two
+    /// statuses. Every unfinished bead is a root now, so a key could name
+    /// nothing the statuses do not, and the field went with the feature. A
+    /// config still naming it is told so, rather than having it read and
+    /// ignored.
+    #[test]
+    fn a_config_naming_the_retired_metadata_keys_is_told_the_field_is_gone() {
+        let err = Config::from_toml(
+            r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+
+[roots]
+metadata_keys = ["working_topic"]
+"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("metadata_keys"), "got: {err}");
+        assert!(err.to_string().contains("gone"), "got: {err}");
     }
 
     #[test]
