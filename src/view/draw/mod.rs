@@ -640,7 +640,7 @@ mod tests {
                 "                                                            ",
                 "                                                            ",
                 "                                                            ",
-                "⚠ no herdr session · which agents are alive is unknown  Ent…",
+                "⚠ no herdr session · which agents are alive is unknown      ",
             ]
         );
     }
@@ -665,7 +665,7 @@ mod tests {
                 "                                                                                ",
                 "                                                                                ",
                 "                                                                                ",
-                "⚠ nothing can tell bdi a project changed · every project is polled instead  Ent…",
+                "⚠ nothing can tell bdi a project changed · every project is polled instead      ",
             ]
         );
     }

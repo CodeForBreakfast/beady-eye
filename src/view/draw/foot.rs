@@ -66,6 +66,7 @@ pub(super) fn status_bar(notices: &[Notice], keys: &str, width: usize) -> Fitted
         Vec::new(),
         vec![keys],
     )
+    .state_or_nothing()
 }
 
 /// Every notice the foot carries, in the fullest words that let all of them
@@ -362,5 +363,48 @@ mod tests {
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);
+    }
+
+    /// The bead this was written for. Measured at 60 columns, the foot drew
+    /// `Ent…` after the notice: four columns saying a key row exists, which
+    /// the reader could already see. Half a key name presses nothing, so a
+    /// row that cannot be drawn whole is not drawn.
+    #[test]
+    fn a_foot_too_narrow_for_the_whole_key_row_draws_none_of_it() {
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 60), 60, 1).rows();
+
+        assert_eq!(
+            drawn[0].trim_end(),
+            "⚠ no herdr session · which agents are alive is unknown"
+        );
+    }
+
+    /// On the narrowest screen the brief notice leaves a couple of dozen
+    /// columns over, which was room for `Enter focus   a all  …` and nothing
+    /// a reader could press.
+    #[test]
+    fn the_narrowest_screen_draws_no_part_of_the_key_row_beside_a_notice() {
+        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], A_KEY_ROW, 40), 40, 1).rows();
+
+        assert_eq!(drawn[0].trim_end(), "⚠ agents unknown");
+    }
+
+    /// Whole where it fits, and the column under that is the whole difference.
+    #[test]
+    fn the_key_row_is_drawn_whole_at_the_first_width_that_holds_it() {
+        let notice = "⚠ no herdr session · which agents are alive is unknown";
+        let fits = notice.chars().count() + GAP + A_KEY_ROW.chars().count();
+        let row = |width: usize| {
+            Painted::of(
+                status_bar(&[Notice::NoHerdr], A_KEY_ROW, width),
+                width as u16,
+                1,
+            )
+            .rows()
+            .remove(0)
+        };
+
+        assert_eq!(row(fits), format!("{notice}  {A_KEY_ROW}"));
+        assert_eq!(row(fits - 1).trim_end(), notice);
     }
 }

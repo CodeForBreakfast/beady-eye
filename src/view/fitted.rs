@@ -34,8 +34,8 @@ pub struct Fitted {
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
     whole: Style,
-    /// Whether the title is given up whole rather than cut.
     title_or_nothing: bool,
+    state_or_nothing: bool,
 }
 
 impl Fitted {
@@ -50,6 +50,7 @@ impl Fitted {
             state,
             whole: Style::new(),
             title_or_nothing: false,
+            state_or_nothing: false,
         }
     }
 
@@ -61,6 +62,17 @@ impl Fitted {
     #[must_use]
     pub(crate) fn title_or_nothing(mut self) -> Self {
         self.title_or_nothing = true;
+        self
+    }
+
+    /// Give the state up whole rather than cut it.
+    ///
+    /// For a state that says nothing in part. A key row cut to `Ent…` names
+    /// no key, so the columns it kept are spent saying that a key row exists
+    /// — which the reader could already see.
+    #[must_use]
+    pub(crate) fn state_or_nothing(mut self) -> Self {
+        self.state_or_nothing = true;
         self
     }
 
@@ -94,14 +106,9 @@ impl Widget for Fitted {
             cut_to(self.identity, width)
         } else {
             let mut room = width - identity;
-            let state = cut_to(self.state, room.saturating_sub(GAP));
+            let state = fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
             room -= columns(&state) + if state.is_empty() { 0 } else { GAP };
-            let room_for_title = room.saturating_sub(GAP);
-            let title = if self.title_or_nothing && columns(&self.title) > room_for_title {
-                Vec::new()
-            } else {
-                cut_to(self.title, room_for_title)
-            };
+            let title = fit(self.title, room.saturating_sub(GAP), self.title_or_nothing);
 
             let mut spans = self.identity;
             if !title.is_empty() {
@@ -125,6 +132,15 @@ impl Widget for Fitted {
 /// in bytes would put a cut inside one.
 pub(crate) fn columns(spans: &[Span<'static>]) -> usize {
     spans.iter().map(Span::width).sum()
+}
+
+/// `spans` fitted into `limit` columns: cut with the cut marked, or, for a
+/// block that says nothing in part, given up whole.
+fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> Vec<Span<'static>> {
+    if or_nothing && columns(&spans) > limit {
+        return Vec::new();
+    }
+    cut_to(spans, limit)
 }
 
 /// `spans`, cut down to `limit` columns with the cut marked.
@@ -224,6 +240,36 @@ mod tests {
         );
 
         assert_eq!(drawn(row, 30), "orb-7  collected 10:22:…  open");
+    }
+
+    /// The foot's key row is the same case on the state block: half a key
+    /// name presses nothing, so the row is drawn whole or not at all, and the
+    /// columns it would have taken go to the title instead.
+    #[test]
+    fn a_state_that_says_nothing_in_part_is_given_up_whole() {
+        let row = || {
+            Fitted::new(
+                vec![Span::raw("orb-7")],
+                vec![Span::raw("a title")],
+                vec![Span::raw("Enter focus   q quit")],
+            )
+            .state_or_nothing()
+        };
+
+        assert_eq!(drawn(row(), 27), "orb-7  Enter focus   q quit");
+        assert_eq!(drawn(row(), 26), "orb-7  a title            ");
+    }
+
+    /// Only where it is asked for, as with the title.
+    #[test]
+    fn a_state_is_cut_like_any_other_block_unless_it_asks_not_to_be() {
+        let row = Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![Span::raw("a title")],
+            vec![Span::raw("Enter focus   q quit")],
+        );
+
+        assert_eq!(drawn(row, 26), "orb-7  Enter focus   q qu…");
     }
 
     /// A band of no rows is a band that was not asked for. Nothing on screen
