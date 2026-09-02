@@ -100,7 +100,7 @@
           cd "$(${pkgs.git}/bin/git rev-parse --show-toplevel)" || exit 1
           exec ${pkgs.watchexec}/bin/watchexec \
             --watch src --watch Cargo.toml --restart --wrap-process=none \
-            -- 'cargo build --quiet && exec target/debug/bdi'
+            -- 'cargo build --release --quiet && exec target/release/bdi'
         '';
 
         # `nix flake check` reads the git index, so an untracked file is not in
