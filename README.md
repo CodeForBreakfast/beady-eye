@@ -202,4 +202,5 @@ deliberately none of `bdi`'s.
 
 ## Status
 
-Design accepted, not yet implemented. See [docs/design.md](docs/design.md).
+Built, and in daily use against the trackers it was written for. The design
+is in [docs/design.md](docs/design.md), reconciled against what got built.

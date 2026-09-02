@@ -44,8 +44,8 @@ Unit tests live in `#[cfg(test)]` modules inside the file they cover; `tests/`
 holds the integration tests, which either link the library or run the built
 binary. A test that reaches a module no test has reached before needs that
 module opening up in `src/lib.rs`, which says why. Fixtures under
-`tests/fixtures/` are faithful captures of what `bd list`, `bd dep tree`, `bd
-query` and `herdr agent list` put on the wire.
+`tests/fixtures/` are faithful captures of what `bd list`, `bd query` and
+`herdr agent list` put on the wire.
 
 Two things to know before writing a test:
 
@@ -65,6 +65,24 @@ reader sees green, and the product does something else. It surfaces when
 somebody reads the caller for another reason, which is not something you can
 schedule — so when you change a caller, check what the arms below its early
 return are still reached by.
+
+Two things a mutation run will meet, so the tally does not send anyone
+building what is already correct:
+
+Every method of `impl View for Screen` in `src/tui/` survives mutation,
+because nothing without a tty reaches them. They are pure delegation and that
+is deliberate: the answers were moved into `Shown`, where a test reaches them,
+rather than a pty harness built to reach `Screen`. A mutant surviving in an
+untestable adapter usually means the behaviour is in the wrong layer, and the
+fix is to move it.
+
+A `Timeout` is a third mutation answer and the tally cannot say which kind it
+is. Some are genuinely non-terminating in production and not gaps: the
+constants cargo-mutants synthesises for `children_of` (`vec![vec![0]]`, the
+literal for `Vec<Vec<usize>>`) hang `flatten` with no loop in the test body at
+all, and the three mutants that feed `fold_all`'s `while
+self.point_every_drawn_fold(true) {}` are the same category. Read a `Timeout`
+under `src/view/` against that list before calling it a hole.
 
 ## PR policy
 
