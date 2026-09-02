@@ -5,6 +5,7 @@
 //! here is the forest itself: the folds the user has set, and where the
 //! selection sits.
 
+mod facts;
 mod handle;
 mod layout;
 
@@ -15,6 +16,7 @@ use crate::model::snapshot::{self, Filter, Snapshot, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::{Action, Motion};
 
+use facts::Facts;
 use handle::{handle_of, selectable, Folds, Handle};
 
 /// How far a half-screen motion moves until the renderer says otherwise.
@@ -24,6 +26,8 @@ const HALF_SCREEN: usize = 10;
 /// that decide which of them are visible and which one is current.
 pub struct Forest {
     snapshot: Snapshot,
+    /// What layout reads of the snapshot, answered when it was taken.
+    facts: Facts,
     folds: Folds,
     cursor: Option<Handle>,
     half_screen: usize,
@@ -35,6 +39,7 @@ pub struct Forest {
 pub fn flatten(snapshot: &Snapshot) -> Forest {
     let mut forest = Forest {
         snapshot: snapshot.clone(),
+        facts: Facts::of(snapshot),
         folds: Folds::default(),
         cursor: None,
         half_screen: HALF_SCREEN,
@@ -92,7 +97,7 @@ impl Forest {
         // A collection carries the filter the command line asked for, which
         // is nobody's answer to `a`. So the one in hand goes on the new
         // snapshot, exactly as the folds and the cursor do.
-        self.snapshot = snapshot::refilter(snapshot, self.snapshot.filter);
+        self.take(snapshot::refilter(snapshot, self.snapshot.filter));
         self.spend_folds(&folded_over);
         self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
         self.lay_out();
@@ -224,7 +229,14 @@ impl Forest {
             Filter::LiveAgents => Filter::All,
             Filter::All => Filter::LiveAgents,
         };
-        self.snapshot = snapshot::refilter(&self.snapshot, next);
+        self.take(snapshot::refilter(&self.snapshot, next));
+    }
+
+    /// Take a snapshot as the one drawn, with what layout reads of it
+    /// answered here and not per keystroke.
+    fn take(&mut self, snapshot: Snapshot) {
+        self.facts = Facts::of(&snapshot);
+        self.snapshot = snapshot;
     }
 
     /// `E` and `C`: point every fold in the selected node's subtree, at every
@@ -312,7 +324,7 @@ impl Forest {
     /// Point every fold drawn in `scope`'s subtree at `open`, reporting
     /// whether any of them was pointing the other way.
     fn point_every_drawn_fold(&mut self, scope: &Handle, open: bool) -> bool {
-        let drawn = layout::draw(&self.snapshot, &self.folds);
+        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds);
         let pointed: Vec<Handle> = subtree_of(&drawn, scope)
             .iter()
             .filter(|line| line.folded == Some(!open))
@@ -450,7 +462,7 @@ impl Forest {
     /// without duplicating either.
     fn lay_out(&mut self) -> Vec<Line> {
         self.settle_cursor();
-        let drawn = layout::draw(&self.snapshot, &self.folds);
+        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds);
         let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
@@ -544,6 +556,7 @@ fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
 
 #[cfg(test)]
 mod tests {
+    use super::facts::TreeFacts;
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
@@ -555,8 +568,8 @@ mod tests {
     use crate::model::tree::{self, Assembled, Nesting};
     use crate::model::types::Pane;
     use crate::view::lines::{
-        counts_beneath, marker, prefix, progress_of, run_size, split, way_below, Group, Item, Note,
-        ProjectLine, OPEN, SHUT,
+        counts_beneath, facts_of, links_below, marker, prefix, progress_of, run_size, split,
+        walks_on_this_thread, way_below, Group, Item, Note, ProjectLine, OPEN, SHUT,
     };
     use crate::view::phrase;
     use crate::view::row::{Progress, Row};
@@ -2044,6 +2057,107 @@ credential_command = "secret harbour"
         assert_eq!(row_of(&forest, "orb-7.7").progress, None);
     }
 
+    /// Everything a line says of the tree beneath it — how far along it is,
+    /// what it is shut over, whether it rests open, what a run stands for —
+    /// depends on the snapshot alone. So it is answered once, when the forest
+    /// takes the snapshot, and a keystroke asks nothing of the tree.
+    #[test]
+    fn a_keystroke_walks_no_subtree() {
+        let mut forest = flatten(&built(Filter::All));
+        assert!(
+            forest
+                .lines()
+                .iter()
+                .any(|line| matches!(line.content, Content::Elided { .. })),
+            "the fixture draws no run, so a keystroke had no run to size"
+        );
+        let before = walks_on_this_thread();
+
+        forest.apply(Action::Move(Motion::NextRow));
+
+        assert_eq!(walks_on_this_thread() - before, 0);
+    }
+
+    /// `cyc-1.1` hangs under `cyc-1` and is blocked by it, so the walk comes
+    /// back to `cyc-1` beneath `cyc-1.1` and cuts the loop there.
+    const LOOPED: &str = r#"[
+      {"id":"cyc-1","title":"root","status":"open"},
+      {"id":"cyc-1.1","title":"one","status":"open",
+       "dependencies":[{"depends_on_id":"cyc-1","type":"parent-child"},
+                       {"depends_on_id":"cyc-1","type":"blocks"}]},
+      {"id":"cyc-1.2","title":"two","status":"closed",
+       "dependencies":[{"depends_on_id":"cyc-1.1","type":"parent-child"}]}
+    ]"#;
+
+    /// What `cyc-1.1` stands over is `cyc-1.2` alone: its forebear is above
+    /// it, not beneath, and only the way down to it can say so. A bead the
+    /// tree holds once can be answered once only where no way down is cut.
+    #[test]
+    fn a_bead_on_a_loop_counts_what_the_way_down_leaves_beneath_it() {
+        let forest = flatten(&alone("orbital", LOOPED, &panes_on(&["cyc-1.1"])));
+
+        assert_eq!(
+            row_of(&forest, "cyc-1.1").progress,
+            Some(Progress {
+                closed: 1,
+                total: 2
+            })
+        );
+    }
+
+    /// Where no loop is cut, nothing beneath a bead can be above it, so the
+    /// way down changes no answer and every copy of a bead gets the one the
+    /// tree keeps for it.
+    #[test]
+    fn where_no_loop_is_cut_every_way_down_to_a_bead_gets_the_same_answer() {
+        let fixtures = [
+            ORBITAL,
+            DEPOT,
+            RELAY,
+            SIDING,
+            TOWER,
+            BEACON,
+            SLUICE,
+            TWICE,
+            CLOSED_TWICE,
+            SHARED_IN_A_RUN,
+        ];
+        let staffed = panes_on(&[
+            "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
+        ]);
+        for json in fixtures {
+            let tree = alone("orbital", json, &staffed).collected.remove(0);
+            assert!(tree.cycles.is_empty(), "{} has a loop", tree.root);
+            let facts = TreeFacts::of(&tree);
+
+            for (at, above) in every_way_down(&tree) {
+                assert_eq!(
+                    facts.bead(&tree, at, &above),
+                    facts_of(&tree, at, &above),
+                    "{} reached by {above:?}",
+                    tree.beads[at].id
+                );
+            }
+        }
+    }
+
+    /// Every way down the walk takes, as the bead it lands on and the beads
+    /// above it.
+    fn every_way_down(tree: &Tree) -> Vec<(usize, Vec<usize>)> {
+        let mut ways = Vec::new();
+        let mut going = vec![(0, Vec::new())];
+        while let Some((at, above)) = going.pop() {
+            let below = way_below(&above, at);
+            going.extend(
+                links_below(tree, at, &above)
+                    .into_iter()
+                    .map(|link| (link.bead, below.clone())),
+            );
+            ways.push((at, above));
+        }
+        ways
+    }
+
     /// A run is drawn with one status glyph standing for every bead it hides,
     /// which is only honest while a run is closed beads and nothing else.
     /// `dep-1.1` is open beside the two closed siblings that make the run, so
@@ -3041,6 +3155,23 @@ credential_command = "secret harbour"
             Some("w:p1"),
             "{:#?}",
             sketch(&forest)
+        );
+    }
+
+    /// A project's line counts the beads of its own trees and no other's.
+    /// `built` puts a tree under orbital and one under harbour, so a count
+    /// taken over the wrong run of trees shows on one line or the other.
+    #[test]
+    fn a_project_line_counts_its_own_trees_and_no_others() {
+        let forest = flatten(&built(Filter::All));
+
+        assert_eq!(
+            header_of(&forest, "orbital").counts,
+            tree_of("orbital", ORBITAL).counts
+        );
+        assert_eq!(
+            header_of(&forest, "harbour").counts,
+            tree_of("harbour", HARBOUR).counts
         );
     }
 

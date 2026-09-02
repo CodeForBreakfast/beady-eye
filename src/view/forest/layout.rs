@@ -9,12 +9,12 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, LoosePane, Snapshot, TrackerState, Tree};
 use crate::model::tree::Link;
 use crate::view::lines::{
-    counts_beneath, first_copy, marker, notes_of, opens_a_fold, prefix, progress_of, root_key,
-    run_size, split, way_below, Content, Group, GroupKind, Item, Line, Note, Place, ProjectLine,
-    Recovery, Unread,
+    first_copy, marker, notes_of, prefix, root_key, way_below, Content, Group, GroupKind, Item,
+    Line, Note, Place, ProjectLine, Recovery, Unread,
 };
 use crate::view::row;
 
+use super::facts::{Facts, TreeFacts};
 use super::handle::{item_key, Folds, Handle, ItemKey};
 
 /// One entry in a parent's sequence of children, before it becomes a line.
@@ -29,8 +29,8 @@ enum Child<'a> {
     Elided(Vec<&'a Link>),
 }
 
-/// The work a line resting shut is hiding: the beads under it that its fold
-/// keeps off the screen, counted once each.
+/// The work a line resting shut is hiding: `beneath` it, the beads under it
+/// that its fold keeps off the screen, counted once each.
 ///
 /// Nothing where the line is open or has nothing under it, because what it
 /// stands over is then drawn on rows of its own. Nothing either on a later
@@ -40,13 +40,19 @@ enum Child<'a> {
 /// Asked at every depth. A root is a bead row like any other, and the one
 /// question a fold raises — what did that just take off the screen — has one
 /// answer wherever it is asked.
-fn shut_over(tree: &Tree, at: usize, above: &[usize], folded: Option<bool>) -> Option<Counts> {
-    (folded == Some(false) && first_copy(tree, at, above)).then(|| counts_beneath(tree, at, above))
+fn shut_over(beneath: Counts, first: bool, folded: Option<bool>) -> Option<Counts> {
+    (folded == Some(false) && first).then_some(beneath)
 }
 
-/// Every line the snapshot draws, in render order.
-pub(super) fn draw(snapshot: &Snapshot, folds: &Folds) -> Vec<Line> {
-    Layout { snapshot, folds }.draw()
+/// Every line the snapshot draws, in render order. `facts` is what the
+/// snapshot answered when the forest took it.
+pub(super) fn draw(snapshot: &Snapshot, facts: &Facts, folds: &Folds) -> Vec<Line> {
+    Layout {
+        snapshot,
+        facts,
+        folds,
+    }
+    .draw()
 }
 
 /// Whether a group is drawn at all, which is whether the snapshot has put
@@ -66,9 +72,11 @@ pub(super) fn group_holding(snapshot: &Snapshot, key: &ItemKey) -> Option<GroupK
     })
 }
 
-/// A snapshot and the folds set over it, which is all that laying out reads.
+/// A snapshot, what it answered, and the folds set over it, which is all
+/// that laying out reads.
 struct Layout<'a> {
     snapshot: &'a Snapshot,
+    facts: &'a Facts,
     folds: &'a Folds,
 }
 
@@ -99,6 +107,7 @@ impl Layout<'_> {
                 self.draw_project(
                     project,
                     &run[..held],
+                    &self.facts.trees()[from..from + held],
                     &recovered[from..from + held],
                     &mut lines,
                 );
@@ -134,6 +143,7 @@ impl Layout<'_> {
         &self,
         project: &str,
         trees: &[Tree],
+        facts: &[TreeFacts],
         panes: &[Vec<LoosePane>],
         lines: &mut Vec<Line>,
     ) {
@@ -154,8 +164,8 @@ impl Layout<'_> {
             place: None,
             content: Content::Project(ProjectLine {
                 every_root_read: self.snapshot.every_root_read(&project),
+                counts: self.facts.project(&project),
                 project,
-                counts: Counts::over(trees.iter().flat_map(|tree| &tree.beads)),
                 recovery,
             }),
         });
@@ -165,13 +175,28 @@ impl Layout<'_> {
         }
         let count = trees.len();
         for (n, tree) in trees.iter().enumerate() {
-            self.draw_tree(tree, n + 1 == count, lines);
+            TreeLayout {
+                folds: self.folds,
+                tree,
+                facts: &facts[n],
+            }
+            .draw(n + 1 == count, lines);
         }
     }
+}
 
-    fn draw_tree(&self, tree: &Tree, last: bool, lines: &mut Vec<Line>) {
-        let root = Place::root(root_key(tree));
-        let Some(node) = tree.beads.first() else {
+/// One tree being drawn: the tree, what it answered when the snapshot was
+/// taken, and the folds set over it.
+struct TreeLayout<'a> {
+    folds: &'a Folds,
+    tree: &'a Tree,
+    facts: &'a TreeFacts,
+}
+
+impl TreeLayout<'_> {
+    fn draw(&self, last: bool, lines: &mut Vec<Line>) {
+        let root = Place::root(root_key(self.tree));
+        let Some(node) = self.tree.beads.first() else {
             // No nodes, so no row: the root is named on a line of its own
             // rather than left out, because a root that would not read is the
             // one a reader most needs to see is there.
@@ -181,8 +206,8 @@ impl Layout<'_> {
                 folded: None,
                 place: Some(root),
                 content: Content::Unread(Unread {
-                    root: tree.root.clone(),
-                    tracker: tree.tracker,
+                    root: self.tree.root.clone(),
+                    tracker: self.tree.tracker,
                 }),
             });
             return;
@@ -190,11 +215,12 @@ impl Layout<'_> {
         // A tree opens because of what is in it, not because the selection
         // is in it: the first screen is meant to be the answer to what is
         // being worked and what could be started.
-        let kids = children_entries(tree, 0, &[]);
+        let kids = self.children_entries(0, &[]);
+        let bead = self.facts.bead(self.tree, 0, &[]);
         let open = !kids.is_empty()
             && self
                 .folds
-                .expanded(&Handle::Bead(root.clone()), opens_a_fold(tree, 0, &[]));
+                .expanded(&Handle::Bead(root.clone()), bead.opens_a_fold);
 
         let folded = (!kids.is_empty()).then_some(open);
         lines.push(Line {
@@ -204,24 +230,23 @@ impl Layout<'_> {
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
                 node,
-                &tree.root,
-                progress_of(tree, 0, &[]),
-                shut_over(tree, 0, &[], folded),
+                &self.tree.root,
+                bead.progress,
+                shut_over(bead.beneath, first_copy(self.tree, 0, &[]), folded),
             )),
         });
 
-        let mut entries: Vec<Child> = notes_of(tree).into_iter().map(Child::Note).collect();
+        let mut entries: Vec<Child> = notes_of(self.tree).into_iter().map(Child::Note).collect();
         if open {
             entries.extend(kids);
         }
-        self.draw_children(tree, entries, &root, &[0], &mut vec![!last], lines);
+        self.draw_children(entries, &root, &[0], &mut vec![!last], lines);
     }
 
     /// `above` is the way down to `parent`, the parent itself included: the
     /// way down to every entry drawn here.
     fn draw_children(
         &self,
-        tree: &Tree,
         entries: Vec<Child>,
         parent: &Place,
         above: &[usize],
@@ -249,7 +274,7 @@ impl Layout<'_> {
                         folded: Some(open),
                         place: None,
                         content: Content::Elided {
-                            count: run_size(tree, &members, above),
+                            count: self.facts.run_size(self.tree, &members, above),
                             under: parent.clone(),
                         },
                     });
@@ -261,26 +286,27 @@ impl Layout<'_> {
                         // said it was the last.
                         trunk.push(!last);
                         let entries = members.into_iter().map(Child::Node).collect();
-                        self.draw_children(tree, entries, parent, above, trunk, lines);
+                        self.draw_children(entries, parent, above, trunk, lines);
                         trunk.pop();
                     }
                 }
                 Child::Node(link) => {
                     let at = link.bead;
-                    let node = &tree.beads[at];
+                    let node = &self.tree.beads[at];
                     let place = parent.step_to(BeadKey {
-                        project: tree.project.clone(),
+                        project: self.tree.project.clone(),
                         id: node.id.clone(),
                     });
-                    let kids = children_entries(tree, at, above);
+                    let kids = self.children_entries(at, above);
+                    let bead = self.facts.bead(self.tree, at, above);
+                    let first = first_copy(self.tree, at, above);
                     // Open the spine to the work a reader needs next and
                     // nothing else. A branch with none rests as one line, its
                     // glyph, its fraction and its marker saying what it holds.
                     let open = !kids.is_empty()
-                        && self.folds.expanded(
-                            &Handle::Bead(place.clone()),
-                            first_copy(tree, at, above) && opens_a_fold(tree, at, above),
-                        );
+                        && self
+                            .folds
+                            .expanded(&Handle::Bead(place.clone()), first && bead.opens_a_fold);
                     let folded = (!kids.is_empty()).then_some(open);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open, Some(&link.edge)),
@@ -289,15 +315,15 @@ impl Layout<'_> {
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
-                            &tree.root,
-                            progress_of(tree, at, above),
-                            shut_over(tree, at, above, folded),
+                            &self.tree.root,
+                            bead.progress,
+                            shut_over(bead.beneath, first, folded),
                         )),
                     });
                     if open {
                         trunk.push(!last);
                         let below = way_below(above, at);
-                        self.draw_children(tree, kids, &place, &below, trunk, lines);
+                        self.draw_children(kids, &place, &below, trunk, lines);
                         trunk.pop();
                     }
                 }
@@ -305,6 +331,19 @@ impl Layout<'_> {
         }
     }
 
+    /// A node's children as they are drawn: the ones worth a line each, then
+    /// one line for the run that is not.
+    fn children_entries<'a>(&'a self, at: usize, above: &[usize]) -> Vec<Child<'a>> {
+        let (drawn, elided) = self.facts.split(self.tree, at, above);
+        let mut entries: Vec<Child> = drawn.into_iter().map(Child::Node).collect();
+        if !elided.is_empty() {
+            entries.push(Child::Elided(elided));
+        }
+        entries
+    }
+}
+
+impl Layout<'_> {
     fn draw_groups(&self, loose: &[LoosePane], lines: &mut Vec<Line>) {
         for kind in GroupKind::ALL {
             let items = group_items(self.snapshot, kind, loose);
@@ -388,17 +427,6 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Vec
             .map(Item::Unconfigured)
             .collect(),
     }
-}
-
-/// A node's children as they are drawn: the ones worth a line each, then
-/// one line for the run that is not.
-fn children_entries<'a>(tree: &'a Tree, at: usize, above: &[usize]) -> Vec<Child<'a>> {
-    let (drawn, elided) = split(tree, at, above);
-    let mut entries: Vec<Child> = drawn.into_iter().map(Child::Node).collect();
-    if !elided.is_empty() {
-        entries.push(Child::Elided(elided));
-    }
-    entries
 }
 
 /// The hidden trees whose findings went with them, which the filter noted

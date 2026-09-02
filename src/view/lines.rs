@@ -349,7 +349,21 @@ pub(crate) fn links_below<'a>(tree: &'a Tree, at: usize, above: &[usize]) -> Vec
 /// about rows: a blocker two of its descendants share is one piece of work
 /// however many times it is drawn.
 pub(crate) fn beneath(tree: &Tree, at: usize, above: &[usize]) -> Vec<usize> {
+    #[cfg(test)]
+    WALKS.with(|walks| walks.set(walks.get() + 1));
     tree::beneath(&tree.children, at, above)
+}
+
+#[cfg(test)]
+thread_local! {
+    static WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many subtrees this thread has walked, so a test can say what a
+/// keystroke costs.
+#[cfg(test)]
+pub(crate) fn walks_on_this_thread() -> usize {
+    WALKS.with(std::cell::Cell::get)
 }
 
 /// Whether the line at `at` is the first this tree draws of its bead.
@@ -430,7 +444,7 @@ pub(crate) fn counts_beneath(tree: &Tree, at: usize, above: &[usize]) -> Counts 
 /// and still hold a working agent three levels down, and the two mechanisms
 /// this feeds — a branch drawn as one finished line, a run drawn as a count —
 /// each hide everything beneath it.
-fn finished(tree: &Tree, at: usize, above: &[usize]) -> bool {
+pub(crate) fn finished(tree: &Tree, at: usize, above: &[usize]) -> bool {
     std::iter::once(at)
         .chain(beneath(tree, at, above))
         .all(|node| tree.beads[node].status.is_closed() && quiet(&tree.beads[node]))
@@ -447,12 +461,22 @@ pub(crate) fn split<'a>(
     at: usize,
     above: &[usize],
 ) -> (Vec<&'a Link>, Vec<&'a Link>) {
-    let links = links_below(tree, at, above);
     let below = way_below(above, at);
+    split_by(tree, at, above, |bead| finished(tree, bead, &below))
+}
+
+/// `split`, told which beads are finished rather than asking the tree.
+pub(crate) fn split_by<'a>(
+    tree: &'a Tree,
+    at: usize,
+    above: &[usize],
+    finished: impl Fn(usize) -> bool,
+) -> (Vec<&'a Link>, Vec<&'a Link>) {
+    let links = links_below(tree, at, above);
     let done: Vec<&Link> = links
         .iter()
         .copied()
-        .filter(|link| finished(tree, link.bead, &below))
+        .filter(|link| finished(link.bead))
         .collect();
 
     if done.len() < MANY {
@@ -495,6 +519,25 @@ pub(crate) fn progress_of(tree: &Tree, at: usize, above: &[usize]) -> Option<Pro
             .filter(|node| tree.beads[*node].status.is_closed())
             .count(),
     })
+}
+
+/// What one line says of the tree beneath its bead, answered together: the
+/// four questions above, each asked of the same bead by the same way down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BeadFacts {
+    pub progress: Option<Progress>,
+    pub beneath: Counts,
+    pub opens_a_fold: bool,
+    pub finished: bool,
+}
+
+pub(crate) fn facts_of(tree: &Tree, at: usize, above: &[usize]) -> BeadFacts {
+    BeadFacts {
+        progress: progress_of(tree, at, above),
+        beneath: counts_beneath(tree, at, above),
+        opens_a_fold: opens_a_fold(tree, at, above),
+        finished: finished(tree, at, above),
+    }
 }
 
 /// What a run stands for: its own beads and everything beneath them.

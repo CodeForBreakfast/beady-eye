@@ -85,6 +85,7 @@ coin one — and say so.**
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
 | **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
+| **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 
 ### Three different things are called "blocked"
@@ -617,6 +618,19 @@ tree and not of the unrolled shape, which can be very much larger: measured
 4,611 beads, one tree of 119 beads unrolling to 194,085 of them, and a
 keystroke under `--all` that cost 146 ms over the rows and 5 ms over the tree.
 The unrolled shape is walked whole in one place, `--json`, which writes it.
+
+**The facts are answered once per snapshot.** Every one of those questions
+depends on the snapshot alone — no fold and no selection moves an answer — so
+the forest answers them when it takes a snapshot and layout reads them, rather
+than asking again for every drawn line on every keystroke. A tree with no loop
+in it keeps one answer per bead: nothing beneath a bead can be above it, so
+leaving the way down out changes nothing and every copy of the bead reads the
+same answer. A tree with a loop cut in it is still asked by the way down,
+because two copies of a bead on either side of the cut stand over different
+things. Measured 2026-09-02 against the maintainer's five trackers, 6,060
+beads held across the shown trees under `--all` and 3,560 lines drawn: the
+keystroke went from 5.0 ms, 3.1 ms of it those questions, to 2.9 ms, 0.8 ms of
+it, and answering them once costs 7.7 ms per snapshot.
 
 **Dedup is the model's; the copies are the view's.** The model holds one node
 per bead and the view draws one line per way down to it, and the two are not
