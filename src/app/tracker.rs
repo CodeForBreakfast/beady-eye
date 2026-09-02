@@ -113,9 +113,10 @@ pub(super) enum Refresh {
 /// that differs from what the standing read was taken against.
 ///
 /// The probe cannot come first. It goes to the tracker, and reaching the
-/// tracker needs the credential the environment capture produces — so an
-/// unchanged project costs that capture and one `bd` invocation, against the
-/// four a changed one still costs on top of them.
+/// tracker needs the environment the capture settles — so an unchanged
+/// project costs one `bd` invocation, plus that capture where the project
+/// named direnv or a credential command, against the four a changed one
+/// still costs on top of them.
 ///
 /// A tracker that cannot answer the probe is read the slow way.
 /// `dolt_hashof_db()` is Dolt's and a SQLite-backed tracker has no such

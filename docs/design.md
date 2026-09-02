@@ -267,8 +267,9 @@ costs, and the cost follows the number of projects rather than the size of
 any one tracker. A
 project whose tracker has moved is read in full: four `bd` invocations
 whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
-ephemeral=true --all` — all of them after the capture of the environment its
-tracker is read in, which is a process of its own. Counted off `collect::bd`
+ephemeral=true --all` — all of them after the environment its tracker is
+read in is settled, which is a process of its own only where the project
+named direnv or a credential command. Counted off `collect::bd`
 once discovery read the listing rather than three subsets of it (`bdi-9jj.8`);
 before that it was six, plus one `show` per closed parent the climb stepped
 onto. A project whose

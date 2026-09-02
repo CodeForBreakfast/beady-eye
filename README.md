@@ -133,8 +133,10 @@ A project whose root has moved is read in full, and that is the cascade the
 poll used to run every time: `bd` for what is ready, what is blocked, the
 ephemeral beads and every bead there is — four `bd` invocations, with the
 roots to draw under read off the last two. The environment its tracker is
-read in is captured before any of them, so the whole refresh is those four
-plus the probe plus that capture, most of it against a remote Dolt server.
+read in is settled before any of them, and is a process of its own only
+where the project named direnv or a credential command. So the whole refresh
+is that cascade plus the probe, plus that process where there is one, most of
+it against a remote Dolt server.
 
 So the poll is cheap, and `bdi` listens as well. Anything that already knows a
 tracker changed can say so, and the project it names is read then rather than
