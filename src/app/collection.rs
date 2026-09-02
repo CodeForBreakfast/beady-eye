@@ -398,10 +398,10 @@ mod tests {
     const UNSTAFFED_TREE: &str = r#"[
       {"id":"orb-7","title":"lift the ground station","status":"blocked",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"open",
+      {"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7",
        "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
        "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
@@ -434,12 +434,6 @@ mod tests {
     fn a_tree_with_no_live_agent_is_reported_rather_than_dropped() {
         let runner = orbital()
             .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
-            .with(
-                &spelled(UNFINISHED_CALL),
-                r#"[{"id":"orb-7","title":"lift the ground station","status":"blocked","parent":""},
-                    {"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7"},
-                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
-            )
             .with(&spelled(TRACKER_CALL), UNSTAFFED_TREE)
             .with(
                 &spelled("blocked --json"),
@@ -690,7 +684,7 @@ mod tests {
     // ---- the refresh gate ----------------------------------------------
 
     /// The whole trade: a tracker that has not moved is asked one question
-    /// instead of seven, and the one question is the probe.
+    /// instead of four, and the one question is the probe.
     #[test]
     fn a_project_whose_tracker_has_not_moved_is_asked_once() {
         let runner = orbital();
@@ -701,7 +695,7 @@ mod tests {
         let first = bd_calls(&runner);
         standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, now());
 
-        assert_eq!(first, 8, "a project read for the first time costs both");
+        assert_eq!(first, 5, "a project read for the first time costs both");
         assert_eq!(
             bd_calls(&runner) - first,
             1,
@@ -710,7 +704,7 @@ mod tests {
     }
 
     /// The other half of the trade, and not a regression to fix: a tracker
-    /// that moved costs the probe on top of the seven rather than instead of
+    /// that moved costs the probe on top of the four rather than instead of
     /// them.
     #[test]
     fn a_project_whose_tracker_has_moved_is_read_in_full() {
@@ -721,7 +715,7 @@ mod tests {
         let moved = orbital().with(&spelled(PROBE_CALL), MOVED);
         let after = standing.collect(&cfg, &moved, &orbital_alone(), Filter::All, now());
 
-        assert_eq!(bd_calls(&moved), 8);
+        assert_eq!(bd_calls(&moved), 5);
         assert!(
             !trees_of(&after, "orbital").is_empty(),
             "and everything it read is drawn"
@@ -753,7 +747,7 @@ mod tests {
 
         assert_eq!(
             bd_calls(&recovered),
-            8,
+            5,
             "the cascade ran again rather than being skipped against the root the failure was probed at"
         );
         assert_eq!(after.failed_projects, vec![], "so the project recovered");
@@ -773,10 +767,10 @@ mod tests {
         let first = bd_calls(&blind);
         let after = standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
 
-        assert_eq!(first, 8, "the probe was asked and the cascade ran anyway");
+        assert_eq!(first, 5, "the probe was asked and the cascade ran anyway");
         assert_eq!(
             bd_calls(&blind) - first,
-            8,
+            5,
             "and again, rather than settling into a skip against a root nobody established"
         );
         assert!(
@@ -802,12 +796,12 @@ mod tests {
         standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
 
         assert_eq!(
-            first, 8,
+            first, 5,
             "the probe went unanswered, so the cascade ran rather than the standing root being kept"
         );
         assert_eq!(
             bd_calls(&blind) - first,
-            8,
+            5,
             "and the read it just took left nothing for the next interval to skip against either"
         );
     }
@@ -858,7 +852,7 @@ mod tests {
         );
         assert_eq!(
             bd_calls(&runner),
-            9,
+            6,
             "the second collection cost the probe alone, so the ageing is the draw's and not the read's"
         );
     }
@@ -905,7 +899,7 @@ mod tests {
         );
         assert_eq!(
             once_due - while_held,
-            8,
+            5,
             "and the whole cascade at the first refresh past the instant it is due"
         );
         assert_eq!(
@@ -937,7 +931,7 @@ mod tests {
             when_it_is_due(),
         );
 
-        assert_eq!(bd_calls(&runner) - first, 8);
+        assert_eq!(bd_calls(&runner) - first, 5);
     }
 
     /// The other side of the same instant. A bead due exactly as the read was
@@ -987,7 +981,7 @@ mod tests {
 
         assert_eq!(
             bd_calls(&named),
-            8,
+            5,
             "the tracker had not moved, but what the panes name had"
         );
     }
@@ -1120,7 +1114,7 @@ mod tests {
         // rightly never ask the second.
         let refused = colliding_trackers(PANES_IN_BOTH)
             .failing(&spelled(PROBE_CALL), failing(FailureKind::Auth))
-            .failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
+            .failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
         let after = collect(&mut standing, &refused, &orbital_alone());
 
         assert_eq!(
@@ -1227,7 +1221,7 @@ mod tests {
         // rightly never ask the second.
         let refused = colliding_trackers(PANES_IN_BOTH)
             .failing(&spelled(PROBE_CALL), failing(FailureKind::Auth))
-            .failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
+            .failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
         let after = standing.collect(&cfg, &refused, &orbital_alone(), Filter::All, later);
 
         assert!(

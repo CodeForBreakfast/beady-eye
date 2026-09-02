@@ -180,8 +180,12 @@ of the screen says that which agents are alive is unknown.
 Roots come from bd, unioned and deduped:
 
 1. Every unfinished bead — `open`, `in_progress`, `blocked` or `deferred` —
-   and every wisp, walked to its root via `parent` ancestors. This uses bd's
-   own statuses and needs no convention. An earlier draft took only
+   and every unfinished wisp, walked to its root via `parent` ancestors. This
+   uses bd's own statuses and needs no convention, and it is read off the
+   `list --all` and `query ephemeral=true --all` answers the forest is drawn
+   from rather than asked of bd as a subset of them: measured 2026-09-02
+   against this project's tracker, every row `--status` listed was in the
+   `--all` answer, and the same for wisps. An earlier draft took only
    `in_progress` and `blocked`, which turned a tracker into a handful of
    roots; since `dd2c3b5` the climb starts from every unfinished bead, so
    every tree with anything left to do is drawn.
@@ -215,16 +219,15 @@ one narrowing reaches all of them and none of them needs to know about it.
 
 That matters because a collection is most of what a run costs, and the cost
 follows the number of projects rather than the size of any one tracker. A
-project whose tracker has moved is read in full: six `bd` invocations
-whatever the tracker holds — `list --status`, `query ephemeral=true`, `ready`,
-`blocked`, `list --all`, `query ephemeral=true --all` — plus one `list
---has-metadata-key` per configured key and one `show` per bead the climb to a
-root steps onto that discovery did not name, all of them after the capture of
-the environment its tracker is read in, which is a process of its own. Counted
-off `collect::bd` at `c5be7a9`; `README.md` and `bdi-rer`'s epic both say
-*seven*, and neither says which seven, so this is the count to trust. A
-project whose tracker has not moved pays one `bd sql` probe and none of the
-rest — see *Reading a tracker only when it has changed*. Measured on 2026-09-01 at
+project whose tracker has moved is read in full: four `bd` invocations
+whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
+ephemeral=true --all` — all of them after the capture of the environment its
+tracker is read in, which is a process of its own. Counted off `collect::bd`
+once discovery read the listing rather than three subsets of it (`bdi-9jj.8`);
+before that it was six, plus one `list --has-metadata-key` per configured key
+and one `show` per closed parent the climb stepped onto. A project whose
+tracker has not moved pays one `bd sql` probe and none of the rest — see
+*Reading a tracker only when it has changed*. Measured on 2026-09-01 at
 `268ab2d`, before that gate landed: `bdi --json`, which waits for the whole
 collection and draws no screen, took 8.2 seconds against a config naming
 three projects, and 3.5 to 4.1 seconds against two at `40f4eb5`.

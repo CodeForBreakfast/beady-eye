@@ -112,7 +112,7 @@ pub(super) enum Refresh {
 /// The probe cannot come first. It goes to the tracker, and reaching the
 /// tracker needs the credential the environment capture produces — so an
 /// unchanged project costs that capture and one `bd` invocation, against the
-/// seven a changed one still costs on top of them.
+/// four a changed one still costs on top of them.
 ///
 /// A tracker that cannot answer the probe is read the slow way.
 /// `dolt_hashof_db()` is Dolt's and a SQLite-backed tracker has no such
@@ -166,7 +166,7 @@ fn read_project(
     panes: &[Pane],
     env: &Env,
 ) -> Result<(ProjectWork, Vec<Bead>), RunFailure> {
-    let discovered = bd::discover_roots(runner, &project.path, env, &cfg.roots.metadata_keys)?;
+    let beads = bd::all_beads(runner, &project.path, env)?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -175,7 +175,6 @@ fn read_project(
         blocked_by: bd::blocked_by(runner, &project.path, env)?,
     };
 
-    let beads = bd::all_beads(runner, &project.path, env)?;
     // Every bead this read of the tracker turned up, and the bead each one
     // hangs under. A parent chain that leaves it has run off the end of what
     // `bdi` read, and there is no tree to draw from where it went — so the
@@ -183,15 +182,10 @@ fn read_project(
     let parents: BTreeMap<&str, Option<&str>> = beads
         .iter()
         .map(|bead| (bead.id.as_str(), bead.parent.as_deref()))
-        .chain(
-            discovered
-                .iter()
-                .map(|(id, parent)| (id.as_str(), parent.as_deref())),
-        )
         .collect();
 
     let mut ancestors: BTreeMap<String, String> = BTreeMap::new();
-    let named: BTreeSet<String> = cfg
+    let mut roots: BTreeSet<String> = cfg
         .roots
         .explicit
         .get(&project.name)
@@ -199,18 +193,20 @@ fn read_project(
         .flatten()
         .cloned()
         .collect();
-    let mut roots = named.clone();
-    for bead in discovered.keys() {
+    for bead in unfinished(&beads) {
         roots.extend(root_of(bead, &parents, &mut ancestors));
     }
     for named in panes_naming_a_bead_here(panes, project, cfg) {
         roots.extend(root_of(named, &parents, &mut ancestors));
     }
 
+    // A root the answer does not hold is one config named: every other root
+    // came out of the answer itself, so a tree cannot fail to assemble on
+    // it.
     let mut read: Vec<(String, Result<Assembled, RootUnread>)> = roots
         .into_iter()
         .map(|root| {
-            let read = assemble(beads.clone(), &root).map_err(|_| why_unheld(&root, &named));
+            let read = assemble(beads.clone(), &root).map_err(|_| RootUnread::NotFound);
             (root, read)
         })
         .collect();
@@ -265,17 +261,23 @@ fn what_no_root_reached(
         .collect()
 }
 
-/// What it means that the answer holds no bead of a root's id — the one way
-/// assembling a tree refuses. A root config or the command line `named` is
-/// a bead this tracker was never holding; any other root came out of the
-/// tracker's own answers, so an answer that then lacks it is one `bdi`
-/// cannot read.
-fn why_unheld(root: &str, named: &BTreeSet<String>) -> RootUnread {
-    if named.contains(root) {
-        RootUnread::NotFound
-    } else {
-        RootUnread::Tracker(TrackerFailure::Parse)
-    }
+/// Every bead that marks unfinished work: the beads discovery climbs to a
+/// root from, read off the listing rather than asked of bd, which would
+/// answer with a subset of the rows already in hand.
+///
+/// Unfinished rather than claimed: an effort holds the work it has left after
+/// its last seat stands down, and a rule that noticed only a claim lost the
+/// whole tree at that moment. `closed` is the only status bd stores that this
+/// leaves out, and that is the whole of the rule.
+///
+/// Wisps are in the listing too, and one with no parent is a root of its own:
+/// every step of a bd molecule hangs under it, so the one rootless row is the
+/// whole run.
+fn unfinished(beads: &[Bead]) -> impl Iterator<Item = &str> {
+    beads
+        .iter()
+        .filter(|bead| !bead.status.is_closed())
+        .map(|bead| bead.id.as_str())
 }
 
 /// What the live panes in this project's directory name. A pane placed in no
@@ -378,9 +380,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
-    /// A second root, reached only because config names it.
+    /// A second root, reached only because config or a pane names it: closed,
+    /// so no status does.
     const MAST_TREE: &str = r#"[
-      {"id":"orb-4","title":"survey the mast","status":"open",
+      {"id":"orb-4","title":"survey the mast","status":"closed",
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -407,6 +410,26 @@ mod tests {
 
     // ---- discovery ----------------------------------------------------
 
+    /// Discovery reads the listing the forest is drawn from, so a changed
+    /// refresh lists the tracker once and its wisps once, and asks bd for no
+    /// subset of either.
+    #[test]
+    fn a_changed_refresh_lists_the_tracker_once_and_its_wisps_once() {
+        let runner = orbital();
+
+        run(&one_project(), &runner, Filter::All, now());
+
+        let listings: Vec<String> = runner
+            .calls()
+            .into_iter()
+            .map(|call| call.argv)
+            .filter(|argv| {
+                argv.starts_with(&spelled("list ")) || argv.starts_with(&spelled("query "))
+            })
+            .collect();
+        assert_eq!(listings, vec![spelled(TRACKER_CALL), spelled(WISP_CALL)]);
+    }
+
     /// The whole point of the ancestor walk: an in-flight task is drawn as
     /// the tree it hangs under, not as a root of its own.
     #[test]
@@ -419,40 +442,73 @@ mod tests {
         assert_eq!(snap.trees[0].nodes.len(), 3);
     }
 
+    /// The shapes this project's own tracker held on 2026-09-02, drawn from
+    /// the one listing: a closed epic over open work, an epic finished whole,
+    /// a deferred bead, a wisp left open under no parent, a wisp closed, and
+    /// a closed bead still carrying a `working_topic`. That tracker held
+    /// seventy-four of the last, and bd's own `--has-metadata-key` named none
+    /// of them: it answers about unfinished beads, so a key is never what
+    /// makes a closed bead a root.
     #[test]
-    fn a_configured_metadata_key_discovers_a_root_bds_statuses_would_miss() {
-        let runner = orbital().with(&spelled(UNFINISHED_CALL), "[]").with(
-            &spelled("list --has-metadata-key working_topic --limit 0 --json"),
-            r#"[{"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7"}]"#,
-        );
+    fn discovery_names_every_unfinished_bead_and_wisp_and_nothing_closed() {
+        let listing = r#"[
+          {"id":"orb-7","title":"lift the ground station","status":"closed",
+           "priority":1,"issue_type":"epic"},
+          {"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7",
+           "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+           "priority":2,"issue_type":"task"},
+          {"id":"orb-8","title":"decommission the old mast","status":"closed",
+           "priority":1,"issue_type":"epic"},
+          {"id":"orb-8.1","title":"cut the guy lines","status":"closed","parent":"orb-8",
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
+           "priority":2,"issue_type":"task",
+           "metadata":{"working_topic":"orbital/v1-orb-8.1"}},
+          {"id":"orb-9","title":"wait for the permit","status":"deferred",
+           "priority":3,"issue_type":"task"}
+        ]"#;
+        let wisps = r#"[
+          {"id":"orb-wisp-a1","title":"heartbeat","status":"open",
+           "priority":2,"issue_type":"task"},
+          {"id":"orb-wisp-b2","title":"a run that finished","status":"closed",
+           "priority":2,"issue_type":"molecule"}
+        ]"#;
+        let runner = orbital()
+            .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
+            .with(&spelled(TRACKER_CALL), listing)
+            .with(&spelled(WISP_CALL), wisps);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
-        assert_eq!(snap.trees.len(), 1);
-        assert_eq!(snap.trees[0].root, "orb-7");
+        assert!(
+            snap.failed_projects.is_empty(),
+            "{:?}",
+            snap.failed_projects
+        );
+        let roots: BTreeSet<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            BTreeSet::from(["orb-7", "orb-9", "orb-wisp-a1"]),
+            "the open task climbs to its closed epic; the deferred bead and the open wisp are roots of their own"
+        );
     }
 
     /// The digest case measured against summit-works on 2026-08-31: a bead
-    /// names a parent that neither `bd list --all` nor discovery holds. The
-    /// chain stops at the last bead this read holds, which is a missing
-    /// ancestor and not a tracker outage — every call was answered, so no
-    /// tree calls the tracker unreadable, and the bead is top of its own
-    /// tree, which is where the parent the answer lost is reported from.
+    /// names a parent that `bd list --all` does not hold. The chain stops at
+    /// the last bead this read holds, which is a missing ancestor and not a
+    /// tracker outage — every call was answered, so no tree calls the tracker
+    /// unreadable, and the bead is top of its own tree, which is where the
+    /// parent the answer lost is reported from.
     ///
     /// Climbing to the parent named a root no tree could be drawn from, and
     /// the project grew a tree reported as a tracker that had answered with
     /// something `bdi` could not read.
     #[test]
     fn a_bead_whose_parent_the_answer_has_lost_is_top_of_its_own_tree() {
-        let orphan_row = r#"[{"id":"orb-7.9","title":"its parent is a digest",
-                              "status":"open","parent":"orb-404"}]"#;
         let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent is a digest",
                                "status":"open","parent":"orb-404",
                                "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
                                "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital()
-            .merging(&spelled(UNFINISHED_CALL), orphan_row)
-            .merging(&spelled(TRACKER_CALL), orphan_bead);
+        let runner = orbital().merging(&spelled(TRACKER_CALL), orphan_bead);
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -716,7 +772,7 @@ mod tests {
         let runner = orbital().with(
             &spelled(TRACKER_CALL),
             &ORBITAL_TREE.replace(
-                r#"{"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+                r#"{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
        "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}}"#,
@@ -773,14 +829,13 @@ mod tests {
     #[test]
     fn a_closed_parent_over_open_work_costs_no_bd_show() {
         let runner = orbital()
-            .with(&spelled(UNFINISHED_CALL),
-                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
-                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
-            )
             .with(&spelled(TRACKER_CALL), CLOSED_OVER_OPEN_WORK)
             // Answered, so that the fake does not panic: what is counted is
             // whether it is asked at all.
-            .with(&spelled("show orb-7 --json"), r#"[{"id":"orb-7","parent":null}]"#);
+            .with(
+                &spelled("show orb-7 --json"),
+                r#"[{"id":"orb-7","parent":null}]"#,
+            );
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -806,9 +861,13 @@ mod tests {
     fn an_effort_is_drawn_from_the_open_work_under_it_with_nobody_on_it() {
         let runner = orbital()
             .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
-            .with(&spelled(UNFINISHED_CALL),
-                r#"[{"id":"orb-7","title":"lift the ground station","status":"open","parent":""},
-                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
+            .with(
+                &spelled(TRACKER_CALL),
+                r#"[{"id":"orb-7","title":"lift the ground station","status":"open",
+                     "priority":1,"issue_type":"epic"},
+                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
+                     "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+                     "priority":2,"issue_type":"task"}]"#,
             );
 
         let snap = run(&one_project(), &runner, Filter::All, now());
@@ -822,9 +881,6 @@ mod tests {
     #[test]
     fn a_parent_chain_that_loops_stops_where_it_repeats() {
         let runner = orbital()
-            .with(&spelled(UNFINISHED_CALL),
-                r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"}]"#,
-            )
             // Both ends of the loop, because a climb stops below a parent
             // this read does not hold — and then the cycle guard, not the
             // cycle, would be what this test never reaches.
@@ -935,7 +991,6 @@ orbital = ["bdi-404"]
         ))
         .expect("the config parses");
         let runner = orbital()
-            .with(&spelled(UNFINISHED_CALL), "[]")
             .with(&spelled("ready --limit 0 --json"), "[]")
             .with(&spelled("blocked --json"), "[]")
             .with(&spelled(TRACKER_CALL), A_CAPTURED_ANSWER);
@@ -1138,8 +1193,8 @@ orbital = ["bdi-404"]
     // ---- degradation ---------------------------------------------------
 
     #[test]
-    fn a_project_whose_discovery_fails_is_named_not_dropped() {
-        let runner = orbital().failing(&spelled(UNFINISHED_CALL), failing(FailureKind::Auth));
+    fn a_project_whose_listing_fails_is_named_not_dropped() {
+        let runner = orbital().failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
 
         let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
 
@@ -1163,7 +1218,7 @@ orbital = ["bdi-404"]
         ];
 
         for (kind, expected) in kinds {
-            let runner = orbital().failing(&spelled(UNFINISHED_CALL), failing(kind));
+            let runner = orbital().failing(&spelled(TRACKER_CALL), failing(kind));
 
             let snap = run(&one_project(), &runner, Filter::All, now());
 
@@ -1171,23 +1226,35 @@ orbital = ["bdi-404"]
         }
     }
 
-    /// A root we already know the id of keeps it, which is what tells two
-    /// failures apart, and the filter has no agent count to hide it by.
+    /// A root config names that the answer does not hold keeps its id, which
+    /// is what sends a reader to the right config entry, and the filter has
+    /// no agent count to hide it by. It is the one root that can be unheld:
+    /// every other comes out of the answer itself.
     #[test]
     fn a_root_the_answer_does_not_hold_keeps_its_id_and_is_never_hidden() {
-        let runner = orbital().with(&spelled(TRACKER_CALL), MAST_TREE);
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
 
-        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+[roots.explicit]
+orbital = ["orb-404"]
+"#
+        ))
+        .expect("the config parses");
+
+        let snap = run(&cfg, &orbital(), Filter::LiveAgents, now());
 
         assert!(
             snap.failed_projects.is_empty(),
             "the project's own tracker answered"
         );
-        assert_eq!(snap.trees.len(), 1);
-        assert_eq!(snap.trees[0].root, "orb-7");
+        let roots: BTreeSet<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, BTreeSet::from(["orb-404", "orb-7"]));
         assert_eq!(
-            snap.trees[0].tracker,
-            TrackerState::Unreachable(TrackerFailure::Parse)
+            rooted_at(&snap, "orb-404").tracker,
+            TrackerState::RootNotFound
         );
         assert!(snap.hidden_trees.is_empty());
     }
@@ -1221,22 +1288,27 @@ orbital = ["bdi-404"]
         );
     }
 
+    /// A tracker holding no bead answers `[]`, and that is an empty forest
+    /// rather than a failure: every root is read off the answer, so there is
+    /// nothing to draw and nothing whose absence to report.
     #[test]
-    fn rows_bd_could_not_have_written_are_a_parse_failure_not_a_missing_tree() {
+    fn a_tracker_holding_no_bead_draws_nothing_and_fails_nothing() {
         let runner = orbital().with(&spelled(TRACKER_CALL), "[]");
 
         let snap = run(&one_project(), &runner, Filter::All, now());
 
-        assert_eq!(
-            snap.trees[0].tracker,
-            TrackerState::Unreachable(TrackerFailure::Parse)
+        assert!(snap.trees.is_empty());
+        assert!(
+            snap.failed_projects.is_empty(),
+            "{:?}",
+            snap.failed_projects
         );
     }
 
     #[test]
     fn bds_own_words_never_reach_the_snapshot() {
         let runner = orbital().failing(
-            &spelled(UNFINISHED_CALL),
+            &spelled(TRACKER_CALL),
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),

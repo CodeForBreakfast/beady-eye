@@ -29,15 +29,16 @@ mod fixtures {
     pub(super) const FERRY: &str = "/srv/work/ferry";
 
     /// One project's tracker as bd answers for the root: an epic over two
-    /// tasks, one of them naming the pane working it.
+    /// tasks, one of them naming the pane working it. Every row carries its
+    /// own `parent` as well as the edge, because bd writes both.
     pub(super) const ORBITAL_TREE: &str = r#"[
       {"id":"orb-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
        "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
        "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
@@ -46,7 +47,7 @@ mod fixtures {
     pub(super) const COLLIDING_TREE: &str = r#"[
       {"id":"x-1","title":"the shared prefix","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"x-1.1","title":"the colliding id","status":"in_progress",
+      {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent":"x-1",
        "dependencies":[{"depends_on_id":"x-1","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
@@ -123,31 +124,16 @@ credential_command = "secret ferry"
     /// takes it.
     pub(super) const TRACKER_CALL: &str = "list --all --limit 0 --json";
 
-    /// The one call discovery makes for statuses, spelled as bd takes it.
-    pub(super) const UNFINISHED_CALL: &str =
-        "list --status open,in_progress,blocked,deferred --limit 0 --json";
-
-    /// The same two questions asked of bd's ephemeral table, which `bd list`
-    /// does not read.
+    /// The same question asked of bd's ephemeral table, which `bd list` does
+    /// not read.
     pub(super) const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
-    pub(super) const UNFINISHED_WISP_CALL: &str = "query ephemeral=true --limit 0 --json";
 
-    /// Every call a healthy single-project run makes. Discovery names each
-    /// bead's own parent, so a healthy run climbs nothing.
+    /// Every call a healthy single-project run makes.
     pub(super) fn orbital() -> FakeRunner {
         FakeRunner::default()
             .with("herdr agent list", PANES)
             .with(&entering(ORBITAL), "")
             .with(&spelled(PROBE_CALL), UNMOVED)
-            .with(&spelled(UNFINISHED_CALL),
-                r#"[{"id":"orb-7","title":"lift the ground station","status":"in_progress","parent":""},
-                    {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
-                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7"}]"#,
-            )
-            .with(
-                &spelled("list --has-metadata-key working_topic --limit 0 --json"),
-                "[]",
-            )
             .with(
                 &spelled("ready --limit 0 --json"),
                 r#"[{"id":"orb-7.2","title":"lay the feeder cable","status":"open"}]"#,
@@ -158,7 +144,6 @@ credential_command = "secret ferry"
             )
             .with(&spelled(TRACKER_CALL), ORBITAL_TREE)
             .with(&spelled(WISP_CALL), "[]")
-            .with(&spelled(UNFINISHED_WISP_CALL), "[]")
     }
 
     pub(super) fn failing(kind: FailureKind) -> RunFailure {
@@ -184,15 +169,10 @@ credential_command = "secret ferry"
         for tracker in [ORBITAL, FERRY] {
             runner = runner
                 .with(&spelled_in(tracker, PROBE_CALL), UNMOVED)
-                .with(&spelled_in(tracker, UNFINISHED_CALL),
-                    r#"[{"id":"x-1","title":"the shared prefix","status":"in_progress","parent":""},
-                        {"id":"x-1.1","title":"the colliding id","status":"in_progress","parent":"x-1"}]"#,
-                )
                 .with(&spelled_in(tracker, "ready --limit 0 --json"), "[]")
                 .with(&spelled_in(tracker, "blocked --json"), "[]")
                 .with(&spelled_in(tracker, TRACKER_CALL), COLLIDING_TREE)
-                .with(&spelled_in(tracker, WISP_CALL), "[]")
-                .with(&spelled_in(tracker, UNFINISHED_WISP_CALL), "[]");
+                .with(&spelled_in(tracker, WISP_CALL), "[]");
         }
         runner
     }

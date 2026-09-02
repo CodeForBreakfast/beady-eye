@@ -1,8 +1,9 @@
 //! Everything `bdi` asks `bd`.
 //!
-//! The questions are one per thing the model needs — a project's rows, the
-//! roots to draw them under, what is ready, what blocks what — and each
-//! answers in bd's own JSON, parsed here and nowhere else.
+//! The questions are one per thing the model needs — a project's rows, what
+//! is ready, what blocks what — and each answers in bd's own JSON, parsed here
+//! and nowhere else. The roots to draw the rows under are read off the rows
+//! themselves, in `app::tracker`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -119,11 +120,11 @@ pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>
         &["list", "--all", "--limit", "0", "--json"],
     )?;
     let mut beads = rows(&out)?;
-    beads.extend(rows(&wisps(runner, cwd, env, &["--all"])?)?);
+    beads.extend(rows(&wisps(runner, cwd, env)?)?);
     Ok(beads)
 }
 
-/// A tracker's wisps, in whichever population `also` asks for.
+/// A tracker's wisps, closed ones included.
 ///
 /// A second call, because bd keeps its ephemeral beads in a table `bd list`
 /// does not read: measured against this project's own tracker on 2026-08-31,
@@ -131,69 +132,17 @@ pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>
 /// written, and `bd list --wisp-type heartbeat` answered `[]` against a
 /// heartbeat wisp that existed. `bd query` is the one call that reads them,
 /// and it writes the same row `bd list` does.
-fn wisps(runner: &dyn Runner, cwd: &Path, env: &Env, also: &[&str]) -> Result<String, RunFailure> {
-    let mut subcommand = vec!["query", EPHEMERAL];
-    subcommand.extend_from_slice(also);
-    subcommand.extend_from_slice(&["--limit", "0", "--json"]);
-    asked(runner, cwd, env, &subcommand)
+fn wisps(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<String, RunFailure> {
+    asked(
+        runner,
+        cwd,
+        env,
+        &["query", EPHEMERAL, "--all", "--limit", "0", "--json"],
+    )
 }
 
 /// The `bd query` expression that selects wisps and nothing else.
 const EPHEMERAL: &str = "ephemeral=true";
-
-/// The statuses bd stores for work that is not finished. `closed` is the only
-/// one of its five this leaves out, and that is the whole of the rule.
-const UNFINISHED: &str = "open,in_progress,blocked,deferred";
-
-/// Every bead that marks unfinished work, and the bead each one hangs under.
-///
-/// Unfinished rather than claimed: an effort holds the work it has left after
-/// its last seat stands down, and a rule that noticed only a claim lost the
-/// whole tree at that moment.
-///
-/// The rows carry a bead's own `parent`, so discovery answers most of the walk
-/// to a root by itself; `app::tracker::root_of` climbs only past what it did
-/// not see.
-pub fn discover_roots(
-    runner: &dyn Runner,
-    cwd: &Path,
-    env: &Env,
-    metadata_keys: &[String],
-) -> Result<BTreeMap<String, Option<String>>, RunFailure> {
-    let mut found = BTreeMap::new();
-
-    let out = asked(
-        runner,
-        cwd,
-        env,
-        &["list", "--status", UNFINISHED, "--limit", "0", "--json"],
-    )?;
-    note_parents(&out, &mut found)?;
-
-    // Without this a wisp with no parent is collected and then hung nowhere.
-    // Every step of a bd molecule hangs under it, so the one rootless row is
-    // the whole run.
-    note_parents(&wisps(runner, cwd, env, &[])?, &mut found)?;
-
-    for key in metadata_keys {
-        let out = asked(
-            runner,
-            cwd,
-            env,
-            &["list", "--has-metadata-key", key, "--limit", "0", "--json"],
-        )?;
-        note_parents(&out, &mut found)?;
-    }
-
-    Ok(found)
-}
-
-fn note_parents(out: &str, into: &mut BTreeMap<String, Option<String>>) -> Result<(), RunFailure> {
-    for bead in rows(out)? {
-        into.insert(bead.id, bead.parent);
-    }
-    Ok(())
-}
 
 /// Ids beads considers ready to start. bd computes readiness itself and
 /// treats it as a state of its own, so we ask for it rather than infer it
@@ -695,134 +644,6 @@ mod tests {
                 },
             ]
         );
-    }
-
-    const UNFINISHED_CALL: &str =
-        "list --status open,in_progress,blocked,deferred --limit 0 --json";
-
-    /// Discovery's wisp call. No `--all`, so it excludes closed wisps and
-    /// nothing else — the same population `UNFINISHED_CALL` asks for.
-    const UNFINISHED_WISP_CALL: &str = "query ephemeral=true --limit 0 --json";
-
-    #[test]
-    fn discovery_unions_the_unfinished_statuses_and_metadata_keys_without_duplicates() {
-        let unfinished = r#"[{"id":"p-1.16","title":"a","status":"in_progress"},
-                             {"id":"p-1.1","title":"b","status":"open"}]"#;
-        // The metadata query returns a bead the status query already found.
-        let carrying_the_key = r#"[{"id":"p-1.16","title":"a","status":"in_progress"}]"#;
-
-        let runner = FakeRunner::default()
-            .with(&spelled(UNFINISHED_CALL), unfinished)
-            .with(&spelled(UNFINISHED_WISP_CALL), "[]")
-            .with(
-                &spelled("list --has-metadata-key working_topic --limit 0 --json"),
-                carrying_the_key,
-            );
-
-        let got = discover_roots(
-            &runner,
-            &project_dir(),
-            &credentialled(),
-            &["working_topic".to_string()],
-        )
-        .unwrap();
-
-        let ids: Vec<&str> = got.keys().map(String::as_str).collect();
-        assert_eq!(ids, vec!["p-1.1", "p-1.16"]);
-
-        let call = runner.call(&spelled(UNFINISHED_CALL));
-        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
-        assert_eq!(call.env, credentialled());
-    }
-
-    /// The defect this rule replaces. Asking only for the statuses a seat
-    /// leaves behind found nothing the moment every seat stood down, so there
-    /// was no root, so the effort was not drawn at all.
-    #[test]
-    fn a_bead_nobody_has_started_is_discovered() {
-        let runner = FakeRunner::default()
-            .with(
-                &spelled(UNFINISHED_CALL),
-                r#"[{"id":"p-1.1","title":"the work that is left","status":"open"}]"#,
-            )
-            .with(&spelled(UNFINISHED_WISP_CALL), "[]");
-
-        let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
-
-        assert!(got.contains_key("p-1.1"));
-    }
-
-    /// A dep-tree row's `parent_id` is the traversal's parent. `bd list`
-    /// carries the bead's own, and that is the one the walk to a root needs.
-    #[test]
-    fn discovery_keeps_each_beads_own_parent() {
-        let runner = FakeRunner::default()
-            .with(
-                &spelled(UNFINISHED_CALL),
-                r#"[{"id":"p-1.16","title":"a","status":"open","parent":"p-1"},
-                {"id":"p-1","title":"b","status":"open","parent":""}]"#,
-            )
-            .with(&spelled(UNFINISHED_WISP_CALL), "[]");
-
-        let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
-
-        assert_eq!(got["p-1.16"], Some("p-1".to_string()));
-        assert_eq!(
-            got["p-1"], None,
-            "bd writes the top of a chain as an empty parent"
-        );
-    }
-
-    /// A free-standing wisp is the shape that passes a collection test and
-    /// still draws nothing: it has no parent, so unless discovery names it a
-    /// root of its own it is collected and then hung nowhere.
-    #[test]
-    fn a_free_standing_wisp_is_discovered_as_a_root_of_its_own() {
-        let runner = FakeRunner::default()
-            .with(&spelled(UNFINISHED_CALL), "[]")
-            .with(&spelled(UNFINISHED_WISP_CALL), WISPS);
-
-        let got = discover_roots(&runner, &project_dir(), &credentialled(), &[]).unwrap();
-
-        assert_eq!(got["bdi-wisp-w3m"], None);
-        assert_eq!(got["bdi-7ao.17.2"], Some("bdi-7ao.17".to_string()));
-
-        let call = runner.call(&spelled(UNFINISHED_WISP_CALL));
-        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
-        assert_eq!(call.env, credentialled());
-    }
-
-    /// The rule is *not finished*, so the query names every status bd stores
-    /// bar `closed`. A status this missed would take its trees off the screen
-    /// with it, which is the defect all over again.
-    #[test]
-    fn the_unfinished_statuses_are_every_status_bd_stores_but_closed() {
-        let named: Vec<Status> = UNFINISHED
-            .split(',')
-            .map(|status| {
-                let json = format!(r#"[{{"id":"x","title":"t","status":"{status}"}}]"#);
-                parse_beads(&json).unwrap()[0].status.clone()
-            })
-            .collect();
-
-        // A variant added to the enum fails this match, which is the point.
-        let every = match Status::Open {
-            Status::Open
-            | Status::InProgress
-            | Status::Blocked
-            | Status::Closed
-            | Status::Deferred
-            | Status::Other(_) => [
-                Status::Open,
-                Status::InProgress,
-                Status::Blocked,
-                Status::Deferred,
-                Status::Closed,
-            ],
-        };
-        let want: Vec<Status> = every.into_iter().filter(|s| !s.is_closed()).collect();
-
-        assert_eq!(named, want);
     }
 
     #[test]

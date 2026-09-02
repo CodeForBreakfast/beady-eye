@@ -93,13 +93,11 @@ the ephemeral beads that are never committed. A project whose root is where
 the last read left it is done there.
 
 A project whose root has moved is read in full, and that is the cascade the
-poll used to run every time: `bd` for the beads discovery starts from, what is
-ready, what is blocked, the ephemeral beads and every bead there is — seven
-`bd` invocations, plus one per metadata key roots are discovered by and one
-per bead the climb to a root steps onto that discovery did not name. The
-environment its tracker is read in is captured before any of them, so the
-whole refresh is those seven plus the probe plus that capture, most of it
-against a remote Dolt server.
+poll used to run every time: `bd` for what is ready, what is blocked, the
+ephemeral beads and every bead there is — four `bd` invocations, with the
+roots to draw under read off the last two. The environment its tracker is
+read in is captured before any of them, so the whole refresh is those four
+plus the probe plus that capture, most of it against a remote Dolt server.
 
 So the poll is cheap, and `bdi` listens as well. Anything that already knows a
 tracker changed can say so, and the project it names is read then rather than

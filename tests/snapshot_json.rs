@@ -13,21 +13,22 @@ use canned::{Canned, PROBE_CALL, WORKING_ROOT};
 
 /// One project's tracker: an epic with a pane on it, a claimed task with
 /// none, a claim nothing has touched in weeks, a task bd calls ready, and a
-/// closed task a pane is still sitting on.
+/// closed task a pane is still sitting on. Every row carries its own
+/// `parent` as well as the edge, because bd writes both.
 const TREE: &str = r#"[
   {"id":"orb-7","title":"lift the ground station","status":"in_progress",
    "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
    "started_at":"2026-08-20T09:00:00Z","metadata":{"agent_pane":"w:p1"}},
-  {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
+  {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":2,"issue_type":"task",
    "updated_at":"2026-08-29T10:00:00Z","started_at":"2026-08-29T10:00:00Z",
    "metadata":{"blocked_on":"human"}},
-  {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress",
+  {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":1,"issue_type":"task",
    "updated_at":"2026-07-01T09:00:00Z","started_at":"2026-07-01T09:00:00Z"},
-  {"id":"orb-7.4","title":"file the licence","status":"open",
+  {"id":"orb-7.4","title":"file the licence","status":"open","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":3,"issue_type":"chore"},
   {"id":"orb-7.2","title":"survey the mast","status":"closed","parent":"orb-7",
@@ -43,18 +44,13 @@ const TREE: &str = r#"[
 const UNSTAFFED_TREE: &str = r#"[
   {"id":"orb-7","title":"lift the ground station","status":"blocked",
    "priority":1,"issue_type":"epic"},
-  {"id":"orb-7.4","title":"file the licence","status":"open",
+  {"id":"orb-7.4","title":"file the licence","status":"open","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":3,"issue_type":"chore"},
   {"id":"orb-7.2","title":"survey the mast","status":"closed","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":2,"issue_type":"task",
    "closed_at":"2026-08-28T09:00:00Z"}
-]"#;
-
-const UNSTAFFED_ROWS: &str = r#"[
-  {"id":"orb-7","title":"lift the ground station","status":"blocked","parent":""},
-  {"id":"orb-7.4","title":"file the licence","status":"open","parent":"orb-7"}
 ]"#;
 
 /// `w:p2` names a bead that named a different pane; `w:p9` names nothing.
@@ -83,16 +79,6 @@ render = "⏸ waiting"
 stale_claim_days = 7
 "#;
 
-/// The one call discovery makes for statuses, and what this tracker answers
-/// it with: every bead of `TREE` bar the closed one.
-const UNFINISHED_CALL: &str = "list --status open,in_progress,blocked,deferred --limit 0 --json";
-const UNFINISHED_ROWS: &str = r#"[
-  {"id":"orb-7","title":"lift the ground station","status":"in_progress","parent":""},
-  {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7"},
-  {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress","parent":"orb-7"},
-  {"id":"orb-7.4","title":"file the licence","status":"open","parent":"orb-7"}
-]"#;
-
 /// A bd call as the runner spells it: the tracker named outright, and writes
 /// refused.
 fn spelled_in(tracker: &str, subcommand: &str) -> String {
@@ -113,14 +99,6 @@ fn canned_reading(tracker: &str) -> Canned {
         // Named by a path alone, so its tracker is reached by entering it.
         .answering(&format!("direnv exec {tracker} env -0"), "")
         .answering(&spelled_in(tracker, PROBE_CALL), WORKING_ROOT)
-        .answering(&spelled_in(tracker, UNFINISHED_CALL), UNFINISHED_ROWS)
-        .answering(
-            &spelled_in(
-                tracker,
-                "list --has-metadata-key working_topic --limit 0 --json",
-            ),
-            "[]",
-        )
         .answering(
             &spelled_in(tracker, "ready --limit 0 --json"),
             r#"[{"id":"orb-7.4","title":"file the licence","status":"open"}]"#,
@@ -131,18 +109,16 @@ fn canned_reading(tracker: &str) -> Canned {
         )
         .answering(&spelled_in(tracker, TRACKER_CALL), TREE)
         .answering(&spelled_in(tracker, WISP_CALL), "[]")
-        .answering(&spelled_in(tracker, UNFINISHED_WISP_CALL), "[]")
 }
 
 /// The one call a project's whole forest is drawn from, spelled as bd takes
 /// it.
 const TRACKER_CALL: &str = "list --all --limit 0 --json";
 
-/// The same two questions asked of bd's ephemeral table, which `bd list`
-/// does not read. Both trackers answer them with nothing unless a case
-/// stages wisps of its own.
+/// The same question asked of bd's ephemeral table, which `bd list` does not
+/// read. Both trackers answer it with nothing unless a case stages wisps of
+/// its own.
 const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
-const UNFINISHED_WISP_CALL: &str = "query ephemeral=true --limit 0 --json";
 
 /// A run recorded as wisps, in the shape bd writes one: a `molecule` that is
 /// nobody's child, and its steps hanging under it by parent-child. The
@@ -166,9 +142,7 @@ const WISP_RUN: &str = r#"[
 /// while it happens, which is the whole reason to draw them.
 #[test]
 fn a_run_recorded_as_wisps_is_drawn_beside_the_permanent_work() {
-    let runner = canned()
-        .answering(&spelled_in(ORBITAL_DIR, WISP_CALL), WISP_RUN)
-        .answering(&spelled_in(ORBITAL_DIR, UNFINISHED_WISP_CALL), WISP_RUN);
+    let runner = canned().answering(&spelled_in(ORBITAL_DIR, WISP_CALL), WISP_RUN);
 
     let emitted = emit(&runner, Filter::All);
 
@@ -466,20 +440,18 @@ fn a_join_disagreement_is_reported_at_the_top_level() {
     );
 }
 
+/// Every root but a configured one is read off the answer, so an answer
+/// holding no bead is an empty forest and not a tree the tracker failed to
+/// draw.
 #[test]
-fn a_root_the_answer_does_not_hold_is_named_in_the_json() {
+fn a_tracker_holding_no_bead_emits_no_tree_and_no_failure() {
     let runner = canned().answering(&spelled_in(ORBITAL_DIR, TRACKER_CALL), "[]");
 
     let emitted = emit(&runner, Filter::LiveAgents);
 
-    assert_eq!(emitted["trees"][0]["root"], "orb-7");
-    assert_eq!(emitted["trees"][0]["project"], "orbital");
-    assert_eq!(
-        emitted["trees"][0]["tracker"],
-        json!({"unreachable": "parse"})
-    );
-    assert_eq!(emitted["trees"][0]["nodes"], json!([]));
-    assert_eq!(emitted["hidden_trees"], json!([]), "never filtered away");
+    assert_eq!(emitted["trees"], json!([]));
+    assert_eq!(emitted["failed_projects"], json!([]));
+    assert_eq!(emitted["hidden_trees"], json!([]));
 }
 
 /// One read draws a project's whole forest, so its failure is the project's
@@ -504,7 +476,7 @@ fn a_tracker_that_stops_answering_is_named_in_the_json_as_the_project_it_is() {
 
 #[test]
 fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
-    let runner = canned().failing(&spelled_in(ORBITAL_DIR, UNFINISHED_CALL), FailureKind::Auth);
+    let runner = canned().failing(&spelled_in(ORBITAL_DIR, TRACKER_CALL), FailureKind::Auth);
 
     let emitted = emit(&runner, Filter::LiveAgents);
 
@@ -521,7 +493,7 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
 /// the whole of the split.
 #[test]
 fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
-    let runner = canned().failing(&spelled_in(ORBITAL_DIR, UNFINISHED_CALL), FailureKind::Auth);
+    let runner = canned().failing(&spelled_in(ORBITAL_DIR, TRACKER_CALL), FailureKind::Auth);
 
     let emitted = emit(&runner, Filter::LiveAgents);
 
@@ -544,7 +516,7 @@ fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
 /// bd names the database and the SQL user when it refuses a credential.
 #[test]
 fn bds_own_words_never_reach_the_json() {
-    let runner = canned().failing(&spelled_in(ORBITAL_DIR, UNFINISHED_CALL), FailureKind::Auth);
+    let runner = canned().failing(&spelled_in(ORBITAL_DIR, TRACKER_CALL), FailureKind::Auth);
 
     let emitted = emit(&runner, Filter::All).to_string();
 
@@ -571,7 +543,6 @@ fn without_herdr_the_json_says_so_and_still_carries_every_tree() {
 fn a_tree_with_no_live_agent_is_reported_and_the_flag_shows_it() {
     let runner = canned()
         .answering("herdr agent list", r#"{"result":{"agents":[]}}"#)
-        .answering(&spelled_in(ORBITAL_DIR, UNFINISHED_CALL), UNSTAFFED_ROWS)
         .answering(&spelled_in(ORBITAL_DIR, TRACKER_CALL), UNSTAFFED_TREE)
         .answering(&spelled_in(ORBITAL_DIR, "blocked --json"), "[]");
 
@@ -599,7 +570,7 @@ const HARBOUR_TREE: &str = r#"[
   {"id":"orb-7","title":"re-dredge the north channel","status":"in_progress",
    "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
    "started_at":"2026-08-25T09:00:00Z","metadata":{"agent_pane":"w:p5"}},
-  {"id":"orb-7.1","title":"hire the dredger","status":"in_progress",
+  {"id":"orb-7.1","title":"hire the dredger","status":"in_progress","parent":"orb-7",
    "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
    "priority":2,"issue_type":"task",
    "updated_at":"2026-08-29T11:00:00Z","started_at":"2026-08-29T11:00:00Z"}
@@ -654,19 +625,6 @@ fn across_two_projects() -> Canned {
         )
         .answering_in(
             HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, UNFINISHED_CALL),
-            r#"[{"id":"orb-7.1","title":"hire the dredger","status":"in_progress","parent":"orb-7"}]"#,
-        )
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(
-                HARBOUR_DIR,
-                "list --has-metadata-key working_topic --limit 0 --json",
-            ),
-            "[]",
-        )
-        .answering_in(
-            HARBOUR_DIR,
             &spelled_in(HARBOUR_DIR, "ready --limit 0 --json"),
             "[]",
         )
@@ -675,17 +633,12 @@ fn across_two_projects() -> Canned {
             &spelled_in(HARBOUR_DIR, "blocked --json"),
             "[]",
         )
+        .answering_in(HARBOUR_DIR, &spelled_in(HARBOUR_DIR, WISP_CALL), "[]")
         .answering_in(
             HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, WISP_CALL),
-            "[]",
+            &spelled_in(HARBOUR_DIR, TRACKER_CALL),
+            HARBOUR_TREE,
         )
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, UNFINISHED_WISP_CALL),
-            "[]",
-        )
-        .answering_in(HARBOUR_DIR, &spelled_in(HARBOUR_DIR, TRACKER_CALL), HARBOUR_TREE)
 }
 
 fn emit_over(cfg: &Config, runner: &Canned, filter: Filter) -> Value {
@@ -736,7 +689,7 @@ fn a_bare_id_in_two_trackers_names_two_beads() {
 fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
     let runner = across_two_projects().failing_in(
         HARBOUR_DIR,
-        &spelled_in(HARBOUR_DIR, UNFINISHED_CALL),
+        &spelled_in(HARBOUR_DIR, TRACKER_CALL),
         FailureKind::Auth,
     );
 
