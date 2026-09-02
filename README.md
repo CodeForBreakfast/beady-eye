@@ -76,9 +76,12 @@ nixpkgs.overlays = [ beady-eye.overlays.default ];
 
 ## What it assumes
 
-**bd, and nothing else.** herdr is optional: without it you still get the tree,
-the counts, the claims and an age-based stale-claim warning. With it you also get
-liveness, exact drift detection, and a tail of the selected bead's pane.
+**bd 1.1.0 or newer, and nothing else.** That floor is about the command line
+`bdi` runs; a bd older than the one that last wrote a tracker is a separate
+hazard, on the tracker itself. herdr is optional: without it you still get the
+tree, the counts, the claims and an age-based stale-claim warning. With it you
+also get liveness, exact drift detection, and a tail of the selected bead's
+pane.
 
 Each project's tracker is read in the environment `bdi` itself was started in,
 so a tracker your shell can already reach needs nothing configured. A setup
