@@ -79,8 +79,10 @@ fix is to move it.
 A `Timeout` is a third mutation answer and the tally cannot say which kind it
 is. Some are genuinely non-terminating in production and not gaps: the three
 mutants that feed `fold_all`'s `while self.point_every_drawn_fold(true) {}`
-are that category. Read a `Timeout` under `src/view/` against that list before
-calling it a hole. A runaway need not time out at all: `delete !` in
+are that category, and so is `+` to `*` on the step past a bare `ESC` in
+`sgr::line` (`src/view/sgr.rs`): `ESC` is one byte, so `at * 1` leaves the
+row where it was and the next search finds the same `ESC` for ever. Read a
+`Timeout` under `src/view/` against that list before calling it a hole. A runaway need not time out at all: `delete !` in
 `beneath` (`src/model/tree.rs`) pushes every way back up the tree for ever, so
 the test process grows to whatever memory cap the run is under in seconds and
 is killed there, which scores it caught. Run cargo-mutants under a cap that

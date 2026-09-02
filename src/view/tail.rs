@@ -143,7 +143,7 @@ pub fn read(pane: String, read: Result<Vec<String>, RunFailure>) -> Tail {
 ///
 /// So the tail stands only while the selection still names the pane it was
 /// read from: scrolling within that pane's rows leaves it where it is, and
-/// its rows are re-read on the refresh tick like everything else.
+/// its rows are read again on the tail's own clock.
 pub fn moved_on(forest: &Forest, showing: Option<&str>) -> bool {
     match target(forest).pane() {
         Some(pane) => showing != Some(pane),

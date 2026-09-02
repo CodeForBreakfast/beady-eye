@@ -88,6 +88,7 @@ coin one — and say so.**
 | **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
 | **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in unless the project's `environment` says otherwise. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
+| **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
 
 ### Three different things are called "blocked"
 
@@ -1370,6 +1371,30 @@ under the rule in dim, and there are five: no herdr session; the selection is
 not a bead (a project line, a group, or a thing in one); nobody is working this
 bead; the pane has gone; the pane is too busy to be read. While a pane is being
 read and has not answered, the band says so rather than staying quiet.
+
+The rows are drawn in the colour and attributes the pane gave them. The read
+asks herdr for its `ansi` form, which on a measured session carries nothing
+but SGR sequences — no cursor motion, no erasing — and the view folds those
+into styles as it draws. A fold and not a terminal emulator: a control
+sequence that is not an SGR is dropped whole, and an SGR parameter the fold
+does not know is skipped rather than refused. The rows arrive wrapped at the
+pane's own width, so the band shows a clipped view of a wider pane, each row
+cut with `…` where it runs past the band; there is no reflow, because a pane's
+screen is a rectangle at its own geometry. What is dimmed is what `bdi` says
+in the band, which is the whole of what tells its words from the pane's.
+
+The pane is read on the band's own clock and not on the trackers'. herdr
+answers a read in a few milliseconds, and no herdr event carries a pane's
+content — `pane.output_matched` is one-shot, the primitive behind
+`pane wait-output` rather than a stream — so polling is the mechanism. The
+band asks for the pane again `[tui] tail_refresh_millis` after each answer
+lands, 250 by default: four a second is where a reader stops telling the band
+from the pane, and each read is one `herdr` process. A gap after the answer
+rather than a period, as `refresh_seconds` is, so a slow herdr stretches the
+gap rather than piling asks up behind itself. The rows stand until the next
+answer lands, and an answer that repeats them changes nothing on the screen.
+A collection landing under the same pane leaves the band alone; what it can
+do to the band is move the selection off the pane.
 
 Reads use `herdr agent read --source visible`: every agent worth tailing is
 alternate-screen and working, and herdr refuses `recent` for those, naming

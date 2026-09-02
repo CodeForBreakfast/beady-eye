@@ -216,6 +216,19 @@ pub struct Tui {
     /// off would leave a merely slow tracker permanently unreadable, which is
     /// the disappearance `bdi` is built not to do.
     pub unanswered_after_seconds: u64,
+
+    /// How long the tail waits after herdr answers before it asks for the
+    /// selected pane again. The one interval here counted in milliseconds,
+    /// because it is the one that is under a second: the tail is a live
+    /// view of a pane, and seconds cannot say how live.
+    ///
+    /// A gap after an answer rather than a period, as `refresh_seconds` is:
+    /// a slow herdr stretches the gap rather than piling asks up behind
+    /// itself. The read is one `herdr` process, measured at 2–5 ms, so at
+    /// the default four a second cost about a hundredth of a core — and four
+    /// a second is where a reader stops being able to tell the band from the
+    /// pane it is reading.
+    pub tail_refresh_millis: u64,
 }
 
 impl Default for Anomalies {
@@ -239,6 +252,7 @@ impl Default for Tui {
         Self {
             refresh_seconds: 30,
             unanswered_after_seconds: 30,
+            tail_refresh_millis: 250,
         }
     }
 }
@@ -246,6 +260,10 @@ impl Default for Tui {
 impl Tui {
     pub fn refresh(&self) -> Duration {
         Duration::from_secs(self.refresh_seconds)
+    }
+
+    pub fn tail_refresh(&self) -> Duration {
+        Duration::from_millis(self.tail_refresh_millis)
     }
 
     /// The same, as the clock arithmetic beside a project's name counts in.
@@ -532,6 +550,7 @@ pane_key = "herdr_pane"
 [tui]
 refresh_seconds = 5
 unanswered_after_seconds = 90
+tail_refresh_millis = 100
 "#;
 
     const ONE_PROJECT: &str = r#"
@@ -624,6 +643,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.join.pane_key, "herdr_pane");
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
+        assert_eq!(cfg.tui.tail_refresh_millis, 100);
     }
 
     #[test]
@@ -637,6 +657,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.join.pane_key, "agent_pane");
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
+        assert_eq!(cfg.tui.tail_refresh_millis, 250);
     }
 
     /// The interval is written in seconds and read as a duration; nothing
@@ -647,6 +668,16 @@ path = "/home/user/dev/cinder"
 
         assert_eq!(cfg.tui.refresh(), Duration::from_secs(5));
         assert_eq!(Tui::default().refresh(), Duration::from_secs(30));
+    }
+
+    /// The tail's interval is the one written in milliseconds, and it is
+    /// read as a duration all the same.
+    #[test]
+    fn the_tails_interval_is_read_as_a_duration() {
+        let cfg = Config::from_toml(EVERY_SECTION).expect("parses");
+
+        assert_eq!(cfg.tui.tail_refresh(), Duration::from_millis(100));
+        assert_eq!(Tui::default().tail_refresh(), Duration::from_millis(250));
     }
 
     /// The same for how long a collection may go unanswered, which is counted

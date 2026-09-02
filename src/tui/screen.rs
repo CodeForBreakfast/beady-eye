@@ -46,6 +46,12 @@ struct Shown {
     tailing: Option<String>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
+    /// How long after herdr answers the pane on the band is asked for again.
+    every: Duration,
+    /// When the pane on the band is next asked for, or nothing while a read
+    /// of it is out or the band names no pane. Armed by the answer that
+    /// filled the band and disarmed by the ask it makes, as a project is.
+    due: Option<DateTime<Utc>>,
     /// The id the reader has just put on the clipboard, said at the foot
     /// until their next key or click. Theirs and not the collector's: a
     /// collection landing a moment after the key would otherwise take the
@@ -79,8 +85,7 @@ struct Shown {
 /// At most one is ever out, so what a reader moving faster than herdr answers
 /// costs is a run of answers dropped rather than a herdr call per keystroke.
 /// An answer is the answer to what was drawn when it was asked for, and what
-/// is drawn moves on: the cursor onto another pane, and a collection coming
-/// back under the same one, which is the refresh tick the pane is re-read on.
+/// is drawn moves on when the cursor lands on another pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reading {
     /// Nothing is out, so the pane the band names is the pane to ask for.
@@ -94,7 +99,12 @@ enum Reading {
 }
 
 impl Shown {
-    fn of(snapshot: Snapshot, panes: Box<dyn Panes>, clipboard: Box<dyn io::Write>) -> Self {
+    fn of(
+        snapshot: Snapshot,
+        panes: Box<dyn Panes>,
+        clipboard: Box<dyn io::Write>,
+        every: Duration,
+    ) -> Self {
         let forest = forest::flatten(snapshot);
         let mut shown = Self {
             tail: tail::tail(&forest),
@@ -103,6 +113,8 @@ impl Shown {
             panes,
             clipboard,
             reading: Reading::Nothing,
+            every,
+            due: None,
             copied: None,
             // Nothing in flight until the loop says otherwise. A collection
             // is already running by the time this exists — the run asks for
@@ -174,16 +186,15 @@ impl Shown {
     /// the pane where it is on one.
     ///
     /// Whatever herdr is already answering was asked for the band this
-    /// replaces, so it is superseded here whether or not the pane has
-    /// changed: a collection coming back is the refresh tick the pane is
-    /// re-read on, and an answer read before it would be the pane as it was
-    /// rather than as it is.
+    /// replaces, so it is superseded here, and a read the band it replaces
+    /// was due is not due any more.
     fn retail(&mut self) {
         self.tailing = tail::target(&self.forest).pane().map(str::to_string);
         self.tail = tail::tail(&self.forest);
         if self.reading == Reading::Outstanding {
             self.reading = Reading::Superseded;
         }
+        self.due = None;
         self.ask();
     }
 
@@ -203,14 +214,40 @@ impl Shown {
         let Tail::Reading { pane } = &self.tail else {
             return;
         };
-        let pane = pane.clone();
+        self.read(pane.clone());
+    }
+
+    /// Ask for the pane on the band again where its interval is up. The
+    /// rows on the band stand until the answer lands: a band that said it
+    /// was reading the pane every time it did would say nothing else.
+    fn reread(&mut self, now: DateTime<Utc>) {
+        if self.reading != Reading::Nothing || !self.due.is_some_and(|due| due <= now) {
+            return;
+        }
+        if let Some(pane) = self.tailing.clone() {
+            self.read(pane);
+        }
+    }
+
+    /// Ask herdr for a pane. Nothing is due while the answer is on its way;
+    /// what arms the next read is that answer landing.
+    fn read(&mut self, pane: String) {
         self.panes.read(&pane, tail::LINES);
         self.reading = Reading::Outstanding;
+        self.due = None;
+    }
+
+    /// How long until the pane on the band is asked for again, or nothing
+    /// where it is not going to be: no pane on the band, or a read still
+    /// out.
+    fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+        self.due
+            .map(|due| (due - now).to_std().unwrap_or(Duration::ZERO))
     }
 
     /// Take what herdr said, reporting whether the screen is any different
     /// for it.
-    fn tailed(&mut self, answer: Answer) -> bool {
+    fn tailed(&mut self, answer: Answer, now: DateTime<Utc>) -> bool {
         match answer {
             Answer::Read { pane, read } => {
                 let superseded = self.reading == Reading::Superseded;
@@ -219,8 +256,11 @@ impl Shown {
                     self.ask();
                     return false;
                 }
-                self.tail = tail::read(pane, read);
-                true
+                let read = tail::read(pane, read);
+                let changed = read != self.tail;
+                self.tail = read;
+                self.due = Some(now + self.every);
+                changed
             }
             // A focus that would not come says so where the tail is, and only
             // while the tail is still that pane's: the rule above the band
@@ -271,9 +311,9 @@ impl Shown {
         // A refresh keeps the folds and the selection, so the cursor stays on
         // the bead the user put it on however the new snapshot has moved it.
         self.forest.refresh(snapshot);
-        // The refresh tick is when the pane is re-read: the rows it has drawn
-        // since the last one are exactly what has moved on.
-        self.retail();
+        // The pane is on the band's own clock. What a collection can do to
+        // the band is move the selection off the pane it is showing.
+        self.follow();
     }
 
     fn apply(&mut self, action: Action) -> bool {
@@ -359,13 +399,14 @@ impl Screen {
         snapshot: Snapshot,
         panes: Box<dyn Panes>,
         at_startup: Vec<Notice>,
+        tail_every: Duration,
     ) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
             terminal,
-            shown: Shown::of(snapshot, panes, Box::new(io::stdout())),
+            shown: Shown::of(snapshot, panes, Box::new(io::stdout()), tail_every),
             at_startup,
         };
 
@@ -463,8 +504,16 @@ impl View for Screen {
         self.shown.holds_for(drawn_at)
     }
 
-    fn tailed(&mut self, answer: Answer) -> bool {
-        self.shown.tailed(answer)
+    fn tailed(&mut self, answer: Answer, now: DateTime<Utc>) -> bool {
+        self.shown.tailed(answer, now)
+    }
+
+    fn reread(&mut self, now: DateTime<Utc>) {
+        self.shown.reread(now);
+    }
+
+    fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+        self.shown.rereads_in(now)
     }
 
     fn pressed(&mut self) -> bool {
@@ -1174,15 +1223,30 @@ mod tests {
         forest
     }
 
+    /// How long the band waits after an answer before asking for its pane
+    /// again, for every screen here. Never slept: the tests that are about
+    /// it hand the screen instants a chosen distance apart.
+    const EVERY: Duration = Duration::from_millis(250);
+
     fn shown(snapshot: Snapshot) -> Shown {
-        Shown::of(snapshot, Box::new(Asking::default()), Box::new(io::sink()))
+        Shown::of(
+            snapshot,
+            Box::new(Asking::default()),
+            Box::new(io::sink()),
+            EVERY,
+        )
     }
 
     /// The same, with the record of what herdr was asked kept beside it.
     fn shown_asking(snapshot: Snapshot) -> (Shown, Asking) {
         let panes = Asking::default();
         (
-            Shown::of(snapshot, Box::new(panes.clone()), Box::new(io::sink())),
+            Shown::of(
+                snapshot,
+                Box::new(panes.clone()),
+                Box::new(io::sink()),
+                EVERY,
+            ),
             panes,
         )
     }
@@ -1885,7 +1949,7 @@ mod tests {
     fn what_herdr_read_for_the_pane_selected_is_what_the_band_shows() {
         let (mut shown, _) = shown_asking(a_staffed_grove(6));
 
-        assert!(shown.tailed(read(A_SELECTED_PANE, &["rebuilt .#thinkpad"])));
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["rebuilt .#thinkpad"]), an_instant()));
 
         assert_eq!(
             shown.tail,
@@ -1931,7 +1995,10 @@ mod tests {
         // The answer to the read started before any of that arrives, about a
         // pane the reader is nowhere near.
         assert!(
-            !shown.tailed(read(A_SELECTED_PANE, &["nothing should reach the screen"])),
+            !shown.tailed(
+                read(A_SELECTED_PANE, &["nothing should reach the screen"]),
+                an_instant()
+            ),
             "an answer about a pane the selection has left changes no screen"
         );
 
@@ -1949,38 +2016,67 @@ mod tests {
         );
     }
 
-    /// The refresh tick is when the pane is re-read, and a read already out
-    /// when the collection lands was asked for before it. Taking that one as
-    /// the refresh's reading would draw the pane as it was rather than as it
-    /// is, and ask for nothing further until the tick after — which on a
-    /// herdr slow enough to overlap every tick is a band that stops keeping
-    /// up altogether while the cursor sits still.
+    /// The pane is read on the band's own clock and not on the collection's:
+    /// a collection landing under the same pane leaves the rows on the band
+    /// standing and asks herdr for nothing.
+    ///
+    /// It used to be the other way — the collection was the tick the pane
+    /// was re-read on, and a read out when it landed was superseded so the
+    /// band would not show the pane as it was. The band's own interval is
+    /// what bounds that now, and it is far shorter than a collection's.
     #[test]
-    fn a_collection_landing_mid_read_reads_the_pane_again() {
+    fn a_collection_landing_under_the_pane_leaves_the_band_to_its_own_clock() {
         let grove = a_staffed_grove(6);
         let (mut shown, panes) = shown_asking(grove.clone());
         let opened_on = panes.reads();
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["what it says"]), an_instant()));
 
         shown.collected(grove);
+
         assert_eq!(
             panes.reads(),
             opened_on,
-            "a read was already out, so the refresh asked for no second one"
-        );
-
-        assert!(
-            !shown.tailed(read(
-                A_SELECTED_PANE,
-                &["what the pane said before the refresh"]
-            )),
-            "the answer to a question asked before the refresh is not the refresh's answer"
+            "the collection asked herdr for nothing"
         );
         assert_eq!(
             shown.tail,
-            Tail::Reading {
-                pane: A_SELECTED_PANE.to_string()
-            }
+            Tail::Pane {
+                pane: A_SELECTED_PANE.to_string(),
+                lines: vec!["what it says".to_string()],
+            },
+            "and the rows on the band stand"
         );
+        assert_eq!(
+            shown.rereads_in(an_instant()),
+            Some(EVERY),
+            "the band's own clock is what reads the pane next"
+        );
+    }
+
+    /// The bead: the pane is asked for again one interval after the answer
+    /// that filled the band, and not before. Nothing on the band changes for
+    /// the ask — the rows stand until the answer lands — because a band that
+    /// said *reading that pane* four times a second would be a band nobody
+    /// could read.
+    #[test]
+    fn the_pane_is_read_again_one_interval_after_the_answer_that_filled_the_band() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+        let opened_on = panes.reads();
+        let answered = an_instant();
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), answered);
+        let filled = shown.tail.clone();
+
+        assert_eq!(shown.rereads_in(answered), Some(EVERY));
+        shown.reread(answered + EVERY / 2);
+        assert_eq!(panes.reads(), opened_on, "half an interval in, not yet");
+        assert_eq!(
+            shown.rereads_in(answered + EVERY / 2),
+            Some(EVERY / 2),
+            "and half is what is left to wait"
+        );
+
+        shown.reread(answered + EVERY);
+
         assert_eq!(
             panes.reads(),
             [
@@ -1988,16 +2084,108 @@ mod tests {
                 vec![format!("{A_SELECTED_PANE} {}", tail::LINES)]
             ]
             .concat(),
-            "so the pane is asked for again once herdr is free"
+            "the interval came round and the pane was asked for"
         );
+        assert_eq!(
+            shown.tail, filled,
+            "the rows stand while the answer is on its way"
+        );
+        assert_eq!(
+            shown.rereads_in(answered + EVERY),
+            None,
+            "nothing is due while a read is out"
+        );
+    }
 
-        assert!(shown.tailed(read(A_SELECTED_PANE, &["what it says now"])));
+    /// A pane that has said nothing new since the last read is the common
+    /// case four times a second, and it is not a change to the screen.
+    #[test]
+    fn an_answer_that_repeats_the_rows_on_the_band_changes_nothing() {
+        let (mut shown, _) = shown_asking(a_staffed_grove(6));
+        let answered = an_instant();
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["what it says"]), answered));
+        shown.reread(answered + EVERY);
+
+        let again = answered + EVERY * 2;
+        assert!(
+            !shown.tailed(read(A_SELECTED_PANE, &["what it says"]), again),
+            "the same rows again are not a change"
+        );
+        assert_eq!(
+            shown.rereads_in(again),
+            Some(EVERY),
+            "and the answer still arms the read after it"
+        );
+    }
+
+    /// The answer to that read arms the next, so a pane the cursor rests on
+    /// is read for as long as it rests there.
+    #[test]
+    fn every_answer_arms_the_read_after_it() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+        let answered = an_instant();
+        shown.tailed(read(A_SELECTED_PANE, &["first"]), answered);
+        shown.reread(answered + EVERY);
+        let asked_twice = panes.reads();
+
+        let again = answered + EVERY * 2;
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["second"]), again));
+        shown.reread(again + EVERY);
+
+        assert_eq!(panes.reads().len(), asked_twice.len() + 1);
         assert_eq!(
             shown.tail,
             Tail::Pane {
                 pane: A_SELECTED_PANE.to_string(),
-                lines: vec!["what it says now".to_string()],
+                lines: vec!["second".to_string()],
             }
+        );
+    }
+
+    /// A row with no pane has nothing to read again, so the band sets no
+    /// deadline and the loop is not woken for it.
+    #[test]
+    fn a_band_with_no_pane_is_never_due_to_read_one() {
+        let (mut shown, panes) = shown_asking(a_grove(6));
+
+        assert_eq!(shown.rereads_in(an_instant()), None);
+        shown.reread(an_instant() + EVERY * 10);
+
+        assert!(panes.reads().is_empty());
+    }
+
+    /// The selection leaving the pane disarms the read that was due for it:
+    /// the pane it lands on is asked for at once, and that answer is what
+    /// arms the next.
+    #[test]
+    fn leaving_the_pane_for_another_disarms_the_read_that_was_due_for_it() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+        let answered = an_instant();
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), answered);
+        assert_eq!(shown.rereads_in(answered), Some(EVERY));
+
+        shown.apply(Action::Move(Motion::NextRow));
+        let Tail::Reading { pane: landed_on } = shown.tail.clone() else {
+            panic!("the row below is another agent's pane: {:?}", shown.tail);
+        };
+        assert_ne!(landed_on, A_SELECTED_PANE);
+
+        assert_eq!(
+            panes.reads().last(),
+            Some(&format!("{landed_on} {}", tail::LINES)),
+            "the pane landed on is asked for at once"
+        );
+        assert_eq!(
+            shown.rereads_in(answered),
+            None,
+            "and nothing is due while that read is out"
+        );
+        let asked = panes.reads();
+        shown.reread(answered + EVERY);
+        assert_eq!(
+            panes.reads(),
+            asked,
+            "the first pane's interval coming round asks for nothing"
         );
     }
 
@@ -2012,8 +2200,14 @@ mod tests {
             other => panic!("the band is still waiting on a pane: {other:?}"),
         };
 
-        shown.tailed(read(A_SELECTED_PANE, &["about the pane left behind"]));
-        assert!(shown.tailed(read(&resting_on, &["about the pane rested on"])));
+        shown.tailed(
+            read(A_SELECTED_PANE, &["about the pane left behind"]),
+            an_instant(),
+        );
+        assert!(shown.tailed(
+            read(&resting_on, &["about the pane rested on"]),
+            an_instant()
+        ));
 
         assert_eq!(
             shown.tail,
@@ -2039,7 +2233,7 @@ mod tests {
     fn a_pane_that_will_not_come_to_the_front_says_so_where_the_tail_is() {
         let (mut shown, _) = shown_asking(a_staffed_grove(6));
 
-        assert!(shown.tailed(refused(A_SELECTED_PANE)));
+        assert!(shown.tailed(refused(A_SELECTED_PANE), an_instant()));
 
         assert_eq!(
             shown.tail,
@@ -2056,7 +2250,7 @@ mod tests {
         assert!(shown.apply(Action::Move(Motion::NextRow)));
         let was = shown.tail.clone();
 
-        assert!(!shown.tailed(refused(A_SELECTED_PANE)));
+        assert!(!shown.tailed(refused(A_SELECTED_PANE), an_instant()));
 
         assert_eq!(shown.tail, was);
     }
@@ -2094,6 +2288,7 @@ mod tests {
                 snapshot,
                 Box::new(Asking::default()),
                 Box::new(clipboard.clone()),
+                EVERY,
             ),
             clipboard,
         )
@@ -2218,7 +2413,12 @@ mod tests {
     /// would be the one line on the screen that was untrue.
     #[test]
     fn a_write_the_terminal_refused_is_not_reported_as_copied() {
-        let mut shown = Shown::of(a_grove(6), Box::new(Asking::default()), Box::new(Refusing));
+        let mut shown = Shown::of(
+            a_grove(6),
+            Box::new(Asking::default()),
+            Box::new(Refusing),
+            EVERY,
+        );
 
         assert!(!shown.apply(Action::CopyId));
 

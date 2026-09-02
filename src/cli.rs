@@ -185,6 +185,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
 
     let refresh = cfg.tui.refresh();
     let patience = cfg.tui.unanswered_after();
+    let tail_every = cfg.tui.tail_refresh();
     let polling = Polling::asked_for(&cli);
     let projects = cfg
         .read()
@@ -194,6 +195,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let trackers = bd::Cli::new(&RealRunner);
     crate::tui::run(
         patience,
+        tail_every,
         filter,
         cfg.scope.clone(),
         projects,

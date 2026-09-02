@@ -309,7 +309,7 @@ mod tests {
         );
         assert_eq!(
             *ran.lock().expect("the worker is done with it"),
-            ["herdr agent read w:p1 --source visible --lines 6 --format text"]
+            ["herdr agent read w:p1 --source visible --lines 6 --format ansi"]
         );
     }
 
@@ -413,8 +413,8 @@ mod tests {
         assert_eq!(
             *ran.lock().expect("the worker is done with it"),
             [
-                "herdr agent read w:p1 --source visible --lines 6 --format text",
-                "herdr agent read w:p1 --source visible --lines 6 --format text"
+                "herdr agent read w:p1 --source visible --lines 6 --format ansi",
+                "herdr agent read w:p1 --source visible --lines 6 --format ansi"
             ],
             "the second reading came from herdr, not from the answer to the first"
         );

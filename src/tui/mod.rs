@@ -3,6 +3,8 @@
 //! One concern, and it is an ordering: what `bdi` starts, in the order it
 //! has to start it in. `run` below says why that order is the one it is.
 
+use std::time::Duration;
+
 use anyhow::Context;
 use chrono::{TimeDelta, Utc};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -32,7 +34,8 @@ use wire::wire;
 ///
 /// `patience` is how long a read may go unanswered before the project it
 /// names says its rows have stopped coming rather than that they are on
-/// their way.
+/// their way. `tail_every` is how long the band under the forest waits after
+/// herdr answers before asking for the selected pane again.
 ///
 /// The screen opens on the projects the config names, before any of them has
 /// been read, and every collection — the first one included — runs on a
@@ -54,6 +57,7 @@ use wire::wire;
 /// unwinding, the condition `Drop for Screen` states.
 pub fn run(
     patience: TimeDelta,
+    tail_every: Duration,
     filter: Filter,
     scope: Scope,
     armed: Vec<Armed>,
@@ -86,7 +90,7 @@ pub fn run(
     let mut outstanding = Outstanding::waiting(patience, WINDOW);
     outstanding.ask(Wanted::Everything, Utc::now());
 
-    let mut screen = Screen::showing(awaiting, panes, at_startup)?;
+    let mut screen = Screen::showing(awaiting, panes, at_startup, tail_every)?;
     screen.collecting(outstanding.awaited());
 
     drive(&mut screen, &events, &ask, outstanding, armed)

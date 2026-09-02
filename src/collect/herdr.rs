@@ -43,14 +43,15 @@ pub fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
 /// state rather than a view it offers a reader.
 ///
 /// `lines` counts back from the newest and clamps to what the snapshot holds.
-/// Plain text, because the alternative carries terminal escapes no part of
-/// `bdi` reads.
+/// With its styling, as SGR sequences in the rows: what the pane drew is the
+/// colour it drew it in, and the tail reads that off the text where it draws
+/// it. Every row is wrapped at the pane's own width, and ends `\r\n`.
 pub fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
     let lines = lines.to_string();
     let out = runner.run(
         "herdr",
         &[
-            "agent", "read", pane, "--source", "visible", "--lines", &lines, "--format", "text",
+            "agent", "read", pane, "--source", "visible", "--lines", &lines, "--format", "ansi",
         ],
         None,
         &Env::new(),
@@ -253,10 +254,11 @@ mod tests {
     }
 
     /// The read a tail makes: one pane, the visible screen — the caller is
-    /// given no way to ask for another snapshot — and text rather than escapes.
+    /// given no way to ask for another snapshot — with the styling the pane
+    /// drew it in.
     #[test]
-    fn agent_read_asks_for_one_panes_visible_screen_as_plain_text() {
-        const ARGV: &str = "herdr agent read wCW:p6 --source visible --lines 40 --format text";
+    fn agent_read_asks_for_one_panes_visible_screen_with_its_styling() {
+        const ARGV: &str = "herdr agent read wCW:p6 --source visible --lines 40 --format ansi";
         let runner = FakeRunner::default().with(ARGV, "");
 
         agent_read(&runner, "wCW:p6", 40).expect("herdr answers");
@@ -271,7 +273,7 @@ mod tests {
     #[test]
     fn the_newline_herdr_ends_on_is_not_a_line() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 2 --format text",
+            "herdr agent read w:p1 --source visible --lines 2 --format ansi",
             "one\ntwo\n",
         );
 
@@ -280,11 +282,26 @@ mod tests {
         assert_eq!(lines, ["one", "two"]);
     }
 
+    /// The styled form ends every row with a carriage return before the
+    /// newline, and the return is a row ending rather than a character on
+    /// the row.
+    #[test]
+    fn a_carriage_return_before_the_newline_is_part_of_the_row_ending() {
+        let runner = FakeRunner::default().with(
+            "herdr agent read w:p1 --source visible --lines 2 --format ansi",
+            "\x1b[1mone\x1b[0m\r\ntwo\r\n",
+        );
+
+        let lines = agent_read(&runner, "w:p1", 2).unwrap();
+
+        assert_eq!(lines, ["\x1b[1mone\x1b[0m", "two"]);
+    }
+
     /// A pane's own blank lines are its shape and are drawn as it drew them.
     #[test]
     fn a_blank_line_within_the_snapshot_is_kept() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 4 --format text",
+            "herdr agent read w:p1 --source visible --lines 4 --format ansi",
             "\none\n\nthree\n",
         );
 
@@ -296,7 +313,7 @@ mod tests {
     #[test]
     fn a_pane_that_has_drawn_nothing_reads_as_no_lines() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 4 --format text",
+            "herdr agent read w:p1 --source visible --lines 4 --format ansi",
             "",
         );
 
@@ -329,7 +346,7 @@ mod tests {
     #[test]
     fn a_closed_pane_reaches_the_caller_as_its_own_kind() {
         let read = FakeRunner::default().failing(
-            "herdr agent read w:gone --source visible --lines 4 --format text",
+            "herdr agent read w:gone --source visible --lines 4 --format ansi",
             vanished(),
         );
         let focus = FakeRunner::default().failing("herdr agent focus w:gone", vanished());

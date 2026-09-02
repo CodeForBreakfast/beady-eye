@@ -14,6 +14,7 @@ pub mod lines;
 pub mod markdown;
 pub mod phrase;
 pub mod row;
+pub mod sgr;
 pub mod show;
 pub mod tail;
 

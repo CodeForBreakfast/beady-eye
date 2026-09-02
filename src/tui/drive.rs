@@ -113,8 +113,24 @@ pub(super) trait View {
     fn holds_for(&self, drawn_at: DateTime<Utc>) -> Option<Duration>;
 
     /// Take what herdr said about a pane it was asked to read or to focus,
-    /// reporting whether the screen has changed.
-    fn tailed(&mut self, answer: Answer) -> bool;
+    /// reporting whether the screen has changed. `now` is when the answer
+    /// landed, which is what the next read of that pane is timed from.
+    fn tailed(&mut self, answer: Answer, now: DateTime<Utc>) -> bool;
+
+    /// Ask herdr for the pane the band is showing again, where the band has
+    /// been showing it for its interval. Nothing on the screen changes for
+    /// the ask: the rows stand until the answer lands.
+    ///
+    /// The tail's own clock, apart from the projects': a pane is read in a
+    /// few milliseconds where a tracker is read in seconds, and a band that
+    /// waited for the trackers' tick would show a pane as it was half a
+    /// minute ago.
+    fn reread(&mut self, now: DateTime<Utc>);
+
+    /// How long until the band is due to read its pane again, or nothing
+    /// where it is not going to: the band names no pane, or a read of it is
+    /// still on its way.
+    fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration>;
 
     /// Take note that the reader has pressed something — a key, a button, a
     /// wheel notch — before the loop works out what it means, reporting
@@ -210,13 +226,15 @@ pub(super) fn drive(
         sleeps_for(view, &outstanding, &armed, drawn_at, Utc::now()),
     ) {
         let woken = match waited {
-            // Nothing has happened and what is drawn is out of date, which is
-            // the whole of what makes the mark turn and the ages advance: a
-            // collection is dozens of round trips and reports nothing until
-            // it is done. It is also how a project asks for itself again and
-            // how a read leaves once its window is out: both are deadlines
-            // nothing else was going to wake the loop for.
-            Waited::Aged => true,
+            // Nothing has happened and a deadline is up. Where it is the
+            // frame's, what is drawn is out of date, which is the whole of
+            // what makes the mark turn and the ages advance: a collection
+            // is dozens of round trips and reports nothing until it is done.
+            // The other deadlines — a project asking for itself again, a
+            // read leaving once its window is out, the band reading its pane
+            // again — change nothing on the screen by themselves, and what
+            // each of them does about the screen it says below.
+            Waited::Aged => ran_out(view, drawn_at, Utc::now()),
             Waited::Event(event) => {
                 let Some(changed) =
                     answered(view, &mut outstanding, &mut armed, &mut showing, event)
@@ -228,12 +246,14 @@ pub(super) fn drive(
         };
 
         // Whatever has fallen due, whether a deadline or an event woke us: a
-        // project's own ask coming round, and the read at the front leaving.
-        // Done in one place rather than on each arm, so that the loop cannot
-        // answer an event and forget to look.
+        // project's own ask coming round, the read at the front leaving, and
+        // the band's next read of its pane. Done in one place rather than on
+        // each arm, so that the loop cannot answer an event and forget to
+        // look.
         let now = Utc::now();
         let told = asks_for_what_is_due(view, &mut outstanding, &mut armed, now);
         outstanding.sends(ask, now);
+        view.reread(now);
 
         if woken || told {
             drawn_at = now;
@@ -267,14 +287,23 @@ fn asks_for_what_is_due(
     told
 }
 
+/// Whether the frame drawn at `drawn_at` has run out by `now`: the view said
+/// how long it would hold, and that long has passed.
+fn ran_out(view: &dyn View, drawn_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    let since_drawn = (now - drawn_at).to_std().unwrap_or_default();
+    view.holds_for(drawn_at)
+        .is_some_and(|held| held <= since_drawn)
+}
+
 /// How long the loop may sleep: until what is drawn stops being true, until a
-/// project asks for itself, or until the read at the front is due to leave —
-/// whichever comes first, and nothing where none of them will.
+/// project asks for itself, until the read at the front is due to leave, or
+/// until the band is due to read its pane again — whichever comes first, and
+/// nothing where none of them will.
 ///
-/// Three deadlines where there was one, and the loop tells them apart only by
-/// doing all three things when it wakes. What it costs is a redraw on a wake
-/// that was a window closing rather than a frame ageing; what it saves is a
-/// second way for the loop to be woken.
+/// Four deadlines where there was one, and the loop tells them apart only by
+/// doing all four things when it wakes. What that costs is asking each of
+/// the four whether it is due on a wake that was one of the others'; what it
+/// saves is a second way for the loop to be woken.
 ///
 /// Two instants, because the screen's deadline is about the frame on it and
 /// the other two are about now: `drawn_at` is when that frame was drawn, and
@@ -293,7 +322,7 @@ fn sleeps_for(
         .holds_for(drawn_at)
         .map(|held| held.saturating_sub(since_drawn));
 
-    [holds_for, outstanding.sends_in(now)]
+    [holds_for, outstanding.sends_in(now), view.rereads_in(now)]
         .into_iter()
         .chain(armed.iter().map(|project| project.asks_in(now)))
         .flatten()
@@ -423,7 +452,7 @@ fn answered(
             view.collecting(outstanding.awaited());
             true
         }
-        Event::Tailed(answer) => view.tailed(answer),
+        Event::Tailed(answer) => view.tailed(answer, Utc::now()),
         // The same `None` 'q' hands back, and for the same reason: it is
         // returning that drops the screen, and dropping the screen is
         // what hands the terminal back.
@@ -748,6 +777,13 @@ mod tests {
         /// the order they were heard: the order the view hears things in is
         /// the whole of what these record.
         pressed_after: Vec<usize>,
+        /// How long this view says it is from reading its pane again, for
+        /// the tests about the band's own clock. Nothing, as a band with no
+        /// pane says.
+        rereads_in: Option<Duration>,
+        /// The instant of each time the loop asked the band to read its pane
+        /// again, in the order it asked.
+        reread_at: Vec<DateTime<Utc>>,
     }
 
     impl Recorder {
@@ -798,8 +834,16 @@ mod tests {
             (!told.is_empty()).then_some(phrase::FRAME)
         }
 
-        fn tailed(&mut self, _answer: Answer) -> bool {
+        fn tailed(&mut self, _answer: Answer, _now: DateTime<Utc>) -> bool {
             true
+        }
+
+        fn reread(&mut self, now: DateTime<Utc>) {
+            self.reread_at.push(now);
+        }
+
+        fn rereads_in(&self, _now: DateTime<Utc>) -> Option<Duration> {
+            self.rereads_in
         }
 
         fn pressed(&mut self) -> bool {
@@ -1357,6 +1401,85 @@ mod tests {
             A_LONG_WINDOW.to_std().ok(),
             "and with nothing armed, the window is what is left to wait for"
         );
+    }
+
+    /// The band's next read of its pane is the fourth deadline, and it is
+    /// the view's to say: the loop knows nothing about panes.
+    #[test]
+    fn the_loop_sleeps_until_the_band_is_due_to_read_its_pane_again() {
+        let now = Utc::now();
+        let mut outstanding = gathering(A_LONG_WINDOW);
+        outstanding.ask(atlas(), now);
+        let view = Recorder {
+            rereads_in: Some(AN_INTERVAL),
+            ..Recorder::default()
+        };
+
+        assert_eq!(
+            sleeps_for(&view, &outstanding, &nothing_armed(), now, now),
+            Some(AN_INTERVAL),
+            "the pane falls due long before the window is out"
+        );
+    }
+
+    /// When the band's interval is up the loop asks it to read its pane
+    /// again, and not before: the band is what decides whether anything is
+    /// due, so the loop asks on every wake and the first wake is the
+    /// interval.
+    #[test]
+    fn the_band_is_asked_to_read_its_pane_again_once_its_interval_is_up() {
+        let mut view = Recorder {
+            rereads_in: Some(AN_INTERVAL),
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let (send, events) = mpsc::channel::<Event>();
+        let holding = thread::spawn(move || {
+            thread::sleep(AN_INTERVAL * 5);
+            drop(send);
+        });
+        let started = Utc::now();
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        holding.join().expect("the thread ran");
+
+        let first = view
+            .reread_at
+            .first()
+            .expect("the interval came round at least once in five of them");
+        assert!(
+            *first - started >= TimeDelta::from_std(AN_INTERVAL).expect("a short interval"),
+            "the band was asked at {first}, before its interval was up from {started}"
+        );
+    }
+
+    /// A wake for the band's deadline alone draws nothing: the ask changes
+    /// nothing on the screen, and the answer, when it lands, says for itself
+    /// whether it did. A loop that redrew for every one of these would write
+    /// to the terminal four times a second for as long as a pane was
+    /// selected, whether or not the pane had said anything.
+    #[test]
+    fn a_wake_for_the_bands_read_alone_draws_nothing() {
+        let mut view = Recorder {
+            rereads_in: Some(AN_INTERVAL),
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let (send, events) = mpsc::channel::<Event>();
+        let holding = thread::spawn(move || {
+            thread::sleep(AN_INTERVAL * 5);
+            drop(send);
+        });
+
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        holding.join().expect("the thread ran");
+
+        assert!(
+            view.reread_at.len() > 1,
+            "the band was asked more than once in five intervals: {}",
+            view.reread_at.len()
+        );
+        assert_eq!(view.drawn(), 1, "the first frame, and no other");
     }
 
     /// The view says how long its frame holds from the instant it was drawn,

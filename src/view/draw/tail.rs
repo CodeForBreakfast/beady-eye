@@ -6,8 +6,9 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
-use crate::view::fitted::{columns, indent};
+use crate::view::fitted::{columns, indent, Fitted};
 use crate::view::phrase;
+use crate::view::sgr;
 use crate::view::tail::Tail;
 
 use super::sentence;
@@ -35,12 +36,13 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
     match tail {
         Tail::Pane { pane, lines } => {
             frame.render_widget(rule(Some(pane), area.width as usize), row(0));
-            for (n, said) in lines
-                .iter()
+            let styled = sgr::lines(lines);
+            for (n, said) in styled
+                .into_iter()
                 .skip(lines.len().saturating_sub(room))
                 .enumerate()
             {
-                frame.render_widget(sentence(&indent(), said.clone(), Color::Reset), row(n + 1));
+                frame.render_widget(as_the_pane_drew_it(said), row(n + 1));
             }
         }
         Tail::Reading { pane } => {
@@ -66,6 +68,15 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
             }
         }
     }
+}
+
+/// One of the pane's own rows, indented like the phrases and cut to the
+/// band's width. The row keeps every colour and attribute the pane gave it,
+/// which is what tells it from a row `bdi` wrote.
+fn as_the_pane_drew_it(said: Line<'static>) -> Fitted {
+    let mut spans = vec![Span::raw(indent())];
+    spans.extend(said.spans);
+    Fitted::new(spans, Vec::new(), Vec::new())
 }
 
 /// The rule between the forest and the tail, with the pane the tail is
@@ -98,6 +109,7 @@ fn rule(pane: Option<&str>, width: usize) -> Line<'static> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::style::Modifier;
 
     use crate::view::painted::Painted;
     use crate::view::phrase;
@@ -213,6 +225,49 @@ mod tests {
                 run.said.contains("rebuilt .#thinkpad") && run.style.fg == Some(Color::Reset)
             }),
             "the pane's own line: {said:?}"
+        );
+    }
+
+    /// What herdr wrote for a real pane on this machine, read the way the
+    /// tail reads it.
+    fn a_captured_pane() -> Tail {
+        use crate::collect::herdr::agent_read;
+        use crate::collect::run::testing::FakeRunner;
+        use crate::view::tail;
+
+        const ARGV: &str = "herdr agent read wDV:p1 --source visible --lines 6 --format ansi";
+        let runner = FakeRunner::default().with(
+            ARGV,
+            include_str!("../../../tests/fixtures/herdr_agent_read_ansi.txt"),
+        );
+        tail::read("wDV:p1".to_string(), agent_read(&runner, "wDV:p1", 6))
+    }
+
+    /// The bead: the band draws the pane's own colour and attributes, read
+    /// off the styling herdr sent, and none of that styling reaches the
+    /// screen as text.
+    #[test]
+    fn the_tail_draws_the_panes_own_colour_and_attributes() {
+        let painted = tail_frame(&a_captured_pane(), 120, 7, 0);
+
+        let host = painted.row(4);
+        assert!(
+            host.iter().any(|run| {
+                run.said == "thinkpad"
+                    && run.style.fg == Some(Color::Rgb(255, 121, 198))
+                    && run.style.add_modifier.contains(Modifier::BOLD)
+            }),
+            "the host, bold and pink as the pane drew it: {host:?}"
+        );
+        assert!(
+            host.iter()
+                .any(|run| run.said == "main" && run.style.fg == Some(Color::Indexed(6))),
+            "the branch, in the pane's 256-colour cyan: {host:?}"
+        );
+        assert!(
+            painted.rows().iter().all(|row| !row.contains('\x1b')),
+            "no escape reaches the screen as text: {:?}",
+            painted.rows()
         );
     }
 
