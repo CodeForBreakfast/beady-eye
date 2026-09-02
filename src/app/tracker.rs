@@ -292,7 +292,7 @@ fn panes_naming_a_bead_here<'a>(
     panes
         .iter()
         .filter(|pane| {
-            join::project_of(&pane.cwd, &cfg.projects).is_some_and(|p| p.name == project.name)
+            join::project_of(pane, &cfg.projects).is_some_and(|p| p.name == project.name)
         })
         .filter_map(|pane| pane.display_agent.as_deref())
 }

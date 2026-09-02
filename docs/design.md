@@ -544,6 +544,61 @@ only one directory staffed nothing. Without this, two trackers with colliding
 id prefixes cross-attach agents — and prefixes are per-tracker and
 uncoordinated, so a collision is a matter of time rather than bad luck.
 
+**A pane no project holds is placed by where it sits in the main working
+tree.** A project's working trees are only the ones it was asked for, and a
+project a scope left out is never asked — so a pane in one of its linked
+worktrees, outside its configured path, is held by nothing and would be
+reported as being in a directory no project covers. Where that pane's
+directory sits in the *main* working tree of whatever repository it is in
+answers it, and that is read off the files git already wrote: a linked
+worktree's `.git` is a file naming an admin directory under the main
+repository's `.git/worktrees/`, that directory's `commondir` names the main
+`.git`, and the main working tree is the directory over it. Four file reads
+and no subprocess, so nothing runs in a directory that is not `bdi`'s. The
+directory the pane is actually in is still tried first, because a config may
+name a project by its place in a linked worktree rather than the main one.
+
+Every way that read can fail answers nothing, and the pane is then placed by
+its own directory exactly as before: a `.git` that is a directory, no `.git`
+anywhere above, a `.git` file with no `gitdir:` line, an admin directory that
+has gone, one with no `commondir` — a submodule's has none — and a common dir
+not named `.git`, which is a bare repository or a `--separate-git-dir` one and
+the only case where the obvious rule answers a confident wrong path rather
+than nothing. Paths are resolved lexically and never through `canonicalize`,
+so a symlinked checkout compares the way the config wrote it.
+
+Folding `..` lexically is what makes the answer comparable to a config, and
+it is not what the filesystem does: where the pane reaches its worktree
+through a symlink, a *relative* `gitdir:` folds to somewhere that is not the
+worktree's admin directory. Usually that is nothing and the read gives up,
+but with two checkouts beside each other it can be a real admin directory
+belonging to a repository the pane has nothing to do with — and every check
+after it passes, because each is satisfied by any ordinary repository. So the
+admin directory is required to name the worktree back, through the `gitdir`
+file git writes inside it. Placing a pane in the wrong repository's working
+tree is the one outcome refused outright; saying nothing is always available.
+
+That back-check is asked only where the `gitdir:` was relative, because only
+folding can go astray, and asking it everywhere would refuse a worktree moved
+without `git worktree repair` — whose admin directory still names where it
+used to be, while the rest of the chain is sound. It resolves both paths to
+compare them, which is not the same as resolving the answer: what it returns
+is a yes or a no, and the placement is still the lexical one. That is the
+distinction to keep — the rule against resolving is about the answer, not
+about what may be looked at to check it.
+
+The rule is not confined to the projects a scope left out. A pane in a linked
+worktree of a project this run *does* read is placed the same way, and
+reported as loose in that project rather than as unconfigured: `bdi` reports
+what it can determine, and declining to place a pane whose project it knows
+would be the model keeping something back.
+
+The read belongs to `app`, which annotates each pane as it collects the
+listing. `model` is pure over what it is handed — that is what lets its tests
+place panes at paths that exist on no machine — and a placement that asked the
+filesystem would answer differently on a machine where one of those paths
+happened to exist.
+
 **Where the two directions disagree, that is a finding, not a tie to break.**
 
 | situation | what `bdi` does |

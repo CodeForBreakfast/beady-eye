@@ -14,3 +14,4 @@ pub mod herdr;
 pub mod panes;
 pub mod run;
 pub mod tracker;
+pub mod worktree;

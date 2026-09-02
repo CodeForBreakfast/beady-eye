@@ -157,6 +157,7 @@ mod tests {
     use super::*;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{RealRunner, RunFailure};
+    use crate::collect::worktree::testing::{a_scratch_directory, git_in};
     use crate::config::{Roots, Tui};
 
     /// A repository beads tracks, as bd and git answer for it. The remote and
@@ -527,42 +528,6 @@ path = "/tmp/seat-b/wt/crates/dish"
                 .holds(Path::new("/srv/work/orbital/src"))
                 .is_some(),
             "a project in no repository holds nothing at all"
-        );
-    }
-
-    /// A directory of our own to build a repository in, outside anything
-    /// this checkout tracks.
-    fn a_scratch_directory(named: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("the directory is ours to make");
-        std::fs::canonicalize(&path).expect("the directory we just made resolves")
-    }
-
-    /// git run with an identity and a default branch of our own, so the test
-    /// says the same thing on a machine whose git is configured differently
-    /// and on one where it is not configured at all.
-    fn git_in(cwd: &Path, args: &[&str]) {
-        let out = std::process::Command::new("git")
-            .args([
-                "-c",
-                "user.name=bdi tests",
-                "-c",
-                "user.email=tests@beady-eye.invalid",
-                "-c",
-                "init.defaultBranch=main",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .expect("git runs");
-        assert!(
-            out.status.success(),
-            "git {args:?} in {}: {}",
-            cwd.display(),
-            String::from_utf8_lossy(&out.stderr)
         );
     }
 

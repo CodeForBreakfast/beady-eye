@@ -1,7 +1,7 @@
 //! What a tracker and a session say, as `bdi` holds it.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -108,9 +108,27 @@ pub struct Pane {
     #[serde(default)]
     pub state_labels: BTreeMap<String, String>,
     pub agent_status: PaneStatus,
+    /// Where `cwd` sits in the main working tree of its repository, where
+    /// `cwd` is in a linked worktree. herdr says nothing about it; it is
+    /// read off the worktree after the listing, and a pane read off the
+    /// wire alone has none.
+    #[serde(skip)]
+    cwd_in_the_main_working_tree: Option<PathBuf>,
 }
 
 impl Pane {
+    /// This pane, with where its directory sits in the main working tree.
+    pub fn with_cwd_in_the_main_working_tree(mut self, cwd: Option<PathBuf>) -> Self {
+        self.cwd_in_the_main_working_tree = cwd;
+        self
+    }
+
+    /// Where this pane's directory sits in the main working tree of its
+    /// repository, where that is somewhere else.
+    pub fn cwd_in_the_main_working_tree(&self) -> Option<&Path> {
+        self.cwd_in_the_main_working_tree.as_deref()
+    }
+
     /// The line to show for this pane: its state label for the state it is
     /// actually in, falling back to its title.
     pub fn caption(&self) -> Option<&str> {

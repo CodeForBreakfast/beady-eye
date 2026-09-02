@@ -89,9 +89,22 @@ pub struct Joined {
     pub conflicts: Vec<Conflict>,
 }
 
+/// The project a pane sits in: the one holding its directory, or, where none
+/// does, the one holding the same place in the main working tree of the
+/// repository the directory is in. `None` when no project's does.
+///
+/// The directory comes first because a config may name a project by its
+/// place in a linked worktree. The main working tree is asked second, for a
+/// pane in a linked worktree of a project this run never asked where it is
+/// worked — one the scope left out — which is held by nothing as it stands.
+pub fn project_of<'a>(pane: &Pane, projects: &'a [Project]) -> Option<&'a Project> {
+    project_holding(&pane.cwd, projects)
+        .or_else(|| project_holding(pane.cwd_in_the_main_working_tree()?, projects))
+}
+
 /// The project a path sits in: the one whose deepest working tree contains
 /// it. `None` when no project's does.
-pub fn project_of<'a>(path: &Path, projects: &'a [Project]) -> Option<&'a Project> {
+fn project_holding<'a>(path: &Path, projects: &'a [Project]) -> Option<&'a Project> {
     projects
         .iter()
         .filter_map(|p| Some((p.holds(path)?, p)))
@@ -120,7 +133,7 @@ pub fn resolve(trees: &[ProjectRows<'_>], panes: &[Pane], cfg: &Config) -> Joine
         .map(|p| {
             (
                 p.pane_id.as_str(),
-                project_of(&p.cwd, &cfg.projects).map(|q| q.name.as_str()),
+                project_of(p, &cfg.projects).map(|q| q.name.as_str()),
             )
         })
         .collect();
@@ -301,6 +314,7 @@ mod tests {
     use crate::model::tree::Nesting;
     use crate::model::types::Bead;
     use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
 
     const BEADS: &str = include_str!("../../tests/fixtures/display_agent_bd_list.json");
     const PANES: &str = include_str!("../../tests/fixtures/herdr_agent_list.json");
@@ -587,14 +601,14 @@ mod tests {
         ];
 
         assert_eq!(
-            project_of(Path::new("/home/user/dev/inner/src"), &cfg).map(|p| p.name.as_str()),
+            project_holding(Path::new("/home/user/dev/inner/src"), &cfg).map(|p| p.name.as_str()),
             Some("inner")
         );
         assert_eq!(
-            project_of(Path::new("/home/user/dev/other"), &cfg).map(|p| p.name.as_str()),
+            project_holding(Path::new("/home/user/dev/other"), &cfg).map(|p| p.name.as_str()),
             Some("outer")
         );
-        assert_eq!(project_of(Path::new("/home/user"), &cfg), None);
+        assert_eq!(project_holding(Path::new("/home/user"), &cfg), None);
     }
 
     /// One worktree per seat puts the panes in sibling worktrees, under
@@ -608,10 +622,10 @@ mod tests {
         )];
 
         assert_eq!(
-            project_of(Path::new("/tmp/seat-a/wt/src"), &cfg).map(|p| p.name.as_str()),
+            project_holding(Path::new("/tmp/seat-a/wt/src"), &cfg).map(|p| p.name.as_str()),
             Some("proj")
         );
-        assert_eq!(project_of(Path::new("/tmp/seat-b/wt"), &cfg), None);
+        assert_eq!(project_holding(Path::new("/tmp/seat-b/wt"), &cfg), None);
     }
 
     /// A worktree is territory like any other, so the deepest directory
@@ -624,8 +638,100 @@ mod tests {
         ];
 
         assert_eq!(
-            project_of(Path::new("/home/user/dev/wt/src"), &cfg).map(|p| p.name.as_str()),
+            project_holding(Path::new("/home/user/dev/wt/src"), &cfg).map(|p| p.name.as_str()),
             Some("inner")
+        );
+    }
+
+    /// A pane in a linked worktree of a project that was never asked where
+    /// it is worked — one the scope left out — is held by nothing as it
+    /// stands, and is placed by where its directory sits in the main working
+    /// tree instead.
+    ///
+    /// Only a pane built by hand can say so. Every pane read off the wire,
+    /// which is every fixture under `tests/fixtures/`, has no main-tree
+    /// place and is placed by its `cwd` alone, so a green run of those says
+    /// nothing about this rule.
+    #[test]
+    fn a_pane_nothing_holds_is_placed_by_where_it_sits_in_the_main_working_tree() {
+        let cfg = vec![project("proj", "/home/user/proj")];
+        let mut live =
+            panes(r#"{"pane_id":"w:p1","cwd":"/tmp/seat-a/wt/src","agent_status":"working"}"#);
+        let pane = live
+            .remove(0)
+            .with_cwd_in_the_main_working_tree(Some(PathBuf::from("/home/user/proj/src")));
+
+        assert_eq!(
+            project_of(&pane, &cfg).map(|p| p.name.as_str()),
+            Some("proj")
+        );
+    }
+
+    /// The directory the pane is in wins over the one it corresponds to: a
+    /// project configured at its place in a linked worktree holds a pane
+    /// there, whatever the main working tree is under.
+    #[test]
+    fn a_pane_something_holds_is_placed_by_its_own_directory_first() {
+        let cfg = vec![
+            project("seat", "/tmp/seat-a/wt"),
+            project("main", "/home/user/proj"),
+        ];
+        let mut live =
+            panes(r#"{"pane_id":"w:p1","cwd":"/tmp/seat-a/wt/src","agent_status":"working"}"#);
+        let pane = live
+            .remove(0)
+            .with_cwd_in_the_main_working_tree(Some(PathBuf::from("/home/user/proj/src")));
+
+        assert_eq!(
+            project_of(&pane, &cfg).map(|p| p.name.as_str()),
+            Some("seat")
+        );
+    }
+
+    #[test]
+    fn a_pane_read_off_the_wire_is_placed_by_its_directory_alone() {
+        let cfg = vec![project("proj", "/home/user/proj")];
+        let live =
+            panes(r#"{"pane_id":"w:p1","cwd":"/tmp/seat-a/wt/src","agent_status":"working"}"#);
+
+        assert_eq!(live[0].cwd_in_the_main_working_tree(), None);
+        assert_eq!(project_of(&live[0], &cfg), None);
+    }
+
+    /// The conflict a pane raises names the project it sits in, so the
+    /// placement reaches it through the same rule.
+    #[test]
+    fn a_pane_placed_by_the_main_working_tree_is_reported_in_that_project() {
+        let two = rows(
+            r#"[{"id":"x-1","title":"in project two","status":"in_progress",
+                 "metadata":{"agent_pane":"w:p1"}}]"#,
+        );
+        let mut live =
+            panes(r#"{"pane_id":"w:p1","cwd":"/tmp/seat-a/wt/src","agent_status":"working"}"#);
+        let pane = live
+            .remove(0)
+            .with_cwd_in_the_main_working_tree(Some(PathBuf::from("/home/user/one/src")));
+        let cfg = vec![
+            project("one", "/home/user/one"),
+            project("two", "/home/user/two"),
+        ];
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "two",
+                rows: &two,
+            }],
+            &[pane],
+            &Config::naming(cfg),
+        );
+
+        assert_eq!(
+            joined.conflicts,
+            vec![Conflict::PaneInAnotherProject {
+                bead: key("two", "x-1"),
+                pane: "w:p1".to_string(),
+                pane_project: Some("one".to_string()),
+            }]
         );
     }
 
@@ -634,7 +740,10 @@ mod tests {
     fn a_path_is_matched_by_whole_directories_rather_than_by_text() {
         let cfg = vec![project("bead", "/home/user/dev/bead")];
 
-        assert_eq!(project_of(Path::new("/home/user/dev/beady"), &cfg), None);
+        assert_eq!(
+            project_holding(Path::new("/home/user/dev/beady"), &cfg),
+            None
+        );
     }
 
     #[test]

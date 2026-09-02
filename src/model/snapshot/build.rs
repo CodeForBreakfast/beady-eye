@@ -112,7 +112,7 @@ pub fn build(
     let (mut unattributed, mut unconfigured) = (Vec::new(), Vec::new());
     for pane in join::unattributed(panes, joined) {
         let cwd = pane.cwd.display().to_string();
-        match join::project_of(&pane.cwd, &cfg.projects) {
+        match join::project_of(pane, &cfg.projects) {
             // A pane in a project this run left out is on another desktop's
             // work: neither drawn nor reported.
             Some(project) if !cfg.reads(&project.name) => {}
@@ -161,7 +161,7 @@ mod tests {
     use crate::model::tree::unroll;
     use crate::model::types::{Edge, PaneStatus, Status};
     use pretty_assertions::assert_eq;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn node<'a>(tree: &'a Tree, id: &str) -> &'a Node {
         tree.beads
@@ -602,6 +602,68 @@ mod tests {
         );
 
         assert_eq!(snap.unattributed, vec![]);
+        assert_eq!(snap.unconfigured, vec![]);
+    }
+
+    /// A pane in a linked worktree of the excluded project, placed outside
+    /// that project's path: as it stands it is held by nothing, because an
+    /// excluded project is never asked where it is worked. Where its
+    /// directory sits in the main working tree is what places it, and a
+    /// pane the main tree places in the excluded project is on another
+    /// desktop's work like any other pane there.
+    fn a_pane_in_a_linked_worktree_of_ferry() -> Vec<Pane> {
+        let mut live = panes(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p2","cwd":"/tmp/seat-a/wt/src","agent_status":"idle"}
+            ]}}"#,
+        );
+        let pane = live
+            .remove(0)
+            .with_cwd_in_the_main_working_tree(Some(PathBuf::from("/srv/work/ferry/src")));
+        vec![pane]
+    }
+
+    fn built_over(panes: &[Pane], cfg: &Config) -> Snapshot {
+        let joined = join::resolve(&[], panes, cfg);
+        build(
+            Collected::default(),
+            panes,
+            &joined,
+            cfg,
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        )
+    }
+
+    #[test]
+    fn a_pane_in_a_linked_worktree_of_an_excluded_project_is_neither_loose_nor_unconfigured() {
+        let cfg = cfg()
+            .scoped_to(&["orbital".to_string()])
+            .expect("orbital is configured");
+
+        let snap = built_over(&a_pane_in_a_linked_worktree_of_ferry(), &cfg);
+
+        assert_eq!(snap.unattributed, vec![]);
+        assert_eq!(snap.unconfigured, vec![]);
+    }
+
+    /// The same pane under a run that reads its project is loose in that
+    /// project, which is what tells placing it from dropping it.
+    #[test]
+    fn a_pane_in_a_linked_worktree_of_a_read_project_is_loose_in_that_project() {
+        let snap = built_over(&a_pane_in_a_linked_worktree_of_ferry(), &cfg());
+
+        assert_eq!(
+            snap.unattributed,
+            vec![LoosePane {
+                pane: "w:p2".to_string(),
+                project: "ferry".to_string(),
+                cwd: "/tmp/seat-a/wt/src".to_string(),
+                pane_status: PaneStatus::Idle,
+            }],
+            "reported where it is, placed where its main working tree is"
+        );
         assert_eq!(snap.unconfigured, vec![]);
     }
 

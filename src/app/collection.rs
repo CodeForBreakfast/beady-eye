@@ -12,6 +12,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use crate::collect::herdr;
 use crate::collect::run::{RunFailure, Runner};
 use crate::collect::tracker::Trackers;
+use crate::collect::worktree;
 use crate::config::{Config, Project};
 use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
@@ -97,6 +98,22 @@ impl Wanted {
     }
 }
 
+/// A pane herdr listed, told where its directory sits in the main working
+/// tree of the repository it is in.
+///
+/// herdr says only where the pane is. A pane in a linked worktree of a
+/// project this run never asked where it is worked — one the scope left
+/// out — is held by no configured path as it stands, and only the
+/// filesystem can say which project it belongs to. That read happens here,
+/// once per listing, because `model` is pure over what it is handed: it
+/// places panes at paths that exist on no machine, and a placement that
+/// asked the disk would answer differently on a machine where one of them
+/// happened to exist.
+fn placed(pane: Pane) -> Pane {
+    let main_tree = worktree::in_the_main_working_tree(&pane.cwd);
+    pane.with_cwd_in_the_main_working_tree(main_tree)
+}
+
 /// What each project's tracker last said, kept between collections.
 ///
 /// Reading a tracker is dozens of round trips; joining what came back is a
@@ -129,7 +146,7 @@ impl Collection {
         // a producer is never polled — so a refresh naming it is the only
         // chance the agent join gets.
         let (panes, herdr_state) = match herdr::agent_list(runner) {
-            Ok(panes) => (panes, HerdrState::Ok),
+            Ok(panes) => (panes.into_iter().map(placed).collect(), HerdrState::Ok),
             Err(_) => (Vec::new(), HerdrState::Unavailable),
         };
 
@@ -329,10 +346,13 @@ mod tests {
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::collect::tracker::Tracker;
+    use crate::collect::worktree::testing::a_linked_worktree_git_made;
     use crate::model::anomaly::Anomaly;
+    use crate::model::snapshot::LoosePane;
+    use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
@@ -1267,6 +1287,98 @@ mod tests {
             ["orbital", "ferry"],
             "the config as written is still reachable"
         );
+    }
+
+    /// orbital, and a second project at a checkout that is really on disk so
+    /// that a linked worktree of it can be too.
+    fn orbital_and_ferry_at(checkout: &Path) -> Config {
+        Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+
+[[projects]]
+name = "ferry"
+path = "{}"
+"#,
+            checkout.display()
+        ))
+        .expect("the config parses")
+    }
+
+    /// A herdr answering with one idle pane sitting in `cwd`.
+    fn a_pane_sitting_in(cwd: &Path) -> FakeRunner {
+        panes_of(&format!(
+            r#"{{"result":{{"agents":[
+              {{"pane_id":"w:p2","cwd":"{}","agent_status":"idle"}}
+            ]}}}}"#,
+            cwd.display()
+        ))
+    }
+
+    /// A pane in a linked worktree, outside every configured path: nothing
+    /// in the config holds where it sits, and where it sits in ferry's main
+    /// working tree is what says it is ferry's.
+    ///
+    /// This is the only test that runs the read the way `bdi` does. Every
+    /// pane in `tests/fixtures/` comes off the wire with no main-tree place
+    /// at all, and the tests in `join` and `snapshot` fill the field by
+    /// hand — so a run that never translated the listing would satisfy all
+    /// of them and still report this pane as `unconfigured`.
+    #[test]
+    fn a_pane_in_a_linked_worktree_is_reported_in_the_project_its_main_working_tree_is_under() {
+        let fixture = a_linked_worktree_git_made("collection-linked-worktree");
+        let cfg = orbital_and_ferry_at(&fixture.checkout);
+
+        let snap = run(
+            &cfg,
+            &a_pane_sitting_in(&fixture.linked),
+            &colliding_trackers(),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.unattributed,
+            vec![LoosePane {
+                pane: "w:p2".to_string(),
+                project: "ferry".to_string(),
+                cwd: fixture.linked.display().to_string(),
+                pane_status: PaneStatus::Idle,
+            }],
+            "reported where it sits, placed by where its main working tree is"
+        );
+        assert_eq!(snap.unconfigured, vec![]);
+    }
+
+    /// The same pane under a run scoped to orbital. ferry is never asked
+    /// where it is worked, so its linked worktrees are unknown and the pane
+    /// is held by nothing as the config stands; placing it by its main
+    /// working tree is what keeps another desktop's work off this screen
+    /// instead of reporting it as a directory nobody configured.
+    ///
+    /// And nothing ran to work that out. `FakeRunner` panics on any command
+    /// it was not staged with, so the calls it recorded are the whole of
+    /// what `bdi` executed: one listing, asked from nowhere in particular.
+    #[test]
+    fn a_pane_in_an_excluded_projects_linked_worktree_is_placed_without_running_anything() {
+        let fixture = a_linked_worktree_git_made("collection-linked-worktree-excluded");
+        let cfg = orbital_and_ferry_at(&fixture.checkout)
+            .scoped_to(&["orbital".to_string()])
+            .expect("orbital is configured");
+        let runner = a_pane_sitting_in(&fixture.linked);
+
+        let snap = run(&cfg, &runner, &colliding_trackers(), Filter::All, now());
+
+        assert_eq!(snap.unattributed, vec![]);
+        assert_eq!(snap.unconfigured, vec![]);
+        let ran: Vec<(String, Option<PathBuf>)> = runner
+            .calls()
+            .into_iter()
+            .map(|call| (call.argv, call.cwd))
+            .collect();
+        assert_eq!(ran, vec![("herdr agent list".to_string(), None)]);
     }
 
     /// The view draws one project line over each run of a project's trees, so
