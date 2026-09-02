@@ -378,8 +378,8 @@ impl View for Screen {
         self.shown.collecting(awaited)
     }
 
-    fn holds_for(&self) -> Option<Duration> {
-        self.shown.holds_for(Utc::now())
+    fn holds_for(&self, drawn_at: DateTime<Utc>) -> Option<Duration> {
+        self.shown.holds_for(drawn_at)
     }
 
     fn tailed(&mut self, answer: Answer) -> bool {
@@ -408,14 +408,10 @@ impl View for Screen {
         }
     }
 
-    fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
+    fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
         let (forest, tail) = (&mut self.shown.forest, &self.shown.tail);
         let at_startup = &self.at_startup;
         let collecting = self.shown.collecting.as_slice();
-        // Read here rather than passed in: this is the instant the frame is
-        // drawn at, and both a project's age and the frame its mark is on are
-        // measured against it.
-        let now = Utc::now();
         self.terminal
             .draw(|frame| paint(frame, forest, tail, showing, at_startup, collecting, now))?;
         Ok(())

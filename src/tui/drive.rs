@@ -100,7 +100,14 @@ pub(super) trait View {
     /// goes stale is what is drawn: an age is a duration and says a different
     /// thing a second later, and a mark part way through turning is a frame
     /// behind by the time the next one is due.
-    fn holds_for(&self) -> Option<Duration>;
+    ///
+    /// Measured from `drawn_at`, the instant the frame on the screen was
+    /// drawn at, and not from a read of the clock: what is drawn was true
+    /// then, and a deadline decided against a later instant is a deadline
+    /// for a frame nobody drew. A mark that came to rest between the draw
+    /// and the ask holds for nothing at all, and the frame showing it
+    /// turning would stand until some unrelated event arrived.
+    fn holds_for(&self, drawn_at: DateTime<Utc>) -> Option<Duration>;
 
     /// Take what herdr said about a pane it was asked to read or to focus,
     /// reporting whether the screen has changed.
@@ -117,7 +124,9 @@ pub(super) trait View {
     /// nothing about what is drawn there.
     fn clicked(&mut self, row: u16) -> bool;
 
-    fn draw(&mut self, showing: Showing) -> anyhow::Result<()>;
+    /// Draw the screen as it stands at `now`, the instant every project's age
+    /// and the frame its mark is on are measured against.
+    fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()>;
 }
 
 /// What the loop waited for and got.
@@ -165,9 +174,13 @@ pub(super) fn drive(
     mut armed: Vec<Armed>,
 ) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
-    view.draw(showing)?;
+    let mut drawn_at = Utc::now();
+    view.draw(showing, drawn_at)?;
 
-    while let Some(waited) = wait(events, sleeps_for(view, &outstanding, &armed, Utc::now())) {
+    while let Some(waited) = wait(
+        events,
+        sleeps_for(view, &outstanding, &armed, drawn_at, Utc::now()),
+    ) {
         let woken = match waited {
             // Nothing has happened and what is drawn is out of date, which is
             // the whole of what makes the mark turn and the ages advance: a
@@ -195,7 +208,8 @@ pub(super) fn drive(
         outstanding.sends(ask, now);
 
         if woken || told {
-            view.draw(showing)?;
+            drawn_at = now;
+            view.draw(showing, drawn_at)?;
         }
     }
 
@@ -233,13 +247,25 @@ fn asks_for_what_is_due(
 /// doing all three things when it wakes. What it costs is a redraw on a wake
 /// that was a window closing rather than a frame ageing; what it saves is a
 /// second way for the loop to be woken.
+///
+/// Two instants, because the screen's deadline is about the frame on it and
+/// the other two are about now: `drawn_at` is when that frame was drawn, and
+/// a loop woken by an event that drew nothing is still sleeping on the frame
+/// from before. The view says how long the frame holds from then, and what
+/// is slept from now is whatever of that is left.
 fn sleeps_for(
     view: &dyn View,
     outstanding: &Outstanding,
     armed: &[Armed],
+    drawn_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Option<Duration> {
-    [view.holds_for(), outstanding.sends_in(now)]
+    let since_drawn = (now - drawn_at).to_std().unwrap_or_default();
+    let holds_for = view
+        .holds_for(drawn_at)
+        .map(|held| held.saturating_sub(since_drawn));
+
+    [holds_for, outstanding.sends_in(now)]
         .into_iter()
         .chain(armed.iter().map(|project| project.asks_in(now)))
         .flatten()
@@ -586,11 +612,12 @@ impl Outstanding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::fixtures::{a_snapshot, atlas, ferry, A_MOMENT, PATIENCE};
+    use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
     use crate::view::phrase;
     use ratatui::crossterm::event::KeyCode;
+    use std::cell::RefCell;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Instant;
@@ -606,7 +633,11 @@ mod tests {
         /// a test that only counted could not tell a refresh of one project
         /// from a refresh of the lot.
         awaited: Vec<Vec<Awaited>>,
-        drawn: usize,
+        /// The instant each frame was drawn at, in the order they were drawn.
+        drawn_at: Vec<DateTime<Utc>>,
+        /// The instant each deadline was asked to be measured from, in the
+        /// order the loop asked.
+        measured_at: RefCell<Vec<DateTime<Utc>>>,
         showing: Vec<Showing>,
         /// What a click reports back, for the tests about a click that lands
         /// on no row.
@@ -614,6 +645,11 @@ mod tests {
     }
 
     impl Recorder {
+        /// How many frames the loop drew.
+        fn drawn(&self) -> usize {
+            self.drawn_at.len()
+        }
+
         /// Which projects the view was told about, in the order it was told,
         /// with the instants left out. Most of these tests are about which
         /// collections the loop starts and in what order; the ones about the
@@ -650,7 +686,8 @@ mod tests {
         /// The same rule `Shown` keeps, so a loop test is asking the loop
         /// what it asks a real screen: a read outstanding is a frame away
         /// from being out of date, and this view has no ages on it.
-        fn holds_for(&self) -> Option<Duration> {
+        fn holds_for(&self, drawn_at: DateTime<Utc>) -> Option<Duration> {
+            self.measured_at.borrow_mut().push(drawn_at);
             let told = self.awaited.last()?;
             (!told.is_empty()).then_some(phrase::FRAME)
         }
@@ -669,8 +706,8 @@ mod tests {
             !self.nothing_under_the_pointer
         }
 
-        fn draw(&mut self, showing: Showing) -> anyhow::Result<()> {
-            self.drawn += 1;
+        fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
+            self.drawn_at.push(now);
             self.showing.push(showing);
             Ok(())
         }
@@ -841,7 +878,11 @@ mod tests {
             [vec![Wanted::Everything]],
             "the view was told a collection began, and over which projects"
         );
-        assert_eq!(view.drawn, 2, "the first frame, and one for the keystroke");
+        assert_eq!(
+            view.drawn(),
+            2,
+            "the first frame, and one for the keystroke"
+        );
     }
 
     /// A window long enough that nothing in a test falls out of it, so a read
@@ -927,6 +968,7 @@ mod tests {
                 &Recorder::default(),
                 &at_once(),
                 &nothing_armed(),
+                Utc::now(),
                 Utc::now()
             ),
             None
@@ -942,14 +984,46 @@ mod tests {
         sooner.came_back(&ferry(), now);
 
         assert_eq!(
-            sleeps_for(&Recorder::default(), &outstanding, &[sooner], now),
+            sleeps_for(&Recorder::default(), &outstanding, &[sooner], now, now),
             Some(AN_INTERVAL),
             "the poll comes round long before the window is out"
         );
         assert_eq!(
-            sleeps_for(&Recorder::default(), &outstanding, &nothing_armed(), now),
+            sleeps_for(
+                &Recorder::default(),
+                &outstanding,
+                &nothing_armed(),
+                now,
+                now
+            ),
             A_LONG_WINDOW.to_std().ok(),
             "and with nothing armed, the window is what is left to wait for"
+        );
+    }
+
+    /// The view says how long its frame holds from the instant it was drawn,
+    /// and the loop sleeps from now — so what it sleeps is what is left of
+    /// the frame, not the whole of it again. A wake that draws nothing is
+    /// where the two instants part: a key bound to nothing at 30 ms into an
+    /// 80 ms frame leaves 50 ms, and one after the frame has run out leaves
+    /// nothing, which is a wake rather than a full frame more of a stale
+    /// screen.
+    #[test]
+    fn a_deadline_decided_after_the_frame_is_what_is_left_of_it() {
+        let now = Utc::now();
+        let mut view = Recorder::default();
+        View::collecting(&mut view, &[reading(atlas(), now)]);
+
+        let drawn_at = now - TimeDelta::milliseconds(30);
+        assert_eq!(
+            sleeps_for(&view, &at_once(), &nothing_armed(), drawn_at, now),
+            Some(phrase::FRAME - Duration::from_millis(30)),
+        );
+        let drawn_at = now - TimeDelta::milliseconds(100);
+        assert_eq!(
+            sleeps_for(&view, &at_once(), &nothing_armed(), drawn_at, now),
+            Some(Duration::ZERO),
+            "the frame ran out before the loop asked, so it wakes at once"
         );
     }
 
@@ -976,7 +1050,8 @@ mod tests {
             "the poll asked, and said so"
         );
         assert_eq!(
-            view.drawn, 2,
+            view.drawn(),
+            2,
             "the first frame, and one for the read the keystroke landed beside"
         );
     }
@@ -1122,7 +1197,7 @@ mod tests {
         drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(view.collecting(), [vec![atlas()]]);
-        assert_eq!(view.drawn, 2);
+        assert_eq!(view.drawn(), 2);
     }
 
     // ---- the mark on a collecting project turns ---------------------------
@@ -1186,9 +1261,9 @@ mod tests {
         drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert!(
-            view.drawn > 2,
+            view.drawn() > 2,
             "the first frame, the collection starting, and the mark turning: {}",
-            view.drawn
+            view.drawn()
         );
         assert_eq!(view.collecting(), [vec![atlas()]], "no second collection");
         assert_eq!(view.applied, [], "and no action for a frame running out");
@@ -1317,7 +1392,7 @@ mod tests {
             [vec![atlas()], vec![atlas(), ferry()]],
             "the one in flight, then it and the one behind it"
         );
-        assert_eq!(view.drawn, 3, "and the screen changed for it");
+        assert_eq!(view.drawn(), 3, "and the screen changed for it");
     }
 
     #[test]
@@ -1536,7 +1611,8 @@ mod tests {
         .expect("the loop runs");
 
         assert_eq!(
-            view.drawn, 1,
+            view.drawn(),
+            1,
             "the first draw and no other: the loop returned rather than \
              going on to the resize behind the signal"
         );
@@ -1564,7 +1640,8 @@ mod tests {
         .expect("the loop runs");
 
         assert_eq!(
-            view.drawn, 2,
+            view.drawn(),
+            2,
             "the first draw and the bindings: the signal ended the run rather \
              than closing the window"
         );
@@ -1586,7 +1663,7 @@ mod tests {
 
         assert!(view.applied.is_empty());
         assert_eq!(asked.try_iter().count(), 0);
-        assert_eq!(view.drawn, 2, "the first draw, and the resize");
+        assert_eq!(view.drawn(), 2, "the first draw, and the resize");
     }
 
     /// The screen is drawn for what changed it. A key bound to nothing
@@ -1605,7 +1682,45 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(view.drawn, 1, "the first draw and no other");
+        assert_eq!(view.drawn(), 1, "the first draw and no other");
+    }
+
+    /// `bdi-6so`: every deadline the loop sleeps on is measured from the
+    /// instant the frame on the screen was drawn at, never from a later read
+    /// of the clock. A deadline decided later than the frame is a deadline
+    /// for a frame nobody drew: a mark that came to rest in between holds
+    /// for nothing at all, and the frame showing it turning stands until some
+    /// unrelated event arrives.
+    ///
+    /// Across a keystroke that draws nothing as well as one that draws,
+    /// because that is where a fresh read would be furthest from the frame:
+    /// the loop wakes, decides a deadline, and the frame on the screen is
+    /// still the one from before.
+    #[test]
+    fn a_deadline_is_measured_from_the_instant_the_frame_on_the_screen_was_drawn_at() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![Event::Resize, Event::Key(key(KeyCode::Char('z')))]),
+            &ask,
+            at_once(),
+            nothing_armed(),
+        )
+        .expect("the loop runs");
+
+        let [first, second] = view.drawn_at[..] else {
+            panic!(
+                "the first frame and one for the resize: {:?}",
+                view.drawn_at
+            );
+        };
+        assert_eq!(
+            *view.measured_at.borrow(),
+            [first, second, second],
+            "one deadline after each frame, and one after the key that drew nothing"
+        );
     }
 
     // ---- the pointer ------------------------------------------------------
@@ -1626,7 +1741,7 @@ mod tests {
 
         assert_eq!(view.clicked, [9]);
         assert!(view.applied.is_empty(), "a click asks for no action");
-        assert_eq!(view.drawn, 2, "the first draw, and the click");
+        assert_eq!(view.drawn(), 2, "the first draw, and the click");
     }
 
     /// The screen is drawn for what changed it. A click on the tail, the key
@@ -1649,7 +1764,7 @@ mod tests {
         .expect("the loop runs");
 
         assert_eq!(view.clicked, [21]);
-        assert_eq!(view.drawn, 1, "the first draw and no other");
+        assert_eq!(view.drawn(), 1, "the first draw and no other");
     }
 
     /// `bdi` holds no scroll of its own — the window is a pure function of
