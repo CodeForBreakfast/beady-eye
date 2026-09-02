@@ -208,8 +208,8 @@ impl Panes for Herdr {
 mod tests {
     use super::*;
     use crate::collect::run::Env;
-    use std::cell::Cell;
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// Long enough that waiting past it means the answer is never coming.
@@ -244,7 +244,7 @@ mod tests {
     struct Echo {
         said: String,
         ran: Arc<Mutex<Vec<String>>>,
-        late: Cell<bool>,
+        late: AtomicBool,
     }
 
     impl Echo {
@@ -254,7 +254,7 @@ mod tests {
                 Self {
                     said: said.to_string(),
                     ran: Arc::clone(&ran),
-                    late: Cell::new(false),
+                    late: AtomicBool::new(false),
                 },
                 ran,
             )
@@ -266,7 +266,7 @@ mod tests {
             let (echo, ran) = Self::saying(said);
             (
                 Self {
-                    late: Cell::new(true),
+                    late: AtomicBool::new(true),
                     ..echo
                 },
                 ran,
@@ -286,7 +286,7 @@ mod tests {
                 .lock()
                 .expect("no test panics holding this")
                 .push(format!("{program} {}", args.join(" ")));
-            if self.late.replace(false) {
+            if self.late.swap(false, Ordering::SeqCst) {
                 thread::sleep(PATIENCE * 2);
             }
             Ok(self.said.clone())

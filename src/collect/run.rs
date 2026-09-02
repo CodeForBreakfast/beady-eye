@@ -153,7 +153,10 @@ impl std::error::Error for RunFailure {}
 
 /// Runs one command and hands back its stdout. A trait so every call site is
 /// testable without spawning anything.
-pub trait Runner {
+///
+/// `Sync` because a collection reads its projects' trackers together, each
+/// on a thread of its own, through the one runner it was given.
+pub trait Runner: Sync {
     fn run(
         &self,
         program: &str,

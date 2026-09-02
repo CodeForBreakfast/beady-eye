@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::collect::herdr;
-use crate::collect::run::Runner;
-use crate::config::Config;
+use crate::collect::run::{RunFailure, Runner};
+use crate::config::{Config, Project};
 use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
     self, Collected, FailedProject, Filter, HerdrState, Snapshot, TrackerFailure, TrackerState,
@@ -131,13 +131,8 @@ impl Collection {
             Err(_) => (Vec::new(), HerdrState::Unavailable),
         };
 
-        for project in cfg.projects.iter().filter(|p| wanted.names(&p.name)) {
-            let standing = self
-                .read
-                .get(&project.name)
-                .and_then(|read| read.taken_at.clone());
-
-            match refresh_project(runner, project, cfg, &panes, standing.as_ref(), now) {
+        for (project, answer) in self.refresh_together(cfg, runner, wanted, &panes, now) {
+            match answer {
                 Ok(Refresh::Unchanged) => {
                     // A skipped read is a successful read: `bdi` knows the
                     // tracker has not moved, so the project is as fresh as if
@@ -175,6 +170,50 @@ impl Collection {
         }
 
         self.draw(cfg, &panes, herdr_state, filter, now)
+    }
+
+    /// One refresh of every project `wanted` names, made together rather
+    /// than in turn, and handed back once the last of them has answered.
+    ///
+    /// The trackers are independent and a read of one is a sequence of round
+    /// trips, so the reads overlap. What comes back is keyed by project and
+    /// drawn in config order, so which tracker answered first is not
+    /// something the screen can see. A read that panics is resumed here, on
+    /// the thread that asked for it, as it would have been had the reads
+    /// been made in turn.
+    fn refresh_together<'a>(
+        &self,
+        cfg: &'a Config,
+        runner: &dyn Runner,
+        wanted: &Wanted,
+        panes: &[Pane],
+        now: DateTime<Utc>,
+    ) -> Vec<(&'a Project, Result<Refresh, RunFailure>)> {
+        std::thread::scope(|reads| {
+            let reading: Vec<_> = cfg
+                .projects
+                .iter()
+                .filter(|p| wanted.names(&p.name))
+                .map(|project| {
+                    let standing = self
+                        .read
+                        .get(&project.name)
+                        .and_then(|read| read.taken_at.clone());
+                    reads.spawn(move || {
+                        let answer =
+                            refresh_project(runner, project, cfg, panes, standing.as_ref(), now);
+                        (project, answer)
+                    })
+                })
+                .collect();
+            reading
+                .into_iter()
+                .map(|read| {
+                    read.join()
+                        .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked))
+                })
+                .collect()
+        })
     }
 
     /// Everything standing, in config order, however much of it this
@@ -275,11 +314,14 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::collect::run::testing::FakeRunner;
+    use crate::collect::run::Env;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::model::anomaly::Anomaly;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Condvar, Mutex};
+    use std::time::Duration;
 
     /// Every way a collection can be asked for, named where a test that reads
     /// the sources can enumerate them.
@@ -447,14 +489,130 @@ mod tests {
         );
     }
 
-    // ---- reading one project at a time ---------------------------------
-
     /// A pane on a bead in one project and a session on none in the other,
     /// so the join has both directions to do across both trackers.
     const PANES_IN_BOTH: &str = r#"{"result":{"agents":[
       {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","display_agent":"x-1.1"},
       {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"idle"}
     ]}}"#;
+
+    /// One call as `Meeting` tells it apart: the directory it was made in
+    /// and its command line.
+    type Made = (PathBuf, String);
+
+    /// The probe is the one call every project's read makes exactly once,
+    /// spelled for the tracker it goes to.
+    fn probe_of(tracker: &str) -> Made {
+        (PathBuf::from(tracker), spelled_in(tracker, PROBE_CALL))
+    }
+
+    /// How long a held call waits for the one it is waiting on before it is
+    /// let go and its wait is written down as spent alone. A read in flight
+    /// beside the one it waits for arrives within a thread spawn of it, so
+    /// only reads made one after the other ever reach this.
+    const ALONE: Duration = Duration::from_secs(5);
+
+    /// A runner that holds a call until another call has been made, and
+    /// remembers each hold that was let go by the clock rather than by the
+    /// arrival it waited for.
+    ///
+    /// Holding each project's probe until the other project's probe has
+    /// arrived is what tells reads made together from reads made in turn,
+    /// without asserting against a clock: two reads in flight together meet
+    /// at their probes, and one made after the other has finished waits
+    /// alone. The deadline is only what a wait that would never end is
+    /// reported in.
+    struct Meeting {
+        inner: FakeRunner,
+        holds: Vec<(Made, Made)>,
+        arrived: Mutex<BTreeSet<Made>>,
+        someone_arrived: Condvar,
+        waited_alone: Mutex<Vec<Made>>,
+    }
+
+    impl Meeting {
+        fn at(inner: FakeRunner) -> Self {
+            Self {
+                inner,
+                holds: Vec::new(),
+                arrived: Mutex::new(BTreeSet::new()),
+                someone_arrived: Condvar::new(),
+                waited_alone: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Hold `held` until `until` has been made.
+        fn holding(mut self, held: Made, until: Made) -> Self {
+            self.holds.push((held, until));
+            self
+        }
+
+        fn waited_alone(&self) -> Vec<Made> {
+            self.waited_alone.lock().unwrap().clone()
+        }
+
+        fn arrived(&self) -> BTreeSet<Made> {
+            self.arrived.lock().unwrap().clone()
+        }
+    }
+
+    impl Runner for Meeting {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            cwd: Option<&Path>,
+            env: &Env,
+        ) -> Result<String, RunFailure> {
+            let this: Made = (
+                cwd.map(Path::to_path_buf).unwrap_or_default(),
+                format!("{program} {}", args.join(" ")),
+            );
+            let mut arrived = self.arrived.lock().unwrap();
+            arrived.insert(this.clone());
+            self.someone_arrived.notify_all();
+            for (_, until) in self.holds.iter().filter(|(held, _)| *held == this) {
+                let (still, waited) = self
+                    .someone_arrived
+                    .wait_timeout_while(arrived, ALONE, |arrived| !arrived.contains(until))
+                    .unwrap();
+                arrived = still;
+                if waited.timed_out() {
+                    self.waited_alone.lock().unwrap().push(this.clone());
+                }
+            }
+            drop(arrived);
+            self.inner.run(program, args, cwd, env)
+        }
+    }
+
+    /// The projects' trackers are independent, and a read of one is a
+    /// sequence of round trips, so the reads are made together rather than
+    /// in turn: the second project's tracker is asked while the first is
+    /// still answering.
+    #[test]
+    fn the_projects_named_are_read_together_rather_than_in_turn() {
+        let runner = Meeting::at(colliding_trackers(PANES_IN_BOTH))
+            .holding(probe_of(ORBITAL), probe_of(FERRY))
+            .holding(probe_of(FERRY), probe_of(ORBITAL));
+
+        collect(&mut Collection::default(), &runner, &Wanted::Everything);
+
+        assert!(
+            runner
+                .arrived()
+                .is_superset(&[probe_of(ORBITAL), probe_of(FERRY)].into()),
+            "both trackers were probed, so a wait spent alone would have been recorded: {:?}",
+            runner.arrived()
+        );
+        assert_eq!(
+            runner.waited_alone(),
+            vec![],
+            "a probe that waited alone was made after the other project's read had finished"
+        );
+    }
+
+    // ---- reading one project at a time ---------------------------------
 
     fn collect(collection: &mut Collection, runner: &dyn Runner, wanted: &Wanted) -> Snapshot {
         collection.collect(&two_projects(), runner, wanted, Filter::All, now())

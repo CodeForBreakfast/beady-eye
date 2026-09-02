@@ -1441,13 +1441,15 @@ orbital = ["bdi-404"]
 
     // ---- several projects at once --------------------------------------
 
+    /// A set rather than a sequence: the projects are read together, so
+    /// which tracker was asked first is not something a read promises.
     #[test]
     fn each_project_reads_its_tracker_in_its_own_directory_with_its_own_credential() {
         let runner = colliding_trackers(r#"{"result":{"agents":[]}}"#);
 
         run(&two_projects(), &runner, Filter::All, now());
 
-        let reads: Vec<(Option<PathBuf>, Option<String>)> = runner
+        let reads: BTreeSet<(Option<PathBuf>, Option<String>)> = runner
             .calls()
             .iter()
             .filter(|c| c.argv.ends_with(TRACKER_CALL))
@@ -1456,7 +1458,7 @@ orbital = ["bdi-404"]
 
         assert_eq!(
             reads,
-            vec![
+            BTreeSet::from([
                 (
                     Some(PathBuf::from(ORBITAL)),
                     Some("orbital-password".to_string())
@@ -1465,7 +1467,7 @@ orbital = ["bdi-404"]
                     Some(PathBuf::from(FERRY)),
                     Some("ferry-password".to_string())
                 ),
-            ]
+            ])
         );
     }
 }
