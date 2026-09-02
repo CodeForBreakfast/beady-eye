@@ -9,6 +9,14 @@ on:
 permissions:
   contents: read
 
+# A push to a pull request's branch supersedes the run on its old head, so
+# that run is cancelled, queued or running. A push to main is never
+# superseded: every squash needs its own verdict, because closing the work
+# behind it reads that run, so those group by sha and share with nothing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   flake-check:
     name: nix flake check

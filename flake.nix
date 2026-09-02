@@ -177,9 +177,11 @@
                                 green because of what landed after you.
             not started yet     Wait. This one resolves on its own.
 
-          A cancelled run is neither green nor red: the commit has no verdict
-          and the run wants starting again. Why runs get cancelled here has not
-          been established, so read no cause into one.
+          A cancelled run is neither green nor red: the commit has no verdict.
+          On a pull request it is the branch moving: a push cancels the run on
+          the head it replaced, and the verdict lives on the new head, which
+          this names. A run cancelled with its head still in place was
+          cancelled by hand and wants starting again.
           USAGE
               exit 0
               ;;
@@ -195,7 +197,7 @@
 
           runs_for() {
             $gh run list --commit "$1" --limit 50 \
-              --json databaseId,headSha,status,conclusion,workflowName,url,createdAt
+              --json databaseId,headSha,headBranch,status,conclusion,workflowName,url,createdAt
           }
 
           runs="$(runs_for "$sha")" || exit 1
@@ -303,8 +305,21 @@
               exit 1
               ;;
             cancelled)
-              echo "NO VERDICT — a run for $subject was cancelled."
-              echo "Cancelled is neither green nor red. Start it again."
+              branch="$(printf '%s' "$latest" |
+                $jq -r 'first(.[] | select(.conclusion == "cancelled")) | .headBranch')"
+              moved="$($gh api "repos/{owner}/{repo}/commits/$subject/pulls" |
+                $jq -r --arg sha "$subject" --arg branch "$branch" \
+                  'first(.[] | select(.head.ref == $branch and .head.sha != $sha)) |
+                   "\(.head.sha) \(.html_url)"')"
+              if [ -n "$moved" ]; then
+                echo "NO VERDICT — the run for $subject was cancelled because $branch"
+                echo "moved on. Its verdict lives on the head that replaced it:"
+                echo "  ''${moved%% *}"
+                echo "  ''${moved#* }"
+                exit 1
+              fi
+              echo "NO VERDICT — a run for $subject was cancelled with $branch still"
+              echo "heading there, so nothing superseded it. Start it again."
               exit 1
               ;;
             skipped)
