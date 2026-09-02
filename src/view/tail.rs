@@ -3,7 +3,7 @@
 use crate::collect::panes::Panes;
 use crate::collect::run::RunFailure;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
-use crate::model::snapshot::{HerdrState, Snapshot};
+use crate::model::snapshot::{ProviderState, Snapshot};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Item};
 use crate::view::phrase;
@@ -105,16 +105,23 @@ fn agent<'a>(snapshot: &'a Snapshot, key: &BeadKey) -> Option<&'a AgentRef> {
     snapshot.node(key)?.agent.as_ref()
 }
 
-/// The tail for whatever the selection points at, before herdr has said
-/// anything about it.
+/// The tail for whatever the selection points at, before the provider has
+/// said anything about it.
 ///
 /// Every way this can come back with no pane says so in `bdi`'s own words.
-/// The order matters: with no herdr there is no pane on any row, so that is
-/// answered before the row is looked at. Where there is a pane, what is left
-/// is the reading, and that is the caller's to ask for.
+/// The order matters: with no provider answering there is no pane on any row,
+/// so that is answered before the row is looked at. Where there is a pane,
+/// what is left is the reading, and that is the caller's to ask for.
+///
+/// The two ways to have no provider are two sentences. A provider that would
+/// not answer is something the reader had and lost; one nobody installed is
+/// the ordinary state of a machine with a tracker and nothing else, and this
+/// band is the one place a run says so.
 pub fn tail(forest: &Forest) -> Tail {
-    if forest.snapshot().herdr == HerdrState::Unavailable {
-        return Tail::Silent(phrase::no_herdr_to_tail());
+    match forest.snapshot().agents.state {
+        ProviderState::NotAnswering => return Tail::Silent(phrase::no_session_to_tail()),
+        ProviderState::Absent => return Tail::Silent(phrase::no_provider_to_tail()),
+        ProviderState::Answering => {}
     }
 
     match target(forest) {
@@ -181,8 +188,8 @@ mod tests {
     use crate::config::Scope;
     use crate::model::join::JoinSource;
     use crate::model::snapshot::{
-        Counts, FailedProject, Filter, LoosePane, Node, TrackerFailure, TrackerState, Tree,
-        UnconfiguredPane,
+        a_provider, Counts, FailedProject, Filter, LoosePane, Node, TrackerFailure, TrackerState,
+        Tree, UnconfiguredPane,
     };
     use crate::model::tree::Link;
     use crate::model::types::{Edge, PaneStatus, Status};
@@ -258,7 +265,7 @@ mod tests {
     /// One tree: a root, two beads one agent is on, and two beads nobody is
     /// on. The pairs are what tell a tail that stands apart from one that
     /// must be read again.
-    fn snapshot(herdr: HerdrState) -> Snapshot {
+    fn snapshot(agents: ProviderState) -> Snapshot {
         let tree = Arc::new(Tree {
             project: "orbital".to_string(),
             root: "orb-7".to_string(),
@@ -296,7 +303,7 @@ mod tests {
 
         Snapshot {
             generated_at: Utc::now(),
-            herdr,
+            agents: a_provider(agents),
             filter: Filter::All,
             trees: vec![Arc::clone(&tree)],
             hidden_trees: Vec::new(),
@@ -314,8 +321,8 @@ mod tests {
     /// The forest with the selection moved down `steps` rows from the header
     /// it starts on.
     /// Steps down from where the forest opens, which is its first root.
-    fn selecting(steps: usize, herdr: HerdrState) -> Forest {
-        let mut forest = forest::flatten(snapshot(herdr));
+    fn selecting(steps: usize, agents: ProviderState) -> Forest {
+        let mut forest = forest::flatten(snapshot(agents));
         for _ in 0..steps {
             forest.apply(Action::Move(Motion::NextRow));
         }
@@ -323,8 +330,8 @@ mod tests {
     }
 
     /// The one line above the first root: its project.
-    fn on_the_project(herdr: HerdrState) -> Forest {
-        let mut forest = forest::flatten(snapshot(herdr));
+    fn on_the_project(agents: ProviderState) -> Forest {
+        let mut forest = forest::flatten(snapshot(agents));
         forest.apply(Action::Move(Motion::FirstRow));
         forest
     }
@@ -334,13 +341,13 @@ mod tests {
     #[test]
     fn the_tail_follows_the_selection() {
         assert_eq!(
-            tail(&selecting(1, HerdrState::Ok)),
+            tail(&selecting(1, ProviderState::Answering)),
             Tail::Reading {
                 pane: "w:p1".to_string()
             }
         );
         assert_eq!(
-            tail(&selecting(2, HerdrState::Ok)),
+            tail(&selecting(2, ProviderState::Answering)),
             Tail::Silent(phrase::no_agent_to_tail()),
             "the row below is a bead nobody is working"
         );
@@ -365,17 +372,33 @@ mod tests {
     #[test]
     fn a_project_line_has_no_pane_to_tail() {
         assert_eq!(
-            tail(&on_the_project(HerdrState::Ok)),
+            tail(&on_the_project(ProviderState::Answering)),
             Tail::Silent(phrase::no_bead_to_tail())
         );
     }
 
     #[test]
-    fn no_herdr_means_no_pane_to_read() {
+    fn a_provider_that_will_not_answer_means_no_pane_to_read() {
         assert_eq!(
-            tail(&selecting(1, HerdrState::Unavailable)),
-            Tail::Silent(phrase::no_herdr_to_tail()),
-            "with no herdr there is no pane on any row, whatever the row says"
+            tail(&selecting(1, ProviderState::NotAnswering)),
+            Tail::Silent(phrase::no_session_to_tail()),
+            "with no session there is no pane on any row, whatever the row says"
+        );
+    }
+
+    /// The band is the one place a run with no provider at all says so, and
+    /// it must not borrow the sentence about a provider that broke: nothing
+    /// broke, and the reader has never had one.
+    #[test]
+    fn no_provider_at_all_is_said_in_its_own_words() {
+        assert_eq!(
+            tail(&selecting(1, ProviderState::Absent)),
+            Tail::Silent(phrase::no_provider_to_tail())
+        );
+        assert_ne!(
+            phrase::no_provider_to_tail(),
+            phrase::no_session_to_tail(),
+            "the two states share a sentence, so the band cannot tell them apart"
         );
     }
 
@@ -414,7 +437,7 @@ mod tests {
     fn enter_focuses_the_pane_the_selection_is_on() {
         let panes = Fake::default();
 
-        focus(&selecting(1, HerdrState::Ok), &panes);
+        focus(&selecting(1, ProviderState::Answering), &panes);
 
         assert_eq!(*panes.focused.borrow(), ["w:p1"]);
     }
@@ -426,7 +449,7 @@ mod tests {
         let panes = Fake::default();
 
         for steps in [0, 2] {
-            focus(&selecting(steps, HerdrState::Ok), &panes);
+            focus(&selecting(steps, ProviderState::Answering), &panes);
         }
 
         assert!(panes.focused.borrow().is_empty());
@@ -446,11 +469,14 @@ mod tests {
     #[test]
     fn the_tail_is_read_again_only_where_the_selection_has_left_the_pane() {
         assert!(
-            !moved_on(&selecting(1, HerdrState::Ok), Some("w:p1")),
+            !moved_on(&selecting(1, ProviderState::Answering), Some("w:p1")),
             "the selection is still on the pane the tail is showing"
         );
-        assert!(moved_on(&selecting(2, HerdrState::Ok), Some("w:p1")));
-        assert!(moved_on(&selecting(1, HerdrState::Ok), None));
+        assert!(moved_on(
+            &selecting(2, ProviderState::Answering),
+            Some("w:p1")
+        ));
+        assert!(moved_on(&selecting(1, ProviderState::Answering), None));
     }
 
     /// A header and a bead nobody is working name no pane between them, and
@@ -458,19 +484,22 @@ mod tests {
     /// the other.
     #[test]
     fn leaving_a_header_for_a_bead_nobody_is_working_is_a_move() {
-        assert!(moved_on(&selecting(2, HerdrState::Ok), None));
+        assert!(moved_on(&selecting(2, ProviderState::Answering), None));
     }
 
     #[test]
     fn moving_between_two_beads_nobody_is_working_is_a_move() {
-        assert!(moved_on(&selecting(3, HerdrState::Ok), None));
+        assert!(moved_on(&selecting(3, ProviderState::Answering), None));
     }
 
     /// One agent can be on more than one bead, and the pane its rows share is
     /// already on screen. This is what the comparison exists for.
     #[test]
     fn two_beads_on_one_pane_do_not_read_it_twice() {
-        assert!(!moved_on(&selecting(4, HerdrState::Ok), Some("w:p1")));
+        assert!(!moved_on(
+            &selecting(4, ProviderState::Answering),
+            Some("w:p1")
+        ));
     }
 
     /// The property stated rather than sampled: wherever `moved_on` says the
@@ -479,12 +508,12 @@ mod tests {
     #[test]
     fn a_tail_that_stands_is_the_tail_the_new_row_calls_for() {
         for from in 0..5 {
-            let was = selecting(from, HerdrState::Ok);
+            let was = selecting(from, ProviderState::Answering);
             let showing = target(&was).pane().map(str::to_string);
             let on_screen = tail(&was);
 
             for onto in 0..5 {
-                let now = selecting(onto, HerdrState::Ok);
+                let now = selecting(onto, ProviderState::Answering);
                 if !moved_on(&now, showing.as_deref()) {
                     assert_eq!(
                         tail(&now),
@@ -573,7 +602,7 @@ mod tests {
     /// claims, all four shapes of conflict, and a project whose tracker never
     /// answered. Five of those lines turn on one pane and four turn on none,
     /// which is what tells a row the tail can follow from a row it cannot.
-    fn snapshot_with_groups(herdr: HerdrState) -> Snapshot {
+    fn snapshot_with_groups(agents: ProviderState) -> Snapshot {
         Snapshot {
             failed_projects: vec![failed_project()],
             unattributed: vec![loose(), another_loose()],
@@ -584,7 +613,7 @@ mod tests {
                 bead_and_pane_disagree(),
                 several_panes_name_one_bead(),
             ],
-            ..snapshot(herdr)
+            ..snapshot(agents)
         }
     }
 
@@ -604,8 +633,8 @@ mod tests {
     /// line before its `if !open { continue; }`, so a shut group is already a
     /// drawn line, and it puts a group's items in as `Content::Item`, so
     /// opening one can never produce another group to open.
-    fn with_groups_open(herdr: HerdrState) -> Forest {
-        let mut forest = forest::flatten(snapshot_with_groups(herdr));
+    fn with_groups_open(agents: ProviderState) -> Forest {
+        let mut forest = forest::flatten(snapshot_with_groups(agents));
         walk::until(
             &mut forest,
             |forest| shut_group(forest).is_none(),
@@ -647,8 +676,8 @@ mod tests {
 
     /// The forest with the selection `steps` rows below the top, every group
     /// open and the row reached by pressing down.
-    fn stepping(steps: usize, herdr: HerdrState) -> Forest {
-        let mut forest = with_groups_open(herdr);
+    fn stepping(steps: usize, agents: ProviderState) -> Forest {
+        let mut forest = with_groups_open(agents);
         forest.apply(Action::Move(Motion::FirstRow));
         for _ in 0..steps {
             forest.apply(Action::Move(Motion::NextRow));
@@ -658,8 +687,8 @@ mod tests {
 
     /// How many rows pressing down from the top reaches, which is every row
     /// drawn or the walk below says which one it stopped at.
-    fn rows(herdr: HerdrState) -> usize {
-        let mut forest = with_groups_open(herdr);
+    fn rows(agents: ProviderState) -> usize {
+        let mut forest = with_groups_open(agents);
         forest.apply(Action::Move(Motion::FirstRow));
         to_the_last_row(&mut forest);
         forest.rows()
@@ -697,7 +726,7 @@ mod tests {
 
     #[test]
     fn a_pane_no_bead_claims_can_be_tailed() {
-        let mut forest = with_groups_open(HerdrState::Ok);
+        let mut forest = with_groups_open(ProviderState::Answering);
 
         for (item, pane) in pane_bearing() {
             step_onto(&mut forest, onto(&item));
@@ -715,7 +744,7 @@ mod tests {
     #[test]
     fn enter_focuses_a_pane_no_bead_claims() {
         let panes = Fake::default();
-        let mut forest = with_groups_open(HerdrState::Ok);
+        let mut forest = with_groups_open(ProviderState::Answering);
 
         for (item, _) in pane_bearing() {
             step_onto(&mut forest, onto(&item));
@@ -733,7 +762,7 @@ mod tests {
     #[test]
     fn a_line_in_a_group_that_turns_on_no_one_pane_is_unchanged() {
         let panes = Fake::default();
-        let mut forest = with_groups_open(HerdrState::Ok);
+        let mut forest = with_groups_open(ProviderState::Answering);
 
         for item in [
             Item::Conflict(bead_and_pane_disagree()),
@@ -758,7 +787,7 @@ mod tests {
     #[test]
     fn a_groups_own_line_names_no_pane() {
         let panes = Fake::default();
-        let mut forest = with_groups_open(HerdrState::Ok);
+        let mut forest = with_groups_open(ProviderState::Answering);
         let kinds: Vec<GroupKind> = forest
             .lines()
             .iter()
@@ -792,7 +821,7 @@ mod tests {
     /// bead's.
     #[test]
     fn the_tail_follows_the_selection_onto_a_loose_pane_and_off_it() {
-        let mut forest = with_groups_open(HerdrState::Ok);
+        let mut forest = with_groups_open(ProviderState::Answering);
         let pane = Item::Loose(loose());
 
         step_onto(&mut forest, onto(&pane));
@@ -829,15 +858,15 @@ mod tests {
     /// happen unseen.
     #[test]
     fn a_tail_that_stands_holds_over_the_groups_too() {
-        let rows = rows(HerdrState::Ok);
+        let rows = rows(ProviderState::Answering);
 
         for from in 0..rows {
-            let was = stepping(from, HerdrState::Ok);
+            let was = stepping(from, ProviderState::Answering);
             let showing = target(&was).pane().map(str::to_string);
             let on_screen = tail(&was);
 
             for onto in 0..rows {
-                let now = stepping(onto, HerdrState::Ok);
+                let now = stepping(onto, ProviderState::Answering);
                 if !moved_on(&now, showing.as_deref()) {
                     assert_eq!(
                         tail(&now),
@@ -853,10 +882,10 @@ mod tests {
     /// its own text is no exception.
     #[test]
     fn no_herdr_means_no_pane_on_a_loose_row_either() {
-        let mut forest = with_groups_open(HerdrState::Unavailable);
+        let mut forest = with_groups_open(ProviderState::NotAnswering);
         step_onto(&mut forest, onto(&Item::Loose(loose())));
 
-        assert_eq!(tail(&forest), Tail::Silent(phrase::no_herdr_to_tail()));
+        assert_eq!(tail(&forest), Tail::Silent(phrase::no_session_to_tail()));
     }
 
     /// A refresh that reorders a group around the selection leaves the
@@ -869,11 +898,11 @@ mod tests {
     /// refresh holds nor the tail that stands over it says this on its own.
     #[test]
     fn a_refresh_that_reorders_a_group_leaves_the_selection_on_the_same_pane() {
-        let mut forest = with_groups_open(HerdrState::Ok);
+        let mut forest = with_groups_open(ProviderState::Answering);
         step_onto(&mut forest, onto(&Item::Loose(loose())));
         assert_eq!(target(&forest).pane(), Some("w:p2"));
 
-        let mut reordered = snapshot_with_groups(HerdrState::Ok);
+        let mut reordered = snapshot_with_groups(ProviderState::Answering);
         reordered.unattributed.reverse();
         reordered.conflicts.reverse();
         forest.refresh(reordered);

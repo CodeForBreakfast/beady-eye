@@ -379,9 +379,11 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::app::run;
+    use crate::collect::agents::testing::{named, pane, Fake as Provider};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
+    use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
     /// A second root, reached only because config or a pane names it: closed,
@@ -509,13 +511,7 @@ orbital = ["orb-4"]
         ]"#;
         let trackers = orbital_with(orbital_holding(listing).also(beads(wisps)));
 
-        let snap = run(
-            &one_project(),
-            &panes_of(r#"{"result":{"agents":[]}}"#),
-            &trackers,
-            Filter::All,
-            now(),
-        );
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
         assert!(
             snap.failed_projects.is_empty(),
@@ -890,13 +886,7 @@ orbital = ["orb-4"]
                  "priority":2,"issue_type":"task"}]"#,
         ));
 
-        let snap = run(
-            &one_project(),
-            &panes_of(r#"{"result":{"agents":[]}}"#),
-            &trackers,
-            Filter::All,
-            now(),
-        );
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7"]);
@@ -973,13 +963,7 @@ orbital = ["orb-4"]
             .with("orbital", colliding_tracker().also(beads(MAST_TREE)))
             .with("ferry", colliding_tracker());
 
-        let snap = run(
-            &cfg,
-            &panes_of(r#"{"result":{"agents":[]}}"#),
-            &trackers,
-            Filter::All,
-            now(),
-        );
+        let snap = run(&cfg, &no_panes(), &trackers, Filter::All, now());
 
         let roots: Vec<(&str, &str)> = snap
             .trees
@@ -1041,19 +1025,16 @@ orbital = ["bdi-404"]
 
     // ---- discovery rule 4: a root only a live pane names ----------------
 
-    /// The only root herdr contributes, and the reason it exists: an agent
+    /// The only root a pane contributes, and the reason it exists: an agent
     /// working off-tree still appears, on a bead no bd status and no
     /// configured key reached. Such a tree has a live agent by construction,
     /// so the live-agent filter can never be what hides it.
     #[test]
     fn a_bead_named_only_by_a_live_pane_becomes_a_root() {
-        let panes = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
-              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-               "display_agent":"orb-4"}
-            ]}}"#,
-        );
+        let panes = Provider::holding(vec![
+            pane("w:p1", ORBITAL, PaneStatus::Working),
+            named(pane("w:p4", ORBITAL, PaneStatus::Working), "orb-4"),
+        ]);
         let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&one_project(), &panes, &trackers, Filter::LiveAgents, now());
@@ -1081,12 +1062,10 @@ orbital = ["bdi-404"]
     /// none of its four questions takes an id.
     #[test]
     fn a_pane_labelled_with_something_that_is_not_a_bead_costs_the_project_nothing() {
-        let panes = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-               "display_agent":"reviewing the docs"}
-            ]}}"#,
-        );
+        let panes = Provider::holding(vec![named(
+            pane("w:p4", ORBITAL, PaneStatus::Working),
+            "reviewing the docs",
+        )]);
 
         let snap = run(&one_project(), &panes, &orbital(), Filter::All, now());
 
@@ -1105,12 +1084,10 @@ orbital = ["bdi-404"]
     /// a tree draws the tree rather than a stray one-node root beside it.
     #[test]
     fn a_pane_naming_a_bead_inside_a_tree_contributes_that_tree_not_the_bead() {
-        let panes = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-               "display_agent":"orb-7.3"}
-            ]}}"#,
-        );
+        let panes = Provider::holding(vec![named(
+            pane("w:p4", ORBITAL, PaneStatus::Working),
+            "orb-7.3",
+        )]);
         // Closed, so discovery never saw it — a seat writing up the bead it
         // has just finished still sits on one.
         let trackers = orbital_with(orbital_tracker().also(beads(
@@ -1136,12 +1113,10 @@ orbital = ["bdi-404"]
     /// not would draw no root for it whichever project the pane was put in.
     #[test]
     fn a_pane_contributes_its_root_only_to_the_project_it_sits_in() {
-        let panes = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-               "display_agent":"orb-4"}
-            ]}}"#,
-        );
+        let panes = Provider::holding(vec![named(
+            pane("w:p4", ORBITAL, PaneStatus::Working),
+            "orb-4",
+        )]);
         let trackers = Fakes::default()
             .with("orbital", colliding_tracker().also(beads(MAST_TREE)))
             .with("ferry", colliding_tracker().also(beads(MAST_TREE)));
@@ -1166,12 +1141,10 @@ orbital = ["bdi-404"]
     /// would draw a root for it.
     #[test]
     fn a_pane_under_no_configured_project_contributes_no_root() {
-        let panes = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p4","cwd":"/srv/elsewhere","agent_status":"working",
-               "display_agent":"orb-4"}
-            ]}}"#,
-        );
+        let panes = Provider::holding(vec![named(
+            pane("w:p4", "/srv/elsewhere", PaneStatus::Working),
+            "orb-4",
+        )]);
         let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&one_project(), &panes, &trackers, Filter::All, now());
@@ -1388,13 +1361,7 @@ orbital = ["orb-404"]
             .with("orbital", orbital_tracker())
             .with("ferry", colliding_tracker());
 
-        let snap = run(
-            &two_projects(),
-            &panes_of(r#"{"result":{"agents":[]}}"#),
-            &trackers,
-            Filter::All,
-            now(),
-        );
+        let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
 
         let roots: Vec<(&str, &str)> = snap
             .trees
@@ -1414,13 +1381,7 @@ orbital = ["orb-404"]
             .unopenable("orbital", FailureKind::Exec)
             .with("ferry", colliding_tracker());
 
-        let snap = run(
-            &two_projects(),
-            &panes_of(r#"{"result":{"agents":[]}}"#),
-            &trackers,
-            Filter::All,
-            now(),
-        );
+        let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
 
         assert_eq!(
             snap.failed_projects,

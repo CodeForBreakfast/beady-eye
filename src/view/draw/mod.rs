@@ -153,7 +153,7 @@ pub fn draw(
 
     frame.render_widget(
         status_bar(
-            &notices(forest.snapshot().herdr, foot.at_startup),
+            &notices(forest.snapshot().agents.state, foot.at_startup),
             foot.copied,
             foot.keys,
             bands.keys.width as usize,
@@ -265,7 +265,8 @@ mod tests {
     use crate::config::Scope;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
-        Counts, Filter, HerdrState, LoosePane, Node, Snapshot, TrackerFailure, TrackerState, Tree,
+        a_provider, Counts, Filter, LoosePane, Node, ProviderState, Snapshot, TrackerFailure,
+        TrackerState, Tree,
     };
     use crate::model::tree::Link;
     use crate::model::types::{Edge, Status};
@@ -436,7 +437,7 @@ mod tests {
     pub(super) fn snapshot(
         trees: Vec<Tree>,
         unattributed: Vec<LoosePane>,
-        herdr: HerdrState,
+        agents: ProviderState,
     ) -> Snapshot {
         // The projects a real collection would have named beside these trees,
         // in the order the trees arrive in.
@@ -450,7 +451,7 @@ mod tests {
 
         Snapshot {
             generated_at: Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap(),
-            herdr,
+            agents: a_provider(agents),
             filter: Filter::All,
             collected: trees.clone(),
             trees,
@@ -600,7 +601,7 @@ mod tests {
         let forest = opened(&snapshot(
             vec![grove(2)],
             Vec::new(),
-            HerdrState::Unavailable,
+            ProviderState::NotAnswering,
         ));
 
         assert_eq!(
@@ -626,7 +627,11 @@ mod tests {
     /// because nothing above the foot is wrong.
     #[test]
     fn a_socket_that_would_not_open_is_said_at_the_foot_of_the_frame() {
-        let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let forest = opened(&snapshot(
+            vec![grove(2)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
 
         assert_eq!(
             frame_with(&forest, &[Notice::NoInboundChannel], &[], 80, 10).rows(),
@@ -650,7 +655,11 @@ mod tests {
     /// matches the line count in the forest.
     #[test]
     fn a_narrow_frame_cuts_every_row_and_wraps_none() {
-        let forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let forest = opened(&snapshot(
+            vec![grove(2)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
         let frame = frame_of(&forest, 24, 10).rows();
 
         assert_eq!(
@@ -672,7 +681,11 @@ mod tests {
     /// the row it is on is drawn.
     #[test]
     fn the_selected_row_is_drawn_wherever_the_selection_has_moved_to() {
-        let mut forest = flatten(snapshot(vec![grove(40)], Vec::new(), HerdrState::Ok));
+        let mut forest = flatten(snapshot(
+            vec![grove(40)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
 
         for motion in [Motion::LastRow, Motion::FirstRow, Motion::HalfScreenDown] {
             forest.apply(Action::Move(motion));
@@ -699,7 +712,11 @@ mod tests {
     /// correct one.
     #[test]
     fn the_row_under_the_cursor_is_the_only_one_drawn_reversed() {
-        let mut forest = opened(&snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let mut forest = opened(&snapshot(
+            vec![grove(2)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
         forest.apply(Action::Move(Motion::FirstRow));
         forest.apply(Action::Move(Motion::NextRow));
         let selected = forest.selected_line();
@@ -732,7 +749,7 @@ mod tests {
         let forest = flatten(snapshot(
             vec![failed],
             vec![pane("wCM:p9", PaneStatus::Working)],
-            HerdrState::Ok,
+            ProviderState::Answering,
         ));
         let frame = frame_of(&forest, 77, 4).rows();
 
@@ -756,7 +773,7 @@ mod tests {
         let forest = flatten(snapshot(
             vec![grove(2), unreadable],
             Vec::new(),
-            HerdrState::Ok,
+            ProviderState::Answering,
         ));
         let frame = frame_of(&forest, 90, 5).rows();
         // The project's own line wears the warning too — one of its roots

@@ -97,26 +97,40 @@ pub enum PaneStatus {
     Other(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// One pane as `bdi` holds it: only the fields it uses. The names are
+/// herdr's, under the terminology rule, and another provider maps into them.
+/// How one spells them on the wire, and which it may leave out, is the
+/// adapter's business.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pane {
     pub pane_id: String,
     pub cwd: PathBuf,
-    #[serde(default)]
     pub display_agent: Option<String>,
-    #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
     pub state_labels: BTreeMap<String, String>,
     pub agent_status: PaneStatus,
     /// Where `cwd` sits in the main working tree of its repository, where
-    /// `cwd` is in a linked worktree. herdr says nothing about it; it is
-    /// read off the worktree after the listing, and a pane read off the
-    /// wire alone has none.
-    #[serde(skip)]
+    /// `cwd` is in a linked worktree. No provider says anything about it; it
+    /// is read off the worktree after the listing, so a pane as a provider
+    /// answered it has none.
     cwd_in_the_main_working_tree: Option<PathBuf>,
 }
 
 impl Pane {
+    /// A pane as a provider answered with it. What it may also have said
+    /// about the pane is public and set after.
+    pub fn answered(pane_id: String, cwd: PathBuf, agent_status: PaneStatus) -> Self {
+        Self {
+            pane_id,
+            cwd,
+            display_agent: None,
+            title: None,
+            state_labels: BTreeMap::new(),
+            agent_status,
+            cwd_in_the_main_working_tree: None,
+        }
+    }
+
     /// This pane, with where its directory sits in the main working tree.
     pub fn with_cwd_in_the_main_working_tree(mut self, cwd: Option<PathBuf>) -> Self {
         self.cwd_in_the_main_working_tree = cwd;

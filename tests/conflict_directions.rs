@@ -20,7 +20,9 @@ use beady_eye::collect::herdr::parse_agent_list;
 use beady_eye::config::Config;
 use beady_eye::model::anomaly::Anomaly;
 use beady_eye::model::join::{resolve, BeadKey, Conflict, ProjectRows};
-use beady_eye::model::snapshot::{self, Collected, Filter, HerdrState, Readiness, Snapshot};
+use beady_eye::model::snapshot::{
+    self, a_provider, Collected, Filter, ProviderState, Readiness, Snapshot,
+};
 use beady_eye::model::tree::Nesting;
 use beady_eye::view::forest;
 use beady_eye::view::lines::{Content, Item};
@@ -158,7 +160,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
             &panes,
             &joined,
             &cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         ),

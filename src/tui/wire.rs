@@ -6,15 +6,16 @@
 //! on. Each source blocks on its own thread so the loop never has to.
 
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 use ratatui::crossterm::event::{self, KeyEventKind, MouseButton, MouseEventKind};
 use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
+use crate::collect::agents::Agents;
 use crate::collect::changes::{self, Reported, Socket};
-use crate::collect::panes::{Herdr, Panes};
-use crate::collect::run::RealRunner;
+use crate::collect::panes::{Aside, Panes};
 use crate::model::snapshot::Snapshot;
 use crate::view::{Motion, Notice};
 
@@ -58,9 +59,9 @@ fn said_at_the_foot(refused: &changes::Refused) -> Notice {
 }
 
 /// The loop's ends: the events it waits on, the channel a collection is asked
-/// for on, herdr to ask what is on a pane, the inbound socket for as long as
-/// there is a view to keep live, and whatever this run of `bdi` has to say
-/// about itself.
+/// for on, the provider to ask what is on a pane, the inbound socket for as
+/// long as there is a view to keep live, and whatever this run of `bdi` has to
+/// say about itself.
 pub(super) type Wired = (
     Receiver<Event>,
     Sender<Wanted>,
@@ -72,15 +73,16 @@ pub(super) type Wired = (
 /// Start everything that produces events, and hand back the loop's ends.
 pub(super) fn wire(
     reported: Reported,
+    agents: Arc<dyn Agents>,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
     asked_to_stop: Signals,
 ) -> Wired {
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
 
-    // herdr's own threads, whose answers come back here like everything
-    // else's: the loop waits on one channel and never on herdr.
-    let panes: Box<dyn Panes> = Box::new(Herdr::new(RealRunner, to_the_loop.clone()));
+    // The provider's own threads, whose answers come back here like everything
+    // else's: the loop waits on one channel and never on the provider.
+    let panes: Box<dyn Panes> = Box::new(Aside::new(agents, to_the_loop.clone()));
 
     let collecting = to_the_loop.clone();
     thread::spawn(move || collector(collect, &asked, &collecting));
@@ -225,7 +227,7 @@ fn keys(to: &Sender<Event>) {
 /// a row, and a wheel notch, which moves the selection. A release, a drag,
 /// bare motion, the other two buttons and the horizontal wheel are each
 /// dropped: none of them names a row the reader is asking for, and
-/// right-click in a herdr pane belongs to herdr's own menu.
+/// right-click in a pane belongs to the terminal's own menu.
 fn incoming(read: event::Event) -> Option<Event> {
     match read {
         event::Event::Key(key) if key.kind == KeyEventKind::Press => Some(Event::Key(key)),

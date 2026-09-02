@@ -4,7 +4,7 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::model::snapshot::HerdrState;
+use crate::model::snapshot::ProviderState;
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::phrase;
 use crate::view::row::WARNING;
@@ -14,15 +14,19 @@ use super::tone::LOOK_AT_THIS;
 
 /// Everything the status bar has to say, in the order it should give it up.
 ///
-/// The herdr one is read off the snapshot behind this frame and can change
+/// The provider's is read off the snapshot behind this frame and can change
 /// under the reader; the rest were settled before the first collection and
 /// hold for the session. Consequence decides the order, not provenance: a
-/// herdr nobody can reach empties the agent column, which is what the reader
-/// came for, so it is the last thing a narrow screen takes away.
-pub(super) fn notices(herdr: HerdrState, at_startup: &[Notice]) -> Vec<Notice> {
-    let collected = match herdr {
-        HerdrState::Ok => None,
-        HerdrState::Unavailable => Some(Notice::NoHerdr),
+/// provider nobody can reach empties the agent column, which is what the
+/// reader came for, so it is the last thing a narrow screen takes away.
+///
+/// A provider nobody installed says nothing here. The reader has lost
+/// nothing — they never had an agent column — and a warning about a program
+/// they have never heard of is a warning they cannot act on.
+pub(super) fn notices(agents: ProviderState, at_startup: &[Notice]) -> Vec<Notice> {
+    let collected = match agents {
+        ProviderState::Answering | ProviderState::Absent => None,
+        ProviderState::NotAnswering => Some(Notice::AgentsUnknown),
     };
 
     collected
@@ -147,7 +151,12 @@ mod tests {
     /// or scrolled away.
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 90), 90, 1).rows();
+        let drawn = Painted::of(
+            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 90),
+            90,
+            1,
+        )
+        .rows();
 
         says(
             &drawn[0],
@@ -181,7 +190,7 @@ mod tests {
     fn a_foot_with_room_says_every_notice_it_is_given() {
         let drawn = Painted::of(
             status_bar(
-                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
                 A_KEY_ROW,
                 200,
@@ -206,7 +215,7 @@ mod tests {
     fn a_narrow_foot_gives_up_the_last_notices_words_first() {
         let drawn = Painted::of(
             status_bar(
-                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
                 A_KEY_ROW,
                 80,
@@ -241,7 +250,7 @@ mod tests {
     #[test]
     fn a_copied_id_is_said_between_a_notice_and_the_keys() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoHerdr], Some("grv-1"), A_KEY_ROW, 120),
+            status_bar(&[Notice::AgentsUnknown], Some("grv-1"), A_KEY_ROW, 120),
             120,
             1,
         )
@@ -274,7 +283,11 @@ mod tests {
     /// project's own fact and it is now said on the project's own line.
     #[test]
     fn the_foot_says_nothing_about_how_fresh_the_rows_above_it_are() {
-        let forest = opened(&snapshot(vec![grove(1)], Vec::new(), HerdrState::Ok));
+        let forest = opened(&snapshot(
+            vec![grove(1)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
 
         let foot = frame_of(&forest, 74, 4).rows().remove(3);
 
@@ -290,7 +303,7 @@ mod tests {
     fn the_narrowest_screen_still_says_the_view_is_polled() {
         let drawn = Painted::of(
             status_bar(
-                &[Notice::NoHerdr, Notice::NoInboundChannel],
+                &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
                 A_KEY_ROW,
                 40,
@@ -372,7 +385,10 @@ mod tests {
     fn the_narrowest_screen_still_says_another_bdi_took_the_channel() {
         let drawn = Painted::of(
             status_bar(
-                &[Notice::NoHerdr, Notice::AnotherBdiHadTheInboundChannel],
+                &[
+                    Notice::AgentsUnknown,
+                    Notice::AnotherBdiHadTheInboundChannel,
+                ],
                 None,
                 A_KEY_ROW,
                 40,
@@ -418,9 +434,22 @@ mod tests {
     #[test]
     fn the_snapshots_notice_outranks_the_sessions() {
         assert_eq!(
-            notices(HerdrState::Unavailable, &[Notice::NoInboundChannel]),
-            vec![Notice::NoHerdr, Notice::NoInboundChannel]
+            notices(ProviderState::NotAnswering, &[Notice::NoInboundChannel]),
+            vec![Notice::AgentsUnknown, Notice::NoInboundChannel]
         );
+    }
+
+    /// A provider nobody installed is not a finding, so it costs the foot
+    /// nothing — while a provider that is installed and will not answer costs
+    /// it the notice above. The two states put the same empty agent column on
+    /// the screen and only one of them is something the reader lost.
+    #[test]
+    fn a_provider_that_was_never_installed_is_not_warned_about() {
+        assert_eq!(
+            notices(ProviderState::Absent, &[Notice::NoInboundChannel]),
+            vec![Notice::NoInboundChannel]
+        );
+        assert_eq!(notices(ProviderState::Absent, &[]), Vec::new());
     }
 
     /// A session fact reaches the foot whether or not the collection behind
@@ -429,21 +458,26 @@ mod tests {
     #[test]
     fn a_session_notice_stands_alone_where_the_snapshot_is_well() {
         assert_eq!(
-            notices(HerdrState::Ok, &[Notice::NoInboundChannel]),
+            notices(ProviderState::Answering, &[Notice::NoInboundChannel]),
             vec![Notice::NoInboundChannel]
         );
     }
 
     #[test]
     fn a_session_with_nothing_wrong_leaves_the_foot_to_the_keys() {
-        assert_eq!(notices(HerdrState::Ok, &[]), Vec::new());
+        assert_eq!(notices(ProviderState::Answering, &[]), Vec::new());
     }
 
     /// Keys can be rediscovered; a herdr that is silently absent cannot. So on
     /// a screen too narrow for both, the keys are what gives way.
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(
+            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 60),
+            60,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
         assert_eq!(drawn[0].chars().count(), 60);
@@ -455,7 +489,12 @@ mod tests {
     /// row that cannot be drawn whole is not drawn.
     #[test]
     fn a_foot_too_narrow_for_the_whole_key_row_draws_none_of_it() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(
+            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 60),
+            60,
+            1,
+        )
+        .rows();
 
         assert_eq!(
             drawn[0].trim_end(),
@@ -468,7 +507,12 @@ mod tests {
     /// a reader could press.
     #[test]
     fn the_narrowest_screen_draws_no_part_of_the_key_row_beside_a_notice() {
-        let drawn = Painted::of(status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, 40), 40, 1).rows();
+        let drawn = Painted::of(
+            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 40),
+            40,
+            1,
+        )
+        .rows();
 
         assert_eq!(drawn[0].trim_end(), "⚠ agents unknown");
     }
@@ -480,7 +524,7 @@ mod tests {
         let fits = notice.chars().count() + GAP + A_KEY_ROW.chars().count();
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[Notice::NoHerdr], None, A_KEY_ROW, width),
+                status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, width),
                 width as u16,
                 1,
             )

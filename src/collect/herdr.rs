@@ -1,10 +1,17 @@
-//! Everything `bdi` asks herdr: the panes on this machine, what one of them
-//! last drew, and putting the user in front of it.
+//! herdr's command line as the way to the panes on this machine.
+//!
+//! The one module that spells `herdr agent …` or reads its envelope. Each
+//! question the seam asks is one herdr invocation, answered in herdr's own
+//! JSON and parsed here and nowhere else.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::collect::agents::Agents;
 use crate::collect::run::{Env, RunFailure, Runner};
-use crate::model::types::Pane;
+use crate::model::types::{Pane, PaneStatus};
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -13,21 +20,79 @@ struct Envelope {
 
 #[derive(Deserialize)]
 struct AgentList {
-    agents: Vec<Pane>,
+    agents: Vec<Agent>,
+}
+
+/// One pane as herdr writes it.
+///
+/// The field names are herdr's and stay so on `Pane`, under the terminology
+/// rule — another provider maps into them. What is herdr's alone is the shape
+/// on the wire: which of them it may leave out, which is what the defaults
+/// here say.
+#[derive(Deserialize)]
+struct Agent {
+    pane_id: String,
+    cwd: PathBuf,
+    #[serde(default)]
+    display_agent: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    state_labels: BTreeMap<String, String>,
+    agent_status: PaneStatus,
+}
+
+impl From<Agent> for Pane {
+    fn from(agent: Agent) -> Self {
+        let mut pane = Pane::answered(agent.pane_id, agent.cwd, agent.agent_status);
+        pane.display_agent = agent.display_agent;
+        pane.title = agent.title;
+        pane.state_labels = agent.state_labels;
+        pane
+    }
 }
 
 /// Parse the output of `herdr agent list`.
 pub fn parse_agent_list(s: &str) -> anyhow::Result<Vec<Pane>> {
     let envelope: Envelope = serde_json::from_str(s)?;
-    Ok(envelope.result.agents)
+    Ok(envelope.result.agents.into_iter().map(Pane::from).collect())
+}
+
+/// herdr as the provider of a run's panes, reached through one runner.
+pub struct Herdr<'r> {
+    runner: &'r dyn Runner,
+}
+
+impl<'r> Herdr<'r> {
+    pub fn new(runner: &'r dyn Runner) -> Self {
+        Self { runner }
+    }
+}
+
+impl Agents for Herdr<'_> {
+    fn name(&self) -> &'static str {
+        "herdr"
+    }
+
+    fn list(&self) -> Result<Vec<Pane>, RunFailure> {
+        agent_list(self.runner)
+    }
+
+    fn read(&self, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
+        agent_read(self.runner, pane, lines)
+    }
+
+    fn focus(&self, pane: &str) -> Result<(), RunFailure> {
+        agent_focus(self.runner, pane)
+    }
 }
 
 /// `herdr agent list`, which answers with JSON and needs no flag to.
 ///
 /// It reports on the whole machine, so it is asked once and takes no
 /// project's directory or credential. A failure here is not fatal: the caller
-/// degrades to the beads-only tier.
-pub fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
+/// degrades to a tier with no panes in it.
+fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
     let out = runner.run("herdr", &["agent", "list"], None, &Env::new())?;
     parse_agent_list(&out).map_err(|e| RunFailure::parse("herdr", e))
 }
@@ -46,7 +111,7 @@ pub fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
 /// With its styling, as SGR sequences in the rows: what the pane drew is the
 /// colour it drew it in, and the tail reads that off the text where it draws
 /// it. Every row is wrapped at the pane's own width, and ends `\r\n`.
-pub fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
+fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
     let lines = lines.to_string();
     let out = runner.run(
         "herdr",
@@ -60,7 +125,7 @@ pub fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<Str
 }
 
 /// `herdr agent focus <pane>` — the only write `bdi` performs.
-pub fn agent_focus(runner: &dyn Runner, pane: &str) -> Result<(), RunFailure> {
+fn agent_focus(runner: &dyn Runner, pane: &str) -> Result<(), RunFailure> {
     runner.run("herdr", &["agent", "focus", pane], None, &Env::new())?;
     Ok(())
 }
@@ -322,11 +387,15 @@ mod tests {
         assert_eq!(lines, Vec::<String>::new());
     }
 
+    /// Asked through the seam, because that is the only way anything reaches
+    /// this: `focus` is the one question no other test puts to the adapter,
+    /// and a `focus` that never ran herdr answers `Ok(())` exactly as this
+    /// one does. The call it left on the runner is what tells them apart.
     #[test]
-    fn agent_focus_names_the_pane_and_nothing_else() {
+    fn a_focus_through_the_seam_names_the_pane_and_nothing_else() {
         let runner = FakeRunner::default().with("herdr agent focus wCW:p6", "");
 
-        agent_focus(&runner, "wCW:p6").expect("herdr answers");
+        Herdr::new(&runner).focus("wCW:p6").expect("herdr answers");
 
         let call = runner.call("herdr agent focus wCW:p6");
         assert_eq!(call.cwd, None);

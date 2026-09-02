@@ -376,6 +376,14 @@ impl Driven {
 
     /// Everything `bdi` has written so far, for a test whose subject is what
     /// was never written — a wait can only say what arrived.
+    ///
+    /// Its stderr as well as its screen: both ends are the one pty, and the
+    /// lines `bdi` writes before it opens the alternate screen are in here
+    /// with the frames. So a test asserting that a phrase is **absent** is
+    /// asserting it of both, and a word the screen never draws can still be
+    /// in here — `bdi` names the session and the runtime directory on stderr
+    /// when it cannot open its inbound socket, which is every run on a
+    /// machine with no `XDG_RUNTIME_DIR`, which is the build sandbox.
     pub fn everything(&self) -> Vec<u8> {
         self.said
             .lock()

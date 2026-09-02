@@ -198,9 +198,49 @@ impl ShimmedTracker {
 /// them — bar `direnv`, which the suite runs without. All three live in the
 /// one directory, so all three are shadowed together whichever of them a
 /// test came for.
+///
+/// It prepends, so nothing here takes a program off `PATH`: the real binary
+/// is still behind the shim, which is what lets a shim hand on to it. A test
+/// asserting what `bdi` does with a program **absent** cannot use this, and
+/// cannot tell that it did not: on a machine that has the program it would be
+/// testing the shim, and on one that does not it would pass without having
+/// established anything. Both are green. `shims_first_with_nothing_called`
+/// below is what an absence test wants.
 pub fn shims_first_on_path() -> (String, String) {
     let inherited = std::env::var("PATH").unwrap_or_default();
     ("PATH".to_string(), format!("{SHIMS}:{inherited}"))
+}
+
+/// The same, with `absent` on `PATH` nowhere: not shimmed, and not behind the
+/// shims either.
+///
+/// The shims are linked into a directory of their own under `beside`, minus
+/// the one named, because a program cannot be taken off `PATH` while the
+/// directory it shares with the others is on it. Every directory of the
+/// inherited `PATH` that holds one is dropped as well, which is the half that
+/// makes the answer the same on a machine that has the program and one that
+/// never did.
+pub fn shims_first_with_nothing_called(absent: &str, beside: &Path) -> (String, String) {
+    let ours = beside.join(format!("shims-without-{absent}"));
+    std::fs::create_dir_all(&ours).expect("the directory is ours to make");
+    for shim in std::fs::read_dir(SHIMS).expect("the shims are where they are written down") {
+        let shim = shim.expect("the shim directory is readable").path();
+        let named = ours.join(shim.file_name().expect("a shim is a file"));
+        if shim.ends_with(absent) || named.exists() {
+            continue;
+        }
+        std::os::unix::fs::symlink(&shim, &named).expect("the link is ours to make");
+    }
+
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let elsewhere: Vec<&str> = inherited
+        .split(':')
+        .filter(|directory| !Path::new(directory).join(absent).exists())
+        .collect();
+    (
+        "PATH".to_string(),
+        format!("{}:{}", ours.display(), elsewhere.join(":")),
+    )
 }
 
 /// A `herdr` that reports the session a test wrote down, and holds its pane

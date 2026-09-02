@@ -15,6 +15,7 @@ use std::path::Path;
 
 use beady_eye::collect::bd;
 use beady_eye::collect::environment::CREDENTIAL_VAR;
+use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::Env;
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
@@ -83,7 +84,13 @@ fn now() -> DateTime<Utc> {
 /// that was made.
 fn calls_made_reading(config: &str, runner: &Canned) -> Vec<Call> {
     let cfg = Config::from_toml(config).expect("the config parses");
-    beady_eye::app::run(&cfg, runner, &bd::Cli::new(runner), Filter::All, now());
+    beady_eye::app::run(
+        &cfg,
+        &Herdr::new(runner),
+        &bd::Cli::new(runner),
+        Filter::All,
+        now(),
+    );
     runner.calls()
 }
 

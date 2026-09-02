@@ -13,20 +13,21 @@ pub use collection::{run, Awaited, Collection, Wanted};
 
 /// The fake trackers and panes both halves read in their tests.
 ///
-/// Every tracker here answers in beads and sets, which is what the seam
-/// carries, so a test on either side of it is reading the same tracker rather
-/// than its own idea of one — and none of them knows how a real one is asked.
+/// Every tracker here answers in beads and sets, and every provider in panes,
+/// which is what each seam carries — so a test on either side of one is
+/// reading the same thing rather than its own idea of it, and none of them
+/// knows how a real one is asked.
 #[cfg(test)]
 mod fixtures {
     use chrono::{DateTime, Utc};
 
+    use crate::collect::agents::testing::{pane, titled, Fake as Provider};
     use crate::collect::bd::parse_beads;
-    use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Fake, Fakes};
     use crate::config::Config;
     use crate::model::snapshot::{Node, Tree};
-    use crate::model::types::Bead;
+    use crate::model::types::{Bead, PaneStatus};
 
     pub(super) const ORBITAL: &str = "/srv/work/orbital";
     pub(super) const FERRY: &str = "/srv/work/ferry";
@@ -56,10 +57,17 @@ mod fixtures {
     ]"#;
 
     /// `w:p1` is on a bead; `w:p9` is a session on none.
-    pub(super) const PANES: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"},
-      {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"idle"}
-    ]}}"#;
+    pub(super) fn panes() -> Provider {
+        Provider::holding(vec![
+            titled(pane("w:p1", ORBITAL, PaneStatus::Working), "the dish"),
+            pane("w:p9", ORBITAL, PaneStatus::Idle),
+        ])
+    }
+
+    /// A provider that is there and holds no pane at all.
+    pub(super) fn no_panes() -> Provider {
+        Provider::holding(Vec::new())
+    }
 
     /// Rows as a test writes them, read into the beads a tracker answers with.
     pub(super) fn beads(rows: &str) -> Vec<Bead> {
@@ -117,16 +125,6 @@ path = "{FERRY}"
     /// The one project's trackers as a healthy run finds them.
     pub(super) fn orbital() -> Fakes {
         orbital_with(orbital_tracker())
-    }
-
-    /// The herdr session answering with `agents`.
-    pub(super) fn panes_of(agents: &str) -> FakeRunner {
-        FakeRunner::default().with("herdr agent list", agents)
-    }
-
-    /// The herdr session as a healthy run finds it.
-    pub(super) fn panes() -> FakeRunner {
-        panes_of(PANES)
     }
 
     /// One of the two trackers that chose the same prefix.

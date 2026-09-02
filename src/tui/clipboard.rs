@@ -2,7 +2,8 @@
 //! outside `bdi`.
 //!
 //! OSC 52 is the escape sequence a terminal takes a clipboard write on. It
-//! travels through herdr and ssh the way the rest of what `bdi` draws does,
+//! travels through a multiplexer and ssh the way the rest of what `bdi` draws
+//! does,
 //! which a clipboard program would not, and a terminal that does not honour
 //! it drops the sequence — so the write can do nothing, and cannot fail for
 //! that.

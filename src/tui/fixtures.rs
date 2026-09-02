@@ -11,7 +11,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::app::{Awaited, Wanted};
 use crate::config::Scope;
-use crate::model::snapshot::{Filter, HerdrState, Snapshot, TrackerFailure, Tree};
+use crate::model::snapshot::{a_provider, Filter, ProviderState, Snapshot, TrackerFailure, Tree};
 
 /// Long enough that a thread which was going to report has, and short
 /// enough that a test waiting in vain is not a hang.
@@ -57,7 +57,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
 
     Snapshot {
         generated_at: Utc::now(),
-        herdr: HerdrState::Ok,
+        agents: a_provider(ProviderState::Answering),
         filter: Filter::LiveAgents,
         trees: vec![Arc::clone(&tree)],
         hidden_trees: Vec::new(),

@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use beady_eye::app;
 use beady_eye::collect::bd;
+use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::RealRunner;
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::{Filter, Snapshot, Tree};
@@ -143,7 +144,7 @@ fn rows_and_keystrokes_over_the_configured_trackers() {
     let started = Instant::now();
     let snapshot = app::run(
         &cfg,
-        &RealRunner,
+        &Herdr::new(&RealRunner),
         &bd::Cli::new(&RealRunner),
         Filter::LiveAgents,
         Utc::now(),

@@ -92,8 +92,10 @@ pub enum Action {
 /// third kind needs no third path to the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
-    /// There is no herdr to ask about liveness, so no row can show an agent.
-    NoHerdr,
+    /// The agent provider is installed and would not answer, so no row can
+    /// show an agent. A provider nobody installed is not this: nothing was
+    /// lost, so there is nothing to say.
+    AgentsUnknown,
     /// Nothing can tell `bdi` a project has changed, so every project is
     /// polled on the refresh interval and the view is as stale as that.
     NoInboundChannel,

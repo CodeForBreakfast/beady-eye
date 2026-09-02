@@ -4,14 +4,17 @@
 use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 
+use crate::collect::agents::Agents;
 use crate::collect::bd;
 use crate::collect::discovery;
+use crate::collect::herdr;
 use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
 use crate::model::snapshot::Filter;
@@ -169,7 +172,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     if cli.json {
         let snapshot = crate::app::run(
             &cfg,
-            &RealRunner,
+            &herdr::Herdr::new(&RealRunner as &dyn Runner),
             &bd::Cli::new(&RealRunner),
             filter,
             Utc::now(),
@@ -193,14 +196,19 @@ pub fn run() -> anyhow::Result<ExitCode> {
         .collect();
     let mut collection = crate::app::Collection::default();
     let trackers = bd::Cli::new(&RealRunner);
+    // One provider for the run, asked by the collection on its thread and by
+    // the tail on another. Which one it is is chosen here and nowhere below.
+    let agents: Arc<dyn Agents> = Arc::new(herdr::Herdr::new(&RealRunner as &dyn Runner));
+    let listing = Arc::clone(&agents);
     crate::tui::run(
         patience,
         tail_every,
         filter,
         cfg.scope.clone(),
         projects,
+        agents,
         Box::new(move |wanted| {
-            collection.collect(&cfg, &RealRunner, &trackers, wanted, filter, Utc::now())
+            collection.collect(&cfg, &listing, &trackers, wanted, filter, Utc::now())
         }),
     )?;
 

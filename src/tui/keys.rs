@@ -69,7 +69,7 @@ pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: &[alone(KeyCode::Char('f'), "f")],
         action: Action::Focus,
-        does: "focus the selected bead's pane in herdr",
+        does: "focus the selected bead's pane",
         hint: None,
     },
     Binding {

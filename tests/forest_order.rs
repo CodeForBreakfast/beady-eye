@@ -7,6 +7,7 @@
 //! loose beads whose ids sort ahead of both efforts that hold work.
 
 use beady_eye::collect::bd::parse_beads;
+use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::tracker::testing::{Fake, Fakes};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
@@ -43,7 +44,7 @@ fn now() -> DateTime<Utc> {
 fn roots(filter: Filter) -> Vec<String> {
     let cfg = Config::from_toml(CONFIG).expect("the config parses");
     let panes = Canned::default().answering("herdr agent list", PANES);
-    let snapshot = beady_eye::app::run(&cfg, &panes, &trackers(), filter, now());
+    let snapshot = beady_eye::app::run(&cfg, &Herdr::new(&panes), &trackers(), filter, now());
     snapshot
         .trees
         .iter()

@@ -580,7 +580,8 @@ mod tests {
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::snapshot;
     use crate::model::snapshot::{
-        build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure, TrackerState,
+        a_provider, build_tree, Collected, FailedProject, ProviderState, Readiness, TrackerFailure,
+        TrackerState, A_PROVIDER,
     };
     use crate::model::tree::{self, Assembled, Nesting};
     use crate::model::types::Pane;
@@ -1122,7 +1123,7 @@ credential_command = "secret harbour"
             &panes,
             &joined,
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             filter,
             now(),
         )
@@ -1555,7 +1556,7 @@ credential_command = "secret harbour"
             panes,
             &joined,
             &cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         )
@@ -1774,7 +1775,7 @@ credential_command = "secret harbour"
             panes,
             &joined,
             &cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         )
@@ -3447,7 +3448,7 @@ credential_command = "secret harbour"
                 conflicts: Vec::new(),
             },
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::LiveAgents,
             now(),
         );
@@ -3939,7 +3940,7 @@ credential_command = "secret harbour"
             panes,
             &joined,
             &cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::LiveAgents,
             now(),
         )
@@ -3961,6 +3962,7 @@ credential_command = "secret harbour"
     fn a_run_that_has_read_nothing_yet_draws_a_line_for_every_configured_project() {
         let awaiting = Snapshot::awaiting(
             vec!["orbital".to_string(), "ferry".to_string()],
+            A_PROVIDER,
             Scope::Everything,
             Filter::LiveAgents,
             now(),
@@ -4002,6 +4004,7 @@ credential_command = "secret harbour"
     fn the_first_frame_already_says_the_directory_chose() {
         let chosen = Snapshot::awaiting(
             vec!["orbital".to_string()],
+            A_PROVIDER,
             Scope::Directory {
                 project: "orbital".to_string(),
                 widened: Vec::new(),
@@ -4023,6 +4026,7 @@ credential_command = "secret harbour"
         for scope in [Scope::Everything, Scope::Asked(vec!["orbital".to_string()])] {
             let awaiting = Snapshot::awaiting(
                 vec!["orbital".to_string()],
+                A_PROVIDER,
                 scope,
                 Filter::LiveAgents,
                 now(),
@@ -4045,6 +4049,7 @@ credential_command = "secret harbour"
             read_at: std::collections::BTreeMap::from([("orbital".to_string(), now())]),
             ..Snapshot::awaiting(
                 vec!["orbital".to_string()],
+                A_PROVIDER,
                 Scope::Everything,
                 Filter::LiveAgents,
                 now(),

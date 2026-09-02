@@ -104,7 +104,7 @@ mod tests {
 
     use crate::model::anomaly::Anomaly;
     use crate::model::snapshot::{
-        Counts, FailedProject, Filter, HerdrState, HiddenTree, TrackerFailure,
+        Counts, FailedProject, Filter, HiddenTree, ProviderState, TrackerFailure,
     };
     use crate::model::types::Status;
     use crate::view::draw::tests::*;
@@ -153,7 +153,7 @@ mod tests {
         hidden.children = under_the_root(&beads);
         hidden.beads = beads;
 
-        let mut snapshot = snapshot(Vec::new(), Vec::new(), HerdrState::Ok);
+        let mut snapshot = snapshot(Vec::new(), Vec::new(), ProviderState::Answering);
         snapshot.filter = Filter::LiveAgents;
         snapshot.hidden_trees = vec![HiddenTree::of(&hidden)];
         let frame = frame_of(&flatten(snapshot), 64, 2).rows();

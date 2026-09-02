@@ -88,7 +88,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use crate::model::snapshot::HerdrState;
+    use crate::model::snapshot::ProviderState;
     use crate::view::draw::tests::*;
     use crate::view::{Action, Motion};
 
@@ -219,7 +219,11 @@ mod tests {
     fn every_row_of_the_forest_names_the_line_drawn_on_it() {
         let (width, height) = (60, 24);
         let band = regions(Rect::new(0, 0, width, height)).forest;
-        let mut forest = opened(&snapshot(vec![grove(40)], Vec::new(), HerdrState::Ok));
+        let mut forest = opened(&snapshot(
+            vec![grove(40)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
         forest.set_half_screen(half_screen(band));
         forest.apply(Action::Move(Motion::HalfScreenDown));
 

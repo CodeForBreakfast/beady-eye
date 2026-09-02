@@ -26,13 +26,60 @@ use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link};
 use crate::model::types::{Edge, PaneStatus, Status};
 
-/// Which tier `bdi` is reading: with no herdr there are no panes, so there is
+/// Which agent provider this run read, and how that went.
+///
+/// Which tier `bdi` is reading follows from the state: with no panes there is
 /// no agent to join and no filter to apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct AgentProvider {
+    /// What the provider calls itself, so a consumer knows which one was
+    /// asked without being told separately.
+    pub provider: &'static str,
+    pub state: ProviderState,
+}
+
+impl AgentProvider {
+    pub fn answering(provider: &'static str) -> Self {
+        Self {
+            provider,
+            state: ProviderState::Answering,
+        }
+    }
+}
+
+/// What a provider is called where a test does not care which one answered.
+#[cfg(feature = "testing")]
+pub const A_PROVIDER: &str = "a provider";
+
+/// One of the three states, over a provider a test does not name.
+///
+/// Which provider answered changes nothing the model decides or the view
+/// draws — only the state does — so a test about either says the state and
+/// leaves the name alone.
+#[cfg(feature = "testing")]
+pub fn a_provider(state: ProviderState) -> AgentProvider {
+    AgentProvider {
+        provider: A_PROVIDER,
+        state,
+    }
+}
+
+/// How a run's agent provider went.
+///
+/// Three states rather than two, because a machine with no provider is not a
+/// machine whose provider stopped working. *Absent* is where every reader
+/// with a tracker and nothing else stands, and it is not a finding: "degrade,
+/// never disappear" is about something the reader has that broke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum HerdrState {
-    Ok,
-    Unavailable,
+pub enum ProviderState {
+    /// It answered, so the panes are every pane there is.
+    Answering,
+    /// It is installed and did not answer. A finding, said at the foot.
+    NotAnswering,
+    /// Nothing is installed to answer. Said once, in the tail band, and
+    /// nowhere else.
+    Absent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -310,7 +357,7 @@ pub struct UnconfiguredPane {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
     pub generated_at: DateTime<Utc>,
-    pub herdr: HerdrState,
+    pub agents: AgentProvider,
     pub filter: Filter,
     /// The trees the filter shows, each shared with `collected` rather than
     /// copied out of it: a filter is a display choice, and a shown tree is
@@ -374,18 +421,19 @@ impl Snapshot {
     /// one this frame is built with is the one every later collection is
     /// shown through.
     ///
-    /// herdr reads as `Ok` because nothing has asked it. `Unavailable` is a
-    /// finding, and drawing it here would put a notice about herdr on the
-    /// screen before `bdi` had spoken to herdr at all.
+    /// The provider reads as answering because nothing has asked it. Either
+    /// other state is something to say on the screen, and saying it here
+    /// would say it before `bdi` had spoken to the provider at all.
     pub fn awaiting(
         projects: Vec<String>,
+        provider: &'static str,
         scope: Scope,
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Self {
         Snapshot {
             generated_at: now,
-            herdr: HerdrState::Ok,
+            agents: AgentProvider::answering(provider),
             filter,
             trees: Vec::new(),
             hidden_trees: Vec::new(),
@@ -605,7 +653,7 @@ render = "⏸ waiting"
             &panes,
             &joined,
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             filter,
             now(),
         )
@@ -621,7 +669,8 @@ render = "⏸ waiting"
         let json: serde_json::Value = serde_json::to_value(&snap).expect("the snapshot serialises");
 
         assert_eq!(json["generated_at"], "2026-08-30T12:00:00Z");
-        assert_eq!(json["herdr"], "ok");
+        assert_eq!(json["agents"]["provider"], A_PROVIDER);
+        assert_eq!(json["agents"]["state"], "answering");
         assert_eq!(json["filter"], "live-agents");
         assert!(
             json.get("scope").is_none(),
@@ -694,7 +743,7 @@ render = "⏸ waiting"
             &[],
             &Joined::default(),
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::LiveAgents,
             now(),
         );
@@ -715,7 +764,7 @@ render = "⏸ waiting"
             &[],
             &Joined::default(),
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         );

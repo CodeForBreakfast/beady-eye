@@ -16,7 +16,7 @@ use crate::model::types::Pane;
 
 use super::filter::{in_flight_first, partition};
 use super::{
-    Collected, Counts, Filter, HerdrState, LoosePane, Node, Readiness, Snapshot, TrackerState,
+    AgentProvider, Collected, Counts, Filter, LoosePane, Node, Readiness, Snapshot, TrackerState,
     Tree, UnconfiguredPane,
 };
 
@@ -96,7 +96,7 @@ pub fn build(
     panes: &[Pane],
     joined: &Joined,
     cfg: &Config,
-    herdr: HerdrState,
+    agents: AgentProvider,
     filter: Filter,
     now: DateTime<Utc>,
 ) -> Snapshot {
@@ -107,7 +107,7 @@ pub fn build(
     } = collected;
     in_flight_first(&mut trees);
     let trees: Vec<Arc<Tree>> = trees.into_iter().map(Arc::new).collect();
-    let (shown, hidden) = partition(&trees, herdr, filter);
+    let (shown, hidden) = partition(&trees, agents.state, filter);
 
     let (mut unattributed, mut unconfigured) = (Vec::new(), Vec::new());
     for pane in join::unattributed(panes, joined) {
@@ -132,7 +132,7 @@ pub fn build(
 
     Snapshot {
         generated_at: now,
-        herdr,
+        agents,
         filter,
         trees: shown,
         hidden_trees: hidden,
@@ -157,6 +157,7 @@ mod tests {
     use crate::model::edges::relations;
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource};
     use crate::model::snapshot::tests::*;
+    use crate::model::snapshot::{a_provider, ProviderState};
     use crate::model::snapshot::{FailedProject, TrackerFailure};
     use crate::model::tree::unroll;
     use crate::model::types::{Edge, PaneStatus, Status};
@@ -596,7 +597,7 @@ mod tests {
             &panes,
             &joined,
             &cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         );
@@ -630,7 +631,7 @@ mod tests {
             panes,
             &joined,
             cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         )
@@ -679,7 +680,7 @@ mod tests {
             &[],
             &joined,
             &cfg,
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         );
@@ -709,7 +710,7 @@ mod tests {
             &p,
             &j,
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::LiveAgents,
             now(),
         );
@@ -750,7 +751,7 @@ mod tests {
             &[],
             &Joined::default(),
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::LiveAgents,
             now(),
         );

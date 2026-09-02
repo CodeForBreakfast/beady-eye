@@ -3,6 +3,7 @@
 //! One concern, and it is an ordering: what `bdi` starts, in the order it
 //! has to start it in. `run` below says why that order is the one it is.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -11,6 +12,7 @@ use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
+use crate::collect::agents::Agents;
 use crate::collect::changes::Reported;
 use crate::config::Scope;
 use crate::model::snapshot::{Filter, Snapshot};
@@ -35,7 +37,7 @@ use wire::wire;
 /// `patience` is how long a read may go unanswered before the project it
 /// names says its rows have stopped coming rather than that they are on
 /// their way. `tail_every` is how long the band under the forest waits after
-/// herdr answers before asking for the selected pane again.
+/// the provider answers before asking for the selected pane again.
 ///
 /// The screen opens on the projects the config names, before any of them has
 /// been read, and every collection — the first one included — runs on a
@@ -61,6 +63,7 @@ pub fn run(
     filter: Filter,
     scope: Scope,
     armed: Vec<Armed>,
+    agents: Arc<dyn Agents>,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
     // Taken here rather than on the thread that waits on them, so that they
@@ -73,11 +76,11 @@ pub fn run(
         .iter()
         .map(|project| project.project().to_string())
         .collect();
-    let awaiting = Snapshot::awaiting(projects.clone(), scope, filter, Utc::now());
+    let awaiting = Snapshot::awaiting(projects.clone(), agents.name(), scope, filter, Utc::now());
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
     let (events, ask, panes, _socket, at_startup) =
-        wire(Reported::watching(projects), collect, asked_to_stop);
+        wire(Reported::watching(projects), agents, collect, asked_to_stop);
     // Asked for before the screen is opened, so the collection is under way
     // while ratatui is still taking the terminal, and the first frame drawn
     // already carries the mark saying every project is being read. A forest

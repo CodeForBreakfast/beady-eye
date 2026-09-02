@@ -42,11 +42,12 @@ struct Shown {
     clipboard: Box<dyn io::Write>,
     tail: Tail,
     /// The pane the band on screen is about, so a selection moving within it
-    /// does not spend a herdr call on the answer already drawn.
+    /// does not spend a call on the provider for the answer already drawn.
     tailing: Option<String>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
-    /// How long after herdr answers the pane on the band is asked for again.
+    /// How long after the provider answers the pane on the band is asked for
+    /// again.
     every: Duration,
     /// When the pane on the band is next asked for, or nothing while a read
     /// of it is out or the band names no pane. Armed by the answer that
@@ -82,8 +83,8 @@ struct Shown {
 
 /// Where the band under the forest is with the read it is waiting on.
 ///
-/// At most one is ever out, so what a reader moving faster than herdr answers
-/// costs is a run of answers dropped rather than a herdr call per keystroke.
+/// At most one is ever out, so what a reader moving faster than the provider
+/// answers costs is a run of answers dropped rather than a call per keystroke.
 /// An answer is the answer to what was drawn when it was asked for, and what
 /// is drawn moves on when the cursor lands on another pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +126,7 @@ impl Shown {
             viewing: None,
         };
         // Asked for here rather than waited for: the first frame is drawn on
-        // the answer to this arriving, not on herdr getting round to it.
+        // the answer to this arriving, not on the provider getting round to it.
         shown.ask();
         shown
     }
@@ -182,10 +183,10 @@ impl Shown {
             .min()
     }
 
-    /// Put the band on whatever the selection is on now, and ask herdr for
+    /// Put the band on whatever the selection is on now, and ask the provider for
     /// the pane where it is on one.
     ///
-    /// Whatever herdr is already answering was asked for the band this
+    /// Whatever the provider is already answering was asked for the band this
     /// replaces, so it is superseded here, and a read the band it replaces
     /// was due is not due any more.
     fn retail(&mut self) {
@@ -198,10 +199,10 @@ impl Shown {
         self.ask();
     }
 
-    /// Ask herdr for the pane the band is waiting on, where it is waiting on
-    /// one and herdr has not been asked already.
+    /// Ask the provider for the pane the band is waiting on, where it is
+    /// waiting on one and it has not been asked already.
     ///
-    /// A reader holding an arrow key down moves faster than a slow herdr
+    /// A reader holding an arrow key down moves faster than a slow provider
     /// answers, so every answer arrives about a screen they have already left
     /// and is dropped; the band goes on naming the pane it is waiting for
     /// until the cursor rests long enough for one answer to land. That is the
@@ -229,7 +230,8 @@ impl Shown {
         }
     }
 
-    /// Ask herdr for a pane. Nothing is due while the answer is on its way;
+    /// Ask the provider for a pane. Nothing is due while the answer is on its
+    /// way;
     /// what arms the next read is that answer landing.
     fn read(&mut self, pane: String) {
         self.panes.read(&pane, tail::LINES);
@@ -245,7 +247,7 @@ impl Shown {
             .map(|due| (due - now).to_std().unwrap_or(Duration::ZERO))
     }
 
-    /// Take what herdr said, reporting whether the screen is any different
+    /// Take what the provider said, reporting whether the screen is any different
     /// for it.
     fn tailed(&mut self, answer: Answer, now: DateTime<Utc>) -> bool {
         match answer {
@@ -319,8 +321,8 @@ impl Shown {
     fn apply(&mut self, action: Action) -> bool {
         // Asking for the selected bead's pane to be brought to the front
         // changes nothing on this screen, and a row with no pane is a no-op:
-        // there is nothing to focus and nothing has gone wrong. What herdr
-        // makes of it arrives as an answer like a reading does.
+        // there is nothing to focus and nothing has gone wrong. What the
+        // provider makes of it arrives as an answer like a reading does.
         if action == Action::Focus {
             tail::focus(&self.forest, self.panes.as_ref());
             return false;
@@ -582,7 +584,9 @@ mod tests {
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::config::Scope;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
-    use crate::model::snapshot::{Counts, Filter, HerdrState, Node, TrackerState, Tree};
+    use crate::model::snapshot::{
+        a_provider, Counts, Filter, Node, ProviderState, TrackerState, Tree,
+    };
     use crate::model::tree::Link;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
@@ -675,7 +679,7 @@ mod tests {
             window_inner(80, 8),
             vec![
                 "  Enter     show the selected bead, or focus its pane from the bead view",
-                "  f         focus the selected bead's pane in herdr",
+                "  f         focus the selected bead's pane",
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
@@ -757,7 +761,7 @@ mod tests {
             window_inner(80, 24),
             vec![
                 "  Enter     show the selected bead, or focus its pane from the bead view",
-                "  f         focus the selected bead's pane in herdr",
+                "  f         focus the selected bead's pane",
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
@@ -899,7 +903,7 @@ mod tests {
     fn a_snapshot_of(trees: Vec<Arc<Tree>>) -> Snapshot {
         Snapshot {
             generated_at: Utc::now(),
-            herdr: HerdrState::Ok,
+            agents: a_provider(ProviderState::Answering),
             filter: Filter::LiveAgents,
             trees: trees.clone(),
             hidden_trees: Vec::new(),
@@ -1039,10 +1043,10 @@ mod tests {
         );
     }
 
-    /// herdr, remembering what it was asked and answering nothing.
+    /// The provider, remembering what it was asked and answering nothing.
     ///
     /// Nothing here answers, because nothing in `Shown` waits for an answer:
-    /// what herdr said arrives through `tailed`, and a test hands it one
+    /// what the provider said arrives through `tailed`, and a test hands it one
     /// itself, whenever it likes and about whichever pane it likes.
     #[derive(Clone, Default)]
     struct Asking {
@@ -1082,7 +1086,7 @@ mod tests {
         }
     }
 
-    /// What herdr said about a pane it read.
+    /// What the provider said about a pane it read.
     fn read(pane: &str, lines: &[&str]) -> Answer {
         Answer::Read {
             pane: pane.to_string(),
@@ -1194,13 +1198,13 @@ mod tests {
         assert_eq!(shown.forest.selected_line(), at_end);
     }
 
-    /// herdr refusing to bring a pane to the front.
+    /// The provider refusing to bring a pane to the front.
     fn refused(pane: &str) -> Answer {
         Answer::Focused {
             pane: pane.to_string(),
             focused: Err(RunFailure {
                 kind: FailureKind::Gone,
-                program: "herdr".to_string(),
+                program: "a provider".to_string(),
                 detail: "the test said so".to_string(),
             }),
         }
@@ -1237,7 +1241,7 @@ mod tests {
         )
     }
 
-    /// The same, with the record of what herdr was asked kept beside it.
+    /// The same, with the record of what the provider was asked kept beside it.
     fn shown_asking(snapshot: Snapshot) -> (Shown, Asking) {
         let panes = Asking::default();
         (
@@ -1914,7 +1918,7 @@ mod tests {
         assert_eq!(forest_band(&mut shown, 60, 24), folded);
     }
 
-    /// The screen opens on what the band has to say while herdr is still
+    /// The screen opens on what the band has to say while the provider is still
     /// answering, and asks for the reading rather than waiting on it. The
     /// startup path used to pay the whole of `PATIENCE` before the first
     /// frame, on a screen that had nothing to announce it with.
@@ -1936,9 +1940,9 @@ mod tests {
     }
 
     /// A bead nobody is working names no pane, so there is nothing to ask
-    /// herdr and the band says so on its own.
+    /// the provider and the band says so on its own.
     #[test]
-    fn a_row_with_no_pane_asks_herdr_nothing() {
+    fn a_row_with_no_pane_asks_the_provider_nothing() {
         let (shown, panes) = shown_asking(a_grove(6));
 
         assert_eq!(shown.tail, Tail::Silent(phrase::no_agent_to_tail()));
@@ -1946,7 +1950,7 @@ mod tests {
     }
 
     #[test]
-    fn what_herdr_read_for_the_pane_selected_is_what_the_band_shows() {
+    fn what_was_read_for_the_pane_selected_is_what_the_band_shows() {
         let (mut shown, _) = shown_asking(a_staffed_grove(6));
 
         assert!(shown.tailed(read(A_SELECTED_PANE, &["rebuilt .#thinkpad"]), an_instant()));
@@ -1960,9 +1964,9 @@ mod tests {
         );
     }
 
-    /// A reader holding an arrow key down moves faster than a slow herdr
+    /// A reader holding an arrow key down moves faster than a slow provider
     /// answers. Every move asks for the pane it landed on, but only one
-    /// question is ever out, so what a run of keystrokes costs is one herdr
+    /// question is ever out, so what a run of keystrokes costs is one
     /// call — not one per key — and the band goes on naming the pane it is
     /// waiting for.
     ///
@@ -1971,7 +1975,7 @@ mod tests {
     /// answers every one of these moves at once, and the rows under the
     /// forest arrive when the cursor rests long enough for an answer to land.
     #[test]
-    fn moving_faster_than_herdr_answers_costs_one_read_at_a_time() {
+    fn moving_faster_than_the_provider_answers_costs_one_read_at_a_time() {
         let (mut shown, panes) = shown_asking(a_staffed_grove(6));
         let opened_on = panes.reads();
 
@@ -2012,13 +2016,13 @@ mod tests {
         assert_eq!(
             panes.reads(),
             [opened_on, vec![format!("{resting_on} {}", tail::LINES)]].concat(),
-            "and that pane is what herdr is asked for next"
+            "and that pane is what the provider is asked for next"
         );
     }
 
     /// The pane is read on the band's own clock and not on the collection's:
     /// a collection landing under the same pane leaves the rows on the band
-    /// standing and asks herdr for nothing.
+    /// standing and asks the provider for nothing.
     ///
     /// It used to be the other way — the collection was the tick the pane
     /// was re-read on, and a read out when it landed was superseded so the
@@ -2036,7 +2040,7 @@ mod tests {
         assert_eq!(
             panes.reads(),
             opened_on,
-            "the collection asked herdr for nothing"
+            "the collection asked the provider for nothing"
         );
         assert_eq!(
             shown.tail,
@@ -2218,7 +2222,7 @@ mod tests {
         );
     }
 
-    /// `⏎` asks herdr for the pane and nothing on this screen changes for it:
+    /// `⏎` asks for the pane and nothing on this screen changes for it:
     /// what changes is which terminal pane is in front of the reader.
     #[test]
     fn enter_asks_for_the_pane_and_draws_nothing() {

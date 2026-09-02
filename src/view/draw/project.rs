@@ -186,7 +186,7 @@ mod tests {
     use crate::model::anomaly::Anomaly;
     use std::sync::Arc;
 
-    use crate::model::snapshot::{HerdrState, LoosePane, Node, Snapshot, TrackerFailure, Tree};
+    use crate::model::snapshot::{LoosePane, Node, ProviderState, Snapshot, TrackerFailure, Tree};
     use crate::model::types::{PaneStatus, Status};
     use crate::view::draw::tone::status_colour;
     use crate::view::draw::{fitted, tests::*};
@@ -238,7 +238,11 @@ mod tests {
             ..tree("harbour", "qua-1", "moor the barge", counts(0, 0, 0, 0))
         };
 
-        let mut snapshot = snapshot(vec![grove(1), harbour], Vec::new(), HerdrState::Ok);
+        let mut snapshot = snapshot(
+            vec![grove(1), harbour],
+            Vec::new(),
+            ProviderState::Answering,
+        );
         snapshot.read_at.insert("harbour".to_string(), read_at());
         snapshot
     }
@@ -780,7 +784,11 @@ mod tests {
     /// out, so the mappings stay in the one place each owns.
     #[test]
     fn a_root_is_drawn_with_its_own_status_glyph_like_any_other_bead() {
-        let forest = flatten(snapshot(vec![grove(2)], Vec::new(), HerdrState::Ok));
+        let forest = flatten(snapshot(
+            vec![grove(2)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
         let root = &forest.lines()[1];
 
         let painted = Painted::of(fitted(root, 12, &at_rest()), 60, 1).row(0);

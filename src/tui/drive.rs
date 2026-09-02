@@ -37,7 +37,7 @@ pub(super) enum Event {
     Changed(Wanted),
     /// A collection has come back.
     Collected(Box<Snapshot>),
-    /// herdr has said what is on a pane, or would not say.
+    /// The provider has said what is on a pane, or would not say.
     Tailed(Answer),
     /// Something outside has asked `bdi` to stop.
     ///
@@ -48,7 +48,8 @@ pub(super) enum Event {
     Signalled,
 }
 
-/// Every answer herdr gives reaches the loop as one of these, which is the
+/// Every answer the provider gives reaches the loop as one of these, which is
+/// the
 /// whole of what `collect::panes` knows about the loop: it is handed a
 /// `Sender` and told nothing about where it goes.
 impl From<Answer> for Event {
@@ -112,12 +113,12 @@ pub(super) trait View {
     /// turning would stand until some unrelated event arrived.
     fn holds_for(&self, drawn_at: DateTime<Utc>) -> Option<Duration>;
 
-    /// Take what herdr said about a pane it was asked to read or to focus,
+    /// Take what the provider said about a pane it was asked to read or to focus,
     /// reporting whether the screen has changed. `now` is when the answer
     /// landed, which is what the next read of that pane is timed from.
     fn tailed(&mut self, answer: Answer, now: DateTime<Utc>) -> bool;
 
-    /// Ask herdr for the pane the band is showing again, where the band has
+    /// Ask the provider for the pane the band is showing again, where the band has
     /// been showing it for its interval. Nothing on the screen changes for
     /// the ask: the rows stand until the answer lands.
     ///

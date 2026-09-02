@@ -9,15 +9,15 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::collect::herdr;
-use crate::collect::run::{RunFailure, Runner};
+use crate::collect::agents::Agents;
+use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::Trackers;
 use crate::collect::worktree;
 use crate::config::{Config, Project};
 use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
-    self, Collected, FailedProject, Filter, HerdrState, Snapshot, TrackerFailure, TrackerState,
-    Tree,
+    self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Snapshot, TrackerFailure,
+    TrackerState, Tree,
 };
 use crate::model::types::Pane;
 
@@ -132,22 +132,31 @@ impl Collection {
     pub fn collect(
         &mut self,
         cfg: &Config,
-        runner: &dyn Runner,
+        agents: &dyn Agents,
         trackers: &dyn Trackers,
         wanted: &Wanted,
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Snapshot {
-        // herdr is the second tier: without it there is no agent to join and
-        // no filter to apply, and every tracker still reads.
+        // The provider is the second tier: without its panes there is no agent
+        // to join and no filter to apply, and every tracker still reads.
         //
         // Read again however few projects `wanted` names: it is one local
         // call, the join it feeds is across every project, and a project with
         // a producer is never polled — so a refresh naming it is the only
         // chance the agent join gets.
-        let (panes, herdr_state) = match herdr::agent_list(runner) {
-            Ok(panes) => (panes.into_iter().map(placed).collect(), HerdrState::Ok),
-            Err(_) => (Vec::new(), HerdrState::Unavailable),
+        let (panes, provider) = match agents.list() {
+            Ok(panes) => (
+                panes.into_iter().map(placed).collect(),
+                AgentProvider::answering(agents.name()),
+            ),
+            Err(failure) => (
+                Vec::new(),
+                AgentProvider {
+                    provider: agents.name(),
+                    state: unlistable(failure.kind),
+                },
+            ),
         };
 
         for (project, answer) in self.refresh_together(cfg, trackers, wanted, &panes, now) {
@@ -188,7 +197,7 @@ impl Collection {
             }
         }
 
-        self.draw(cfg, &panes, herdr_state, filter, now)
+        self.draw(cfg, &panes, provider, filter, now)
     }
 
     /// One refresh of every project `wanted` names, made together rather
@@ -240,7 +249,7 @@ impl Collection {
         &self,
         cfg: &Config,
         panes: &[Pane],
-        herdr_state: HerdrState,
+        agents: AgentProvider,
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Snapshot {
@@ -302,7 +311,7 @@ impl Collection {
             panes,
             joined,
             cfg,
-            herdr_state,
+            agents,
             filter,
             now,
         )
@@ -326,23 +335,43 @@ impl Collection {
     }
 }
 
-/// Read every configured tracker and, where there is one, the herdr session,
-/// and draw the result.
+/// What a failed listing says about the provider that failed it.
+///
+/// The line `collect::discovery` draws for bd, drawn again here: `Exec` is
+/// raised where a process is spawned and nowhere else, so it is the one
+/// failure that means nothing was installed to run. Every other failure is a
+/// provider that is installed and did not answer, which is a finding.
+fn unlistable(kind: FailureKind) -> ProviderState {
+    match kind {
+        FailureKind::Exec => ProviderState::Absent,
+        FailureKind::Auth
+        | FailureKind::Unavailable
+        | FailureKind::Gone
+        | FailureKind::Busy
+        | FailureKind::Parse
+        | FailureKind::Unsupported
+        | FailureKind::UnknownFlag => ProviderState::NotAnswering,
+    }
+}
+
+/// Read every configured tracker and the agent provider, and draw the result.
 pub fn run(
     cfg: &Config,
-    runner: &dyn Runner,
+    agents: &dyn Agents,
     trackers: &dyn Trackers,
     filter: Filter,
     now: DateTime<Utc>,
 ) -> Snapshot {
-    Collection::default().collect(cfg, runner, trackers, &Wanted::Everything, filter, now)
+    Collection::default().collect(cfg, agents, trackers, &Wanted::Everything, filter, now)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::fixtures::*;
-    use crate::collect::run::testing::FakeRunner;
+    use crate::collect::agents::testing::{
+        named, pane, Asked as AskedOfTheProvider, Fake as Provider, THE_FAKE,
+    };
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::collect::tracker::Tracker;
@@ -448,12 +477,15 @@ mod tests {
 
     // ---- degradation ---------------------------------------------------
 
+    /// A provider that is installed and would not answer, which is the only
+    /// state that costs the foot a notice.
     #[test]
-    fn without_herdr_the_snapshot_says_so_and_still_draws_every_tree() {
-        let no_session = FakeRunner::default().failing(
-            "herdr agent list",
-            RunFailure::exec("herdr", "no such session"),
-        );
+    fn a_provider_that_will_not_answer_is_said_and_every_tree_still_draws() {
+        let no_session = Provider::unlistable(RunFailure {
+            kind: FailureKind::Unavailable,
+            program: "a provider".to_string(),
+            detail: "no such session".to_string(),
+        });
 
         let snap = run(
             &one_project(),
@@ -463,15 +495,46 @@ mod tests {
             now(),
         );
 
-        assert_eq!(snap.herdr, HerdrState::Unavailable);
+        assert_eq!(snap.agents.state, ProviderState::NotAnswering);
         assert_eq!(snap.trees.len(), 1, "trees draw without liveness");
         assert!(snap.trees[0].beads.iter().all(|n| n.agent.is_none()));
         assert!(snap.unattributed.is_empty());
     }
 
+    /// A machine with nothing to provide agents. It draws exactly as the
+    /// unanswering one does and says something else about why, because a
+    /// provider nobody installed is not a provider that broke.
+    #[test]
+    fn a_provider_that_was_never_installed_is_absent_and_every_tree_still_draws() {
+        let nothing = Provider::unlistable(RunFailure::exec(THE_FAKE, "No such file or directory"));
+
+        let snap = run(
+            &one_project(),
+            &nothing,
+            &orbital(),
+            Filter::LiveAgents,
+            now(),
+        );
+
+        assert_eq!(snap.agents.state, ProviderState::Absent);
+        assert_eq!(snap.agents.provider, THE_FAKE);
+        assert_eq!(snap.trees.len(), 1, "trees draw with no provider at all");
+        assert!(snap.trees[0].beads.iter().all(|n| n.agent.is_none()));
+        assert!(snap.unattributed.is_empty());
+    }
+
+    /// A provider that answered and holds no pane is neither of those: it
+    /// answered, so the panes it gave are all the panes there are.
+    #[test]
+    fn a_provider_holding_no_pane_has_still_answered() {
+        let snap = run(&one_project(), &no_panes(), &orbital(), Filter::All, now());
+
+        assert_eq!(snap.agents.state, ProviderState::Answering);
+    }
+
     #[test]
     fn a_tree_with_no_live_agent_is_reported_rather_than_dropped() {
-        let nobody = panes_of(r#"{"result":{"agents":[]}}"#);
+        let nobody = no_panes();
         let trackers = orbital_with(
             Fake::holding(beads(UNSTAFFED_TREE))
                 .ready(["orb-7.2"])
@@ -515,12 +578,10 @@ mod tests {
     /// against the tracker its directory sits in and no other.
     #[test]
     fn a_pane_joins_only_the_project_its_directory_sits_in() {
-        let panes = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
-               "display_agent":"x-1.1"}
-            ]}}"#,
-        );
+        let panes = Provider::holding(vec![named(
+            pane("w:p1", ORBITAL, PaneStatus::Working),
+            "x-1.1",
+        )]);
 
         let snap = run(
             &two_projects(),
@@ -542,10 +603,12 @@ mod tests {
 
     /// A pane on a bead in one project and a session on none in the other,
     /// so the join has both directions to do across both trackers.
-    const PANES_IN_BOTH: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","display_agent":"x-1.1"},
-      {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"idle"}
-    ]}}"#;
+    fn panes_in_both() -> Provider {
+        Provider::holding(vec![
+            named(pane("w:p1", ORBITAL, PaneStatus::Working), "x-1.1"),
+            pane("w:p2", FERRY, PaneStatus::Idle),
+        ])
+    }
 
     /// How long a held fingerprint waits for the one it is waiting on before
     /// it is let go and its wait is written down as spent alone. A read in
@@ -664,7 +727,7 @@ mod tests {
 
         collect(
             &mut Collection::default(),
-            &panes_of(PANES_IN_BOTH),
+            &panes_in_both(),
             &trackers,
             &Wanted::Everything,
         );
@@ -685,13 +748,13 @@ mod tests {
 
     fn collect(
         collection: &mut Collection,
-        runner: &dyn Runner,
+        agents: &dyn Agents,
         trackers: &dyn Trackers,
         wanted: &Wanted,
     ) -> Snapshot {
         collection.collect(
             &two_projects(),
-            runner,
+            agents,
             trackers,
             wanted,
             Filter::All,
@@ -759,9 +822,12 @@ mod tests {
 
     /// A pane sitting in orbital with a bead's id on it, which is a root the
     /// tracker was never asked about.
-    const PANE_ON_A_BEAD: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","display_agent":"orb-7.2"}
-    ]}}"#;
+    fn pane_on_a_bead() -> Provider {
+        Provider::holding(vec![named(
+            pane("w:p1", ORBITAL, PaneStatus::Working),
+            "orb-7.2",
+        )])
+    }
 
     // ---- the refresh gate ----------------------------------------------
 
@@ -1218,7 +1284,7 @@ mod tests {
         let again = orbital();
         standing.collect(
             &cfg,
-            &panes_of(PANE_ON_A_BEAD),
+            &pane_on_a_bead(),
             &again,
             &orbital_alone(),
             Filter::All,
@@ -1268,7 +1334,7 @@ mod tests {
 
         let snap = Collection::default().collect(
             &scoped,
-            &panes_of(PANES_IN_BOTH),
+            &panes_in_both(),
             &colliding_trackers(),
             &Wanted::Everything,
             Filter::All,
@@ -1307,14 +1373,15 @@ path = "{}"
         .expect("the config parses")
     }
 
-    /// A herdr answering with one idle pane sitting in `cwd`.
-    fn a_pane_sitting_in(cwd: &Path) -> FakeRunner {
-        panes_of(&format!(
-            r#"{{"result":{{"agents":[
-              {{"pane_id":"w:p2","cwd":"{}","agent_status":"idle"}}
-            ]}}}}"#,
-            cwd.display()
-        ))
+    /// A provider answering with one idle pane sitting in `cwd`, with no
+    /// main-tree place on it — which is every pane as a provider answers,
+    /// and what the collection has to translate.
+    fn a_pane_sitting_in(cwd: &Path) -> Provider {
+        Provider::holding(vec![pane(
+            "w:p2",
+            &cwd.display().to_string(),
+            PaneStatus::Idle,
+        )])
     }
 
     /// A pane in a linked worktree, outside every configured path: nothing
@@ -1358,27 +1425,22 @@ path = "{}"
     /// working tree is what keeps another desktop's work off this screen
     /// instead of reporting it as a directory nobody configured.
     ///
-    /// And nothing ran to work that out. `FakeRunner` panics on any command
-    /// it was not staged with, so the calls it recorded are the whole of
-    /// what `bdi` executed: one listing, asked from nowhere in particular.
+    /// And nothing was asked to work that out beyond the listing. The
+    /// collection is handed a provider and no runner, so what the provider
+    /// recorded is the whole of what `bdi` put to anything.
     #[test]
     fn a_pane_in_an_excluded_projects_linked_worktree_is_placed_without_running_anything() {
         let fixture = a_linked_worktree_git_made("collection-linked-worktree-excluded");
         let cfg = orbital_and_ferry_at(&fixture.checkout)
             .scoped_to(&["orbital".to_string()])
             .expect("orbital is configured");
-        let runner = a_pane_sitting_in(&fixture.linked);
+        let provider = a_pane_sitting_in(&fixture.linked);
 
-        let snap = run(&cfg, &runner, &colliding_trackers(), Filter::All, now());
+        let snap = run(&cfg, &provider, &colliding_trackers(), Filter::All, now());
 
         assert_eq!(snap.unattributed, vec![]);
         assert_eq!(snap.unconfigured, vec![]);
-        let ran: Vec<(String, Option<PathBuf>)> = runner
-            .calls()
-            .into_iter()
-            .map(|call| (call.argv, call.cwd))
-            .collect();
-        assert_eq!(ran, vec![("herdr agent list".to_string(), None)]);
+        assert_eq!(provider.asked(), vec![AskedOfTheProvider::List]);
     }
 
     /// The view draws one project line over each run of a project's trees, so
@@ -1393,7 +1455,7 @@ path = "{}"
     fn every_projects_trees_arrive_together_and_in_the_order_the_config_names() {
         let snap = collect(
             &mut Collection::default(),
-            &panes_of(PANES_IN_BOTH),
+            &panes_in_both(),
             &colliding_trackers(),
             &Wanted::Everything,
         );
@@ -1420,7 +1482,7 @@ path = "{}"
     /// able to disagree about what is on the screen.
     #[test]
     fn refreshing_one_project_gives_the_snapshot_a_whole_rebuild_would_have() {
-        let panes = panes_of(PANES_IN_BOTH);
+        let panes = panes_in_both();
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
         collect(&mut standing, &panes, &trackers, &Wanted::Everything);
@@ -1440,7 +1502,7 @@ path = "{}"
     /// changed is not read again.
     #[test]
     fn refreshing_one_project_asks_no_other_projects_tracker() {
-        let panes = panes_of(PANES_IN_BOTH);
+        let panes = panes_in_both();
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
         collect(&mut standing, &panes, &trackers, &Wanted::Everything);
@@ -1459,6 +1521,33 @@ path = "{}"
         );
     }
 
+    /// The refresh gate reaches the trackers and stops there. A provider
+    /// reports on the whole machine rather than on a project, so a collection
+    /// asks it for its panes once — reading two projects, and reading the one
+    /// a refresh named.
+    #[test]
+    fn a_collection_asks_the_provider_for_its_panes_once() {
+        let panes = panes_in_both();
+        let trackers = colliding_trackers();
+        let mut standing = Collection::default();
+
+        collect(&mut standing, &panes, &trackers, &Wanted::Everything);
+
+        assert_eq!(
+            panes.asked(),
+            vec![AskedOfTheProvider::List],
+            "two projects were read, and the machine holding them was asked once"
+        );
+
+        collect(&mut standing, &panes, &trackers, &orbital_alone());
+
+        assert_eq!(
+            panes.asked(),
+            vec![AskedOfTheProvider::List, AskedOfTheProvider::List],
+            "a refresh naming one project reads every pane on the machine, once"
+        );
+    }
+
     /// The property scoping exists for, one layer up from the refresh: a
     /// project the config no longer names is a project whose tracker is never
     /// asked, however whole the collection asking is.
@@ -1471,7 +1560,7 @@ path = "{}"
 
         Collection::default().collect(
             &scoped,
-            &panes_of(PANES_IN_BOTH),
+            &panes_in_both(),
             &trackers,
             &Wanted::Everything,
             Filter::All,
@@ -1494,7 +1583,7 @@ path = "{}"
     /// read, so a tracker that fails mid-refresh cannot cost them anything.
     #[test]
     fn a_tracker_that_fails_while_one_project_refreshes_leaves_the_others_drawn() {
-        let panes = panes_of(PANES_IN_BOTH);
+        let panes = panes_in_both();
         let mut standing = Collection::default();
         let before = collect(
             &mut standing,
@@ -1524,28 +1613,21 @@ path = "{}"
     }
 
     /// A project something reports for is never polled, so a refresh naming
-    /// it is the only chance the agent join gets. The herdr session is read
+    /// it is the only chance the agent join gets. The provider is read
     /// again whatever a refresh names — it is one local call, and the join it
     /// feeds runs across every project by design. What a refresh leaves alone
     /// is the trackers it did not name, not the panes.
     #[test]
-    fn a_refresh_naming_one_project_still_reads_the_herdr_session() {
+    fn a_refresh_naming_one_project_still_reads_the_provider() {
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
-        let before = collect(
-            &mut standing,
-            &panes_of(r#"{"result":{"agents":[]}}"#),
-            &trackers,
-            &Wanted::Everything,
-        );
+        let before = collect(&mut standing, &no_panes(), &trackers, &Wanted::Everything);
         assert!(node(tree_of(&before, "ferry"), "x-1.1").agent.is_none());
 
-        let arrived = panes_of(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"working",
-               "display_agent":"x-1.1"}
-            ]}}"#,
-        );
+        let arrived = Provider::holding(vec![named(
+            pane("w:p2", FERRY, PaneStatus::Working),
+            "x-1.1",
+        )]);
         let after = collect(&mut standing, &arrived, &trackers, &orbital_alone());
 
         assert!(
@@ -1561,7 +1643,7 @@ path = "{}"
     /// that never happened.
     #[test]
     fn a_refresh_naming_one_project_dates_that_project_and_leaves_the_rest_alone() {
-        let panes = panes_of(PANES_IN_BOTH);
+        let panes = panes_in_both();
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
         let cfg = two_projects();
@@ -1607,7 +1689,7 @@ path = "{}"
     /// the other direction.
     #[test]
     fn a_read_that_failed_is_still_dated_by_the_attempt_that_failed() {
-        let panes = panes_of(PANES_IN_BOTH);
+        let panes = panes_in_both();
         let mut standing = Collection::default();
         let cfg = two_projects();
         let earlier = now();

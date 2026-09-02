@@ -2,6 +2,7 @@
 //! binary's model through the one public entry point a consumer sees.
 
 use beady_eye::collect::bd::parse_beads;
+use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::FailureKind;
 use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
@@ -203,7 +204,10 @@ fn the_json_carries_the_contract_fields() {
     let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
 
     assert_eq!(emitted["generated_at"], "2026-08-30T12:00:00Z");
-    assert_eq!(emitted["herdr"], "ok");
+    assert_eq!(
+        emitted["agents"],
+        json!({"provider": "herdr", "state": "answering"})
+    );
     assert_eq!(emitted["filter"], "live-agents");
     assert_eq!(emitted["hidden_trees"], json!([]));
     assert_eq!(emitted["failed_projects"], json!([]));
@@ -531,17 +535,40 @@ fn a_trackers_own_words_never_reach_the_json() {
     }
 }
 
+/// A machine with no herdr installed. `Exec` is the failure of a program that
+/// never ran, so the contract says the provider is absent rather than that
+/// something the reader had has broken.
 #[test]
-fn without_herdr_the_json_says_so_and_still_carries_every_tree() {
-    let no_session = Canned::default().failing("herdr agent list", FailureKind::Exec);
+fn with_no_provider_installed_the_json_says_absent_and_still_carries_every_tree() {
+    let nothing = Canned::default().failing("herdr agent list", FailureKind::Exec);
 
-    let emitted = emit(&no_session, &orbital(), Filter::LiveAgents);
+    let emitted = emit(&nothing, &orbital(), Filter::LiveAgents);
 
-    assert_eq!(emitted["herdr"], "unavailable");
+    assert_eq!(
+        emitted["agents"],
+        json!({"provider": "herdr", "state": "absent"})
+    );
     assert_eq!(emitted["trees"][0]["root"], "orb-7");
     assert_eq!(emitted["trees"][0]["counts"]["live_agents"], 0);
     assert_eq!(emitted["unattributed"], json!([]));
     assert_eq!(emitted["conflicts"], json!([]));
+}
+
+/// The same forest, and the other reason for it: herdr is installed and would
+/// not answer. Every tree still draws, and a consumer can tell the two apart
+/// because only this one is a finding.
+#[test]
+fn a_provider_that_will_not_answer_is_told_apart_from_one_that_is_not_there() {
+    let no_session = Canned::default().failing("herdr agent list", FailureKind::Unavailable);
+
+    let emitted = emit(&no_session, &orbital(), Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["agents"],
+        json!({"provider": "herdr", "state": "not-answering"})
+    );
+    assert_eq!(emitted["trees"][0]["root"], "orb-7");
+    assert_eq!(emitted["trees"][0]["counts"]["live_agents"], 0);
 }
 
 /// A filtered tree is reported, never dropped.
@@ -626,7 +653,7 @@ fn panes_across() -> Canned {
 }
 
 fn emit_over(cfg: &Config, runner: &Canned, trackers: &Fakes, filter: Filter) -> Value {
-    let snapshot = beady_eye::app::run(cfg, runner, trackers, filter, now());
+    let snapshot = beady_eye::app::run(cfg, &Herdr::new(runner), trackers, filter, now());
     serde_json::to_value(&snapshot).expect("the snapshot serialises")
 }
 

@@ -89,6 +89,8 @@ coin one — and say so.**
 | **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in unless the project's `environment` says otherwise. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 | **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
+| **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
+| **aside** | *coined* | the agent provider held off the loop: the tail asks by sending, and the answer arrives later on the channel every other event arrives on. A provider that has wedged therefore costs one waiting thread rather than a keyboard that has stopped answering. Neither project names it, because neither is the thing being kept waiting. |
 
 ### Three different things are called "blocked"
 
@@ -140,17 +142,22 @@ filtering. All the logic worth a test lives here and needs neither herdr nor bd
 to run.
 **renderers** — two consumers of the same model.
 
-## herdr is a provider, not a dependency
+## The agent provider is a seam, not a dependency
 
-**bd discovers the trees. herdr filters and enriches them.**
+**bd discovers the trees. The agent provider filters and enriches them.**
 
 An earlier draft had herdr enumerate the roots. That is wrong, and the evidence
 is concrete: the tracker held a root with no pane in herdr at all. Herdr-first
 enumeration drops it silently.
 
+herdr is one adapter behind the seam. Anything that can answer which panes are
+alive, in which directory, showing what, and can bring one to the front, is
+another; `collect::agents` is what a second one implements, and `collect::herdr`
+is the only module that spells herdr's own argv.
+
 So `bdi` runs in two tiers:
 
-| | bd only | + herdr |
+| | bd only | + an agent provider |
 |---|---|---|
 | tree of work, correctly drawn | ✅ | ✅ |
 | done / left / in-flight counts | ✅ | ✅ |
@@ -160,6 +167,19 @@ So `bdi` runs in two tiers:
 | agent alive right now | ✗ | ✅ |
 | `stale-pane` and `unattributed` | ✗ | ✅ |
 | pane tail and focus | ✗ | ✅ |
+
+**The bd-only tier has two states, and only one of them is a finding.** A
+provider that is configured and stops answering is something the reader had and
+lost, so it is said at the foot. A machine with no provider installed is the
+ordinary state of a reader with a tracker and nothing else: every tree draws,
+the foot says nothing, and the tail band says there is no provider — once, in
+the one place a run has to write something anyway. *Degrade, never disappear*
+is about something that broke; nothing here has.
+
+Which of the two a run is in is inferred rather than configured, on the line
+`collect::discovery` already draws for bd: a provider that could not be spawned
+was never installed, and every other failure is one that ran and would not
+answer.
 
 The age heuristic earns its keep alone. In one tracker, two beads have sat
 `in_progress` for 54 and 58 days. No herdr needed to see that. It stays a
@@ -1192,7 +1212,7 @@ name to the socket after any command that wrote something.
 ```json
 {
   "generated_at": "2026-08-30T10:22:14Z",
-  "herdr": "ok",
+  "agents": { "provider": "herdr", "state": "answering" },
   "filter": "live-agents",
   "trees": [
     {
@@ -1261,8 +1281,11 @@ construction*), so what `--json` says does not follow what the model stores. `ag
 direction of the join resolved it, so a consumer can tell a confirmed agent
 from an inferred one. `anomalies` is every rule that fired, `[]` where none
 did — never absent, never null; an `orphan-claim` the join refused carries the
-refusing conflict as `refused`, and one it did not omits the field. `herdr` is
-`ok` or `unavailable`, so a consumer knows which tier it is reading. A tree's
+refusing conflict as `refused`, and one it did not omits the field. `agents`
+says which agent provider was asked and how that went, so a consumer knows
+which tier it is reading and which program answered for it: `state` is
+`answering`, `not-answering` where the provider is installed and did not, or
+`absent` where nothing was installed to. A tree's
 `tracker` is `ok`, `{ "unreachable": <reason> }` where its tracker could not
 be read, or `root-not-found` where the tracker answered and holds no bead of
 that id — which only a root named in config or on the command line can be,
@@ -1422,10 +1445,11 @@ over up to six lines of that pane's output indented two columns; the newest
 lines are the ones kept, because a pane's last line is what it is doing now. The
 rule is drawn whether or not there is a pane, so the band never goes blank and
 always says where the forest stopped. Where there is no pane, the reason sits
-under the rule in dim, and there are five: no herdr session; the selection is
-not a bead (a project line, a group, or a thing in one); nobody is working this
-bead; the pane has gone; the pane is too busy to be read. While a pane is being
-read and has not answered, the band says so rather than staying quiet.
+under the rule in dim, and there are six: no agent provider at all; a provider
+that would not answer; the selection is not a bead (a project line, a group, or
+a thing in one); nobody is working this bead; the pane has gone; the pane is
+too busy to be read. While a pane is being read and has not answered, the band
+says so rather than staying quiet.
 
 The rows are drawn in the colour and attributes the pane gave them. The read
 asks herdr for its `ansi` form, which on a measured session carries nothing
@@ -1615,7 +1639,7 @@ The bindings are vim-like, with the arrows as aliases:
 | key | does |
 |---|---|
 | `Enter` | show the selected bead, or focus its pane from the bead view |
-| `f` | focus the selected bead's pane in herdr |
+| `f` | focus the selected bead's pane |
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
@@ -1761,11 +1785,13 @@ projects come from the config, so the first frame has real content to draw.
 ### The foot of the screen
 
 The foot is one row: the keys, and every notice the view carries. **A notice
-is a fact that has no row to sit on.** Two qualify: a herdr that could not be
-reached empties the agent column on every row, and a `bdi` whose inbound
-socket would not open is told nothing when a project changes, so the whole
-view is only as fresh as the refresh interval. Neither has a row that is
-wrong, which is why neither can be said anywhere else. The rule's other edge
+is a fact that has no row to sit on.** Two qualify: an agent provider that
+could not be reached empties the agent column on every row, and a `bdi` whose
+inbound socket would not open is told nothing when a project changes, so the
+whole view is only as fresh as the refresh interval. Neither has a row that is
+wrong, which is why neither can be said anywhere else. A provider nobody
+installed is not a third: nothing was lost, so there is nothing to say, and
+the tail band carries what little there is to carry. The rule's other edge
 is that a per-project fact never belongs there: it has a project line, and the
 line is where the reader is already looking at the thing it is about — a
 tracker that refused a credential is drawn on its own project, and freshness

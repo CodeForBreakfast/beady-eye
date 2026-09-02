@@ -231,7 +231,8 @@ mod tests {
     /// What herdr wrote for a real pane on this machine, read the way the
     /// tail reads it.
     fn a_captured_pane() -> Tail {
-        use crate::collect::herdr::agent_read;
+        use crate::collect::agents::Agents;
+        use crate::collect::herdr::Herdr;
         use crate::collect::run::testing::FakeRunner;
         use crate::view::tail;
 
@@ -240,7 +241,7 @@ mod tests {
             ARGV,
             include_str!("../../../tests/fixtures/herdr_agent_read_ansi.txt"),
         );
-        tail::read("wDV:p1".to_string(), agent_read(&runner, "wDV:p1", 6))
+        tail::read("wDV:p1".to_string(), Herdr::new(&runner).read("wDV:p1", 6))
     }
 
     /// The bead: the band draws the pane's own colour and attributes, read

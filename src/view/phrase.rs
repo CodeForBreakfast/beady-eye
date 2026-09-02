@@ -51,7 +51,7 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
 /// they can no longer see, or how stale what they are looking at may be.
 pub fn notice(notice: Notice) -> &'static str {
     match notice {
-        Notice::NoHerdr => "no herdr session · which agents are alive is unknown",
+        Notice::AgentsUnknown => "no herdr session · which agents are alive is unknown",
         Notice::NoInboundChannel => {
             "nothing can tell bdi a project changed · every project is polled instead"
         }
@@ -70,7 +70,7 @@ pub fn notice(notice: Notice) -> &'static str {
 /// what the fact costs the reader.
 pub fn brief_notice(notice: Notice) -> &'static str {
     match notice {
-        Notice::NoHerdr => "agents unknown",
+        Notice::AgentsUnknown => "agents unknown",
         Notice::NoInboundChannel => "polled, not reported",
         // The cause is what survives the cut, not the cost. A reader who
         // keeps only *polled* has what the notice this one replaced already
@@ -489,8 +489,18 @@ pub fn no_agent_to_tail() -> &'static str {
     "no pane · nobody is working this bead"
 }
 
-pub fn no_herdr_to_tail() -> &'static str {
+pub fn no_session_to_tail() -> &'static str {
     "no herdr session · there is no pane to read"
+}
+
+/// That nothing on this machine provides agents at all, which is the ordinary
+/// state of a run with a tracker and nothing else.
+///
+/// It names no program, because the reader has never installed one and a name
+/// they do not recognise would read as something broken. What it says instead
+/// is what the run is, which is a whole answer rather than a loss.
+pub fn no_provider_to_tail() -> &'static str {
+    "no agent provider · bdi is reading beads alone"
 }
 
 /// That the pane the selection points at is being read and has not answered
@@ -662,7 +672,7 @@ mod tests {
         }
 
         for fact in [
-            Notice::NoHerdr,
+            Notice::AgentsUnknown,
             Notice::NoInboundChannel,
             Notice::AnotherBdiHadTheInboundChannel,
         ] {
@@ -736,7 +746,7 @@ mod tests {
 
         said.push(no_bead_to_tail().to_string());
         said.push(no_agent_to_tail().to_string());
-        said.push(no_herdr_to_tail().to_string());
+        said.push(no_session_to_tail().to_string());
         said.push(pane_being_read().to_string());
         for kind in [
             FailureKind::Auth,
@@ -1213,7 +1223,7 @@ mod tests {
         let _: fn(JoinSource) -> Option<&'static str> = join_caveat;
         let _: fn() -> &'static str = no_bead_to_tail;
         let _: fn() -> &'static str = no_agent_to_tail;
-        let _: fn() -> &'static str = no_herdr_to_tail;
+        let _: fn() -> &'static str = no_session_to_tail;
         let _: fn() -> &'static str = pane_being_read;
         let _: fn(FailureKind) -> &'static str = pane_unreadable;
     }
@@ -1290,7 +1300,10 @@ mod tests {
     /// says the agents are missing, the other that the beads may be stale.
     #[test]
     fn the_two_notices_are_told_apart() {
-        assert_ne!(notice(Notice::NoHerdr), notice(Notice::NoInboundChannel));
+        assert_ne!(
+            notice(Notice::AgentsUnknown),
+            notice(Notice::NoInboundChannel)
+        );
     }
 
     /// The reader cannot open the socket from in here, so the notice is

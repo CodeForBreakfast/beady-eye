@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::{Filter, HerdrState, HiddenTree, Snapshot, TrackerState, Tree};
+use super::{Filter, HiddenTree, ProviderState, Snapshot, TrackerState, Tree};
 
 impl Tree {
     /// What the default filter keeps: a tree somebody is working in, a tree
@@ -63,16 +63,17 @@ pub(super) fn in_flight_first(trees: &mut [Tree]) {
 }
 
 /// Divide the collected trees into the ones the filter shows and the ones it
-/// hides. With no herdr there are no panes, so there is no agent to filter on
-/// and every tree renders.
+/// hides. With no provider answering there are no panes, so there is no agent
+/// to filter on and every tree renders.
 pub(super) fn partition(
     trees: &[Arc<Tree>],
-    herdr: HerdrState,
+    agents: ProviderState,
     filter: Filter,
 ) -> (Vec<Arc<Tree>>, Vec<HiddenTree>) {
-    let filter = match herdr {
-        HerdrState::Ok => filter,
-        HerdrState::Unavailable => Filter::All,
+    let filter = if agents == ProviderState::Answering {
+        filter
+    } else {
+        Filter::All
     };
     let (shown, hidden): (Vec<&Arc<Tree>>, Vec<&Arc<Tree>>) =
         trees.iter().partition(|t| t.survives(filter));
@@ -106,7 +107,7 @@ impl Snapshot {
     /// a display choice over what was collected, so nothing is read again and
     /// the answer is the one `build` would have given for that filter.
     pub fn refilter(&mut self, filter: Filter) {
-        let (trees, hidden_trees) = partition(&self.collected, self.herdr, filter);
+        let (trees, hidden_trees) = partition(&self.collected, self.agents.state, filter);
         self.filter = filter;
         self.trees = trees;
         self.hidden_trees = hidden_trees;
@@ -119,7 +120,8 @@ mod tests {
     use crate::model::join::{BeadKey, Conflict, Joined};
     use crate::model::snapshot::tests::*;
     use crate::model::snapshot::{
-        build, build_tree, Collected, Counts, FailedProject, Readiness, TrackerFailure,
+        a_provider, build, build_tree, Collected, Counts, FailedProject, ProviderState, Readiness,
+        TrackerFailure,
     };
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
@@ -402,7 +404,7 @@ mod tests {
             &[],
             &Joined::default(),
             &cfg(),
-            HerdrState::Unavailable,
+            a_provider(ProviderState::NotAnswering),
             Filter::LiveAgents,
             now(),
         );
@@ -430,7 +432,7 @@ mod tests {
             &panes(PANES),
             &Joined::default(),
             &cfg(),
-            HerdrState::Ok,
+            a_provider(ProviderState::Answering),
             Filter::All,
             now(),
         );
@@ -575,7 +577,7 @@ mod tests {
             &[],
             &Joined::default(),
             &cfg(),
-            HerdrState::Unavailable,
+            a_provider(ProviderState::NotAnswering),
             Filter::All,
             now(),
         );
