@@ -1432,8 +1432,8 @@ The bindings are vim-like, with the arrows as aliases:
 | `Left`, `h` | collapse, or move to the parent when it is already collapsed |
 | `^D`, `PgDn` | move down half a screen |
 | `^U`, `PgUp` | move up half a screen |
-| `g` | move to the first row |
-| `G` | move to the last row |
+| `Home`, `g` | move to the first row |
+| `End`, `G` | move to the last row |
 
 The mapping, the `?` window and the row under the tail are one table read
 three ways, so a key is written down once and nothing on screen can disagree

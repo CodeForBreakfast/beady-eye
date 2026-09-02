@@ -427,12 +427,14 @@ mod tests {
     use crate::model::tree::Link;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
-    use crate::tui::keys::BINDINGS;
+    use crate::tui::keys::tests::key;
+    use crate::tui::keys::{action, BINDINGS};
     use crate::view::bindings::bindings_window;
     use crate::view::painted::Painted;
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
     use chrono::Utc;
+    use ratatui::crossterm::event::KeyCode;
     use ratatui::layout::Rect;
     use ratatui::widgets::Block;
     use std::collections::BTreeMap;
@@ -608,8 +610,8 @@ mod tests {
                 "  Left, h   collapse, or move to the parent when it is already collapsed",
                 "  ^D, PgDn  move down half a screen",
                 "  ^U, PgUp  move up half a screen",
-                "  g         move to the first row",
-                "  G         move to the last row",
+                "  Home, g   move to the first row",
+                "  End, G    move to the last row",
             ]
         );
     }
@@ -931,6 +933,76 @@ mod tests {
             "a walk from row {from} of {rows} reaches the last row in one press per row after it"
         );
         moved
+    }
+
+    /// Press the key at `code` the way the loop presses it: through the
+    /// table, so a test here fails when the key is bound to nothing.
+    fn press(shown: &mut Shown, code: KeyCode) -> bool {
+        let asked = action(key(code)).unwrap_or_else(|| panic!("{code:?} is bound to nothing"));
+        shown.apply(asked)
+    }
+
+    /// Home from the bottom of a grove taller than the screen: the selection
+    /// is on the first row and the band has scrolled back up to draw it.
+    #[test]
+    fn home_puts_the_selection_on_the_first_row_from_anywhere() {
+        let mut shown = shown(a_grove(30));
+        to_the_last_row(&mut shown);
+        let root = |band: &[String]| band.iter().any(|row| row.contains("grv-1 "));
+        assert!(
+            !root(&forest_band(&mut shown, 60, 24)),
+            "the fixture has to scroll the root off the screen first"
+        );
+
+        assert!(press(&mut shown, KeyCode::Home));
+
+        assert_eq!(shown.forest.selected_line(), 0);
+        let band = forest_band(&mut shown, 60, 24);
+        assert!(root(&band), "{band:#?}");
+    }
+
+    /// End from partway down: the selection is on the last row and the band
+    /// has scrolled down to draw it.
+    #[test]
+    fn end_puts_the_selection_on_the_last_row_from_anywhere() {
+        let mut shown = shown(a_grove(30));
+        let rows = shown.rows();
+        walk::until(
+            &mut shown,
+            |shown| shown.forest.selected_line() >= 3,
+            |shown| {
+                shown.apply(Action::Move(Motion::NextRow));
+            },
+            |shown| format!("stopped at row {}", shown.forest.selected_line()),
+        );
+        let last = |band: &[String]| band.iter().any(|row| row.contains(" .30 "));
+        assert!(
+            !last(&forest_band(&mut shown, 60, 24)),
+            "the fixture has to start with the last row off the screen"
+        );
+
+        assert!(press(&mut shown, KeyCode::End));
+
+        assert_eq!(shown.forest.selected_line() + 1, rows);
+        let band = forest_band(&mut shown, 60, 24);
+        assert!(last(&band), "{band:#?}");
+    }
+
+    /// A selection already at the end it was sent to stays where it is.
+    #[test]
+    fn home_and_end_move_nothing_when_the_selection_is_already_there() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Home);
+        let at_home = shown.forest.selected_line();
+
+        assert!(!press(&mut shown, KeyCode::Home));
+        assert_eq!(shown.forest.selected_line(), at_home);
+
+        press(&mut shown, KeyCode::End);
+        let at_end = shown.forest.selected_line();
+
+        assert!(!press(&mut shown, KeyCode::End));
+        assert_eq!(shown.forest.selected_line(), at_end);
     }
 
     /// herdr refusing to bring a pane to the front.
