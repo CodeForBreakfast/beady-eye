@@ -182,6 +182,7 @@ mod tests {
         Counts, FailedProject, Filter, LoosePane, Node, TrackerFailure, TrackerState, Tree,
         UnconfiguredPane,
     };
+    use crate::model::tree::Link;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::forest;
     use crate::view::lines::GroupKind;
@@ -228,19 +229,13 @@ mod tests {
         }
     }
 
-    fn node(id: &str, depth: u16, agent: Option<AgentRef>) -> Node {
+    fn node(id: &str, agent: Option<AgentRef>) -> Node {
         Node {
             id: id.to_string(),
             title: "a bead in the tree".to_string(),
             status: Status::InProgress,
             issue_type: "task".to_string(),
             priority: 2,
-            depth,
-            edge: if depth == 0 {
-                None
-            } else {
-                Some(Edge::ParentChild)
-            },
             ready: true,
             blocked_by: Vec::new(),
             started_at: None,
@@ -266,12 +261,25 @@ mod tests {
                 anomalies: 0,
             },
             tracker: TrackerState::Ok,
-            nodes: vec![
-                node("orb-7", 0, None),
-                node("orb-7.1", 1, Some(agent_on("w:p1"))),
-                node("orb-7.2", 1, None),
-                node("orb-7.3", 1, None),
-                node("orb-7.4", 1, Some(agent_on("w:p1"))),
+            beads: vec![
+                node("orb-7", None),
+                node("orb-7.1", Some(agent_on("w:p1"))),
+                node("orb-7.2", None),
+                node("orb-7.3", None),
+                node("orb-7.4", Some(agent_on("w:p1"))),
+            ],
+            children: vec![
+                (1..5)
+                    .map(|bead| Link {
+                        bead,
+                        edge: Edge::ParentChild,
+                        first: true,
+                    })
+                    .collect(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
             ],
             dangling: Vec::new(),
             cycles: Vec::new(),

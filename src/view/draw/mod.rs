@@ -254,7 +254,8 @@ mod tests {
     use crate::model::snapshot::{
         Counts, Filter, HerdrState, LoosePane, Node, Snapshot, TrackerFailure, TrackerState, Tree,
     };
-    use crate::model::types::Status;
+    use crate::model::tree::Link;
+    use crate::model::types::{Edge, Status};
     use crate::view::forest::flatten;
     use crate::view::row::{self, Row};
     use crate::view::{Action, Motion};
@@ -354,7 +355,8 @@ mod tests {
             title: title.into(),
             counts,
             tracker: TrackerState::Ok,
-            nodes: Vec::new(),
+            beads: Vec::new(),
+            children: Vec::new(),
             dangling: Vec::new(),
             cycles: Vec::new(),
         }
@@ -367,8 +369,6 @@ mod tests {
             status,
             issue_type: "task".into(),
             priority: 2,
-            depth: 1,
-            edge: None,
             ready: false,
             blocked_by: Vec::new(),
             started_at: None,
@@ -508,12 +508,13 @@ mod tests {
 
     /// One tree of `children` open beads under an in-flight root.
     pub(super) fn grove(children: usize) -> Tree {
-        let mut nodes = vec![Node {
-            depth: 0,
-            ..node("nix-9670s", "lift the ground station", Status::InProgress)
-        }];
+        let mut beads = vec![node(
+            "nix-9670s",
+            "lift the ground station",
+            Status::InProgress,
+        )];
         for child in 1..=children {
-            nodes.push(node(
+            beads.push(node(
                 &format!("nix-9670s.{child}"),
                 &format!("bead number {child}"),
                 Status::Open,
@@ -521,8 +522,9 @@ mod tests {
         }
 
         Tree {
-            counts: counts(0, nodes.len(), 0, 0),
-            nodes,
+            counts: counts(0, beads.len(), 0, 0),
+            children: under_the_root(&beads),
+            beads,
             ..tree(
                 "summit-works",
                 "nix-9670s",
@@ -530,6 +532,20 @@ mod tests {
                 counts(0, 0, 0, 0),
             )
         }
+    }
+
+    /// The ways down a tree of one root over leaves: every other bead hangs
+    /// under the first, and nothing hangs under them.
+    pub(super) fn under_the_root(beads: &[Node]) -> Vec<Vec<Link>> {
+        let mut children = vec![(1..beads.len())
+            .map(|bead| Link {
+                bead,
+                edge: Edge::ParentChild,
+                first: true,
+            })
+            .collect()];
+        children.resize(beads.len(), Vec::new());
+        children
     }
 
     /// A forest with its first tree opened by hand. Nothing in these fixtures

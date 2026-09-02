@@ -235,7 +235,7 @@ impl Collection {
                 work.roots.iter().filter_map(move |(_, read)| {
                     read.as_ref().ok().map(|assembled| ProjectRows {
                         project,
-                        rows: &assembled.rows,
+                        rows: &assembled.beads,
                     })
                 })
             })
@@ -426,7 +426,7 @@ mod tests {
 
         assert_eq!(snap.herdr, HerdrState::Unavailable);
         assert_eq!(snap.trees.len(), 1, "trees draw without liveness");
-        assert!(snap.trees[0].nodes.iter().all(|n| n.agent.is_none()));
+        assert!(snap.trees[0].beads.iter().all(|n| n.agent.is_none()));
         assert!(snap.unattributed.is_empty());
     }
 
@@ -647,7 +647,7 @@ mod tests {
     /// stale, which is the one thing a node says that is derived from the
     /// clock rather than from what the tracker said.
     fn a_claim_is_drawn_as_stale(snap: &Snapshot) -> bool {
-        snap.trees.iter().flat_map(|tree| &tree.nodes).any(|node| {
+        snap.trees.iter().flat_map(|tree| &tree.beads).any(|node| {
             node.anomalies
                 .iter()
                 .any(|fired| matches!(fired, Anomaly::StaleClaim { .. }))

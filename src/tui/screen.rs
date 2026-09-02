@@ -425,7 +425,8 @@ mod tests {
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{self, Counts, Filter, HerdrState, Node, TrackerState, Tree};
-    use crate::model::types::{PaneStatus, Status};
+    use crate::model::tree::Link;
+    use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
     use crate::tui::keys::BINDINGS;
     use crate::view::bindings::bindings_window;
@@ -672,14 +673,12 @@ mod tests {
     }
 
     fn a_grove_of(children: Vec<usize>) -> Snapshot {
-        let bead = |id: String, depth: u16| Node {
+        let bead = |id: String| Node {
             id,
             title: "a bead in the grove".to_string(),
             status: Status::InProgress,
             issue_type: "task".to_string(),
             priority: 2,
-            depth,
-            edge: None,
             ready: true,
             blocked_by: Vec::new(),
             started_at: None,
@@ -689,8 +688,16 @@ mod tests {
             anomalies: Vec::new(),
         };
 
-        let mut nodes = vec![bead("grv-1".to_string(), 0)];
-        nodes.extend(children.iter().map(|n| bead(format!("grv-1.{n}"), 1)));
+        let mut beads = vec![bead("grv-1".to_string())];
+        beads.extend(children.iter().map(|n| bead(format!("grv-1.{n}"))));
+        let mut links = vec![(1..beads.len())
+            .map(|bead| Link {
+                bead,
+                edge: Edge::ParentChild,
+                first: true,
+            })
+            .collect()];
+        links.resize(beads.len(), Vec::new());
 
         let tree = Tree {
             project: "grove".to_string(),
@@ -703,7 +710,8 @@ mod tests {
                 anomalies: 0,
             },
             tracker: TrackerState::Ok,
-            nodes,
+            beads,
+            children: links,
             dangling: Vec::new(),
             cycles: Vec::new(),
         };
@@ -1198,7 +1206,7 @@ mod tests {
             .iter_mut()
             .chain(snapshot.collected.iter_mut())
         {
-            for (at, node) in tree.nodes.iter_mut().enumerate() {
+            for (at, node) in tree.beads.iter_mut().enumerate() {
                 node.agent = Some(AgentRef {
                     pane: format!("w:p{at}"),
                     pane_status: PaneStatus::Working,

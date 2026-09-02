@@ -15,11 +15,13 @@ pub use filter::refilter;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
+use crate::model::tree::{self, Link};
 use crate::model::types::{Edge, PaneStatus, Status};
 
 /// Which tier `bdi` is reading: with no herdr there are no panes, so there is
@@ -115,6 +117,12 @@ impl Counts {
     }
 }
 
+/// One bead as its tree draws it: what the tracker said of it, and what the
+/// join and the rules added.
+///
+/// A bead is drawn once for every way down to it, and this is the bead and
+/// not the copy: where a copy sits, and by which kind of edge, belongs to the
+/// way down.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Node {
     pub id: String,
@@ -122,8 +130,6 @@ pub struct Node {
     pub status: Status,
     pub issue_type: String,
     pub priority: u8,
-    pub depth: u16,
-    pub edge: Option<Edge>,
     /// Open, with every dependency satisfied. From `bd ready`, which is the
     /// only thing that knows.
     pub ready: bool,
@@ -135,21 +141,96 @@ pub struct Node {
     pub anomalies: Vec<Anomaly>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tree {
     pub project: String,
     pub root: String,
     pub title: String,
     pub counts: Counts,
     pub tracker: TrackerState,
-    pub nodes: Vec<Node>,
-    /// Ids in `nodes` naming work the tracker's answer does not hold — most
+    /// Every bead the tree draws, once each: the root first, then the rest in
+    /// the order a walk down from it first reaches them.
+    pub beads: Vec<Node>,
+    /// The ways down from each of `beads` to the beads beneath it, in render
+    /// order. A bead is drawn once for every way down to it, so the tree the
+    /// screen shows is this unrolled from the root — and `--json` writes it
+    /// that way, as `nodes`.
+    pub children: Vec<Vec<Link>>,
+    /// Ids in `beads` naming work the tracker's answer does not hold — most
     /// often a parent that was deleted. A bead this tree does not draw is not
     /// reported here, whatever its own dependencies are missing.
     pub dangling: Vec<String>,
     /// Ids whose own descendants lead back to them. Each is still in
-    /// `nodes`, drawn where the loop was cut.
+    /// `beads`, drawn where the loop was cut.
     pub cycles: Vec<String>,
+}
+
+/// A tree is written the way it is drawn: `nodes` is the beads unrolled into
+/// render order, one row for every way down to a bead, each carrying the
+/// depth and the edge that way down gives it. The tree holds each bead once
+/// and unrolls only here, because the unrolled shape can be very much larger
+/// than the tree and `--json` is the one consumer that wants the whole of it.
+impl Serialize for Tree {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tree = serializer.serialize_struct("Tree", 8)?;
+        tree.serialize_field("project", &self.project)?;
+        tree.serialize_field("root", &self.root)?;
+        tree.serialize_field("title", &self.title)?;
+        tree.serialize_field("counts", &self.counts)?;
+        tree.serialize_field("tracker", &self.tracker)?;
+        tree.serialize_field("nodes", &self.unrolled())?;
+        tree.serialize_field("dangling", &self.dangling)?;
+        tree.serialize_field("cycles", &self.cycles)?;
+        tree.end()
+    }
+}
+
+/// One row of `nodes`: a bead at one of its places. Every field of the bead,
+/// with `depth` and `edge` — the two that belong to the place rather than
+/// the bead — where the contract puts them.
+#[derive(Serialize)]
+struct Drawn<'a> {
+    id: &'a str,
+    title: &'a str,
+    status: &'a Status,
+    issue_type: &'a str,
+    priority: u8,
+    depth: u16,
+    edge: Option<Edge>,
+    ready: bool,
+    blocked_by: &'a [String],
+    started_at: Option<DateTime<Utc>>,
+    closed_at: Option<DateTime<Utc>>,
+    badges: &'a [Badged],
+    agent: Option<&'a AgentRef>,
+    anomalies: &'a [Anomaly],
+}
+
+impl Tree {
+    fn unrolled(&self) -> Vec<Drawn<'_>> {
+        tree::unroll(&self.children)
+            .into_iter()
+            .map(|placed| {
+                let node = &self.beads[placed.bead];
+                Drawn {
+                    id: &node.id,
+                    title: &node.title,
+                    status: &node.status,
+                    issue_type: &node.issue_type,
+                    priority: node.priority,
+                    depth: placed.depth,
+                    edge: placed.edge,
+                    ready: node.ready,
+                    blocked_by: &node.blocked_by,
+                    started_at: node.started_at,
+                    closed_at: node.closed_at,
+                    badges: &node.badges,
+                    agent: node.agent.as_ref(),
+                    anomalies: &node.anomalies,
+                }
+            })
+            .collect()
+    }
 }
 
 /// A project whose tracker could not be read at all. It has no root and no
@@ -294,7 +375,7 @@ impl Snapshot {
     }
 
     /// Where a key sits: the tree holding it and its place among that tree's
-    /// nodes. Bead ids are unique only within a tracker, so both halves of
+    /// beads. Bead ids are unique only within a tracker, so both halves of
     /// the key are matched together here and neither is ever matched alone
     /// anywhere else.
     pub fn locate(&self, key: &BeadKey) -> Option<(&Tree, usize)> {
@@ -302,14 +383,14 @@ impl Snapshot {
             .iter()
             .filter(|tree| tree.project == key.project)
             .find_map(|tree| {
-                let at = tree.nodes.iter().position(|node| node.id == key.id)?;
+                let at = tree.beads.iter().position(|node| node.id == key.id)?;
                 Some((tree, at))
             })
     }
 
     /// The bead a key names.
     pub fn node(&self, key: &BeadKey) -> Option<&Node> {
-        self.locate(key).map(|(tree, at)| &tree.nodes[at])
+        self.locate(key).map(|(tree, at)| &tree.beads[at])
     }
 }
 
@@ -329,7 +410,8 @@ impl Tree {
             title: String::new(),
             counts: Counts::default(),
             tracker,
-            nodes: Vec::new(),
+            beads: Vec::new(),
+            children: Vec::new(),
             dangling: Vec::new(),
             cycles: Vec::new(),
         }
@@ -343,8 +425,8 @@ mod tests {
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::join::{self, Joined, ProjectRows};
-    use crate::model::tree::{assemble, Assembled, Placed};
-    use crate::model::types::Pane;
+    use crate::model::tree::{assemble, Assembled};
+    use crate::model::types::{Bead, Pane};
     use pretty_assertions::assert_eq;
 
     /// One project's tree as bd writes it. `orb-7.3` is claimed and long
@@ -406,7 +488,7 @@ render = "⏸ waiting"
     }
 
     /// The root of a hand-written tree: the one row that depends on nothing.
-    fn root_row(beads: &[crate::model::types::Bead]) -> String {
+    fn root_row(beads: &[Bead]) -> String {
         beads
             .iter()
             .find(|b| b.dependencies.is_empty())
@@ -425,7 +507,7 @@ render = "⏸ waiting"
         parse_agent_list(json).expect("the panes parse")
     }
 
-    pub(super) fn joined(rows: &[Placed], panes: &[Pane]) -> Joined {
+    pub(super) fn joined(rows: &[Bead], panes: &[Pane]) -> Joined {
         let cfg = cfg();
         join::resolve(
             &[ProjectRows {
@@ -454,13 +536,13 @@ render = "⏸ waiting"
     pub(super) fn tree() -> Tree {
         let assembled = assembled(BEADS);
         let panes = panes(PANES);
-        let joined = joined(&assembled.rows, &panes);
+        let joined = joined(&assembled.beads, &panes);
         build_tree("orbital", &assembled, &joined, &readiness(), &cfg(), now())
     }
 
     pub(super) fn built(trees: Vec<Tree>, filter: Filter) -> Snapshot {
         let panes = panes(PANES);
-        let joined = joined(&assembled(BEADS).rows, &panes);
+        let joined = joined(&assembled(BEADS).beads, &panes);
         build(
             Collected {
                 trees,
@@ -498,6 +580,41 @@ render = "⏸ waiting"
         assert!(
             json["trees"][0]["nodes"][1]["anomalies"].is_array(),
             "anomalies is a list"
+        );
+    }
+
+    /// `nodes` is written by hand, field by field, and a field added to a
+    /// bead and not to the row would leave the JSON silently. So the row is
+    /// held to the bead: every field the bead writes, with the same value,
+    /// and nothing else but the two that belong to the place.
+    #[test]
+    fn a_row_of_nodes_carries_every_field_of_its_bead_and_its_place() {
+        let t = tree();
+        let json = serde_json::to_value(&t).expect("the tree serialises");
+        let bead = serde_json::to_value(&t.beads[1]).expect("the bead serialises");
+        let bead = bead.as_object().expect("a bead is an object");
+
+        let row = json["nodes"][1].as_object().expect("a row is an object");
+        let mut expected: BTreeSet<&str> = bead.keys().map(String::as_str).collect();
+        expected.extend(["depth", "edge"]);
+        assert_eq!(
+            row.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            expected
+        );
+        for (key, value) in bead {
+            assert_eq!(&row[key], value, "{key}");
+        }
+    }
+
+    /// And in the contract's order, which a parsed value cannot show: the
+    /// two fields of the place follow `priority`.
+    #[test]
+    fn a_row_of_nodes_puts_its_place_after_the_beads_priority() {
+        let written = serde_json::to_string(&tree()).expect("the tree serialises");
+
+        assert!(
+            written.contains(r#""priority":1,"depth":1,"edge":"parent-child","ready":false"#),
+            "{written}"
         );
     }
 

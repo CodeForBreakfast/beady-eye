@@ -207,7 +207,8 @@ mod tests {
                 anomalies: 0,
             },
             tracker: TrackerState::Ok,
-            nodes: Vec::new(),
+            beads: Vec::new(),
+            children: Vec::new(),
             dangling: Vec::new(),
             cycles: Vec::new(),
         }
@@ -335,7 +336,7 @@ mod tests {
     fn without_herdr_nothing_is_filtered() {
         let mut quiet = tree();
         quiet.counts.live_agents = 0;
-        quiet.nodes.iter_mut().for_each(|n| n.agent = None);
+        quiet.beads.iter_mut().for_each(|n| n.agent = None);
 
         let snap = build(
             Collected {
@@ -363,7 +364,7 @@ mod tests {
     fn asking_for_every_tree_hides_none() {
         let mut quiet = tree();
         quiet.counts.live_agents = 0;
-        quiet.nodes.iter_mut().for_each(|n| n.agent = None);
+        quiet.beads.iter_mut().for_each(|n| n.agent = None);
 
         let snap = build(
             Collected {

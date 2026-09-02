@@ -243,7 +243,7 @@ fn what_no_root_reached(
     let drawn: BTreeSet<&str> = read
         .iter()
         .filter_map(|(_, read)| read.as_ref().ok())
-        .flat_map(|assembled| assembled.rows.iter().map(|placed| placed.bead.id.as_str()))
+        .flat_map(|assembled| assembled.beads.iter().map(|bead| bead.id.as_str()))
         .collect();
 
     let tops: BTreeSet<String> = tree::adrift(beads)
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(snap.trees.len(), 1);
         assert_eq!(snap.trees[0].root, "orb-7");
         assert_eq!(snap.trees[0].title, "lift the ground station");
-        assert_eq!(snap.trees[0].nodes.len(), 3);
+        assert_eq!(snap.trees[0].beads.len(), 3);
     }
 
     /// The shapes this project's own tracker held on 2026-09-02, drawn from
@@ -590,7 +590,7 @@ mod tests {
         let component = rooted_at(&snap, "orb-5");
         assert_eq!(
             component
-                .nodes
+                .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
@@ -630,7 +630,7 @@ mod tests {
         let component = rooted_at(&snap, "orb-9");
         assert_eq!(
             component
-                .nodes
+                .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
@@ -672,7 +672,7 @@ mod tests {
 
         let ids = |root: &str| {
             rooted_at(&snap, root)
-                .nodes
+                .beads
                 .iter()
                 .map(|n| n.id.to_string())
                 .collect::<Vec<_>>()
@@ -716,7 +716,7 @@ mod tests {
         );
         assert_eq!(
             rooted_at(&snap, "orb-2c")
-                .nodes
+                .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(roots, vec!["orb-7", "orb-3"]);
         let lost = rooted_at(&snap, "orb-3");
         assert_eq!(
-            lost.nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            lost.beads.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
             vec!["orb-3", "orb-3.1"]
         );
         assert_eq!(

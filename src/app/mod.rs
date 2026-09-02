@@ -155,10 +155,10 @@ credential_command = "secret ferry"
     }
 
     pub(super) fn node<'a>(tree: &'a Tree, id: &str) -> &'a Node {
-        tree.nodes
+        tree.beads
             .iter()
             .find(|n| n.id == id)
-            .unwrap_or_else(|| panic!("{id} is among the nodes"))
+            .unwrap_or_else(|| panic!("{id} is among the beads"))
     }
 
     pub(super) fn colliding_trackers(panes: &str) -> FakeRunner {

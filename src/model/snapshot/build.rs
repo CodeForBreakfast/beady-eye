@@ -26,11 +26,10 @@ pub fn build_tree(
     cfg: &Config,
     now: DateTime<Utc>,
 ) -> Tree {
-    let nodes: Vec<Node> = assembled
-        .rows
+    let beads: Vec<Node> = assembled
+        .beads
         .iter()
-        .map(|placed| {
-            let bead = &placed.bead;
+        .map(|bead| {
             let key = BeadKey {
                 project: project.to_string(),
                 id: bead.id.clone(),
@@ -43,8 +42,6 @@ pub fn build_tree(
                 status: bead.status.clone(),
                 issue_type: bead.issue_type.clone(),
                 priority: bead.priority,
-                depth: placed.depth,
-                edge: placed.edge.clone(),
                 ready: readiness.ready.contains(&bead.id),
                 blocked_by: readiness
                     .blocked_by
@@ -60,16 +57,17 @@ pub fn build_tree(
         })
         .collect();
 
-    let counts = Counts::over(&nodes);
+    let counts = Counts::over(&beads);
 
-    let root = nodes.first();
+    let root = beads.first();
     Tree {
         project: project.to_string(),
         root: root.map(|n| n.id.clone()).unwrap_or_default(),
         title: root.map(|n| n.title.clone()).unwrap_or_default(),
         counts,
         tracker: TrackerState::Ok,
-        nodes,
+        beads,
+        children: assembled.children.clone(),
         dangling: assembled.dangling.clone(),
         cycles: assembled.cycles.clone(),
     }
@@ -136,28 +134,52 @@ mod tests {
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource};
     use crate::model::snapshot::tests::*;
     use crate::model::snapshot::{FailedProject, TrackerFailure};
+    use crate::model::tree::unroll;
     use crate::model::types::{Edge, PaneStatus, Status};
     use pretty_assertions::assert_eq;
 
     fn node<'a>(tree: &'a Tree, id: &str) -> &'a Node {
-        tree.nodes
+        tree.beads
             .iter()
             .find(|n| n.id == id)
-            .unwrap_or_else(|| panic!("{id} is among the nodes"))
+            .unwrap_or_else(|| panic!("{id} is among the beads"))
+    }
+
+    /// The tree as it is drawn: one row per way down to a bead, with the
+    /// depth and the edge that way down gives it.
+    fn rows(tree: &Tree) -> Vec<(&str, u16, Option<Edge>)> {
+        unroll(&tree.children)
+            .into_iter()
+            .map(|placed| {
+                (
+                    tree.beads[placed.bead].id.as_str(),
+                    placed.depth,
+                    placed.edge,
+                )
+            })
+            .collect()
     }
 
     #[test]
-    fn the_nodes_are_flattened_in_render_order_with_their_depth() {
+    fn the_beads_are_held_in_render_order_and_unroll_with_their_depth() {
         let t = tree();
-        let order: Vec<&str> = t.nodes.iter().map(|n| n.id.as_str()).collect();
+        let order: Vec<&str> = t.beads.iter().map(|n| n.id.as_str()).collect();
 
         assert_eq!(
             order,
             ["orb-7", "orb-7.3", "orb-7.1", "orb-7.4", "orb-7.2"],
             "work in flight leads, finished work trails"
         );
-        assert_eq!(t.nodes[0].depth, 0);
-        assert_eq!(node(&t, "orb-7.3").depth, 1);
+        assert_eq!(
+            rows(&t),
+            vec![
+                ("orb-7", 0, None),
+                ("orb-7.3", 1, Some(Edge::ParentChild)),
+                ("orb-7.1", 1, Some(Edge::ParentChild)),
+                ("orb-7.4", 1, Some(Edge::ParentChild)),
+                ("orb-7.2", 1, Some(Edge::ParentChild)),
+            ]
+        );
     }
 
     #[test]
@@ -235,10 +257,6 @@ mod tests {
             Some("2026-08-20T09:00:00Z".parse().unwrap())
         );
         assert_eq!(root.closed_at, None);
-        assert_eq!(root.edge, None);
-
-        let child = node(&t, "orb-7.1");
-        assert_eq!(child.edge, Some(Edge::ParentChild));
         assert_eq!(
             node(&t, "orb-7.2").closed_at,
             Some("2026-08-28T09:00:00Z".parse().unwrap())
@@ -281,7 +299,7 @@ mod tests {
     fn an_agent_on_a_colliding_id_in_another_project_is_not_this_tree_s() {
         let a = assembled(BEADS);
         let p = panes(PANES);
-        let mut j = joined(&a.rows, &p);
+        let mut j = joined(&a.beads, &p);
         j.agents.insert(
             BeadKey {
                 project: "ferry".to_string(),
@@ -324,7 +342,7 @@ mod tests {
 
         assert_eq!(t.dangling, ["orb-4.2"]);
         assert_eq!(t.counts.total, 2, "a reported bead is still drawn");
-        assert_eq!(node(&t, "orb-4.2").depth, 1);
+        assert_eq!(rows(&t)[1], ("orb-4.2", 1, Some(Edge::ParentChild)));
     }
 
     /// The nesting is the whole of what this tree says, so each row has to
@@ -350,19 +368,13 @@ mod tests {
             now(),
         );
 
-        let edges: Vec<(&str, Option<&Edge>)> = t
-            .nodes
-            .iter()
-            .map(|node| (node.id.as_str(), node.edge.as_ref()))
-            .collect();
-
         assert_eq!(
-            edges,
+            rows(&t),
             vec![
-                ("orb-9", None),
-                ("orb-9.1", Some(&Edge::ParentChild)),
-                ("orb-9.2", Some(&Edge::Blocks)),
-                ("orb-9.2", Some(&Edge::ParentChild)),
+                ("orb-9", 0, None),
+                ("orb-9.1", 1, Some(Edge::ParentChild)),
+                ("orb-9.2", 2, Some(Edge::Blocks)),
+                ("orb-9.2", 1, Some(Edge::ParentChild)),
             ]
         );
     }
@@ -392,7 +404,8 @@ mod tests {
             now(),
         );
 
-        assert_eq!(t.nodes.len(), 6, "a copy per way down");
+        assert_eq!(rows(&t).len(), 6, "a copy per way down");
+        assert_eq!(t.beads.len(), 4, "held once each");
         assert_eq!(t.counts.total, 4);
         assert_eq!(t.counts.closed, 1);
     }
@@ -468,7 +481,7 @@ mod tests {
         ]}}"#;
         let a = assembled(BEADS);
         let p = panes(disagreeing);
-        let j = joined(&a.rows, &p);
+        let j = joined(&a.beads, &p);
 
         let snap = build(
             Collected::default(),

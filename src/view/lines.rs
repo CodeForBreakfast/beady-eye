@@ -1,7 +1,7 @@
 //! The lines the forest is made of, and the shape of the tree behind them.
 //!
-//! Every question here is asked of a `Tree` and its nodes alone: which node is
-//! whose child, what rests open, what a run stands for, how far along a branch
+//! Every question here is asked of a `Tree` and its beads alone: what hangs
+//! under what, what rests open, what a run stands for, how far along a branch
 //! is. None of it knows the fold state, the selection, or which screen it is
 //! drawn on, which is what lets the state machine next door be about nothing
 //! else.
@@ -12,6 +12,7 @@ use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     Counts, FailedProject, HiddenTree, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
 };
+use crate::model::tree::{self, Link};
 use crate::model::types::Edge;
 use crate::view::row::{Progress, Row};
 
@@ -321,62 +322,53 @@ pub(crate) fn notes_of(tree: &Tree) -> Vec<Note> {
     notes
 }
 
-/// Which node is whose child. The model hands over one flat list in render
-/// order with an explicit depth, so a node's parent is the last one shallower
-/// than it.
-pub(crate) fn children_of(nodes: &[Node]) -> Vec<Vec<usize>> {
-    let mut children = vec![Vec::new(); nodes.len()];
-    let mut ancestors: Vec<usize> = Vec::new();
-    for (at, node) in nodes.iter().enumerate() {
-        ancestors.truncate(node.depth as usize);
-        if let Some(parent) = ancestors.last() {
-            children[*parent].push(at);
-        }
-        ancestors.push(at);
-    }
-    children
-}
-
 /// Whether nothing is happening on this bead: nobody working it, and nothing
 /// wrong with it. Says nothing about its children.
 pub(crate) fn quiet(node: &Node) -> bool {
     node.agent.is_none() && node.anomalies.is_empty()
 }
 
-/// The nodes strictly beneath `at`, in no order worth relying on.
-pub(crate) fn beneath(children: &[Vec<usize>], at: usize) -> Vec<usize> {
-    let mut found = Vec::new();
-    let mut walking = children[at].clone();
-    while let Some(node) = walking.pop() {
-        found.push(node);
-        walking.extend(children[node].iter().copied());
-    }
-    found
+/// Every question below is asked of one line, and a line is a bead at the
+/// end of one way down to it: `at` is the bead, and `above` the beads
+/// stepped through from the root to reach it, `at` itself not among them.
+/// A bead reached more than one way down is asked once per way, because the
+/// way down is where a loop is cut — a walk that comes back to a bead it
+/// came down through stops there — and two copies of a bead on either side
+/// of such a cut stand over different things. Where no loop runs through a
+/// bead, every way down to it gets the same answer.
+///
+/// The ways down from `at` that the walk takes, in render order.
+pub(crate) fn links_below<'a>(tree: &'a Tree, at: usize, above: &[usize]) -> Vec<&'a Link> {
+    tree::links_from(&tree.children, at, above)
 }
 
-/// The beads strictly beneath `at`, one row each.
+/// The beads strictly beneath `at`, each once, in no order worth relying on.
 ///
 /// A bead reachable more than one way down is drawn once for each, and every
 /// question asked of what a branch holds is a question about work rather than
 /// about rows: a blocker two of its descendants share is one piece of work
 /// however many times it is drawn.
-fn beads_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> Vec<usize> {
-    let mut seen = BTreeSet::new();
-    beneath(children, at)
-        .into_iter()
-        .filter(|node| seen.insert(tree.nodes[*node].id.as_str()))
-        .collect()
+pub(crate) fn beneath(tree: &Tree, at: usize, above: &[usize]) -> Vec<usize> {
+    tree::beneath(&tree.children, at, above)
 }
 
 /// Whether the line at `at` is the first this tree draws of its bead.
 ///
 /// A bead reached more than one way down gets a line for each way, and the
-/// first of them is the one that stands for the work. Asked of the model's
-/// render order rather than of the lines already drawn, so a fold the reader
+/// first of them is the one that stands for the work: the one whose every
+/// link down from the root is the way the walk first reached its bead. Asked
+/// of the tree rather than of the lines already drawn, so a fold the reader
 /// opens elsewhere cannot move which line that is.
-pub(crate) fn first_copy(tree: &Tree, at: usize) -> bool {
-    let id = &tree.nodes[at].id;
-    !tree.nodes[..at].iter().any(|node| node.id == *id)
+pub(crate) fn first_copy(tree: &Tree, at: usize, above: &[usize]) -> bool {
+    above
+        .iter()
+        .copied()
+        .zip(above.iter().copied().skip(1).chain([at]))
+        .all(|(from, to)| {
+            tree.children[from]
+                .iter()
+                .any(|link| link.bead == to && link.first)
+        })
 }
 
 /// Whether the line at `at` rests open: whether anything beneath it is work
@@ -385,8 +377,8 @@ pub(crate) fn first_copy(tree: &Tree, at: usize) -> bool {
 /// This is the whole of the fold default. A line rests open exactly when it
 /// stands on the spine to such work, so the first screen is that work and the
 /// path to it and nothing else.
-pub(crate) fn opens_a_fold(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    live_beneath(tree, children, at) || ready_beneath(tree, children, at)
+pub(crate) fn opens_a_fold(tree: &Tree, at: usize, above: &[usize]) -> bool {
+    live_beneath(tree, at, above) || ready_beneath(tree, at, above)
 }
 
 /// Whether any bead beneath `at` carries live work: an agent on it, or an
@@ -394,10 +386,10 @@ pub(crate) fn opens_a_fold(tree: &Tree, children: &[Vec<usize>], at: usize) -> b
 ///
 /// No fold `bdi` chose for itself has ever closed over an agent or an
 /// anomaly, and this is what holds that.
-fn live_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    beneath(children, at)
+fn live_beneath(tree: &Tree, at: usize, above: &[usize]) -> bool {
+    beneath(tree, at, above)
         .into_iter()
-        .any(|node| !quiet(&tree.nodes[node]))
+        .any(|node| !quiet(&tree.beads[node]))
 }
 
 /// Whether any bead beneath `at` is one `bd` would start today.
@@ -406,10 +398,10 @@ fn live_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
 /// deferred beads are all unfinished, and only `bd` knows which of them has
 /// every dependency behind it. Work it will not start is still unfinished
 /// work a reader is not looking for, so it earns no fold.
-fn ready_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    beneath(children, at)
+fn ready_beneath(tree: &Tree, at: usize, above: &[usize]) -> bool {
+    beneath(tree, at, above)
         .into_iter()
-        .any(|node| tree.nodes[node].ready)
+        .any(|node| tree.beads[node].ready)
 }
 
 /// What the beads beneath `at` add up to: how many there are, how many are
@@ -422,11 +414,11 @@ fn ready_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
 /// Counted as work rather than as rows, like every other statistic here: a
 /// blocker two of these branches share is one bead, one seat and one warning
 /// however many ways down reach it.
-pub(crate) fn counts_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) -> Counts {
+pub(crate) fn counts_beneath(tree: &Tree, at: usize, above: &[usize]) -> Counts {
     Counts::over(
-        beads_beneath(tree, children, at)
+        beneath(tree, at, above)
             .into_iter()
-            .map(|node| &tree.nodes[node]),
+            .map(|node| &tree.beads[node]),
     )
 }
 
@@ -438,13 +430,10 @@ pub(crate) fn counts_beneath(tree: &Tree, children: &[Vec<usize>], at: usize) ->
 /// and still hold a working agent three levels down, and the two mechanisms
 /// this feeds — a branch drawn as one finished line, a run drawn as a count —
 /// each hide everything beneath it.
-fn finished(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
-    let node = &tree.nodes[at];
-    node.status.is_closed()
-        && quiet(node)
-        && children[at]
-            .iter()
-            .all(|kid| finished(tree, children, *kid))
+fn finished(tree: &Tree, at: usize, above: &[usize]) -> bool {
+    std::iter::once(at)
+        .chain(beneath(tree, at, above))
+        .all(|node| tree.beads[node].status.is_closed() && quiet(&tree.beads[node]))
 }
 
 /// A node's children split into the ones drawn and the run that is not.
@@ -453,23 +442,37 @@ fn finished(tree: &Tree, children: &[Vec<usize>], at: usize) -> bool {
 /// anomaly at any depth does not, because eliding it would hide live work
 /// behind a line saying there is none. A run of one is drawn: `… 1 more`
 /// costs a line and saves none.
-pub(crate) fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usize>, Vec<usize>) {
-    let done: Vec<usize> = children[at]
+pub(crate) fn split<'a>(
+    tree: &'a Tree,
+    at: usize,
+    above: &[usize],
+) -> (Vec<&'a Link>, Vec<&'a Link>) {
+    let links = links_below(tree, at, above);
+    let below = way_below(above, at);
+    let done: Vec<&Link> = links
         .iter()
         .copied()
-        .filter(|kid| finished(tree, children, *kid))
+        .filter(|link| finished(tree, link.bead, &below))
         .collect();
 
     if done.len() < MANY {
-        return (children[at].clone(), Vec::new());
+        return (links, Vec::new());
     }
 
-    let drawn = children[at]
+    let drawn = links
         .iter()
         .copied()
-        .filter(|kid| !done.contains(kid))
+        .filter(|link| !done.contains(link))
         .collect();
     (drawn, done)
+}
+
+/// The way down to whatever hangs under `at`: the way down to `at`, and then
+/// `at`.
+pub(crate) fn way_below(above: &[usize], at: usize) -> Vec<usize> {
+    let mut below = above.to_vec();
+    below.push(at);
+    below
 }
 
 /// How far along the subtree at `at` is, where it is more than the one bead.
@@ -478,23 +481,25 @@ pub(crate) fn split(tree: &Tree, children: &[Vec<usize>], at: usize) -> (Vec<usi
 /// bead would only say again what its glyph says. Everything else is counted
 /// with its own bead among the total, which is the rule a root's counts
 /// already follow.
-pub(crate) fn progress_of(tree: &Tree, children: &[Vec<usize>], at: usize) -> Option<Progress> {
-    if children[at].is_empty() {
+pub(crate) fn progress_of(tree: &Tree, at: usize, above: &[usize]) -> Option<Progress> {
+    if links_below(tree, at, above).is_empty() {
         return None;
     }
 
     let mut counting = vec![at];
-    counting.extend(beads_beneath(tree, children, at));
+    counting.extend(beneath(tree, at, above));
     Some(Progress {
         total: counting.len(),
         closed: counting
             .into_iter()
-            .filter(|node| tree.nodes[*node].status.is_closed())
+            .filter(|node| tree.beads[*node].status.is_closed())
             .count(),
     })
 }
 
 /// What a run stands for: its own beads and everything beneath them.
+/// `above` is the way down to the bead the run hangs under, that bead
+/// included.
 ///
 /// Opening it draws those beads and leaves their descendants to the same rules,
 /// which for a quiet closed run of their own is another count one level down.
@@ -504,12 +509,10 @@ pub(crate) fn progress_of(tree: &Tree, children: &[Vec<usize>], at: usize) -> Op
 /// blocker several of the run's branches share is one bead, and the set spans
 /// the whole run rather than each member, because the two branches sharing it
 /// may be two different members.
-pub(crate) fn run_size(tree: &Tree, children: &[Vec<usize>], members: &[usize]) -> usize {
-    let mut seen = BTreeSet::new();
-    for kid in members {
-        for node in std::iter::once(*kid).chain(beneath(children, *kid)) {
-            seen.insert(tree.nodes[node].id.as_str());
-        }
+pub(crate) fn run_size(tree: &Tree, members: &[&Link], above: &[usize]) -> usize {
+    let mut seen: BTreeSet<usize> = members.iter().map(|link| link.bead).collect();
+    for member in members {
+        seen.extend(beneath(tree, member.bead, above));
     }
     seen.len()
 }

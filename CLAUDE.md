@@ -77,12 +77,15 @@ untestable adapter usually means the behaviour is in the wrong layer, and the
 fix is to move it.
 
 A `Timeout` is a third mutation answer and the tally cannot say which kind it
-is. Some are genuinely non-terminating in production and not gaps: the
-constants cargo-mutants synthesises for `children_of` (`vec![vec![0]]`, the
-literal for `Vec<Vec<usize>>`) hang `flatten` with no loop in the test body at
-all, and the three mutants that feed `fold_all`'s `while
-self.point_every_drawn_fold(true) {}` are the same category. Read a `Timeout`
-under `src/view/` against that list before calling it a hole.
+is. Some are genuinely non-terminating in production and not gaps: the three
+mutants that feed `fold_all`'s `while self.point_every_drawn_fold(true) {}`
+are that category. Read a `Timeout` under `src/view/` against that list before
+calling it a hole. A runaway need not time out at all: `delete !` in
+`beneath` (`src/model/tree.rs`) pushes every way back up the tree for ever, so
+the test process grows to whatever memory cap the run is under in seconds and
+is killed there, which scores it caught. Run cargo-mutants under a cap that
+kills the one process and lets the run carry on, or that kill is the end of
+the run.
 
 ## PR policy
 

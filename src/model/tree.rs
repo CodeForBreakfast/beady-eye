@@ -8,29 +8,50 @@ use anyhow::bail;
 
 use crate::model::types::{Bead, Edge};
 
+/// One way down from a bead to a bead beneath it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    /// The bead beneath, by its place among the tree's beads.
+    pub bead: usize,
+    /// The kind of edge that hangs it there.
+    pub edge: Edge,
+    /// Whether this is the way the walk first reached the bead. A bead is
+    /// drawn once for every way down to it, and the first of those lines is
+    /// the one that stands for the work: it is the line whose every link
+    /// down from the root is one of these.
+    pub first: bool,
+}
+
+/// One row of the tree unrolled into render order: a bead, at the depth one
+/// way down puts it, hung there by one kind of edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placed {
-    pub bead: Bead,
+    pub bead: usize,
     pub depth: u16,
     /// The kind of edge this copy was reached by, and `None` on the root.
     pub edge: Option<Edge>,
 }
 
-/// A flat set of bd rows in render order, with every departure from a clean
-/// tree named rather than dropped.
+/// One root's tree: each bead it reaches held once, and the ways down to it,
+/// with every departure from a clean tree named rather than dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembled {
-    pub rows: Vec<Placed>,
-    /// Ids in `rows` naming a bead they depend on that the answer does not
+    /// Every bead the root reaches, once each: the root first, then the rest
+    /// in the order the walk first reaches them.
+    pub beads: Vec<Bead>,
+    /// The beads beneath each of `beads`, in render order. A bead reached
+    /// several ways is linked from each of the beads that reach it.
+    pub children: Vec<Vec<Link>>,
+    /// Ids in `beads` naming a bead they depend on that the answer does not
     /// hold. A bead the root does not reach is in another tree and is not
     /// reported here, however incomplete its own dependencies are.
     pub dangling: Vec<String>,
-    /// Ids whose own descendants lead back to them. Each is kept in `rows`,
-    /// drawn where the loop was cut.
+    /// Ids whose own descendants lead back to them. Each is kept in `beads`,
+    /// and drawn where the loop was cut.
     pub cycles: Vec<String>,
 }
 
-/// Order a flat set of bd rows into render order under one root.
+/// Order a flat set of bd rows into a tree under one root.
 ///
 /// A bead's descendants are the things that must complete before it can, which
 /// beads says with two edge kinds running opposite ways: a parent cannot
@@ -39,8 +60,11 @@ pub struct Assembled {
 /// blocks. An edge kind beads may add later has no settled direction against
 /// completion, so it nests nothing.
 ///
-/// So a bead is drawn once for every way down to it, and depth is counted from
-/// the walk rather than taken from bd, which flattens it under `--max-depth`.
+/// So a bead has as many places as there are ways down to it, and is drawn at
+/// each — but it is held once, and each way down points at it. Depth is a
+/// property of a way down rather than of a bead, and is counted by whoever
+/// walks the tree rather than taken from bd, which flattens it under
+/// `--max-depth`.
 ///
 /// Siblings sort by state, then priority, then id.
 pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
@@ -71,32 +95,39 @@ pub fn assemble(beads: Vec<Bead>, root: &str) -> anyhow::Result<Assembled> {
         })
         .collect();
 
-    let mut rows = Vec::new();
-    let mut cycles = BTreeSet::new();
-    walk(
-        root,
-        0,
-        None,
-        &ordered,
-        &by_id,
-        &mut Vec::new(),
-        &mut cycles,
-        &mut rows,
-    );
+    let Reached {
+        order,
+        children,
+        looped,
+    } = reach(root, &ordered, &by_id);
 
     // Only what this tree drew. A bead whose parent the tracker no longer
     // holds is top of its own graph, and reporting it against a root that
     // never reached it names it in every tree there is.
-    let dangling: BTreeSet<String> = rows
+    let dangling: Vec<String> = order
         .iter()
-        .map(|placed| placed.bead.id.clone())
-        .filter(|id| waiting_on_the_absent.contains(id))
+        .filter(|id| waiting_on_the_absent.contains(*id))
+        .cloned()
         .collect();
 
+    // A walk that found no way back up found no loop to cut, and a tree
+    // with none is what most trees are — so saying where the loops are cut
+    // costs only the trees that have any.
+    let cycles = if looped {
+        cuts(&children)
+            .into_iter()
+            .map(|bead| order[bead].clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let beads = order.iter().map(|id| by_id[id].clone()).collect();
     Ok(Assembled {
-        rows,
-        dangling: dangling.into_iter().collect(),
-        cycles: cycles.into_iter().collect(),
+        beads,
+        children,
+        dangling,
+        cycles,
     })
 }
 
@@ -251,34 +282,57 @@ fn under<'a>(
     reached
 }
 
-/// Emit a bead and everything that must finish before it, depth-first.
-///
-/// `path` is the way down to this bead, and a bead already on it would loop:
-/// that copy is cut and reported, which is the only thing standing between a
-/// parent blocked by its own child and a walk that never ends.
-#[allow(clippy::too_many_arguments)]
-fn walk(
-    id: &str,
-    depth: u16,
-    edge: Option<Edge>,
-    children: &BTreeMap<String, Vec<String>>,
-    by_id: &BTreeMap<String, Bead>,
-    path: &mut Vec<String>,
-    cycles: &mut BTreeSet<String>,
-    out: &mut Vec<Placed>,
-) {
-    if path.iter().any(|seen| seen == id) {
-        cycles.insert(id.to_string());
-        return;
-    }
-    out.push(Placed {
-        bead: by_id[id].clone(),
-        depth,
-        edge,
-    });
+/// What one walk down from the root found: every bead it reached, in the
+/// order it first reached them, and the ways down between them.
+struct Reached {
+    order: Vec<String>,
+    children: Vec<Vec<Link>>,
+    /// Whether any way down led back to a bead still above it. A loop is
+    /// cut there, and where this is false nothing is.
+    looped: bool,
+}
 
-    path.push(id.to_string());
-    for child in children.get(id).into_iter().flatten() {
+/// Walk down from the root, placing each bead the first time it is reached
+/// and linking every later way down to the place it already has.
+///
+/// The order the beads are first reached in is the order the first copy of
+/// each is drawn in. A walk that drew a bead once for every way down to it
+/// would reach nothing new on the second way, because everything under the
+/// bead was reached under it the first time or was already above it.
+fn reach(
+    root: &str,
+    ordered: &BTreeMap<String, Vec<String>>,
+    by_id: &BTreeMap<String, Bead>,
+) -> Reached {
+    let mut found = Reached {
+        order: vec![root.to_string()],
+        children: vec![Vec::new()],
+        looped: false,
+    };
+    let mut placed: BTreeMap<&str, usize> = BTreeMap::from([(root, 0)]);
+    descend(
+        root,
+        0,
+        ordered,
+        by_id,
+        &mut placed,
+        &mut Vec::new(),
+        &mut found,
+    );
+    found
+}
+
+fn descend<'a>(
+    id: &'a str,
+    at: usize,
+    ordered: &'a BTreeMap<String, Vec<String>>,
+    by_id: &BTreeMap<String, Bead>,
+    placed: &mut BTreeMap<&'a str, usize>,
+    above: &mut Vec<&'a str>,
+    found: &mut Reached,
+) {
+    above.push(id);
+    for child in ordered.get(id).into_iter().flatten() {
         let edge = if by_id[child]
             .dependencies
             .iter()
@@ -288,18 +342,162 @@ fn walk(
         } else {
             Edge::Blocks
         };
-        walk(
-            child,
+        found.looped |= above.contains(&child.as_str());
+        let (bead, first) = match placed.get(child.as_str()) {
+            Some(&bead) => (bead, false),
+            None => {
+                let bead = found.order.len();
+                found.order.push(child.clone());
+                found.children.push(Vec::new());
+                placed.insert(child, bead);
+                (bead, true)
+            }
+        };
+        found.children[at].push(Link { bead, edge, first });
+        if first {
+            descend(child, bead, ordered, by_id, placed, above, found);
+        }
+    }
+    above.pop();
+}
+
+/// The beads at which a walk drawing every way down cuts a loop: each is
+/// reached, then reached again from beneath itself, and the second time is
+/// where the walk stops rather than going round again.
+///
+/// Which beads those are depends on the order the walk takes, and not only
+/// on which beads sit on a loop: one the walk meets above the loop is cut
+/// when the loop comes back to it, and one it meets only from inside the
+/// loop never is. So this asks the same walk the same question — every way
+/// down, each stopped where it meets a bead already above it — and remembers
+/// each answer by what it can depend on. From one bead, the answer depends
+/// on which of the beads above it are among the ones it can reach, and on
+/// nothing else; a bead that reaches nothing above it gets one answer for
+/// every way down to it, which is what keeps this from being the unrolling
+/// it is asking about.
+fn cuts(children: &[Vec<Link>]) -> BTreeSet<usize> {
+    let reach: Vec<BTreeSet<usize>> = (0..children.len())
+        .map(|from| {
+            let mut reached = BTreeSet::new();
+            let mut going = vec![from];
+            while let Some(bead) = going.pop() {
+                for link in &children[bead] {
+                    if reached.insert(link.bead) {
+                        going.push(link.bead);
+                    }
+                }
+            }
+            reached
+        })
+        .collect();
+    cuts_from(0, &mut Vec::new(), children, &reach, &mut BTreeMap::new())
+}
+
+fn cuts_from(
+    at: usize,
+    above: &mut Vec<usize>,
+    children: &[Vec<Link>],
+    reach: &[BTreeSet<usize>],
+    answered: &mut BTreeMap<(usize, Vec<usize>), BTreeSet<usize>>,
+) -> BTreeSet<usize> {
+    let seen: Vec<usize> = above
+        .iter()
+        .copied()
+        .filter(|bead| reach[at].contains(bead))
+        .collect();
+    if let Some(cut) = answered.get(&(at, seen.clone())) {
+        return cut.clone();
+    }
+
+    let mut cut = BTreeSet::new();
+    above.push(at);
+    for link in &children[at] {
+        if above.contains(&link.bead) {
+            cut.insert(link.bead);
+        } else {
+            cut.extend(cuts_from(link.bead, above, children, reach, answered));
+        }
+    }
+    above.pop();
+    answered.insert((at, seen), cut.clone());
+    cut
+}
+
+/// The ways down from `at` that a walk takes, `above` being the beads it
+/// came down through to reach `at`. A way back to one of those, or to `at`
+/// itself, is where a loop is cut: the walk does not take it.
+pub fn links_from<'a>(children: &'a [Vec<Link>], at: usize, above: &[usize]) -> Vec<&'a Link> {
+    children[at]
+        .iter()
+        .filter(|link| link.bead != at && !above.contains(&link.bead))
+        .collect()
+}
+
+/// Every bead a walk down from `at` reaches, `at` itself excluded, each once
+/// and in no order worth relying on. `above` is the way down to `at`, and is
+/// where the walk's loops are cut.
+pub fn beneath(children: &[Vec<Link>], at: usize, above: &[usize]) -> Vec<usize> {
+    let mut reached: Vec<bool> = vec![false; children.len()];
+    reached[at] = true;
+    for bead in above {
+        reached[*bead] = true;
+    }
+    let mut found = Vec::new();
+    let mut going = vec![at];
+    while let Some(bead) = going.pop() {
+        for link in &children[bead] {
+            if !reached[link.bead] {
+                reached[link.bead] = true;
+                found.push(link.bead);
+                going.push(link.bead);
+            }
+        }
+    }
+    found
+}
+
+/// The tree unrolled into render order: one row for every way down to a
+/// bead, each loop cut where the way down comes back on itself.
+///
+/// This is the shape the tree is drawn in and the shape `--json` writes, and
+/// it can be very much larger than the tree: a bead reached several ways is
+/// a row for each, and so is everything beneath it, compounding down the
+/// tree. So nothing asks for it per keystroke; it is walked once, when the
+/// whole of it is what is wanted.
+pub fn unroll(children: &[Vec<Link>]) -> Vec<Placed> {
+    let mut rows = Vec::new();
+    if !children.is_empty() {
+        unroll_from(0, 0, None, children, &mut Vec::new(), &mut rows);
+    }
+    rows
+}
+
+fn unroll_from(
+    at: usize,
+    depth: u16,
+    edge: Option<Edge>,
+    children: &[Vec<Link>],
+    above: &mut Vec<usize>,
+    out: &mut Vec<Placed>,
+) {
+    out.push(Placed {
+        bead: at,
+        depth,
+        edge,
+    });
+    let links = links_from(children, at, above);
+    above.push(at);
+    for link in links {
+        unroll_from(
+            link.bead,
             depth + 1,
-            Some(edge),
+            Some(link.edge.clone()),
             children,
-            by_id,
-            path,
-            cycles,
+            above,
             out,
         );
     }
-    path.pop();
+    above.pop();
 }
 
 #[cfg(test)]
@@ -321,16 +519,35 @@ mod tests {
         assemble(parse_beads(json).expect("the rows parse"), root).expect("the rows assemble")
     }
 
+    /// The tree as it is drawn: one row per way down to a bead.
+    fn rows(a: &Assembled) -> Vec<(&str, u16, Option<Edge>)> {
+        unroll(&a.children)
+            .into_iter()
+            .map(|p| (a.beads[p.bead].id.as_str(), p.depth, p.edge))
+            .collect()
+    }
+
     fn ids(a: &Assembled) -> Vec<&str> {
-        a.rows.iter().map(|p| p.bead.id.as_str()).collect()
+        rows(a).into_iter().map(|(id, _, _)| id).collect()
+    }
+
+    fn drawn(a: &Assembled, id: &str) -> usize {
+        ids(a).into_iter().filter(|drawn| *drawn == id).count()
     }
 
     fn depth_of(a: &Assembled, id: &str) -> u16 {
-        a.rows
-            .iter()
-            .find(|p| p.bead.id == id)
+        rows(a)
+            .into_iter()
+            .find(|(drawn, _, _)| *drawn == id)
             .unwrap_or_else(|| panic!("{id} is in the rows"))
-            .depth
+            .1
+    }
+
+    fn index_of(a: &Assembled, id: &str) -> usize {
+        a.beads
+            .iter()
+            .position(|b| b.id == id)
+            .unwrap_or_else(|| panic!("{id} is among the beads"))
     }
 
     /// One bead depending on another, in the shape `bd list --json` writes.
@@ -349,14 +566,33 @@ mod tests {
         format!("[{}]", beads.join(","))
     }
 
+    /// The bead the first row of `id` hangs under.
     fn parent_of(a: &Assembled, id: &str) -> Option<String> {
-        let at = a.rows.iter().position(|p| p.bead.id == id)?;
-        let depth = a.rows[at].depth;
-        a.rows[..at]
+        let rows = rows(a);
+        let at = rows.iter().position(|(drawn, _, _)| *drawn == id)?;
+        let depth = rows[at].1;
+        rows[..at]
             .iter()
             .rev()
-            .find(|p| p.depth < depth)
-            .map(|p| p.bead.id.clone())
+            .find(|(_, above, _)| *above < depth)
+            .map(|(parent, _, _)| (*parent).to_string())
+    }
+
+    /// The beads each row of `id` hangs under, one per row.
+    fn parents_of(a: &Assembled, id: &str) -> Vec<String> {
+        let rows = rows(a);
+        rows.iter()
+            .enumerate()
+            .filter(|(_, (drawn, _, _))| *drawn == id)
+            .map(|(at, (_, depth, _))| {
+                rows[..at]
+                    .iter()
+                    .rev()
+                    .find(|(_, above, _)| above < depth)
+                    .map(|(parent, _, _)| (*parent).to_string())
+                    .expect("every row but the root hangs under one")
+            })
+            .collect()
     }
 
     #[test]
@@ -409,33 +645,50 @@ mod tests {
         ]);
         let a = assembled(&json, ROOT);
 
-        let drawn: Vec<&str> = a
-            .rows
-            .iter()
-            .filter(|p| p.bead.id == "done")
-            .map(|_| "done")
-            .collect();
         assert_eq!(
-            drawn.len(),
+            drawn(&a, "done"),
             3,
             "once under the root, once under each waiter"
         );
+        let under = parents_of(&a, "done");
+        assert!(under.contains(&"a".to_string()));
+        assert!(under.contains(&"b".to_string()));
+    }
 
-        let under: Vec<Option<String>> = a
-            .rows
+    #[test]
+    fn a_bead_drawn_several_ways_is_held_once_and_each_way_down_points_at_it() {
+        let json = tracker(&[
+            bead("r", "open", &[]),
+            bead(
+                "a",
+                "open",
+                &[dep("r", "parent-child"), dep("done", "blocks")],
+            ),
+            bead(
+                "b",
+                "open",
+                &[dep("r", "parent-child"), dep("done", "blocks")],
+            ),
+            bead("done", "closed", &[dep("r", "parent-child")]),
+        ]);
+        let a = assembled(&json, ROOT);
+
+        let held: Vec<&str> = a.beads.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(
+            held,
+            vec!["r", "a", "done", "b"],
+            "once each, as first reached"
+        );
+
+        let done = index_of(&a, "done");
+        let linked_from: Vec<&str> = a
+            .children
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.bead.id == "done")
-            .map(|(at, p)| {
-                a.rows[..at]
-                    .iter()
-                    .rev()
-                    .find(|q| q.depth < p.depth)
-                    .map(|q| q.bead.id.clone())
-            })
+            .filter(|(_, links)| links.iter().any(|link| link.bead == done))
+            .map(|(from, _)| a.beads[from].id.as_str())
             .collect();
-        assert!(under.contains(&Some("a".to_string())));
-        assert!(under.contains(&Some("b".to_string())));
+        assert_eq!(linked_from, vec!["r", "a", "b"]);
     }
 
     #[test]
@@ -453,19 +706,10 @@ mod tests {
         ]);
         let a = assembled(&json, ROOT);
 
-        for (at, placed) in a.rows.iter().enumerate() {
-            if placed.bead.id != "done" {
-                continue;
-            }
-            assert!(
-                a.rows[at + 1..]
-                    .iter()
-                    .take_while(|p| p.depth > placed.depth)
-                    .next()
-                    .is_none(),
-                "a closed blocker has nothing beneath it"
-            );
-        }
+        assert!(
+            a.children[index_of(&a, "done")].is_empty(),
+            "a closed blocker has nothing beneath it"
+        );
     }
 
     #[test]
@@ -482,9 +726,75 @@ mod tests {
         let a = assembled(&json, ROOT);
 
         assert_eq!(
-            a.rows.iter().filter(|p| p.bead.id == "r.2").count(),
+            drawn(&a, "r.2"),
             2,
             "once as the root's child, once as what r.1 waits on"
+        );
+        assert_eq!(a.beads.len(), 3, "and held once");
+    }
+
+    /// The first line drawn of a bead is the one that stands for the work,
+    /// and it is the line whose every link down from the root is a first
+    /// link. Here `r.2` is met under `r.1` before it is met under the root,
+    /// so the deeper way down is the first one.
+    #[test]
+    fn the_first_link_to_a_bead_is_the_way_the_walk_first_reached_it() {
+        let json = tracker(&[
+            bead("r", "open", &[]),
+            bead(
+                "r.1",
+                "open",
+                &[dep("r", "parent-child"), dep("r.2", "blocks")],
+            ),
+            bead("r.2", "open", &[dep("r", "parent-child")]),
+        ]);
+        let a = assembled(&json, ROOT);
+        let (r_1, r_2) = (index_of(&a, "r.1"), index_of(&a, "r.2"));
+
+        let firsts: Vec<(usize, usize, bool)> = a
+            .children
+            .iter()
+            .enumerate()
+            .flat_map(|(from, links)| links.iter().map(move |l| (from, l.bead, l.first)))
+            .collect();
+        assert_eq!(
+            firsts,
+            vec![(0, r_1, true), (0, r_2, false), (r_1, r_2, true)]
+        );
+        assert_eq!(
+            rows(&a)[..3]
+                .iter()
+                .map(|(id, depth, _)| (*id, *depth))
+                .collect::<Vec<_>>(),
+            vec![("r", 0), ("r.1", 1), ("r.2", 2)],
+            "which is the way down its first row takes"
+        );
+    }
+
+    #[test]
+    fn a_link_carries_the_kind_of_edge_that_hangs_the_bead_there() {
+        let json = tracker(&[
+            bead("r", "open", &[]),
+            bead(
+                "r.1",
+                "open",
+                &[dep("r", "parent-child"), dep("r.2", "blocks")],
+            ),
+            bead("r.2", "open", &[dep("r", "parent-child")]),
+        ]);
+        let a = assembled(&json, ROOT);
+        let r_1 = index_of(&a, "r.1");
+
+        assert_eq!(a.children[0][0].edge, Edge::ParentChild);
+        assert_eq!(a.children[r_1][0].edge, Edge::Blocks);
+        assert_eq!(
+            rows(&a),
+            vec![
+                ("r", 0, None),
+                ("r.1", 1, Some(Edge::ParentChild)),
+                ("r.2", 2, Some(Edge::Blocks)),
+                ("r.2", 1, Some(Edge::ParentChild)),
+            ]
         );
     }
 
@@ -508,6 +818,103 @@ mod tests {
         assert_eq!(ids(&a), vec!["r", "r.1"], "both are kept");
     }
 
+    /// The link back up is held — it is a way down from `r.1`, and the
+    /// tree says so — and every walk cuts it: the beads beneath `r.1` are
+    /// none, because the only one is the one it came down from.
+    #[test]
+    fn a_loop_is_cut_where_the_way_down_comes_back_on_itself() {
+        let json = tracker(&[
+            bead("r", "open", &[]),
+            bead(
+                "r.1",
+                "open",
+                &[dep("r", "parent-child"), dep("r", "blocks")],
+            ),
+        ]);
+        let a = assembled(&json, ROOT);
+        let r_1 = index_of(&a, "r.1");
+
+        assert_eq!(a.children[r_1].len(), 1, "the way back up is held");
+        assert!(links_from(&a.children, r_1, &[0]).is_empty());
+        assert_eq!(beneath(&a.children, r_1, &[0]), Vec::<usize>::new());
+        assert_eq!(beneath(&a.children, 0, &[]), vec![r_1]);
+    }
+
+    /// A walk that draws every way down, stopping where it meets a bead
+    /// already above it: the definition `cycles` is measured against.
+    fn every_way_down(children: &[Vec<Link>]) -> BTreeSet<usize> {
+        fn walk(
+            at: usize,
+            above: &mut Vec<usize>,
+            children: &[Vec<Link>],
+            cut: &mut BTreeSet<usize>,
+        ) {
+            above.push(at);
+            for link in &children[at] {
+                if above.contains(&link.bead) {
+                    cut.insert(link.bead);
+                } else {
+                    walk(link.bead, above, children, cut);
+                }
+            }
+            above.pop();
+        }
+        let mut cut = BTreeSet::new();
+        walk(0, &mut Vec::new(), children, &mut cut);
+        cut
+    }
+
+    /// Which beads a loop is cut at depends on the way the walk goes, and
+    /// not only on which beads are on the loop: `c` and `x` are on one loop
+    /// here and only `x`, met first, is where it is cut. Every shape below
+    /// is answered the way a walk over every way down answers it — the
+    /// last two are where remembering answers could go wrong, a loop
+    /// reached under two beads that share it and a bead under itself.
+    #[test]
+    fn a_loop_is_reported_at_the_beads_a_walk_over_every_way_down_would_cut_it_at() {
+        let met_from_above = tracker(&[
+            bead("r", "open", &[]),
+            bead("x", "open", &[dep("r", "parent-child"), dep("c", "blocks")]),
+            bead("c", "open", &[dep("x", "blocks")]),
+        ]);
+        let both_ways_round = tracker(&[
+            bead("r", "open", &[]),
+            bead("a", "open", &[dep("r", "parent-child"), dep("b", "blocks")]),
+            bead("b", "open", &[dep("r", "parent-child"), dep("a", "blocks")]),
+        ]);
+        let shared_above = tracker(&[
+            bead("r", "open", &[]),
+            bead("p", "open", &[dep("r", "parent-child"), dep("m", "blocks")]),
+            bead("q", "open", &[dep("r", "parent-child"), dep("m", "blocks")]),
+            bead("m", "open", &[dep("n", "blocks")]),
+            bead("n", "open", &[dep("m", "blocks")]),
+        ]);
+        let under_itself = tracker(&[
+            bead("r", "open", &[]),
+            bead("s", "open", &[dep("r", "parent-child"), dep("s", "blocks")]),
+        ]);
+
+        for (json, expected) in [
+            (met_from_above, vec!["x"]),
+            (both_ways_round, vec!["a", "b"]),
+            (shared_above, vec!["m"]),
+            (under_itself, vec!["s"]),
+        ] {
+            let a = assembled(&json, ROOT);
+            let reference: Vec<&str> = every_way_down(&a.children)
+                .into_iter()
+                .map(|bead| a.beads[bead].id.as_str())
+                .collect();
+            assert_eq!(a.cycles, expected, "{json}");
+            assert_eq!(a.cycles, reference, "{json}");
+        }
+    }
+
+    #[test]
+    fn a_tree_with_no_loop_reports_none() {
+        assert!(assembled(FIXTURE, FIXTURE_ROOT).cycles.is_empty());
+    }
+
     #[test]
     fn an_edge_kind_bdi_does_not_know_nests_nothing() {
         // Only the two kinds beads defines have a settled direction against
@@ -525,15 +932,18 @@ mod tests {
         let a = assembled(&json, ROOT);
 
         assert_eq!(parent_of(&a, "r.2").as_deref(), Some("r"));
-        assert_eq!(a.rows.iter().filter(|p| p.bead.id == "r.2").count(), 1);
+        assert_eq!(drawn(&a, "r.2"), 1);
     }
 
     #[test]
     fn the_root_leads_the_rows_at_depth_zero() {
         let a = assembled(FIXTURE, FIXTURE_ROOT);
-        assert_eq!(a.rows[0].bead.id, FIXTURE_ROOT);
-        assert_eq!(a.rows[0].depth, 0);
-        assert_eq!(a.rows[0].edge, None, "nothing reached the root");
+        assert_eq!(a.beads[0].id, FIXTURE_ROOT);
+        assert_eq!(
+            rows(&a)[0],
+            (FIXTURE_ROOT, 0, None),
+            "nothing reached the root"
+        );
     }
 
     #[test]
@@ -541,15 +951,16 @@ mod tests {
         // `bdi-2bb.5` waits on `bdi-2bb.3`, so the blocker sits directly under
         // it rather than after the sibling that comes next.
         let a = assembled(FIXTURE, FIXTURE_ROOT);
-        let at = a
-            .rows
+        let rows = rows(&a);
+        let at = rows
             .iter()
-            .position(|p| p.bead.id == "bdi-2bb.5")
+            .position(|(id, _, _)| *id == "bdi-2bb.5")
             .expect("the waiting bead is drawn");
 
-        assert_eq!(a.rows[at + 1].bead.id, "bdi-2bb.3");
-        assert_eq!(a.rows[at + 1].depth, a.rows[at].depth + 1);
-        assert_eq!(a.rows[at + 1].edge, Some(Edge::Blocks));
+        assert_eq!(
+            rows[at + 1],
+            ("bdi-2bb.3", rows[at].1 + 1, Some(Edge::Blocks))
+        );
     }
 
     #[test]
@@ -558,10 +969,7 @@ mod tests {
         // of the root besides.
         let a = assembled(FIXTURE, FIXTURE_ROOT);
 
-        assert_eq!(
-            a.rows.iter().filter(|p| p.bead.id == "bdi-2bb.3").count(),
-            3
-        );
+        assert_eq!(drawn(&a, "bdi-2bb.3"), 3);
     }
 
     #[test]
@@ -591,7 +999,7 @@ mod tests {
         ]"#;
         let a = assembled(json, ROOT);
 
-        assert_eq!(a.rows[0].bead.id, "r");
+        assert_eq!(a.beads[0].id, "r");
         assert!(a.dangling.is_empty(), "the root is not a dangling parent");
     }
 
@@ -625,7 +1033,7 @@ mod tests {
         // bd's own order is arbitrary; the tree owes them one.
         let a = assembled(FIXTURE, FIXTURE_ROOT);
 
-        assert_eq!(a.rows[1].bead.id, "bdi-r5l", "the bead in flight leads");
+        assert_eq!(ids(&a)[1], "bdi-r5l", "the bead in flight leads");
     }
 
     #[test]
@@ -703,5 +1111,10 @@ mod tests {
         let a = assembled(json, "one");
 
         assert_eq!(ids(&a), vec!["one", "one.1"]);
+    }
+
+    #[test]
+    fn nothing_is_unrolled_from_no_tree() {
+        assert!(unroll(&[]).is_empty());
     }
 }

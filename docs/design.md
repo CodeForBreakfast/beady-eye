@@ -83,6 +83,8 @@ coin one — and say so.**
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
+| **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
+| **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 
 ### Three different things are called "blocked"
@@ -597,17 +599,35 @@ beads stepped through below its root to reach the line — not by the bead, and
 that is what a fold and a selection are held by. Folding one copy leaves the
 others as they were.
 
-**Dedup belongs in neither the model nor the renderer.** An earlier draft put
-it in the model: one node per id, an id→node map resolving to it, and a
-warning that a copy per path makes id-based navigation land on whichever copy
-was built last. All three claims are withdrawn. The code draws a copy per path
-and has since trees came from several roots; the navigation objection held
-only while the fold and the selection were keyed on the id, and both are keyed
-on the way down to a copy now, so they land on the copy the reader is standing
-on and there is no last-built copy to lose to. What must not be duplicated is
-the *identity*: `(project, id)` still names one bead however many lines carry
-it, and asking what a bead *is* — which agent is on it, say — resolves the id
-to one answer, because the agent belongs to the bead and not to the copy.
+**The tree holds each bead once, and the ways down to it point at it.** The
+copies are drawn, not stored. A tree is every bead its root reaches, held once
+— the root first, then the rest in the order a walk down from it first reaches
+them — and, for each, its links: the ways down from it to the beads beneath
+it, each saying which bead, by which kind of edge, and whether it is the way
+the walk first reached the bead. What the screen draws is that tree unrolled,
+a line for a bead at every way down to it whose forebears are open, and the
+layout walks the links carrying the way down as it goes. Every question it
+asks of a line — what is beneath it, how far along it is, whether it rests
+open, what a run stands for, whether it is the first line of its bead — is
+answered from the bead and the way down to it: reachability from the bead
+with the way down left out, each bead once, or for the first line, whether
+every link down the way is a first link. So a question costs the size of the
+tree and not of the unrolled shape, which can be very much larger: measured
+2026-09-02 against the maintainer's five trackers, 336,063 unrolled rows over
+4,611 beads, one tree of 119 beads unrolling to 194,085 of them, and a
+keystroke under `--all` that cost 146 ms over the rows and 5 ms over the tree.
+The unrolled shape is walked whole in one place, `--json`, which writes it.
+
+**Dedup is the model's; the copies are the view's.** The model holds one node
+per bead and the view draws one line per way down to it, and the two are not
+in tension. An earlier draft warned that one node per id makes id-based
+navigation land on whichever copy was built last; that held only while the
+fold and the selection were keyed on the id. Both are keyed on the way down to
+a copy, so they land on the copy the reader is standing on, and there is no
+last-built copy to lose to. What must not be duplicated is the *identity*:
+`(project, id)` names one bead however many lines carry it, and asking what a
+bead *is* — which agent is on it, say — resolves the id to one answer, because
+the agent belongs to the bead and not to the copy.
 
 **What a fraction counts.** A line that stands for more than itself says how
 much of that is done: a node with children gets closed/total over its whole
@@ -630,7 +650,14 @@ still drawn, and a bead nothing in the answer nests at all is a root of its own
 (discovery rule 5), so it is drawn under its project and reported as dangling
 there rather than nowhere. `cycles` is beads whose own descendants lead back to
 them — a bead blocked by one of its own forebears, which beads permits — each
-still drawn, where the loop was cut. An earlier draft called the second
+still drawn, where the loop was cut. The cut is the way down: a walk that
+comes back to a bead it came down through stops there, so the tree holds the
+way back up as a link like any other and every walk declines to take it.
+Which beads are reported is therefore a fact about the walk and not only
+about the loop — a bead met above a loop is cut when the loop comes back to
+it, and one met only from inside the loop never is — and two copies of a bead
+on either side of a cut are the one place two copies stand over different
+things. An earlier draft called the second
 `unreachable` and hung such beads off the root; under this rule every bead is
 drawn where the rest of its edges put it and it is the loop that is cut, so the
 old word would have been false on a contract field. That is a JSON contract
@@ -1039,7 +1066,9 @@ name to the socket after any command that wrote something.
 `nodes` is pre-flattened in render order with an explicit `depth`, so a consumer
 draws it without reconstructing the tree; `edge` says which kind of edge put
 the node where it is (`parent-child` or `blocks`), and a bead reachable more
-than once is in `nodes` once per way down to it. `agent.source` records which
+than once is in `nodes` once per way down to it. That is the tree unrolled,
+written at emission from a model that holds each bead once (see *Tree
+construction*), so what `--json` says does not follow what the model stores. `agent.source` records which
 direction of the join resolved it, so a consumer can tell a confirmed agent
 from an inferred one. `anomalies` is every rule that fired, `[]` where none
 did — never absent, never null; an `orphan-claim` the join refused carries the

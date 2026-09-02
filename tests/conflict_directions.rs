@@ -108,7 +108,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
         .iter()
         .map(|(project, a)| ProjectRows {
             project,
-            rows: &a.rows,
+            rows: &a.beads,
         })
         .collect();
     let joined = resolve(&trees, &panes, &cfg.projects, &cfg.join);
@@ -116,13 +116,13 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
     let claimed = assembled
         .iter()
         .flat_map(|(project, a)| {
-            a.rows.iter().filter_map(move |placed| {
+            a.beads.iter().filter_map(move |bead| {
                 Some((
                     BeadKey {
                         project: (*project).to_string(),
-                        id: placed.bead.id.clone(),
+                        id: bead.id.clone(),
                     },
-                    placed.bead.metadata.get("agent_pane")?.clone(),
+                    bead.metadata.get("agent_pane")?.clone(),
                 ))
             })
         })
@@ -160,7 +160,7 @@ fn refusals(snapshot: &Snapshot) -> Vec<(BeadKey, Conflict)> {
         .trees
         .iter()
         .flat_map(|tree| {
-            tree.nodes.iter().flat_map(move |node| {
+            tree.beads.iter().flat_map(move |node| {
                 node.anomalies
                     .iter()
                     .filter_map(move |anomaly| match anomaly {

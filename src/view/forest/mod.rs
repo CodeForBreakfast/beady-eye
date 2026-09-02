@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{self, Filter, Snapshot, Tree};
-use crate::view::lines::{beneath, children_of, quiet, root_key, Content, GroupKind, Line, Place};
+use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::{Action, Motion};
 
 use handle::{handle_of, selectable, Folds, Handle};
@@ -130,16 +130,16 @@ impl Forest {
         let Handle::Bead(place) = handle else {
             return BTreeSet::new();
         };
-        let Some((tree, at)) = self.locate(place) else {
+        let Some((tree, way)) = self.locate(place) else {
             return BTreeSet::new();
         };
-        let children = children_of(&tree.nodes);
-        beneath(&children, at)
+        let (at, above) = way.split_last().expect("a way down ends somewhere");
+        beneath(tree, *at, above)
             .into_iter()
-            .filter(|node| !quiet(&tree.nodes[*node]))
+            .filter(|node| !quiet(&tree.beads[*node]))
             .map(|node| BeadKey {
                 project: tree.project.clone(),
-                id: tree.nodes[node].id.clone(),
+                id: tree.beads[node].id.clone(),
             })
             .collect()
     }
@@ -170,21 +170,25 @@ impl Forest {
         chain
     }
 
-    /// The tree a place was drawn in and the node its last step lands on.
+    /// The tree a place was drawn in and the way down it, as the beads
+    /// stepped through from the root to the one its last step lands on.
     ///
     /// The steps are walked rather than the last of them looked up, because a
-    /// bead reachable more than once stands in the nodes more than once and
-    /// only the way down to a copy tells it from its twins.
-    fn locate(&self, place: &Place) -> Option<(&Tree, usize)> {
+    /// bead reachable more than once is drawn more than once and only the way
+    /// down to a copy tells it from its twins — and the way down is what
+    /// every question about the copy is asked with.
+    fn locate(&self, place: &Place) -> Option<(&Tree, Vec<usize>)> {
         let tree = self.tree_of(place)?;
-        let children = children_of(&tree.nodes);
-        let mut at = (!tree.nodes.is_empty()).then_some(0)?;
+        let mut way = vec![(!tree.beads.is_empty()).then_some(0)?];
         for step in &place.steps {
-            at = *children[at]
-                .iter()
-                .find(|child| tree.nodes[**child].id == step.id)?;
+            let (at, above) = way.split_last().expect("a way down ends somewhere");
+            let next = links_below(tree, *at, above)
+                .into_iter()
+                .find(|link| tree.beads[link.bead].id == step.id)?
+                .bead;
+            way.push(next);
         }
-        Some((tree, at))
+        Some((tree, way))
     }
 
     fn tree_of(&self, place: &Place) -> Option<&Tree> {
@@ -264,10 +268,10 @@ impl Forest {
     /// is the last. A fold nests inside another only where a bead hangs
     /// under a bead, with at most the run of quiet children between the two,
     /// so a tree holds two levels per bead it has — and the beads down one
-    /// path are all different, because `children_of` reads a list in depth
-    /// order and gives a bead only the beads after it. The two left over are
-    /// the fold a project or a group draws over what hangs beneath it, and
-    /// the round that finds nothing left to point.
+    /// path are all different, because a way down that comes back to a bead
+    /// it came through is cut there. The two left over are the fold a
+    /// project or a group draws over what hangs beneath it, and the round
+    /// that finds nothing left to point.
     ///
     /// Generous on purpose: a level too many costs one draw that finds
     /// nothing, a level too few stops a walk that was still working. Which is
@@ -282,7 +286,7 @@ impl Forest {
             .snapshot
             .trees
             .iter()
-            .map(|tree| tree.nodes.len())
+            .map(|tree| tree.beads.len())
             .sum();
         2 * beads + 2
     }
@@ -548,10 +552,10 @@ mod tests {
     use crate::model::snapshot::{
         build_tree, Collected, FailedProject, HerdrState, Readiness, TrackerFailure, TrackerState,
     };
-    use crate::model::tree::{assemble, Assembled};
+    use crate::model::tree::{self, assemble, Assembled};
     use crate::model::types::Pane;
     use crate::view::lines::{
-        counts_beneath, marker, prefix, progress_of, run_size, split, Group, Item, Note,
+        counts_beneath, marker, prefix, progress_of, run_size, split, way_below, Group, Item, Note,
         ProjectLine, OPEN, SHUT,
     };
     use crate::view::phrase;
@@ -771,7 +775,8 @@ mod tests {
 
     /// One epic whose two halves are each held up by the same survey. Under
     /// the rule that a bead's descendants are what must finish before it,
-    /// `orb-9` is drawn beneath both of them.
+    /// `orb-9` is drawn beneath both of them: under `orb-8.1` as its child,
+    /// and under `orb-8.2` as what it waits on.
     const TWICE: &str = r#"[
       {"id":"orb-8","title":"lift the gantry","status":"in_progress",
        "priority":1,"issue_type":"epic"},
@@ -779,7 +784,8 @@ mod tests {
        "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
       {"id":"orb-8.2","title":"rail the crane","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
+       "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
+                       {"depends_on_id":"orb-9","type":"blocks"}],
        "priority":2,"issue_type":"task"},
       {"id":"orb-9","title":"survey the ground","status":"in_progress",
        "dependencies":[{"depends_on_id":"orb-8.1","type":"parent-child"}],
@@ -789,7 +795,8 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
-    /// A closed bead holding unfinished work, drawn twice in one tree. Both
+    /// A closed bead holding unfinished work, drawn twice in one tree: under
+    /// `orb-5.1` as its child, and under `orb-5.2` as what it waits on. Both
     /// copies rest shut, because nothing under either is live or ready, so
     /// what each of them says about the work it is shut over is all that
     /// tells them apart.
@@ -813,7 +820,8 @@ mod tests {
        "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
       {"id":"orb-5.2","title":"strip the south span","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"}],
+       "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"},
+                       {"depends_on_id":"orb-4","type":"blocks"}],
        "priority":2,"issue_type":"task"},
       {"id":"orb-5.2.1","title":"cut the south deck","status":"in_progress",
        "dependencies":[{"depends_on_id":"orb-5.2","type":"parent-child"}],
@@ -823,12 +831,16 @@ mod tests {
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
     fn drawn_twice_in_one_tree() -> Snapshot {
-        drawn_twice(TWICE, "orb-9", &["orb-9.1"])
+        alone("orbital", TWICE, &panes_on(&["orb-9.1"]))
     }
 
     /// The same, over a closed bead that still holds unfinished work.
     fn closed_bead_drawn_twice_in_one_tree() -> Snapshot {
-        drawn_twice(CLOSED_TWICE, "orb-4", &["orb-5.1.1", "orb-5.2.1"])
+        alone(
+            "orbital",
+            CLOSED_TWICE,
+            &panes_on(&["orb-5.1.1", "orb-5.2.1"]),
+        )
     }
 
     /// A run whose branches share a blocker. `lck-2` holds up both halves of
@@ -863,64 +875,6 @@ mod tests {
       {"id":"lck-2","title":"stop off the pound","status":"closed",
        "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
     ]"#;
-
-    /// One tree, with the subtree at `id` put back on the end so the tree
-    /// draws it twice.
-    ///
-    /// `assemble` gives every bead one parent, so the second copy is put into
-    /// the nodes here rather than read from a tracker. Everything else is
-    /// built the way every other fixture is, and `children_of` reads the
-    /// shape back out of the depths without caring who wrote them.
-    fn drawn_twice(json: &str, id: &str, working: &[&str]) -> Snapshot {
-        let rows = assembled(json);
-        let cfg = cfg();
-        let panes = panes_on(working);
-        let joined = join::resolve(
-            &[ProjectRows {
-                project: "orbital",
-                rows: &rows.rows,
-            }],
-            &panes,
-            &cfg.projects,
-            &cfg.join,
-        );
-        let mut tree = build_tree(
-            "orbital",
-            &rows,
-            &joined,
-            &Readiness::default(),
-            &cfg,
-            now(),
-        );
-
-        let at = tree
-            .nodes
-            .iter()
-            .position(|node| node.id == id)
-            .expect("the fixture draws the bead under the first half");
-        let subtree = tree.nodes[at + 1..]
-            .iter()
-            .take_while(|node| node.depth > tree.nodes[at].depth)
-            .count();
-        // The last node at the depth above is the other half, so the copy
-        // lands under it by sitting at the end.
-        let copy = tree.nodes[at..=at + subtree].to_vec();
-        tree.nodes.extend(copy);
-
-        snapshot::build(
-            Collected {
-                trees: vec![tree],
-                failed_projects: Vec::new(),
-                read_at: every_project_read(),
-            },
-            &panes,
-            &joined,
-            &cfg,
-            HerdrState::Ok,
-            Filter::All,
-            now(),
-        )
-    }
 
     /// Two of one project's roots whose trees overlap. `qua-1.2` blocks both
     /// epics, and a blocker is drawn beneath every bead it blocks, so it
@@ -1051,11 +1005,11 @@ credential_command = "secret harbour"
             &[
                 ProjectRows {
                     project: "orbital",
-                    rows: &orbital.rows,
+                    rows: &orbital.beads,
                 },
                 ProjectRows {
                     project: "harbour",
-                    rows: &harbour.rows,
+                    rows: &harbour.beads,
                 },
             ],
             panes,
@@ -1077,6 +1031,35 @@ credential_command = "secret harbour"
             &cfg(),
             now(),
         )
+    }
+
+    /// The first way down to bead `at`: the beads above it on the way the
+    /// walk first reached it, the root first.
+    fn above(tree: &Tree, at: usize) -> Vec<usize> {
+        let mut way = Vec::new();
+        let mut reached = at;
+        while reached != 0 {
+            reached = (0..tree.beads.len())
+                .find(|from| {
+                    tree.children[*from]
+                        .iter()
+                        .any(|link| link.bead == reached && link.first)
+                })
+                .expect("every bead but the root was first reached under one");
+            way.push(reached);
+        }
+        way.reverse();
+        way
+    }
+
+    /// A bead by id, and the first way down to it.
+    fn way_to(tree: &Tree, id: &str) -> (usize, Vec<usize>) {
+        let at = tree
+            .beads
+            .iter()
+            .position(|bead| bead.id == id)
+            .unwrap_or_else(|| panic!("{id} is in the tree"));
+        (at, above(tree, at))
     }
 
     /// Every configured project, read at `now`.
@@ -1482,7 +1465,7 @@ credential_command = "secret harbour"
         let joined = join::resolve(
             &[ProjectRows {
                 project,
-                rows: &rows.rows,
+                rows: &rows.beads,
             }],
             panes,
             &cfg.projects,
@@ -1691,8 +1674,8 @@ credential_command = "secret harbour"
         let cfg = cfg();
         let quarry = assembled(QUARRY);
         let wharf = assembled(WHARF);
-        let mut rows = quarry.rows.clone();
-        rows.extend(wharf.rows.clone());
+        let mut rows = quarry.beads.clone();
+        rows.extend(wharf.beads.clone());
         let joined = join::resolve(
             &[ProjectRows {
                 project: "orbital",
@@ -1993,15 +1976,10 @@ credential_command = "secret harbour"
     #[test]
     fn a_finished_subtree_counts_its_closed_beads_and_not_only_its_size() {
         let tree = tree_of("orbital", DEPOT);
-        let children = children_of(&tree.nodes);
-        let at = tree
-            .nodes
-            .iter()
-            .position(|node| node.id == "dep-1.2")
-            .expect("dep-1.2 is in the tree");
+        let (at, above) = way_to(&tree, "dep-1.2");
 
         assert_eq!(
-            progress_of(&tree, &children, at),
+            progress_of(&tree, at, &above),
             Some(Progress {
                 closed: 4,
                 total: 4
@@ -2026,10 +2004,9 @@ credential_command = "secret harbour"
            "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"}]}
         ]"#;
         let tree = tree_of("orbital", SHARED);
-        let children = children_of(&tree.nodes);
 
         assert_eq!(
-            progress_of(&tree, &children, 0),
+            progress_of(&tree, 0, &[]),
             Some(Progress {
                 closed: 1,
                 total: 4
@@ -2051,14 +2028,9 @@ credential_command = "secret harbour"
            "dependencies":[{"depends_on_id":"wtd-1","type":"parent-child"}]}
         ]"#;
         let tree = tree_of("orbital", WAITED);
-        let children = children_of(&tree.nodes);
-        let at = tree
-            .nodes
-            .iter()
-            .position(|node| node.id == "wtd-1.9")
-            .expect("the closed blocker is drawn");
+        let (at, above) = way_to(&tree, "wtd-1.9");
 
-        assert_eq!(progress_of(&tree, &children, at), None);
+        assert_eq!(progress_of(&tree, at, &above), None);
     }
 
     /// A leaf stands for itself alone, so there is nothing to be part-way
@@ -2078,14 +2050,13 @@ credential_command = "secret harbour"
     #[test]
     fn a_run_holds_closed_beads_and_nothing_else_which_is_what_lets_one_glyph_stand_for_it() {
         let tree = tree_of("orbital", DEPOT);
-        let children = children_of(&tree.nodes);
 
         let mut runs = 0;
-        for at in 0..tree.nodes.len() {
-            let (_, run) = split(&tree, &children, at);
+        for at in 0..tree.beads.len() {
+            let (_, run) = split(&tree, at, &above(&tree, at));
             runs += usize::from(!run.is_empty());
             for member in run {
-                let bead = &tree.nodes[member];
+                let bead = &tree.beads[member.bead];
                 assert!(
                     bead.status.is_closed(),
                     "{} is in a run and is {:?}",
@@ -2213,7 +2184,7 @@ credential_command = "secret harbour"
                 .filter_map(|line| line.bead().map(|key| key.id.as_str()))
                 .collect();
 
-            for node in &snapshot.trees[0].nodes {
+            for node in &snapshot.trees[0].beads {
                 if node.agent.is_none() && node.anomalies.is_empty() {
                     continue;
                 }
@@ -2245,7 +2216,7 @@ credential_command = "secret harbour"
         for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
             let unstaffed = alone("orbital", json, &[]);
             let unfinished: Vec<String> = unstaffed.trees[0]
-                .nodes
+                .beads
                 .iter()
                 .filter(|node| !node.status.is_closed())
                 .map(|node| node.id.clone())
@@ -2308,19 +2279,20 @@ credential_command = "secret harbour"
         let mut runs = 0;
         for json in [ORBITAL, DEPOT, RELAY, SHARED_IN_A_RUN] {
             let tree = alone("orbital", json, &two_panes()).trees.remove(0);
-            let children = children_of(&tree.nodes);
 
-            for at in 0..tree.nodes.len() {
-                let (_, run) = split(&tree, &children, at);
+            for at in 0..tree.beads.len() {
+                let above = above(&tree, at);
+                let (_, run) = split(&tree, at, &above);
                 if run.is_empty() {
                     continue;
                 }
                 runs += 1;
 
+                let below = way_below(&above, at);
                 let mut behind = BTreeSet::new();
-                let mut walking = run.clone();
+                let mut walking: Vec<usize> = run.iter().map(|link| link.bead).collect();
                 while let Some(node) = walking.pop() {
-                    let bead = &tree.nodes[node];
+                    let bead = &tree.beads[node];
                     behind.insert(bead.id.clone());
                     assert!(
                         bead.status.is_closed()
@@ -2329,10 +2301,14 @@ credential_command = "secret harbour"
                         "{} is behind a run that says nobody is on it",
                         bead.id
                     );
-                    walking.extend(children[node].iter().copied());
+                    walking.extend(
+                        tree::links_from(&tree.children, node, &below)
+                            .into_iter()
+                            .map(|link| link.bead),
+                    );
                 }
 
-                assert_eq!(run_size(&tree, &children, &run), behind.len());
+                assert_eq!(run_size(&tree, &run, &below), behind.len());
             }
         }
 
@@ -2434,14 +2410,9 @@ credential_command = "secret harbour"
     #[test]
     fn what_a_branch_holds_never_counts_the_bead_it_was_asked_about() {
         let tree = tree_of("orbital", SIDING);
-        let children = children_of(&tree.nodes);
-        let at = tree
-            .nodes
-            .iter()
-            .position(|node| node.id == "sdg-4.3")
-            .expect("the fixture has an unfinished branch");
+        let (at, above) = way_to(&tree, "sdg-4.3");
 
-        assert_eq!(counts_beneath(&tree, &children, at).unfinished(), 1);
+        assert_eq!(counts_beneath(&tree, at, &above).unfinished(), 1);
     }
 
     /// Only a line whose own glyph says done. An unfinished bead resting shut
@@ -2928,7 +2899,7 @@ credential_command = "secret harbour"
         let mut altered = snapshot();
         let mut retitled = 0;
         for tree in &mut altered.trees {
-            for node in &mut tree.nodes {
+            for node in &mut tree.beads {
                 let key = BeadKey {
                     project: tree.project.clone(),
                     id: node.id.clone(),

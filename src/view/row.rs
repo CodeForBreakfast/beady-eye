@@ -180,8 +180,6 @@ mod tests {
             status,
             issue_type: "task".into(),
             priority: 2,
-            depth: 1,
-            edge: None,
             ready: false,
             blocked_by: Vec::new(),
             started_at: None,

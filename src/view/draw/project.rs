@@ -231,10 +231,8 @@ mod tests {
     fn two_projects() -> Snapshot {
         let harbour = Tree {
             counts: counts(0, 1, 0, 0),
-            nodes: vec![Node {
-                depth: 0,
-                ..node("qua-1", "moor the barge", Status::InProgress)
-            }],
+            beads: vec![node("qua-1", "moor the barge", Status::InProgress)],
+            children: vec![Vec::new()],
             ..tree("harbour", "qua-1", "moor the barge", counts(0, 0, 0, 0))
         };
 

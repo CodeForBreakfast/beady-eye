@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::config::{Join, Project};
-use crate::model::tree::Placed;
+use crate::model::types::Bead;
 use crate::model::types::{Pane, PaneStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -73,7 +73,7 @@ pub enum Conflict {
 /// One project's assembled rows, as the join reads them.
 pub struct ProjectRows<'a> {
     pub project: &'a str,
-    pub rows: &'a [Placed],
+    pub rows: &'a [Bead],
 }
 
 /// The agents the join could account for, and every disagreement it could not.
@@ -133,7 +133,7 @@ pub fn resolve(
     for tree in trees {
         for row in tree.rows {
             projects_holding
-                .entry(row.bead.id.as_str())
+                .entry(row.id.as_str())
                 .or_default()
                 .insert(tree.project);
         }
@@ -147,7 +147,7 @@ pub fn resolve(
     let mut claimed_pane: BTreeMap<BeadKey, String> = BTreeMap::new();
     for tree in trees {
         for row in tree.rows {
-            let Some(named) = row.bead.metadata.get(&join.pane_key) else {
+            let Some(named) = row.metadata.get(&join.pane_key) else {
                 continue;
             };
             // A named pane that is not live resolves to nothing; that absence
@@ -157,7 +157,7 @@ pub fn resolve(
             };
             let bead = BeadKey {
                 project: tree.project.to_string(),
-                id: row.bead.id.clone(),
+                id: row.id.clone(),
             };
             let holds = pane_project[pane.pane_id.as_str()];
             if holds != Some(tree.project) {
@@ -336,10 +336,10 @@ mod tests {
             .clone()
     }
 
-    fn rows(json: &str) -> Vec<Placed> {
+    fn rows(json: &str) -> Vec<Bead> {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        assemble(beads, &root).expect("the rows assemble").rows
+        assemble(beads, &root).expect("the rows assemble").beads
     }
 
     /// The bodies of `herdr agent list`'s `agents` array, wrapped in its
