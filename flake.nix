@@ -916,6 +916,7 @@
           pkgs.rustfmt
           pkgs.clippy
           pkgs.rust-analyzer
+          pkgs.cargo-mutants
           pkgs.watchexec
           rerunBdiOnChange
           checkBeforePush
