@@ -1,7 +1,9 @@
 # rust
 /target/
-/mutants.out/
-/mutants.out.old/
+# Every run cargo-mutants leaves behind, whatever it is called. It rotates
+# mutants.out to mutants.out.old itself, and a seat keeping a third run
+# names it by hand — so the glob is what makes the next invented name safe.
+/mutants.out*/
 
 # nix
 result
