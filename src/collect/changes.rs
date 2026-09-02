@@ -301,9 +301,11 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::any::Any;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::Shutdown;
     use std::os::unix::net::{UnixListener, UnixStream};
+    use std::panic::AssertUnwindSafe;
     use std::path::Path;
     use std::sync::mpsc::{self, Receiver};
     use std::time::Duration;
@@ -340,19 +342,75 @@ mod tests {
         (writing, reading)
     }
 
-    /// Send `lines` down one connection and read back what bdi said to each.
-    fn say(at: &Path, lines: &[&str]) -> Vec<String> {
+    /// Hold one conversation with bdi: each line goes down the connection
+    /// with the answer expected back for it.
+    ///
+    /// Each answer is asserted before the line after it is sent. A bdi that
+    /// hangs up on a writer breaks the next write as well as the answer that
+    /// never came, and a broken pipe would fail the test without saying which
+    /// line it was; so the answer is what a test fails on, and a bdi that has
+    /// gone is reported by the line it was not there for.
+    #[track_caller]
+    fn say(at: &Path, exchanges: &[(&str, &str)]) {
         let (mut writing, mut reading) = connect(at);
+        let mut answered = Vec::new();
 
-        lines
-            .iter()
-            .map(|line| {
-                write!(writing, "{line}").expect("bdi takes the message");
-                let mut said = String::new();
-                reading.read_line(&mut said).expect("bdi answers");
-                said.trim_end().to_string()
-            })
-            .collect()
+        for (line, expected) in exchanges {
+            let mut said = String::new();
+            let heard = write!(writing, "{line}").and_then(|()| reading.read_line(&mut said));
+            assert!(
+                matches!(heard, Ok(1..)),
+                "bdi let the writer go at {line:?}, after answering {answered:?}"
+            );
+            assert_eq!(said.trim_end(), *expected, "bdi's answer to {line:?}");
+            answered.push(said.trim_end().to_string());
+        }
+    }
+
+    fn message_of(panic: Box<dyn Any + Send>) -> String {
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|said| said.to_string()))
+            .expect("the failure carried a message")
+    }
+
+    /// Every conversation with bdi in this module goes through `say`, so
+    /// what it reports when bdi stops answering is what a mutant that
+    /// hangs up on a writer is caught by. A stand-in that answers one line
+    /// and drops the next shows the red naming the message bdi was not
+    /// there for, and how far the conversation got, rather than the pipe
+    /// that closed under the write.
+    #[test]
+    fn a_bdi_that_lets_a_writer_go_is_reported_by_the_message_it_never_answered() {
+        let at = a_socket_path("lets-the-writer-go");
+        std::fs::create_dir_all(at.parent().expect("the socket is in a directory"))
+            .expect("a directory to put the socket in");
+        let listener = UnixListener::bind(&at).expect("a stand-in for bdi");
+        let stand_in = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("the writer connects");
+            let mut reading = BufReader::new(stream.try_clone().expect("both ends of the stream"));
+            let mut line = String::new();
+            reading.read_line(&mut line).expect("the first message");
+            writeln!(&stream, "ok atlas").expect("the answer goes back");
+            line.clear();
+            reading.read_line(&mut line).expect("the second message");
+        });
+
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            say(&at, &[("atlas\n", "ok atlas"), ("ferry\n", "ok ferry")]);
+        }));
+        stand_in.join().expect("the stand-in ran to its end");
+
+        let red = message_of(outcome.expect_err("say noticed bdi had gone"));
+        assert!(
+            red.contains("\"ferry\\n\""),
+            "the red names the message bdi never answered: {red}"
+        );
+        assert!(
+            red.contains("\"ok atlas\""),
+            "the red says how far the conversation got: {red}"
+        );
     }
 
     #[test]
@@ -419,7 +477,7 @@ mod tests {
         let reported = watching(["atlas"]);
         let (_socket, changes) = open(&at, &reported);
 
-        assert_eq!(say(&at, &["atlas\n"]), ["ok atlas"]);
+        say(&at, &[("atlas\n", "ok atlas")]);
 
         assert_eq!(
             changes.recv_timeout(A_MOMENT).ok(),
@@ -433,7 +491,7 @@ mod tests {
         let at = a_socket_path("names-a-stranger");
         let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
 
-        assert_eq!(say(&at, &["ghost\n"]), ["unknown ghost"]);
+        say(&at, &[("ghost\n", "unknown ghost")]);
 
         assert!(
             changes.recv_timeout(Duration::from_millis(100)).is_err(),
@@ -448,11 +506,7 @@ mod tests {
         let at = a_socket_path("malformed");
         let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
 
-        assert_eq!(
-            say(&at, &["\n", "atlas\n"]),
-            ["malformed", "ok atlas"],
-            "the channel carried on from the bad line to the good one"
-        );
+        say(&at, &[("\n", "malformed"), ("atlas\n", "ok atlas")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
     }
 
@@ -505,11 +559,6 @@ mod tests {
     /// fits in the room is one byte short of it. A writer sitting on that
     /// boundary is heard, and the message after it is still read as the
     /// next message rather than as the tail of this one.
-    ///
-    /// Each answer is read and asserted before the message after it is
-    /// sent. A bdi that hangs up on the boundary breaks the second write
-    /// as well as the first answer, and a broken pipe would fail this test
-    /// without saying which of the two it was.
     #[test]
     fn the_longest_message_that_still_ends_is_taken() {
         let at = a_socket_path("longest-that-ends");
@@ -517,24 +566,12 @@ mod tests {
         let reported = watching([brink.as_str(), "atlas"]);
         let (_socket, changes) = open(&at, &reported);
 
-        let (mut writing, mut reading) = connect(&at);
-
-        writeln!(writing, "{brink}").expect("bdi takes the message");
-        let mut said = String::new();
-        reading.read_line(&mut said).expect("bdi answers");
-        assert_eq!(
-            said.trim_end(),
-            format!("ok {brink}"),
-            "the line ended inside the room it was given, so bdi took it"
-        );
-
-        writeln!(writing, "atlas").expect("bdi is still hearing this writer");
-        let mut next = String::new();
-        reading.read_line(&mut next).expect("bdi answers");
-        assert_eq!(
-            next.trim_end(),
-            "ok atlas",
-            "bdi read on from where the boundary message ended"
+        say(
+            &at,
+            &[
+                (&format!("{brink}\n"), &format!("ok {brink}")),
+                ("atlas\n", "ok atlas"),
+            ],
         );
 
         assert_eq!(
@@ -551,7 +588,7 @@ mod tests {
         let at = a_socket_path("stays-and-speaks");
         let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
 
-        assert_eq!(say(&at, &["atlas\n", "ferry\n"]), ["ok atlas", "ok ferry"]);
+        say(&at, &[("atlas\n", "ok atlas"), ("ferry\n", "ok ferry")]);
 
         for said in ["atlas", "ferry"] {
             assert_eq!(
@@ -567,8 +604,8 @@ mod tests {
         let at = a_socket_path("several-writers");
         let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
 
-        assert_eq!(say(&at, &["atlas\n"]), ["ok atlas"]);
-        assert_eq!(say(&at, &["ferry\n"]), ["ok ferry"]);
+        say(&at, &[("atlas\n", "ok atlas")]);
+        say(&at, &[("ferry\n", "ok ferry")]);
 
         for said in ["atlas", "ferry"] {
             assert_eq!(
@@ -592,7 +629,7 @@ mod tests {
         let reported = watching(["atlas", "ferry"]);
         let (_socket, changes) = open(&at, &reported);
 
-        assert_eq!(say(&at, &["atlas\n"]), ["ok atlas"]);
+        say(&at, &[("atlas\n", "ok atlas")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
     }
 
@@ -608,11 +645,7 @@ mod tests {
         let second = listen(Some(at.clone()), &reported, changed);
 
         assert!(matches!(second, Err(Refused::AlreadyListening(_))));
-        assert_eq!(
-            say(&at, &["atlas\n"]),
-            ["ok atlas"],
-            "the first bdi is still listening"
-        );
+        say(&at, &[("atlas\n", "ok atlas")]);
     }
 
     /// The line that reaches the primary screen carries the half no notice
