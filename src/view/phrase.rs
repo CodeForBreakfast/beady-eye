@@ -634,7 +634,10 @@ mod tests {
     use super::*;
     use crate::collect::run::{Env, RealRunner, Runner};
     use crate::view::fitted::columns;
-    use crate::view::tests::says;
+    use crate::view::tests::{
+        every_failure_kind, every_join_source, every_mark, every_notice, every_tracker_failure,
+        says,
+    };
     use pretty_assertions::assert_eq;
     use ratatui::text::Span;
 
@@ -652,18 +655,22 @@ mod tests {
     }
 
     /// Every phrase this module can produce, over every variant of every enum
-    /// it takes. The enums are finite and the matches are exhaustive, so this
-    /// is the whole of what can ever appear on screen from here.
+    /// it takes.
+    ///
+    /// The enums are walked rather than listed, so a variant added to one of
+    /// them stops this compiling until it has been given a place. That is
+    /// what makes this the whole of what can ever appear on screen from
+    /// here: the sentence used to rest on seven array literals staying in
+    /// step by hand, and one of them had already fallen behind.
+    ///
+    /// Where a variant carries fields it has shapes as well, and no walk can
+    /// enumerate those. The walk takes one shape of each variant and the
+    /// shapes that read differently are listed beside it, as the sample they
+    /// are rather than as a second total claim.
     fn every_phrase() -> Vec<String> {
         let mut said: Vec<String> = Vec::new();
 
-        for failure in [
-            TrackerFailure::Auth,
-            TrackerFailure::Unavailable,
-            TrackerFailure::Exec,
-            TrackerFailure::Parse,
-            TrackerFailure::UnknownFlag,
-        ] {
+        for failure in every_tracker_failure() {
             said.push(tracker_failure(failure).to_string());
             said.push(failed_project(&FailedProject {
                 project: "summit-works".into(),
@@ -671,29 +678,24 @@ mod tests {
             }));
         }
 
-        for fact in [
-            Notice::AgentsUnknown,
-            Notice::NoInboundChannel,
-            Notice::AnotherBdiHadTheInboundChannel,
-        ] {
+        for fact in every_notice() {
             said.push(notice(fact).to_string());
             said.push(brief_notice(fact).to_string());
         }
 
+        for rule in every_anomaly() {
+            said.push(anomaly(&rule));
+        }
+
+        // The shapes inside a rule, which are a sample and not a roster: the
+        // refusal an orphan claim carries reads as its own sentence, and an
+        // age is said in the singular or the plural.
         for rule in [
-            Anomaly::OrphanClaim { refused: None },
             Anomaly::OrphanClaim {
                 refused: Some(Conflict::PaneInAnotherProject {
                     bead: key("nix-9670s.20"),
                     pane: "wCM:pD".into(),
                     pane_project: None,
-                }),
-            },
-            Anomaly::OrphanClaim {
-                refused: Some(Conflict::PaneInAnotherProject {
-                    bead: key("nix-9670s.20"),
-                    pane: "wCM:p9".into(),
-                    pane_project: Some("homelab".into()),
                 }),
             },
             Anomaly::OrphanClaim {
@@ -703,37 +705,24 @@ mod tests {
                     beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
                 }),
             },
-            Anomaly::StalePane,
-            Anomaly::StaleClaim { days: 1 },
             Anomaly::StaleClaim { days: 58 },
         ] {
             said.push(anomaly(&rule));
         }
 
+        for clash in every_conflict() {
+            said.push(conflict(&clash));
+        }
+
+        // The shapes inside a disagreement, a sample as above: a contested
+        // pane's own caption is said where it has one, and a pane under no
+        // configured project at all is named differently from one under
+        // another.
         for clash in [
-            Conflict::BeadAndPaneDisagree {
-                bead: key("nix-9670s.20"),
-                named_by_bead: "wCM:p9".into(),
-                named_by_pane: "wCM:p6".into(),
-            },
-            Conflict::SeveralPanesNameOneBead {
-                bead: key("nix-9670s.20"),
-                panes: vec!["wCM:p9".into(), "wCM:p6".into()],
-            },
-            Conflict::SeveralBeadsNameOnePane {
-                pane: "wCM:p9".into(),
-                caption: None,
-                beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
-            },
             Conflict::SeveralBeadsNameOnePane {
                 pane: "wCM:p9".into(),
                 caption: Some("nix-9670s.1: rebuild the installer image".into()),
                 beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
-            },
-            Conflict::PaneInAnotherProject {
-                bead: key("nix-9670s.20"),
-                pane: "wCM:p9".into(),
-                pane_project: Some("homelab".into()),
             },
             Conflict::PaneInAnotherProject {
                 bead: key("nix-9670s.20"),
@@ -748,16 +737,7 @@ mod tests {
         said.push(no_agent_to_tail().to_string());
         said.push(no_session_to_tail().to_string());
         said.push(pane_being_read().to_string());
-        for kind in [
-            FailureKind::Auth,
-            FailureKind::Unavailable,
-            FailureKind::Gone,
-            FailureKind::Busy,
-            FailureKind::Exec,
-            FailureKind::Parse,
-            FailureKind::Unsupported,
-            FailureKind::UnknownFlag,
-        ] {
+        for kind in every_failure_kind() {
             said.push(pane_unreadable(kind).to_string());
         }
         said.push(no_live_panes().to_string());
@@ -784,7 +764,7 @@ mod tests {
         said.push(scoped_by_the_directory("summit-works"));
         said.push(all_projects_reads_the_rest().to_string());
 
-        for source in [JoinSource::AgentPane, JoinSource::DisplayAgent] {
+        for source in every_join_source() {
             said.extend(join_caveat(source).map(str::to_string));
         }
 
@@ -800,8 +780,12 @@ mod tests {
                 .to_string(),
             );
         }
-        for at_rest in [Mark::Read, Mark::Refused] {
-            said.push(mark(resting(at_rest), an_instant()).to_string());
+        // Every mark, the turning one included. Its frames are walked above
+        // and this reaches it once more, which costs a duplicate and keeps
+        // the walk total — the mark for a collection that has stopped
+        // answering was the phrase the hand-written pair left out.
+        for state in every_mark() {
+            said.push(mark(resting_or_turning(state), an_instant()).to_string());
         }
         for ago in [1, 90, 5_000, 200_000] {
             said.extend(last_read(
@@ -811,6 +795,52 @@ mod tests {
         }
 
         said
+    }
+
+    /// One of every anomaly rule, walked so the compiler asks when a rule is
+    /// added. See `view::tests::every_failure_kind` for what the walk does
+    /// and does not prove; the values inside a rule are the caller's to
+    /// vary, and `every_phrase` varies them.
+    fn every_anomaly() -> impl Iterator<Item = Anomaly> {
+        std::iter::successors(
+            Some(Anomaly::OrphanClaim { refused: None }),
+            |rule| match rule {
+                Anomaly::OrphanClaim { .. } => Some(Anomaly::StalePane),
+                Anomaly::StalePane => Some(Anomaly::StaleClaim { days: 1 }),
+                Anomaly::StaleClaim { .. } => None,
+            },
+        )
+    }
+
+    /// One of every disagreement the join reports rather than resolves,
+    /// walked for the same reason as [`every_anomaly`].
+    fn every_conflict() -> impl Iterator<Item = Conflict> {
+        std::iter::successors(
+            Some(Conflict::BeadAndPaneDisagree {
+                bead: key("nix-9670s.20"),
+                named_by_bead: "wCM:p9".into(),
+                named_by_pane: "wCM:p6".into(),
+            }),
+            |clash| match clash {
+                Conflict::BeadAndPaneDisagree { .. } => Some(Conflict::SeveralPanesNameOneBead {
+                    bead: key("nix-9670s.20"),
+                    panes: vec!["wCM:p9".into(), "wCM:p6".into()],
+                }),
+                Conflict::SeveralPanesNameOneBead { .. } => {
+                    Some(Conflict::SeveralBeadsNameOnePane {
+                        pane: "wCM:p9".into(),
+                        caption: None,
+                        beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+                    })
+                }
+                Conflict::SeveralBeadsNameOnePane { .. } => Some(Conflict::PaneInAnotherProject {
+                    bead: key("nix-9670s.20"),
+                    pane: "wCM:p9".into(),
+                    pane_project: Some("homelab".into()),
+                }),
+                Conflict::PaneInAnotherProject { .. } => None,
+            },
+        )
     }
 
     fn an_instant() -> chrono::DateTime<chrono::Utc> {
@@ -918,19 +948,18 @@ mod tests {
 
     /// Graeme, on the mark at rest: *"when not collecting, the spinner can be
     /// replaced with something to indicate success/failure so that it doesn't
-    /// jump around"*. Three states, three marks, and the mark is what tells
-    /// them apart — the age beside it says the same kind of thing in all
-    /// three.
+    /// jump around"*. A state apiece, and the mark is what tells them apart —
+    /// the age beside it says the same kind of thing in all of them.
+    ///
+    /// Walked, so a state added to the enum arrives here with no glyph and
+    /// this says so. The list it is compared against is in the walk's order.
     #[test]
     fn each_state_of_a_collection_wears_its_own_mark() {
-        assert_eq!(
-            [
-                mark(collecting(), an_instant()),
-                mark(resting(Mark::Read), an_instant()),
-                mark(resting(Mark::Refused), an_instant()),
-            ],
-            ["⠴", "✓", "⚠"]
-        );
+        let said: Vec<&str> = every_mark()
+            .map(|state| mark(resting_or_turning(state), an_instant()))
+            .collect();
+
+        assert_eq!(said, ["⠴", "⠿", "✓", "⚠"]);
     }
 
     /// The bead: the cell changed shape rather than content every time a
@@ -938,7 +967,7 @@ mod tests {
     /// mark is one column, so nothing after it moves.
     #[test]
     fn every_mark_is_one_column_so_the_cell_never_changes_width() {
-        for state in [Mark::Collecting, Mark::Read, Mark::Refused] {
+        for state in every_mark() {
             for frame in 0..TURNING.len() as i64 {
                 let at = an_instant() + TimeDelta::milliseconds(frame * FRAME_MS);
                 let drawn = mark(resting_or_turning(state), at);
@@ -972,7 +1001,7 @@ mod tests {
     fn what_is_drawn_holds_exactly_as_long_as_holds_for_says() {
         for offset in [0, 1, 37, 79, 80, 500, 999, 1_500, 61_000, 3_601_000] {
             let now = an_instant() + TimeDelta::milliseconds(offset);
-            for state in [collecting(), resting(Mark::Read), resting(Mark::Refused)] {
+            for state in every_mark().map(resting_or_turning) {
                 let held = holds_for(state, now)
                     .expect("a project that has been read says something that expires")
                     .as_millis() as i64;
@@ -1150,10 +1179,19 @@ mod tests {
     /// A mark at rest is a still glyph and stays on whichever one its last
     /// collection earned: a resting mark that turned would read as a
     /// collection running.
+    ///
+    /// Which of them are at rest is asked of the enum rather than listed, so
+    /// a mark added to it has to be put on one side or the other before this
+    /// compiles. Only the turning one is not.
     #[test]
     fn a_mark_at_rest_is_the_same_glyph_a_frame_later() {
-        for at_rest in [Mark::Read, Mark::Refused] {
-            let frame = |at| mark(resting(at_rest), at);
+        let at_rest = every_mark().filter(|state| match state {
+            Mark::Collecting => false,
+            Mark::Unanswered | Mark::Read | Mark::Refused => true,
+        });
+
+        for state in at_rest {
+            let frame = |at| mark(resting_or_turning(state), at);
 
             assert_eq!(
                 frame(an_instant()),
@@ -1232,19 +1270,26 @@ mod tests {
     /// pane: gone and busy each in their own words, since one is a row to
     /// stop tailing and the other a wait, and the rest that it could not be
     /// read.
+    ///
+    /// The kinds are walked and which of the three words each gets is
+    /// matched exhaustively, so a kind added to the enum has to be given
+    /// words here before this compiles. `pane_unreadable` growing an arm for
+    /// it is not that: an arm is not an assertion about what it says.
     #[test]
     fn the_pane_phrases_say_what_happened_to_the_pane() {
-        says(pane_unreadable(FailureKind::Gone), "gone");
-        says(pane_unreadable(FailureKind::Busy), "busy");
-        for kind in [
-            FailureKind::Auth,
-            FailureKind::Unavailable,
-            FailureKind::Exec,
-            FailureKind::Parse,
-            FailureKind::Unsupported,
-            FailureKind::UnknownFlag,
-        ] {
-            says(pane_unreadable(kind), "could not be read");
+        for kind in every_failure_kind() {
+            let words = match kind {
+                FailureKind::Gone => "gone",
+                FailureKind::Busy => "busy",
+                FailureKind::Auth
+                | FailureKind::Unavailable
+                | FailureKind::Exec
+                | FailureKind::Parse
+                | FailureKind::Unsupported
+                | FailureKind::UnknownFlag => "could not be read",
+            };
+
+            says(pane_unreadable(kind), words);
         }
     }
 
@@ -1255,20 +1300,17 @@ mod tests {
             .all(|phrase| !phrase.trim().is_empty()));
     }
 
+    /// A reader who cannot tell which failure it is cannot act on it, so no
+    /// two of them may read the same. Walked rather than counted in the
+    /// name: a name saying how many there are goes stale without going red.
     #[test]
-    fn the_five_tracker_failures_are_told_apart() {
-        let said = [
-            tracker_failure(TrackerFailure::Auth),
-            tracker_failure(TrackerFailure::Unavailable),
-            tracker_failure(TrackerFailure::Exec),
-            tracker_failure(TrackerFailure::Parse),
-            tracker_failure(TrackerFailure::UnknownFlag),
-        ];
-        let mut distinct = said.to_vec();
+    fn every_tracker_failure_is_told_apart_from_the_rest() {
+        let said: Vec<&str> = every_tracker_failure().map(tracker_failure).collect();
+        let mut distinct = said.clone();
         distinct.sort_unstable();
         distinct.dedup();
 
-        assert_eq!(distinct.len(), said.len());
+        assert_eq!(distinct.len(), said.len(), "{said:?}");
     }
 
     /// A bd that does not know a flag bdi uses is one the reader replaces,
@@ -1296,14 +1338,25 @@ mod tests {
         assert_eq!(join_caveat(JoinSource::AgentPane), None);
     }
 
-    /// Neither notice can be acted on without knowing which one it is: one
-    /// says the agents are missing, the other that the beads may be stale.
+    /// No notice can be acted on without knowing which one it is: one says
+    /// the agents are missing, another that the beads may be stale, and the
+    /// third which of those the reader can put right by closing something.
+    ///
+    /// Both surfaces, because the foot gives up the long words for the brief
+    /// ones under a narrow screen and a reader there needs them apart just
+    /// as much.
     #[test]
-    fn the_two_notices_are_told_apart() {
-        assert_ne!(
-            notice(Notice::AgentsUnknown),
-            notice(Notice::NoInboundChannel)
-        );
+    fn every_notice_is_told_apart_from_the_rest() {
+        for said in [
+            every_notice().map(notice).collect::<Vec<&str>>(),
+            every_notice().map(brief_notice).collect::<Vec<&str>>(),
+        ] {
+            let mut distinct = said.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+
+            assert_eq!(distinct.len(), said.len(), "{said:?}");
+        }
     }
 
     /// The reader cannot open the socket from in here, so the notice is

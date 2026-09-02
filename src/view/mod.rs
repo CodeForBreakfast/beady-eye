@@ -225,6 +225,9 @@ impl Freshness {
 mod tests {
     use super::*;
     use crate::app::Wanted;
+    use crate::collect::run::FailureKind;
+    use crate::model::join::JoinSource;
+    use crate::model::snapshot::TrackerFailure;
     use chrono::{TimeDelta, TimeZone};
     use pretty_assertions::assert_eq;
 
@@ -267,6 +270,78 @@ mod tests {
     #[should_panic(expected = "nothing is asserted")]
     fn nothing_is_not_something_a_text_can_leave_out() {
         does_not_say("⚠ agents unknown", "");
+    }
+
+    /// Every variant of an enum a phrase is drawn from, walked rather than
+    /// listed: each arm names the variant after it, so a variant added to the
+    /// enum stops these compiling until it has been given a place in the
+    /// chain. A roster whose name or comment says it covers an enum is built
+    /// from one of these, because a hand-written array literal cannot keep
+    /// that promise and reads exactly the same when it has stopped keeping
+    /// it.
+    ///
+    /// The compiler asks; it does not prove. An arm answering `None` early
+    /// drops everything after it. Proving it wants `strum`'s `EnumIter`,
+    /// which is a dependency for a handful of test rosters, and stable Rust
+    /// has no `variant_count`.
+    ///
+    /// Only enums whose variants stand on their own are here. One carrying
+    /// fields has shapes as well as variants, and the values that make a
+    /// shape belong beside the test that reads them.
+    ///
+    /// They sit in `view` rather than in the module that first needed them
+    /// because `view::phrase` and `view::tail` roster the same enums, and a
+    /// second copy of a chain is the drift the chain exists to catch.
+    pub(super) fn every_failure_kind() -> impl Iterator<Item = FailureKind> {
+        std::iter::successors(Some(FailureKind::Auth), |kind| match kind {
+            FailureKind::Auth => Some(FailureKind::Unavailable),
+            FailureKind::Unavailable => Some(FailureKind::Gone),
+            FailureKind::Gone => Some(FailureKind::Busy),
+            FailureKind::Busy => Some(FailureKind::Exec),
+            FailureKind::Exec => Some(FailureKind::Parse),
+            FailureKind::Parse => Some(FailureKind::Unsupported),
+            FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
+            FailureKind::UnknownFlag => None,
+        })
+    }
+
+    /// Every way a tracker can refuse to be read. See [`every_failure_kind`].
+    pub(super) fn every_tracker_failure() -> impl Iterator<Item = TrackerFailure> {
+        std::iter::successors(Some(TrackerFailure::Auth), |failure| match failure {
+            TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
+            TrackerFailure::Unavailable => Some(TrackerFailure::Exec),
+            TrackerFailure::Exec => Some(TrackerFailure::Parse),
+            TrackerFailure::Parse => Some(TrackerFailure::UnknownFlag),
+            TrackerFailure::UnknownFlag => None,
+        })
+    }
+
+    /// Every fact said at the foot of the screen. See [`every_failure_kind`].
+    pub(super) fn every_notice() -> impl Iterator<Item = Notice> {
+        std::iter::successors(Some(Notice::AgentsUnknown), |fact| match fact {
+            Notice::AgentsUnknown => Some(Notice::NoInboundChannel),
+            Notice::NoInboundChannel => Some(Notice::AnotherBdiHadTheInboundChannel),
+            Notice::AnotherBdiHadTheInboundChannel => None,
+        })
+    }
+
+    /// Every mark a project's cell can wear. See [`every_failure_kind`].
+    pub(super) fn every_mark() -> impl Iterator<Item = Mark> {
+        std::iter::successors(Some(Mark::Collecting), |mark| match mark {
+            Mark::Collecting => Some(Mark::Unanswered),
+            Mark::Unanswered => Some(Mark::Read),
+            Mark::Read => Some(Mark::Refused),
+            Mark::Refused => None,
+        })
+    }
+
+    /// Every direction the join can award an agent from. See
+    /// [`every_failure_kind`].
+    pub(super) fn every_join_source() -> impl Iterator<Item = JoinSource> {
+        std::iter::successors(Some(JoinSource::AgentPane), |source| match source {
+            JoinSource::AgentPane => Some(JoinSource::DisplayAgent),
+            JoinSource::DisplayAgent => None,
+        })
     }
 
     fn at(minute: u32, second: u32) -> DateTime<Utc> {

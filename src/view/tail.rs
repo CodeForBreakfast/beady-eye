@@ -195,6 +195,7 @@ mod tests {
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::forest;
     use crate::view::lines::GroupKind;
+    use crate::view::tests::every_failure_kind;
     use crate::view::walk::{self, Rows};
     use crate::view::{Action, Motion};
     use chrono::Utc;
@@ -228,27 +229,6 @@ mod tests {
             program: "herdr".to_string(),
             detail: "the test said so".to_string(),
         }
-    }
-
-    /// Every way a read can fail, walked rather than listed: each arm names
-    /// the kind after it, so a `FailureKind` added to the enum stops this
-    /// compiling until it has been given a place in the chain.
-    ///
-    /// The compiler asks; it does not prove. An arm answering `None` early
-    /// drops everything after it. Proving it wants `strum`'s `EnumIter`,
-    /// which is a dependency for one roster, and stable Rust has no
-    /// `variant_count`.
-    fn every_failure_kind() -> impl Iterator<Item = FailureKind> {
-        std::iter::successors(Some(FailureKind::Auth), |kind| match kind {
-            FailureKind::Auth => Some(FailureKind::Unavailable),
-            FailureKind::Unavailable => Some(FailureKind::Gone),
-            FailureKind::Gone => Some(FailureKind::Busy),
-            FailureKind::Busy => Some(FailureKind::Exec),
-            FailureKind::Exec => Some(FailureKind::Parse),
-            FailureKind::Parse => Some(FailureKind::Unsupported),
-            FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
-            FailureKind::UnknownFlag => None,
-        })
     }
 
     fn agent_on(pane: &str) -> AgentRef {
