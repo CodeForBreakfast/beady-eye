@@ -4,6 +4,7 @@
 use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::Context;
 use chrono::Utc;
@@ -13,6 +14,7 @@ use crate::collect::discovery;
 use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
 use crate::model::snapshot::Filter;
+use crate::tui::Armed;
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
@@ -51,6 +53,51 @@ struct Cli {
     /// Draw every tree, including those with no live agent.
     #[arg(long)]
     all: bool,
+
+    /// Poll every project this run, whatever the config says about each.
+    #[arg(long, conflicts_with = "no_poll")]
+    poll: bool,
+
+    /// Poll no project this run, whatever the config says about each.
+    #[arg(long = "no-poll")]
+    no_poll: bool,
+}
+
+/// What this run said about polling, over what its config says about each
+/// project.
+///
+/// A run-level switch rather than a second way of naming projects: `--project`
+/// already narrows the set, and what this is for is bisecting — turning the
+/// poll on to see whether a suspect producer was the only thing wrong, or off
+/// to see whether it was working at all — on a machine nobody wants to
+/// redeploy to find out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Polling {
+    /// Each project as its own `poll` key says.
+    AsConfigured,
+    Everything,
+    Nothing,
+}
+
+impl Polling {
+    fn asked_for(cli: &Cli) -> Self {
+        match (cli.poll, cli.no_poll) {
+            (true, _) => Polling::Everything,
+            (_, true) => Polling::Nothing,
+            _ => Polling::AsConfigured,
+        }
+    }
+
+    /// How long after a read this project waits before asking for the next,
+    /// or nothing where it does not ask at all.
+    fn after_a_read(self, project: &crate::config::Project, every: Duration) -> Option<Duration> {
+        let polls = match self {
+            Polling::AsConfigured => project.poll,
+            Polling::Everything => true,
+            Polling::Nothing => false,
+        };
+        polls.then_some(every)
+    }
 }
 
 pub fn run() -> anyhow::Result<ExitCode> {
@@ -84,16 +131,16 @@ pub fn run() -> anyhow::Result<ExitCode> {
 
     let refresh = cfg.tui.refresh();
     let patience = cfg.tui.unanswered_after();
+    let polling = Polling::asked_for(&cli);
     // RealRunner is a unit struct, so the collection builds its own rather
     // than borrowing one across the thread it runs on.
     let projects = cfg
         .projects
         .iter()
-        .map(|project| project.name.clone())
+        .map(|project| Armed::polling(project.name.clone(), polling.after_a_read(project, refresh)))
         .collect();
     let mut collection = crate::app::Collection::default();
     crate::tui::run(
-        refresh,
         patience,
         filter,
         projects,
@@ -376,6 +423,65 @@ detached
     #[test]
     fn no_project_is_named_unless_one_is_asked_for() {
         assert!(Cli::parse_from(["bdi"]).projects.is_empty());
+    }
+
+    /// The run says nothing about polling unless it is asked to, and each
+    /// project is then read as its own config key says.
+    #[test]
+    fn a_run_that_says_nothing_about_polling_leaves_it_to_the_config() {
+        assert_eq!(
+            Polling::asked_for(&Cli::parse_from(["bdi"])),
+            Polling::AsConfigured
+        );
+    }
+
+    #[test]
+    fn a_run_can_turn_the_poll_on_or_off_for_every_project() {
+        assert_eq!(
+            Polling::asked_for(&Cli::parse_from(["bdi", "--poll"])),
+            Polling::Everything
+        );
+        assert_eq!(
+            Polling::asked_for(&Cli::parse_from(["bdi", "--no-poll"])),
+            Polling::Nothing
+        );
+    }
+
+    /// Asking for both is a command line that contradicts itself, and clap
+    /// says so rather than one of them quietly winning.
+    #[test]
+    fn a_run_cannot_ask_for_the_poll_and_against_it_at_once() {
+        assert!(Cli::try_parse_from(["bdi", "--poll", "--no-poll"]).is_err());
+    }
+
+    /// The interval each project's next ask is armed from, or nothing where
+    /// it does not ask: what the run said, over what its config says.
+    #[test]
+    fn what_the_run_said_outranks_what_each_project_says() {
+        let every = Duration::from_secs(30);
+        let polled = a_project(true);
+        let pushed = a_project(false);
+
+        assert_eq!(
+            Polling::AsConfigured.after_a_read(&polled, every),
+            Some(every)
+        );
+        assert_eq!(Polling::AsConfigured.after_a_read(&pushed, every), None);
+        assert_eq!(
+            Polling::Everything.after_a_read(&pushed, every),
+            Some(every)
+        );
+        assert_eq!(Polling::Nothing.after_a_read(&polled, every), None);
+    }
+
+    fn a_project(poll: bool) -> crate::config::Project {
+        crate::config::Project {
+            name: "orbital".to_string(),
+            path: PathBuf::from("/srv/work/orbital"),
+            credential_command: None,
+            poll,
+            worktrees: Vec::new(),
+        }
     }
 
     #[test]

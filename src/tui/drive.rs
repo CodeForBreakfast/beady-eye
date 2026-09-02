@@ -18,6 +18,7 @@ use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion};
 
+use super::armed::Armed;
 use super::keys::action;
 
 /// Everything that reaches the loop.
@@ -161,75 +162,39 @@ pub(super) fn drive(
     events: &Receiver<Event>,
     ask: &Sender<Wanted>,
     mut outstanding: Outstanding,
+    mut armed: Vec<Armed>,
 ) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
     view.draw(showing)?;
 
-    while let Some(waited) = wait(events, view.holds_for()) {
-        let event = match waited {
+    while let Some(waited) = wait(events, sleeps_for(view, &outstanding, &armed, Utc::now())) {
+        let woken = match waited {
             // Nothing has happened and what is drawn is out of date, which is
             // the whole of what makes the mark turn and the ages advance: a
             // collection is dozens of round trips and reports nothing until
-            // it is done, and a resting `bdi` whose projects are all reported
-            // for polls nothing at all.
-            Waited::Aged => {
-                view.draw(showing)?;
-                continue;
+            // it is done. It is also how a project asks for itself again and
+            // how a read leaves once its window is out: both are deadlines
+            // nothing else was going to wake the loop for.
+            Waited::Aged => true,
+            Waited::Event(event) => {
+                let Some(changed) =
+                    answered(view, &mut outstanding, &mut armed, &mut showing, event)
+                else {
+                    return Ok(());
+                };
+                changed
             }
-            Waited::Event(event) => event,
         };
 
-        let changed = match event {
-            // Any key at all, because a reader who opened the bindings by
-            // accident must not have to find the one key that closes them.
-            Event::Key(_) if showing == Showing::Bindings => {
-                showing = Showing::Forest;
-                true
-            }
-            Event::Key(key) => match action(key) {
-                Some(Action::Quit) => return Ok(()),
-                Some(Action::ShowBindings) => {
-                    showing = Showing::Bindings;
-                    true
-                }
-                Some(Action::Refresh) => {
-                    outstanding.ask(ask, Wanted::Everything, Utc::now())
-                        && view.collecting(outstanding.awaited())
-                }
-                Some(action) => view.apply(action),
-                None => false,
-            },
-            // A click or a notch takes the bindings away and does no more,
-            // for the same reason a key does: the window is over the forest,
-            // so the rows under the pointer are rows nobody can see.
-            Event::Clicked(_) | Event::Scrolled(_) if showing == Showing::Bindings => {
-                showing = Showing::Forest;
-                true
-            }
-            Event::Clicked(row) => view.clicked(row),
-            Event::Scrolled(motion) => view.apply(Action::Move(motion)),
-            Event::Resize => true,
-            Event::Changed(wanted) => {
-                outstanding.ask(ask, wanted, Utc::now()) && view.collecting(outstanding.awaited())
-            }
-            Event::Collected(snapshot) => {
-                outstanding.came_back(ask);
-                view.collected(*snapshot);
-                // Told after the rows land, and told whatever came of the
-                // collection that ended: another may have been waiting behind
-                // it, and where none was, a line left saying it was being
-                // read would say so over rows that had already arrived.
-                view.collecting(outstanding.awaited());
-                true
-            }
-            Event::Tailed(answer) => view.tailed(answer),
-            // The same return 'q' takes, and for the same reason: it is
-            // returning that drops the screen, and dropping the screen is
-            // what hands the terminal back.
-            Event::Signalled => return Ok(()),
-        };
+        // Whatever has fallen due, whether a deadline or an event woke us: a
+        // project's own ask coming round, and the read at the front leaving.
+        // Done in one place rather than on each arm, so that the loop cannot
+        // answer an event and forget to look.
+        let now = Utc::now();
+        let told = asks_for_what_is_due(view, &mut outstanding, &mut armed, now);
+        outstanding.sends(ask, now);
 
-        if changed {
+        if woken || told {
             view.draw(showing)?;
         }
     }
@@ -237,7 +202,173 @@ pub(super) fn drive(
     Ok(())
 }
 
+/// Ask for whatever the projects that arm themselves are now due to ask for.
+/// Whether the screen changed for it.
+///
+/// Through `asked_for`, the same way a message and `^R` ask, so that a poll's
+/// own read is said on the screen without this having to remember to say it.
+/// A further way of making a read outstanding belongs on that call for the
+/// same reason: the marking is the rule's, not each caller's.
+fn asks_for_what_is_due(
+    view: &mut dyn View,
+    outstanding: &mut Outstanding,
+    armed: &mut [Armed],
+    now: DateTime<Utc>,
+) -> bool {
+    // Every project that is due, not the first: several come due together
+    // after a read of everything, and a short-circuiting `any` would ask for
+    // one of them and leave the rest armed in the past.
+    let mut told = false;
+    for wanted in armed.iter_mut().filter_map(|project| project.asks(now)) {
+        told |= asked_for(view, outstanding, wanted);
+    }
+    told
+}
+
+/// How long the loop may sleep: until what is drawn stops being true, until a
+/// project asks for itself, or until the read at the front is due to leave —
+/// whichever comes first, and nothing where none of them will.
+///
+/// Three deadlines where there was one, and the loop tells them apart only by
+/// doing all three things when it wakes. What it costs is a redraw on a wake
+/// that was a window closing rather than a frame ageing; what it saves is a
+/// second way for the loop to be woken.
+fn sleeps_for(
+    view: &dyn View,
+    outstanding: &Outstanding,
+    armed: &[Armed],
+    now: DateTime<Utc>,
+) -> Option<Duration> {
+    [view.holds_for(), outstanding.sends_in(now)]
+        .into_iter()
+        .chain(armed.iter().map(|project| project.asks_in(now)))
+        .flatten()
+        .min()
+}
+
+/// Answer one event, reporting whether the screen has changed — or nothing
+/// where it was the event that ends the run.
+fn answered(
+    view: &mut dyn View,
+    outstanding: &mut Outstanding,
+    armed: &mut [Armed],
+    showing: &mut Showing,
+    event: Event,
+) -> Option<bool> {
+    Some(match event {
+        // Any key at all, because a reader who opened the bindings by
+        // accident must not have to find the one key that closes them.
+        Event::Key(_) if *showing == Showing::Bindings => {
+            *showing = Showing::Forest;
+            true
+        }
+        Event::Key(key) => match action(key) {
+            Some(Action::Quit) => return None,
+            Some(Action::ShowBindings) => {
+                *showing = Showing::Bindings;
+                true
+            }
+            // The same line the inbound channel's arm is, and that is
+            // Graeme's ruling rather than a tidy-up: the refresh key acts
+            // exactly like a notification, with no bypass and no path of its
+            // own. What it does not share is which projects it names, because
+            // a key nobody aimed at a project asks about all of them.
+            Some(Action::Refresh) => asked_for(view, outstanding, Wanted::Everything),
+            Some(action) => view.apply(action),
+            None => false,
+        },
+        // A click or a notch takes the bindings away and does no more,
+        // for the same reason a key does: the window is over the forest,
+        // so the rows under the pointer are rows nobody can see.
+        Event::Clicked(_) | Event::Scrolled(_) if *showing == Showing::Bindings => {
+            *showing = Showing::Forest;
+            true
+        }
+        Event::Clicked(row) => view.clicked(row),
+        Event::Scrolled(motion) => view.apply(Action::Move(motion)),
+        Event::Resize => true,
+        Event::Changed(wanted) => asked_for(view, outstanding, wanted),
+        Event::Collected(snapshot) => {
+            let now = Utc::now();
+            if let Some(read) = outstanding.came_back() {
+                // Every project that read covered now has nothing coming, so
+                // this is where each of them arms its next ask. The only
+                // place: a read that never comes back arms nothing, and the
+                // project says its tracker has stopped answering rather than
+                // being quietly polled over.
+                for project in armed.iter_mut() {
+                    project.came_back(&read, now);
+                }
+            }
+            view.collected(*snapshot);
+            // Told after the rows land, and told whatever came of the
+            // collection that ended: another may have been waiting behind
+            // it, and where none was, a line left saying it was being
+            // read would say so over rows that had already arrived.
+            view.collecting(outstanding.awaited());
+            true
+        }
+        Event::Tailed(answer) => view.tailed(answer),
+        // The same `None` 'q' hands back, and for the same reason: it is
+        // returning that drops the screen, and dropping the screen is
+        // what hands the terminal back.
+        Event::Signalled => return None,
+    })
+}
+
+/// Ask for a read, and say so on the screen at the instant it was asked for
+/// rather than at the instant it leaves.
+///
+/// The two are no longer the same moment — a read waits out its window before
+/// it is sent — and it is the ask the reader is owed. `^R` did nothing a
+/// reader could see once already, and a mark that waited for the window would
+/// be that bead again on a shorter timescale.
+///
+/// **Every way of making a read outstanding goes through here**, so that
+/// saying so is the ask's own business rather than something each caller has
+/// to remember. A message on the inbound channel, `^R`, and a project asking
+/// for itself are the three; a fourth belongs on this call and not beside it.
+fn asked_for(view: &mut dyn View, outstanding: &mut Outstanding, wanted: Wanted) -> bool {
+    outstanding.ask(wanted, Utc::now()) && view.collecting(outstanding.awaited())
+}
+
+/// How long a read is held after it is asked for before it is sent, so that
+/// a burst about one project costs one read rather than one each.
+///
+/// A producer with nothing to lose by talking — a hook firing per commit, a
+/// key held down — says the same thing many times in a moment, and without
+/// this each saying is a read. It runs from the first notification and is not
+/// reset by the ones after it, so a `^R` held down still gets the read it was
+/// pressed for; a resetting window would withhold it for as long as the key
+/// was down.
+///
+/// **It has to stay well under `[tui] unanswered_after_seconds`.** A read
+/// waiting out its window is drawn exactly like one a tracker has stopped
+/// answering, because `Awaited::unanswered_at` measures from the ask and
+/// deliberately not from the send — `Outstanding::came_back` says why that
+/// stamp cannot move. The two are kept apart by the config key counting in
+/// whole seconds: the shortest wait it can name that is not "immediately" is
+/// a second, and this is a fifth of it.
+///
+/// `a_read_goes_before_its_project_can_be_said_to_have_stopped_being_read`
+/// holds that against the shortest patience the key can name, through the
+/// predicate rather than by comparing two constants. **What it cannot see is
+/// this constant ceasing to be the window.** The window is a parameter and
+/// `Outstanding` takes any value for it, so a later change reading it from
+/// config would edit `tui::run` and leave this sitting at 200ms with the
+/// test still passing. A `debug_assert!(window < patience)` in `waiting`
+/// would cover that and is not available: the tests that are about the
+/// window construct one longer than the patience on purpose.
+pub(super) const WINDOW: TimeDelta = TimeDelta::milliseconds(200);
+
 /// What has been asked for and not yet collected.
+///
+/// A project is in one of three states here and never in none of them: its
+/// read is in flight, or its read is asked for and waiting — out its window,
+/// or behind the read in front of it — or it has nothing here at all and is
+/// `Armed` to ask again. The last transition is `came_back`'s, and it is what
+/// makes the three cover every project: a read that comes back arms, a read
+/// that never comes back stays here and is drawn as unanswered.
 ///
 /// A request arriving while a collection is in flight used to be dropped, on
 /// the grounds that the collection already running was reading exactly what
@@ -273,13 +404,23 @@ pub(super) struct Outstanding {
     /// is where a read is asked for, and carried on each one so that whoever
     /// draws it needs nothing else to decide.
     patience: TimeDelta,
+    /// How long the read at the front is held before it is sent, so that a
+    /// burst of notifications about one project costs one read rather than
+    /// one each. See `WINDOW`.
+    window: TimeDelta,
+    /// Whether the read at the front has gone to the collector. False while
+    /// it is waiting out its window, and false again the moment the read it
+    /// named comes back.
+    sent: bool,
 }
 
 impl Outstanding {
-    pub(super) fn waiting(patience: TimeDelta) -> Self {
+    pub(super) fn waiting(patience: TimeDelta, window: TimeDelta) -> Self {
         Self {
             awaited: Vec::new(),
             patience,
+            window,
+            sent: false,
         }
     }
 
@@ -288,15 +429,55 @@ impl Outstanding {
     /// Reports whether what is outstanding is any different for it, which is
     /// not the same as whether a collection started: a request arriving
     /// mid-collection waits its turn, and its project's line says so.
-    pub(super) fn ask(&mut self, ask: &Sender<Wanted>, wanted: Wanted, now: DateTime<Utc>) -> bool {
+    ///
+    /// Asking never sends. Every read waits out its window first, and
+    /// `sends` is where the leaving happens — so the screen says a read is
+    /// coming at the instant it was asked for, whatever the window then does
+    /// about when it goes.
+    pub(super) fn ask(&mut self, wanted: Wanted, now: DateTime<Utc>) -> bool {
         if self.awaited.is_empty() {
-            if ask.send(wanted.clone()).is_err() {
-                return false;
-            }
             self.awaited.push(self.stamped(wanted, now));
             return true;
         }
         self.queue(wanted, now)
+    }
+
+    /// Send the read at the front, where its window is out and no other is in
+    /// flight.
+    ///
+    /// One at a time, as it has always been: a collection is dozens of round
+    /// trips per project and two at once would double what a tracker is
+    /// asked without halving anything.
+    pub(super) fn sends(&mut self, ask: &Sender<Wanted>, now: DateTime<Utc>) {
+        if self.sent {
+            return;
+        }
+        let Some(next) = self.awaited.first() else {
+            return;
+        };
+        if now < next.asked_at + self.window {
+            return;
+        }
+        if ask.send(next.wanted.clone()).is_err() {
+            self.awaited.clear();
+            return;
+        }
+        self.sent = true;
+    }
+
+    /// How long until the read at the front leaves, or nothing where none is
+    /// waiting to leave: the loop sleeps until this among its other
+    /// deadlines, because nothing else is going to wake it for a window
+    /// running out.
+    pub(super) fn sends_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+        if self.sent {
+            return None;
+        }
+        self.awaited.first().map(|next| {
+            (next.asked_at + self.window - now)
+                .to_std()
+                .unwrap_or_default()
+        })
     }
 
     /// Keep a request until its turn, where nothing already waiting covers
@@ -327,7 +508,7 @@ impl Outstanding {
                 if self.queued().any(|it| it.wanted == Wanted::Everything) {
                     return false;
                 }
-                self.awaited.truncate(1);
+                self.awaited.truncate(self.in_flight());
                 self.awaited.push(self.stamped(Wanted::Everything, now));
                 true
             }
@@ -347,9 +528,22 @@ impl Outstanding {
         }
     }
 
-    /// The reads that have not been sent, which is every one but the first.
+    /// The reads that have not been sent.
+    ///
+    /// Every one but the first, once the first has gone — and every one of
+    /// them while the first is still waiting out its window, which is what
+    /// makes the window a debounce at all. A hundred messages about one
+    /// project arriving into an idle `bdi` find their own unsent read at the
+    /// front and are dropped against it; were the front skipped they would
+    /// queue ninety-nine reads behind it.
     fn queued(&self) -> impl Iterator<Item = &Awaited> {
-        self.awaited.iter().skip(1)
+        self.awaited.iter().skip(self.in_flight())
+    }
+
+    /// How many reads the collector has: one, or none while the front is
+    /// still waiting out its window.
+    fn in_flight(&self) -> usize {
+        usize::from(self.sent)
     }
 
     fn stamped(&self, wanted: Wanted, asked_at: DateTime<Utc>) -> Awaited {
@@ -360,25 +554,26 @@ impl Outstanding {
         }
     }
 
-    /// Take the read that came back, sending whatever waited behind it.
+    /// Take the read that came back, and say what it read.
     ///
-    /// The one that reaches the front keeps the stamp it queued at rather
-    /// than being stamped again. Its project's rows have been on their way
-    /// since the change that wanted them was reported, and a wait that
-    /// started over on reaching the front would tell a reader whose project
-    /// had been stranded ten minutes behind a hung tracker that its own
-    /// tracker had just been asked.
-    fn came_back(&mut self, ask: &Sender<Wanted>) {
+    /// What it read is what arms the projects it covered for their next ask,
+    /// which is the only thing that arms them: a read nobody answers arms
+    /// nothing, and a project with nothing coming is what the unanswered mark
+    /// is for.
+    ///
+    /// Whatever waited behind it is left to `sends`. The one that reaches the
+    /// front keeps the stamp it queued at rather than being stamped again.
+    /// Its project's rows have been on their way since the change that wanted
+    /// them was reported, and a wait that started over on reaching the front
+    /// would tell a reader whose project had been stranded ten minutes behind
+    /// a hung tracker that its own tracker had just been asked. Its window
+    /// ran out while it waited, so `sends` finds it due and it leaves at once.
+    fn came_back(&mut self) -> Option<Wanted> {
         if self.awaited.is_empty() {
-            return;
+            return None;
         }
-        self.awaited.remove(0);
-        let Some(next) = self.awaited.first() else {
-            return;
-        };
-        if ask.send(next.wanted.clone()).is_err() {
-            self.awaited.clear();
-        }
+        self.sent = false;
+        Some(self.awaited.remove(0).wanted)
     }
 
     /// Every read outstanding and since when, for the screen to say beside
@@ -482,6 +677,25 @@ mod tests {
     }
 
     /// An event source holding everything the loop will see, in order.
+    /// What is outstanding with no window in front of it, which is what
+    /// every test about something other than the window wants: the read goes
+    /// the moment the loop next looks, so a test that drives the loop over a
+    /// fixed list of events and stops sees it sent.
+    ///
+    /// A window of nothing is a setting `bdi` could be run at rather than a
+    /// stand-in: `WINDOW` is the only value production uses, and the tests
+    /// that are about the window say so by naming one.
+    fn at_once() -> Outstanding {
+        Outstanding::waiting(PATIENCE, TimeDelta::zero())
+    }
+
+    /// The projects that ask for themselves, where the test is not about
+    /// them. Nothing is armed at the start of a run either — the first read
+    /// arms every project when it comes back.
+    fn nothing_armed() -> Vec<Armed> {
+        Vec::new()
+    }
+
     fn waiting(events: Vec<Event>) -> Receiver<Event> {
         let (to, from) = mpsc::channel();
         for event in events {
@@ -506,7 +720,7 @@ mod tests {
             key(KeyCode::Char('k')),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.applied,
@@ -529,7 +743,7 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -561,7 +775,7 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -582,7 +796,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -600,7 +814,7 @@ mod tests {
             Event::Key(key(KeyCode::Char('j'))),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [Wanted::Everything]);
         assert_eq!(
@@ -620,7 +834,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Key(control('r'))]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -628,6 +842,272 @@ mod tests {
             "the view was told a collection began, and over which projects"
         );
         assert_eq!(view.drawn, 2, "the first frame, and one for the keystroke");
+    }
+
+    /// A window long enough that nothing in a test falls out of it, so a read
+    /// is asked for and demonstrably not sent.
+    const A_LONG_WINDOW: TimeDelta = TimeDelta::seconds(30);
+
+    /// What is outstanding, gathering for `window` before anything leaves.
+    fn gathering(window: TimeDelta) -> Outstanding {
+        Outstanding::waiting(PATIENCE, window)
+    }
+
+    /// The property the debounce must not cost: the screen says a read is
+    /// coming at the instant it was asked for, not at the instant it goes.
+    ///
+    /// `^R` did nothing a reader could see once already — the bead two tests
+    /// up — and a window is exactly the thing that would do it again. The two
+    /// halves are asserted together on purpose: `view.collecting` alone
+    /// passes under any window at all, because the marking path never
+    /// observes the send, so it discriminates nothing on its own.
+    #[test]
+    fn a_read_is_said_on_the_screen_before_its_window_lets_it_go() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![Event::Key(control('r'))]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            gathering(A_LONG_WINDOW),
+            nothing_armed(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.collecting(),
+            [vec![Wanted::Everything]],
+            "the mark belongs to the ask"
+        );
+        assert!(
+            asked.try_iter().next().is_none(),
+            "and the read had not gone: marked before sent, not after"
+        );
+    }
+
+    /// What the window is for. A producer with nothing to lose by talking
+    /// says the same thing many times in a moment, and each saying used to be
+    /// a read of its own — absorbed only once one was already in flight.
+    #[test]
+    fn a_burst_about_one_project_inside_the_window_costs_one_read() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting((0..100).map(|_| Event::Changed(atlas())).collect());
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            gathering(A_LONG_WINDOW),
+            nothing_armed(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.collecting(),
+            [vec![atlas()]],
+            "a hundred messages, one read, and the screen told once"
+        );
+    }
+
+    /// The loop sleeps until the first of three deadlines, and a screen that
+    /// nothing can stale with no read waiting and nothing armed does not sleep
+    /// at all — it waits on the channel until something happens.
+    ///
+    /// Asserted rather than left to the loop, because a deadline of nothing at
+    /// all turns the loop into a spin: it wakes, finds nothing due, redraws and
+    /// waits nothing again. That costs a processor and produces no test
+    /// failure, only a slow suite.
+    #[test]
+    fn a_loop_with_nothing_due_sleeps_until_something_happens() {
+        assert_eq!(
+            sleeps_for(
+                &Recorder::default(),
+                &at_once(),
+                &nothing_armed(),
+                Utc::now()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_loop_sleeps_until_the_soonest_of_what_it_is_waiting_for() {
+        let now = Utc::now();
+        let mut outstanding = gathering(A_LONG_WINDOW);
+        outstanding.ask(atlas(), now);
+        let mut sooner = Armed::polling("ferry".to_string(), Some(AN_INTERVAL));
+        sooner.came_back(&ferry(), now);
+
+        assert_eq!(
+            sleeps_for(&Recorder::default(), &outstanding, &[sooner], now),
+            Some(AN_INTERVAL),
+            "the poll comes round long before the window is out"
+        );
+        assert_eq!(
+            sleeps_for(&Recorder::default(), &outstanding, &nothing_armed(), now),
+            A_LONG_WINDOW.to_std().ok(),
+            "and with nothing armed, the window is what is left to wait for"
+        );
+    }
+
+    /// A poll coming due beside an event that changed nothing still reaches
+    /// the screen.
+    ///
+    /// The narrow case the loop's `told` exists for. A poll usually arrives as
+    /// its own deadline, and the loop redraws for a deadline whatever else it
+    /// finds — so the only way a due poll can go undrawn is by falling in the
+    /// same pass as an event the view had nothing to say about.
+    #[test]
+    fn a_poll_falling_beside_a_keystroke_that_changed_nothing_still_redraws() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![Event::Key(key(KeyCode::Char('x')))]);
+        let mut overdue = Armed::polling("atlas".to_string(), Some(AN_INTERVAL));
+        overdue.came_back(&atlas(), Utc::now() - TimeDelta::hours(1));
+
+        drive(&mut view, &events, &ask, at_once(), vec![overdue]).expect("the loop runs");
+
+        assert_eq!(
+            view.collecting(),
+            [vec![atlas()]],
+            "the poll asked, and said so"
+        );
+        assert_eq!(
+            view.drawn, 2,
+            "the first frame, and one for the read the keystroke landed beside"
+        );
+    }
+
+    /// One read comes back for a project that polls, and the loop is driven
+    /// until that project's own ask reaches the collector.
+    ///
+    /// The events channel is held open by a thread rather than drained from a
+    /// list, because what is being waited on is the loop's own deadline: a
+    /// list that ran out would close the channel and end the run before the
+    /// interval was up.
+    fn until_atlas_asks_for_itself(view: &mut Recorder) -> Option<Wanted> {
+        let (ask, asked) = mpsc::channel();
+        let (send, events) = mpsc::channel();
+        send.send(Event::Collected(Box::new(a_snapshot())))
+            .expect("the loop's end of the channel is open");
+        let holding = thread::spawn(move || {
+            let asked_for = asked.recv_timeout(A_MOMENT);
+            drop(send);
+            asked_for
+        });
+
+        drive(
+            view,
+            &events,
+            &ask,
+            started(),
+            vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+        )
+        .expect("the loop runs");
+
+        holding.join().expect("the thread ran").ok()
+    }
+
+    /// The invariant the refresh path rests on, and neither half can see it
+    /// alone: a project always has a read outstanding or an ask armed, so a
+    /// project whose reads keep coming back never stops being read.
+    ///
+    /// Nothing but a read coming back arms one. This is the arming half; the
+    /// test below it is the half that must not happen.
+    #[test]
+    fn a_project_asks_for_itself_again_once_its_read_comes_back() {
+        let mut view = Recorder::default();
+
+        let asked_for = until_atlas_asks_for_itself(&mut view);
+
+        assert_eq!(
+            asked_for,
+            Some(atlas()),
+            "the read that came back armed atlas, and its interval came round"
+        );
+    }
+
+    /// And the reader is told, exactly as they are told about a read a
+    /// message or `^R` asked for. A project that asked for itself and said
+    /// nothing about it is the bead `^R` came from over again: rows replaced
+    /// under a reader with nothing to mark that they were about to be.
+    ///
+    /// The case is live rather than theoretical, which is why this is a test
+    /// rather than a line of `asks_for_what_is_due`'s doc: the poll is the
+    /// one way of asking that `a_collection_nobody_asked_for_is_still_said_on
+    /// _the_screen` cannot reach, because a poll does not arrive as an
+    /// `Event::Changed`.
+    #[test]
+    fn a_project_that_asked_for_itself_says_so_on_the_screen() {
+        let mut view = Recorder::default();
+
+        until_atlas_asks_for_itself(&mut view);
+
+        assert_eq!(
+            view.collecting().last(),
+            Some(&vec![atlas()]),
+            "the poll's own read is said on the screen like any other"
+        );
+    }
+
+    /// The mirror, and it is the hazard arming-from-completion deliberately
+    /// keeps: a read that never comes back arms nothing, so a hung tracker
+    /// goes quiet here rather than piling reads up behind itself. What says
+    /// so on the screen is the unanswered mark on the read still standing.
+    ///
+    /// Two things hold this and only one of them is `Armed`'s, which is worth
+    /// knowing before reading a pass here as proof of either. Measured by
+    /// breaking each: taking the disarm out of `Armed::asks` leaves this
+    /// green, because `queue` drops an ask for a project that already has one
+    /// outstanding, so a free-running poll reaches the collector once
+    /// whatever it does here — `a_project_whose_read_never_comes_back_asks_no_more`
+    /// in `armed` is what guards the disarm. What this one guards is the
+    /// loop: that arming happens on the read coming back, and that no second
+    /// read is ever sent for an ask nobody answered. Emptying
+    /// `Armed::came_back` fails it.
+    #[test]
+    fn a_project_whose_ask_is_never_answered_asks_no_more() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let (send, events) = mpsc::channel();
+        send.send(Event::Collected(Box::new(a_snapshot())))
+            .expect("the loop's end of the channel is open");
+        let holding = thread::spawn(move || {
+            thread::sleep(AN_INTERVAL * 20);
+            drop(send);
+        });
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            started(),
+            vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+        )
+        .expect("the loop runs");
+
+        holding.join().expect("the thread ran");
+        assert_eq!(
+            asked.try_iter().collect::<Vec<_>>(),
+            [atlas()],
+            "twenty intervals passed and nothing answered the one ask"
+        );
+    }
+
+    /// Short enough that a test waiting out several is not slow, and long
+    /// enough that a loop doing its work in between is not racing it.
+    const AN_INTERVAL: Duration = Duration::from_millis(20);
+
+    /// What is outstanding as a run has it when the loop starts: the first
+    /// collection asked for and not yet come back. Nothing is armed until it
+    /// does.
+    fn started() -> Outstanding {
+        let mut outstanding = at_once();
+        outstanding.ask(Wanted::Everything, Utc::now());
+        outstanding
     }
 
     /// The timer and the inbound socket start collections nobody pressed a
@@ -639,7 +1119,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(view.collecting(), [vec![atlas()]]);
         assert_eq!(view.drawn, 2);
@@ -703,7 +1183,7 @@ mod tests {
             let _ = send.send(Event::Key(key(KeyCode::Char('q'))));
         });
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert!(
             view.drawn > 2,
@@ -728,7 +1208,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -749,7 +1229,7 @@ mod tests {
         let before = Utc::now();
         let events = waiting(vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         let asked_at = view.asked_at();
         assert_eq!(asked_at.len(), 1, "one collection was started");
@@ -776,7 +1256,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -809,7 +1289,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -830,7 +1310,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas()), Event::Changed(ferry())]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -850,7 +1330,7 @@ mod tests {
             Event::Key(control('r')),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -873,7 +1353,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), ferry()]);
     }
@@ -890,7 +1370,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), atlas()]);
     }
@@ -911,7 +1391,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -937,7 +1417,7 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -956,7 +1436,7 @@ mod tests {
             Event::Changed(ferry()),
         ]);
 
-        drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE)).expect("the loop runs");
+        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -999,7 +1479,7 @@ mod tests {
         let (finished, ended) = mpsc::channel();
         let driving = thread::spawn(move || {
             let mut view = Recorder::default();
-            let outcome = drive(&mut view, &events, &ask, Outstanding::waiting(PATIENCE));
+            let outcome = drive(&mut view, &events, &ask, at_once(), nothing_armed());
             let _ = finished.send(());
             (view, outcome)
         });
@@ -1025,7 +1505,8 @@ mod tests {
             &mut view,
             &waiting(Vec::new()),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1049,7 +1530,8 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Signalled, Event::Resize]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1076,7 +1558,8 @@ mod tests {
                 Event::Resize,
             ]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1096,7 +1579,8 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Resize]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1116,7 +1600,8 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Key(key(KeyCode::Char('z')))]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1134,7 +1619,8 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Clicked(9)]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1157,7 +1643,8 @@ mod tests {
             &mut view,
             &waiting(vec![Event::Clicked(21)]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1180,7 +1667,8 @@ mod tests {
                 Event::Scrolled(Motion::NextRow),
             ]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1210,7 +1698,8 @@ mod tests {
                 Event::Clicked(9),
             ]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1242,7 +1731,8 @@ mod tests {
                 Event::Scrolled(Motion::NextRow),
             ]),
             &ask,
-            Outstanding::waiting(PATIENCE),
+            at_once(),
+            nothing_armed(),
         )
         .expect("the loop runs");
 
@@ -1262,6 +1752,7 @@ mod tests {
     /// would be deciding on scheduling jitter rather than on the rule.
     mod what_waits {
         use super::*;
+        use crate::config::Tui;
         use chrono::TimeZone;
         use pretty_assertions::assert_eq;
 
@@ -1272,11 +1763,13 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap() + TimeDelta::seconds(second)
         }
 
-        /// Asked at `at(0)` and never answered, so everything after it waits.
+        /// Asked at `at(0)`, sent, and never answered — so everything after
+        /// it waits.
         fn hung_on(project: Wanted) -> (Outstanding, Sender<Wanted>, Receiver<Wanted>) {
             let (ask, asked) = mpsc::channel();
-            let mut outstanding = Outstanding::waiting(PATIENCE);
-            outstanding.ask(&ask, project, at(0));
+            let mut outstanding = at_once();
+            outstanding.ask(project, at(0));
+            outstanding.sends(&ask, at(0));
             (outstanding, ask, asked)
         }
 
@@ -1294,9 +1787,9 @@ mod tests {
         /// waiting.
         #[test]
         fn a_read_that_cannot_be_sent_yet_is_stamped_when_it_joins_the_queue() {
-            let (mut outstanding, ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(atlas());
 
-            outstanding.ask(&ask, ferry(), at(5));
+            outstanding.ask(ferry(), at(5));
 
             assert_eq!(stamps(&outstanding), [(atlas(), at(0)), (ferry(), at(5))]);
         }
@@ -1310,10 +1803,10 @@ mod tests {
         /// read, and the mark would never turn.
         #[test]
         fn a_project_reported_for_again_while_it_waits_keeps_the_wait_it_has() {
-            let (mut outstanding, ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(atlas());
 
-            outstanding.ask(&ask, ferry(), at(5));
-            outstanding.ask(&ask, ferry(), at(35));
+            outstanding.ask(ferry(), at(5));
+            outstanding.ask(ferry(), at(35));
 
             assert_eq!(stamps(&outstanding), [(atlas(), at(0)), (ferry(), at(5))]);
         }
@@ -1336,15 +1829,101 @@ mod tests {
         /// nobody asked.
         #[test]
         fn a_whole_collection_absorbing_what_waits_starts_a_wait_of_its_own() {
-            let (mut outstanding, ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(atlas());
 
-            outstanding.ask(&ask, ferry(), at(5));
-            outstanding.ask(&ask, Wanted::Everything, at(40));
+            outstanding.ask(ferry(), at(5));
+            outstanding.ask(Wanted::Everything, at(40));
 
             assert_eq!(
                 stamps(&outstanding),
                 [(atlas(), at(0)), (Wanted::Everything, at(40))],
                 "not :05, which would be every other project's wait too"
+            );
+        }
+
+        /// The absorption `truncate` could not do before, because before the
+        /// window there was no such thing as an unsent read: `ask` sent the
+        /// moment the queue was empty, so the front was always in flight and
+        /// always had to be kept. No existing test asserts this case because
+        /// no existing code could produce it.
+        #[test]
+        fn a_whole_collection_absorbs_a_read_that_has_not_been_sent() {
+            let mut outstanding = Outstanding::waiting(PATIENCE, A_LONG_WINDOW);
+            outstanding.ask(atlas(), at(0));
+
+            outstanding.ask(Wanted::Everything, at(1));
+
+            assert_eq!(
+                stamps(&outstanding),
+                [(Wanted::Everything, at(1))],
+                "the whole collection reads atlas anyway, and nothing had gone yet"
+            );
+        }
+
+        /// And the one in flight is still kept, because the collection
+        /// running is not the collection about to be asked for.
+        #[test]
+        fn a_whole_collection_keeps_the_read_already_in_flight() {
+            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+
+            outstanding.ask(Wanted::Everything, at(1));
+
+            assert_eq!(
+                stamps(&outstanding),
+                [(atlas(), at(0)), (Wanted::Everything, at(1))]
+            );
+        }
+
+        /// A held-down `^R` gets the read it was pressed for. The window runs
+        /// from the first notification and is not reset by the ones after it;
+        /// under reset the read would be withheld for as long as the key was
+        /// down, which is the one thing that key exists to force.
+        #[test]
+        fn a_window_is_not_pushed_back_by_the_notifications_that_arrive_in_it() {
+            let mut outstanding = Outstanding::waiting(PATIENCE, TimeDelta::seconds(2));
+            let (ask, asked) = mpsc::channel();
+            outstanding.ask(Wanted::Everything, at(0));
+
+            for pressed in 1..=10 {
+                outstanding.ask(Wanted::Everything, at(pressed));
+                outstanding.sends(&ask, at(pressed));
+            }
+
+            assert_eq!(
+                asked.try_iter().collect::<Vec<_>>(),
+                [Wanted::Everything],
+                "sent two seconds after the first press, not two after the last"
+            );
+        }
+
+        /// The relationship between the window and the patience, through the
+        /// predicate that would get it wrong rather than between two
+        /// constants: a read held for the whole of the window goes before the
+        /// shortest patience the config key can name has run out, so a
+        /// project waiting out a window is never drawn as one whose tracker
+        /// has stopped answering.
+        #[test]
+        fn a_read_goes_before_its_project_can_be_said_to_have_stopped_being_read() {
+            let shortest = Tui {
+                unanswered_after_seconds: 1,
+                ..Tui::default()
+            }
+            .unanswered_after();
+            let (ask, asked) = mpsc::channel();
+            let mut outstanding = Outstanding::waiting(shortest, WINDOW);
+            outstanding.ask(atlas(), at(0));
+
+            let out = at(0) + WINDOW;
+            outstanding.sends(&ask, out);
+
+            assert_eq!(
+                asked.try_iter().collect::<Vec<_>>(),
+                [atlas()],
+                "the window was out, so the read went"
+            );
+            assert!(
+                !outstanding.awaited()[0].unanswered_at(out),
+                "and atlas was not yet said to have stopped being read"
             );
         }
 
@@ -1354,10 +1933,10 @@ mod tests {
         /// moment ago the instant that tracker answers.
         #[test]
         fn a_read_that_reaches_the_front_keeps_the_stamp_it_queued_at() {
-            let (mut outstanding, ask, _asked) = hung_on(atlas());
-            outstanding.ask(&ask, ferry(), at(5));
+            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+            outstanding.ask(ferry(), at(5));
 
-            outstanding.came_back(&ask);
+            outstanding.came_back();
 
             assert_eq!(stamps(&outstanding), [(ferry(), at(5))]);
         }
@@ -1368,11 +1947,13 @@ mod tests {
         #[test]
         fn the_reads_are_sent_in_the_order_they_were_asked_for() {
             let (mut outstanding, ask, asked) = hung_on(atlas());
-            outstanding.ask(&ask, ferry(), at(5));
-            outstanding.ask(&ask, Wanted::Project("harbour".to_string()), at(6));
+            outstanding.ask(ferry(), at(5));
+            outstanding.ask(Wanted::Project("harbour".to_string()), at(6));
 
-            outstanding.came_back(&ask);
-            outstanding.came_back(&ask);
+            outstanding.came_back();
+            outstanding.sends(&ask, at(7));
+            outstanding.came_back();
+            outstanding.sends(&ask, at(8));
 
             assert_eq!(
                 asked.try_iter().collect::<Vec<_>>(),
@@ -1387,9 +1968,11 @@ mod tests {
         #[test]
         fn a_collection_nothing_asked_for_leaves_the_queue_alone() {
             let (ask, _asked) = mpsc::channel();
-            let mut outstanding = Outstanding::waiting(PATIENCE);
+            let mut outstanding = at_once();
 
-            outstanding.came_back(&ask);
+            assert_eq!(outstanding.came_back(), None);
+
+            outstanding.sends(&ask, at(0));
 
             assert_eq!(stamps(&outstanding), []);
         }

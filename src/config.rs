@@ -35,11 +35,31 @@ pub struct Project {
     /// produces.
     #[serde(default)]
     pub credential_command: Option<String>,
+    /// Whether this project asks for itself every interval, or leaves saying
+    /// its work has moved to whatever reports for it on the inbound channel.
+    ///
+    /// Per project because a producer is per tracker: a consumer filtered to
+    /// one project's database covers that project and no other, and a setup
+    /// that has deployed one for some of its trackers should not have to poll
+    /// all of them or none.
+    ///
+    /// Off is a claim, not a saving. It says something else reports this
+    /// project's changes, so a producer that dies takes the project's
+    /// freshness with it and nothing here quietly covers for that — an
+    /// automatic fallback would hide the very failure the operator needs to
+    /// see. `bdi` polls until told otherwise, which is why this defaults on.
+    #[serde(default = "polls")]
+    pub poll: bool,
     /// Where this project is worked: the place it names, in each working
     /// tree git lists for its repository. Measured rather than configured, so
     /// nothing written by hand can outrank what git says.
     #[serde(skip)]
     pub worktrees: Vec<PathBuf>,
+}
+
+/// A project says nothing about polling until it says it does not.
+fn polls() -> bool {
+    true
 }
 
 impl Project {
@@ -88,10 +108,18 @@ pub struct Join {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Tui {
-    /// How long the fallback timer waits between collections, for the
-    /// projects nothing else reports changes for. A collection is several
-    /// `bd` subprocesses against each tracker's server, per instance
-    /// running, so this is measured in seconds.
+    /// How long a project waits after one read before it asks for the next,
+    /// where it polls at all. A collection is several `bd` subprocesses
+    /// against each tracker's server, per instance running, so this is
+    /// measured in seconds.
+    ///
+    /// A gap after a read rather than a period a read happens inside, and the
+    /// difference is worth reading twice: the next ask is armed by the read
+    /// that came back, so the effective period is this plus however long a
+    /// read takes — `bdi-rer.4` measured 1.53s for the cascade. What it buys
+    /// is that each project's schedule comes from its own history and nothing
+    /// else, so projects drift apart rather than all paying the cascade on
+    /// one tick, and a slow project delays only itself.
     ///
     /// Measured at `40f4eb5` against Dolt-backed trackers, one of 129 beads
     /// and one larger: 1.1 to 1.5 seconds for the small one alone, 2.3 to
@@ -103,12 +131,11 @@ pub struct Tui {
     /// any one tracker, and a config naming twice as many wants a longer
     /// interval than this one.
     ///
-    /// Setting it below a collection is allowed and is bounded. Collections
-    /// never overlap: one runs, at most one waits behind it, and every
-    /// interval that passes meanwhile collapses into that one. So an interval
-    /// shorter than a collection buys back-to-back collections with no idle
-    /// gap — one per collection, never one per interval — and a view as fresh
-    /// as the collection allows rather than as the interval promised.
+    /// Setting it below a collection is allowed and is bounded, because the
+    /// gap does not start until the read ends: a project asks again this long
+    /// after its last answer, never sooner and never twice over. So a short
+    /// interval buys back-to-back collections with no idle gap, and a view as
+    /// fresh as the collection allows rather than as the interval promised.
     pub refresh_seconds: u64,
 
     /// How long a collection may go unanswered before `bdi` reports the
@@ -399,6 +426,7 @@ path = "/home/user/dev/cinder"
                     name: "atlas".to_string(),
                     path: PathBuf::from("/home/user/atlas"),
                     credential_command: Some("secret-tool lookup tracker atlas".to_string()),
+                    poll: true,
                     worktrees: Vec::new(),
                 },
                 Project {
@@ -407,6 +435,7 @@ path = "/home/user/dev/cinder"
                     credential_command: Some(
                         "cat /home/user/dev/beacon/.beads-password".to_string()
                     ),
+                    poll: true,
                     worktrees: Vec::new(),
                 },
             ]

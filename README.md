@@ -102,8 +102,8 @@ whole refresh is those seven plus the probe plus that capture, most of it
 against a remote Dolt server.
 
 So the poll is cheap, and `bdi` listens as well. Anything that already knows a
-tracker changed can say so, and the project it names stops being polled for as
-long as it keeps saying it.
+tracker changed can say so, and the project it names is read then rather than
+at its next interval.
 
 **The socket.** `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, a stream socket
 created mode `0600`. Under the runtime directory it is user-scoped: it needs no
@@ -128,15 +128,37 @@ The answer goes back to the writer rather than onto the screen because the
 writer is the only one who can fix a wrong name — the person running `bdi` is
 watching a forest, not a log. A writer that does not care can ignore it.
 
-**What a message does to the poll.** Nothing tells `bdi` in advance which
-projects have a producer, so it works it out from what arrives. Every project
-starts polled. A project something reports for stops being polled for as long as
-messages keep arriving inside the refresh interval. A poll reads only the
-projects it still has to find, so a project with no producer costs nothing to
-the projects that have one. If the producer goes away, the next interval finds
-the project uncovered and the poll resumes — the view degrades to slow, never
-to stale. Nothing needs configuring for any of this, and
-a project nobody wires up simply carries on being polled.
+**What a message does to the poll.** A project asks to be read again one
+`refresh_seconds` after its last read *finished*, whichever of the three
+things asked for that read — a message, the poll, or `^R`. So a project
+something keeps reporting for is never polled: each message's read pushes the
+next poll out past the interval before it arrives. A project whose producer
+goes away comes due one interval after its last read and is polled from then
+on — the view degrades to slow, never to stale. Nothing needs configuring for
+any of this, and a project nobody wires up simply carries on being polled.
+
+Because each project's next read is timed from its own last one, projects
+drift apart rather than all paying the cascade on the same tick, and a slow
+project delays only itself.
+
+**Turning the poll off.** A project whose producer you trust can stop polling
+altogether:
+
+```toml
+[[projects]]
+name = "atlas"
+path = "/home/you/atlas"
+poll = false
+```
+
+That is a claim rather than a saving: nothing then covers for a producer that
+dies, which is the point — an automatic fallback would hide the failure you
+need to see. `bdi` polls until told otherwise, so a project that says nothing
+is polled.
+
+For one run, `--poll` polls every project whatever the config says and
+`--no-poll` polls none, which is how to find out whether a suspect producer
+was the only thing wrong without redeploying anything.
 
 If the socket cannot be opened at all — no `XDG_RUNTIME_DIR`, another `bdi`
 already listening — `bdi` says so on stderr as it starts and polls everything,

@@ -5,16 +5,14 @@
 //! the time they leave here: an `Event` on the one channel the loop waits
 //! on. Each source blocks on its own thread so the loop never has to.
 
-use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
 
 use ratatui::crossterm::event::{self, KeyEventKind, MouseButton, MouseEventKind};
 use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
-use crate::collect::changes::{self, Reported, Socket, Uncovered};
+use crate::collect::changes::{self, Reported, Socket};
 use crate::collect::panes::{Herdr, Panes};
 use crate::collect::run::RealRunner;
 use crate::model::snapshot::Snapshot;
@@ -73,7 +71,6 @@ pub(super) type Wired = (
 
 /// Start everything that produces events, and hand back the loop's ends.
 pub(super) fn wire(
-    refresh: Duration,
     reported: Reported,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
     asked_to_stop: Signals,
@@ -113,23 +110,11 @@ pub(super) fn wire(
         changed.clone(),
     ));
 
-    let told = to_the_loop.clone();
     thread::spawn(move || {
         report(
             &mut Inbound {
                 changes,
                 _open: changed,
-            },
-            &told,
-        );
-    });
-
-    thread::spawn(move || {
-        report(
-            &mut Timer {
-                every: refresh,
-                reported,
-                due: VecDeque::new(),
             },
             &to_the_loop,
         );
@@ -140,49 +125,17 @@ pub(super) fn wire(
 
 /// What tells `bdi` that a project's work has moved on.
 ///
-/// A tracker that can report its own changes is subscribed to; one that
-/// cannot is timed, and a timer is only a duller way of being told. Each
-/// source runs on its own thread and blocks there, so the loop never sleeps
-/// until a deadline of its own.
+/// Something outside `bdi` saying so, over the inbound channel. A project
+/// nothing says it for asks for itself instead, which is `Armed`'s job and
+/// happens in the loop, because what arms a project is the read that came
+/// back and only the loop knows one has.
+///
+/// Each source runs on its own thread and blocks there, so the loop never
+/// sleeps until a deadline of its own.
 trait Changes: Send {
     /// Block until there is something to collect for, and say what reading it
     /// takes. Nothing, where the source has no more to report.
     fn next(&mut self) -> Option<Wanted>;
-}
-
-/// The source for the projects nothing else reports for: it says the work has
-/// moved every interval, whether or not it has.
-///
-/// It stays quiet for as long as every project is being reported for over the
-/// inbound channel, because a poll then has nothing to find that a message
-/// has not already said. A project the channel stops covering is polled again
-/// from the next interval, so a producer going away costs the view its speed
-/// rather than its truth. The window is the interval itself: a project
-/// reported for more recently than that is one the poll would have found
-/// nothing on.
-struct Timer {
-    every: Duration,
-    reported: Reported,
-    /// What the last interval found uncovered and has not yet reported. One
-    /// report is one collection, so several projects are handed over one at
-    /// a time.
-    due: VecDeque<String>,
-}
-
-impl Changes for Timer {
-    fn next(&mut self) -> Option<Wanted> {
-        loop {
-            if let Some(project) = self.due.pop_front() {
-                return Some(Wanted::Project(project));
-            }
-            thread::sleep(self.every);
-            match self.reported.uncovered(self.every) {
-                Uncovered::Everything => return Some(Wanted::Everything),
-                Uncovered::These(projects) => self.due = projects.into(),
-                Uncovered::Nothing => {}
-            }
-        }
-    }
 }
 
 /// The source for the projects something else reports for: it says the work
@@ -290,8 +243,9 @@ fn incoming(read: event::Event) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::fixtures::{atlas, ferry, A_MOMENT};
+    use crate::tui::fixtures::{atlas, A_MOMENT};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::time::Duration;
 
     /// A source that reports only when the test says so.
     struct OnCue(Receiver<Wanted>);
@@ -301,15 +255,6 @@ mod tests {
             // A test that has finished with this source drops the cue, and
             // the source goes quiet.
             self.0.recv().ok()
-        }
-    }
-
-    /// A timer with nothing yet due, as one starts.
-    fn polling(every: Duration, reported: Reported) -> Timer {
-        Timer {
-            every,
-            reported,
-            due: VecDeque::new(),
         }
     }
 
@@ -333,77 +278,6 @@ mod tests {
         );
     }
 
-    /// A project something is reporting for does not need asking: the poll
-    /// would find only what the message has already said.
-    #[test]
-    fn a_polled_project_goes_quiet_while_something_reports_it() {
-        let (to_the_loop, events) = mpsc::channel();
-        let reported = Reported::watching(["atlas".to_string()]);
-
-        let producing = reported.clone();
-        thread::spawn(move || loop {
-            producing.take("atlas");
-            thread::sleep(Duration::from_millis(20));
-        });
-        thread::spawn(move || {
-            report(&mut polling(Duration::from_secs(1), reported), &to_the_loop);
-        });
-
-        assert!(
-            events.recv_timeout(Duration::from_millis(1500)).is_err(),
-            "the writer had said everything a poll would have found"
-        );
-    }
-
-    /// The saving a mixed setup gets from a refresh being nameable: the
-    /// project with a producer is left out of the poll its neighbour still
-    /// needs, rather than swept up with it every interval.
-    #[test]
-    fn a_poll_names_only_the_projects_nothing_is_reporting_for() {
-        let (to_the_loop, events) = mpsc::channel();
-        let reported = Reported::watching(["atlas".to_string(), "ferry".to_string()]);
-
-        let producing = reported.clone();
-        thread::spawn(move || loop {
-            producing.take("atlas");
-            thread::sleep(Duration::from_millis(20));
-        });
-        thread::spawn(move || {
-            report(
-                &mut polling(Duration::from_millis(300), reported),
-                &to_the_loop,
-            );
-        });
-
-        assert_eq!(
-            events.recv_timeout(A_MOMENT).ok(),
-            Some(Event::Changed(ferry())),
-            "atlas is being reported for, so the poll has only ferry to find"
-        );
-    }
-
-    /// The signal that a live source has gone quiet: the project is polled
-    /// again, so the view degrades to slow rather than to stale.
-    #[test]
-    fn a_project_the_channel_stops_covering_is_polled_again() {
-        let (to_the_loop, events) = mpsc::channel();
-        let reported = Reported::watching(["atlas".to_string()]);
-        reported.take("atlas");
-
-        thread::spawn(move || {
-            report(
-                &mut polling(Duration::from_millis(20), reported),
-                &to_the_loop,
-            );
-        });
-
-        assert_eq!(
-            events.recv_timeout(A_MOMENT).ok(),
-            Some(Event::Changed(Wanted::Everything)),
-            "a poll knows nothing about where the work moved, so it reads everywhere"
-        );
-    }
-
     /// A channel whose writers have all gone must go quiet. A source that
     /// returned from `next` the moment it had nothing left would report in a
     /// loop and collect without pause.
@@ -424,37 +298,16 @@ mod tests {
         assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
     }
 
-    #[test]
-    fn a_polled_project_is_reported_every_interval() {
-        let (to_the_loop, events) = mpsc::channel();
-        thread::spawn(move || {
-            report(
-                &mut polling(Duration::from_millis(20), Reported::default()),
-                &to_the_loop,
-            );
-        });
-
-        for reported in 1..=2 {
-            assert!(
-                matches!(events.recv_timeout(A_MOMENT), Ok(Event::Changed(_))),
-                "the timer stopped after {reported} report(s)"
-            );
-        }
-    }
-
     /// The loop's threads are the loop's: each ends when the loop stops
     /// listening, rather than outliving the screen it was drawing for.
     #[test]
     fn a_reporter_ends_when_the_loop_stops_listening() {
         let (to_the_loop, events) = mpsc::channel();
-        let reporter = thread::spawn(move || {
-            report(
-                &mut polling(Duration::from_millis(1), Reported::default()),
-                &to_the_loop,
-            );
-        });
+        let (cue, cued) = mpsc::channel();
+        let reporter = thread::spawn(move || report(&mut OnCue(cued), &to_the_loop));
 
         drop(events);
+        let _ = cue.send(atlas());
 
         assert!(reporter.join().is_ok());
     }

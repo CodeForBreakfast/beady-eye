@@ -11,14 +11,13 @@
 //! and never speaks costs one sleeping thread and cannot stop `^C` reaching
 //! the loop or the terminal being put back.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 use std::{fmt, fs, thread};
 
 /// The variable naming the directory this login session owns. A socket under
@@ -65,89 +64,46 @@ impl fmt::Display for Answer {
     }
 }
 
-/// The projects `bdi` watches, and when something last said each one changed.
+/// The projects `bdi` watches, which is the whole of what the channel needs
+/// to know: a message either names one of them or it does not, and that is
+/// the answer the writer gets back.
 ///
-/// This is what selects a project's refresh source, and it needs no
-/// configuring to do it: nothing can say in advance which projects have a
-/// producer, so a project is polled until something reports for it and polled
-/// again from the moment that stops.
+/// Nothing here decides whether a project is polled. What a poll would have
+/// found is already said by the read a report causes: each read arms the
+/// project's next ask one interval further out, so a project something keeps
+/// reporting for never comes due, and one whose producer stops comes due an
+/// interval after its last read. See `tui::armed`.
+///
+/// Settled when the run starts and never written again, so the connection
+/// threads share it without a lock. A writer that panics mid-message can
+/// therefore take nothing down with it: there is no state for it to leave
+/// half-written, which is what a channel anything may write to has to be able
+/// to say.
 #[derive(Clone, Default)]
 pub struct Reported {
-    projects: Arc<Mutex<BTreeMap<String, Option<Instant>>>>,
+    projects: Arc<BTreeSet<String>>,
 }
 
 impl Reported {
     pub fn watching<I: IntoIterator<Item = String>>(projects: I) -> Self {
         Self {
-            projects: Arc::new(Mutex::new(
-                projects
-                    .into_iter()
-                    .map(|project| (project, None))
-                    .collect(),
-            )),
+            projects: Arc::new(projects.into_iter().collect()),
         }
     }
 
-    /// Take one message, recording it where it names a project `bdi` watches.
+    /// Take one message, and say what `bdi` made of it.
     pub fn take(&self, message: &str) -> Answer {
         let named = message.trim();
         if named.is_empty() || named.len() > LONGEST_MESSAGE {
             return Answer::Malformed;
         }
 
-        match self.projects().get_mut(named) {
-            Some(last) => {
-                *last = Some(Instant::now());
-                Answer::Watched(named.to_string())
-            }
-            None => Answer::Unwatched(named.to_string()),
-        }
-    }
-
-    /// What a poll now would still have to find: the projects nothing has
-    /// reported for inside `within`.
-    ///
-    /// Watching nothing leaves everything to be found. There is no poll to
-    /// stand down, and a window nothing has to fall inside is one that says
-    /// nothing.
-    pub fn uncovered(&self, within: Duration) -> Uncovered {
-        let projects = self.projects();
-        let uncovered: Vec<String> = projects
-            .iter()
-            .filter(|(_, last)| !last.is_some_and(|at| at.elapsed() < within))
-            .map(|(project, _)| project.clone())
-            .collect();
-
-        if uncovered.len() == projects.len() {
-            Uncovered::Everything
-        } else if uncovered.is_empty() {
-            Uncovered::Nothing
+        if self.projects.contains(named) {
+            Answer::Watched(named.to_string())
         } else {
-            Uncovered::These(uncovered)
+            Answer::Unwatched(named.to_string())
         }
     }
-
-    /// A thread that panicked mid-message poisons the lock. The messages it
-    /// left behind are still true, and a view that stopped refreshing because
-    /// one writer misbehaved would be exactly the failure this channel is not
-    /// allowed to cause.
-    fn projects(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Option<Instant>>> {
-        self.projects.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-/// What a poll has left to find.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Uncovered {
-    /// Every project. Nothing is being reported for, so a poll reading them
-    /// all at once costs one collection where naming them would cost one
-    /// each.
-    Everything,
-    /// Only these. The rest are being reported for, and a poll would find in
-    /// them only what their messages have already said.
-    These(Vec<String>),
-    /// None of them: every project is covered, so there is nothing to poll.
-    Nothing,
 }
 
 /// Why `bdi` has no inbound channel.
@@ -350,13 +306,11 @@ mod tests {
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
     use std::sync::mpsc::{self, Receiver};
+    use std::time::Duration;
 
     /// Long enough that a channel which was going to report has, and short
     /// enough that a test waiting in vain is not a hang.
     const A_MOMENT: Duration = Duration::from_secs(5);
-
-    /// A window wide enough that nothing in a test falls out of it.
-    const A_WHILE: Duration = Duration::from_secs(600);
 
     fn watching<const N: usize>(projects: [&str; N]) -> Reported {
         Reported::watching(projects.map(str::to_string))
@@ -428,11 +382,6 @@ mod tests {
             reported.take("ghost"),
             Answer::Unwatched("ghost".to_string())
         );
-        assert_eq!(
-            reported.uncovered(A_WHILE),
-            Uncovered::Everything,
-            "a name bdi does not watch stands no poll down"
-        );
     }
 
     #[test]
@@ -456,61 +405,6 @@ mod tests {
     }
 
     #[test]
-    fn a_project_something_reports_for_stands_its_poll_down() {
-        let reported = watching(["atlas"]);
-
-        assert_eq!(
-            reported.uncovered(A_WHILE),
-            Uncovered::Everything,
-            "nothing has reported for it yet, so it is still polled"
-        );
-        reported.take("atlas");
-
-        assert_eq!(reported.uncovered(A_WHILE), Uncovered::Nothing);
-    }
-
-    /// The saving a mixed setup gets: the project with a producer is left out
-    /// of the poll its neighbour still needs, rather than swept up with it.
-    #[test]
-    fn a_project_nothing_reports_for_is_polled_without_the_ones_that_are() {
-        let reported = watching(["atlas", "ferry"]);
-
-        reported.take("atlas");
-
-        assert_eq!(
-            reported.uncovered(A_WHILE),
-            Uncovered::These(vec!["ferry".to_string()]),
-            "ferry has no writer, so the poll still has it to find"
-        );
-    }
-
-    /// The signal that a live source has gone quiet is the poll resuming: the
-    /// view degrades to slow rather than to wrong.
-    #[test]
-    fn a_project_the_channel_stops_covering_is_polled_again() {
-        let reported = watching(["atlas"]);
-
-        reported.take("atlas");
-
-        assert_eq!(
-            reported.uncovered(Duration::ZERO),
-            Uncovered::Everything,
-            "a window that has already closed leaves the project uncovered"
-        );
-    }
-
-    #[test]
-    fn nothing_watched_is_never_covered() {
-        let reported = watching([]);
-
-        assert_eq!(
-            reported.uncovered(A_WHILE),
-            Uncovered::Everything,
-            "there is nothing here for a message to stand down"
-        );
-    }
-
-    #[test]
     fn without_a_runtime_directory_there_is_no_inbound_channel() {
         let (changed, _changes) = mpsc::channel();
 
@@ -531,11 +425,6 @@ mod tests {
             changes.recv_timeout(A_MOMENT).ok(),
             Some("atlas".to_string()),
             "the loop was told which project to collect"
-        );
-        assert_eq!(
-            reported.uncovered(A_WHILE),
-            Uncovered::Nothing,
-            "and atlas's poll stood down"
         );
     }
 

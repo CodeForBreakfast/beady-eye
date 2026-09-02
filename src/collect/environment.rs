@@ -117,6 +117,7 @@ mod tests {
             name: "atlas".to_string(),
             path: project_dir(),
             credential_command: None,
+            poll: true,
             worktrees: Vec::new(),
         }
     }
@@ -243,6 +244,7 @@ mod tests {
             name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
+            poll: true,
             worktrees: Vec::new(),
         };
 
@@ -287,6 +289,7 @@ mod tests {
             name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
+            poll: true,
             worktrees: Vec::new(),
         };
 
@@ -347,6 +350,7 @@ mod tests {
             name: "atlas".to_string(),
             path: project_dir(),
             credential_command: Some("op read the/password".to_string()),
+            poll: true,
             worktrees: Vec::new(),
         };
 

@@ -47,6 +47,7 @@ pub fn from_the_current_directory(
             name,
             path: root,
             credential_command: None,
+            poll: true,
             worktrees,
         }],
         roots: Roots::default(),
@@ -201,6 +202,7 @@ detached
                 name: "ground-station".to_string(),
                 path: PathBuf::from("/srv/work/orbital"),
                 credential_command: None,
+                poll: true,
                 worktrees: vec![PathBuf::from("/srv/work/orbital")],
             }]
         );
@@ -716,6 +718,7 @@ credential_command = "secret-tool lookup tracker harbour"
                 name: "loose".to_string(),
                 path: PathBuf::from("/srv/loose"),
                 credential_command: None,
+                poll: true,
                 worktrees: Vec::new(),
             }]
         );

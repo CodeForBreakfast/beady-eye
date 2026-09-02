@@ -60,6 +60,8 @@ coin one — and say so.**
 | **badge** | *coined* | a rendering of one metadata value. beads has `label`, but a label is a bead's own tag; this renders a `metadata` entry, which neither project has a display term for. |
 | **unattributed** | *coined* | a live pane resolving to no bead. Neither project names this, because neither knows about the other. |
 | **unconfigured** | *coined* | a directory no `[[projects]]` entry covers, and the panes working in it. `bdi` has not failed to attribute them; it was never told the project exists. |
+| **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
+| **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 
 ### Three different things are called "blocked"
@@ -660,8 +662,12 @@ counted once, because a bead standing in several of them is still one bead.
 ```
 
 Keys: arrows to move, space to fold, `⏎` to focus the pane, `a` to drop the
-live-agent filter, `^R` to refresh, `q` to quit. Refresh is a poll — herdr has no
-event stream — on a default interval with `^R` to force one.
+live-agent filter, `^R` to refresh, `q` to quit.
+
+`^R` is a notification like any other: it takes the same window and the same
+queue as a message on the inbound channel and the poll a project arms for
+itself, and differs only in naming every project rather than one. It has no
+path of its own, so nothing it does can be lost where the other two are kept.
 
 The pointer works too. A click selects the row under it; a wheel notch moves the
 selection one row, because `bdi` holds no scroll of its own and the window is

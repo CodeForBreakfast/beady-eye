@@ -314,6 +314,7 @@ mod tests {
             name: name.to_string(),
             path: path.into(),
             credential_command: None,
+            poll: true,
             worktrees: Vec::new(),
         }
     }

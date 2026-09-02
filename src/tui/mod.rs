@@ -3,8 +3,6 @@
 //! One concern, and it is an ordering: what `bdi` starts, in the order it
 //! has to start it in. `run` below says why that order is the one it is.
 
-use std::time::Duration;
-
 use anyhow::Context;
 use chrono::{TimeDelta, Utc};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -17,12 +15,14 @@ use crate::model::snapshot::{Filter, Snapshot};
 #[cfg(test)]
 mod fixtures;
 
+mod armed;
 mod drive;
 mod keys;
 mod screen;
 mod wire;
 
-use drive::{drive, Outstanding, View};
+pub(crate) use armed::Armed;
+use drive::{drive, Outstanding, View, WINDOW};
 use screen::Screen;
 use wire::wire;
 
@@ -51,10 +51,9 @@ use wire::wire;
 /// back rests on `Screen`'s `Drop` — which rests in turn on the build
 /// unwinding, the condition `Drop for Screen` states.
 pub fn run(
-    refresh: Duration,
     patience: TimeDelta,
     filter: Filter,
-    projects: Vec<String>,
+    armed: Vec<Armed>,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
     // Taken here rather than on the thread that waits on them, so that they
@@ -63,25 +62,29 @@ pub fn run(
     // signal still kills outright.
     let asked_to_stop = Signals::new([SIGHUP, SIGINT, SIGTERM])
         .context("asking to be told about the signals that would otherwise kill bdi")?;
+    let projects: Vec<String> = armed
+        .iter()
+        .map(|project| project.project().to_string())
+        .collect();
     let awaiting = Snapshot::awaiting(projects.clone(), filter, Utc::now());
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, at_startup) = wire(
-        refresh,
-        Reported::watching(projects),
-        collect,
-        asked_to_stop,
-    );
+    let (events, ask, panes, _socket, at_startup) =
+        wire(Reported::watching(projects), collect, asked_to_stop);
     // Asked for before the screen is opened, so the collection is under way
     // while ratatui is still taking the terminal, and the first frame drawn
     // already carries the mark saying every project is being read. A forest
     // of empty projects with no mark beside them would be a forest that looks
     // read and is not.
-    let mut outstanding = Outstanding::waiting(patience);
-    outstanding.ask(&ask, Wanted::Everything, Utc::now());
+    //
+    // It is this read coming back that arms every project for its first poll,
+    // which is why nothing is armed here: a project armed at startup would
+    // ask for a second read of what is already being collected.
+    let mut outstanding = Outstanding::waiting(patience, WINDOW);
+    outstanding.ask(Wanted::Everything, Utc::now());
 
     let mut screen = Screen::showing(awaiting, panes, at_startup)?;
     screen.collecting(outstanding.awaited());
 
-    drive(&mut screen, &events, &ask, outstanding)
+    drive(&mut screen, &events, &ask, outstanding, armed)
 }
