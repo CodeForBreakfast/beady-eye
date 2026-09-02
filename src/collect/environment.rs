@@ -6,8 +6,27 @@
 
 use std::path::Path;
 
-use crate::collect::run::{Env, RunFailure, Runner, CREDENTIAL_VAR};
+use crate::collect::run::{Env, RunFailure, Runner};
 use crate::config::{Environment, Project};
+
+/// The variable bd authenticates its Dolt server with.
+///
+/// No subprocess `bdi` launches inherits it — `git`, `herdr` and a project's
+/// own `credential_command` are all arbitrary programs that were never given
+/// a tracker's password and have no business holding one.
+pub const CREDENTIAL_VAR: &str = "BEADS_DOLT_PASSWORD";
+
+/// The variable bd reads to find a tracker. It outranks the working
+/// directory, so a project is read from the directory `bdi` chose only where
+/// no inherited value overrules it.
+pub const TRACKER_VAR: &str = "BEADS_DIR";
+
+/// Which tracker is read and what authenticates to it are one identity, and
+/// inheriting either half reaches another project's database. So the runner
+/// tells every child both or neither, whatever program the child is: a
+/// tracker's credential is kept from `herdr`, `direnv` and a project's own
+/// `credential_command` as much as from another project's bd.
+pub const NEVER_INHERITED: [&str; 2] = [CREDENTIAL_VAR, TRACKER_VAR];
 
 /// The credential the shell `bdi` was launched from holds, which a project
 /// configuring none reaches its tracker on.

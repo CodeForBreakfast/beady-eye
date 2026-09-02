@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use beady_eye::app;
+use beady_eye::collect::bd;
 use beady_eye::collect::run::RealRunner;
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::{Filter, Snapshot, Tree};
@@ -140,7 +141,13 @@ fn report(name: &str, snapshot: &Snapshot) {
 fn rows_and_keystrokes_over_the_configured_trackers() {
     let cfg = config();
     let started = Instant::now();
-    let snapshot = app::run(&cfg, &RealRunner, Filter::LiveAgents, Utc::now());
+    let snapshot = app::run(
+        &cfg,
+        &RealRunner,
+        &bd::Cli::new(&RealRunner),
+        Filter::LiveAgents,
+        Utc::now(),
+    );
     println!("collected in {:?}", started.elapsed());
     let mut largest: Vec<(usize, &str, &str)> = snapshot
         .collected

@@ -6,14 +6,15 @@
 //! `tests/fixtures/bulk_loose_roots.json` is that shape in miniature — six
 //! loose beads whose ids sort ahead of both efforts that hold work.
 
+use beady_eye::collect::bd::parse_beads;
+use beady_eye::collect::tracker::testing::{Fake, Fakes};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
 mod canned;
 
-use canned::{Canned, PROBE_CALL, WORKING_ROOT};
+use canned::Canned;
 
 const TRACKER: &str = include_str!("fixtures/bulk_loose_roots.json");
 
@@ -27,52 +28,12 @@ name = "orbital"
 path = "/srv/work/orbital"
 "#;
 
-/// What the tracker answers discovery with: every bead of the fixture bar the
-/// closed one, each carrying its own parent. Derived from the fixture so the
-/// two answers cannot drift apart.
-fn unfinished_rows() -> String {
-    let beads: Vec<Value> = serde_json::from_str(TRACKER).expect("the fixture parses");
-    let rows: Vec<Value> = beads
-        .iter()
-        .filter(|bead| bead["status"] != "closed")
-        .map(|bead| {
-            serde_json::json!({
-                "id": bead["id"],
-                "title": bead["title"],
-                "status": bead["status"],
-                "parent": bead["parent"],
-            })
-        })
-        .collect();
-    serde_json::to_string(&rows).expect("the rows serialise")
-}
-
-const ORBITAL_DIR: &str = "/srv/work/orbital";
-
-/// A bd call as the runner spells it: the tracker named outright, and writes
-/// refused.
-fn spelled(subcommand: &str) -> String {
-    format!("bd -C {ORBITAL_DIR} --readonly {subcommand}")
-}
-
-fn canned() -> Canned {
-    Canned::default()
-        .answering("herdr agent list", PANES)
-        .answering(&spelled(PROBE_CALL), WORKING_ROOT)
-        .answering(
-            &spelled("list --status open,in_progress,blocked,deferred --limit 0 --json"),
-            &unfinished_rows(),
-        )
-        // This tracker keeps no wisps. What a wisp root does to the order is
-        // the same as any other root's: it has counts like the rest.
-        .answering(&spelled("query ephemeral=true --limit 0 --json"), "[]")
-        .answering(
-            &spelled("query ephemeral=true --all --limit 0 --json"),
-            "[]",
-        )
-        .answering(&spelled("ready --limit 0 --json"), "[]")
-        .answering(&spelled("blocked --json"), "[]")
-        .answering(&spelled("list --all --limit 0 --json"), TRACKER)
+/// The tracker holding the fixture, with nothing ready and nothing blocked.
+fn trackers() -> Fakes {
+    Fakes::default().with(
+        "orbital",
+        Fake::holding(parse_beads(TRACKER).expect("the fixture parses")),
+    )
 }
 
 fn now() -> DateTime<Utc> {
@@ -81,7 +42,8 @@ fn now() -> DateTime<Utc> {
 
 fn roots(filter: Filter) -> Vec<String> {
     let cfg = Config::from_toml(CONFIG).expect("the config parses");
-    let snapshot = beady_eye::app::run(&cfg, &canned(), filter, now());
+    let panes = Canned::default().answering("herdr agent list", PANES);
+    let snapshot = beady_eye::app::run(&cfg, &panes, &trackers(), filter, now());
     snapshot
         .trees
         .iter()

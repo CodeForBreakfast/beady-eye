@@ -11,6 +11,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::collect::herdr;
 use crate::collect::run::{RunFailure, Runner};
+use crate::collect::tracker::Trackers;
 use crate::config::{Config, Project};
 use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
@@ -115,6 +116,7 @@ impl Collection {
         &mut self,
         cfg: &Config,
         runner: &dyn Runner,
+        trackers: &dyn Trackers,
         wanted: &Wanted,
         filter: Filter,
         now: DateTime<Utc>,
@@ -131,7 +133,7 @@ impl Collection {
             Err(_) => (Vec::new(), HerdrState::Unavailable),
         };
 
-        for (project, answer) in self.refresh_together(cfg, runner, wanted, &panes, now) {
+        for (project, answer) in self.refresh_together(cfg, trackers, wanted, &panes, now) {
             match answer {
                 Ok(Refresh::Unchanged) => {
                     // A skipped read is a successful read: `bdi` knows the
@@ -184,7 +186,7 @@ impl Collection {
     fn refresh_together<'a>(
         &self,
         cfg: &'a Config,
-        runner: &dyn Runner,
+        trackers: &dyn Trackers,
         wanted: &Wanted,
         panes: &[Pane],
         now: DateTime<Utc>,
@@ -200,7 +202,7 @@ impl Collection {
                         .and_then(|read| read.taken_at.clone());
                     reads.spawn(move || {
                         let answer =
-                            refresh_project(runner, project, cfg, panes, standing.as_ref(), now);
+                            refresh_project(trackers, project, cfg, panes, standing.as_ref(), now);
                         (project, answer)
                     })
                 })
@@ -309,8 +311,14 @@ impl Collection {
 
 /// Read every configured tracker and, where there is one, the herdr session,
 /// and draw the result.
-pub fn run(cfg: &Config, runner: &dyn Runner, filter: Filter, now: DateTime<Utc>) -> Snapshot {
-    Collection::default().collect(cfg, runner, &Wanted::Everything, filter, now)
+pub fn run(
+    cfg: &Config,
+    runner: &dyn Runner,
+    trackers: &dyn Trackers,
+    filter: Filter,
+    now: DateTime<Utc>,
+) -> Snapshot {
+    Collection::default().collect(cfg, runner, trackers, &Wanted::Everything, filter, now)
 }
 
 #[cfg(test)]
@@ -318,12 +326,13 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::collect::run::testing::FakeRunner;
-    use crate::collect::run::Env;
     use crate::collect::run::{FailureKind, RunFailure};
+    use crate::collect::tracker::testing::{Asked, Fake, Fakes};
+    use crate::collect::tracker::Tracker;
     use crate::model::anomaly::Anomaly;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
@@ -421,12 +430,18 @@ mod tests {
 
     #[test]
     fn without_herdr_the_snapshot_says_so_and_still_draws_every_tree() {
-        let runner = orbital().failing(
+        let no_session = FakeRunner::default().failing(
             "herdr agent list",
             RunFailure::exec("herdr", "no such session"),
         );
 
-        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+        let snap = run(
+            &one_project(),
+            &no_session,
+            &orbital(),
+            Filter::LiveAgents,
+            now(),
+        );
 
         assert_eq!(snap.herdr, HerdrState::Unavailable);
         assert_eq!(snap.trees.len(), 1, "trees draw without liveness");
@@ -436,27 +451,38 @@ mod tests {
 
     #[test]
     fn a_tree_with_no_live_agent_is_reported_rather_than_dropped() {
-        let runner = orbital()
-            .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
-            .with(&spelled(TRACKER_CALL), UNSTAFFED_TREE)
-            .with(
-                &spelled("blocked --json"),
-                r#"[{"id":"orb-7","blocked_by":["orb-9"]}]"#,
-            );
+        let nobody = panes_of(r#"{"result":{"agents":[]}}"#);
+        let trackers = orbital_with(
+            Fake::holding(beads(UNSTAFFED_TREE))
+                .ready(["orb-7.2"])
+                .blocked("orb-7", &["orb-9"]),
+        );
 
-        let filtered = run(&one_project(), &runner, Filter::LiveAgents, now());
+        let filtered = run(
+            &one_project(),
+            &nobody,
+            &trackers,
+            Filter::LiveAgents,
+            now(),
+        );
         assert!(filtered.trees.is_empty());
         assert_eq!(filtered.hidden_trees.len(), 1);
         assert_eq!(filtered.hidden_trees[0].root, "orb-7");
 
-        let all = run(&one_project(), &runner, Filter::All, now());
+        let all = run(&one_project(), &nobody, &trackers, Filter::All, now());
         assert_eq!(all.trees.len(), 1);
         assert!(all.hidden_trees.is_empty());
     }
 
     #[test]
     fn a_pane_on_no_bead_is_reported_under_the_project_it_sits_in() {
-        let snap = run(&one_project(), &orbital(), Filter::LiveAgents, now());
+        let snap = run(
+            &one_project(),
+            &panes(),
+            &orbital(),
+            Filter::LiveAgents,
+            now(),
+        );
 
         let loose: Vec<&str> = snap.unattributed.iter().map(|p| p.pane.as_str()).collect();
         assert_eq!(loose, vec!["w:p9"]);
@@ -469,13 +495,20 @@ mod tests {
     /// against the tracker its directory sits in and no other.
     #[test]
     fn a_pane_joins_only_the_project_its_directory_sits_in() {
-        let panes = r#"{"result":{"agents":[
-          {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
-           "display_agent":"x-1.1"}
-        ]}}"#;
-        let runner = colliding_trackers(panes);
+        let panes = panes_of(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
+               "display_agent":"x-1.1"}
+            ]}}"#,
+        );
 
-        let snap = run(&two_projects(), &runner, Filter::All, now());
+        let snap = run(
+            &two_projects(),
+            &panes,
+            &colliding_trackers(),
+            Filter::All,
+            now(),
+        );
 
         assert!(
             node(tree_of(&snap, "orbital"), "x-1.1").agent.is_some(),
@@ -494,42 +527,33 @@ mod tests {
       {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"idle"}
     ]}}"#;
 
-    /// One call as `Meeting` tells it apart: the directory it was made in
-    /// and its command line.
-    type Made = (PathBuf, String);
-
-    /// The probe is the one call every project's read makes exactly once,
-    /// spelled for the tracker it goes to.
-    fn probe_of(tracker: &str) -> Made {
-        (PathBuf::from(tracker), spelled_in(tracker, PROBE_CALL))
-    }
-
-    /// How long a held call waits for the one it is waiting on before it is
-    /// let go and its wait is written down as spent alone. A read in flight
-    /// beside the one it waits for arrives within a thread spawn of it, so
-    /// only reads made one after the other ever reach this.
+    /// How long a held fingerprint waits for the one it is waiting on before
+    /// it is let go and its wait is written down as spent alone. A read in
+    /// flight beside the one it waits for arrives within a thread spawn of
+    /// it, so only reads made one after the other ever reach this.
     const ALONE: Duration = Duration::from_secs(5);
 
-    /// A runner that holds a call until another call has been made, and
-    /// remembers each hold that was let go by the clock rather than by the
-    /// arrival it waited for.
+    /// Trackers that hold one project's fingerprint until another project's
+    /// has been asked for, and remember each hold that was let go by the
+    /// clock rather than by the arrival it waited for.
     ///
-    /// Holding each project's probe until the other project's probe has
+    /// The fingerprint is the one question every project's read asks exactly
+    /// once, and first. Holding each project's until the other project's has
     /// arrived is what tells reads made together from reads made in turn,
     /// without asserting against a clock: two reads in flight together meet
-    /// at their probes, and one made after the other has finished waits
+    /// at their fingerprints, and one made after the other has finished waits
     /// alone. The deadline is only what a wait that would never end is
     /// reported in.
     struct Meeting {
-        inner: FakeRunner,
-        holds: Vec<(Made, Made)>,
-        arrived: Mutex<BTreeSet<Made>>,
+        inner: Fakes,
+        holds: Vec<(String, String)>,
+        arrived: Mutex<BTreeSet<String>>,
         someone_arrived: Condvar,
-        waited_alone: Mutex<Vec<Made>>,
+        waited_alone: Mutex<Vec<String>>,
     }
 
     impl Meeting {
-        fn at(inner: FakeRunner) -> Self {
+        fn at(inner: Fakes) -> Self {
             Self {
                 inner,
                 holds: Vec::new(),
@@ -539,48 +563,72 @@ mod tests {
             }
         }
 
-        /// Hold `held` until `until` has been made.
-        fn holding(mut self, held: Made, until: Made) -> Self {
-            self.holds.push((held, until));
+        /// Hold `held`'s fingerprint until `until`'s has been asked for.
+        fn holding(mut self, held: &str, until: &str) -> Self {
+            self.holds.push((held.to_string(), until.to_string()));
             self
         }
 
-        fn waited_alone(&self) -> Vec<Made> {
+        fn waited_alone(&self) -> Vec<String> {
             self.waited_alone.lock().unwrap().clone()
         }
 
-        fn arrived(&self) -> BTreeSet<Made> {
+        fn arrived(&self) -> BTreeSet<String> {
             self.arrived.lock().unwrap().clone()
         }
-    }
 
-    impl Runner for Meeting {
-        fn run(
-            &self,
-            program: &str,
-            args: &[&str],
-            cwd: Option<&Path>,
-            env: &Env,
-        ) -> Result<String, RunFailure> {
-            let this: Made = (
-                cwd.map(Path::to_path_buf).unwrap_or_default(),
-                format!("{program} {}", args.join(" ")),
-            );
+        /// `project`'s fingerprint has been asked for; wait here for whoever
+        /// it was told to wait for.
+        fn met_by(&self, project: &str) {
             let mut arrived = self.arrived.lock().unwrap();
-            arrived.insert(this.clone());
+            arrived.insert(project.to_string());
             self.someone_arrived.notify_all();
-            for (_, until) in self.holds.iter().filter(|(held, _)| *held == this) {
+            for (_, until) in self.holds.iter().filter(|(held, _)| held == project) {
                 let (still, waited) = self
                     .someone_arrived
                     .wait_timeout_while(arrived, ALONE, |arrived| !arrived.contains(until))
                     .unwrap();
                 arrived = still;
                 if waited.timed_out() {
-                    self.waited_alone.lock().unwrap().push(this.clone());
+                    self.waited_alone.lock().unwrap().push(project.to_string());
                 }
             }
-            drop(arrived);
-            self.inner.run(program, args, cwd, env)
+        }
+    }
+
+    impl Trackers for Meeting {
+        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, RunFailure> {
+            Ok(Box::new(Held {
+                meeting: self,
+                project: project.name.clone(),
+                inner: self.inner.of(project)?,
+            }))
+        }
+    }
+
+    /// One project's tracker as `Meeting` hands it out.
+    struct Held<'m> {
+        meeting: &'m Meeting,
+        project: String,
+        inner: Box<dyn Tracker + 'm>,
+    }
+
+    impl Tracker for Held<'_> {
+        fn fingerprint(&self) -> Option<Result<String, RunFailure>> {
+            self.meeting.met_by(&self.project);
+            self.inner.fingerprint()
+        }
+
+        fn all(&self) -> Result<Vec<crate::model::types::Bead>, RunFailure> {
+            self.inner.all()
+        }
+
+        fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
+            self.inner.ready()
+        }
+
+        fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
+            self.inner.blocked()
         }
     }
 
@@ -590,45 +638,55 @@ mod tests {
     /// still answering.
     #[test]
     fn the_projects_named_are_read_together_rather_than_in_turn() {
-        let runner = Meeting::at(colliding_trackers(PANES_IN_BOTH))
-            .holding(probe_of(ORBITAL), probe_of(FERRY))
-            .holding(probe_of(FERRY), probe_of(ORBITAL));
+        let trackers = Meeting::at(colliding_trackers())
+            .holding("orbital", "ferry")
+            .holding("ferry", "orbital");
 
-        collect(&mut Collection::default(), &runner, &Wanted::Everything);
+        collect(
+            &mut Collection::default(),
+            &panes_of(PANES_IN_BOTH),
+            &trackers,
+            &Wanted::Everything,
+        );
 
-        assert!(
-            runner
-                .arrived()
-                .is_superset(&[probe_of(ORBITAL), probe_of(FERRY)].into()),
-            "both trackers were probed, so a wait spent alone would have been recorded: {:?}",
-            runner.arrived()
+        assert_eq!(
+            trackers.arrived(),
+            BTreeSet::from(["orbital".to_string(), "ferry".to_string()]),
+            "both trackers were asked for a fingerprint, so a wait spent alone would have been recorded"
         );
         assert_eq!(
-            runner.waited_alone(),
-            vec![],
-            "a probe that waited alone was made after the other project's read had finished"
+            trackers.waited_alone(),
+            Vec::<String>::new(),
+            "a fingerprint that waited alone was asked for after the other project's read had finished"
         );
     }
 
     // ---- reading one project at a time ---------------------------------
 
-    fn collect(collection: &mut Collection, runner: &dyn Runner, wanted: &Wanted) -> Snapshot {
-        collection.collect(&two_projects(), runner, wanted, Filter::All, now())
+    fn collect(
+        collection: &mut Collection,
+        runner: &dyn Runner,
+        trackers: &dyn Trackers,
+        wanted: &Wanted,
+    ) -> Snapshot {
+        collection.collect(
+            &two_projects(),
+            runner,
+            trackers,
+            wanted,
+            Filter::All,
+            now(),
+        )
     }
 
     fn orbital_alone() -> Wanted {
         Wanted::Project("orbital".to_string())
     }
 
-    /// Every `bd` invocation a runner was asked to make. What the refresh
-    /// gate costs is counted in these and in nothing else: the environment
-    /// capture beside them is a different program and a different bead.
-    fn bd_calls(runner: &FakeRunner) -> usize {
-        runner
-            .calls()
-            .iter()
-            .filter(|c| c.argv.starts_with("bd "))
-            .count()
+    /// Every question `project`'s tracker was asked. What the refresh gate
+    /// costs is counted in these and in nothing else.
+    fn asked_of(trackers: &Fakes, project: &str) -> usize {
+        trackers.tracker(project).asked().len()
     }
 
     /// The same tracker with its in-flight bead last touched 29 days before
@@ -688,38 +746,59 @@ mod tests {
     // ---- the refresh gate ----------------------------------------------
 
     /// The whole trade: a tracker that has not moved is asked one question
-    /// instead of four, and the one question is the probe.
+    /// instead of four, and the one question is its fingerprint.
     #[test]
     fn a_project_whose_tracker_has_not_moved_is_asked_once() {
-        let runner = orbital();
+        let trackers = orbital();
         let cfg = one_project();
         let mut standing = Collection::default();
 
-        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, now());
-        let first = bd_calls(&runner);
-        standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, now());
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let first = asked_of(&trackers, "orbital");
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &orbital_alone(),
+            Filter::All,
+            now(),
+        );
 
-        assert_eq!(first, 5, "a project read for the first time costs both");
+        assert_eq!(first, 4, "a project read for the first time costs both");
         assert_eq!(
-            bd_calls(&runner) - first,
+            asked_of(&trackers, "orbital") - first,
             1,
-            "and a project that has not moved since costs the probe alone"
+            "and a project that has not moved since costs the fingerprint alone"
         );
     }
 
     /// The other half of the trade, and not a regression to fix: a tracker
-    /// that moved costs the probe on top of the four rather than instead of
-    /// them.
+    /// that moved costs the fingerprint on top of the three rather than
+    /// instead of them.
     #[test]
     fn a_project_whose_tracker_has_moved_is_read_in_full() {
         let cfg = one_project();
         let mut standing = Collection::default();
-        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+        standing.collect(
+            &cfg,
+            &panes(),
+            &orbital(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
 
-        let moved = orbital().with(&spelled(PROBE_CALL), MOVED);
-        let after = standing.collect(&cfg, &moved, &orbital_alone(), Filter::All, now());
+        let moved = orbital_with(orbital_tracker().moved());
+        let after = standing.collect(&cfg, &panes(), &moved, &orbital_alone(), Filter::All, now());
 
-        assert_eq!(bd_calls(&moved), 5);
+        assert_eq!(asked_of(&moved, "orbital"), 4);
         assert!(
             !trees_of(&after, "orbital").is_empty(),
             "and everything it read is drawn"
@@ -736,76 +815,151 @@ mod tests {
     fn a_cascade_that_failed_leaves_nothing_for_the_next_interval_to_skip_against() {
         let cfg = one_project();
         let mut standing = Collection::default();
-        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+        standing.collect(
+            &cfg,
+            &panes(),
+            &orbital(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
 
-        let refused = orbital()
-            .with(&spelled(PROBE_CALL), MOVED)
-            .failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
-        let failed = standing.collect(&cfg, &refused, &orbital_alone(), Filter::All, now());
+        let refused = orbital_with(
+            orbital_tracker()
+                .moved()
+                .failing(Asked::All, failing(FailureKind::Auth)),
+        );
+        let failed = standing.collect(
+            &cfg,
+            &panes(),
+            &refused,
+            &orbital_alone(),
+            Filter::All,
+            now(),
+        );
         assert_eq!(failed.failed_projects.len(), 1, "the cascade failed");
 
-        // The tracker has not moved since the failure — the same probe answer
+        // The tracker has not moved since the failure — the same fingerprint
         // the failure was taken at — and this time it answers the cascade.
-        let recovered = orbital().with(&spelled(PROBE_CALL), MOVED);
-        let after = standing.collect(&cfg, &recovered, &orbital_alone(), Filter::All, now());
+        let recovered = orbital_with(orbital_tracker().moved());
+        let after = standing.collect(
+            &cfg,
+            &panes(),
+            &recovered,
+            &orbital_alone(),
+            Filter::All,
+            now(),
+        );
 
         assert_eq!(
-            bd_calls(&recovered),
-            5,
-            "the cascade ran again rather than being skipped against the root the failure was probed at"
+            asked_of(&recovered, "orbital"),
+            4,
+            "the cascade ran again rather than being skipped against the fingerprint the failure was taken at"
         );
         assert_eq!(after.failed_projects, vec![], "so the project recovered");
     }
 
-    /// Degrade, never disappear. `dolt_hashof_db()` is Dolt's, and a
-    /// SQLite-backed tracker has no such function — so a probe that errors
-    /// means "read it the slow way", never "nothing changed", every interval
-    /// rather than only the first.
+    /// Degrade, never disappear. A fingerprint that errors means "read it
+    /// the slow way", never "nothing changed", every interval rather than
+    /// only the first.
     #[test]
-    fn a_tracker_that_cannot_answer_the_probe_is_read_in_full_every_interval() {
+    fn a_tracker_that_cannot_answer_its_fingerprint_is_read_in_full_every_interval() {
         let cfg = one_project();
-        let blind = orbital().failing(&spelled(PROBE_CALL), failing(FailureKind::Unavailable));
+        let blind = orbital_with(
+            orbital_tracker().failing(Asked::Fingerprint, failing(FailureKind::Unavailable)),
+        );
         let mut standing = Collection::default();
 
-        standing.collect(&cfg, &blind, &Wanted::Everything, Filter::All, now());
-        let first = bd_calls(&blind);
-        let after = standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
+        standing.collect(
+            &cfg,
+            &panes(),
+            &blind,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let first = asked_of(&blind, "orbital");
+        let after = standing.collect(&cfg, &panes(), &blind, &orbital_alone(), Filter::All, now());
 
-        assert_eq!(first, 5, "the probe was asked and the cascade ran anyway");
         assert_eq!(
-            bd_calls(&blind) - first,
-            5,
-            "and again, rather than settling into a skip against a root nobody established"
+            first, 4,
+            "the fingerprint was asked for and the cascade ran anyway"
+        );
+        assert_eq!(
+            asked_of(&blind, "orbital") - first,
+            4,
+            "and again, rather than settling into a skip against a fingerprint nobody established"
         );
         assert!(
             !trees_of(&after, "orbital").is_empty(),
-            "a tracker blind to the probe still draws its trees"
+            "a tracker blind to its fingerprint still draws its trees"
         );
     }
 
-    /// The same rule where a root *is* standing to skip against, which is the
-    /// way round it can silently go wrong: a tracker read once and answering
-    /// the probe, then stopping. An unanswered probe is not the answer "the
-    /// root you hold is still current", and reading it as one would freeze
-    /// the project on that read for as long as the probe stayed broken.
+    /// A tracker with nothing to fingerprint by says so rather than failing,
+    /// and is read in full every interval the same way: `None` is not the
+    /// answer "the read you hold is still current".
     #[test]
-    fn a_tracker_that_stops_answering_the_probe_is_read_in_full_again() {
+    fn a_tracker_with_no_fingerprint_is_read_in_full_every_interval() {
+        let cfg = one_project();
+        let unfingerprinted = orbital_with(orbital_tracker().without_a_fingerprint());
+        let mut standing = Collection::default();
+
+        standing.collect(
+            &cfg,
+            &panes(),
+            &unfingerprinted,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let first = asked_of(&unfingerprinted, "orbital");
+        let after = standing.collect(
+            &cfg,
+            &panes(),
+            &unfingerprinted,
+            &orbital_alone(),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(first, 4);
+        assert_eq!(asked_of(&unfingerprinted, "orbital") - first, 4);
+        assert!(!trees_of(&after, "orbital").is_empty());
+    }
+
+    /// The same rule where a fingerprint *is* standing to skip against, which
+    /// is the way round it can silently go wrong: a tracker read once and
+    /// answering, then stopping. An unanswered fingerprint is not the answer
+    /// "the read you hold is still current", and reading it as one would
+    /// freeze the project on that read for as long as it stayed broken.
+    #[test]
+    fn a_tracker_that_stops_answering_its_fingerprint_is_read_in_full_again() {
         let cfg = one_project();
         let mut standing = Collection::default();
-        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+        standing.collect(
+            &cfg,
+            &panes(),
+            &orbital(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
 
-        let blind = orbital().failing(&spelled(PROBE_CALL), failing(FailureKind::Unavailable));
-        standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
-        let first = bd_calls(&blind);
-        standing.collect(&cfg, &blind, &orbital_alone(), Filter::All, now());
+        let blind = orbital_with(
+            orbital_tracker().failing(Asked::Fingerprint, failing(FailureKind::Unavailable)),
+        );
+        standing.collect(&cfg, &panes(), &blind, &orbital_alone(), Filter::All, now());
+        let first = asked_of(&blind, "orbital");
+        standing.collect(&cfg, &panes(), &blind, &orbital_alone(), Filter::All, now());
 
         assert_eq!(
-            first, 5,
-            "the probe went unanswered, so the cascade ran rather than the standing root being kept"
+            first, 4,
+            "the fingerprint went unanswered, so the cascade ran rather than the standing one being kept"
         );
         assert_eq!(
-            bd_calls(&blind) - first,
-            5,
+            asked_of(&blind, "orbital") - first,
+            4,
             "and the read it just took left nothing for the next interval to skip against either"
         );
     }
@@ -816,13 +970,27 @@ mod tests {
     #[test]
     fn a_skipped_read_is_as_fresh_as_the_collection_that_skipped_it() {
         let cfg = one_project();
-        let runner = orbital();
+        let trackers = orbital();
         let earlier = now();
         let later = earlier + chrono::Duration::seconds(30);
         let mut standing = Collection::default();
-        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, earlier);
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            earlier,
+        );
 
-        let after = standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, later);
+        let after = standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &orbital_alone(),
+            Filter::All,
+            later,
+        );
 
         assert_eq!(after.read_at["orbital"], later);
         assert!(
@@ -838,13 +1006,27 @@ mod tests {
     #[test]
     fn a_skipped_read_still_ages_what_the_screen_says_about_it() {
         let cfg = one_project();
-        let runner = orbital().with(&spelled(TRACKER_CALL), AGEING_TREE);
+        let trackers = orbital_with(orbital_holding(AGEING_TREE));
         let earlier = now();
         let later = earlier + chrono::Duration::days(2);
         let mut standing = Collection::default();
 
-        let before = standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, earlier);
-        let after = standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, later);
+        let before = standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            earlier,
+        );
+        let after = standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &orbital_alone(),
+            Filter::All,
+            later,
+        );
 
         assert!(
             !a_claim_is_drawn_as_stale(&before),
@@ -855,9 +1037,9 @@ mod tests {
             "and 31 days is outside it at the second, which read nothing"
         );
         assert_eq!(
-            bd_calls(&runner),
-            6,
-            "the second collection cost the probe alone, so the ageing is the draw's and not the read's"
+            asked_of(&trackers, "orbital"),
+            5,
+            "the second collection cost the fingerprint alone, so the ageing is the draw's and not the read's"
         );
     }
 
@@ -869,28 +1051,44 @@ mod tests {
     #[test]
     fn a_read_stops_speaking_for_the_tracker_once_a_held_bead_is_due() {
         let cfg = one_project();
-        let runner = orbital().with(&spelled(TRACKER_CALL), DEFERRED_TREE);
+        let trackers = orbital_with(orbital_holding(DEFERRED_TREE));
         let read_at = now();
         let mut standing = Collection::default();
-        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, read_at);
-        let first = bd_calls(&runner);
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            read_at,
+        );
+        let first = asked_of(&trackers, "orbital");
 
         let hour = chrono::Duration::hours(1);
-        standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, read_at + hour);
-        let while_held = bd_calls(&runner);
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &orbital_alone(),
+            Filter::All,
+            read_at + hour,
+        );
+        let while_held = asked_of(&trackers, "orbital");
 
         standing.collect(
             &cfg,
-            &runner,
+            &panes(),
+            &trackers,
             &orbital_alone(),
             Filter::All,
             read_at + hour * 3,
         );
-        let once_due = bd_calls(&runner);
+        let once_due = asked_of(&trackers, "orbital");
 
         standing.collect(
             &cfg,
-            &runner,
+            &panes(),
+            &trackers,
             &orbital_alone(),
             Filter::All,
             read_at + hour * 4,
@@ -899,17 +1097,17 @@ mod tests {
         assert_eq!(
             while_held - first,
             1,
-            "the probe alone while bd is still holding the bead back"
+            "the fingerprint alone while the tracker is still holding the bead back"
         );
         assert_eq!(
             once_due - while_held,
-            5,
+            4,
             "and the whole cascade at the first refresh past the instant it is due"
         );
         assert_eq!(
-            bd_calls(&runner) - once_due,
+            asked_of(&trackers, "orbital") - once_due,
             1,
-            "after which nothing is held back, so the probe alone again rather than for ever"
+            "after which nothing is held back, so the fingerprint alone again rather than for ever"
         );
     }
 
@@ -922,20 +1120,28 @@ mod tests {
     #[test]
     fn a_read_has_stopped_speaking_at_the_instant_a_held_bead_is_due_rather_than_after_it() {
         let cfg = one_project();
-        let runner = orbital().with(&spelled(TRACKER_CALL), DEFERRED_TREE);
+        let trackers = orbital_with(orbital_holding(DEFERRED_TREE));
         let mut standing = Collection::default();
-        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, now());
-        let first = bd_calls(&runner);
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let first = asked_of(&trackers, "orbital");
 
         standing.collect(
             &cfg,
-            &runner,
+            &panes(),
+            &trackers,
             &orbital_alone(),
             Filter::All,
             when_it_is_due(),
         );
 
-        assert_eq!(bd_calls(&runner) - first, 5);
+        assert_eq!(asked_of(&trackers, "orbital") - first, 4);
     }
 
     /// The other side of the same instant. A bead due exactly as the read was
@@ -945,27 +1151,29 @@ mod tests {
     #[test]
     fn a_bead_due_as_the_read_was_taken_leaves_nothing_to_turn_over() {
         let cfg = one_project();
-        let runner = orbital().with(&spelled(TRACKER_CALL), DEFERRED_TREE);
+        let trackers = orbital_with(orbital_holding(DEFERRED_TREE));
         let mut standing = Collection::default();
         standing.collect(
             &cfg,
-            &runner,
+            &panes(),
+            &trackers,
             &Wanted::Everything,
             Filter::All,
             when_it_is_due(),
         );
-        let first = bd_calls(&runner);
+        let first = asked_of(&trackers, "orbital");
 
         let hour = chrono::Duration::hours(1);
         standing.collect(
             &cfg,
-            &runner,
+            &panes(),
+            &trackers,
             &orbital_alone(),
             Filter::All,
             when_it_is_due() + hour,
         );
 
-        assert_eq!(bd_calls(&runner) - first, 1);
+        assert_eq!(asked_of(&trackers, "orbital") - first, 1);
     }
 
     /// A root can come from a pane rather than from the tracker, so what the
@@ -978,25 +1186,46 @@ mod tests {
     fn a_pane_that_starts_naming_a_bead_has_the_project_read_again() {
         let cfg = one_project();
         let mut standing = Collection::default();
-        standing.collect(&cfg, &orbital(), &Wanted::Everything, Filter::All, now());
+        standing.collect(
+            &cfg,
+            &panes(),
+            &orbital(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
 
-        let named = orbital().with("herdr agent list", PANE_ON_A_BEAD);
-        standing.collect(&cfg, &named, &orbital_alone(), Filter::All, now());
+        let again = orbital();
+        standing.collect(
+            &cfg,
+            &panes_of(PANE_ON_A_BEAD),
+            &again,
+            &orbital_alone(),
+            Filter::All,
+            now(),
+        );
 
         assert_eq!(
-            bd_calls(&named),
-            5,
+            asked_of(&again, "orbital"),
+            4,
             "the tracker had not moved, but what the panes name had"
         );
     }
 
-    /// What one project's tracker was asked, however it was reached.
-    fn tracker_calls(runner: &FakeRunner, path: &str) -> usize {
-        runner
-            .calls()
-            .iter()
-            .filter(|c| c.cwd == Some(PathBuf::from(path)))
-            .count()
+    /// Both trackers, with orbital's refusing its credential. The fingerprint
+    /// is refused as well, which is what a tracker that has stopped answering
+    /// does: it is the same connection the cascade would have used. Refusing
+    /// only the cascade would stage a tracker that answers one question and
+    /// not the next, and the refresh would rightly never ask the second.
+    fn orbital_refusing() -> Fakes {
+        Fakes::default()
+            .with(
+                "orbital",
+                colliding_tracker()
+                    .failing(Asked::Fingerprint, failing(FailureKind::Auth))
+                    .failing(Asked::All, failing(FailureKind::Auth)),
+            )
+            .with("ferry", colliding_tracker())
     }
 
     fn trees_of<'a>(snap: &'a Snapshot, project: &str) -> Vec<&'a Tree> {
@@ -1019,7 +1248,8 @@ mod tests {
 
         let snap = Collection::default().collect(
             &scoped,
-            &colliding_trackers(PANES_IN_BOTH),
+            &panes_of(PANES_IN_BOTH),
+            &colliding_trackers(),
             &Wanted::Everything,
             Filter::All,
             now(),
@@ -1051,7 +1281,8 @@ mod tests {
     fn every_projects_trees_arrive_together_and_in_the_order_the_config_names() {
         let snap = collect(
             &mut Collection::default(),
-            &colliding_trackers(PANES_IN_BOTH),
+            &panes_of(PANES_IN_BOTH),
+            &colliding_trackers(),
             &Wanted::Everything,
         );
 
@@ -1077,12 +1308,18 @@ mod tests {
     /// able to disagree about what is on the screen.
     #[test]
     fn refreshing_one_project_gives_the_snapshot_a_whole_rebuild_would_have() {
-        let runner = colliding_trackers(PANES_IN_BOTH);
+        let panes = panes_of(PANES_IN_BOTH);
+        let trackers = colliding_trackers();
         let mut standing = Collection::default();
-        collect(&mut standing, &runner, &Wanted::Everything);
+        collect(&mut standing, &panes, &trackers, &Wanted::Everything);
 
-        let refreshed = collect(&mut standing, &runner, &orbital_alone());
-        let rebuilt = collect(&mut Collection::default(), &runner, &Wanted::Everything);
+        let refreshed = collect(&mut standing, &panes, &trackers, &orbital_alone());
+        let rebuilt = collect(
+            &mut Collection::default(),
+            &panes,
+            &trackers,
+            &Wanted::Everything,
+        );
 
         assert_eq!(refreshed, rebuilt);
     }
@@ -1091,23 +1328,21 @@ mod tests {
     /// changed is not read again.
     #[test]
     fn refreshing_one_project_asks_no_other_projects_tracker() {
-        let runner = colliding_trackers(PANES_IN_BOTH);
+        let panes = panes_of(PANES_IN_BOTH);
+        let trackers = colliding_trackers();
         let mut standing = Collection::default();
-        collect(&mut standing, &runner, &Wanted::Everything);
-        let (orbital, ferry) = (
-            tracker_calls(&runner, ORBITAL),
-            tracker_calls(&runner, FERRY),
-        );
+        collect(&mut standing, &panes, &trackers, &Wanted::Everything);
+        let (orbital, ferry) = (asked_of(&trackers, "orbital"), asked_of(&trackers, "ferry"));
 
-        collect(&mut standing, &runner, &orbital_alone());
+        collect(&mut standing, &panes, &trackers, &orbital_alone());
 
         assert_eq!(
-            tracker_calls(&runner, FERRY),
+            asked_of(&trackers, "ferry"),
             ferry,
             "ferry was not named, so its tracker was not asked again"
         );
         assert!(
-            tracker_calls(&runner, ORBITAL) > orbital,
+            asked_of(&trackers, "orbital") > orbital,
             "orbital was named, so it was read"
         );
     }
@@ -1117,20 +1352,27 @@ mod tests {
     /// asked, however whole the collection asking is.
     #[test]
     fn a_project_a_scope_left_out_has_its_tracker_unasked() {
-        let runner = colliding_trackers(PANES_IN_BOTH);
+        let trackers = colliding_trackers();
         let scoped = two_projects()
             .scoped_to(&["orbital".to_string()])
             .expect("orbital is configured");
 
-        Collection::default().collect(&scoped, &runner, &Wanted::Everything, Filter::All, now());
+        Collection::default().collect(
+            &scoped,
+            &panes_of(PANES_IN_BOTH),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
 
         assert_eq!(
-            tracker_calls(&runner, FERRY),
+            asked_of(&trackers, "ferry"),
             0,
             "ferry was scoped out, so nothing should have gone near its tracker"
         );
         assert!(
-            tracker_calls(&runner, ORBITAL) > 0,
+            asked_of(&trackers, "orbital") > 0,
             "orbital was scoped in, so it was read"
         );
     }
@@ -1140,22 +1382,16 @@ mod tests {
     /// read, so a tracker that fails mid-refresh cannot cost them anything.
     #[test]
     fn a_tracker_that_fails_while_one_project_refreshes_leaves_the_others_drawn() {
+        let panes = panes_of(PANES_IN_BOTH);
         let mut standing = Collection::default();
         let before = collect(
             &mut standing,
-            &colliding_trackers(PANES_IN_BOTH),
+            &panes,
+            &colliding_trackers(),
             &Wanted::Everything,
         );
 
-        // The probe is refused as well, which is what a tracker that has
-        // stopped answering does: it is the same connection the cascade
-        // would have used. Refusing only the cascade would stage a tracker
-        // that answers one question and not the next, and the refresh would
-        // rightly never ask the second.
-        let refused = colliding_trackers(PANES_IN_BOTH)
-            .failing(&spelled(PROBE_CALL), failing(FailureKind::Auth))
-            .failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
-        let after = collect(&mut standing, &refused, &orbital_alone());
+        let after = collect(&mut standing, &panes, &orbital_refusing(), &orbital_alone());
 
         assert_eq!(
             after.failed_projects,
@@ -1182,21 +1418,23 @@ mod tests {
     /// is the trackers it did not name, not the panes.
     #[test]
     fn a_refresh_naming_one_project_still_reads_the_herdr_session() {
+        let trackers = colliding_trackers();
         let mut standing = Collection::default();
         let before = collect(
             &mut standing,
-            &colliding_trackers(r#"{"result":{"agents":[]}}"#),
+            &panes_of(r#"{"result":{"agents":[]}}"#),
+            &trackers,
             &Wanted::Everything,
         );
         assert!(node(tree_of(&before, "ferry"), "x-1.1").agent.is_none());
 
-        let arrived = colliding_trackers(
+        let arrived = panes_of(
             r#"{"result":{"agents":[
               {"pane_id":"w:p2","cwd":"/srv/work/ferry","agent_status":"working",
                "display_agent":"x-1.1"}
             ]}}"#,
         );
-        let after = collect(&mut standing, &arrived, &orbital_alone());
+        let after = collect(&mut standing, &arrived, &trackers, &orbital_alone());
 
         assert!(
             node(tree_of(&after, "ferry"), "x-1.1").agent.is_some(),
@@ -1211,14 +1449,29 @@ mod tests {
     /// that never happened.
     #[test]
     fn a_refresh_naming_one_project_dates_that_project_and_leaves_the_rest_alone() {
-        let runner = colliding_trackers(PANES_IN_BOTH);
+        let panes = panes_of(PANES_IN_BOTH);
+        let trackers = colliding_trackers();
         let mut standing = Collection::default();
         let cfg = two_projects();
         let earlier = now();
         let later = earlier + chrono::Duration::seconds(30);
 
-        standing.collect(&cfg, &runner, &Wanted::Everything, Filter::All, earlier);
-        let after = standing.collect(&cfg, &runner, &orbital_alone(), Filter::All, later);
+        standing.collect(
+            &cfg,
+            &panes,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            earlier,
+        );
+        let after = standing.collect(
+            &cfg,
+            &panes,
+            &trackers,
+            &orbital_alone(),
+            Filter::All,
+            later,
+        );
 
         assert_eq!(
             after.read_at,
@@ -1242,27 +1495,28 @@ mod tests {
     /// the other direction.
     #[test]
     fn a_read_that_failed_is_still_dated_by_the_attempt_that_failed() {
+        let panes = panes_of(PANES_IN_BOTH);
         let mut standing = Collection::default();
         let cfg = two_projects();
         let earlier = now();
         let later = earlier + chrono::Duration::seconds(30);
         standing.collect(
             &cfg,
-            &colliding_trackers(PANES_IN_BOTH),
+            &panes,
+            &colliding_trackers(),
             &Wanted::Everything,
             Filter::All,
             earlier,
         );
 
-        // The probe is refused as well, which is what a tracker that has
-        // stopped answering does: it is the same connection the cascade
-        // would have used. Refusing only the cascade would stage a tracker
-        // that answers one question and not the next, and the refresh would
-        // rightly never ask the second.
-        let refused = colliding_trackers(PANES_IN_BOTH)
-            .failing(&spelled(PROBE_CALL), failing(FailureKind::Auth))
-            .failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
-        let after = standing.collect(&cfg, &refused, &orbital_alone(), Filter::All, later);
+        let after = standing.collect(
+            &cfg,
+            &panes,
+            &orbital_refusing(),
+            &orbital_alone(),
+            Filter::All,
+            later,
+        );
 
         assert!(
             trees_of(&after, "orbital").is_empty(),

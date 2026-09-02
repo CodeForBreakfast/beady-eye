@@ -1,23 +1,149 @@
-//! Everything `bdi` asks `bd`.
+//! bd's command line as the way to a project's tracker.
 //!
-//! The questions are one per thing the model needs — a project's rows, what
-//! is ready, what blocks what — and each answers in bd's own JSON, parsed here
-//! and nowhere else. The roots to draw the rows under are read off the rows
-//! themselves, in `app::tracker`.
+//! The one module that spells `bd -C <path> --readonly …`. Each question the
+//! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
+//! here and nowhere else. The roots to draw the rows under are read off the
+//! rows themselves, in `app::tracker`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use serde::Deserialize;
 
+use chrono::{DateTime, Utc};
+use serde::Deserializer;
+
+use crate::collect::environment;
 use crate::collect::run::{Env, RunFailure, Runner};
-use crate::model::types::Bead;
+use crate::collect::tracker::{Tracker, Trackers};
+use crate::config::Project;
+use crate::model::types::{Bead, Dependency, Edge, Status};
 
 /// Parse a flat array of bd rows, however the answer that carried them was
 /// asked for. `bd list`, `bd ready` and `bd query` all write the same row.
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
-    serde_json::from_str(s).context("bd --json returned a shape we do not understand")
+    let rows: Vec<Row> =
+        serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
+    Ok(rows.into_iter().map(Bead::from).collect())
+}
+
+/// One row of a bd listing, in the shape bd writes it, holding only the
+/// fields `bdi` reads.
+///
+/// Unknown fields are ignored; a present field of the wrong type is an error.
+/// Every field bd omits when empty is optional here, because bd omits it
+/// rather than writing null.
+///
+/// `depth` is deliberately absent: bd flattens it under `--max-depth`, so the
+/// tree recomputes nesting from the dependency edges instead.
+#[derive(Deserialize)]
+struct Row {
+    id: String,
+    title: String,
+    status: Status,
+    #[serde(default)]
+    priority: u8,
+    #[serde(default)]
+    issue_type: String,
+    /// bd writes the top of a chain as an empty parent, or leaves the field
+    /// out; either reads as none.
+    #[serde(default, deserialize_with = "empty_is_none")]
+    parent: Option<String>,
+    #[serde(default, deserialize_with = "none_is_empty")]
+    dependencies: Vec<RowDependency>,
+    #[serde(default, deserialize_with = "text_of_each_value")]
+    metadata: BTreeMap<String, String>,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    assignee: Option<String>,
+    /// As `bd show` prints it. bd leaves the field out of a row that has
+    /// none.
+    #[serde(default)]
+    description: Option<String>,
+    /// Everything `bd note` has added, as one text. Left out the same way.
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    closed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    defer_until: Option<DateTime<Utc>>,
+}
+
+/// One dependency as a row carries it.
+#[derive(Deserialize)]
+struct RowDependency {
+    depends_on_id: String,
+    #[serde(rename = "type")]
+    edge: Edge,
+}
+
+impl From<Row> for Bead {
+    fn from(row: Row) -> Self {
+        Bead {
+            id: row.id,
+            title: row.title,
+            status: row.status,
+            priority: row.priority,
+            issue_type: row.issue_type,
+            parent: row.parent,
+            dependencies: row
+                .dependencies
+                .into_iter()
+                .map(|dependency| Dependency {
+                    on: dependency.depends_on_id,
+                    edge: dependency.edge,
+                })
+                .collect(),
+            metadata: row.metadata,
+            owner: row.owner,
+            assignee: row.assignee,
+            description: row.description,
+            notes: row.notes,
+            updated_at: row.updated_at,
+            started_at: row.started_at,
+            closed_at: row.closed_at,
+            defer_until: row.defer_until,
+        }
+    }
+}
+
+/// bd omits a field it has nothing for, and `#[serde(default)]` covers that.
+/// It does not extend to an explicit null. A tracker is read whole, so a row
+/// bd wrote the other way costs not one bead's edges but every bead in that
+/// project.
+fn none_is_empty<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<RowDependency>, D::Error> {
+    Ok(Option::<Vec<RowDependency>>::deserialize(d)?.unwrap_or_default())
+}
+
+/// bd spells an absent parent three ways — `""`, `null`, or no field — and
+/// they all mean the top of a chain.
+fn empty_is_none<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.filter(|parent| !parent.is_empty()))
+}
+
+/// A bead's metadata is whatever JSON was written into it, and bdi draws it
+/// as text. So each value is read as the text it prints as, and a value that
+/// is not a string costs nothing.
+///
+/// A tracker is read whole, so the alternative is not a bead without its
+/// badge — it is every bead in that project, gone.
+fn text_of_each_value<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
+    let raw = BTreeMap::<String, serde_json::Value>::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .map(|(key, value)| match value {
+            serde_json::Value::String(text) => (key, text),
+            written => (key, written.to_string()),
+        })
+        .collect())
 }
 
 /// One row of `bd blocked --json`, which carries a blocker set no dep-tree
@@ -29,57 +155,150 @@ struct BlockedRow {
     blocked_by: Vec<String>,
 }
 
-/// One answer out of a project's tracker.
-///
-/// `-C` names the tracker outright, and it outranks `BEADS_DIR` in both
-/// directions: a wrong variable still resolves the project, and a wrong
-/// directory is refused rather than resolved to something plausible. That is
-/// what makes entering the directory safe, because direnv can quietly do
-/// nothing. Clearing the inherited variables stays as well; together they
-/// mean a misconfiguration fails loudly.
-///
-/// `--readonly` has bd refuse the writes `bdi` never makes, so for every
-/// subcommand but one the rule is enforced by bd rather than resting on `bdi`
-/// being well behaved. `sql` is the exception: it is a general executor, bd's
-/// own help for it warns that direct database access bypasses the storage
-/// layer, and `--readonly` does not veto it — measured against this project's
-/// own tracker on 2026-09-01. What holds there instead is `WORKING_ROOT`, a
-/// constant nothing composes, reached from one function that takes no
-/// argument.
-fn asked(
-    runner: &dyn Runner,
-    tracker: &Path,
-    env: &Env,
-    subcommand: &[&str],
-) -> Result<String, RunFailure> {
-    let named = tracker.to_string_lossy();
-    let mut argv = vec!["-C", named.as_ref(), "--readonly"];
-    argv.extend_from_slice(subcommand);
-    runner.run("bd", &argv, Some(tracker), env)
+/// bd's CLI, reaching every project's tracker through one runner.
+pub struct Cli<'r> {
+    runner: &'r dyn Runner,
+    /// The credential the shell `bdi` was launched from holds, which a
+    /// project configuring none reaches its tracker on. Read once: the shell
+    /// `bdi` was launched from does not change while it runs.
+    ambient: Option<String>,
 }
 
-/// The tracker's Dolt working root: one hash over everything the database
-/// holds, committed or not.
-///
-/// Not the committed head, because `bdi` reads wisps and the head cannot see
-/// them. `wisps` and `wisp_%` are in `dolt_ignore`, so they live in the
-/// working set and never reach `dolt_log` — measured against this project's
-/// own tracker on 2026-09-01, one `bd create --ephemeral` left
-/// `hashof('HEAD')` identical either side of it and moved this. A caller
-/// gating on the head would leave a wisp-only change off the screen until
-/// some unrelated write moved it.
-///
-/// A read does not move it: three of these with a whole cascade between them
-/// answered the same hash, measured the same day. That is what makes it worth
-/// asking, because a hash that moved on being read would report a change
-/// every time and cost 0.2s to learn nothing.
-pub fn working_root(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<String, RunFailure> {
-    let out = asked(runner, cwd, env, &["sql", "--json", WORKING_ROOT])?;
-    let rows: Vec<HashRow> = serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
-    rows.into_iter()
-        .next()
-        .map(|row| row.h)
-        .ok_or_else(|| RunFailure::parse("bd", "bd sql answered no row"))
+impl<'r> Cli<'r> {
+    pub fn new(runner: &'r dyn Runner) -> Self {
+        Self {
+            runner,
+            ambient: environment::ambient_credential(),
+        }
+    }
+}
+
+impl Trackers for Cli<'_> {
+    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, RunFailure> {
+        let env = environment::tracker_env(self.runner, project, self.ambient.as_deref())?;
+        Ok(Box::new(Reader {
+            runner: self.runner,
+            path: project.path.clone(),
+            env,
+        }))
+    }
+}
+
+/// One project's tracker as bd reads it: in the project's directory, with the
+/// environment its config asked for.
+struct Reader<'r> {
+    runner: &'r dyn Runner,
+    path: PathBuf,
+    env: Env,
+}
+
+impl Reader<'_> {
+    /// One answer out of the tracker.
+    ///
+    /// `-C` names the tracker outright, and it outranks `BEADS_DIR` in both
+    /// directions: a wrong variable still resolves the project, and a wrong
+    /// directory is refused rather than resolved to something plausible. That
+    /// is what makes entering the directory safe, because direnv can quietly
+    /// do nothing. Clearing the inherited variables stays as well; together
+    /// they mean a misconfiguration fails loudly.
+    ///
+    /// `--readonly` has bd refuse the writes `bdi` never makes, so for every
+    /// subcommand but one the rule is enforced by bd rather than resting on
+    /// `bdi` being well behaved. `sql` is the exception: it is a general
+    /// executor, bd's own help for it warns that direct database access
+    /// bypasses the storage layer, and `--readonly` does not veto it —
+    /// measured against this project's own tracker on 2026-09-01. What holds
+    /// there instead is `WORKING_ROOT`, a constant nothing composes, reached
+    /// from one method that takes no argument.
+    fn asked(&self, subcommand: &[&str]) -> Result<String, RunFailure> {
+        let named = self.path.to_string_lossy();
+        let mut argv = vec!["-C", named.as_ref(), "--readonly"];
+        argv.extend_from_slice(subcommand);
+        self.runner.run("bd", &argv, Some(&self.path), &self.env)
+    }
+
+    /// The tracker's Dolt working root: one hash over everything the
+    /// database holds, committed or not.
+    ///
+    /// Not the committed head, because `bdi` reads wisps and the head cannot
+    /// see them. `wisps` and `wisp_%` are in `dolt_ignore`, so they live in
+    /// the working set and never reach `dolt_log` — measured against this
+    /// project's own tracker on 2026-09-01, one `bd create --ephemeral` left
+    /// `hashof('HEAD')` identical either side of it and moved this. A caller
+    /// gating on the head would leave a wisp-only change off the screen until
+    /// some unrelated write moved it.
+    ///
+    /// A read does not move it: three of these with a whole cascade between
+    /// them answered the same hash, measured the same day. That is what makes
+    /// it worth asking, because a hash that moved on being read would report
+    /// a change every time and cost 0.2s to learn nothing.
+    fn working_root(&self) -> Result<String, RunFailure> {
+        let out = self.asked(&["sql", "--json", WORKING_ROOT])?;
+        let rows: Vec<HashRow> =
+            serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
+        rows.into_iter()
+            .next()
+            .map(|row| row.h)
+            .ok_or_else(|| RunFailure::parse("bd", "bd sql answered no row"))
+    }
+
+    /// A tracker's wisps, closed ones included.
+    ///
+    /// A second call, because bd keeps its ephemeral beads in a table `bd
+    /// list` does not read: measured against this project's own tracker on
+    /// 2026-08-31, `bd list --all` answered 120 rows both before and after two
+    /// wisps were written, and `bd list --wisp-type heartbeat` answered `[]`
+    /// against a heartbeat wisp that existed. `bd query` is the one call that
+    /// reads them, and it writes the same row `bd list` does.
+    fn wisps(&self) -> Result<String, RunFailure> {
+        self.asked(&["query", EPHEMERAL, "--all", "--limit", "0", "--json"])
+    }
+}
+
+impl Tracker for Reader<'_> {
+    /// bd over Dolt always has a probe, so this is never `None` here.
+    fn fingerprint(&self) -> Option<Result<String, RunFailure>> {
+        Some(self.working_root())
+    }
+
+    /// One call per project rather than one per root, because a tree is
+    /// drawn from dependency edges and `bd dep tree` cannot carry them: it
+    /// walks dependents and dedupes, so what comes back is a spanning tree —
+    /// each bead with the one edge the walk first reached it by, and every
+    /// other edge into it missing. Measured against this project's own
+    /// tracker on 2026-08-30, that walk carried 93 of the 176 edges among the
+    /// beads it returned. It is also the reason `blocked` is asked for
+    /// separately.
+    ///
+    /// `--all` is load-bearing: without it bd answers about open beads only,
+    /// and a smaller correct-looking answer about a different population is
+    /// the kind of wrong that reads as right.
+    fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+        let out = self.asked(&["list", "--all", "--limit", "0", "--json"])?;
+        let mut beads = rows(&out)?;
+        beads.extend(rows(&self.wisps()?)?);
+        Ok(beads)
+    }
+
+    /// bd computes readiness itself and treats it as a state of its own, so
+    /// it is asked for rather than inferred from status.
+    fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
+        let out = self.asked(&["ready", "--limit", "0", "--json"])?;
+        Ok(rows(&out)?.into_iter().map(|bead| bead.id).collect())
+    }
+
+    /// A dep-tree row carries its tree parent, not its blocker set: a bead
+    /// blocked by two others appears once, under one of them, with the second
+    /// nowhere in the output. `bd blocked` takes no limit of its own.
+    fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
+        let out = self.asked(&["blocked", "--json"])?;
+        let blocked: Vec<BlockedRow> =
+            serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
+        Ok(blocked
+            .into_iter()
+            .map(|row| (row.id, row.blocked_by))
+            .collect())
+    }
 }
 
 /// The whole of the SQL `bdi` writes.
@@ -98,82 +317,8 @@ struct HashRow {
     h: String,
 }
 
-/// Every bead one tracker holds, each carrying the beads it depends on, the
-/// kind of each dependency, and the bead it hangs under.
-///
-/// One call per project rather than one per root, because a tree is drawn
-/// from dependency edges and `bd dep tree` cannot carry them: it walks
-/// dependents and dedupes, so what comes back is a spanning tree — each bead
-/// with the one edge the walk first reached it by, and every other edge into
-/// it missing. Measured against this project's own tracker on 2026-08-30,
-/// that walk carried 93 of the 176 edges among the beads it returned. It is
-/// also the reason `blocked_by` is asked for separately.
-///
-/// `--all` is load-bearing: without it bd answers about open beads only, and
-/// a smaller correct-looking answer about a different population is the kind
-/// of wrong that reads as right.
-pub fn all_beads(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<Vec<Bead>, RunFailure> {
-    let out = asked(
-        runner,
-        cwd,
-        env,
-        &["list", "--all", "--limit", "0", "--json"],
-    )?;
-    let mut beads = rows(&out)?;
-    beads.extend(rows(&wisps(runner, cwd, env)?)?);
-    Ok(beads)
-}
-
-/// A tracker's wisps, closed ones included.
-///
-/// A second call, because bd keeps its ephemeral beads in a table `bd list`
-/// does not read: measured against this project's own tracker on 2026-08-31,
-/// `bd list --all` answered 120 rows both before and after two wisps were
-/// written, and `bd list --wisp-type heartbeat` answered `[]` against a
-/// heartbeat wisp that existed. `bd query` is the one call that reads them,
-/// and it writes the same row `bd list` does.
-fn wisps(runner: &dyn Runner, cwd: &Path, env: &Env) -> Result<String, RunFailure> {
-    asked(
-        runner,
-        cwd,
-        env,
-        &["query", EPHEMERAL, "--all", "--limit", "0", "--json"],
-    )
-}
-
 /// The `bd query` expression that selects wisps and nothing else.
 const EPHEMERAL: &str = "ephemeral=true";
-
-/// Ids beads considers ready to start. bd computes readiness itself and
-/// treats it as a state of its own, so we ask for it rather than infer it
-/// from status.
-pub fn ready_ids(
-    runner: &dyn Runner,
-    cwd: &Path,
-    env: &Env,
-) -> Result<BTreeSet<String>, RunFailure> {
-    let out = asked(runner, cwd, env, &["ready", "--limit", "0", "--json"])?;
-    Ok(rows(&out)?.into_iter().map(|bead| bead.id).collect())
-}
-
-/// Every blocker of every blocked bead.
-///
-/// A dep-tree row carries its tree parent, not its blocker set: a bead
-/// blocked by two others appears once, under one of them, with the second
-/// nowhere in the output. `bd blocked` takes no limit of its own.
-pub fn blocked_by(
-    runner: &dyn Runner,
-    cwd: &Path,
-    env: &Env,
-) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
-    let out = asked(runner, cwd, env, &["blocked", "--json"])?;
-    let blocked: Vec<BlockedRow> =
-        serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
-    Ok(blocked
-        .into_iter()
-        .map(|row| (row.id, row.blocked_by))
-        .collect())
-}
 
 /// `bd list`, `bd ready` and `bd query` all answer with the same rows.
 fn rows(out: &str) -> Result<Vec<Bead>, RunFailure> {
@@ -413,8 +558,11 @@ mod tests {
         assert!(!Status::Open.is_closed());
     }
 
+    use crate::collect::environment::CREDENTIAL_VAR;
     use crate::collect::run::testing::FakeRunner;
-    use crate::collect::run::{FailureKind, CREDENTIAL_VAR};
+    use crate::collect::run::FailureKind;
+    use crate::collect::tracker::Trackers;
+    use crate::config::{Environment, Project};
     use std::path::PathBuf;
 
     fn project_dir() -> PathBuf {
@@ -430,6 +578,123 @@ mod tests {
 
     fn credentialled() -> Env {
         Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())])
+    }
+
+    /// The tracker under `project_dir()`, opened on its credential.
+    fn opened(runner: &FakeRunner) -> Reader<'_> {
+        Reader {
+            runner,
+            path: project_dir(),
+            env: credentialled(),
+        }
+    }
+
+    /// A project entry as the config takes it by default: a path and nothing
+    /// else, read in `bdi`'s own environment.
+    fn ambient_project() -> Project {
+        Project {
+            name: "atlas".to_string(),
+            path: project_dir(),
+            environment: Environment::Ambient,
+            credential_command: None,
+            poll: true,
+            worktrees: Vec::new(),
+        }
+    }
+
+    /// bd's CLI as `bdi` holds it when launched from a shell holding
+    /// `ambient`, or from one holding no credential.
+    fn launched_with<'a>(runner: &'a FakeRunner, ambient: Option<&str>) -> Cli<'a> {
+        Cli {
+            runner,
+            ambient: ambient.map(str::to_string),
+        }
+    }
+
+    /// The direnv call that reproduces entering `project_dir()`.
+    fn entering_the_directory() -> String {
+        format!("direnv exec {} env -0", project_dir().display())
+    }
+
+    /// The seam's promise: a tracker opened for a project is read in the
+    /// environment that project's config asks for, so nothing above the
+    /// adapter threads an environment through its calls.
+    #[test]
+    fn a_tracker_opened_for_a_project_is_read_in_the_environment_its_config_asks_for() {
+        let runner = FakeRunner::default()
+            .with(
+                &entering_the_directory(),
+                "BEADS_DOLT_PASSWORD=the-projects-own-password",
+            )
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), "[]");
+        let project = Project {
+            environment: Environment::Direnv,
+            ..ambient_project()
+        };
+
+        let cli = launched_with(&runner, Some("the-launching-shells-password"));
+        let tracker = cli.of(&project).expect("the directory can be entered");
+        tracker.all().expect("the tracker answers");
+
+        let call = runner.call(&spelled(TRACKER_CALL));
+        assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
+        assert_eq!(
+            call.env,
+            Env::from([(
+                CREDENTIAL_VAR.to_string(),
+                "the-projects-own-password".to_string()
+            )]),
+            "the credential entering the directory produced is the one bd was given"
+        );
+    }
+
+    /// A project that configures nothing is read on the credential the shell
+    /// `bdi` was launched from holds, which the adapter captured once.
+    #[test]
+    fn a_project_configuring_nothing_is_read_on_the_ambient_credential() {
+        let runner = FakeRunner::default().with(&spelled("ready --limit 0 --json"), "[]");
+
+        let cli = launched_with(&runner, Some("hunter2"));
+        let tracker = cli
+            .of(&ambient_project())
+            .expect("nothing is run to open an ambient project");
+        tracker.ready().expect("the tracker answers");
+
+        assert_eq!(
+            runner.call(&spelled("ready --limit 0 --json")).env,
+            credentialled()
+        );
+    }
+
+    /// Opening is where the environment capture fails, and a project whose
+    /// directory cannot be entered is that project's failure before bd is
+    /// asked anything — the fake would panic on a bd call nobody staged.
+    #[test]
+    fn a_project_whose_directory_cannot_be_entered_fails_before_bd_is_asked_anything() {
+        let runner = FakeRunner::default().failing(
+            &entering_the_directory(),
+            RunFailure::exec("direnv", "No such file or directory"),
+        );
+        let project = Project {
+            environment: Environment::Direnv,
+            ..ambient_project()
+        };
+
+        let failure = launched_with(&runner, None)
+            .of(&project)
+            .err()
+            .expect("the project cannot be opened");
+
+        assert_eq!(failure.kind, FailureKind::Exec);
+        assert_eq!(failure.program, "direnv");
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| !call.argv.starts_with("bd ")),
+            "bd was asked something for a project that could not be opened"
+        );
     }
 
     /// The one call a project's whole forest is drawn from, spelled as bd
@@ -459,7 +724,9 @@ mod tests {
             &format!(r#"[{{"h":"{A_WORKING_ROOT}"}}]"#),
         );
 
-        let root = working_root(&runner, &project_dir(), &credentialled())
+        let root = opened(&runner)
+            .fingerprint()
+            .expect("bd has a probe")
             .expect("the tracker answered its working root");
 
         assert_eq!(root, A_WORKING_ROOT);
@@ -477,8 +744,10 @@ mod tests {
     fn a_probe_that_answers_no_row_is_a_failure_rather_than_a_hash() {
         let runner = FakeRunner::default().with(&spelled(PROBE_CALL), "[]");
 
-        let failure =
-            working_root(&runner, &project_dir(), &Env::new()).expect_err("no row is no answer");
+        let failure = opened(&runner)
+            .fingerprint()
+            .expect("bd has a probe")
+            .expect_err("no row is no answer");
 
         assert_eq!(failure.kind, FailureKind::Parse);
     }
@@ -490,7 +759,9 @@ mod tests {
     fn a_probe_answering_something_else_is_a_failure_rather_than_a_hash() {
         let runner = FakeRunner::default().with(&spelled(PROBE_CALL), "no such function");
 
-        let failure = working_root(&runner, &project_dir(), &Env::new())
+        let failure = opened(&runner)
+            .fingerprint()
+            .expect("bd has a probe")
             .expect_err("an answer that is not the row is no answer");
 
         assert_eq!(failure.kind, FailureKind::Parse);
@@ -502,7 +773,7 @@ mod tests {
             .with(&spelled(TRACKER_CALL), FIXTURE)
             .with(&spelled(WISP_CALL), "[]");
 
-        let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
+        let beads = opened(&runner).all().unwrap();
 
         assert_eq!(beads.len(), 7);
         for subcommand in [TRACKER_CALL, WISP_CALL] {
@@ -521,7 +792,7 @@ mod tests {
             .with(&spelled(TRACKER_CALL), FIXTURE)
             .with(&spelled(WISP_CALL), WISPS);
 
-        let beads = all_beads(&runner, &project_dir(), &credentialled()).unwrap();
+        let beads = opened(&runner).all().unwrap();
 
         let ids: Vec<&str> = beads.iter().map(|bead| bead.id.as_str()).collect();
         assert!(
@@ -696,7 +967,7 @@ mod tests {
                       {"id":"p-1.3","title":"b","status":"open"}]"#;
         let runner = FakeRunner::default().with(&spelled("ready --limit 0 --json"), out);
 
-        let got = ready_ids(&runner, &project_dir(), &credentialled()).unwrap();
+        let got = opened(&runner).ready().unwrap();
 
         assert!(got.contains("p-1.1"));
         assert!(got.contains("p-1.3"));
@@ -716,7 +987,7 @@ mod tests {
                        "blocked_by":["p-1.10"]}]"#;
         let runner = FakeRunner::default().with(&spelled("blocked --json"), out);
 
-        let got = blocked_by(&runner, &project_dir(), &credentialled()).unwrap();
+        let got = opened(&runner).blocked().unwrap();
 
         assert_eq!(
             got.get("p-1.9").map(Vec::as_slice),
@@ -737,7 +1008,7 @@ mod tests {
             },
         );
 
-        let failure = all_beads(&runner, &project_dir(), &credentialled()).unwrap_err();
+        let failure = opened(&runner).all().unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Auth);
     }
@@ -746,7 +1017,7 @@ mod tests {
     fn output_bd_could_not_have_written_is_a_parse_failure_not_an_unreachable_tracker() {
         let runner = FakeRunner::default().with(&spelled("blocked --json"), "not json at all");
 
-        let failure = blocked_by(&runner, &project_dir(), &credentialled()).unwrap_err();
+        let failure = opened(&runner).blocked().unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Parse);
     }
@@ -761,7 +1032,7 @@ mod tests {
             .with(&spelled(TRACKER_CALL), FIXTURE)
             .with(&spelled(WISP_CALL), "[]");
 
-        all_beads(&runner, &project_dir(), &credentialled()).unwrap();
+        opened(&runner).all().unwrap();
 
         for call in runner.calls() {
             let after_the_program = call

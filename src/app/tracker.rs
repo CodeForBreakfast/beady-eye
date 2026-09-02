@@ -9,9 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 
-use crate::collect::bd;
-use crate::collect::environment;
-use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
+use crate::collect::run::{FailureKind, RunFailure};
+use crate::collect::tracker::{Tracker, Trackers};
 use crate::config::{Config, Project};
 use crate::model::edges::{self, Relations};
 use crate::model::join;
@@ -112,31 +111,26 @@ pub(super) enum Refresh {
 /// One project's refresh: what it looks like now, and the cascade only if
 /// that differs from what the standing read was taken against.
 ///
-/// The probe cannot come first. It goes to the tracker, and reaching the
-/// tracker needs the environment the capture settles — so an unchanged
-/// project costs one `bd` invocation, plus that capture where the project
-/// named direnv or a credential command, against the four a changed one
+/// The fingerprint cannot come first. It goes to the tracker, and reaching
+/// the tracker is opening it — so an unchanged project costs one question,
+/// plus whatever opening the tracker costs, against the four a changed one
 /// still costs on top of them.
 ///
-/// A tracker that cannot answer the probe is read the slow way.
-/// `dolt_hashof_db()` is Dolt's and a SQLite-backed tracker has no such
-/// function, so an error there means "read it the slow way", never "nothing
-/// changed".
+/// A tracker that cannot answer its fingerprint is read the slow way: an
+/// error there means "read it the slow way", never "nothing changed". A
+/// tracker with no fingerprint to offer says so with `None` and is read the
+/// slow way every time.
 pub(super) fn refresh_project(
-    runner: &dyn Runner,
+    trackers: &dyn Trackers,
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
     standing: Option<&ReadAt>,
     now: DateTime<Utc>,
 ) -> Result<Refresh, RunFailure> {
-    let env = environment::tracker_env(
-        runner,
-        project,
-        environment::ambient_credential().as_deref(),
-    )?;
+    let tracker = trackers.of(project)?;
 
-    let probed = bd::working_root(runner, &project.path, &env).ok();
+    let probed = tracker.fingerprint().and_then(Result::ok);
     let named: BTreeSet<String> = panes_naming_a_bead_here(panes, project, cfg)
         .map(str::to_string)
         .collect();
@@ -147,7 +141,7 @@ pub(super) fn refresh_project(
         }
     }
 
-    let (work, beads) = read_project(runner, project, cfg, panes, &env)?;
+    let (work, beads) = read_project(tracker.as_ref(), project, cfg, panes)?;
     let at = probed.map(|working_root| ReadAt {
         working_root,
         named,
@@ -164,19 +158,18 @@ pub(super) fn refresh_project(
 /// the project's own failure rather than a tree; a failure on one root
 /// afterwards is that root's.
 fn read_project(
-    runner: &dyn Runner,
+    tracker: &dyn Tracker,
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
-    env: &Env,
 ) -> Result<(ProjectWork, Vec<Bead>), RunFailure> {
-    let beads = bd::all_beads(runner, &project.path, env)?;
+    let beads = tracker.all()?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
     let readiness = Readiness {
-        ready: bd::ready_ids(runner, &project.path, env)?,
-        blocked_by: bd::blocked_by(runner, &project.path, env)?,
+        ready: tracker.ready()?,
+        blocked_by: tracker.blocked()?,
     };
 
     // Every bead this read of the tracker turned up, and the bead each one
@@ -384,10 +377,10 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::app::run;
+    use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
     use pretty_assertions::assert_eq;
-    use std::path::PathBuf;
 
     /// A second root, reached only because config or a pane names it: closed,
     /// so no status does.
@@ -420,23 +413,20 @@ mod tests {
     // ---- discovery ----------------------------------------------------
 
     /// Discovery reads the listing the forest is drawn from, so a changed
-    /// refresh lists the tracker once and its wisps once, and asks bd for no
-    /// subset of either.
+    /// refresh asks the tracker for its beads once, and for no subset of them.
     #[test]
-    fn a_changed_refresh_lists_the_tracker_once_and_its_wisps_once() {
-        let runner = orbital();
+    fn a_changed_refresh_asks_the_tracker_for_its_beads_once() {
+        let trackers = orbital();
 
-        run(&one_project(), &runner, Filter::All, now());
+        run(&one_project(), &panes(), &trackers, Filter::All, now());
 
-        let listings: Vec<String> = runner
-            .calls()
+        let listings = trackers
+            .tracker("orbital")
+            .asked()
             .into_iter()
-            .map(|call| call.argv)
-            .filter(|argv| {
-                argv.starts_with(&spelled("list ")) || argv.starts_with(&spelled("query "))
-            })
-            .collect();
-        assert_eq!(listings, vec![spelled(TRACKER_CALL), spelled(WISP_CALL)]);
+            .filter(|question| *question == Asked::All)
+            .count();
+        assert_eq!(listings, 1);
     }
 
     /// The same edges nest the same beads whichever root is walked, so one
@@ -459,12 +449,10 @@ orbital = ["orb-4"]
         let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
                         "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
                         "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital()
-            .merging(&spelled(TRACKER_CALL), MAST_TREE)
-            .merging(&spelled(TRACKER_CALL), lost);
+        let tracker = orbital_tracker().also(beads(MAST_TREE)).also(beads(lost));
 
         let before = nestings_on_this_thread();
-        let (work, _) = read_project(&runner, &cfg.projects[0], &cfg, &[], &Env::new())
+        let (work, _) = read_project(&tracker, &cfg.projects[0], &cfg, &[])
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
@@ -476,7 +464,13 @@ orbital = ["orb-4"]
     /// the tree it hangs under, not as a root of its own.
     #[test]
     fn a_discovered_bead_is_drawn_as_the_tree_it_hangs_under() {
-        let snap = run(&one_project(), &orbital(), Filter::LiveAgents, now());
+        let snap = run(
+            &one_project(),
+            &panes(),
+            &orbital(),
+            Filter::LiveAgents,
+            now(),
+        );
 
         assert_eq!(snap.trees.len(), 1);
         assert_eq!(snap.trees[0].root, "orb-7");
@@ -511,12 +505,15 @@ orbital = ["orb-4"]
           {"id":"orb-wisp-b2","title":"a run that finished","status":"closed",
            "priority":2,"issue_type":"molecule"}
         ]"#;
-        let runner = orbital()
-            .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
-            .with(&spelled(TRACKER_CALL), listing)
-            .with(&spelled(WISP_CALL), wisps);
+        let trackers = orbital_with(orbital_holding(listing).also(beads(wisps)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(
+            &one_project(),
+            &panes_of(r#"{"result":{"agents":[]}}"#),
+            &trackers,
+            Filter::All,
+            now(),
+        );
 
         assert!(
             snap.failed_projects.is_empty(),
@@ -547,9 +544,9 @@ orbital = ["orb-4"]
                                "status":"open","parent":"orb-404",
                                "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
                                "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), orphan_bead);
+        let trackers = orbital_with(orbital_tracker().also(beads(orphan_bead)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         assert!(
             snap.failed_projects.is_empty(),
@@ -591,9 +588,9 @@ orbital = ["orb-4"]
         let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
                         "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
                         "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), lost);
+        let trackers = orbital_with(orbital_tracker().also(beads(lost)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         // The tree somebody is working leads, as it does whatever else is
         // drawn beside it.
@@ -620,9 +617,9 @@ orbital = ["orb-4"]
                              "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"},
                                              {"depends_on_id":"orb-5","type":"parent-child"}],
                              "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), component);
+        let trackers = orbital_with(orbital_tracker().also(beads(component)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7", "orb-5"]);
@@ -660,9 +657,9 @@ orbital = ["orb-4"]
                            "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"},
                                            {"depends_on_id":"orb-404","type":"parent-child"}],
                            "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), looping);
+        let trackers = orbital_with(orbital_tracker().also(beads(looping)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7", "orb-9"]);
@@ -705,9 +702,9 @@ orbital = ["orb-4"]
                                              {"depends_on_id":"orb-6c","type":"parent-child"},
                                              {"depends_on_id":"orb-404","type":"parent-child"}],
                              "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), both_ways);
+        let trackers = orbital_with(orbital_tracker().also(beads(both_ways)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let ids = |root: &str| {
             rooted_at(&snap, root)
@@ -743,9 +740,9 @@ orbital = ["orb-4"]
                                {"id":"orb-2d","title":"and the other way round","status":"closed",
                                 "dependencies":[{"depends_on_id":"orb-2c","type":"parent-child"}],
                                 "priority":2,"issue_type":"epic"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), under_a_loop);
+        let trackers = orbital_with(orbital_tracker().also(beads(under_a_loop)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
@@ -773,9 +770,9 @@ orbital = ["orb-4"]
         let unrelated = r#"[{"id":"orb-2","title":"found by work that is gone","status":"closed",
                              "dependencies":[{"depends_on_id":"orb-404","type":"discovered-by"}],
                              "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), unrelated);
+        let trackers = orbital_with(orbital_tracker().also(beads(unrelated)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7"]);
@@ -789,9 +786,9 @@ orbital = ["orb-4"]
         let waiting = r#"[{"id":"orb-2","title":"waiting on work that is gone","status":"closed",
                            "dependencies":[{"depends_on_id":"orb-404","type":"blocks"}],
                            "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), waiting);
+        let trackers = orbital_with(orbital_tracker().also(beads(waiting)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7"]);
@@ -808,21 +805,18 @@ orbital = ["orb-4"]
                                                 {"depends_on_id":"orb-404","type":"parent-child"}],
                                 "priority":2,"issue_type":"task",
                                 "metadata":{"agent_pane":"w:p1"}}]"#;
-        let runner = orbital().with(
-            &spelled(TRACKER_CALL),
-            &ORBITAL_TREE.replace(
-                r#"{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
+        let trackers = orbital_with(orbital_holding(&ORBITAL_TREE.replace(
+            r#"{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
        "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}}"#,
-                also_waiting
-                    .trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']'),
-            ),
-        );
+            also_waiting
+                .trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']'),
+        )));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
@@ -844,9 +838,9 @@ orbital = ["orb-4"]
                         "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
                                         {"depends_on_id":"orb-405","type":"parent-child"}],
                         "priority":2,"issue_type":"task"}]"#;
-        let runner = orbital().merging(&spelled(TRACKER_CALL), lost);
+        let trackers = orbital_with(orbital_tracker().also(beads(lost)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7", "orb-3"]);
@@ -862,32 +856,20 @@ orbital = ["orb-4"]
     }
 
     /// A closed bead above unfinished children is the normal healthy shape of
-    /// this tree, and discovery never sees one. `bd list --all` carries every
-    /// bead's own parent, so the climb past it is answered from the read
-    /// already in hand: it costs no process, however many beads share it.
+    /// this tree, and discovery never sees one. Every row carries the bead's
+    /// own parent, so the climb past it is answered from the read already in
+    /// hand: one read is the four questions and nothing more, however many
+    /// beads share the parent.
     #[test]
-    fn a_closed_parent_over_open_work_costs_no_bd_show() {
-        let runner = orbital()
-            .with(&spelled(TRACKER_CALL), CLOSED_OVER_OPEN_WORK)
-            // Answered, so that the fake does not panic: what is counted is
-            // whether it is asked at all.
-            .with(
-                &spelled("show orb-7 --json"),
-                r#"[{"id":"orb-7","parent":null}]"#,
-            );
+    fn a_closed_parent_over_open_work_costs_the_tracker_no_further_question() {
+        let trackers = orbital_with(orbital_holding(CLOSED_OVER_OPEN_WORK));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         assert_eq!(snap.trees[0].root, "orb-7");
-        let shown: Vec<String> = runner
-            .calls()
-            .into_iter()
-            .map(|call| call.argv)
-            .filter(|argv| argv.starts_with(&spelled("show ")))
-            .collect();
         assert_eq!(
-            shown,
-            Vec::<String>::new(),
+            trackers.tracker("orbital").asked(),
+            vec![Asked::Fingerprint, Asked::All, Asked::Ready, Asked::Blocked],
             "a parent the listing already carries is not asked for again"
         );
     }
@@ -898,18 +880,21 @@ orbital = ["orb-4"]
     /// still claimed was drawn in its place.
     #[test]
     fn an_effort_is_drawn_from_the_open_work_under_it_with_nobody_on_it() {
-        let runner = orbital()
-            .with("herdr agent list", r#"{"result":{"agents":[]}}"#)
-            .with(
-                &spelled(TRACKER_CALL),
-                r#"[{"id":"orb-7","title":"lift the ground station","status":"open",
-                     "priority":1,"issue_type":"epic"},
-                    {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
-                     "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
-                     "priority":2,"issue_type":"task"}]"#,
-            );
+        let trackers = orbital_with(orbital_holding(
+            r#"[{"id":"orb-7","title":"lift the ground station","status":"open",
+                 "priority":1,"issue_type":"epic"},
+                {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
+                 "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+                 "priority":2,"issue_type":"task"}]"#,
+        ));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(
+            &one_project(),
+            &panes_of(r#"{"result":{"agents":[]}}"#),
+            &trackers,
+            Filter::All,
+            now(),
+        );
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7"]);
@@ -919,18 +904,17 @@ orbital = ["orb-4"]
     /// the bead visible rather than hanging on it.
     #[test]
     fn a_parent_chain_that_loops_stops_where_it_repeats() {
-        let runner = orbital()
-            // Both ends of the loop, because a climb stops below a parent
-            // this read does not hold — and then the cycle guard, not the
-            // cycle, would be what this test never reaches.
-            .with(&spelled(TRACKER_CALL),
-                r#"[{"id":"orb-7","title":"lift the ground station","status":"closed","parent":"orb-7.1",
-                     "priority":1,"issue_type":"epic"},
-                    {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
-                     "priority":2,"issue_type":"task"}]"#,
-            );
+        // Both ends of the loop, because a climb stops below a parent this
+        // read does not hold — and then the cycle guard, not the cycle,
+        // would be what this test never reaches.
+        let trackers = orbital_with(orbital_holding(
+            r#"[{"id":"orb-7","title":"lift the ground station","status":"closed","parent":"orb-7.1",
+                 "priority":1,"issue_type":"epic"},
+                {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
+                 "priority":2,"issue_type":"task"}]"#,
+        ));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         assert_eq!(snap.trees.len(), 1);
         assert_eq!(snap.trees[0].root, "orb-7.1");
@@ -949,9 +933,9 @@ orbital = ["orb-7", "orb-4"]
 "#
         ))
         .expect("the config parses");
-        let runner = orbital().merging(&spelled(TRACKER_CALL), MAST_TREE);
+        let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
 
-        let snap = run(&cfg, &runner, Filter::All, now());
+        let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
@@ -962,9 +946,10 @@ orbital = ["orb-7", "orb-4"]
     }
 
     /// The key is `(project, id)`: a root named in config belongs to one
-    /// tracker, and no other is asked about an id it was never given. Asking
-    /// them all drew a tree per project claiming a healthy tracker was
-    /// unreachable.
+    /// tracker, and no other draws a tree for an id it was never given.
+    /// Asking them all drew a tree per project claiming a healthy tracker was
+    /// unreachable. That no tracker is *asked* about the id is the seam's
+    /// shape: none of its four questions takes one.
     #[test]
     fn a_root_named_in_config_is_read_only_from_the_project_it_is_named_under() {
         let cfg = Config::from_toml(&format!(
@@ -972,22 +957,27 @@ orbital = ["orb-7", "orb-4"]
 [[projects]]
 name = "orbital"
 path = "{ORBITAL}"
-credential_command = "secret orbital"
 
 [[projects]]
 name = "ferry"
 path = "{FERRY}"
-credential_command = "secret ferry"
 
 [roots.explicit]
 orbital = ["orb-4"]
 "#
         ))
         .expect("the config parses");
-        let runner = colliding_trackers(r#"{"result":{"agents":[]}}"#)
-            .merging(&spelled(TRACKER_CALL), MAST_TREE);
+        let trackers = Fakes::default()
+            .with("orbital", colliding_tracker().also(beads(MAST_TREE)))
+            .with("ferry", colliding_tracker());
 
-        let snap = run(&cfg, &runner, Filter::All, now());
+        let snap = run(
+            &cfg,
+            &panes_of(r#"{"result":{"agents":[]}}"#),
+            &trackers,
+            Filter::All,
+            now(),
+        );
 
         let roots: Vec<(&str, &str)> = snap
             .trees
@@ -998,13 +988,6 @@ orbital = ["orb-4"]
             roots,
             vec![("orbital", "x-1"), ("orbital", "orb-4"), ("ferry", "x-1")],
             "ferry draws no tree for a root orbital was given"
-        );
-
-        // A tracker is read whole rather than per root, so no call names a
-        // bead id at all — which is the stronger form of the same guarantee.
-        assert!(
-            runner.calls().iter().all(|c| !c.argv.contains("orb-4")),
-            "no tracker was asked about an id it was never given"
         );
     }
 
@@ -1029,12 +1012,9 @@ orbital = ["bdi-404"]
 "#
         ))
         .expect("the config parses");
-        let runner = orbital()
-            .with(&spelled("ready --limit 0 --json"), "[]")
-            .with(&spelled("blocked --json"), "[]")
-            .with(&spelled(TRACKER_CALL), A_CAPTURED_ANSWER);
+        let trackers = orbital_with(Fake::holding(beads(A_CAPTURED_ANSWER)));
 
-        let snap = run(&cfg, &runner, Filter::All, now());
+        let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
         assert!(
             snap.failed_projects.is_empty(),
@@ -1065,18 +1045,16 @@ orbital = ["bdi-404"]
     /// so the live-agent filter can never be what hides it.
     #[test]
     fn a_bead_named_only_by_a_live_pane_becomes_a_root() {
-        let runner = orbital()
-            .with(
-                "herdr agent list",
-                r#"{"result":{"agents":[
-                  {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
-                  {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-                   "display_agent":"orb-4"}
-                ]}}"#,
-            )
-            .merging(&spelled(TRACKER_CALL), MAST_TREE);
+        let panes = panes_of(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
+              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
+               "display_agent":"orb-4"}
+            ]}}"#,
+        );
+        let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
 
-        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+        let snap = run(&one_project(), &panes, &trackers, Filter::LiveAgents, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
@@ -1094,20 +1072,21 @@ orbital = ["bdi-404"]
     }
 
     /// `display_agent` is free text, so reading it as a bead id is a guess.
-    /// A sentence is an id the read does not hold, so the guess costs no
-    /// call and names no root: the pane belongs in `unattributed`, and
-    /// taking the whole tracker down for one is the opposite of degrading.
+    /// A sentence is an id the read does not hold, so the guess names no
+    /// root: the pane belongs in `unattributed`, and taking the whole tracker
+    /// down for one is the opposite of degrading. The label is looked up in
+    /// the read and never sent to the tracker, which the seam's shape holds:
+    /// none of its four questions takes an id.
     #[test]
     fn a_pane_labelled_with_something_that_is_not_a_bead_costs_the_project_nothing() {
-        let runner = orbital().with(
-            "herdr agent list",
+        let panes = panes_of(
             r#"{"result":{"agents":[
               {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
                "display_agent":"reviewing the docs"}
             ]}}"#,
         );
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes, &orbital(), Filter::All, now());
 
         assert!(
             snap.failed_projects.is_empty(),
@@ -1117,15 +1096,6 @@ orbital = ["bdi-404"]
         assert_eq!(roots, vec!["orb-7"], "rules 1 to 3 are untouched");
         let loose: Vec<&str> = snap.unattributed.iter().map(|p| p.pane.as_str()).collect();
         assert_eq!(loose, vec!["w:p4"], "the pane is reported, not dropped");
-        // The fake panics on a call it has no response for, so the label
-        // never reaching bd is what lets this get to its assertions.
-        assert!(
-            runner
-                .calls()
-                .iter()
-                .all(|call| !call.argv.contains("reviewing the docs")),
-            "the label is looked up in the read, not sent to the tracker"
-        );
     }
 
     /// The pane names a bead, not a root. What joins the root set is the top
@@ -1133,24 +1103,21 @@ orbital = ["bdi-404"]
     /// a tree draws the tree rather than a stray one-node root beside it.
     #[test]
     fn a_pane_naming_a_bead_inside_a_tree_contributes_that_tree_not_the_bead() {
-        let runner = orbital()
-            .with(
-                "herdr agent list",
-                r#"{"result":{"agents":[
-                  {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
-                   "display_agent":"orb-7.3"}
-                ]}}"#,
-            )
-            // Closed, so discovery never saw it — a seat writing up the bead
-            // it has just finished still sits on one.
-            .merging(
-                &spelled(TRACKER_CALL),
-                r#"[{"id":"orb-7.3","title":"written up","status":"closed","parent":"orb-7",
-                     "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
-                     "priority":2,"issue_type":"task"}]"#,
-            );
+        let panes = panes_of(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
+               "display_agent":"orb-7.3"}
+            ]}}"#,
+        );
+        // Closed, so discovery never saw it — a seat writing up the bead it
+        // has just finished still sits on one.
+        let trackers = orbital_with(orbital_tracker().also(beads(
+            r#"[{"id":"orb-7.3","title":"written up","status":"closed","parent":"orb-7",
+                 "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+                 "priority":2,"issue_type":"task"}]"#,
+        )));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes, &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
@@ -1167,16 +1134,17 @@ orbital = ["bdi-404"]
     /// not would draw no root for it whichever project the pane was put in.
     #[test]
     fn a_pane_contributes_its_root_only_to_the_project_it_sits_in() {
-        let runner = colliding_trackers(
+        let panes = panes_of(
             r#"{"result":{"agents":[
               {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"working",
                "display_agent":"orb-4"}
             ]}}"#,
-        )
-        .merging(&spelled_in(ORBITAL, TRACKER_CALL), MAST_TREE)
-        .merging(&spelled_in(FERRY, TRACKER_CALL), MAST_TREE);
+        );
+        let trackers = Fakes::default()
+            .with("orbital", colliding_tracker().also(beads(MAST_TREE)))
+            .with("ferry", colliding_tracker().also(beads(MAST_TREE)));
 
-        let snap = run(&two_projects(), &runner, Filter::All, now());
+        let snap = run(&two_projects(), &panes, &trackers, Filter::All, now());
 
         let roots: Vec<(&str, &str)> = snap
             .trees
@@ -1196,30 +1164,34 @@ orbital = ["bdi-404"]
     /// would draw a root for it.
     #[test]
     fn a_pane_under_no_configured_project_contributes_no_root() {
-        let runner = orbital()
-            .with(
-                "herdr agent list",
-                r#"{"result":{"agents":[
-                  {"pane_id":"w:p4","cwd":"/srv/elsewhere","agent_status":"working",
-                   "display_agent":"orb-4"}
-                ]}}"#,
-            )
-            .merging(&spelled(TRACKER_CALL), MAST_TREE);
+        let panes = panes_of(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p4","cwd":"/srv/elsewhere","agent_status":"working",
+               "display_agent":"orb-4"}
+            ]}}"#,
+        );
+        let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes, &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7"]);
     }
 
-    // ---- what bd knows that the tree does not --------------------------
+    // ---- what the tracker knows that the tree does not -------------------
 
     #[test]
-    fn readiness_and_blockers_come_from_bd_rather_than_from_status() {
-        let snap = run(&one_project(), &orbital(), Filter::LiveAgents, now());
+    fn readiness_and_blockers_come_from_the_tracker_rather_than_from_status() {
+        let snap = run(
+            &one_project(),
+            &panes(),
+            &orbital(),
+            Filter::LiveAgents,
+            now(),
+        );
         let tree = &snap.trees[0];
 
-        assert!(node(tree, "orb-7.2").ready, "bd ready named it");
+        assert!(node(tree, "orb-7.2").ready, "the tracker named it ready");
         assert!(!node(tree, "orb-7.1").ready);
         assert_eq!(
             node(tree, "orb-7.1").blocked_by,
@@ -1233,9 +1205,16 @@ orbital = ["bdi-404"]
 
     #[test]
     fn a_project_whose_listing_fails_is_named_not_dropped() {
-        let runner = orbital().failing(&spelled(TRACKER_CALL), failing(FailureKind::Auth));
+        let trackers =
+            orbital_with(orbital_tracker().failing(Asked::All, failing(FailureKind::Auth)));
 
-        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+        let snap = run(
+            &one_project(),
+            &panes(),
+            &trackers,
+            Filter::LiveAgents,
+            now(),
+        );
 
         assert!(snap.trees.is_empty());
         assert_eq!(
@@ -1257,9 +1236,9 @@ orbital = ["bdi-404"]
         ];
 
         for (kind, expected) in kinds {
-            let runner = orbital().failing(&spelled(TRACKER_CALL), failing(kind));
+            let trackers = orbital_with(orbital_tracker().failing(Asked::All, failing(kind)));
 
-            let snap = run(&one_project(), &runner, Filter::All, now());
+            let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
             assert_eq!(snap.failed_projects[0].tracker, expected, "on {kind:?}");
         }
@@ -1283,7 +1262,7 @@ orbital = ["orb-404"]
         ))
         .expect("the config parses");
 
-        let snap = run(&cfg, &orbital(), Filter::LiveAgents, now());
+        let snap = run(&cfg, &panes(), &orbital(), Filter::LiveAgents, now());
 
         assert!(
             snap.failed_projects.is_empty(),
@@ -1304,9 +1283,16 @@ orbital = ["orb-404"]
     /// recovered.
     #[test]
     fn the_one_tracker_read_failing_takes_the_project_down_by_name() {
-        let runner = orbital().failing(&spelled(TRACKER_CALL), failing(FailureKind::Unavailable));
+        let trackers =
+            orbital_with(orbital_tracker().failing(Asked::All, failing(FailureKind::Unavailable)));
 
-        let snap = run(&one_project(), &runner, Filter::LiveAgents, now());
+        let snap = run(
+            &one_project(),
+            &panes(),
+            &trackers,
+            Filter::LiveAgents,
+            now(),
+        );
 
         assert_eq!(
             snap.failed_projects,
@@ -1332,9 +1318,9 @@ orbital = ["orb-404"]
     /// nothing to draw and nothing whose absence to report.
     #[test]
     fn a_tracker_holding_no_bead_draws_nothing_and_fails_nothing() {
-        let runner = orbital().with(&spelled(TRACKER_CALL), "[]");
+        let trackers = orbital_with(orbital_holding("[]"));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         assert!(snap.trees.is_empty());
         assert!(
@@ -1344,18 +1330,20 @@ orbital = ["orb-404"]
         );
     }
 
+    /// A tracker names its database and the user it authenticated as when it
+    /// refuses a credential, and none of that belongs on the screen.
     #[test]
-    fn bds_own_words_never_reach_the_snapshot() {
-        let runner = orbital().failing(
-            &spelled(TRACKER_CALL),
+    fn a_trackers_own_words_never_reach_the_snapshot() {
+        let trackers = orbital_with(orbital_tracker().failing(
+            Asked::All,
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
                 detail: "Access denied for user 'orbital' at db.example.invalid:3306".to_string(),
             },
-        );
+        ));
 
-        let snap = run(&one_project(), &runner, Filter::All, now());
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
         let json = serde_json::to_string(&snap).expect("the snapshot serialises");
 
         for leak in ["Access denied", "db.example.invalid", "'orbital'", "3306"] {
@@ -1367,52 +1355,81 @@ orbital = ["orb-404"]
     /// so a tracker that cannot answer must not leave one behind.
     #[test]
     fn a_tracker_that_cannot_answer_readiness_fails_rather_than_calling_every_bead_unready() {
-        for call in [
-            &spelled("ready --limit 0 --json"),
-            &spelled("blocked --json"),
-        ] {
-            let runner = orbital().failing(call, failing(FailureKind::Unavailable));
+        for question in [Asked::Ready, Asked::Blocked] {
+            let trackers = orbital_with(
+                orbital_tracker().failing(question, failing(FailureKind::Unavailable)),
+            );
 
-            let snap = run(&one_project(), &runner, Filter::All, now());
+            let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
-            assert!(snap.trees.is_empty(), "on {call}");
+            assert!(snap.trees.is_empty(), "on {question:?}");
             assert_eq!(
                 snap.failed_projects[0].tracker,
                 TrackerFailure::Unavailable,
-                "on {call}"
+                "on {question:?}"
             );
         }
     }
 
     // ---- several projects at once --------------------------------------
 
-    /// A set rather than a sequence: the projects are read together, so
-    /// which tracker was asked first is not something a read promises.
+    /// Each project is drawn from the tracker opened for it and no other:
+    /// two trackers holding different work draw different trees under their
+    /// own project names. How a tracker is opened for a project — its
+    /// directory, its credential — is the adapter's, held on its side of the
+    /// seam.
     #[test]
-    fn each_project_reads_its_tracker_in_its_own_directory_with_its_own_credential() {
-        let runner = colliding_trackers(r#"{"result":{"agents":[]}}"#);
+    fn each_project_is_drawn_from_the_tracker_opened_for_it() {
+        let trackers = Fakes::default()
+            .with("orbital", orbital_tracker())
+            .with("ferry", colliding_tracker());
 
-        run(&two_projects(), &runner, Filter::All, now());
+        let snap = run(
+            &two_projects(),
+            &panes_of(r#"{"result":{"agents":[]}}"#),
+            &trackers,
+            Filter::All,
+            now(),
+        );
 
-        let reads: BTreeSet<(Option<PathBuf>, Option<String>)> = runner
-            .calls()
+        let roots: Vec<(&str, &str)> = snap
+            .trees
             .iter()
-            .filter(|c| c.argv.ends_with(TRACKER_CALL))
-            .map(|c| (c.cwd.clone(), c.env.get("BEADS_DOLT_PASSWORD").cloned()))
+            .map(|t| (t.project.as_str(), t.root.as_str()))
             .collect();
+        assert_eq!(roots, vec![("orbital", "orb-7"), ("ferry", "x-1")]);
+    }
+
+    /// Opening a tracker is where entering a project's directory happens,
+    /// and a directory that cannot be entered fails that project before its
+    /// tracker is asked anything — by name, with the failure's own kind, and
+    /// with every other project still drawn.
+    #[test]
+    fn a_project_whose_tracker_cannot_be_opened_is_named_with_that_failure() {
+        let trackers = Fakes::default()
+            .unopenable("orbital", FailureKind::Exec)
+            .with("ferry", colliding_tracker());
+
+        let snap = run(
+            &two_projects(),
+            &panes_of(r#"{"result":{"agents":[]}}"#),
+            &trackers,
+            Filter::All,
+            now(),
+        );
 
         assert_eq!(
-            reads,
-            BTreeSet::from([
-                (
-                    Some(PathBuf::from(ORBITAL)),
-                    Some("orbital-password".to_string())
-                ),
-                (
-                    Some(PathBuf::from(FERRY)),
-                    Some("ferry-password".to_string())
-                ),
-            ])
+            snap.failed_projects,
+            vec![FailedProject {
+                project: "orbital".to_string(),
+                tracker: TrackerFailure::Exec,
+            }]
         );
+        let roots: Vec<(&str, &str)> = snap
+            .trees
+            .iter()
+            .map(|t| (t.project.as_str(), t.root.as_str()))
+            .collect();
+        assert_eq!(roots, vec![("ferry", "x-1")]);
     }
 }

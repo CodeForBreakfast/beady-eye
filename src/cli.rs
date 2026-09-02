@@ -10,6 +10,7 @@ use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 
+use crate::collect::bd;
 use crate::collect::discovery;
 use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
@@ -166,7 +167,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Filter::LiveAgents
     };
     if cli.json {
-        let snapshot = crate::app::run(&cfg, &RealRunner, filter, Utc::now());
+        let snapshot = crate::app::run(
+            &cfg,
+            &RealRunner,
+            &bd::Cli::new(&RealRunner),
+            filter,
+            Utc::now(),
+        );
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
         return Ok(ExitCode::SUCCESS);
     }
@@ -179,19 +186,20 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let refresh = cfg.tui.refresh();
     let patience = cfg.tui.unanswered_after();
     let polling = Polling::asked_for(&cli);
-    // RealRunner is a unit struct, so the collection builds its own rather
-    // than borrowing one across the thread it runs on.
     let projects = cfg
         .read()
         .map(|project| Armed::polling(project.name.clone(), polling.after_a_read(project, refresh)))
         .collect();
     let mut collection = crate::app::Collection::default();
+    let trackers = bd::Cli::new(&RealRunner);
     crate::tui::run(
         patience,
         filter,
         cfg.scope.clone(),
         projects,
-        Box::new(move |wanted| collection.collect(&cfg, &RealRunner, wanted, filter, Utc::now())),
+        Box::new(move |wanted| {
+            collection.collect(&cfg, &RealRunner, &trackers, wanted, filter, Utc::now())
+        }),
     )?;
 
     Ok(ExitCode::SUCCESS)

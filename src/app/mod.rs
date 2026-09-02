@@ -11,26 +11,29 @@ mod tracker;
 
 pub use collection::{run, Awaited, Collection, Wanted};
 
-/// The fake tracker both halves read in their tests.
+/// The fake trackers and panes both halves read in their tests.
 ///
-/// Every canned answer here is one bd call spelled as the runner spells it, so
-/// a test on either side of the seam is reading the same tracker rather than
-/// its own idea of one.
+/// Every tracker here answers in beads and sets, which is what the seam
+/// carries, so a test on either side of it is reading the same tracker rather
+/// than its own idea of one — and none of them knows how a real one is asked.
 #[cfg(test)]
 mod fixtures {
     use chrono::{DateTime, Utc};
 
+    use crate::collect::bd::parse_beads;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{FailureKind, RunFailure};
+    use crate::collect::tracker::testing::{Fake, Fakes};
     use crate::config::Config;
     use crate::model::snapshot::{Node, Tree};
+    use crate::model::types::Bead;
 
     pub(super) const ORBITAL: &str = "/srv/work/orbital";
     pub(super) const FERRY: &str = "/srv/work/ferry";
 
-    /// One project's tracker as bd answers for the root: an epic over two
-    /// tasks, one of them naming the pane working it. Every row carries its
-    /// own `parent` as well as the edge, because bd writes both.
+    /// One project's tracker: an epic over two tasks, one of them naming the
+    /// pane working it. Every row carries its own `parent` as well as the
+    /// edge, because a tracker writes both.
     pub(super) const ORBITAL_TREE: &str = r#"[
       {"id":"orb-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic"},
@@ -58,36 +61,21 @@ mod fixtures {
       {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"idle"}
     ]}}"#;
 
-    /// A bd call as the runner spells it: the tracker named outright, and
-    /// writes refused. Two projects now differ in their argv as well as their
-    /// directory, so each is staged for the tracker it reads.
-    pub(super) fn spelled_in(tracker: &str, subcommand: &str) -> String {
-        format!("bd -C {tracker} --readonly {subcommand}")
-    }
-
-    /// The same, for the single project most of these tests read.
-    pub(super) fn spelled(subcommand: &str) -> String {
-        spelled_in(ORBITAL, subcommand)
-    }
-
-    /// The direnv call that reproduces entering a project's directory.
-    pub(super) fn entering(tracker: &str) -> String {
-        format!("direnv exec {tracker} env -0")
+    /// Rows as a test writes them, read into the beads a tracker answers with.
+    pub(super) fn beads(rows: &str) -> Vec<Bead> {
+        parse_beads(rows).expect("the rows parse")
     }
 
     pub(super) fn now() -> DateTime<Utc> {
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
 
-    /// One project, read the direnv way, so that every collection in these
-    /// tests goes through the environment capture as well as the bd calls.
     pub(super) fn one_project() -> Config {
         Config::from_toml(&format!(
             r#"
 [[projects]]
 name = "orbital"
 path = "{ORBITAL}"
-environment = "direnv"
 "#
         ))
         .expect("the config parses")
@@ -99,51 +87,58 @@ environment = "direnv"
 [[projects]]
 name = "orbital"
 path = "{ORBITAL}"
-credential_command = "secret orbital"
 
 [[projects]]
 name = "ferry"
 path = "{FERRY}"
-credential_command = "secret ferry"
 "#
         ))
         .expect("the config parses")
     }
 
-    /// The one question a refresh asks before it decides whether to ask the
-    /// other seven, spelled as bd takes it.
-    pub(super) const PROBE_CALL: &str = "sql --json SELECT dolt_hashof_db() AS h";
+    /// Orbital's tracker holding `rows` in place of its usual tree, with the
+    /// same task ready and the same task blocked from outside it.
+    pub(super) fn orbital_holding(rows: &str) -> Fake {
+        Fake::holding(beads(rows))
+            .ready(["orb-7.2"])
+            .blocked("orb-7.1", &["orb-9"])
+    }
 
-    /// One answer to `PROBE_CALL`, as a tracker that has not moved keeps
-    /// giving. A test that needs a tracker to have moved stages `MOVED`
-    /// against a second runner and collects again.
-    pub(super) const UNMOVED: &str = r#"[{"h":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]"#;
-    pub(super) const MOVED: &str = r#"[{"h":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]"#;
+    /// Orbital's tracker as a healthy single-project run finds it.
+    pub(super) fn orbital_tracker() -> Fake {
+        orbital_holding(ORBITAL_TREE)
+    }
 
-    /// The one call a project's whole forest is drawn from, spelled as bd
-    /// takes it.
-    pub(super) const TRACKER_CALL: &str = "list --all --limit 0 --json";
+    /// The one project's trackers, with orbital's staged as `tracker`.
+    pub(super) fn orbital_with(tracker: Fake) -> Fakes {
+        Fakes::default().with("orbital", tracker)
+    }
 
-    /// The same question asked of bd's ephemeral table, which `bd list` does
-    /// not read.
-    pub(super) const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
+    /// The one project's trackers as a healthy run finds them.
+    pub(super) fn orbital() -> Fakes {
+        orbital_with(orbital_tracker())
+    }
 
-    /// Every call a healthy single-project run makes.
-    pub(super) fn orbital() -> FakeRunner {
-        FakeRunner::default()
-            .with("herdr agent list", PANES)
-            .with(&entering(ORBITAL), "")
-            .with(&spelled(PROBE_CALL), UNMOVED)
-            .with(
-                &spelled("ready --limit 0 --json"),
-                r#"[{"id":"orb-7.2","title":"lay the feeder cable","status":"open"}]"#,
-            )
-            .with(
-                &spelled("blocked --json"),
-                r#"[{"id":"orb-7.1","blocked_by":["orb-9"]}]"#,
-            )
-            .with(&spelled(TRACKER_CALL), ORBITAL_TREE)
-            .with(&spelled(WISP_CALL), "[]")
+    /// The herdr session answering with `agents`.
+    pub(super) fn panes_of(agents: &str) -> FakeRunner {
+        FakeRunner::default().with("herdr agent list", agents)
+    }
+
+    /// The herdr session as a healthy run finds it.
+    pub(super) fn panes() -> FakeRunner {
+        panes_of(PANES)
+    }
+
+    /// One of the two trackers that chose the same prefix.
+    pub(super) fn colliding_tracker() -> Fake {
+        Fake::holding(beads(COLLIDING_TREE))
+    }
+
+    /// Both projects' trackers, each holding the colliding tree.
+    pub(super) fn colliding_trackers() -> Fakes {
+        Fakes::default()
+            .with("orbital", colliding_tracker())
+            .with("ferry", colliding_tracker())
     }
 
     pub(super) fn failing(kind: FailureKind) -> RunFailure {
@@ -159,21 +154,5 @@ credential_command = "secret ferry"
             .iter()
             .find(|n| n.id == id)
             .unwrap_or_else(|| panic!("{id} is among the beads"))
-    }
-
-    pub(super) fn colliding_trackers(panes: &str) -> FakeRunner {
-        let mut runner = FakeRunner::default()
-            .with("herdr agent list", panes)
-            .with("sh -c secret orbital", "orbital-password")
-            .with("sh -c secret ferry", "ferry-password");
-        for tracker in [ORBITAL, FERRY] {
-            runner = runner
-                .with(&spelled_in(tracker, PROBE_CALL), UNMOVED)
-                .with(&spelled_in(tracker, "ready --limit 0 --json"), "[]")
-                .with(&spelled_in(tracker, "blocked --json"), "[]")
-                .with(&spelled_in(tracker, TRACKER_CALL), COLLIDING_TREE)
-                .with(&spelled_in(tracker, WISP_CALL), "[]");
-        }
-        runner
     }
 }

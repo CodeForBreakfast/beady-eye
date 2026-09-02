@@ -6,6 +6,8 @@ use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
+use crate::collect::environment::NEVER_INHERITED;
+
 /// The variables a child process is given on top of the environment `bdi`
 /// itself runs in; a set value replaces whatever the parent holds.
 ///
@@ -13,26 +15,9 @@ use std::process::Command;
 /// parent's environment whatever its cwd, so reading a second tracker means
 /// changing this, not only the directory.
 ///
-/// `NEVER_INHERITED` is the exception to the inheritance: a subprocess holds
-/// one of those only if this names it.
+/// `environment::NEVER_INHERITED` is the exception to the inheritance: a
+/// subprocess holds one of those only if this names it.
 pub type Env = BTreeMap<String, String>;
-
-/// The variable bd authenticates its Dolt server with.
-///
-/// No subprocess `bdi` launches inherits it — `git`, `herdr` and a project's
-/// own `credential_command` are all arbitrary programs that were never given
-/// a tracker's password and have no business holding one.
-pub const CREDENTIAL_VAR: &str = "BEADS_DOLT_PASSWORD";
-
-/// The variable bd reads to find a tracker. It outranks the working
-/// directory, so a project is read from the directory `bdi` chose only where
-/// no inherited value overrules it.
-pub const TRACKER_VAR: &str = "BEADS_DIR";
-
-/// Which tracker is read and what authenticates to it are one identity, and
-/// inheriting either half reaches another project's database. So a child is
-/// told both or neither.
-const NEVER_INHERITED: [&str; 2] = [CREDENTIAL_VAR, TRACKER_VAR];
 
 /// Why a command did not yield usable output. Each kind wants a different
 /// response from the caller, so they stay apart.

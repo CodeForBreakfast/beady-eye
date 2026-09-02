@@ -13,14 +13,16 @@
 
 use std::path::Path;
 
-use beady_eye::collect::run::{Env, CREDENTIAL_VAR};
+use beady_eye::collect::bd;
+use beady_eye::collect::environment::CREDENTIAL_VAR;
+use beady_eye::collect::run::Env;
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
 use chrono::{DateTime, Utc};
 
 mod canned;
 
-use canned::{Call, Canned, PROBE_CALL, WORKING_ROOT};
+use canned::{Call, Canned};
 
 const ORBITAL_DIR: &str = "/srv/work/orbital";
 const HARBOUR_DIR: &str = "/srv/work/harbour";
@@ -51,81 +53,37 @@ name = "solo"
 path = "/srv/work/solo"
 "#;
 
-/// A bd call as the runner spells it: the tracker named outright, and writes
-/// refused.
-fn spelled_in(tracker: &str, subcommand: &str) -> String {
-    format!("bd -C {tracker} --readonly {subcommand}")
-}
-
-/// One in-flight bead under a closed epic, so the climb to a root is made as
-/// well as discovered — every call bd is asked for is one this checks. What
-/// each tracker holds does not matter here; that every call to it carries the
-/// right credential does.
-fn tracker(runner: Canned, cwd: &str, id: &str) -> Canned {
-    runner
-        .answering_in(cwd, &spelled_in(cwd, PROBE_CALL), WORKING_ROOT)
-        .answering_in(
-            cwd,
-            &spelled_in(
-                cwd,
-                "list --status open,in_progress,blocked,deferred --limit 0 --json",
-            ),
-            &format!(
-                r#"[{{"id":"{id}.1","title":"the work","status":"in_progress","parent":"{id}"}}]"#
-            ),
-        )
-        .answering_in(
-            cwd,
-            &spelled_in(cwd, "query ephemeral=true --limit 0 --json"),
-            "[]",
-        )
-        .answering_in(
-            cwd,
-            &spelled_in(cwd, "query ephemeral=true --all --limit 0 --json"),
-            "[]",
-        )
-        .answering_in(cwd, &spelled_in(cwd, "ready --limit 0 --json"), "[]")
-        .answering_in(cwd, &spelled_in(cwd, "blocked --json"), "[]")
-        .answering_in(
-            cwd,
-            &spelled_in(cwd, &format!("show {id} --json")),
-            &format!(r#"[{{"id":"{id}","parent":null}}]"#),
-        )
-        .answering_in(
-            cwd,
-            &spelled_in(cwd, "list --all --limit 0 --json"),
-            &format!(
-                r#"[{{"id":"{id}","title":"the work","status":"in_progress",
-                      "priority":1,"issue_type":"task","started_at":"2026-08-29T09:00:00Z",
-                      "updated_at":"2026-08-29T09:00:00Z"}}]"#
-            ),
-        )
-}
+/// Every question bd is asked is answered with nothing, which every one of
+/// its answers parses as. What a tracker holds does not matter here; that
+/// every call to it carries the right credential does — and a tracker holding
+/// nothing is still asked every question a read makes.
+const NOTHING: &str = "[]";
 
 const NO_PANES: &str = r#"{"id":"cli:agent:list","result":{"agents":[]}}"#;
 
 fn across_two_projects() -> Canned {
-    let runner = Canned::default()
+    Canned::default()
         .answering("herdr agent list", NO_PANES)
         .answering("sh -c pass show orbital/tracker", "orbital-secret\n")
-        .answering("sh -c pass show harbour/tracker", "harbour-secret\n");
-    let runner = tracker(runner, ORBITAL_DIR, "orb-7");
-    tracker(runner, HARBOUR_DIR, "har-3")
+        .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
+        .answering_every("bd", NOTHING)
 }
 
 fn on_the_ambient_credential() -> Canned {
-    let runner = Canned::default().answering("herdr agent list", NO_PANES);
-    tracker(runner, SOLO_DIR, "solo-1")
+    Canned::default()
+        .answering("herdr agent list", NO_PANES)
+        .answering_every("bd", NOTHING)
 }
 
 fn now() -> DateTime<Utc> {
     "2026-08-30T12:00:00Z".parse().expect("the instant parses")
 }
 
-/// Collect over a config, and hand back every call that was made.
+/// Collect over a config through bd's own adapter, and hand back every call
+/// that was made.
 fn calls_made_reading(config: &str, runner: &Canned) -> Vec<Call> {
     let cfg = Config::from_toml(config).expect("the config parses");
-    beady_eye::app::run(&cfg, runner, Filter::All, now());
+    beady_eye::app::run(&cfg, runner, &bd::Cli::new(runner), Filter::All, now());
     runner.calls()
 }
 

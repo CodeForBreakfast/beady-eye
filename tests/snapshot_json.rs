@@ -1,15 +1,18 @@
 //! `bdi --json` emits the contract in `docs/design.md`. These drive the whole
 //! binary's model through the one public entry point a consumer sees.
 
+use beady_eye::collect::bd::parse_beads;
 use beady_eye::collect::run::FailureKind;
+use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
+use beady_eye::model::types::Bead;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 mod canned;
 
-use canned::{Canned, PROBE_CALL, WORKING_ROOT};
+use canned::{refused, Canned};
 
 /// One project's tracker: an epic with a pane on it, a claimed task with
 /// none, a claim nothing has touched in weeks, a task bd calls ready, and a
@@ -76,44 +79,38 @@ render = "⏸ waiting"
 stale_claim_days = 7
 "#;
 
-/// A bd call as the runner spells it: the tracker named outright, and writes
-/// refused.
-fn spelled_in(tracker: &str, subcommand: &str) -> String {
-    format!("bd -C {tracker} --readonly {subcommand}")
+/// Rows as a test writes them, read into the beads a tracker answers with.
+fn beads(rows: &str) -> Vec<Bead> {
+    parse_beads(rows).expect("the rows parse")
 }
 
-const ORBITAL_DIR: &str = "/srv/work/orbital";
-
-fn canned() -> Canned {
-    canned_reading(ORBITAL_DIR)
+/// The herdr session as these tests find it.
+fn panes() -> Canned {
+    Canned::default().answering("herdr agent list", PANES)
 }
 
-/// The same tracker, read at whichever directory the project is configured
-/// with — which is not always where its panes sit.
-fn canned_reading(tracker: &str) -> Canned {
-    Canned::default()
-        .answering("herdr agent list", PANES)
-        .answering(&spelled_in(tracker, PROBE_CALL), WORKING_ROOT)
-        .answering(
-            &spelled_in(tracker, "ready --limit 0 --json"),
-            r#"[{"id":"orb-7.4","title":"file the licence","status":"open"}]"#,
-        )
-        .answering(
-            &spelled_in(tracker, "blocked --json"),
-            r#"[{"id":"orb-7.1","blocked_by":["orb-9"],"blocked_by_count":1}]"#,
-        )
-        .answering(&spelled_in(tracker, TRACKER_CALL), TREE)
-        .answering(&spelled_in(tracker, WISP_CALL), "[]")
+/// Orbital's tracker holding `rows` in place of its usual tree, with the same
+/// task ready and the same task blocked from outside it.
+fn orbital_holding(rows: &str) -> Fake {
+    Fake::holding(beads(rows))
+        .ready(["orb-7.4"])
+        .blocked("orb-7.1", &["orb-9"])
 }
 
-/// The one call a project's whole forest is drawn from, spelled as bd takes
-/// it.
-const TRACKER_CALL: &str = "list --all --limit 0 --json";
+/// Orbital's tracker as these tests find it.
+fn orbital_tracker() -> Fake {
+    orbital_holding(TREE)
+}
 
-/// The same question asked of bd's ephemeral table, which `bd list` does not
-/// read. Both trackers answer it with nothing unless a case stages wisps of
-/// its own.
-const WISP_CALL: &str = "query ephemeral=true --all --limit 0 --json";
+/// The one project's trackers, with orbital's staged as `tracker`.
+fn orbital_with(tracker: Fake) -> Fakes {
+    Fakes::default().with("orbital", tracker)
+}
+
+/// The one project's trackers as these tests find them.
+fn orbital() -> Fakes {
+    orbital_with(orbital_tracker())
+}
 
 /// A run recorded as wisps, in the shape bd writes one: a `molecule` that is
 /// nobody's child, and its steps hanging under it by parent-child. The
@@ -137,9 +134,9 @@ const WISP_RUN: &str = r#"[
 /// while it happens, which is the whole reason to draw them.
 #[test]
 fn a_run_recorded_as_wisps_is_drawn_beside_the_permanent_work() {
-    let runner = canned().answering(&spelled_in(ORBITAL_DIR, WISP_CALL), WISP_RUN);
+    let trackers = orbital_with(orbital_tracker().also(beads(WISP_RUN)));
 
-    let emitted = emit(&runner, Filter::All);
+    let emitted = emit(&panes(), &trackers, Filter::All);
 
     let trees = emitted["trees"].as_array().expect("trees is an array");
     let run = trees
@@ -188,9 +185,8 @@ fn now() -> DateTime<Utc> {
     "2026-08-30T12:00:00Z".parse().expect("the instant parses")
 }
 
-fn emit(runner: &Canned, filter: Filter) -> Value {
-    let snapshot = beady_eye::app::run(&cfg(), runner, filter, now());
-    serde_json::to_value(&snapshot).expect("the snapshot serialises")
+fn emit(runner: &Canned, trackers: &Fakes, filter: Filter) -> Value {
+    emit_over(&cfg(), runner, trackers, filter)
 }
 
 fn node<'a>(tree: &'a Value, id: &str) -> &'a Value {
@@ -204,7 +200,7 @@ fn node<'a>(tree: &'a Value, id: &str) -> &'a Value {
 
 #[test]
 fn the_json_carries_the_contract_fields() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
 
     assert_eq!(emitted["generated_at"], "2026-08-30T12:00:00Z");
     assert_eq!(emitted["herdr"], "ok");
@@ -232,7 +228,7 @@ fn the_json_carries_the_contract_fields() {
 /// consumer draws it without rebuilding the tree.
 #[test]
 fn the_nodes_arrive_flattened_in_render_order() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
     let nodes = emitted["trees"][0]["nodes"]
         .as_array()
         .expect("nodes is an array");
@@ -261,7 +257,7 @@ fn the_nodes_arrive_flattened_in_render_order() {
 
 #[test]
 fn a_node_carries_every_field_the_contract_names() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
     let claimed = node(&emitted["trees"][0], "orb-7.1");
 
     assert_eq!(
@@ -289,7 +285,7 @@ fn a_node_carries_every_field_the_contract_names() {
 /// consumer can tell a confirmed agent from an inferred one.
 #[test]
 fn the_agent_records_which_direction_of_the_join_resolved_it() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
     let tree = &emitted["trees"][0];
 
     assert_eq!(
@@ -314,7 +310,7 @@ fn the_agent_records_which_direction_of_the_join_resolved_it() {
 /// prose governs and the model follows the prose.
 #[test]
 fn a_node_carries_every_anomaly_that_fires_on_it() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
     let tree = &emitted["trees"][0];
 
     assert_eq!(
@@ -330,7 +326,7 @@ fn a_node_carries_every_anomaly_that_fires_on_it() {
 
 #[test]
 fn readiness_reaches_the_json_as_bd_reported_it() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
     let tree = &emitted["trees"][0];
 
     assert_eq!(node(tree, "orb-7.4")["ready"], true);
@@ -343,7 +339,7 @@ fn readiness_reaches_the_json_as_bd_reported_it() {
 /// sits in, so a consumer groups it without resolving the path again.
 #[test]
 fn a_pane_on_no_bead_is_reported_with_its_project() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
 
     assert_eq!(
         emitted["unattributed"],
@@ -362,7 +358,7 @@ fn a_pane_on_no_bead_is_reported_with_its_project() {
 /// for; a missing value would be a judgement they have to make.
 #[test]
 fn a_pane_under_no_configured_project_is_its_own_array() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
 
     assert_eq!(
         emitted["unconfigured"],
@@ -396,7 +392,8 @@ fn a_contested_pane_is_reported_with_its_own_account_of_itself() {
         r#""started_at":"2026-07-01T09:00:00Z","metadata":{"agent_pane":"w:p1"}}"#,
     );
     let emitted = emit(
-        &canned().answering(&spelled_in(ORBITAL_DIR, TRACKER_CALL), &contested),
+        &panes(),
+        &orbital_with(orbital_holding(&contested)),
         Filter::LiveAgents,
     );
 
@@ -422,7 +419,7 @@ fn a_contested_pane_is_reported_with_its_own_account_of_itself() {
 /// resolve by picking a winner.
 #[test]
 fn a_join_disagreement_is_reported_at_the_top_level() {
-    let emitted = emit(&canned(), Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
 
     assert_eq!(
         emitted["conflicts"],
@@ -440,9 +437,9 @@ fn a_join_disagreement_is_reported_at_the_top_level() {
 /// draw.
 #[test]
 fn a_tracker_holding_no_bead_emits_no_tree_and_no_failure() {
-    let runner = canned().answering(&spelled_in(ORBITAL_DIR, TRACKER_CALL), "[]");
+    let trackers = orbital_with(orbital_holding("[]"));
 
-    let emitted = emit(&runner, Filter::LiveAgents);
+    let emitted = emit(&panes(), &trackers, Filter::LiveAgents);
 
     assert_eq!(emitted["trees"], json!([]));
     assert_eq!(emitted["failed_projects"], json!([]));
@@ -454,12 +451,10 @@ fn a_tracker_holding_no_bead_emits_no_tree_and_no_failure() {
 /// empty trees.
 #[test]
 fn a_tracker_that_stops_answering_is_named_in_the_json_as_the_project_it_is() {
-    let runner = canned().failing(
-        &spelled_in(ORBITAL_DIR, TRACKER_CALL),
-        FailureKind::Unavailable,
-    );
+    let trackers =
+        orbital_with(orbital_tracker().failing(Asked::All, refused(FailureKind::Unavailable)));
 
-    let emitted = emit(&runner, Filter::LiveAgents);
+    let emitted = emit(&panes(), &trackers, Filter::LiveAgents);
 
     assert_eq!(emitted["trees"], json!([]));
     assert_eq!(
@@ -471,9 +466,7 @@ fn a_tracker_that_stops_answering_is_named_in_the_json_as_the_project_it_is() {
 
 #[test]
 fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
-    let runner = canned().failing(&spelled_in(ORBITAL_DIR, TRACKER_CALL), FailureKind::Auth);
-
-    let emitted = emit(&runner, Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital_refusing(), Filter::LiveAgents);
 
     assert_eq!(emitted["trees"], json!([]));
     assert_eq!(
@@ -488,9 +481,7 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
 /// the whole of the split.
 #[test]
 fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
-    let runner = canned().failing(&spelled_in(ORBITAL_DIR, TRACKER_CALL), FailureKind::Auth);
-
-    let emitted = emit(&runner, Filter::LiveAgents);
+    let emitted = emit(&panes(), &orbital_refusing(), Filter::LiveAgents);
 
     let unattributed = emitted["unattributed"]
         .as_array()
@@ -508,12 +499,17 @@ fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
     );
 }
 
-/// bd names the database and the SQL user when it refuses a credential.
-#[test]
-fn bds_own_words_never_reach_the_json() {
-    let runner = canned().failing(&spelled_in(ORBITAL_DIR, TRACKER_CALL), FailureKind::Auth);
+/// The one project's trackers, with orbital's refusing its credential the
+/// way bd does: naming the database and the SQL user it turned away.
+fn orbital_refusing() -> Fakes {
+    orbital_with(orbital_tracker().failing(Asked::All, refused(FailureKind::Auth)))
+}
 
-    let emitted = emit(&runner, Filter::All).to_string();
+/// A tracker names the database and the SQL user when it refuses a
+/// credential.
+#[test]
+fn a_trackers_own_words_never_reach_the_json() {
+    let emitted = emit(&panes(), &orbital_refusing(), Filter::All).to_string();
 
     for leak in ["Access denied", "db.example.invalid", "3306", "'orbital'"] {
         assert!(!emitted.contains(leak), "{leak:?} survived into {emitted}");
@@ -522,9 +518,9 @@ fn bds_own_words_never_reach_the_json() {
 
 #[test]
 fn without_herdr_the_json_says_so_and_still_carries_every_tree() {
-    let runner = canned().failing("herdr agent list", FailureKind::Exec);
+    let no_session = Canned::default().failing("herdr agent list", FailureKind::Exec);
 
-    let emitted = emit(&runner, Filter::LiveAgents);
+    let emitted = emit(&no_session, &orbital(), Filter::LiveAgents);
 
     assert_eq!(emitted["herdr"], "unavailable");
     assert_eq!(emitted["trees"][0]["root"], "orb-7");
@@ -536,12 +532,10 @@ fn without_herdr_the_json_says_so_and_still_carries_every_tree() {
 /// A filtered tree is reported, never dropped.
 #[test]
 fn a_tree_with_no_live_agent_is_reported_and_the_flag_shows_it() {
-    let runner = canned()
-        .answering("herdr agent list", r#"{"result":{"agents":[]}}"#)
-        .answering(&spelled_in(ORBITAL_DIR, TRACKER_CALL), UNSTAFFED_TREE)
-        .answering(&spelled_in(ORBITAL_DIR, "blocked --json"), "[]");
+    let nobody = Canned::default().answering("herdr agent list", r#"{"result":{"agents":[]}}"#);
+    let trackers = orbital_with(Fake::holding(beads(UNSTAFFED_TREE)).ready(["orb-7.4"]));
 
-    let filtered = emit(&runner, Filter::LiveAgents);
+    let filtered = emit(&nobody, &trackers, Filter::LiveAgents);
     assert_eq!(filtered["trees"], json!([]));
     assert_eq!(
         filtered["hidden_trees"],
@@ -549,13 +543,11 @@ fn a_tree_with_no_live_agent_is_reported_and_the_flag_shows_it() {
                 "title": "lift the ground station", "reason": "no-live-agent"}])
     );
 
-    let unfiltered = emit(&runner, Filter::All);
+    let unfiltered = emit(&nobody, &trackers, Filter::All);
     assert_eq!(unfiltered["filter"], "all");
     assert_eq!(unfiltered["trees"][0]["root"], "orb-7");
     assert_eq!(unfiltered["hidden_trees"], json!([]));
 }
-
-const HARBOUR_DIR: &str = "/srv/work/harbour";
 
 /// A second tracker's own `orb-7`: the same bare id, a different bead, a
 /// different project. Prefixes are per-tracker and uncoordinated, so this is
@@ -581,12 +573,10 @@ const TWO_PROJECTS: &str = r#"
 [[projects]]
 name = "orbital"
 path = "/srv/work/orbital"
-credential_command = "pass show orbital/tracker"
 
 [[projects]]
 name = "harbour"
 path = "/srv/work/harbour"
-credential_command = "pass show harbour/tracker"
 
 [[badges]]
 key = "blocked_on"
@@ -601,40 +591,27 @@ fn two_projects() -> Config {
     Config::from_toml(TWO_PROJECTS).expect("the config parses")
 }
 
-/// Orbital answering wherever it is asked, plus a harbour tracker that answers
-/// only in harbour's own directory. Every answer harbour gives contradicts
-/// orbital's, so a call that reached the wrong directory replays the wrong
-/// tracker and the case fails rather than passing on a coincidence.
-fn across_two_projects() -> Canned {
-    canned()
-        .answering("herdr agent list", PANES_ACROSS)
-        .answering("sh -c pass show orbital/tracker", "orbital-secret\n")
-        .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, PROBE_CALL),
-            WORKING_ROOT,
-        )
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, "ready --limit 0 --json"),
-            "[]",
-        )
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, "blocked --json"),
-            "[]",
-        )
-        .answering_in(HARBOUR_DIR, &spelled_in(HARBOUR_DIR, WISP_CALL), "[]")
-        .answering_in(
-            HARBOUR_DIR,
-            &spelled_in(HARBOUR_DIR, TRACKER_CALL),
-            HARBOUR_TREE,
-        )
+/// Orbital's tracker beside harbour's. Every answer harbour gives contradicts
+/// orbital's, so a tree drawn from the wrong tracker fails the case rather
+/// than passing on a coincidence.
+fn across_two_projects() -> Fakes {
+    across_two_projects_with(Fake::holding(beads(HARBOUR_TREE)))
 }
 
-fn emit_over(cfg: &Config, runner: &Canned, filter: Filter) -> Value {
-    let snapshot = beady_eye::app::run(cfg, runner, filter, now());
+/// The same, with harbour's tracker staged as `harbour`.
+fn across_two_projects_with(harbour: Fake) -> Fakes {
+    Fakes::default()
+        .with("orbital", orbital_tracker())
+        .with("harbour", harbour)
+}
+
+/// The herdr session with one live pane in each project's directory.
+fn panes_across() -> Canned {
+    Canned::default().answering("herdr agent list", PANES_ACROSS)
+}
+
+fn emit_over(cfg: &Config, runner: &Canned, trackers: &Fakes, filter: Filter) -> Value {
+    let snapshot = beady_eye::app::run(cfg, runner, trackers, filter, now());
     serde_json::to_value(&snapshot).expect("the snapshot serialises")
 }
 
@@ -642,7 +619,12 @@ fn emit_over(cfg: &Config, runner: &Canned, filter: Filter) -> Value {
 /// the only thing that tells the two apart.
 #[test]
 fn each_tree_carries_the_project_it_was_read_from() {
-    let emitted = emit_over(&two_projects(), &across_two_projects(), Filter::LiveAgents);
+    let emitted = emit_over(
+        &two_projects(),
+        &panes_across(),
+        &across_two_projects(),
+        Filter::LiveAgents,
+    );
 
     let trees = emitted["trees"].as_array().expect("trees is an array");
     assert_eq!(trees.len(), 2);
@@ -660,7 +642,12 @@ fn each_tree_carries_the_project_it_was_read_from() {
 /// title, its own tracker's readiness, and the agent in its own project.
 #[test]
 fn a_bare_id_in_two_trackers_names_two_beads() {
-    let emitted = emit_over(&two_projects(), &across_two_projects(), Filter::LiveAgents);
+    let emitted = emit_over(
+        &two_projects(),
+        &panes_across(),
+        &across_two_projects(),
+        Filter::LiveAgents,
+    );
     let orbital = &emitted["trees"][0];
     let harbour = &emitted["trees"][1];
 
@@ -679,13 +666,16 @@ fn a_bare_id_in_two_trackers_names_two_beads() {
 /// refusing the credential costs harbour's trees and nothing else.
 #[test]
 fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
-    let runner = across_two_projects().failing_in(
-        HARBOUR_DIR,
-        &spelled_in(HARBOUR_DIR, TRACKER_CALL),
-        FailureKind::Auth,
+    let trackers = across_two_projects_with(
+        Fake::holding(beads(HARBOUR_TREE)).failing(Asked::All, refused(FailureKind::Auth)),
     );
 
-    let emitted = emit_over(&two_projects(), &runner, Filter::LiveAgents);
+    let emitted = emit_over(
+        &two_projects(),
+        &panes_across(),
+        &trackers,
+        Filter::LiveAgents,
+    );
 
     assert_eq!(
         emitted["failed_projects"],
@@ -700,7 +690,7 @@ fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
 
     assert_eq!(
         emitted["unattributed"],
-        json!([{"pane": "w:p5", "project": "harbour", "cwd": HARBOUR_DIR,
+        json!([{"pane": "w:p5", "project": "harbour", "cwd": "/srv/work/harbour",
                 "pane_status": "working"}]),
         "the pane in the failed project is still reported"
     );
@@ -717,7 +707,7 @@ fn a_claim_whose_pane_is_under_no_configured_path_says_that_on_the_bead() {
     let elsewhere = Config::from_toml(&CONFIG.replace("/srv/work/orbital", "/srv/wt/orbital"))
         .expect("the config parses");
 
-    let emitted = emit_over(&elsewhere, &canned_reading("/srv/wt/orbital"), Filter::All);
+    let emitted = emit_over(&elsewhere, &panes(), &orbital(), Filter::All);
 
     let tree = &emitted["trees"][0];
     assert_eq!(node(tree, "orb-7")["agent"], json!(null));
