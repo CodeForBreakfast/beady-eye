@@ -10,6 +10,7 @@ use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
 use crate::collect::changes::Reported;
+use crate::config::Scope;
 use crate::model::snapshot::{Filter, Snapshot};
 
 #[cfg(test)]
@@ -53,6 +54,7 @@ use wire::wire;
 pub fn run(
     patience: TimeDelta,
     filter: Filter,
+    scope: Scope,
     armed: Vec<Armed>,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
 ) -> anyhow::Result<()> {
@@ -66,7 +68,7 @@ pub fn run(
         .iter()
         .map(|project| project.project().to_string())
         .collect();
-    let awaiting = Snapshot::awaiting(projects.clone(), filter, Utc::now());
+    let awaiting = Snapshot::awaiting(projects.clone(), scope, filter, Utc::now());
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
     let (events, ask, panes, _socket, at_startup) =

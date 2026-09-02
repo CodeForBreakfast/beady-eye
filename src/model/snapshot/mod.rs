@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
+use crate::config::Scope;
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
@@ -332,6 +333,12 @@ pub struct Snapshot {
     /// ever sees.
     #[serde(skip)]
     pub projects: Vec<String>,
+    /// Which of the configured projects this run reads, and what chose
+    /// them. The view says so on the screen where the directory chose, and
+    /// nothing where the reader typed the scope. Not part of the JSON
+    /// contract: which projects were read is in the trees.
+    #[serde(skip)]
+    pub scope: Scope,
 }
 
 impl Snapshot {
@@ -350,7 +357,12 @@ impl Snapshot {
     /// herdr reads as `Ok` because nothing has asked it. `Unavailable` is a
     /// finding, and drawing it here would put a notice about herdr on the
     /// screen before `bdi` had spoken to herdr at all.
-    pub fn awaiting(projects: Vec<String>, filter: Filter, now: DateTime<Utc>) -> Self {
+    pub fn awaiting(
+        projects: Vec<String>,
+        scope: Scope,
+        filter: Filter,
+        now: DateTime<Utc>,
+    ) -> Self {
         Snapshot {
             generated_at: now,
             herdr: HerdrState::Ok,
@@ -364,6 +376,7 @@ impl Snapshot {
             collected: Vec::new(),
             read_at: BTreeMap::new(),
             projects,
+            scope,
         }
     }
 
@@ -527,8 +540,7 @@ render = "⏸ waiting"
                 rows,
             }],
             panes,
-            &cfg.projects,
-            &cfg.join,
+            &cfg,
         )
     }
 
@@ -581,6 +593,10 @@ render = "⏸ waiting"
         assert_eq!(json["generated_at"], "2026-08-30T12:00:00Z");
         assert_eq!(json["herdr"], "ok");
         assert_eq!(json["filter"], "live-agents");
+        assert!(
+            json.get("scope").is_none(),
+            "which projects a run read is in its trees; the scope is the view's"
+        );
         assert_eq!(json["trees"][0]["tracker"], "ok");
         assert_eq!(json["trees"][0]["counts"]["total"], 5);
         assert_eq!(json["trees"][0]["nodes"][0]["id"], "orb-7");

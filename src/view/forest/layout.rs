@@ -7,12 +7,13 @@
 
 use std::sync::Arc;
 
+use crate::config::Scope;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, LoosePane, Snapshot, TrackerState, Tree};
 use crate::model::tree::Link;
 use crate::view::lines::{
     first_copy, marker, notes_of, prefix, root_key, way_below, Content, Group, GroupKind, Item,
-    Line, Note, Place, ProjectLine, Recovery, Unread,
+    Line, Note, Place, ProjectLine, Recovery, Unread, INDENT,
 };
 use crate::view::row;
 
@@ -122,6 +123,7 @@ impl Layout<'_> {
         if lines.is_empty() {
             lines.push(nothing_to_draw());
         }
+        self.say_what_the_directory_chose(&mut lines);
         lines
     }
 
@@ -378,6 +380,24 @@ impl Layout<'_> {
                     content: Content::Item(item),
                 });
             }
+        }
+    }
+}
+
+impl Layout<'_> {
+    /// The scope, where the directory chose it. A scope the reader typed is
+    /// silent, and a run reading everything has nothing to say.
+    fn say_what_the_directory_chose(&self, lines: &mut Vec<Line>) {
+        if let Scope::Directory { project, .. } = &self.snapshot.scope {
+            lines.push(Line {
+                prefix: INDENT.to_string(),
+                depth: 0,
+                folded: None,
+                place: None,
+                content: Content::Scoped {
+                    project: project.clone(),
+                },
+            });
         }
     }
 }

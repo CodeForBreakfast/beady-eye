@@ -405,6 +405,19 @@ pub fn hidden_trees(count: usize, with_findings: usize) -> String {
     format!("{hidden} · {with_findings} with findings")
 }
 
+/// The one project a run reads because `bdi` was started in it. Scoping by
+/// `--project` is silent because the reader typed it; a scope the reader got
+/// by launching somewhere is said, because a reader who sees one project
+/// could think the others vanished.
+pub fn scoped_by_the_directory(project: &str) -> String {
+    format!("reading {project}, where bdi was started")
+}
+
+/// How to see the projects a scope the directory chose left out.
+pub fn all_projects_reads_the_rest() -> &'static str {
+    "--all-projects reads every project"
+}
+
 /// Live panes that resolved to no bead.
 pub fn unattributed(count: usize) -> String {
     let pane = if count == 1 { "pane" } else { "panes" };
@@ -691,6 +704,8 @@ mod tests {
         said.push(dangling(3));
         said.push(cycle(1));
         said.push(cycle(3));
+        said.push(scoped_by_the_directory("summit-works"));
+        said.push(all_projects_reads_the_rest().to_string());
 
         for source in [JoinSource::AgentPane, JoinSource::DisplayAgent] {
             said.extend(join_caveat(source).map(str::to_string));
@@ -1293,6 +1308,14 @@ mod tests {
     #[test]
     fn work_behind_a_shut_line_is_counted_rather_than_merely_admitted_to() {
         assert!(unfinished_beneath(7).contains('7'));
+    }
+
+    /// A reader who sees one project could think the others vanished, so the
+    /// line names the project being read and the flag that reads the rest.
+    #[test]
+    fn a_scope_the_directory_chose_names_the_project_and_the_way_to_the_rest() {
+        assert!(scoped_by_the_directory("summit-works").contains("summit-works"));
+        assert!(all_projects_reads_the_rest().contains("--all-projects"));
     }
 
     #[test]

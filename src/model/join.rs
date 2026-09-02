@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::config::{Join, Project};
+use crate::config::{Config, Project};
 use crate::model::types::Bead;
 use crate::model::types::{Pane, PaneStatus};
 
@@ -107,22 +107,20 @@ pub fn project_of<'a>(path: &Path, projects: &'a [Project]) -> Option<&'a Projec
 /// direction resolved uncontested, otherwise from the inferred direction when
 /// exactly one pane names it, otherwise none — and wherever the two directions
 /// name different live panes, the disagreement is reported however it went.
-pub fn resolve(
-    trees: &[ProjectRows<'_>],
-    panes: &[Pane],
-    projects: &[Project],
-    join: &Join,
-) -> Joined {
+pub fn resolve(trees: &[ProjectRows<'_>], panes: &[Pane], cfg: &Config) -> Joined {
     let live: BTreeMap<&str, &Pane> = panes.iter().map(|p| (p.pane_id.as_str(), p)).collect();
 
     // Every pane is placed in a project before any bead is looked at, so a
-    // colliding id in another tracker never reaches the join at all.
+    // colliding id in another tracker never reaches the join at all. Placed
+    // against every configured project, read or not: a pane in a project
+    // this run left out is in that project, not in a directory nobody
+    // configured.
     let pane_project: BTreeMap<&str, Option<&str>> = panes
         .iter()
         .map(|p| {
             (
                 p.pane_id.as_str(),
-                project_of(&p.cwd, projects).map(|q| q.name.as_str()),
+                project_of(&p.cwd, &cfg.projects).map(|q| q.name.as_str()),
             )
         })
         .collect();
@@ -147,7 +145,7 @@ pub fn resolve(
     let mut claimed_pane: BTreeMap<BeadKey, String> = BTreeMap::new();
     for tree in trees {
         for row in tree.rows {
-            let Some(named) = row.metadata.get(&join.pane_key) else {
+            let Some(named) = row.metadata.get(&cfg.join.pane_key) else {
                 continue;
             };
             // A named pane that is not live resolves to nothing; that absence
@@ -206,6 +204,12 @@ pub fn resolve(
         let Some(project) = pane_project[pane.pane_id.as_str()] else {
             continue;
         };
+        // A pane in a project this run left out is on that project's work,
+        // whose tracker was never read: an id it names says nothing about
+        // a read project's bead of the same id.
+        if !cfg.reads(project) {
+            continue;
+        }
         // Most `display_agent` values are free text rather than a bead id.
         let Some(holders) = projects_holding.get(id.as_str()) else {
             continue;
@@ -293,6 +297,7 @@ mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
+    use crate::config::Join;
     use crate::model::tree::Nesting;
     use crate::model::types::Bead;
     use pretty_assertions::assert_eq;
@@ -393,8 +398,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         let a = pane_of(&joined, "beady-eye", "bdi-7ao.22");
@@ -426,8 +430,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         let a = pane_of(&joined, "proj", "p-1.1");
@@ -459,8 +462,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(
@@ -493,8 +495,10 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &join,
+            &Config {
+                join,
+                ..Config::naming(cfg)
+            },
         );
 
         assert_eq!(pane_of(&joined, "proj", "p-1").pane, "w:p1");
@@ -512,8 +516,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         // wCW:p5 carries display_agent=bdi-3um.3; no bead in the tracker
@@ -542,8 +545,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new());
@@ -566,8 +568,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new());
@@ -647,8 +648,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         // wCM:pN names bead nix-9670s.5 from an unconfigured summit-works, and
@@ -690,8 +690,7 @@ mod tests {
                 },
             ],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(pane_of(&joined, "one", "x-1").pane, "w:p1");
@@ -728,8 +727,7 @@ mod tests {
                 },
             ],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(
@@ -785,8 +783,7 @@ mod tests {
                 },
             ],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new());
@@ -806,6 +803,74 @@ mod tests {
         );
     }
 
+    /// A pane under a project the scope left out is neither drawn nor
+    /// reported. Its own tracker was never read, so an id it names that a
+    /// read project happens to hold says nothing about that project's bead —
+    /// the pane is most likely on its own project's bead of that id.
+    #[test]
+    fn a_pane_in_a_project_the_scope_left_out_names_nothing_and_is_not_reported() {
+        let one = rows(r#"[{"id":"x-1","title":"in project one","status":"in_progress"}]"#);
+        let live = panes(
+            r#"{"pane_id":"w:p1","cwd":"/home/user/two/src","agent_status":"working",
+                "display_agent":"x-1"}"#,
+        );
+        let cfg = Config::naming(vec![
+            project("one", "/home/user/one"),
+            project("two", "/home/user/two"),
+        ])
+        .scoped_to(&["one".to_string()])
+        .expect("one is configured");
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "one",
+                rows: &one,
+            }],
+            &live,
+            &cfg,
+        );
+
+        assert_eq!(joined.agents, BTreeMap::new());
+        assert_eq!(joined.conflicts, vec![]);
+    }
+
+    /// A read bead naming a pane that sits in a project the scope left out
+    /// is reported as a pane in that project — which the config still names
+    /// — rather than as one in a directory no project covers.
+    #[test]
+    fn a_bead_naming_a_pane_in_a_project_the_scope_left_out_is_told_which_project() {
+        let beads = rows(
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
+                 "metadata":{"agent_pane":"w:p1"}}]"#,
+        );
+        let live =
+            panes(r#"{"pane_id":"w:p1","cwd":"/home/user/two/src","agent_status":"working"}"#);
+        let cfg = Config::naming(vec![
+            project("one", "/home/user/one"),
+            project("two", "/home/user/two"),
+        ])
+        .scoped_to(&["one".to_string()])
+        .expect("one is configured");
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "one",
+                rows: &beads,
+            }],
+            &live,
+            &cfg,
+        );
+
+        assert_eq!(
+            joined.conflicts,
+            vec![Conflict::PaneInAnotherProject {
+                bead: key("one", "p-1"),
+                pane: "w:p1".to_string(),
+                pane_project: Some("two".to_string()),
+            }]
+        );
+    }
+
     #[test]
     fn a_bead_naming_a_pane_in_no_configured_project_does_not_join_and_is_reported() {
         let beads = rows(
@@ -821,8 +886,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new());
@@ -859,8 +923,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         let a = pane_of(&joined, "proj", "p-1");
@@ -897,8 +960,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(
@@ -925,8 +987,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new(), "neither pane wins");
@@ -962,8 +1023,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new(), "neither bead gets the pane");
@@ -1018,8 +1078,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new(), "none of the three gets it");
@@ -1063,8 +1122,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         assert_eq!(
@@ -1106,8 +1164,7 @@ mod tests {
                 rows: &beads,
             }],
             &live,
-            &cfg,
-            &Join::default(),
+            &Config::naming(cfg),
         );
 
         let a = pane_of(&joined, "proj", "p-1.1");

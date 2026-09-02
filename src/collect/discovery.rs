@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::collect::run::{Env, FailureKind, Runner};
-use crate::config::{Anomalies, Config, Join, Project, Roots, Tui};
+use crate::config::{Config, Project, Scope};
 
 /// The single project `bdi` reads when no config file names one: the
 /// repository the current directory sits in, on the ambient credential.
@@ -42,20 +42,34 @@ pub fn from_the_current_directory(
         })
         .unwrap_or_else(|| directory_name(&root));
 
-    Ok(Config {
-        projects: vec![Project {
-            name,
-            path: root,
-            credential_command: None,
-            poll: true,
-            worktrees,
-        }],
-        roots: Roots::default(),
-        badges: Vec::new(),
-        anomalies: Anomalies::default(),
-        join: Join::default(),
-        tui: Tui::default(),
-    })
+    Ok(Config::naming(vec![Project {
+        name,
+        path: root,
+        credential_command: None,
+        poll: true,
+        worktrees,
+    }]))
+}
+
+/// The config scoped to the project holding `cwd` — the directory `bdi` was
+/// started in — or left whole where none does.
+///
+/// `Project::holds` is asked first, against the paths the config names. It
+/// misses one case: a linked worktree placed outside the project's tree,
+/// because the scope is settled before any project has been asked where it
+/// is worked. So where nothing holds the directory, git is asked once, from
+/// the directory itself, for the working trees of whatever repository it
+/// sits in, and the directory's counterpart in each of them is tried instead
+/// — each, because a config may name a project by its place in a linked
+/// worktree rather than the main one. Nothing runs in any project's
+/// directory.
+pub fn scoped_to_the_directory(config: Config, runner: &dyn Runner, cwd: &Path) -> Config {
+    let config = config.scoped_to_the_project_holding(cwd);
+    if matches!(config.scope, Scope::Directory { .. }) {
+        return config;
+    }
+    let counterparts = the_same_place_in_each(&worktrees_of(runner, cwd), cwd);
+    config.scoped_to_the_project_holding_any_of(&counterparts)
 }
 
 /// The config a file spelled out, with each project's working trees filled
@@ -68,7 +82,8 @@ pub fn from_the_current_directory(
 /// counterpart at the same place in each of them, and those counterparts are
 /// the project — never the whole repository a subdirectory happens to sit in.
 pub fn with_the_working_trees_git_lists(mut config: Config, runner: &dyn Runner) -> Config {
-    for project in &mut config.projects {
+    let scope = config.scope.clone();
+    for project in config.projects.iter_mut().filter(|p| scope.reads(&p.name)) {
         let listed = worktrees_of(runner, &project.path);
         project.worktrees = the_same_place_in_each(&listed, &project.path);
     }
@@ -141,6 +156,7 @@ mod tests {
     use super::*;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{RealRunner, RunFailure};
+    use crate::config::{Roots, Tui};
 
     /// A repository beads tracks, as bd and git answer for it. The remote and
     /// the directory disagree deliberately, so a test can tell which was read.
@@ -303,6 +319,108 @@ name = "harbour"
 path = "/srv/work/harbour"
 credential_command = "secret-tool lookup tracker harbour"
 "#;
+
+    /// A project configured as a directory inside its repository, and `bdi`
+    /// started at that place in a linked worktree cut somewhere else: the
+    /// config's path holds nothing of it, and the counterpart in the main
+    /// working tree is what the project holds.
+    #[test]
+    fn a_linked_worktree_of_a_project_inside_the_repository_is_that_project() {
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        let cfg = scoped_to_the_directory(
+            Config::from_toml(A_PROJECT_IN_A_SUBDIRECTORY).expect("the config parses"),
+            &runner,
+            Path::new("/tmp/seat-a/wt/crates/dish/src"),
+        );
+
+        assert_eq!(
+            cfg.scope,
+            Scope::Directory {
+                project: "dish".to_string(),
+                widened: Vec::new(),
+            }
+        );
+        assert_eq!(
+            runner.call("git worktree list --porcelain").cwd,
+            Some(PathBuf::from("/tmp/seat-a/wt/crates/dish/src")),
+            "git is asked once, from the directory bdi was started in"
+        );
+    }
+
+    /// A directory a configured project holds outright needs no git: the
+    /// config alone answers, and the one call is spent only where nothing
+    /// holds the directory. A runner with nothing staged fails the test on
+    /// any call at all.
+    #[test]
+    fn a_directory_a_project_holds_is_read_without_asking_git() {
+        let runner = FakeRunner::default();
+
+        let cfg = scoped_to_the_directory(
+            Config::from_toml(TWO_CONFIGURED_PROJECTS).expect("the config parses"),
+            &runner,
+            Path::new("/srv/work/harbour/src"),
+        );
+
+        assert_eq!(
+            cfg.scope,
+            Scope::Directory {
+                project: "harbour".to_string(),
+                widened: Vec::new(),
+            }
+        );
+        assert!(runner.calls().is_empty());
+    }
+
+    /// A config may name a project by its place in a linked worktree rather
+    /// than in the main one, and `bdi` may be started at that place in a
+    /// third. Every working tree git lists holds the same place, so the
+    /// counterpart in each is tried, not only the main tree's.
+    #[test]
+    fn a_project_configured_in_one_linked_worktree_holds_the_same_place_in_another() {
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        let cfg = scoped_to_the_directory(
+            Config::from_toml(
+                r#"
+[[projects]]
+name = "dish"
+path = "/tmp/seat-b/wt/crates/dish"
+"#,
+            )
+            .expect("the config parses"),
+            &runner,
+            Path::new("/tmp/seat-a/wt/crates/dish/src"),
+        );
+
+        assert_eq!(
+            cfg.scope,
+            Scope::Directory {
+                project: "dish".to_string(),
+                widened: Vec::new(),
+            }
+        );
+    }
+
+    /// A directory in a repository no configured project is in — a linked
+    /// worktree of something else, or a repository nobody configured —
+    /// leaves the config whole, and the sibling directory at the same place
+    /// in the listing is not taken for a project either.
+    #[test]
+    fn a_working_tree_of_no_configured_project_leaves_every_project_read() {
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        let cfg = scoped_to_the_directory(
+            Config::from_toml(TWO_CONFIGURED_PROJECTS).expect("the config parses"),
+            &runner,
+            Path::new("/home/elsewhere/notes"),
+        );
+
+        assert_eq!(cfg.scope, Scope::Everything);
+    }
 
     /// The bug: a project a config file names holds only the path the file
     /// spelled out, so a seat working in a linked worktree sits under nothing

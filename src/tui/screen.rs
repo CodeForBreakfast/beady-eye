@@ -423,6 +423,7 @@ mod tests {
     use super::*;
     use crate::app::Wanted;
     use crate::collect::run::{FailureKind, RunFailure};
+    use crate::config::Scope;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{Counts, Filter, HerdrState, Node, TrackerState, Tree};
     use crate::model::tree::Link;
@@ -738,6 +739,7 @@ mod tests {
             read_at: BTreeMap::new(),
             collected: trees,
             projects: vec!["grove".to_string()],
+            scope: Scope::default(),
         }
     }
 

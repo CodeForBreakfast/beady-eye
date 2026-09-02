@@ -99,6 +99,9 @@ pub fn build(
     for pane in join::unattributed(panes, joined) {
         let cwd = pane.cwd.display().to_string();
         match join::project_of(&pane.cwd, &cfg.projects) {
+            // A pane in a project this run left out is on another desktop's
+            // work: neither drawn nor reported.
+            Some(project) if !cfg.reads(&project.name) => {}
             Some(project) => unattributed.push(LoosePane {
                 pane: pane.pane_id.clone(),
                 project: project.name.clone(),
@@ -125,13 +128,15 @@ pub fn build(
         conflicts: joined.conflicts.clone(),
         collected: trees,
         read_at,
-        projects: cfg.projects.iter().map(|p| p.name.clone()).collect(),
+        projects: cfg.read().map(|p| p.name.clone()).collect(),
+        scope: cfg.scope.clone(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Scope;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource};
@@ -140,6 +145,7 @@ mod tests {
     use crate::model::tree::unroll;
     use crate::model::types::{Edge, PaneStatus, Status};
     use pretty_assertions::assert_eq;
+    use std::path::Path;
 
     fn node<'a>(tree: &'a Tree, id: &str) -> &'a Node {
         tree.beads
@@ -472,6 +478,65 @@ mod tests {
         assert!(
             !snap.unattributed.iter().any(|p| p.pane == "w:pF"),
             "a pane is in one list or the other, never both"
+        );
+    }
+
+    /// A pane under a project the scope left out is neither drawn nor
+    /// reported: not loose, because it is on another desktop's work, and not
+    /// unconfigured, because the config still names its project.
+    #[test]
+    fn a_pane_under_a_project_the_scope_left_out_is_neither_loose_nor_unconfigured() {
+        let cfg = cfg()
+            .scoped_to(&["orbital".to_string()])
+            .expect("orbital is configured");
+        let panes = panes(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p2","cwd":"/srv/work/ferry/src","agent_status":"idle"}
+            ]}}"#,
+        );
+        let joined = join::resolve(&[], &panes, &cfg);
+
+        let snap = build(
+            Collected {
+                trees: Vec::new(),
+                failed_projects: Vec::new(),
+                read_at: std::collections::BTreeMap::new(),
+            },
+            &panes,
+            &joined,
+            &cfg,
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.unattributed, vec![]);
+        assert_eq!(snap.unconfigured, vec![]);
+    }
+
+    /// The view says on the screen when the directory chose the scope, and
+    /// the snapshot is the only thing the view reads.
+    #[test]
+    fn the_scope_reaches_the_snapshot() {
+        let cfg = cfg().scoped_to_the_project_holding(Path::new("/srv/work/ferry/src"));
+        let joined = join::resolve(&[], &[], &cfg);
+
+        let snap = build(
+            Collected::default(),
+            &[],
+            &joined,
+            &cfg,
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.scope,
+            Scope::Directory {
+                project: "ferry".to_string(),
+                widened: Vec::new(),
+            }
         );
     }
 

@@ -48,6 +48,23 @@ pub(super) fn group_line(prefix: &str, group: Group) -> Fitted {
     )
 }
 
+/// The scope, where the directory chose it. Nothing went wrong, so it is
+/// drawn as the hidden trees are: no warning, and the way to the rest where
+/// they keep theirs.
+pub(super) fn scoped_line(prefix: &str, project: &str) -> Fitted {
+    Fitted::new(
+        vec![
+            Span::raw(prefix.to_string()),
+            Span::raw(phrase::scoped_by_the_directory(project)),
+        ],
+        Vec::new(),
+        vec![Span::styled(
+            phrase::all_projects_reads_the_rest(),
+            Style::new().fg(Color::DarkGray),
+        )],
+    )
+}
+
 /// One thing inside such a group.
 pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
     match item {
@@ -110,6 +127,19 @@ mod tests {
         assert_eq!(
             Painted::of(group_line(SHUT, broken), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent · 2 with findings     a to show all"]
+        );
+    }
+
+    /// Nothing went wrong when the directory chose the scope, so the line
+    /// saying so is drawn as the hidden trees are: no warning, and the way to
+    /// the rest in the column the hidden trees keep theirs in.
+    #[test]
+    fn the_scope_the_directory_chose_is_said_with_the_way_to_the_rest() {
+        assert_eq!(
+            Painted::of(scoped_line("  ", "orbital"), 80, 1).rows(),
+            vec![
+                "  reading orbital, where bdi was started      --all-projects reads every project"
+            ]
         );
     }
 

@@ -569,7 +569,7 @@ mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
-    use crate::config::Config;
+    use crate::config::{Config, Scope};
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::snapshot;
     use crate::model::snapshot::{
@@ -1038,8 +1038,7 @@ credential_command = "secret harbour"
                 },
             ],
             panes,
-            &cfg.projects,
-            &cfg.join,
+            &cfg,
         )
     }
 
@@ -1160,6 +1159,7 @@ credential_command = "secret harbour"
             Content::Note(note) => format!("! {note:?}"),
             Content::Group(group) => format!("[{:?}] {}", group.kind, group.count),
             Content::Item(item) => format!("- {item:?}"),
+            Content::Scoped { project } => format!("~ reading {project}"),
         }
     }
 
@@ -1523,8 +1523,7 @@ credential_command = "secret harbour"
                 rows: &rows.beads,
             }],
             panes,
-            &cfg.projects,
-            &cfg.join,
+            &cfg,
         );
         let readiness = Readiness {
             ready: ready.iter().map(|id| (*id).to_string()).collect(),
@@ -1737,8 +1736,7 @@ credential_command = "secret harbour"
                 rows: &rows,
             }],
             panes,
-            &cfg.projects,
-            &cfg.join,
+            &cfg,
         );
         let tree = |rows: &Assembled| {
             build_tree("orbital", rows, &joined, &Readiness::default(), &cfg, now())
@@ -3908,7 +3906,7 @@ credential_command = "secret harbour"
     /// supplying a line.
     fn only(collected: Collected, panes: &[Pane]) -> Snapshot {
         let cfg = cfg();
-        let joined = join::resolve(&[], panes, &cfg.projects, &cfg.join);
+        let joined = join::resolve(&[], panes, &cfg);
         snapshot::build(
             Collected {
                 read_at: every_project_read(),
@@ -3939,11 +3937,75 @@ credential_command = "secret harbour"
     fn a_run_that_has_read_nothing_yet_draws_a_line_for_every_configured_project() {
         let awaiting = Snapshot::awaiting(
             vec!["orbital".to_string(), "ferry".to_string()],
+            Scope::Everything,
             Filter::LiveAgents,
             now(),
         );
 
         assert_eq!(sketch(&flatten(awaiting)), vec!["▾ orbital", "▾ ferry"]);
+    }
+
+    /// A scope the reader did not type is said on the screen: a reader who
+    /// sees one project could think the others vanished. It is the last
+    /// line, below the groups, where the hidden trees say what the filter
+    /// took away.
+    #[test]
+    fn a_scope_the_directory_chose_is_said_below_the_groups() {
+        let chosen = Snapshot {
+            scope: Scope::Directory {
+                project: "orbital".to_string(),
+                widened: Vec::new(),
+            },
+            ..built(Filter::LiveAgents)
+        };
+
+        let drawn = sketch(&flatten(chosen));
+
+        assert_eq!(
+            drawn.last().map(String::as_str),
+            Some("  ~ reading orbital")
+        );
+        let last_group = drawn.iter().rposition(|line| line.contains('['));
+        assert!(
+            last_group.is_some_and(|at| at + 1 < drawn.len()),
+            "the line is not below the groups: {drawn:#?}"
+        );
+    }
+
+    /// Said from the first frame, before any tracker has answered: the
+    /// projects the run is about are on the screen, and so is why.
+    #[test]
+    fn the_first_frame_already_says_the_directory_chose() {
+        let chosen = Snapshot::awaiting(
+            vec!["orbital".to_string()],
+            Scope::Directory {
+                project: "orbital".to_string(),
+                widened: Vec::new(),
+            },
+            Filter::LiveAgents,
+            now(),
+        );
+
+        assert_eq!(
+            sketch(&flatten(chosen)),
+            vec!["▾ orbital", "  ~ reading orbital"]
+        );
+    }
+
+    /// Scoping by `--project` is silent because the reader typed it, and a
+    /// run reading everything has nothing to say.
+    #[test]
+    fn a_scope_the_reader_typed_is_silent() {
+        for scope in [Scope::Everything, Scope::Asked(vec!["orbital".to_string()])] {
+            let awaiting = Snapshot::awaiting(
+                vec!["orbital".to_string()],
+                scope,
+                Filter::LiveAgents,
+                now(),
+            );
+
+            assert_eq!(sketch(&flatten(awaiting)), vec!["▾ orbital"]);
+        }
     }
 
     /// A project whose tracker answered and held nothing draws no line, as it
@@ -3957,7 +4019,12 @@ credential_command = "secret harbour"
     fn a_project_read_and_holding_nothing_draws_no_line() {
         let read = Snapshot {
             read_at: std::collections::BTreeMap::from([("orbital".to_string(), now())]),
-            ..Snapshot::awaiting(vec!["orbital".to_string()], Filter::LiveAgents, now())
+            ..Snapshot::awaiting(
+                vec!["orbital".to_string()],
+                Scope::Everything,
+                Filter::LiveAgents,
+                now(),
+            )
         };
 
         assert_eq!(sketch(&flatten(read)), vec!["! NoRoots"]);

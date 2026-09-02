@@ -212,16 +212,61 @@ Roots come from bd, unioned and deduped:
 
 ## Scoping a run to fewer projects
 
-`--project <NAME>`, repeated for more than one, draws only those of the
-configured projects. It is not a view filter: the projects left out are never
-read. `Config.projects` is narrowed as the config is assembled — before git is
-asked where each project is worked, which is itself a subprocess in the
-project's own directory — and every site downstream reads that field — the collection loop, the order the trees are
-drawn in, the join, and the forest drawn before any tracker has answered — so
-one narrowing reaches all of them and none of them needs to know about it.
+A run reads some of the configured projects and never the rest. It is not a
+view filter: the projects left out are never read. Which projects those are
+is a function of the config, the directory `bdi` was started in, and the
+command line, decided as the config is assembled and before git is asked
+where each project is worked — which is itself a subprocess in the project's
+own directory. The config is not narrowed. It keeps every project it names,
+and carries beside them the *scope*: which of them this run reads, and what
+chose them. Every site that gathers reads the projects through that scope —
+the collection loop, the working trees git is asked for, the order the trees
+are drawn in, the forest drawn before any tracker has answered, the names the
+inbound channel answers `ok` to — so one decision reaches all of them and
+none of them needs to know about it. The sites that place a pane read the
+projects as written, which is what lets a pane on another desktop be placed
+in its own project rather than reported as in a directory nobody configured.
+See *The excluded projects stay known* below.
 
-That matters because a collection is most of what a run costs, and the cost
-follows the number of projects rather than the size of any one tracker. A
+**The directory `bdi` is started in decides the read set.** The use is one
+`bdi` per desktop: a desktop's panes sit under one project's directory, and a
+`bdi` started there should draw that project's trees and nothing else. The
+project that holds the current directory is the one read — *holds* being the
+test the join already uses to place a pane: under the project's path or any
+of its working trees, deepest match winning, so a repository inside another
+resolves to the inner one, and a launch from a repository inside a project's
+directory lands on that project. Started outside every configured project,
+`bdi` reads everything: there is nothing to scope to and nothing was asked
+for.
+
+One case that test misses is a linked worktree placed outside the project's
+tree, because the scope is decided before any project has been asked where it
+is worked. It is covered with one git call *from the current directory* for
+the working trees of whatever repository it sits in, and the directory's
+counterpart in each of them is tried against the same test — each, because a
+config may name a project by its place in a linked worktree rather than the
+main one. Nothing runs in any other project's directory.
+
+**`--all-projects` opts out and reads every configured project.** It is what
+the session watching everything from one project's checkout runs. It cannot
+be `--all`: that flag draws every tree, including those with no live agent,
+and keeps that meaning. `--all-projects` with `--project` is a command line
+asking for every project and for only some, and is refused as the
+contradiction it is, the way `--poll --no-poll` is.
+
+**An explicit `--project <NAME>`, repeated for more than one, outranks the
+directory.** It stays the way to ask for two projects, or a different one,
+from anywhere, and the directory is not consulted. `--project` has no path
+form; the directory is the path form.
+
+**The no-config run is unchanged.** It discovers the project the current
+directory sits in and reads that; the rule above is that behaviour with a
+config present. The one project it discovers is everything there is, so the
+run reads it as everything and the screen has nothing to say about a scope.
+
+Never reading the rest matters because a collection is most of what a run
+costs, and the cost follows the number of projects rather than the size of
+any one tracker. A
 project whose tracker has moved is read in full: four `bd` invocations
 whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
 ephemeral=true --all` — all of them after the capture of the environment its
@@ -246,33 +291,48 @@ an empty forest the reader cannot tell from a quiet one. This is what the file
 already does with an unknown project name in `[roots.explicit]` or in a
 `<project>:<bead-id>` argument.
 
-What decides whether a run is scoped is *whether a scope was asked for*, never
-how many projects one selected. A run with no `--project` reads everything, and
-a scope that selected nothing is refused rather than obeyed — the two must not
-be reached through the same emptiness test.
+What decides whether a run is scoped is whether a project holds the directory
+or a `--project` was typed, never how many projects a `--project` selected. A
+scope that selected nothing is refused rather than obeyed, and a run scoped by
+neither reads everything — the two must not be reached through the same
+emptiness test.
 
-**Scoping is silent, and this is a deviation from *degrade, never
-disappear*.** That principle governs a tree `bdi` could not draw: an
-unreachable tracker, a dangling parent. A project the
-reader excluded on the command line is not a failure to report, and a standing
-line about it would be noise on every run of a flag whose whole purpose is a
-smaller screen. The reader typed the scope; the screen does not need to tell
-them what they typed.
+**Scoping by `--project` is silent, and this is a deviation from *degrade,
+never disappear*.** That principle governs a tree `bdi` could not draw: an
+unreachable tracker, a dangling parent. A project the reader excluded on the
+command line is not a failure to report, and a standing line about it would
+be noise on every run of a flag whose whole purpose is a smaller screen. The
+reader typed the scope; the screen does not need to tell them what they typed.
+
+**A scope the directory chose is said on the screen.** The reader did not
+type this one, which is weaker ground for silence, and a reader who sees one
+project could think the others vanished. One line below the groups, in the
+shape the hidden-trees group takes — no warning mark, and the way to the rest
+where that group keeps its key — names the project being read and says that
+`--all-projects` reads every project. That is the degrade-never-disappear
+answer: the projects left out are not drawn, and the screen says so.
 
 **The positional `<project>:<bead-id>` still adds a root, and does not scope.**
 The two arguments do different jobs: `--project` decides which trackers are
-read, the positional adds a root inside a tracker already being read. Merging
-them would remove the ability to add a root while still reading everything,
-which is what the positional does today.
+read, the positional adds a root inside a tracker being read. Merging them
+would remove the ability to add a root while still reading everything, which
+is what the positional does from outside every configured project.
 
-Scoping is applied before the roots the command line names, so a positional
-under a project the scope left out is refused. The contradiction is inside one
-invocation — the same command line asking for `beta`'s root and asking not to
-read `beta` — and there is no reading of it under which both halves are meant.
-The other order accepts it and then draws nothing: `roots.explicit` is read
-only inside a project's own collection, so a root under a project no
-collection reaches is dropped with nothing said about it. Refusing is the
-degrade-never-disappear answer here rather than the price of it.
+Scoping is applied before the roots the command line names, and what a
+positional under a project the scope left out means depends on which kind of
+scope it is. Against a scope the reader typed it is refused. The
+contradiction is inside one invocation — the same command line asking for
+`beta`'s root and asking not to read `beta` — and there is no reading of it
+under which both halves are meant. The other order accepts it and then draws
+nothing: `roots.explicit` is read only inside a project's own collection, so
+a root under a project no collection reaches is dropped with nothing said
+about it. Refusing is the degrade-never-disappear answer here rather than the
+price of it. Against a scope the directory chose there is no contradiction,
+because the reader asked for nothing the root contradicts: the root widens
+the read set to take its project in, so `bdi homelab:hl-123` from the Beacon
+desktop reads Beacon and homelab. The widening happens before git is asked
+where each project is worked, so the project a root brought in learns its
+working trees like any other.
 
 A root the **config file** names under an excluded project is not that
 contradiction, and is silent. It is a standing preference the reader is
@@ -285,19 +345,37 @@ project no collection reaches.
 One consequence worth knowing: a scope that leaves exactly one project makes a
 bare bead id unambiguous, because what a bare id was ever ambiguous about is
 which of the trackers being read holds it. `bdi --project orbital orb-7` works
-against a config naming three.
+against a config naming three, and so does `bdi orb-7` from orbital's
+checkout.
 
-**Considered and rejected: scoping to the union of `--project` and the
-projects the positionals name.** It would let `bdi --project alpha beta:xyz`
-work by putting `beta` in the scope because a bead of `beta` was named. Two
-things sink it. It answers the question above by the back door — with no
-`--project` at all, `bdi beta:xyz` would scope to `beta` alone, which is a
-change to what the positional does today — and avoiding that needs the
-positional to mean different things depending on whether a `--project` is
-present. And it infers an opt-in the reader cannot see: `--project alpha`
-would read `beta`, and every project line on the screen looks like one they
-asked for, so there is nowhere to notice it. Refusing costs one word to
-recover from; reading an excluded tracker is not observable at all.
+**Considered and rejected: widening an explicit `--project` by the projects
+the positionals name.** It would let `bdi --project alpha beta:xyz` work by
+putting `beta` in the scope because a bead of `beta` was named. What sinks it
+is that it infers an opt-in the reader cannot see: `--project alpha` would
+read `beta`, and every project line on the screen looks like one they asked
+for, so there is nowhere to notice it. Refusing costs one word to recover
+from; reading an excluded tracker is not observable at all. A scope the
+directory chose is widened, and the difference is that the reader typed
+nothing the widening overrides — and the screen says the directory chose, so
+a project line beyond the one named there is visibly one the reader added.
+
+**The excluded projects stay known to the run.** The config as written stays
+reachable alongside the read set, rather than the projects being narrowed to
+the read set and the rest dropped. Two things need it now. The join places a
+pane by which configured project holds its directory, so a scoped run whose
+projects were only the read set would report every pane on the other
+desktops as *in a directory no configured project covers*, and every
+unreadable tracker as *possibly more*. Panes are placed against the config
+as written, and a pane under an excluded project is neither drawn nor
+reported: not loose, because it is on another desktop's work; not
+unconfigured, because the config names its project; and not a claim on a
+read project's bead of an id it names, because its own tracker was never
+read and says nothing about that bead. A read bead naming a pane that sits
+in an excluded project is still reported, as a pane in that project. And
+reloading the config while running will have to re-derive the read set from
+the new file, so it is kept a function of config, directory and flags rather
+than a value computed once at start. Later, a reference that crosses
+trackers will need it to resolve and show a foreign bead from a scoped run.
 
 ## Conventions are configuration
 
@@ -963,7 +1041,7 @@ line ending in `\n`. `bdi` answers each line with one line of its own:
 | answer | meaning |
 |---|---|
 | `ok <project>` | a project `bdi` watches. That project is read again; no other is |
-| `unknown <project>` | not a project this `bdi` was configured with. Nothing happens |
+| `unknown <project>` | not a project this `bdi` is reading. Nothing happens |
 | `malformed` | blank, or longer than 512 bytes. Nothing happens |
 
 The name must match a project's `name` in the config. A connection may carry as

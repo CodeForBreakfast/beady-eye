@@ -10,6 +10,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::app::{Awaited, Wanted};
+use crate::config::Scope;
 use crate::model::snapshot::{Filter, HerdrState, Snapshot, TrackerFailure, Tree};
 
 /// Long enough that a thread which was going to report has, and short
@@ -67,5 +68,6 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         read_at: BTreeMap::new(),
         collected: vec![tree],
         projects: vec!["atlas".to_string()],
+        scope: Scope::default(),
     }
 }

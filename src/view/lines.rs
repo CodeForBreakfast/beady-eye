@@ -24,7 +24,7 @@ const MANY: usize = 3;
 pub(crate) const OPEN: &str = "▾ ";
 pub(crate) const SHUT: &str = "▸ ";
 /// A tree's children start under its header's marker, not under its project.
-const INDENT: &str = "  ";
+pub(crate) const INDENT: &str = "  ";
 const BRANCH: char = '├';
 const LAST: char = '└';
 /// The arm from a line's elbow to its glyph, two columns of it. A bead hung
@@ -145,6 +145,13 @@ pub enum Content {
     Group(Group),
     /// One thing in such a group.
     Item(Item),
+    /// The directory `bdi` was started in chose to read this project and no
+    /// other. Said below the groups: a reader who sees one project could
+    /// think the others vanished, and a scope the reader did not type is
+    /// weaker ground for silence than one they did.
+    Scoped {
+        project: String,
+    },
 }
 
 /// A project's own line: what it is, how much of it there is, and the panes

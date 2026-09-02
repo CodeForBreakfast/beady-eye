@@ -191,8 +191,7 @@ impl Collection {
     ) -> Vec<(&'a Project, Result<Refresh, RunFailure>)> {
         std::thread::scope(|reads| {
             let reading: Vec<_> = cfg
-                .projects
-                .iter()
+                .read()
                 .filter(|p| wanted.names(&p.name))
                 .map(|project| {
                     let standing = self
@@ -240,7 +239,7 @@ impl Collection {
                 })
             })
             .collect();
-        let joined = &join::resolve(&rows, panes, &cfg.projects, &cfg.join);
+        let joined = &join::resolve(&rows, panes, cfg);
 
         let trees = self
             .that_answered(cfg)
@@ -288,8 +287,7 @@ impl Collection {
     /// order a snapshot draws in belongs to the config, not to how a
     /// collection happened to store what it read.
     fn standing<'a>(&'a self, cfg: &'a Config) -> impl Iterator<Item = (&'a str, &'a Read)> {
-        cfg.projects
-            .iter()
+        cfg.read()
             .filter_map(|p| Some((p.name.as_str(), self.read.get(&p.name)?)))
     }
 
@@ -1001,6 +999,38 @@ mod tests {
             .filter(|t| t.project == project)
             .map(Arc::as_ref)
             .collect()
+    }
+
+    /// The pane on ferry's desktop is neither drawn nor reported by a run
+    /// scoped to orbital, and in particular is not reported as unconfigured:
+    /// the config still names ferry, and the pane is placed against the
+    /// config as written.
+    #[test]
+    fn a_pane_under_a_project_the_scope_left_out_is_not_reported() {
+        let scoped = two_projects()
+            .scoped_to(&["orbital".to_string()])
+            .expect("orbital is configured");
+
+        let snap = Collection::default().collect(
+            &scoped,
+            &colliding_trackers(PANES_IN_BOTH),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.unconfigured, vec![]);
+        assert!(
+            !snap.unattributed.iter().any(|pane| pane.pane == "w:p2"),
+            "ferry's pane was reported by a run reading orbital: {:#?}",
+            snap.unattributed
+        );
+        let named: Vec<&str> = scoped.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            named,
+            ["orbital", "ferry"],
+            "the config as written is still reachable"
+        );
     }
 
     /// The view draws one project line over each run of a project's trees, so

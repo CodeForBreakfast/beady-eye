@@ -23,6 +23,44 @@ pub struct Config {
     pub join: Join,
     #[serde(default)]
     pub tui: Tui,
+    /// Which of `projects` this run reads, and what chose them. The rest stay
+    /// here rather than being dropped: a pane is placed by which configured
+    /// project holds its directory, whether or not that project is read.
+    #[serde(skip)]
+    pub scope: Scope,
+}
+
+/// The projects a run reads, out of every one the config names, and what
+/// decided it. A function of the config, the directory `bdi` was started in
+/// and the command line — never a value the config file can carry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// Every configured project: nothing asked for fewer, and no project
+    /// holds the directory `bdi` was started in.
+    #[default]
+    Everything,
+    /// The projects `--project` named. The reader typed them, so the screen
+    /// says nothing about the ones left out.
+    Asked(Vec<String>),
+    /// The project holding the directory `bdi` was started in, and any the
+    /// roots named on the command line widened the read set to. The reader
+    /// did not type this one, so the screen says the directory chose.
+    Directory {
+        project: String,
+        widened: Vec<String>,
+    },
+}
+
+impl Scope {
+    pub fn reads(&self, name: &str) -> bool {
+        match self {
+            Scope::Everything => true,
+            Scope::Asked(named) => named.iter().any(|n| n == name),
+            Scope::Directory { project, widened } => {
+                project == name || widened.iter().any(|n| n == name)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -196,6 +234,20 @@ impl Tui {
 }
 
 impl Config {
+    /// A config naming these projects and nothing else, with every other
+    /// setting at its default: what discovery builds where no file says more.
+    pub fn naming(projects: Vec<Project>) -> Self {
+        Config {
+            projects,
+            roots: Roots::default(),
+            badges: Vec::new(),
+            anomalies: Anomalies::default(),
+            join: Join::default(),
+            tui: Tui::default(),
+            scope: Scope::default(),
+        }
+    }
+
     pub fn from_toml(s: &str) -> anyhow::Result<Self> {
         let cfg: Config = toml::from_str(s)?;
         if cfg.projects.is_empty() {
@@ -222,17 +274,26 @@ impl Config {
         Ok(cfg)
     }
 
-    /// The config narrowed to the projects named, or left whole where none
-    /// is. What decides that is whether a scope was asked for, never how many
-    /// projects one selected: a `bdi` run with no arguments reads everything,
-    /// and a scope that selected nothing is refused below rather than obeyed.
+    /// The projects this run reads, in the order the config names them.
     ///
-    /// Narrowing `projects` is the whole of scoping, because it is the field
-    /// every site downstream reads — the collection loop, the order the trees
-    /// are drawn in, the join, and the forest drawn before any tracker has
-    /// answered. So a project that leaves here is one nothing can go and
-    /// read, which is the property asked for: the projects left out are not
-    /// gathered, rather than gathered and hidden.
+    /// Every site that gathers reads through this — the collection loop, the
+    /// order the trees are drawn in, the forest drawn before any tracker has
+    /// answered, the working trees git is asked for — so a project outside
+    /// the scope is one nothing can go and read: the projects left out are
+    /// not gathered, rather than gathered and hidden. `projects` itself stays
+    /// whole for the sites that place a pane.
+    pub fn read(&self) -> impl Iterator<Item = &Project> {
+        self.projects.iter().filter(|p| self.reads(&p.name))
+    }
+
+    pub fn reads(&self, name: &str) -> bool {
+        self.scope.reads(name)
+    }
+
+    /// The config scoped to the projects `--project` named, or left whole
+    /// where none is. What decides that is whether a scope was asked for,
+    /// never how many projects one selected: a scope that selected nothing is
+    /// refused below rather than obeyed.
     ///
     /// Applied before the roots the command line names, so a *positional*
     /// under a project the scope left out is refused: one command line asking
@@ -260,15 +321,42 @@ impl Config {
                 names_of(&self.projects).join(", ")
             );
         }
-        self.projects
-            .retain(|project| names.contains(&project.name));
+        self.scope = Scope::Asked(names.to_vec());
         Ok(self)
+    }
+
+    /// The config scoped to the project holding `path` — the directory `bdi`
+    /// was started in — or left whole where no project holds it. The
+    /// deepest project wins, as it does when the join places a pane.
+    pub fn scoped_to_the_project_holding(self, path: &Path) -> Self {
+        self.scoped_to_the_project_holding_any_of(&[path.to_path_buf()])
+    }
+
+    /// The same, over the places one directory is: its counterpart in each
+    /// working tree of the repository it sits in.
+    pub fn scoped_to_the_project_holding_any_of(mut self, places: &[PathBuf]) -> Self {
+        let holding = places
+            .iter()
+            .flat_map(|place| {
+                self.projects
+                    .iter()
+                    .filter_map(move |p| Some((p.holds(place)?, p)))
+            })
+            .max_by_key(|(depth, _)| *depth)
+            .map(|(_, project)| project.name.clone());
+        if let Some(project) = holding {
+            self.scope = Scope::Directory {
+                project,
+                widened: Vec::new(),
+            };
+        }
+        self
     }
 
     /// Roots named on the command line join those named in config: discovery
     /// rule 3 has two spellings and one meaning. `<project>:<bead-id>` says
     /// whose tracker holds the bead; a bare id can only mean the one project
-    /// there is, so the terse form survives exactly as far as it is
+    /// being read, so the terse form survives exactly as far as it is
     /// unambiguous.
     pub fn with_roots_named_on_the_command_line(
         mut self,
@@ -283,14 +371,24 @@ impl Config {
 
     /// The project and bead a command-line root names, or why it names
     /// neither.
-    fn placed(&self, named: &str) -> anyhow::Result<(String, String)> {
+    ///
+    /// A root under a project the scope left out is a contradiction only
+    /// when the reader typed the scope. A scope the directory chose is
+    /// widened to take the project in: `bdi homelab:hl-1` from another
+    /// project's desktop reads both.
+    fn placed(&mut self, named: &str) -> anyhow::Result<(String, String)> {
         let Some((project, id)) = named.split_once(':') else {
-            return match self.projects.as_slice() {
+            let reading: Vec<&Project> = self.read().collect();
+            return match reading.as_slice() {
                 [only] => Ok((only.name.clone(), named.to_string())),
                 several => anyhow::bail!(
                     "{named} names no project, and bdi is reading {}; write it as \
                      <project>:{named}",
-                    names_of(several).join(", ")
+                    several
+                        .iter()
+                        .map(|p| p.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             };
         };
@@ -300,9 +398,22 @@ impl Config {
         if !self.is_configured(project) {
             anyhow::bail!(
                 "{named} gives {id} to {project}, which is not among the projects \
-                 bdi is reading: {}",
+                 bdi is configured for: {}",
                 names_of(&self.projects).join(", ")
             );
+        }
+        if !self.reads(project) {
+            match &mut self.scope {
+                Scope::Directory { widened, .. } => widened.push(project.to_string()),
+                Scope::Asked(_) | Scope::Everything => anyhow::bail!(
+                    "{named} gives {id} to {project}, which is not among the projects \
+                     bdi is reading: {}",
+                    self.read()
+                        .map(|p| p.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            }
         }
         Ok((project.to_string(), id.to_string()))
     }
@@ -705,17 +816,36 @@ path = "/home/user/dev/atlas-fork"
         }
     }
 
+    /// The projects a config reads, by name and in its order.
+    fn read_by(cfg: &Config) -> Vec<&str> {
+        cfg.read().map(|p| p.name.as_str()).collect()
+    }
+
     /// Scoping is what stops a reader working in one project paying for the
-    /// others, and it works by taking the projects out of the config: every
-    /// site downstream reads this field, so a project that leaves here is one
-    /// nothing can go and read.
+    /// others: every site that gathers reads the projects through `read`, so
+    /// a project outside the scope is one nothing can go and read.
     #[test]
-    fn a_scope_keeps_only_the_projects_it_names() {
+    fn a_scope_reads_only_the_projects_it_names() {
         let cfg = two_projects()
             .scoped_to(&["beacon".to_string()])
             .expect("beacon is configured");
 
-        assert_eq!(names_of(&cfg.projects), ["beacon"]);
+        assert_eq!(read_by(&cfg), ["beacon"]);
+    }
+
+    /// The projects a scope leaves out stay known. A pane is placed by which
+    /// configured project holds its directory, and a run that had forgotten
+    /// the other projects would report every pane on another desktop as in a
+    /// directory no project covers.
+    #[test]
+    fn a_scope_leaves_the_config_naming_every_project() {
+        let cfg = two_projects()
+            .scoped_to(&["beacon".to_string()])
+            .expect("beacon is configured");
+
+        assert_eq!(names_of(&cfg.projects), ["atlas", "beacon"]);
+        assert!(cfg.reads("beacon"));
+        assert!(!cfg.reads("atlas"));
     }
 
     /// The forest is drawn in the order the config names, so a scope is a
@@ -726,7 +856,7 @@ path = "/home/user/dev/atlas-fork"
             .scoped_to(&["beacon".to_string(), "atlas".to_string()])
             .expect("both are configured");
 
-        assert_eq!(names_of(&cfg.projects), ["atlas", "beacon"]);
+        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
     }
 
     /// Asking for no particular project is not asking for none. What decides
@@ -738,7 +868,100 @@ path = "/home/user/dev/atlas-fork"
             .scoped_to(&[])
             .expect("a scope of nothing scopes nothing");
 
-        assert_eq!(names_of(&cfg.projects), ["atlas", "beacon"]);
+        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(cfg.scope, Scope::Everything);
+    }
+
+    /// The directory `bdi` is started in decides the read set: the project
+    /// holding it is the one read, and the scope says the directory chose.
+    #[test]
+    fn the_project_holding_the_directory_is_the_one_read() {
+        let cfg =
+            two_projects().scoped_to_the_project_holding(Path::new("/home/user/dev/beacon/src"));
+
+        assert_eq!(read_by(&cfg), ["beacon"]);
+        assert_eq!(
+            cfg.scope,
+            Scope::Directory {
+                project: "beacon".to_string(),
+                widened: Vec::new(),
+            }
+        );
+        assert_eq!(
+            names_of(&cfg.projects),
+            ["atlas", "beacon"],
+            "the projects the directory left out stay known"
+        );
+    }
+
+    /// A repository inside another resolves to the inner one, which is the
+    /// tie the join already breaks the same way when it places a pane.
+    #[test]
+    fn the_deepest_project_holding_the_directory_is_the_one_read() {
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "outer"
+path = "/home/user/dev"
+
+[[projects]]
+name = "inner"
+path = "/home/user/dev/inner"
+"#,
+        )
+        .expect("the config parses")
+        .scoped_to_the_project_holding(Path::new("/home/user/dev/inner/src"));
+
+        assert_eq!(read_by(&cfg), ["inner"]);
+    }
+
+    /// Started outside every configured project there is nothing to scope to
+    /// and nothing was asked for, so `bdi` reads everything, as it does today.
+    #[test]
+    fn a_directory_no_project_holds_leaves_every_project_read() {
+        let cfg = two_projects().scoped_to_the_project_holding(Path::new("/home/user/elsewhere"));
+
+        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(cfg.scope, Scope::Everything);
+    }
+
+    /// A positional under a project the directory left out widens the read
+    /// set to that project: `bdi homelab:hl-1` from another project's desktop
+    /// reads both. Only an explicit `--project` makes that a contradiction.
+    #[test]
+    fn a_root_under_a_project_the_directory_left_out_widens_the_read_set() {
+        let cfg = two_projects()
+            .scoped_to_the_project_holding(Path::new("/home/user/dev/beacon"))
+            .with_roots_named_on_the_command_line(&["atlas:a-1".to_string()])
+            .expect("a root elsewhere widens a scope the directory chose");
+
+        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(
+            cfg.roots.explicit,
+            BTreeMap::from([("atlas".to_string(), vec!["a-1".to_string()])])
+        );
+        assert_eq!(
+            cfg.scope,
+            Scope::Directory {
+                project: "beacon".to_string(),
+                widened: vec!["atlas".to_string()],
+            }
+        );
+    }
+
+    /// A bare id belongs to the one project being read, however the scope
+    /// that left one was arrived at.
+    #[test]
+    fn a_bare_root_belongs_to_the_project_the_directory_chose() {
+        let cfg = two_projects()
+            .scoped_to_the_project_holding(Path::new("/home/user/dev/beacon"))
+            .with_roots_named_on_the_command_line(&["b-7".to_string()])
+            .expect("the directory leaves only beacon");
+
+        assert_eq!(
+            cfg.roots.explicit,
+            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+        );
     }
 
     /// A scope that quietly selected less than it named would start `bdi` on
@@ -775,7 +998,7 @@ path = "/home/user/dev/atlas-fork"
             .scoped_to(&["atlas".to_string()])
             .expect("a config root elsewhere is not a contradiction");
 
-        assert_eq!(names_of(&cfg.projects), ["atlas"]);
+        assert_eq!(read_by(&cfg), ["atlas"]);
         assert_eq!(
             cfg.roots.explicit["beacon"],
             ["b-7"],

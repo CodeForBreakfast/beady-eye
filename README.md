@@ -84,6 +84,24 @@ It knows nothing about any particular way of organising agents — no orchestrat
 model, no roles, no workflow. Conventions your setup encodes in bead metadata are
 named in config and drawn as badges; `bdi` never learns what they mean.
 
+## Which projects a run reads
+
+The directory `bdi` is started in decides. Started under one of the projects
+the config names — its own directory, a repository inside it, or a linked
+worktree of it — `bdi` reads that project and no other, and says so on the
+screen. Started outside every configured project it reads all of them. The
+projects left out are never read, rather than read and hidden, and the config
+still knows them: a pane working in one is placed in its own project, not
+reported as somewhere `bdi` was never told about.
+
+`--all-projects` reads every configured project wherever `bdi` is started.
+`--project <NAME>`, repeated for more than one, reads only those, from
+anywhere, and outranks the directory. Naming a bead as `<project>:<bead-id>`
+adds its tree to the run; from a directory that chose a different project, it
+reads that project too. Against an explicit `--project` that left the project
+out it is refused instead — one command line asking for a project's tree and
+asking not to read that project contradicts itself.
+
 ## Telling `bdi` a project changed
 
 `bdi` polls, and almost every poll finds nothing has moved. So a refresh asks
@@ -114,7 +132,7 @@ line ending in `\n`. `bdi` answers each line with one line of its own:
 | Answer | Meaning |
 | --- | --- |
 | `ok <project>` | A project `bdi` watches. That project is read again; no other is. |
-| `unknown <project>` | Not a project this `bdi` was configured with. Nothing happens. |
+| `unknown <project>` | Not a project this `bdi` is reading. Nothing happens. |
 | `malformed` | Blank, or longer than 512 bytes. Nothing happens. |
 
 The name must match a project's `name` in the config. A connection may carry as

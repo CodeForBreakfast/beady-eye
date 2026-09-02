@@ -73,7 +73,8 @@ pub fn target(forest: &Forest) -> Target<'_> {
         | Content::Unread(_)
         | Content::Elided { .. }
         | Content::Note(_)
-        | Content::Group(_) => Target::NotABead,
+        | Content::Group(_)
+        | Content::Scoped { .. } => Target::NotABead,
     }
 }
 
@@ -177,6 +178,7 @@ pub fn focused(focused: Result<(), RunFailure>) -> Option<Tail> {
 mod tests {
     use super::*;
     use crate::collect::run::{FailureKind, RunFailure};
+    use crate::config::Scope;
     use crate::model::join::JoinSource;
     use crate::model::snapshot::{
         Counts, FailedProject, Filter, LoosePane, Node, TrackerFailure, TrackerState, Tree,
@@ -299,6 +301,7 @@ mod tests {
             read_at: BTreeMap::new(),
             collected: vec![tree],
             projects: vec!["orbital".to_string()],
+            scope: Scope::default(),
         }
     }
 

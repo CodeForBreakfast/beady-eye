@@ -37,7 +37,7 @@ pub use tail::draw_tail;
 use bands::scroll_offset;
 use bead::{bead_line, elided_run};
 use foot::{notices, status_bar};
-use groups::{group_line, item_line};
+use groups::{group_line, item_line, scoped_line};
 use project::{project_line, unread_line};
 use tone::LOOK_AT_THIS;
 
@@ -180,6 +180,7 @@ pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitt
         }
         Content::Group(group) => group_line(&line.prefix, *group),
         Content::Item(item) => item_line(&line.prefix, item),
+        Content::Scoped { project } => scoped_line(&line.prefix, project),
     }
 }
 
@@ -251,6 +252,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::app::Wanted;
+    use crate::config::Scope;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
         Counts, Filter, HerdrState, LoosePane, Node, Snapshot, TrackerFailure, TrackerState, Tree,
@@ -477,6 +479,7 @@ mod tests {
             collected: trees.clone(),
             trees,
             projects,
+            scope: Scope::default(),
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),
             unattributed,

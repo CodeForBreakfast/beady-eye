@@ -116,7 +116,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
             rows: &a.beads,
         })
         .collect();
-    let joined = resolve(&trees, &panes, &cfg.projects, &cfg.join);
+    let joined = resolve(&trees, &panes, &cfg);
 
     let claimed = assembled
         .iter()

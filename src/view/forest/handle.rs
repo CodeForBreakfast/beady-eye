@@ -123,7 +123,7 @@ pub(super) fn handle_of(line: &Line) -> Option<Handle> {
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
         Content::Group(group) => Some(Handle::Group(group.kind)),
         Content::Item(item) => item_key(item).map(Handle::Item),
-        Content::Note(_) => None,
+        Content::Note(_) | Content::Scoped { .. } => None,
     }
 }
 
