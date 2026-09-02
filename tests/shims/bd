@@ -1,12 +1,23 @@
 #!/bin/sh
-# A `bd` that stops answering while a flag file is there: a tracker that hangs
+# A `bd` a test can answer for and hold up: it says what a file tells it to
+# say, and stops answering while a flag file is there — a tracker that hangs
 # rather than fails.
 #
 # `bdi` reaches bd by a PATH lookup (src/collect/run.rs), so this directory
-# first on PATH is enough to inject any delay without touching `bdi` at all.
-# That is what makes a hung tracker reachable — it is otherwise a state only a
-# broken network produces.
+# first on PATH is enough to give a machine with no tracker a project to
+# read, and to inject any delay, without touching `bdi` at all. That is what
+# makes a hung tracker reachable — it is otherwise a state only a broken
+# network produces.
 #
+#   BDI_SHIM_BD_ANSWERS      directory holding one file per call, named by the
+#                            call as bdi asks it past the `-C <tracker>
+#                            --readonly` every call opens with: `list --all
+#                            --limit 0 --json`, `blocked --json`. A call with
+#                            a file there is answered with it; any other goes
+#                            to the bd this shadows.
+#   BDI_SHIM_BD_UNANSWERED   file this appends each call it had no answer for
+#                            to, so a reader can tell a capture that was not
+#                            served from one that was served wrongly.
 #   BDI_SHIM_BD_HANGS_WHILE  path to the flag. Touch it and every bd call from
 #                            then on waits until it goes away.
 #   BDI_SHIM_BD_HOLDING      path this writes while it is holding a call, so a
@@ -34,5 +45,43 @@ if [ -n "${BDI_SHIM_BD_HANGS_WHILE:-}" ] && [ -e "$BDI_SHIM_BD_HANGS_WHILE" ]; t
   done
   if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then rm -f "$BDI_SHIM_BD_HOLDING"; fi
 fi
+
+# The subcommand and everything after it. Every call from bdi opens with
+# flags naming the tracker (src/collect/bd.rs), so the subcommand is not $1
+# and a shim that tested $1 would answer nothing and fall through to the real
+# bd — which, against a HOME with no tracker, is the very "nothing here" it
+# was written to replace. Scanned rather than counted, so one more leading
+# flag does not put the shim back in that state.
+asked() {
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -C) shift 2 ;;
+      -*) shift ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$*"
+}
+asked=$(asked "$@")
+
+# `sql` is never answered from a file, whatever is there. bdi asks it for the
+# tracker's working root and skips the whole read when the answer has not
+# moved (src/app/tracker.rs), so a fixed answer would have the first read
+# stand for every refresh after it: a test changing what the tracker holds
+# would see nothing change and nothing go red. Unanswered, the real bd errors
+# and bdi reads in full each time, which is the degradation it was built to
+# take. An answer that moved with the files above would be safe; a constant
+# is not.
+case $asked in
+  sql\ *) ;;
+  *)
+    if [ -n "${BDI_SHIM_BD_ANSWERS:-}" ] && [ -f "$BDI_SHIM_BD_ANSWERS/$asked" ]; then
+      exec cat "$BDI_SHIM_BD_ANSWERS/$asked"
+    fi
+    if [ -n "${BDI_SHIM_BD_UNANSWERED:-}" ]; then
+      printf '%s\n' "$asked" >>"$BDI_SHIM_BD_UNANSWERED"
+    fi
+    ;;
+esac
 
 exec "$(dirname "$0")/shadowed" bd "$@"

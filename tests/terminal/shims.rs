@@ -19,17 +19,33 @@ use std::time::{Duration, Instant};
 /// written down.
 const SHIMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/shims");
 
-/// A `bd` that answers as it always did until it is told to hang, and then
-/// holds every call until it is dropped.
+/// A `bd` that answers for the beads a test wrote down, or as it always did
+/// where a test wrote none, until it is told to hang — and then holds every
+/// call until it is dropped.
+///
+/// A machine with no tracker is the ordinary one in a build sandbox, and a
+/// `bdi` that finds none has no row under any project to read. So the beads
+/// are written to a file rather than found, for the reason the herdr beside
+/// this one gives: what is on the wire is a capture, and every test that
+/// needs a row gets the same one whatever the machine is running.
 pub struct ShimmedTracker {
+    answers: PathBuf,
+    unanswered: PathBuf,
     hangs_while: PathBuf,
     holding: PathBuf,
 }
+
+/// The statuses bd stores for work that is not finished, spelled as
+/// `collect::bd` asks for them. Written out rather than reached for, so a
+/// change to that call shows up here as a call the shim could not answer.
+const UNFINISHED: &str = "open,in_progress,blocked,deferred";
 
 impl ShimmedTracker {
     /// A tracker answering normally, whose scripts sit under `beside`.
     pub fn beside(beside: &Path) -> Self {
         Self {
+            answers: beside.join("bd-answers"),
+            unanswered: beside.join("bd-unanswered"),
             hangs_while: beside.join("bd-hangs"),
             holding: beside.join("bd-holding"),
         }
@@ -40,6 +56,14 @@ impl ShimmedTracker {
     pub fn environment(&self) -> Vec<(String, String)> {
         let mut environment = vec![shims_first_on_path()];
         environment.push((
+            "BDI_SHIM_BD_ANSWERS".to_string(),
+            self.answers.display().to_string(),
+        ));
+        environment.push((
+            "BDI_SHIM_BD_UNANSWERED".to_string(),
+            self.unanswered.display().to_string(),
+        ));
+        environment.push((
             "BDI_SHIM_BD_HANGS_WHILE".to_string(),
             self.hangs_while.display().to_string(),
         ));
@@ -48,6 +72,61 @@ impl ShimmedTracker {
             self.holding.display().to_string(),
         ));
         environment
+    }
+
+    /// Hold these beads — a capture of `bd list --all --json` — and answer
+    /// every question a collection asks from them.
+    ///
+    /// One answer per call, keyed by the call as `bd` is asked it, which is
+    /// how the in-process doubles key theirs too. What `bd` would filter is
+    /// filtered here — the unfinished rows for discovery, one row for `show`
+    /// — so the shim says what the real thing would about the same beads.
+    /// It holds no wisps, and reports nothing ready and nothing blocked,
+    /// until a test that needs one of those says otherwise.
+    pub fn holds(&self, capture: &str) {
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(capture).expect("a capture of bd list --json");
+        std::fs::create_dir_all(&self.answers).expect("the answers are ours to write");
+
+        self.answers("list --all --limit 0 --json", &rows);
+        let unfinished: Vec<serde_json::Value> = rows
+            .iter()
+            .filter(|row| row["status"] != "closed")
+            .cloned()
+            .collect();
+        self.answers(
+            &format!("list --status {UNFINISHED} --limit 0 --json"),
+            &unfinished,
+        );
+        for row in &rows {
+            let id = row["id"].as_str().expect("a bd row names its bead");
+            self.answers(&format!("show {id} --json"), std::slice::from_ref(row));
+        }
+        self.answers("query ephemeral=true --limit 0 --json", &[]);
+        self.answers("query ephemeral=true --all --limit 0 --json", &[]);
+        self.answers("ready --limit 0 --json", &[]);
+        self.answers("blocked --json", &[]);
+    }
+
+    fn answers(&self, asked: &str, with: &[serde_json::Value]) {
+        std::fs::write(
+            self.answers.join(asked),
+            serde_json::to_string(with).expect("rows serialise"),
+        )
+        .expect("the answer is ours to write");
+    }
+
+    /// Every call `bd` was asked that the shim had no answer for, spelled as
+    /// it was asked. Such a call went to the real `bd` instead — which,
+    /// against a `HOME` with no tracker, is exactly the "nothing here" that
+    /// a shim answering nothing would have produced. Empty is the only
+    /// reading that says the capture was served.
+    pub fn unanswered(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.unanswered)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// Stop answering. Every `bd` call from here waits until this is dropped.
