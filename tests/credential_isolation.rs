@@ -114,9 +114,7 @@ fn across_two_projects() -> Canned {
 }
 
 fn on_the_ambient_credential() -> Canned {
-    let runner = Canned::default()
-        .answering("herdr agent list", NO_PANES)
-        .answering_in(SOLO_DIR, &format!("direnv exec {SOLO_DIR} env -0"), "");
+    let runner = Canned::default().answering("herdr agent list", NO_PANES);
     tracker(runner, SOLO_DIR, "solo-1")
 }
 

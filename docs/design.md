@@ -86,6 +86,7 @@ coin one — and say so.**
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
 | **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
 | **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
+| **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in unless the project's `environment` says otherwise. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 
 ### Three different things are called "blocked"
@@ -851,10 +852,31 @@ bd found the config — it knew the database and the user — and had no passwor
 for it. **This is a credential boundary, not a policy one**, and it is the
 biggest constraint on the multi-project view.
 
-### v1 reaches a tracker by entering its directory
+### How a project's tracker is reached is a choice per project
 
 Confirmed with the operator of this deployment: no cross-project reader exists
 today; the one read-only user on the server is scoped to a single database.
+
+A project is read in one of three environments, and its config entry names at
+most one:
+
+| `[[projects]]` says | the tracker is read in |
+|---|---|
+| nothing | the ambient environment, with the credential the launching shell holds |
+| `environment = "direnv"` | what entering the project's directory produces |
+| `credential_command = "…"` | the ambient environment, with the command's stdout as the credential |
+
+**Ambient is the default**, because it is the run a new user makes first: a
+machine with bd and nothing else reads the tracker its shell can already
+reach, and direnv is a dependency `bdi` does not otherwise have. `-C` naming
+the tracker outright is what makes that safe, and the rest of this section
+says why. direnv was the default before `-C`, when entering the directory was
+the only safe way to reach the right tracker; it is now how a setup with one
+credential per project supplies them, and that is a setup rather than the
+tool, so it is asked for by name. Inferring it from an `.envrc` and a direnv
+on PATH was declined: explicit costs one line, and the config then says which
+mechanism reads a project where an inference would have to be re-derived to
+be reported.
 
 **Neither a credential nor a tracker path is carried by a working directory.**
 An earlier draft said `bd` finds a project's credential by being run in that
@@ -873,14 +895,16 @@ authenticates to it are one identity: a child is told both or neither.
 
 **A shell that has entered a project's directory is correctly configured for
 its tracker.** direnv is what makes that true — it loads the flake, the bd
-version, `BEADS_DIR`, and whatever holds the password. So `bdi` reproduces
-entering the directory rather than reconstructing what entering it would have
-produced, and a project entry needs only a path:
+version, `BEADS_DIR`, and whatever holds the password. So a project that asks
+for direnv is read by reproducing entering the directory rather than by
+reconstructing what entering it would have produced, and the entry says
+nothing about what the secret is called or where it lives:
 
 ```toml
 [[projects]]
 name = "summit-works"
 path = "/tmp/bdi-ground/summit-works"
+environment = "direnv"
 ```
 
 - **The tracker is named outright, with bd's own `-C`.** Every call `bdi` makes
@@ -889,12 +913,13 @@ path = "/tmp/bdi-ground/summit-works"
   project, and `BEADS_DIR=<valid> bd -C /tmp` refuses with *no beads project
   found*. Stating the tracker does not depend on `bdi` having thought of every
   variable bd reads.
-- **`-C` is what makes entering the directory safe.** direnv fails open: it
-  exits 0 and runs with the ambient environment where an `.envrc` is unallowed
-  or a flake will not evaluate. With the tracker named outright, such a
-  fallback can no longer point bd at the wrong database — only fail to
-  authenticate against the right one, which `bdi` reports per project as `auth`
-  while every other tree still draws.
+- **`-C` is what makes the ambient environment safe, and entering the
+  directory with it.** direnv fails open: it exits 0 and runs with the ambient
+  environment where an `.envrc` is unallowed or a flake will not evaluate.
+  With the tracker named outright, neither the ambient environment nor such a
+  fallback can point bd at the wrong database — only fail to authenticate
+  against the right one, which `bdi` reports per project as `auth` while every
+  other tree still draws.
 - **`--readonly` has bd enforce the no-writes rule** rather than leaving it to
   `bdi` being well behaved.
 - **The environment is captured once per project, not per call.** `direnv exec`
@@ -919,7 +944,9 @@ path = "/tmp/bdi-ground/summit-works"
 - **`credential_command` survives as the escape hatch**, for a tracker outside
   direnv's reach. The config stores a command, never a secret; its stdout is
   the password. What went is its promotion to the default, and the rule that
-  demanded one from every project once a second was named.
+  demanded one from every project once a second was named. A project naming
+  it beside `environment = "direnv"` is refused: it is entered one way, and a
+  precedence between the two would be a mechanism nothing on the screen says.
 - **An authentication failure is distinguished from the others.**
   `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`, `exec`, or
   `parse`. They want different responses and reporting them as one string does
@@ -930,7 +957,10 @@ path = "/tmp/bdi-ground/summit-works"
 An earlier draft rejected `direnv exec` on two guesses, and both were wrong:
 that it costs a direnv evaluation per call, and that it requires every tracker
 to be a direnv-managed checkout. The first is answered by capturing once; on
-the second, a directory with no `.envrc` runs anyway.
+the second, a directory with no `.envrc` runs anyway. Rejecting it as the
+*default* was right for a third reason neither guess named: a machine without
+direnv got `exec` on its first run and drew nothing, when README had said bd
+was all it needed.
 
 A single read-only user across every tracker would retire `credential_command`
 entirely, and the shape it would take has been measured — see *Open, for

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project_read_without_direnv, contains, ENTER_ALTERNATE_SCREEN};
+use terminal::{a_home_naming_one_project, contains, ENTER_ALTERNATE_SCREEN};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -42,7 +42,7 @@ const SHOW_EVERY_TREE: &[u8] = b"a";
 
 #[test]
 fn a_bead_the_tracker_holds_is_drawn_as_a_row() {
-    let home = a_home_naming_one_project_read_without_direnv("held");
+    let home = a_home_naming_one_project("held");
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_TRACKER);
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &tracker.environment());
@@ -54,6 +54,12 @@ fn a_bead_the_tracker_holds_is_drawn_as_a_row() {
         Vec::<String>::new(),
         "bd was asked something the shim had no answer for, so the real bd \
          answered instead and the project was read as having no tracker"
+    );
+    assert_eq!(
+        tracker.direnv_runs(),
+        Vec::<String>::new(),
+        "a project configured by its path alone was entered with direnv, \
+         which a machine with bd and nothing else does not have"
     );
 
     bdi.send(SHOW_EVERY_TREE);

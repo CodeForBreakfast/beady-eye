@@ -18,7 +18,7 @@ use std::time::Duration;
 use beady_eye::view::phrase::FRAME;
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project_read_without_direnv, contains};
+use terminal::{a_home_naming_one_project, contains};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -63,7 +63,7 @@ const BINDINGS_OPENED: &[u8] = "Key bindings".as_bytes();
 
 #[test]
 fn a_keystroke_is_answered_while_a_collection_is_outstanding() {
-    let home = a_home_naming_one_project_read_without_direnv("outstanding");
+    let home = a_home_naming_one_project("outstanding");
     let tracker = ShimmedTracker::beside(&home);
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &tracker.environment());
     bdi.read_until(terminal::ENTER_ALTERNATE_SCREEN, GIVING_UP);

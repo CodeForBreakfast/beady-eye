@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::collect::run::{Env, FailureKind, Runner};
-use crate::config::{Config, Project, Scope};
+use crate::config::{Config, Environment, Project, Scope};
 
 /// The single project `bdi` reads when no config file names one: the
 /// repository the current directory sits in, on the ambient credential.
@@ -45,6 +45,7 @@ pub fn from_the_current_directory(
     Ok(Config::naming(vec![Project {
         name,
         path: root,
+        environment: Environment::Ambient,
         credential_command: None,
         poll: true,
         worktrees,
@@ -217,6 +218,7 @@ detached
             vec![Project {
                 name: "ground-station".to_string(),
                 path: PathBuf::from("/srv/work/orbital"),
+                environment: Environment::Ambient,
                 credential_command: None,
                 poll: true,
                 worktrees: vec![PathBuf::from("/srv/work/orbital")],
@@ -835,6 +837,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             vec![Project {
                 name: "loose".to_string(),
                 path: PathBuf::from("/srv/loose"),
+                environment: Environment::Ambient,
                 credential_command: None,
                 poll: true,
                 worktrees: Vec::new(),

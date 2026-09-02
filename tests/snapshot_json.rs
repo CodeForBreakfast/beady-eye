@@ -93,8 +93,6 @@ fn canned() -> Canned {
 fn canned_reading(tracker: &str) -> Canned {
     Canned::default()
         .answering("herdr agent list", PANES)
-        // Named by a path alone, so its tracker is reached by entering it.
-        .answering(&format!("direnv exec {tracker} env -0"), "")
         .answering(&spelled_in(tracker, PROBE_CALL), WORKING_ROOT)
         .answering(
             &spelled_in(tracker, "ready --limit 0 --json"),

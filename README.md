@@ -80,6 +80,25 @@ nixpkgs.overlays = [ beady-eye.overlays.default ];
 the counts, the claims and an age-based stale-claim warning. With it you also get
 liveness, exact drift detection, and a tail of the selected bead's pane.
 
+Each project's tracker is read in the environment `bdi` itself was started in,
+so a tracker your shell can already reach needs nothing configured. A setup
+that keeps one credential per project in each project's own directory, loaded
+by direnv when you enter it, says so per project:
+
+```toml
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+environment = "direnv"
+```
+
+That project is then read with what entering its directory produces, at the
+cost of one `direnv exec` per refresh. direnv is worth naming when the
+password bd needs is in a project's `.envrc` and nowhere in the shell running
+`bdi`; a single tracker, or a SQLite one, wants the default. `credential_command`
+is the third way in, for a tracker outside both: a command whose stdout is the
+password. A project names one of the three.
+
 It knows nothing about any particular way of organising agents — no orchestration
 model, no roles, no workflow. Conventions your setup encodes in bead metadata are
 named in config and drawn as badges; `bdi` never learns what they mean.

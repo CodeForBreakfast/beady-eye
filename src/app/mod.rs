@@ -79,12 +79,15 @@ mod fixtures {
         "2026-08-30T12:00:00Z".parse().expect("the instant parses")
     }
 
+    /// One project, read the direnv way, so that every collection in these
+    /// tests goes through the environment capture as well as the bd calls.
     pub(super) fn one_project() -> Config {
         Config::from_toml(&format!(
             r#"
 [[projects]]
 name = "orbital"
 path = "{ORBITAL}"
+environment = "direnv"
 "#
         ))
         .expect("the config parses")

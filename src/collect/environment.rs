@@ -1,12 +1,13 @@
 //! The environment each project's tracker is read in.
 //!
-//! One capture per project: what entering its directory produces, or what its
-//! escape hatch answers. Every question asked with it is in `bd`.
+//! One capture per project: `bdi`'s own environment, what entering the
+//! project's directory produces, or what its escape hatch answers — whichever
+//! the project's config chose. Every question asked with it is in `bd`.
 
 use std::path::Path;
 
 use crate::collect::run::{Env, RunFailure, Runner, CREDENTIAL_VAR};
-use crate::config::Project;
+use crate::config::{Environment, Project};
 
 /// The credential the shell `bdi` was launched from holds, which a project
 /// configuring none reaches its tracker on.
@@ -16,12 +17,20 @@ pub fn ambient_credential() -> Option<String> {
 
 /// The environment one project's tracker is read with.
 ///
-/// A shell that has entered a project's directory is already configured for
-/// its tracker: direnv loads the flake, the bd version, and whatever holds
-/// the password. So `bdi` reproduces entering the directory rather than
-/// reconstructing what entering it would have produced, and a project entry
-/// needs only a path — no assumption about what the secret is called, where
-/// it lives, or what the DSN is.
+/// By default it is `bdi`'s own, and nothing is run to find it: a machine
+/// with bd and nothing else reads its tracker, and `-C` naming the tracker
+/// outright is what makes that safe, because a credential belonging to
+/// another tracker can only fail to authenticate against the right database,
+/// never open the wrong one.
+///
+/// A project configured `environment = "direnv"` is read with what entering
+/// its directory produces instead. A shell that has entered it is already
+/// configured for its tracker — direnv loads the flake, the bd version, and
+/// whatever holds the password — so `bdi` reproduces entering the directory
+/// rather than reconstructing what entering it would have produced, and the
+/// project entry says nothing about what the secret is called or where it
+/// lives. That is what a setup keeping one credential per project in each
+/// project's own directory wants.
 ///
 /// Captured once per project rather than by wrapping every call, because
 /// `direnv exec` reloads the directory each time it runs. Measured against
@@ -33,10 +42,8 @@ pub fn ambient_credential() -> Option<String> {
 /// A `credential_command` is the escape hatch for a tracker outside direnv's
 /// reach, and answers instead of entering the directory.
 ///
-/// The ambient credential underneath both is what lets a single-tracker
-/// setup configure nothing at all. It is safe here in a way it was not
-/// before `-C`: a credential belonging to another tracker can now only fail
-/// to authenticate against the right database, never open the wrong one.
+/// The ambient credential underneath all three is what lets a single-tracker
+/// setup configure nothing at all.
 pub fn tracker_env(
     runner: &dyn Runner,
     project: &Project,
@@ -45,15 +52,16 @@ pub fn tracker_env(
     let mut env = ambient.map_or_else(Env::new, |password| {
         Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
     });
-    match &project.credential_command {
-        Some(command) => {
+    match (&project.credential_command, project.environment) {
+        (Some(command), _) => {
             let password = runner.run("sh", &["-c", command], Some(&project.path), &Env::new())?;
             env.insert(
                 CREDENTIAL_VAR.to_string(),
                 password.trim_end_matches(['\r', '\n']).to_string(),
             );
         }
-        None => env.extend(entering(&project.path, runner)?),
+        (None, Environment::Direnv) => env.extend(entering(&project.path, runner)?),
+        (None, Environment::Ambient) => {}
     }
     Ok(env)
 }
@@ -111,14 +119,25 @@ mod tests {
         PathBuf::from("/tmp/proj")
     }
 
-    /// A project entry as the config now takes it: a path, and nothing else.
+    /// A project entry as the config takes it by default: a path, and
+    /// nothing else.
     fn ambient_project() -> Project {
         Project {
             name: "atlas".to_string(),
             path: project_dir(),
+            environment: Environment::Ambient,
             credential_command: None,
             poll: true,
             worktrees: Vec::new(),
+        }
+    }
+
+    /// A project that asked to be read with what entering its directory
+    /// produces.
+    fn entered_with_direnv() -> Project {
+        Project {
+            environment: Environment::Direnv,
+            ..ambient_project()
         }
     }
 
@@ -142,11 +161,11 @@ mod tests {
             .join("\0")
     }
 
-    /// The invariant the whole design rests on: a shell that has entered the
-    /// project's directory is configured for its tracker, so bdi reproduces
-    /// entering it rather than restating what it would have produced.
+    /// What direnv is for: a shell that has entered the project's directory
+    /// is configured for its tracker, so bdi reproduces entering it rather
+    /// than restating what it would have produced.
     #[test]
-    fn a_project_naming_only_a_path_is_read_by_entering_its_directory() {
+    fn a_project_asking_for_direnv_is_read_by_entering_its_directory() {
         let runner = FakeRunner::default().with(
             &entering_the_directory(),
             &exported(&[
@@ -155,7 +174,7 @@ mod tests {
             ]),
         );
 
-        let env = tracker_env(&runner, &ambient_project(), None).unwrap();
+        let env = tracker_env(&runner, &entered_with_direnv(), None).unwrap();
 
         assert_eq!(
             env.get("BEADS_DOLT_PASSWORD").map(String::as_str),
@@ -179,7 +198,7 @@ mod tests {
 
         tracker_env(
             &runner,
-            &ambient_project(),
+            &entered_with_direnv(),
             Some("the-launching-shells-password"),
         )
         .unwrap();
@@ -204,7 +223,7 @@ mod tests {
             ),
         );
 
-        let env = tracker_env(&runner, &ambient_project(), None).unwrap();
+        let env = tracker_env(&runner, &entered_with_direnv(), None).unwrap();
 
         assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter2"));
         assert_eq!(
@@ -229,7 +248,7 @@ mod tests {
             RunFailure::exec("direnv", "No such file or directory"),
         );
 
-        let failure = tracker_env(&runner, &ambient_project(), Some("hunter2")).unwrap_err();
+        let failure = tracker_env(&runner, &entered_with_direnv(), Some("hunter2")).unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Exec);
         assert_eq!(failure.program, "direnv");
@@ -243,6 +262,7 @@ mod tests {
         let project = Project {
             name: "atlas".to_string(),
             path: project_dir(),
+            environment: Environment::Ambient,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
             worktrees: Vec::new(),
@@ -256,6 +276,25 @@ mod tests {
                 .iter()
                 .any(|call| call.argv.starts_with("direnv ")),
             "the directory was entered as well as the escape hatch being used"
+        );
+    }
+
+    /// The default: a project entry that says nothing about how it is entered
+    /// is read with the environment `bdi` itself runs in, and nothing is run
+    /// to find out what entering its directory would have produced. A fake
+    /// with no answer staged panics on any call, so a direnv reached for here
+    /// fails this test in the runner before the assertion is read.
+    #[test]
+    fn a_project_that_says_nothing_about_its_environment_is_read_without_running_anything() {
+        let runner = FakeRunner::default();
+
+        let env = tracker_env(&runner, &ambient_project(), Some("hunter2")).unwrap();
+
+        assert_eq!(env, credentialled());
+        assert_eq!(
+            runner.calls(),
+            Vec::new(),
+            "an ambient project ran a program to find its environment"
         );
     }
 
@@ -288,6 +327,7 @@ mod tests {
         let project = Project {
             name: "atlas".to_string(),
             path: project_dir(),
+            environment: Environment::Ambient,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
             worktrees: Vec::new(),
@@ -318,7 +358,7 @@ mod tests {
             &exported(&[("PATH", "/nix/bin")]),
         );
 
-        let env = tracker_env(&runner, &ambient_project(), Some("hunter2")).unwrap();
+        let env = tracker_env(&runner, &entered_with_direnv(), Some("hunter2")).unwrap();
 
         assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter2"));
         assert_eq!(
@@ -335,7 +375,7 @@ mod tests {
         let runner = FakeRunner::default().with(&entering_the_directory(), &exported(&[]));
 
         assert_eq!(
-            tracker_env(&runner, &ambient_project(), None).unwrap(),
+            tracker_env(&runner, &entered_with_direnv(), None).unwrap(),
             Env::new()
         );
     }
@@ -349,6 +389,7 @@ mod tests {
         let project = Project {
             name: "atlas".to_string(),
             path: project_dir(),
+            environment: Environment::Ambient,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
             worktrees: Vec::new(),

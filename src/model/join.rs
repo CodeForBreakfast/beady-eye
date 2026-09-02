@@ -297,7 +297,7 @@ mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
-    use crate::config::Join;
+    use crate::config::{Environment, Join};
     use crate::model::tree::Nesting;
     use crate::model::types::Bead;
     use pretty_assertions::assert_eq;
@@ -318,6 +318,7 @@ mod tests {
         Project {
             name: name.to_string(),
             path: path.into(),
+            environment: Environment::Ambient,
             credential_command: None,
             poll: true,
             worktrees: Vec::new(),

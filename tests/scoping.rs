@@ -19,22 +19,14 @@ use std::process::{Command, Output};
 /// name. That failure is the observation: a project bdi did not read is not
 /// in the snapshot at all, and a project it did read is there whether or not
 /// its tracker answered.
-///
-/// `credential_command` is what keeps direnv out of it. Without one the first
-/// thing a collection does is run direnv, and on a machine without direnv the
-/// project fails there instead — the same shape of answer for a different
-/// reason, which would leave this test passing on a machine where nothing
-/// worked.
 const TWO_PROJECTS: &str = "\
 [[projects]]
 name = \"atlas\"
 path = \"{}\"
-credential_command = \"printf ''\"
 
 [[projects]]
 name = \"beacon\"
 path = \"{}\"
-credential_command = \"printf ''\"
 ";
 
 /// A config naming two projects, written where a test can hand bdi its path.

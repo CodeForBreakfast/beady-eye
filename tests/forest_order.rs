@@ -58,8 +58,6 @@ fn spelled(subcommand: &str) -> String {
 fn canned() -> Canned {
     Canned::default()
         .answering("herdr agent list", PANES)
-        // Named by a path alone, so its tracker is reached by entering it.
-        .answering(&format!("direnv exec {ORBITAL_DIR} env -0"), "")
         .answering(&spelled(PROBE_CALL), WORKING_ROOT)
         .answering(
             &spelled("list --status open,in_progress,blocked,deferred --limit 0 --json"),

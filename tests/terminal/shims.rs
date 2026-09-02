@@ -33,6 +33,7 @@ pub struct ShimmedTracker {
     unanswered: PathBuf,
     hangs_while: PathBuf,
     holding: PathBuf,
+    direnv_ran: PathBuf,
 }
 
 /// The statuses bd stores for work that is not finished, spelled as
@@ -48,6 +49,7 @@ impl ShimmedTracker {
             unanswered: beside.join("bd-unanswered"),
             hangs_while: beside.join("bd-hangs"),
             holding: beside.join("bd-holding"),
+            direnv_ran: beside.join("direnv-ran"),
         }
     }
 
@@ -70,6 +72,10 @@ impl ShimmedTracker {
         environment.push((
             "BDI_SHIM_BD_HOLDING".to_string(),
             self.holding.display().to_string(),
+        ));
+        environment.push((
+            "BDI_SHIM_DIRENV_RAN".to_string(),
+            self.direnv_ran.display().to_string(),
         ));
         environment
     }
@@ -108,12 +114,41 @@ impl ShimmedTracker {
         self.answers("blocked --json", &[]);
     }
 
+    /// Say `path` is a directory beads tracks, which is what a `bdi` given no
+    /// config asks first: `bd where` answering is what makes the directory
+    /// the one project of the run. The tracker it names is the shape a real
+    /// answer has, and nothing reads it.
+    pub fn tracks(&self, path: &Path) {
+        std::fs::create_dir_all(&self.answers).expect("the answers are ours to write");
+        let beads = path.join(".beads");
+        self.answers_with(
+            "where --json",
+            &format!(
+                r#"{{"database_path": "{}", "path": "{}", "schema_version": 1}}"#,
+                beads.join("dolt").display(),
+                beads.display()
+            ),
+        );
+    }
+
     fn answers(&self, asked: &str, with: &[serde_json::Value]) {
-        std::fs::write(
-            self.answers.join(asked),
-            serde_json::to_string(with).expect("rows serialise"),
-        )
-        .expect("the answer is ours to write");
+        self.answers_with(asked, &serde_json::to_string(with).expect("rows serialise"));
+    }
+
+    fn answers_with(&self, asked: &str, text: &str) {
+        std::fs::write(self.answers.join(asked), text).expect("the answer is ours to write");
+    }
+
+    /// Every call `direnv` was asked, spelled as it was asked. The `direnv`
+    /// on PATH beside `bd` is one nobody installed, so a call here is a
+    /// project `bdi` tried to enter on a machine that cannot, and an empty
+    /// list is the reading that says the project was read without it.
+    pub fn direnv_runs(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.direnv_ran)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// Every call `bd` was asked that the shim had no answer for, spelled as
@@ -160,8 +195,9 @@ impl ShimmedTracker {
 }
 
 /// The shims ahead of the real programs, so they shadow them and hand on to
-/// them. Both shims live in the one directory, so both are shadowed together
-/// whichever of them a test came for.
+/// them — bar `direnv`, which the suite runs without. All three live in the
+/// one directory, so all three are shadowed together whichever of them a
+/// test came for.
 pub fn shims_first_on_path() -> (String, String) {
     let inherited = std::env::var("PATH").unwrap_or_default();
     ("PATH".to_string(), format!("{SHIMS}:{inherited}"))

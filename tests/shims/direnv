@@ -1,0 +1,19 @@
+#!/bin/sh
+# A `direnv` nobody installed. It never hands on to a real one: the suite runs
+# as a machine with bd and nothing else, which is the machine `bdi`'s default
+# has to read a project on, and a test that wants to know direnv was left
+# alone reads the file this writes rather than inferring it from the screen.
+#
+#   BDI_SHIM_DIRENV_RAN   file this appends each call it was asked to, so a
+#                         reader can say direnv was never run — or, when it
+#                         was, with what.
+#
+# Plain `sh`, and POSIX, for the reason the bd shim beside this one gives.
+set -u
+
+if [ -n "${BDI_SHIM_DIRENV_RAN:-}" ]; then
+  printf '%s\n' "$*" >>"$BDI_SHIM_DIRENV_RAN"
+fi
+
+echo "direnv: not installed; the test suite runs as a machine without one" >&2
+exit 127

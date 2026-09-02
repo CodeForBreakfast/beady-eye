@@ -292,7 +292,7 @@ mod tests {
     use super::*;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{Env, RunFailure};
-    use crate::config::Scope;
+    use crate::config::{Environment, Scope};
     use clap::CommandFactory;
     use std::collections::BTreeMap;
 
@@ -928,6 +928,7 @@ detached
         crate::config::Project {
             name: "orbital".to_string(),
             path: PathBuf::from("/srv/work/orbital"),
+            environment: Environment::Ambient,
             credential_command: None,
             poll,
             worktrees: Vec::new(),

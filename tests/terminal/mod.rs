@@ -164,9 +164,15 @@ fn die_with(_spawned_by: u32) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A `HOME` holding a config that names one project, so `bdi` gets past
-/// config assembly and as far as drawing. The project's path is the same
-/// directory, which holds no tracker, so the collection fails fast.
+/// A `HOME` holding a config that names one project by its path and nothing
+/// else, so `bdi` gets past config assembly and as far as drawing. The
+/// project's path is the same directory, which holds no tracker, so the
+/// collection fails fast unless a test puts a [`shims::ShimmedTracker`] on
+/// PATH to answer for one.
+///
+/// A path and nothing else is read in `bdi`'s own environment, which is what
+/// a test about `bd` needs: nothing else is run before `bd` is reached, on
+/// this machine or on one with no direnv.
 ///
 /// What is drawn is still whatever the machine has to say — `bdi` asks herdr
 /// for the live agents, and on a machine running one it answers. Nothing here
@@ -174,26 +180,6 @@ fn die_with(_spawned_by: u32) -> std::io::Result<()> {
 /// somebody's real panes and a frame saying there is no herdr are the same
 /// frame to them.
 pub fn a_home_naming_one_project(named: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
-    std::fs::write(
-        home.join(".config/beady-eye/config.toml"),
-        format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n",
-            home.display()
-        ),
-    )
-    .expect("the config is ours to write");
-    home
-}
-
-/// A `HOME` whose one project reaches its tracker without direnv.
-///
-/// `credential_command` is the escape hatch for a tracker outside direnv's
-/// reach, and it is what a test about `bd` needs: without it the first thing
-/// a collection does is run direnv, and on a machine without one the project
-/// fails there and `bd` is never reached at all.
-pub fn a_home_naming_one_project_read_without_direnv(named: &str) -> PathBuf {
     a_home_naming_one_project_settled(named, "")
 }
 
@@ -209,8 +195,7 @@ pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n\
-             credential_command = \"printf ''\"\n{settings}",
+            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n{settings}",
             home.display()
         ),
     )
