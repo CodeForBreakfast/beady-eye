@@ -85,6 +85,13 @@ tree, the counts, the claims and an age-based stale-claim warning. With it you
 also get liveness, exact drift detection, and a tail of the selected bead's
 pane.
 
+With no config file at all, `bdi` reads the one project the directory it was
+started in belongs to: the repository bd tracks there, named after its `origin`
+remote, or after the directory where there is no remote. `BDI_PROJECT` in the
+environment names it instead. That is the only variable `bdi` reads for a
+name, so a shell that keeps the project's name in another tool's variable
+exports it under this one too.
+
 Each project's tracker is read in the environment `bdi` itself was started in,
 so a tracker your shell can already reach needs nothing configured. A setup
 that keeps one credential per project in each project's own directory, loaded

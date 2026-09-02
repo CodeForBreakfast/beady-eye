@@ -20,9 +20,9 @@ use crate::tui::Armed;
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
 
-/// The variable that names the project when no config file names one. commy
-/// resolves a project the same way, so a name set once reaches both.
-const PROJECT_IN_THE_ENVIRONMENT: &str = "COMMY_PROJECT";
+/// The variable that names the project when no config file names one, ahead
+/// of the name its repository or directory would give it.
+const PROJECT_IN_THE_ENVIRONMENT: &str = "BDI_PROJECT";
 
 /// The view is drawn on the alternate screen, so a `bdi` whose output is a
 /// pipe has nowhere to draw and `--json` is the only thing it can give.

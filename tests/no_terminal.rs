@@ -27,7 +27,7 @@ fn bdi(home: &Path, args: &[&str]) -> Output {
         .current_dir(home)
         .env("HOME", home)
         .env_remove("BEADS_DIR")
-        .env_remove("COMMY_PROJECT")
+        .env_remove("BDI_PROJECT")
         .output()
         .expect("bdi runs")
 }

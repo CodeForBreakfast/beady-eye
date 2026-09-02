@@ -237,7 +237,7 @@ pub fn bdi_on(theirs: &std::fs::File, home: &Path, environment: &[(String, Strin
             .env("HOME", home)
             .env("TERM", "xterm-256color")
             .env_remove("BEADS_DIR")
-            .env_remove("COMMY_PROJECT")
+            .env_remove("BDI_PROJECT")
             .envs(environment.iter().map(|(named, value)| (named, value)))
             .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
             .stdout(theirs.try_clone().expect("the pty is ours to hand over"))

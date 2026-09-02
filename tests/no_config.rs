@@ -17,7 +17,7 @@ fn nowhere(named: &str) -> PathBuf {
 }
 
 /// `bdi` as someone on a fresh machine runs it: no `BEADS_DIR` pointing at a
-/// tracker, no `COMMY_PROJECT` naming a project, and a `HOME` with no config.
+/// tracker, no `BDI_PROJECT` naming a project, and a `HOME` with no config.
 fn bdi(cwd: &Path, args: &[&str]) -> Output {
     bdi_in(cwd, args, &[])
 }
@@ -30,7 +30,7 @@ fn bdi_in(cwd: &Path, args: &[&str], environment: &[(String, String)]) -> Output
         .current_dir(cwd)
         .env("HOME", cwd)
         .env_remove("BEADS_DIR")
-        .env_remove("COMMY_PROJECT")
+        .env_remove("BDI_PROJECT")
         .envs(environment.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .output()
         .expect("bdi runs")
@@ -76,6 +76,74 @@ fn a_directory_bd_tracks_is_read_with_no_config_and_no_direnv() {
     assert!(
         snapshot.contains(&format!("\"{THE_ROOT}\"")),
         "the tracker's root was not read: {snapshot}"
+    );
+
+    std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
+}
+
+/// `BDI_PROJECT` is bdi's own name for the project it finds with no config,
+/// and outranks the directory's. It is the one variable read: a name another
+/// tool keeps in a variable of its own reaches bdi only by being exported
+/// under this one too.
+#[test]
+fn bdi_project_names_the_project_read_with_no_config() {
+    let cwd = nowhere("named-in-the-environment");
+    let tracker = ShimmedTracker::beside(&cwd);
+    tracker.tracks(&cwd);
+    tracker.holds(THE_TRACKER);
+    let mut environment = tracker.environment();
+    environment.push(("BDI_PROJECT".to_string(), "orbital".to_string()));
+
+    let out = bdi_in(&cwd, &["--json"], &environment);
+    let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(out.status.success(), "bdi exited {}: {said}", out.status);
+    let directory = cwd
+        .file_name()
+        .expect("the directory has a name")
+        .to_string_lossy();
+    assert!(
+        snapshot.contains("\"project\": \"orbital\""),
+        "the project is not called what BDI_PROJECT says: {snapshot}"
+    );
+    assert!(
+        !snapshot.contains(&format!("\"project\": \"{directory}\"")),
+        "the directory's name was used with BDI_PROJECT set: {snapshot}"
+    );
+
+    std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
+}
+
+/// The name is read from bdi's own variable and no other tool's: commy's
+/// variable for the same thing, set with `BDI_PROJECT` unset, leaves the
+/// project called after its directory. A shell that wants both tools to
+/// agree exports both names.
+#[test]
+fn another_tools_project_variable_is_not_read() {
+    let cwd = nowhere("named-for-another-tool");
+    let tracker = ShimmedTracker::beside(&cwd);
+    tracker.tracks(&cwd);
+    tracker.holds(THE_TRACKER);
+    let mut environment = tracker.environment();
+    environment.push(("COMMY_PROJECT".to_string(), "orbital".to_string()));
+
+    let out = bdi_in(&cwd, &["--json"], &environment);
+    let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(out.status.success(), "bdi exited {}: {said}", out.status);
+    let directory = cwd
+        .file_name()
+        .expect("the directory has a name")
+        .to_string_lossy();
+    assert!(
+        snapshot.contains(&format!("\"project\": \"{directory}\"")),
+        "the project is not called after its directory: {snapshot}"
+    );
+    assert!(
+        !snapshot.contains("\"project\": \"orbital\""),
+        "another tool's variable named the project: {snapshot}"
     );
 
     std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
