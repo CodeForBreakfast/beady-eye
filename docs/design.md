@@ -622,8 +622,12 @@ id), never id alone.**
 draws it without reconstructing the tree. `agent.source` records which direction
 of the join resolved it, so a consumer can tell a confirmed agent from an
 inferred one. `herdr` is `ok` or `unavailable`, so a consumer knows which tier it
-is reading. `hidden_trees` is never empty-by-omission — a filtered tree is
-reported, not dropped.
+is reading. A tree's `tracker` is `ok`, `{ "unreachable": <reason> }` where its
+tracker could not be read, or `root-not-found` where the tracker answered and
+holds no bead of that id — which only a root named in config or on the command
+line can be, since every other root came out of the tracker's own answers.
+`hidden_trees` is never empty-by-omission — a filtered tree is reported, not
+dropped.
 
 ## TUI
 

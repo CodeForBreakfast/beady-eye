@@ -107,6 +107,7 @@ pub(super) fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fit
     ];
     let why = match unread.tracker {
         TrackerState::Unreachable(failure) => phrase::tracker_failure(failure),
+        TrackerState::RootNotFound => phrase::root_not_found(),
         TrackerState::Ok => phrase::root_unread(),
     };
 
@@ -816,6 +817,18 @@ mod tests {
 
         says(&drawn[0], "nix-9670s");
         says(&drawn[0], "the tracker did not answer");
+    }
+
+    /// A root the tracker holds no bead for is named the same way, and the
+    /// reason beside it is about what named the root, not about the tracker.
+    #[test]
+    fn a_root_the_tracker_does_not_hold_says_so_beside_its_id() {
+        let unread = unread("nix-9670s", TrackerState::RootNotFound);
+        let drawn = Painted::of(unread_line(&unread, LAST, 9), 90, 1).rows();
+
+        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "no such bead in this tracker");
+        does_not_say(&drawn[0], "bdi cannot read");
     }
 
     /// A tracker that could not be read has no counts, and `0/0` would say the

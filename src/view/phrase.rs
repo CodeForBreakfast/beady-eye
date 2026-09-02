@@ -327,6 +327,12 @@ pub fn root_unread() -> &'static str {
     "this root drew no rows, and nothing said why"
 }
 
+/// A root the tracker was asked to draw and holds no bead for. The tracker
+/// did nothing wrong, so the phrase sends the reader to what named it.
+pub fn root_not_found() -> &'static str {
+    "no such bead in this tracker · named in config or on the command line"
+}
+
 /// A node bd stopped at, so what hangs beneath it is not in this tree.
 pub fn truncated() -> &'static str {
     "more beneath this · the tracker stopped at its depth limit"
@@ -682,6 +688,8 @@ mod tests {
         said.push(no_live_panes().to_string());
         said.push(panes_may_be_incomplete().to_string());
         said.push(truncated().to_string());
+        said.push(root_unread().to_string());
+        said.push(root_not_found().to_string());
         for count in [1, 3] {
             said.push(elided(count));
             said.push(unfinished_beneath(count));
@@ -1166,6 +1174,14 @@ mod tests {
         distinct.dedup();
 
         assert_eq!(distinct.len(), said.len());
+    }
+
+    /// A tracker that answered and holds no such bead did nothing wrong, and
+    /// the phrase must not send the reader to it.
+    #[test]
+    fn a_root_the_tracker_does_not_hold_is_told_apart_from_an_unreadable_answer() {
+        assert_ne!(root_not_found(), tracker_failure(TrackerFailure::Parse));
+        assert!(root_not_found().contains("config"));
     }
 
     #[test]

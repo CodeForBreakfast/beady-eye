@@ -14,14 +14,32 @@ use crate::collect::environment;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::config::{Config, Project};
 use crate::model::join;
-use crate::model::snapshot::{Readiness, TrackerFailure};
+use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{self, assemble, Assembled};
 use crate::model::types::{Bead, Pane};
 
 /// One project's roots in id order, each either read or unreadable.
 pub(super) struct ProjectWork {
     pub(super) readiness: Readiness,
-    pub(super) roots: Vec<(String, Result<Assembled, TrackerFailure>)>,
+    pub(super) roots: Vec<(String, Result<Assembled, RootUnread>)>,
+}
+
+/// Why a root drew no rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RootUnread {
+    /// The tracker could not be read.
+    Tracker(TrackerFailure),
+    /// The tracker answered, and holds no bead of this id.
+    NotFound,
+}
+
+impl From<RootUnread> for TrackerState {
+    fn from(why: RootUnread) -> Self {
+        match why {
+            RootUnread::Tracker(failure) => TrackerState::Unreachable(failure),
+            RootUnread::NotFound => TrackerState::RootNotFound,
+        }
+    }
 }
 
 /// What a project's rows were last read against, and when they stop speaking
@@ -168,7 +186,7 @@ fn read_project(
         .collect();
 
     let mut ancestors: BTreeMap<String, String> = BTreeMap::new();
-    let mut roots: BTreeSet<String> = cfg
+    let named: BTreeSet<String> = cfg
         .roots
         .explicit
         .get(&project.name)
@@ -176,6 +194,7 @@ fn read_project(
         .flatten()
         .cloned()
         .collect();
+    let mut roots = named.clone();
     for bead in discovered.keys() {
         roots.insert(root_of(
             runner,
@@ -206,10 +225,10 @@ fn read_project(
         }
     }
 
-    let mut read: Vec<(String, Result<Assembled, TrackerFailure>)> = roots
+    let mut read: Vec<(String, Result<Assembled, RootUnread>)> = roots
         .into_iter()
         .map(|root| {
-            let read = assemble(beads.clone(), &root).map_err(|_| TrackerFailure::Parse);
+            let read = assemble(beads.clone(), &root).map_err(|_| why_unheld(&root, &named));
             (root, read)
         })
         .collect();
@@ -241,8 +260,8 @@ fn read_project(
 /// already draws needs nothing standing up over it.
 fn what_no_root_reached(
     beads: &[Bead],
-    read: &[(String, Result<Assembled, TrackerFailure>)],
-) -> Vec<(String, Result<Assembled, TrackerFailure>)> {
+    read: &[(String, Result<Assembled, RootUnread>)],
+) -> Vec<(String, Result<Assembled, RootUnread>)> {
     let drawn: BTreeSet<&str> = read
         .iter()
         .filter_map(|(_, read)| read.as_ref().ok())
@@ -257,10 +276,24 @@ fn what_no_root_reached(
 
     tops.into_iter()
         .map(|id| {
-            let read = assemble(beads.to_vec(), &id).map_err(|_| TrackerFailure::Parse);
+            let read = assemble(beads.to_vec(), &id)
+                .map_err(|_| RootUnread::Tracker(TrackerFailure::Parse));
             (id, read)
         })
         .collect()
+}
+
+/// What it means that the answer holds no bead of a root's id — the one way
+/// assembling a tree refuses. A root config or the command line `named` is
+/// a bead this tracker was never holding; any other root came out of the
+/// tracker's own answers, so an answer that then lacks it is one `bdi`
+/// cannot read.
+fn why_unheld(root: &str, named: &BTreeSet<String>) -> RootUnread {
+    if named.contains(root) {
+        RootUnread::NotFound
+    } else {
+        RootUnread::Tracker(TrackerFailure::Parse)
+    }
 }
 
 /// What the live panes in this project's directory name. A pane placed in no
@@ -1014,6 +1047,56 @@ orbital = ["orb-4"]
         assert!(
             runner.calls().iter().all(|c| !c.argv.contains("orb-4")),
             "no tracker was asked about an id it was never given"
+        );
+    }
+
+    /// What this project's own tracker answered `bd list --all --json` with,
+    /// captured rather than written: the ids a root is checked against are
+    /// the ones a real answer carries.
+    const A_CAPTURED_ANSWER: &str = include_str!("../../tests/fixtures/bd_list.json");
+
+    /// The tracker answered every call and holds no bead of that id. That is
+    /// a fact about the config, and a reader sent to look at the tracker is
+    /// sent to the one thing that did nothing wrong.
+    #[test]
+    fn a_root_named_in_config_that_the_answer_does_not_hold_is_not_an_unreadable_tracker() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+
+[roots.explicit]
+orbital = ["bdi-404"]
+"#
+        ))
+        .expect("the config parses");
+        let runner = orbital()
+            .with(&spelled(UNFINISHED_CALL), "[]")
+            .with(&spelled("ready --limit 0 --json"), "[]")
+            .with(&spelled("blocked --json"), "[]")
+            .with(&spelled(TRACKER_CALL), A_CAPTURED_ANSWER);
+
+        let snap = run(&cfg, &runner, Filter::All, now());
+
+        assert!(
+            snap.failed_projects.is_empty(),
+            "the project's own tracker answered: {:?}",
+            snap.failed_projects
+        );
+        assert_eq!(
+            rooted_at(&snap, "bdi-404").tracker,
+            TrackerState::RootNotFound
+        );
+        assert!(
+            snap.trees
+                .iter()
+                .all(|tree| tree.tracker != TrackerState::Unreachable(TrackerFailure::Parse)),
+            "no tree blames the tracker's answer: {:?}",
+            snap.trees
+                .iter()
+                .map(|tree| (tree.root.as_str(), tree.tracker))
+                .collect::<Vec<_>>()
         );
     }
 

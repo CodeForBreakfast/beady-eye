@@ -59,6 +59,10 @@ pub enum TrackerFailure {
 pub enum TrackerState {
     Ok,
     Unreachable(TrackerFailure),
+    /// The tracker answered, and its answer holds no bead of this id. Only a
+    /// root named outright — in config or on the command line — can be here:
+    /// a discovered root came out of the same tracker's answers.
+    RootNotFound,
 }
 
 /// What bd knows about dependencies that a dep-tree row does not carry: a row
@@ -313,13 +317,19 @@ impl Snapshot {
 impl Tree {
     /// A root whose tracker refused to answer: known by project and id, with
     /// nothing to show beneath it.
+    #[cfg(test)]
     pub fn tracker_unreachable(project: &str, root: &str, failure: TrackerFailure) -> Self {
+        Self::unread(project, root, TrackerState::Unreachable(failure))
+    }
+
+    /// A root that drew no rows, with why beside it.
+    pub fn unread(project: &str, root: &str, tracker: TrackerState) -> Self {
         Self {
             project: project.to_string(),
             root: root.to_string(),
             title: String::new(),
             counts: Counts::default(),
-            tracker: TrackerState::Unreachable(failure),
+            tracker,
             nodes: Vec::new(),
             dangling: Vec::new(),
             cycles: Vec::new(),
@@ -519,6 +529,28 @@ render = "⏸ waiting"
         assert_eq!(json["trees"][0]["tracker"]["unreachable"], "auth");
         assert_eq!(json["failed_projects"][0]["tracker"], "parse");
         assert_eq!(json["trees"][0]["counts"]["total"], 0);
+    }
+
+    #[test]
+    fn a_root_the_tracker_does_not_hold_serialises_as_such() {
+        let snap = build(
+            Collected {
+                trees: vec![Tree::unread("ferry", "fry-3", TrackerState::RootNotFound)],
+                ..Default::default()
+            },
+            &[],
+            &Joined::default(),
+            &cfg(),
+            HerdrState::Ok,
+            Filter::All,
+            now(),
+        );
+        let json: serde_json::Value = serde_json::to_value(&snap).expect("the snapshot serialises");
+
+        assert_eq!(json["trees"][0]["tracker"], "root-not-found");
+        assert!(json["failed_projects"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
     }
 
     // ---- finding a bead across trackers -------------------------------

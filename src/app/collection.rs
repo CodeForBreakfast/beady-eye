@@ -14,7 +14,8 @@ use crate::collect::run::Runner;
 use crate::config::Config;
 use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
-    self, Collected, FailedProject, Filter, HerdrState, Snapshot, TrackerFailure, Tree,
+    self, Collected, FailedProject, Filter, HerdrState, Snapshot, TrackerFailure, TrackerState,
+    Tree,
 };
 use crate::model::types::Pane;
 
@@ -209,7 +210,7 @@ impl Collection {
                     Ok(assembled) => {
                         snapshot::build_tree(project, assembled, joined, &work.readiness, cfg, now)
                     }
-                    Err(failure) => Tree::tracker_unreachable(project, root, *failure),
+                    Err(why) => Tree::unread(project, root, TrackerState::from(*why)),
                 })
             })
             .collect();
