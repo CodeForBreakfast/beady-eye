@@ -568,6 +568,7 @@ mod tests {
     use super::*;
     use crate::collect::run::{Env, RealRunner, Runner};
     use crate::view::fitted::columns;
+    use crate::view::tests::says;
     use pretty_assertions::assert_eq;
     use ratatui::text::Span;
 
@@ -1264,8 +1265,8 @@ mod tests {
             tracker: TrackerFailure::Auth,
         });
 
-        assert!(said.contains("summit-works"));
-        assert!(said.contains(tracker_failure(TrackerFailure::Auth)));
+        says(&said, "summit-works");
+        says(&said, "the tracker refused the credential it was given");
     }
 
     /// bdi-9vm: every claimed bead on a live screen read `claimed · no pane`

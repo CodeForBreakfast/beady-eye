@@ -218,6 +218,47 @@ mod tests {
     use chrono::{TimeDelta, TimeZone};
     use pretty_assertions::assert_eq;
 
+    /// The text says these words.
+    ///
+    /// The words are written out at the call rather than asked of the code
+    /// that produced the text. A test that takes them from `phrase` passes
+    /// whatever `phrase` says, the empty string included, so it proves the
+    /// words reached the text and nothing about what they are.
+    pub(super) fn says(text: &str, words: &str) {
+        assert!(
+            !words.is_empty(),
+            "every text says nothing, so nothing is asserted"
+        );
+        assert!(text.contains(words), "{text:?} does not say {words:?}");
+    }
+
+    /// The text does not say these words. Inverted, the same guard is needed
+    /// for the opposite reason: no text leaves nothing out, so an empty
+    /// expectation fails whatever the text says.
+    pub(super) fn does_not_say(text: &str, words: &str) {
+        assert!(
+            !words.is_empty(),
+            "no text leaves nothing out, so nothing is asserted"
+        );
+        assert!(!text.contains(words), "{text:?} says {words:?}");
+    }
+
+    /// The whole point of the guard: a phrase emptied at source and passed
+    /// straight through would satisfy `contains` on every text ever produced.
+    #[test]
+    #[should_panic(expected = "nothing is asserted")]
+    fn nothing_is_not_something_a_text_can_say() {
+        says("⚠ agents unknown", "");
+    }
+
+    /// And its mirror: no text leaves nothing out, so the inverted form has to
+    /// refuse the same expectation for the opposite reason.
+    #[test]
+    #[should_panic(expected = "nothing is asserted")]
+    fn nothing_is_not_something_a_text_can_leave_out() {
+        does_not_say("⚠ agents unknown", "");
+    }
+
     fn at(minute: u32, second: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, 30, 10, minute, second)
             .unwrap()

@@ -275,53 +275,13 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
 
     pub(super) use crate::view::painted::Painted;
+    pub(super) use crate::view::tests::{does_not_say, says};
 
     pub(super) const OPEN: &str = "▾ ";
     pub(super) const SHUT: &str = "▸ ";
     pub(super) const NO_FOLD: &str = "  ";
     pub(super) const BRANCH: &str = "  ├── ";
     pub(super) const LAST: &str = "  └── ";
-
-    /// A row says these words.
-    ///
-    /// The words are written out at the call rather than asked of the code
-    /// that drew the row. A test that takes them from `phrase` passes
-    /// whatever `phrase` says, the empty string included, so it proves the
-    /// words reached the screen and nothing about what they are.
-    pub(super) fn says(row: &str, words: &str) {
-        assert!(
-            !words.is_empty(),
-            "every row says nothing, so nothing is asserted"
-        );
-        assert!(row.contains(words), "{row:?} does not say {words:?}");
-    }
-
-    /// A row does not say these words. Inverted, the same guard is needed for
-    /// the opposite reason: no row leaves nothing out, so an empty
-    /// expectation fails whatever the row says.
-    pub(super) fn does_not_say(row: &str, words: &str) {
-        assert!(
-            !words.is_empty(),
-            "no row leaves nothing out, so nothing is asserted"
-        );
-        assert!(!row.contains(words), "{row:?} says {words:?}");
-    }
-
-    /// The whole point of the guard: a phrase emptied at source and passed
-    /// straight through would satisfy `contains` on every row ever drawn.
-    #[test]
-    #[should_panic(expected = "nothing is asserted")]
-    fn nothing_is_not_something_a_row_can_say() {
-        says("⚠ agents unknown", "");
-    }
-
-    /// And its mirror: no row leaves nothing out, so the inverted form has to
-    /// refuse the same expectation for the opposite reason.
-    #[test]
-    #[should_panic(expected = "nothing is asserted")]
-    fn nothing_is_not_something_a_row_can_leave_out() {
-        does_not_say("⚠ agents unknown", "");
-    }
 
     /// A run of closed siblings, under whichever bead the test likes: the
     /// drawing says the count and nothing about the bead it hangs under.
