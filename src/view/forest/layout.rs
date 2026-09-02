@@ -180,7 +180,7 @@ impl Layout<'_> {
             // rather than left out, because a root that would not read is the
             // one a reader most needs to see is there.
             lines.push(Line {
-                prefix: prefix(&[], last, false),
+                prefix: prefix(&[], last, false, None),
                 depth: 1,
                 folded: None,
                 place: Some(root),
@@ -203,7 +203,7 @@ impl Layout<'_> {
 
         let folded = (!kids.is_empty()).then_some(open);
         lines.push(Line {
-            prefix: prefix(&[], last, !kids.is_empty() && !open),
+            prefix: prefix(&[], last, !kids.is_empty() && !open, node.edge.as_ref()),
             depth: 1,
             folded,
             place: Some(root.clone()),
@@ -237,7 +237,7 @@ impl Layout<'_> {
             let last = n + 1 == count;
             match entry {
                 Child::Note(note) => lines.push(Line {
-                    prefix: prefix(trunk, last, false),
+                    prefix: prefix(trunk, last, false, None),
                     depth,
                     folded: None,
                     place: None,
@@ -247,7 +247,7 @@ impl Layout<'_> {
                     // A run rests as the count it was drawn to be.
                     let open = self.folds.expanded(&Handle::Elided(parent.clone()), false);
                     lines.push(Line {
-                        prefix: prefix(trunk, last, !open),
+                        prefix: prefix(trunk, last, !open, None),
                         depth,
                         folded: Some(open),
                         place: None,
@@ -285,7 +285,7 @@ impl Layout<'_> {
                         );
                     let folded = (!kids.is_empty()).then_some(open);
                     lines.push(Line {
-                        prefix: prefix(trunk, last, !kids.is_empty() && !open),
+                        prefix: prefix(trunk, last, !kids.is_empty() && !open, node.edge.as_ref()),
                         depth,
                         folded,
                         place: Some(place.clone()),
@@ -331,7 +331,7 @@ impl Layout<'_> {
             for (n, item) in items.into_iter().enumerate() {
                 let last = n + 1 == count;
                 lines.push(Line {
-                    prefix: prefix(&[], last, false),
+                    prefix: prefix(&[], last, false, None),
                     depth: 1,
                     folded: None,
                     place: None,

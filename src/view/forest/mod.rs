@@ -3612,6 +3612,67 @@ credential_command = "secret harbour"
         );
     }
 
+    /// `slu-1.1` is a child of the root and holds up its sibling `slu-1.2`,
+    /// so the tree draws it under each: once as part of the root, once as
+    /// what `slu-1.2` cannot finish until. The same nesting is saying two
+    /// different things, and the arm of the elbow is where it says which —
+    /// dashed under the bead it blocks, solid under the bead it is part of.
+    /// `slu-1.1.1` hangs under both copies on a solid arm, because it is a
+    /// child of `slu-1.1` wherever `slu-1.1` is drawn.
+    const SLUICE: &str = r#"[
+      {"id":"slu-1","title":"rehang the sluice","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"slu-1.1","title":"forge the new pintles","status":"in_progress",
+       "dependencies":[{"depends_on_id":"slu-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"slu-1.1.1","title":"cast the pintle blanks","status":"open",
+       "dependencies":[{"depends_on_id":"slu-1.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"slu-1.2","title":"hang the gate","status":"open",
+       "dependencies":[{"depends_on_id":"slu-1","type":"parent-child"},
+                       {"depends_on_id":"slu-1.1","type":"blocks"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A bead drawn under one it blocks is drawn on a dashed arm, and under
+    /// its parent on the solid one every child gets. Otherwise the two copies
+    /// are the same row twice, and a reader takes the tree for having
+    /// duplicated it.
+    ///
+    /// The arm is the elbow's, so it holds whether the line rests shut or
+    /// open: the fold marker takes the arm's last column exactly as it does
+    /// on a child, and the width is the four columns a level every line has.
+    #[test]
+    fn a_bead_drawn_under_one_it_blocks_hangs_on_a_dashed_arm() {
+        let mut forest = flatten(&alone("orbital", SLUICE, &panes_on(&["slu-1.1"])));
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital",
+                "  └── ◐ slu-1 rehang the sluice",
+                "      ├─▸ ◐ .1 forge the new pintles",
+                "      └── ○ .2 hang the gate",
+                "          └┄▸ ◐ .1 forge the new pintles",
+            ]
+        );
+
+        forest.apply(Action::ExpandSubtree);
+
+        assert_eq!(
+            sketch(&forest),
+            vec![
+                "▾ orbital",
+                "  └── ◐ slu-1 rehang the sluice",
+                "      ├── ◐ .1 forge the new pintles",
+                "      │   └── ○ .1.1 cast the pintle blanks",
+                "      └── ○ .2 hang the gate",
+                "          └┄┄ ◐ .1 forge the new pintles",
+                "              └── ○ .1.1 cast the pintle blanks",
+            ]
+        );
+    }
+
     /// Four columns a level, every line in a forest with trees in it,
     /// whatever that line is doing.
     ///
@@ -3625,9 +3686,9 @@ credential_command = "secret harbour"
     /// no prefix at all.
     #[test]
     fn every_prefix_is_four_columns_a_level() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
+        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON, SLUICE] {
             let staffed = panes_on(&[
-                "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6",
+                "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
             ]);
             let mut forest = flatten(&alone("orbital", json, &staffed));
             four_columns_a_level(&forest);
@@ -3662,7 +3723,10 @@ credential_command = "secret harbour"
             .expect("the shared snapshot draws a tree whose tracker refused");
 
         assert_eq!(header.folded, None, "{:#?}", sketch(&forest));
-        assert_eq!(columns(&header.prefix), columns(&prefix(&[], true, false)));
+        assert_eq!(
+            columns(&header.prefix),
+            columns(&prefix(&[], true, false, None))
+        );
     }
 
     /// A root that read fine and has nothing under it holds no fold either.
@@ -3693,7 +3757,10 @@ credential_command = "secret harbour"
             .expect("the fixture draws its root");
 
         assert_eq!(root.folded, None, "{:#?}", sketch(&forest));
-        assert_eq!(columns(&root.prefix), columns(&prefix(&[], true, false)));
+        assert_eq!(
+            columns(&root.prefix),
+            columns(&prefix(&[], true, false, None))
+        );
     }
 
     // ---- a forest with nothing in it --------------------------------------

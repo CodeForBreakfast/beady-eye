@@ -12,6 +12,7 @@ use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     Counts, FailedProject, HiddenTree, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
 };
+use crate::model::types::Edge;
 use crate::view::row::{Progress, Row};
 
 /// How many finished siblings it takes before a count reads better than their
@@ -23,13 +24,19 @@ pub(crate) const OPEN: &str = "▾ ";
 pub(crate) const SHUT: &str = "▸ ";
 /// A tree's children start under its header's marker, not under its project.
 const INDENT: &str = "  ";
-const BRANCH: &str = "├── ";
-const LAST: &str = "└── ";
-/// The same elbows with the shut marker drawn into them. A marker appended
-/// after an elbow would cost its own two columns, and a line's content would
-/// then start further right for having something folded under it.
-const BRANCH_SHUT: &str = "├─▸ ";
-const LAST_SHUT: &str = "└─▸ ";
+const BRANCH: char = '├';
+const LAST: char = '└';
+/// The arm from a line's elbow to its glyph, two columns of it. A bead hung
+/// under one it blocks hangs on the dashed one: the nesting is the same and
+/// means a different thing — part of that, or what that cannot finish until
+/// — and the arm is where the row says which.
+const ARM: char = '─';
+const BLOCKS_ARM: char = '┄';
+/// A shut marker is drawn into the arm's last column rather than appended
+/// after it. Appended, it would cost its own two columns, and a line's
+/// content would then start further right for having something folded under
+/// it.
+const SHUT_IN_THE_ARM: char = '▸';
 const TRUNK: &str = "│   ";
 const GAP: &str = "    ";
 
@@ -283,17 +290,25 @@ pub(crate) fn marker(open: bool) -> &'static str {
 /// Where a line sits, in four columns a level of depth. A line resting shut
 /// says so inside its own elbow, so the fold state costs no width and every
 /// line at a depth starts in the same column.
-pub(crate) fn prefix(trunk: &[bool], last: bool, shut: bool) -> String {
+///
+/// `edge` is what hangs the line under the one above it, for a line that is
+/// a bead: a blocker's elbow is drawn with a dashed arm, so a bead drawn
+/// under its parent and again under something it blocks is two statements
+/// rather than one row twice. Every other kind of line, and a root, hangs by
+/// no edge and takes the solid arm.
+pub(crate) fn prefix(trunk: &[bool], last: bool, shut: bool, edge: Option<&Edge>) -> String {
     let mut drawn = String::from(INDENT);
     for more in trunk {
         drawn.push_str(if *more { TRUNK } else { GAP });
     }
-    drawn.push_str(match (last, shut) {
-        (false, false) => BRANCH,
-        (false, true) => BRANCH_SHUT,
-        (true, false) => LAST,
-        (true, true) => LAST_SHUT,
-    });
+    let arm = match edge {
+        Some(Edge::Blocks) => BLOCKS_ARM,
+        Some(Edge::ParentChild | Edge::Other(_)) | None => ARM,
+    };
+    drawn.push(if last { LAST } else { BRANCH });
+    drawn.push(arm);
+    drawn.push(if shut { SHUT_IN_THE_ARM } else { arm });
+    drawn.push(' ');
     drawn
 }
 
