@@ -38,6 +38,10 @@ pub enum FailureKind {
     /// The tracker cannot run what it was asked at all, so asking it again
     /// answers the same.
     Unsupported,
+    /// The program does not know a flag or subcommand on its command line
+    /// and refused the whole of it before running: a bd older than the flag,
+    /// or newer than it and without it.
+    UnknownFlag,
 }
 
 /// A command that did not yield usable output, classified.
@@ -72,6 +76,24 @@ const NO_ANSWER: [&str; 4] = [
 /// mode`, exit 1, nothing on stdout; the same words from 1.0.4, 1.1.0 and
 /// 1.1.2.
 const CANNOT_RUN: &str = "not yet supported";
+
+/// What cobra, bd's command-line parser, says to a flag or subcommand it does
+/// not have, before bd itself runs. Measured 2026-09-02 on bd 0.42.0 through
+/// 1.0.3, none of which has `-C`: `Error: unknown shorthand flag: 'C' in -C`
+/// then the usage text, exit 1, plain text with `--json` given. A long flag
+/// gets `unknown flag: --readonly` and a subcommand `unknown command "sql"
+/// for "bd"`. The prefix is cobra's own, and keeps the same words quoted
+/// inside another failure from reading as this one.
+const NOT_KNOWN: [&str; 3] = [
+    "error: unknown flag",
+    "error: unknown shorthand flag",
+    "error: unknown command",
+];
+
+/// The one program whose refusal of its command line is a bd to replace. A
+/// credential command or direnv says the same words to a flag it lacks, and
+/// neither is answered by a newer bd.
+const BD: &str = "bd";
 
 /// What herdr says when the pane a command names is not there, and when a
 /// pane is in the alternate screen and working so its history cannot be
@@ -116,6 +138,11 @@ impl RunFailure {
             (
                 FailureKind::Unsupported,
                 format!("{program} cannot run that against this tracker"),
+            )
+        } else if program == BD && NOT_KNOWN.iter().any(|phrase| said.contains(phrase)) {
+            (
+                FailureKind::UnknownFlag,
+                format!("{program} does not know a flag bdi uses"),
             )
         } else if said.contains(NO_SUCH_PANE) {
             (
@@ -311,6 +338,21 @@ mod tests {
     /// measured from.
     const EMBEDDED: &str = "Error: 'bd sql' is not yet supported in embedded mode";
 
+    /// What a bd with no `-C` says to bdi's first tracker call, measured
+    /// 2026-09-02 on bd 0.42.0 through 1.0.3 in an empty directory: cobra
+    /// refuses the command line before bd runs, so it is plain text with
+    /// `--json` given, exit 1. The usage text after these lines was not kept
+    /// by the measurement.
+    const NO_SUCH_FLAG: &str =
+        "Error: unknown shorthand flag: 'C' in -C\nUsage:\n  bd list [flags]\n";
+    /// The same refusal of a long flag and of a subcommand, in cobra's words
+    /// for each, measured the same day.
+    const NO_SUCH_LONG_FLAG: &str = "Error: unknown flag: --readonly";
+    const NO_SUCH_COMMAND: &str = r#"Error: unknown command "sql" for "bd""#;
+
+    /// A stderr no phrase places.
+    const UNPLACED: &str = "Error: something neither bd nor herdr has been measured saying";
+
     /// The two shapes herdr writes when it cannot read a pane, measured
     /// against herdr 0.8.2 on 2026-08-30. Both name the pane and the command,
     /// and `focus` answers the first of them the same way bar its `id`.
@@ -383,6 +425,94 @@ mod tests {
         assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
     }
 
+    /// A bd that does not know a flag or subcommand bdi uses refuses the
+    /// command line before it runs, which is not a tracker that did not
+    /// answer: the reader wants a newer bd, not a look at the network.
+    #[test]
+    fn a_bd_that_does_not_know_a_flag_bdi_uses_is_told_apart_from_an_unanswered_tracker() {
+        for said in [NO_SUCH_FLAG, NO_SUCH_LONG_FLAG, NO_SUCH_COMMAND] {
+            assert_eq!(
+                RunFailure::from_exit("bd", Some(1), said).kind,
+                FailureKind::UnknownFlag,
+                "on {said:?}"
+            );
+        }
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), UNREACHABLE).kind,
+            FailureKind::Unavailable
+        );
+    }
+
+    /// The bd this build runs against still refuses a flag it does not have
+    /// in the words the classifier reads, which is the whole of what the
+    /// classification rests on. cobra refuses before bd runs, so no tracker
+    /// is touched.
+    #[test]
+    fn the_bd_on_path_refuses_a_flag_it_lacks_in_the_words_the_classifier_reads() {
+        let failure = RealRunner
+            .run(
+                "bd",
+                &[
+                    "--readonly",
+                    "list",
+                    "--json",
+                    "--no-such-flag-bdi-never-uses",
+                ],
+                None,
+                &Env::new(),
+            )
+            .expect_err("cobra refuses the command line");
+
+        assert_eq!(failure.kind, FailureKind::UnknownFlag);
+    }
+
+    /// cobra's refusal is an error line of its own, `Error: unknown …`. The
+    /// same words inside another failure — a path or a statement bd was
+    /// quoting back — are not bd refusing its command line.
+    #[test]
+    fn cobras_words_inside_another_failure_do_not_make_it_a_bd_to_replace() {
+        let quoting =
+            r#"Error: failed to open database: no such directory "/srv/unknown command/tracker""#;
+
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), quoting).kind,
+            FailureKind::Unavailable
+        );
+    }
+
+    /// A credential command or direnv refusing its own command line is a
+    /// configured command that failed, which is what it always was: only bd
+    /// refusing a flag is a bd to replace, and the screen must not send the
+    /// reader to upgrade the wrong program.
+    #[test]
+    fn only_bds_refusal_of_its_command_line_is_a_bd_to_replace() {
+        for program in ["sh", "direnv"] {
+            assert_eq!(
+                RunFailure::from_exit(program, Some(1), NO_SUCH_COMMAND).kind,
+                FailureKind::Unavailable,
+                "from {program}"
+            );
+        }
+    }
+
+    /// Placing cobra's refusal moves no other failure: each stderr bd or
+    /// herdr is known to write still lands where it did.
+    #[test]
+    fn placing_cobras_refusal_moves_no_other_failure() {
+        let placed = [
+            (REFUSED, FailureKind::Auth),
+            (UNREACHABLE, FailureKind::Unavailable),
+            (EMBEDDED, FailureKind::Unsupported),
+            (NO_SUCH_PANE, FailureKind::Gone),
+            (PANE_BUSY, FailureKind::Busy),
+            (UNPLACED, FailureKind::Unavailable),
+        ];
+
+        for (said, expected) in placed {
+            assert_eq!(failing_command(said).kind, expected, "on {said:?}");
+        }
+    }
+
     /// bd's failures name the database and the user it authenticated as.
     #[test]
     fn bds_error_text_never_survives_into_the_failure() {
@@ -398,7 +528,7 @@ mod tests {
     /// guessed at as a credential problem.
     #[test]
     fn an_unrecognised_failure_is_not_reported_as_a_refused_credential() {
-        let failure = failing_command("Error: unknown flag: --whatever");
+        let failure = failing_command(UNPLACED);
 
         assert_eq!(failure.kind, FailureKind::Unavailable);
     }

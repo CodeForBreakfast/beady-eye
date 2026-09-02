@@ -475,6 +475,21 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
     );
 }
 
+/// A bd that does not know a flag `bdi` uses is a bd to replace, which a
+/// consumer cannot tell from an outage unless the reason says so.
+#[test]
+fn a_project_whose_bd_does_not_know_a_flag_is_named_in_the_json_as_such() {
+    let trackers =
+        orbital_with(orbital_tracker().failing(Asked::All, refused(FailureKind::UnknownFlag)));
+
+    let emitted = emit(&panes(), &trackers, Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["failed_projects"],
+        json!([{"project": "orbital", "tracker": "unknown-flag"}])
+    );
+}
+
 /// A configured project whose tracker refused is still a configured project.
 /// Its panes have nowhere to be attributed, which is not the same as `bdi`
 /// never having been told the project exists — and telling those two apart is

@@ -949,9 +949,18 @@ environment = "direnv"
   it beside `environment = "direnv"` is refused: it is entered one way, and a
   precedence between the two would be a mechanism nothing on the screen says.
 - **An authentication failure is distinguished from the others.**
-  `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`, `exec`, or
-  `parse`. They want different responses and reporting them as one string does
-  not help anyone.
+  `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`, `exec`,
+  `parse`, or `unknown-flag`. They want different responses and reporting them
+  as one string does not help anyone. The last is bd refusing the command
+  line before it runs, in cobra's words (`unknown flag`, `unknown shorthand
+  flag`, `unknown command`): a bd older than a flag `bdi` uses, which is what
+  a bd below README's floor looks like, and the screen names the floor. Only
+  bd's own refusal counts: a credential command or direnv saying the same
+  words to a flag it lacks is a configured command that failed, as before,
+  and not a bd to replace.
+  `bdi` never asks `bd --version`: bd already says which flag it lacks on the
+  first call, a version gate cannot see a newer bd that drops a flag, and the
+  refusal needs no parsing where a version string would.
 - **No error text reaches the output verbatim.** bd's failures name the database
   and user; the reason is reported, the raw stderr is not.
 

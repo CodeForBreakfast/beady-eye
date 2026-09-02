@@ -400,6 +400,7 @@ mod tests {
             FailureKind::Exec,
             FailureKind::Parse,
             FailureKind::Unsupported,
+            FailureKind::UnknownFlag,
         ] {
             assert_eq!(
                 read("w:p1".to_string(), Err(failure(kind))),

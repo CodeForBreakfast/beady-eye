@@ -370,6 +370,7 @@ pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
         | FailureKind::Unsupported => TrackerFailure::Unavailable,
         FailureKind::Exec => TrackerFailure::Exec,
         FailureKind::Parse => TrackerFailure::Parse,
+        FailureKind::UnknownFlag => TrackerFailure::UnknownFlag,
     }
 }
 
@@ -1235,6 +1236,7 @@ orbital = ["bdi-404"]
             (FailureKind::Exec, TrackerFailure::Exec),
             (FailureKind::Parse, TrackerFailure::Parse),
             (FailureKind::Unsupported, TrackerFailure::Unavailable),
+            (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
         ];
 
         for (kind, expected) in kinds {

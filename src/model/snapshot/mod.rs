@@ -56,6 +56,9 @@ pub enum TrackerFailure {
     Exec,
     /// bd answered with something `bdi` cannot read.
     Parse,
+    /// bd does not know a flag `bdi` uses, so it refused the command line
+    /// before reading anything: a bd below the floor README states.
+    UnknownFlag,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

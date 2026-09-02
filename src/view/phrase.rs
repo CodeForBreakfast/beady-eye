@@ -22,12 +22,26 @@ use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::types::{PaneStatus, Status};
 use crate::view::{Freshness, Mark, Notice};
 
+/// The oldest bd whose command line `bdi` runs, as README states it. A
+/// literal rather than a `const` so the phrase naming it stays a
+/// `&'static str`, which is the guarantee that nothing a tool wrote is in it.
+macro_rules! bd_floor {
+    () => {
+        "1.1.0"
+    };
+}
+
 pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     match failure {
         TrackerFailure::Auth => "the tracker refused the credential it was given",
         TrackerFailure::Unavailable => "the tracker did not answer",
         TrackerFailure::Exec => "bd could not be run",
         TrackerFailure::Parse => "bd answered with something bdi cannot read",
+        TrackerFailure::UnknownFlag => concat!(
+            "bd does not know a flag bdi uses · bdi needs bd ",
+            bd_floor!(),
+            " or newer"
+        ),
     }
 }
 
@@ -497,7 +511,8 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
         | FailureKind::Unavailable
         | FailureKind::Exec
         | FailureKind::Parse
-        | FailureKind::Unsupported => "that pane could not be read",
+        | FailureKind::Unsupported
+        | FailureKind::UnknownFlag => "that pane could not be read",
     }
 }
 
@@ -637,6 +652,7 @@ mod tests {
             TrackerFailure::Unavailable,
             TrackerFailure::Exec,
             TrackerFailure::Parse,
+            TrackerFailure::UnknownFlag,
         ] {
             said.push(tracker_failure(failure).to_string());
             said.push(failed_project(&FailedProject {
@@ -730,6 +746,7 @@ mod tests {
             FailureKind::Exec,
             FailureKind::Parse,
             FailureKind::Unsupported,
+            FailureKind::UnknownFlag,
         ] {
             said.push(pane_unreadable(kind).to_string());
         }
@@ -1201,6 +1218,26 @@ mod tests {
         let _: fn(FailureKind) -> &'static str = pane_unreadable;
     }
 
+    /// The band under a pane that cannot be read says what happened to the
+    /// pane: gone and busy each in their own words, since one is a row to
+    /// stop tailing and the other a wait, and the rest that it could not be
+    /// read.
+    #[test]
+    fn the_pane_phrases_say_what_happened_to_the_pane() {
+        says(pane_unreadable(FailureKind::Gone), "gone");
+        says(pane_unreadable(FailureKind::Busy), "busy");
+        for kind in [
+            FailureKind::Auth,
+            FailureKind::Unavailable,
+            FailureKind::Exec,
+            FailureKind::Parse,
+            FailureKind::Unsupported,
+            FailureKind::UnknownFlag,
+        ] {
+            says(pane_unreadable(kind), "could not be read");
+        }
+    }
+
     #[test]
     fn every_phrase_says_something() {
         assert!(every_phrase()
@@ -1209,18 +1246,31 @@ mod tests {
     }
 
     #[test]
-    fn the_four_tracker_failures_are_told_apart() {
+    fn the_five_tracker_failures_are_told_apart() {
         let said = [
             tracker_failure(TrackerFailure::Auth),
             tracker_failure(TrackerFailure::Unavailable),
             tracker_failure(TrackerFailure::Exec),
             tracker_failure(TrackerFailure::Parse),
+            tracker_failure(TrackerFailure::UnknownFlag),
         ];
         let mut distinct = said.to_vec();
         distinct.sort_unstable();
         distinct.dedup();
 
         assert_eq!(distinct.len(), said.len());
+    }
+
+    /// A bd that does not know a flag bdi uses is one the reader replaces,
+    /// so the phrase says which bd would do — the floor README states, from
+    /// the one place the code holds it.
+    #[test]
+    fn a_bd_that_does_not_know_a_flag_is_sent_to_the_floor() {
+        let said = tracker_failure(TrackerFailure::UnknownFlag);
+
+        says(said, "bd");
+        says(said, "flag");
+        says(said, &format!("bd {} or newer", bd_floor!()));
     }
 
     /// A tracker that answered and holds no such bead did nothing wrong, and
