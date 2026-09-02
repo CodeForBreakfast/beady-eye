@@ -133,7 +133,6 @@ pub struct Node {
     pub badges: Vec<Badged>,
     pub agent: Option<AgentRef>,
     pub anomalies: Vec<Anomaly>,
-    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

@@ -247,7 +247,7 @@ be reached through the same emptiness test.
 
 **Scoping is silent, and this is a deviation from *degrade, never
 disappear*.** That principle governs a tree `bdi` could not draw: an
-unreachable tracker, a dangling parent, a truncated subtree. A project the
+unreachable tracker, a dangling parent. A project the
 reader excluded on the command line is not a failure to report, and a standing
 line about it would be noise on every run of a flag whose whole purpose is a
 smaller screen. The reader typed the scope; the screen does not need to tell
@@ -355,7 +355,6 @@ A row carries:
 | `dependencies[]` — `depends_on_id`, `type` | every edge out of the bead; `type` is `parent-child` or `blocks`, and any other value nests nothing |
 | `metadata` | the whole map, inline |
 | `updated_at`, `started_at`, `closed_at`, `owner`, `assignee` | the age rules |
-| `truncated` | parsed and carried, though `bd list` never writes it — see below |
 
 Three consequences:
 
@@ -394,12 +393,6 @@ What we still redo is the **rendering**. bd's text tree emits broken glyphs —
 vertical connectors missing under a node that has following siblings, and child
 indent that does not line up with its parent's marker. The JSON is sound; only
 the drawing is not.
-
-`truncated` is parsed and surfaced rather than ignored — a truncated node means
-the tree shown is incomplete, which is exactly the kind of silent partial answer
-this tool exists to avoid — but `bd list` never writes the field, so nothing
-production reads reaches that path today. Whether it is a dead feature or a
-missing source is open (`bdi-7ao.12` left it standing deliberately).
 
 ### herdr
 
@@ -625,10 +618,7 @@ each bead counted once, for the same reason. Keyed on having children, never
 on `issue_type == "epic"`: reading a display rule out of bd's taxonomy is
 interpreting what a field means, which this project's rules push into config,
 whereas having children is the shape of the tree `bdi` already computes and is
-exactly the condition under which the question is askable. What a count does
-not cover: a truncated node's descendants were never in the tracker's answer,
-so a count covers only what bd returned, and the tree's truncation note is
-what carries the honesty.
+exactly the condition under which the question is askable.
 
 **Two degradations, and a cycle.** `dangling` is beads naming something they
 depend on that the answer does not hold — most often a deleted parent; each is
@@ -1011,8 +1001,7 @@ name to the socket after any command that wrote something.
             "title": "shell selector + stable path",
             "source": "agent_pane"
           },
-          "anomalies": [],
-          "truncated": false
+          "anomalies": []
         },
         {
           "id": "nix-9670s.16",
@@ -1028,8 +1017,7 @@ name to the socket after any command that wrote something.
           "closed_at": null,
           "badges": [],
           "agent": null,
-          "anomalies": [{ "rule": "orphan-claim" }],
-          "truncated": false
+          "anomalies": [{ "rule": "orphan-claim" }]
         }
       ],
       "dangling": [],

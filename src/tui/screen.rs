@@ -687,7 +687,6 @@ mod tests {
             badges: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
-            truncated: false,
         };
 
         let mut nodes = vec![bead("grv-1".to_string(), 0)];

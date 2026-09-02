@@ -56,7 +56,6 @@ pub fn build_tree(
                 badges: badges::badges_for(bead, &cfg.badges),
                 anomalies: anomaly::detect(bead, agent.as_ref(), refused, &cfg.anomalies, now),
                 agent,
-                truncated: bead.truncated,
             }
         })
         .collect();
@@ -237,7 +236,6 @@ mod tests {
         );
         assert_eq!(root.closed_at, None);
         assert_eq!(root.edge, None);
-        assert!(!root.truncated);
 
         let child = node(&t, "orb-7.1");
         assert_eq!(child.edge, Some(Edge::ParentChild));

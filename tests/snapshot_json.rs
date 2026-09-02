@@ -314,7 +314,6 @@ fn a_node_carries_every_field_the_contract_names() {
             "badges": [{"key": "blocked_on", "text": "⏸ waiting"}],
             "agent": null,
             "anomalies": [{"rule": "orphan-claim"}],
-            "truncated": false,
         })
     );
 }

@@ -424,16 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn truncation_survives_the_parse() {
-        for bead in fixture() {
-            assert!(!bead.truncated, "{} is not truncated", bead.id);
-        }
-
-        let json = r#"[{"id":"x","title":"t","status":"open","truncated":true}]"#;
-        assert!(parse_beads(json).unwrap()[0].truncated);
-    }
-
-    #[test]
     fn a_wrongly_typed_field_is_an_error_not_a_default() {
         let bad = r#"[{"id":"x","title":"t","status":"open","priority":"high"}]"#;
         assert!(parse_beads(bad).is_err());

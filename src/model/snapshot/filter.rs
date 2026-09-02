@@ -143,8 +143,7 @@ mod tests {
     }
 
     /// A quiet tree that has something to report: a bead waiting on work bd
-    /// never returned, a bead blocked by its own forebear, and a subtree bd
-    /// cut short.
+    /// never returned, and a bead blocked by its own forebear.
     fn quiet_with_reports() -> Tree {
         let json = r#"[
           {"id":"orb-6","title":"the far side","status":"open"},
@@ -155,10 +154,7 @@ mod tests {
            "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
                            {"depends_on_id":"orb-6","type":"blocks"}]},
           {"id":"orb-6.4","title":"two","status":"open",
-           "dependencies":[{"depends_on_id":"orb-6.3","type":"parent-child"}]},
-          {"id":"orb-6.5","title":"cut short","status":"open",
-           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
-           "truncated":true}
+           "dependencies":[{"depends_on_id":"orb-6.3","type":"parent-child"}]}
         ]"#;
         build_tree(
             "orbital",
@@ -447,7 +443,6 @@ mod tests {
         );
         assert_eq!(back.dangling, ["orb-6.2"]);
         assert_eq!(back.cycles, ["orb-6"]);
-        assert!(back.nodes.iter().any(|n| n.truncated));
     }
 
     #[test]

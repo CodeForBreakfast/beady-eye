@@ -70,9 +70,6 @@ pub fn cells(
     shut_over: Option<Counts>,
 ) -> Row {
     let mut notes = Vec::new();
-    if node.truncated {
-        notes.push(phrase::truncated().to_string());
-    }
     notes.extend(
         shut_over
             .as_ref()
@@ -192,7 +189,6 @@ mod tests {
             badges: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
-            truncated: false,
         }
     }
 
@@ -353,19 +349,6 @@ mod tests {
         assert_eq!(row.anomalies, None);
         assert_eq!(row.agent, None);
         assert_eq!(row.notes, Vec::<String>::new());
-    }
-
-    /// A truncated node means the tree shown is incomplete, which is the kind
-    /// of silent partial answer this tool exists to avoid.
-    #[test]
-    fn a_node_the_tracker_stopped_at_says_so_on_its_row() {
-        let mut stopped = node("nix-9670s.20", Status::Open);
-        stopped.truncated = true;
-
-        assert_eq!(
-            cells(&stopped, ROOT, None, None).notes,
-            vec![phrase::truncated()]
-        );
     }
 
     #[test]

@@ -248,7 +248,6 @@ mod tests {
             badges: Vec::new(),
             agent,
             anomalies: Vec::new(),
-            truncated: false,
         }
     }
 

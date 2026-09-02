@@ -205,7 +205,6 @@ fn finding(note: Note) -> (String, Color) {
     let said = match note {
         Note::Dangling(count) => phrase::dangling(count),
         Note::Cycle(count) => phrase::cycle(count),
-        Note::Truncated(count) => phrase::truncated_nodes(count),
         Note::NoRoots => return (phrase::no_roots().to_string(), Color::Reset),
     };
     (format!("{WARNING} {said}"), LOOK_AT_THIS)
@@ -377,7 +376,6 @@ mod tests {
             badges: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
-            truncated: false,
         }
     }
 
@@ -435,29 +433,6 @@ mod tests {
         assert_eq!(painted[0].said, LAST);
         assert_eq!(painted[0].style.fg, Some(Color::Reset));
         assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS));
-    }
-
-    /// A note's count is a count of beads, and the word is what says so. It
-    /// is written out here rather than asked of `phrase`, because a count
-    /// corrected by renaming what it counts would leave every test that reads
-    /// the number alone green.
-    #[test]
-    fn a_note_names_the_beads_the_tracker_stopped_at() {
-        let drawn = Painted::of(
-            fitted(
-                &under(LAST, Content::Note(Note::Truncated(1))),
-                0,
-                &at_rest(),
-            ),
-            96,
-            1,
-        )
-        .rows();
-
-        says(
-            &drawn[0],
-            "1 bead the tracker stopped at · what hangs beneath it is not in this tree",
-        );
     }
 
     /// Every other note is a fault and wears a warning. Nothing went wrong in

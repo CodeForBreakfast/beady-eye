@@ -207,7 +207,6 @@ pub struct Unread {
 pub enum Note {
     Dangling(usize),
     Cycle(usize),
-    Truncated(usize),
     /// Every tracker answered and none of them had a root to draw, so the
     /// forest is empty. Under no tree, because there is none: it is the only
     /// line on the screen.
@@ -221,9 +220,8 @@ pub struct Group {
     /// How many of the things this group holds carry findings the screen is
     /// not drawing, because the group holds them rather than showing them.
     ///
-    /// Only a hidden tree has any: the filter took its dangling, looping
-    /// and truncated counts out of the forest with it, and that choice should
-    /// hold — but a group that says only how many trees it hides reads like
+    /// Only a hidden tree has any: the filter took its dangling and looping
+    /// counts out of the forest with it, and that choice should hold — but a group that says only how many trees it hides reads like
     /// "nothing to see" when some of them are broken.
     pub with_findings: usize,
 }
@@ -319,17 +317,6 @@ pub(crate) fn notes_of(tree: &Tree) -> Vec<Note> {
     }
     if !tree.cycles.is_empty() {
         notes.push(Note::Cycle(tree.cycles.len()));
-    }
-    // A bead the tracker stopped at is one bead however many ways down the
-    // tree draws it, and the note says beads.
-    let truncated: BTreeSet<&str> = tree
-        .nodes
-        .iter()
-        .filter(|node| node.truncated)
-        .map(|node| node.id.as_str())
-        .collect();
-    if !truncated.is_empty() {
-        notes.push(Note::Truncated(truncated.len()));
     }
     notes
 }

@@ -333,11 +333,6 @@ pub fn root_not_found() -> &'static str {
     "no such bead in this tracker · named in config or on the command line"
 }
 
-/// A node bd stopped at, so what hangs beneath it is not in this tree.
-pub fn truncated() -> &'static str {
-    "more beneath this · the tracker stopped at its depth limit"
-}
-
 /// A run of closed siblings nobody is working, drawn as a count rather than
 /// as rows of its own.
 pub fn elided(count: usize) -> String {
@@ -380,16 +375,6 @@ pub fn agents_beneath(count: usize) -> String {
 pub fn anomalies_beneath(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
     format!("{count} {bead} beneath")
-}
-
-/// Beads bd stopped at, counted for the tree they sit in.
-pub fn truncated_nodes(count: usize) -> String {
-    let (bead, them) = if count == 1 {
-        ("bead", "it")
-    } else {
-        ("beads", "them")
-    };
-    format!("{count} {bead} the tracker stopped at · what hangs beneath {them} is not in this tree")
 }
 
 /// Projects whose tracker could not be read at all, so they have no root to
@@ -687,7 +672,6 @@ mod tests {
         }
         said.push(no_live_panes().to_string());
         said.push(panes_may_be_incomplete().to_string());
-        said.push(truncated().to_string());
         said.push(root_unread().to_string());
         said.push(root_not_found().to_string());
         for count in [1, 3] {
@@ -695,7 +679,6 @@ mod tests {
             said.push(unfinished_beneath(count));
             said.push(agents_beneath(count));
             said.push(anomalies_beneath(count));
-            said.push(truncated_nodes(count));
             said.push(failed_projects(count));
             said.push(conflicts(count));
             for with_findings in [0, 1, count] {
@@ -1143,7 +1126,6 @@ mod tests {
     #[test]
     fn the_failure_phrases_are_static() {
         let _: fn(TrackerFailure) -> &'static str = tracker_failure;
-        let _: fn() -> &'static str = truncated;
         let _: fn() -> &'static str = no_live_panes;
         let _: fn() -> &'static str = panes_may_be_incomplete;
         let _: fn(JoinSource) -> Option<&'static str> = join_caveat;
@@ -1322,7 +1304,6 @@ mod tests {
             unfinished_beneath(1),
             agents_beneath(1),
             anomalies_beneath(1),
-            truncated_nodes(1),
             failed_projects(1),
             conflicts(1),
             hidden_trees(1, 0),

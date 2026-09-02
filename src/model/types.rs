@@ -92,8 +92,6 @@ pub struct Bead {
     /// on the clock rather than on a write.
     #[serde(default)]
     pub defer_until: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub truncated: bool,
 }
 
 /// bd omits a field it has nothing for, and `#[serde(default)]` covers that.

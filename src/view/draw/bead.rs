@@ -410,21 +410,6 @@ mod tests {
         assert!(first < second, "{drawn:?}");
     }
 
-    /// A row bd stopped at means what hangs beneath it is not in the tree at
-    /// all, which is the silent partial answer this tool exists to avoid — so
-    /// it survives all the way to the screen.
-    #[test]
-    fn a_bead_the_tracker_stopped_at_says_so_on_screen() {
-        let mut stopped = node("nix-9670s.20", "a bead", Status::Open);
-        stopped.truncated = true;
-        let drawn = Painted::of(bead_line(&row(&stopped), BRANCH, 4), 120, 1).rows();
-
-        says(
-            &drawn[0],
-            "more beneath this · the tracker stopped at its depth limit",
-        );
-    }
-
     #[test]
     fn a_bead_line_too_long_for_the_width_is_cut_rather_than_wrapped() {
         let long = node("nix-9670s.20", &"wallpaper ".repeat(20), Status::Open);
