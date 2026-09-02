@@ -19,8 +19,8 @@ mod terminal;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::{Duration, Instant};
 
-use terminal::a_home_naming_one_project;
 use terminal::driver::Driven;
+use terminal::{a_home_naming_one_project, said_by};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -28,9 +28,9 @@ const COLS: u16 = 120;
 /// `?`, which would put the key bindings up — had it arrived.
 const SHOW_BINDINGS: &[u8] = b"?";
 
-/// Long enough to tell a refusal from a wait: the driver's own deadline is a
-/// minute, and a refusal is a comparison against what has been read.
-const A_REFUSAL_TAKES: Duration = Duration::from_secs(10);
+/// Long enough to tell a refusal from a wait: the driver's own deadline is
+/// ten seconds, and a refusal is a comparison against what has been read.
+const A_REFUSAL_TAKES: Duration = Duration::from_secs(5);
 
 #[test]
 fn a_key_typed_before_the_first_frame_is_refused_at_once() {
@@ -44,11 +44,7 @@ fn a_key_typed_before_the_first_frame_is_refused_at_once() {
     let refusal = typed
         .err()
         .expect("the driver typed at a bdi that had not opened its screen, and said nothing");
-    let refusal = refusal
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| refusal.downcast_ref::<&str>().map(|said| said.to_string()))
-        .expect("the refusal is a message");
+    let refusal = said_by(&refusal);
     assert!(
         refusal.contains("ENTER_ALTERNATE_SCREEN"),
         "the refusal does not say what to wait for: {refusal}"

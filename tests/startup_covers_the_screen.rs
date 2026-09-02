@@ -17,41 +17,40 @@
 
 mod terminal;
 
-use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::process::Child;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use terminal::{a_home_naming_one_project, a_pty, bdi_on, contains, ENTER_ALTERNATE_SCREEN};
+use terminal::a_home_naming_one_project;
+use terminal::driver::{Driven, GIVING_UP};
+use terminal::ENTER_ALTERNATE_SCREEN;
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
 const CELLS: usize = ROWS as usize * COLS as usize;
 
-/// Long enough for a collection that has no tracker to fail and the screen to
-/// open. Only ever a giving-up point: nothing is asserted against the clock.
-const LONG_ENOUGH_TO_DRAW: Duration = Duration::from_secs(60);
-/// The screen is done when the terminal has been silent this many times over.
+/// The screen is done when the terminal has been silent this long.
 ///
-/// `bdi` writes one frame in one burst, and it writes several bursts here: it
-/// opens the screen before any tracker has answered, so it goes on drawing
-/// for as long as it is collecting — a mark turning beside each project every
-/// eighty milliseconds, and each project redrawn as its rows land. So a gap
-/// this long is not one frame ending but the collecting being over, which is
-/// the first moment `bdi` has nothing left to say.
+/// Waiting for the alternate screen only says the frame has started, so the
+/// test then reads until the terminal falls silent. `bdi` writes one frame in
+/// one burst, and it writes several bursts here: it opens the screen before
+/// any tracker has answered, so it goes on drawing for as long as it is
+/// collecting — a mark turning beside each project every eighty
+/// milliseconds, and each project redrawn as its rows land. So a gap this
+/// long is not one frame ending but the collecting being over, which is the
+/// first moment `bdi` has nothing left to say.
 ///
-/// That is later than this test needs and no worse for it, for the reason
-/// `first_frame` gives: a later frame accounts for cells the first already
-/// did, and it is reading too *little* that would count cells no frame had
-/// reached.
-const SILENCES_THAT_END_A_FRAME: u8 = 3;
-const A_SILENCE: Duration = Duration::from_millis(200);
+/// That is later than this test needs and no worse for it: reading too much
+/// is harmless, since a later frame accounts for the same cells the first
+/// already did, and it is reading too *little* that would count cells no
+/// frame had reached.
+const A_FRAME_IS_OVER_AFTER: Duration = Duration::from_millis(600);
 
 #[test]
 fn the_first_frame_accounts_for_every_cell_of_the_terminal() {
-    let mut showing = Showing::the_forest();
+    let mut bdi = Driven::bdi(ROWS, COLS, a_home_naming_one_project("covers"), &[]);
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
+    bdi.settle(A_FRAME_IS_OVER_AFTER, GIVING_UP);
 
-    let accounted = accounted_for(&showing.first_frame());
+    let accounted = accounted_for(&bdi.everything());
 
     assert_eq!(
         accounted,
@@ -218,86 +217,4 @@ fn a_string_length(said: &[u8]) -> usize {
         end += 1;
     }
     said.len()
-}
-
-/// A `bdi` drawing on a pty of our own.
-struct Showing {
-    child: Child,
-    terminal: OwnedFd,
-    home: std::path::PathBuf,
-}
-
-impl Showing {
-    fn the_forest() -> Self {
-        let home = a_home_naming_one_project("covers");
-        let (ours, theirs) = a_pty(ROWS, COLS);
-        // Read without blocking, because a frame ends in silence and there is
-        // nothing to end a blocking read: `bdi` is still alive, so no end of
-        // file arrives, and a read that outlives its `poll` waits for the next
-        // frame instead of reporting that this one is over.
-        unsafe { libc::fcntl(ours.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
-        let child = bdi_on(&theirs, &home, &[]);
-        drop(theirs);
-        Self {
-            child,
-            terminal: ours,
-            home,
-        }
-    }
-
-    /// Everything `bdi` writes up to and including its first frame.
-    ///
-    /// Waiting for the alternate screen only says the frame has started, so
-    /// this then reads until the terminal falls silent. Reading too much would
-    /// be harmless — a redraw accounts for the same cells again — but reading
-    /// too little would count cells the frame had not reached yet.
-    fn first_frame(&mut self) -> Vec<u8> {
-        let mut said = Vec::new();
-        let giving_up = Instant::now() + LONG_ENOUGH_TO_DRAW;
-        while Instant::now() < giving_up && !contains(&said, ENTER_ALTERNATE_SCREEN) {
-            self.read_some(&mut said);
-        }
-        assert!(
-            contains(&said, ENTER_ALTERNATE_SCREEN),
-            "bdi never put the terminal on the alternate screen; it wrote {} bytes: {:?}",
-            said.len(),
-            String::from_utf8_lossy(&said)
-        );
-
-        let mut silences = 0;
-        while silences < SILENCES_THAT_END_A_FRAME && Instant::now() < giving_up {
-            let so_far = said.len();
-            self.read_some(&mut said);
-            silences = if said.len() == so_far {
-                silences + 1
-            } else {
-                0
-            };
-        }
-        said
-    }
-
-    fn read_some(&mut self, into: &mut Vec<u8>) {
-        let mut polling = libc::pollfd {
-            fd: self.terminal.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        unsafe { libc::poll(&mut polling, 1, A_SILENCE.as_millis() as i32) };
-        let mut buffer = [0u8; 8192];
-        let mut terminal = unsafe { std::fs::File::from_raw_fd(self.terminal.as_raw_fd()) };
-        let read = terminal.read(&mut buffer);
-        std::mem::forget(terminal);
-        if let Ok(count) = read {
-            into.extend_from_slice(&buffer[..count]);
-        }
-    }
-}
-
-impl Drop for Showing {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.home);
-    }
 }

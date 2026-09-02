@@ -48,6 +48,15 @@ pub const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 /// on the master is a different question with a different answer — it arrives
 /// when the last *slave* handle closes, and every one of those is `bdi`'s own
 /// stdio, so a read here sees no end of file while `bdi` is alive.
+///
+/// Which is why the master comes back non-blocking. A frame ends in silence,
+/// and with no end of file coming there is nothing else to end a read: one
+/// that outlives its `poll` waits for the next frame instead of reporting
+/// that this one is over, and a test that waits like that runs to its whole
+/// deadline — bdi-2bb.28, measured at 60.05s against 0.66s. Set here, every
+/// read on a pty from this harness is bounded by the poll before it. A `bdi`
+/// that dies still ends a read the same way it always did: end of file is a
+/// read of nothing, blocking or not.
 pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
     let mut ours = 0;
     let mut theirs = 0;
@@ -79,6 +88,11 @@ pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
         unsafe { libc::fcntl(ours, libc::F_SETFD, libc::FD_CLOEXEC) },
         0,
         "the master is ours to keep to ourselves"
+    );
+    assert_eq!(
+        unsafe { libc::fcntl(ours, libc::F_SETFL, libc::O_NONBLOCK) },
+        0,
+        "the master is ours to read without blocking"
     );
     unsafe {
         (
@@ -202,6 +216,30 @@ pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf
     )
     .expect("the config is ours to write");
     home
+}
+
+/// A `HOME` whose config does not parse, for a test whose subject is a `bdi`
+/// that exits before it has drawn anything: reading the config is the first
+/// thing `bdi` does, and a config it cannot read is an error on the way out.
+pub fn a_home_whose_config_does_not_parse(named: &str) -> PathBuf {
+    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
+    std::fs::write(
+        home.join(".config/beady-eye/config.toml"),
+        "[[projects]\nthis is not toml\n",
+    )
+    .expect("the config is ours to write");
+    home
+}
+
+/// What a panic said, for a test whose subject is a refusal: the payload is
+/// a `String` where the message was formatted and a `&str` where it was not.
+pub fn said_by(panic: &Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|said| said.to_string()))
+        .expect("the refusal is a message")
 }
 
 /// A `bdi` drawing on the far end of a pty, with `environment` on top of what

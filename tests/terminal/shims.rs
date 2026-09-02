@@ -141,6 +141,7 @@ impl ShimmedTracker {
     /// frame before, so "collected 12:34:56" becoming "collecting" puts three
     /// letters on the wire and no word a test could look for. The shim says it
     /// outright instead.
+    #[track_caller]
     pub fn wait_until_holding(&self, patience: Duration) {
         let giving_up = Instant::now() + patience;
         while Instant::now() < giving_up {
@@ -250,6 +251,7 @@ impl ShimmedHerdr {
     /// The screen cannot be asked this: a `bdi` that has not yet asked herdr
     /// and one waiting on it draw the same band. The shim says it outright
     /// instead, which is what makes the wait an ordering rather than a sleep.
+    #[track_caller]
     pub fn wait_until_holding(&self, patience: Duration) {
         let giving_up = Instant::now() + patience;
         while Instant::now() < giving_up {

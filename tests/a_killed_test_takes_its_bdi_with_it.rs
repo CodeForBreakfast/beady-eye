@@ -38,6 +38,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use terminal::driver::GIVING_UP;
 use terminal::{a_home_naming_one_project, a_pty, bdi_on, contains, ENTER_ALTERNATE_SCREEN};
 
 const ROWS: u16 = 40;
@@ -53,10 +54,6 @@ const HOME_SAID: &str = "its home is ";
 /// slave arrives across the exec at the number it was opened on.
 const SLAVE_FD: &str = "BDI_TEST_PTY_SLAVE_FD";
 
-/// Long enough for a machine under a mutation run to start a `bdi` and say
-/// which one. Only ever a giving-up point: nothing is asserted against the
-/// clock.
-const LONG_ENOUGH_TO_SPAWN: Duration = Duration::from_secs(60);
 /// Long enough for a process the kernel has signalled to be gone.
 const LONG_ENOUGH_TO_DIE: Duration = Duration::from_secs(10);
 /// Long enough for the test below to do the killing, and short enough that a
@@ -143,14 +140,16 @@ fn a_killed_test_leaves_no_bdi_behind() {
     // sketch of it. The `bdi` processes that outlived their mutation runs had
     // exec'd and drawn, and the arming this holds is done before the exec, so
     // a kill that lands first would say nothing about whether it survives one.
-    if let Err(said) = wait_until_drawn(&ours) {
+    if let Err(said) = wait_until_drawn(&ours, &bdi) {
         // Dropping a `Child` does not kill it, and a test about processes
         // left running is the last one that should leave any.
         let _ = parent.kill();
         let _ = parent.wait();
         let _ = std::fs::remove_dir_all(&home);
         panic!(
-            "bdi never put the terminal on the alternate screen; it wrote {} bytes: {:?}",
+            "bdi never put the terminal on the alternate screen — it is {}; \
+             it wrote {} bytes: {:?}",
+            state_of(&bdi),
             said.len(),
             String::from_utf8_lossy(&said)
         );
@@ -205,32 +204,49 @@ fn a_test_binary_holding_a_bdi(theirs: &std::fs::File) -> Child {
 }
 
 /// Read our end until `bdi` has put the terminal on the alternate screen, or
-/// give up and hand back what it said instead.
-fn wait_until_drawn(terminal: &OwnedFd) -> Result<(), Vec<u8>> {
-    // Read without blocking: `bdi` holds the other end, so no end of file
-    // arrives to stop a read that has outrun its poll waiting for a byte.
-    unsafe { libc::fcntl(terminal.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+/// give up and hand back what it said instead — at once where `bdi` has
+/// stopped running, once its last words are read, since nothing more is
+/// coming from it. The `bdi` is not ours to `wait` on, so `/proc` is asked
+/// rather than the child.
+fn wait_until_drawn(terminal: &OwnedFd, bdi: &Process) -> Result<(), Vec<u8>> {
     let mut said = Vec::new();
-    let giving_up = Instant::now() + LONG_ENOUGH_TO_SPAWN;
+    let giving_up = Instant::now() + GIVING_UP;
     while Instant::now() < giving_up {
         if contains(&said, ENTER_ALTERNATE_SCREEN) {
             return Ok(());
         }
-        let mut polling = libc::pollfd {
-            fd: terminal.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        unsafe { libc::poll(&mut polling, 1, A_GLANCE.as_millis() as i32) };
-        let mut buffer = [0u8; 8192];
-        let mut reading = unsafe { std::fs::File::from_raw_fd(terminal.as_raw_fd()) };
-        let read = reading.read(&mut buffer);
-        std::mem::forget(reading);
-        if let Ok(count) = read {
-            said.extend_from_slice(&buffer[..count]);
+        if !state_of(bdi).is_running() {
+            while read_some(terminal, &mut said) {}
+            if contains(&said, ENTER_ALTERNATE_SCREEN) {
+                return Ok(());
+            }
+            return Err(said);
         }
+        read_some(terminal, &mut said);
     }
     Err(said)
+}
+
+/// One poll, and whatever was ready when it returned. Says whether anything
+/// was.
+fn read_some(terminal: &OwnedFd, into: &mut Vec<u8>) -> bool {
+    let mut polling = libc::pollfd {
+        fd: terminal.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    unsafe { libc::poll(&mut polling, 1, A_GLANCE.as_millis() as i32) };
+    let mut buffer = [0u8; 8192];
+    let mut reading = unsafe { std::fs::File::from_raw_fd(terminal.as_raw_fd()) };
+    let read = reading.read(&mut buffer);
+    std::mem::forget(reading);
+    match read {
+        Ok(count) if count > 0 => {
+            into.extend_from_slice(&buffer[..count]);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// The `bdi` the spawned half started, and the home it made for it. `None`
@@ -249,7 +265,7 @@ fn what_it_started(parent: &mut Child) -> Option<(Process, PathBuf)> {
 
     let mut pid = None;
     let mut home = None;
-    let giving_up = Instant::now() + LONG_ENOUGH_TO_SPAWN;
+    let giving_up = Instant::now() + GIVING_UP;
     while (pid.is_none() || home.is_none()) && Instant::now() < giving_up {
         let Ok(line) = heard.recv_timeout(Duration::from_millis(200)) else {
             continue;

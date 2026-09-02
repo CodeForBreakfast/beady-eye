@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 mod terminal;
 
+use terminal::driver::GIVING_UP;
 use terminal::shims::ShimmedTracker;
 use terminal::{
     a_home_naming_one_project, a_home_naming_one_project_settled, a_pty, bdi_on, contains,
@@ -39,9 +40,6 @@ const MOUSE_OFF: [(&str, &[u8]); 5] = [
     ("SGR coordinates", b"\x1b[?1006l"),
 ];
 
-/// Long enough for a collection that has no tracker to fail and the screen to
-/// open. Only ever a giving-up point: nothing is asserted against the clock.
-const LONG_ENOUGH_TO_DRAW: Duration = Duration::from_secs(60);
 /// Long enough for a process that is going to die to have died.
 const LONG_ENOUGH_TO_DIE: Duration = Duration::from_secs(10);
 
@@ -110,7 +108,7 @@ fn an_interrupt_while_the_first_collection_runs_puts_the_terminal_back() {
 
     let mut session = Session::on(home, &tracker.environment());
     session.read_until(ENTER_ALTERNATE_SCREEN);
-    tracker.wait_until_holding(LONG_ENOUGH_TO_DRAW);
+    tracker.wait_until_holding(GIVING_UP);
 
     let restoring = session.signal_and_read(libc::SIGINT);
 
@@ -179,18 +177,32 @@ impl Session {
         restoring
     }
 
-    /// Read until the terminal has said this, or until we give up on it.
+    /// Read until the terminal has said this, or until we give up on it —
+    /// at once where `bdi` has exited, since nothing more is coming.
+    #[track_caller]
     fn read_until(&mut self, said: &[u8]) {
         let mut seen = Vec::new();
-        let giving_up = Instant::now() + LONG_ENOUGH_TO_DRAW;
+        let giving_up = Instant::now() + GIVING_UP;
         while Instant::now() < giving_up {
             self.read_some(&mut seen);
             if contains(&seen, said) {
                 return;
             }
+            if let Ok(Some(exited)) = self.child.try_wait() {
+                self.read_some(&mut seen);
+                assert!(
+                    contains(&seen, said),
+                    "bdi exited ({exited}) before it put the terminal on the alternate \
+                     screen; it wrote {} bytes: {:?}",
+                    seen.len(),
+                    String::from_utf8_lossy(&seen)
+                );
+                return;
+            }
         }
         panic!(
-            "bdi never put the terminal on the alternate screen; it wrote {} bytes: {:?}",
+            "bdi never put the terminal on the alternate screen in {GIVING_UP:?}; \
+             it wrote {} bytes: {:?}",
             seen.len(),
             String::from_utf8_lossy(&seen)
         );
