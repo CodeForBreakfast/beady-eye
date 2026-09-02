@@ -6,17 +6,32 @@
 //! going on, and that needs both halves — synthetic keystrokes written at
 //! chosen moments, and a time against every chunk that comes back.
 //!
-//! Every wait here is a `poll` with a deadline, and no read outlives its
-//! poll: the master `a_pty` hands over is non-blocking, and it says why. A
-//! wait ends one of three ways — what it waited for arrived; `bdi` exited
-//! without it, which is failed at once; or the deadline passed — and the two
-//! failures panic at the line of the test that waited, naming what never
-//! arrived and what did.
+//! The master is drained by a thread of its own, from the moment `bdi`
+//! starts until it has been reaped, rather than by whichever wait happens to
+//! be running. A terminal a person is sitting at drains continuously, and a
+//! harness that reads only when a test asks it to puts `bdi` under
+//! backpressure no terminal applies: a tty's output queue fills, the next
+//! frame blocks in `write`, and whatever `bdi` would have done after drawing
+//! never happens. macOS gives a tty a far smaller queue than Linux does, so
+//! it fills during the first frame — measured on 2026-09-02, where
+//! `forest_before_the_first_collection` waited ten seconds for a collection
+//! `bdi` had not reached the code to begin, and began it 120ms after the
+//! master was first read. Draining is the terminal's half of the bargain and
+//! it is not a test's to schedule.
+//!
+//! Every wait here is a deadline over what that thread has heard. A wait ends
+//! one of three ways — what it waited for arrived; `bdi` exited without it,
+//! which is failed at once; or the deadline passed — and the two failures
+//! panic at the line of the test that waited, naming what never arrived and
+//! what did.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::{a_pty, bdi_on, ENTER_ALTERNATE_SCREEN};
@@ -47,34 +62,76 @@ struct Said {
 
 /// Where in what `bdi` has said a test is reading from. Handed out by
 /// [`Driven::send`], so what a keystroke was answered with can be asked for
-/// without the frame before it: a chunk is one read, so a chunk taken before
-/// the send is wholly before it.
+/// without the frame before it.
+///
+/// What makes it divide the two is that `send` empties the pty and takes the
+/// mark under the lock the drain appends through, and writes the key without
+/// letting go: nothing `bdi` had already written can arrive after it, and
+/// nothing can be appended between the mark and the key. Neither half is
+/// spare. Without the drain, a frame `bdi` wrote before the key but that the
+/// drain had not yet picked up is counted as the answer to it — which is a
+/// test proving the loop answered during a hang passing without proving it,
+/// and passing quietly.
 #[derive(Clone, Copy)]
 pub struct Mark(usize);
 
 /// A `bdi` drawing on a pty of our own, that we can type at.
 pub struct Driven {
     child: Child,
-    terminal: OwnedFd,
+    terminal: Arc<OwnedFd>,
     home: PathBuf,
     started: Instant,
-    said: Vec<Said>,
+    said: Arc<Mutex<Vec<Said>>>,
+    draining: Arc<AtomicBool>,
+    drain: Option<JoinHandle<()>>,
 }
 
 impl Driven {
     /// Start `bdi` on a pty of the given size, with `environment` on top of
     /// what a test binary already carries.
     pub fn bdi(rows: u16, cols: u16, home: PathBuf, environment: &[(String, String)]) -> Self {
+        Self::bdi_with_the_drain_held_back(rows, cols, home, environment, Duration::ZERO)
+    }
+
+    /// The same, with the drain thread held back this long before each read.
+    ///
+    /// A wait has to be right however far behind the drain has fallen, and on
+    /// a machine that is not loaded it never falls behind at all — so that is
+    /// a state a test can only reach by putting the driver in it, the way
+    /// `tests/shims/` reaches a hung tracker. Held back longer than the glance
+    /// a wait takes between looks, the pty keeps what `bdi` wrote across one,
+    /// which is where a wait that reads what has been appended and a wait that
+    /// empties the pty itself part company.
+    pub fn bdi_with_the_drain_held_back(
+        rows: u16,
+        cols: u16,
+        home: PathBuf,
+        environment: &[(String, String)],
+        held_back: Duration,
+    ) -> Self {
         let (ours, theirs) = a_pty(rows, cols);
         let started = Instant::now();
         let child = bdi_on(&theirs, &home, environment);
         drop(theirs);
+
+        let terminal = Arc::new(ours);
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let draining = Arc::new(AtomicBool::new(true));
+        let drain = std::thread::spawn({
+            let terminal = Arc::clone(&terminal);
+            let said = Arc::clone(&said);
+            let draining = Arc::clone(&draining);
+            move || drain_into(&terminal, &said, started, &draining, held_back)
+        });
+
         Self {
             child,
-            terminal: ours,
+            terminal,
             home,
             started,
-            said: Vec::new(),
+            said,
+            draining,
+            drain: Some(drain),
         }
     }
 
@@ -82,6 +139,19 @@ impl Driven {
     /// than what it draws.
     pub fn pid(&self) -> libc::pid_t {
         self.child.id() as libc::pid_t
+    }
+
+    /// Whether the drain is still reading the terminal.
+    ///
+    /// It stops of its own accord once the pty has hung up and given up what
+    /// it held, so this is false from a little after `bdi` goes. Nothing in
+    /// the driver asks it — a test does, because a drain that never stopped
+    /// would poll a hung-up pty as fast as the machine allows and there is
+    /// nothing else to see that from.
+    pub fn still_reading(&self) -> bool {
+        self.drain
+            .as_ref()
+            .is_some_and(|drain| !drain.is_finished())
     }
 
     /// Read until `bdi` has said this, or give up and say what it did say.
@@ -102,11 +172,11 @@ impl Driven {
     /// [`Driven::answer_to`] is what it calls after.
     #[track_caller]
     pub fn settle(&mut self, quiet: Duration, patience: Duration) {
-        let mut heard = self.said.len();
+        let mut heard = self.heard();
         let mut silent_since = Instant::now();
         self.wait_until(patience, "stopped drawing", |driven| {
-            if driven.said.len() != heard {
-                heard = driven.said.len();
+            if driven.heard() != heard {
+                heard = driven.heard();
                 silent_since = Instant::now();
             }
             silent_since.elapsed() >= quiet
@@ -136,6 +206,7 @@ impl Driven {
     ) {
         let giving_up = Instant::now() + patience;
         while Instant::now() < giving_up {
+            self.hear_what_is_waiting();
             if satisfied(self) {
                 return;
             }
@@ -148,7 +219,7 @@ impl Driven {
                     self.everything_said()
                 );
             }
-            self.read_some();
+            std::thread::sleep(A_GLANCE);
         }
         panic!(
             "bdi never {wanted} in {patience:?}. {}",
@@ -157,39 +228,65 @@ impl Driven {
     }
 
     /// How `bdi` exited, where it has, with whatever it wrote on the way out
-    /// read: the read that saw nothing may have come before its last write.
+    /// read.
+    ///
+    /// Emptied here rather than waited out. A `bdi` that has been reaped
+    /// writes nothing more, so what the pty holds is the whole of its last
+    /// words and a read that finds it empty has them all — where a quiet
+    /// interval says only that the drain did not run in it, and a drain the
+    /// scheduler held off for one would have this report a `bdi` that never
+    /// said what it said on the way out.
     fn exited(&mut self) -> Option<ExitStatus> {
         let exited = self.child.try_wait().expect("bdi is ours to ask after")?;
-        loop {
-            let before = self.said.len();
-            self.read_some();
-            if self.said.len() == before {
-                return Some(exited);
-            }
-        }
+        self.hear_what_is_waiting();
+        Some(exited)
+    }
+
+    /// Take everything the pty holds now, under the lock the drain appends
+    /// through — so no read is in flight, nothing read is unappended, and
+    /// what is left behind is a pty a read would find empty.
+    ///
+    /// This is what makes a wait's view of what `bdi` has said exact at the
+    /// moment it looks, rather than as fresh as the drain thread last
+    /// happened to be scheduled.
+    fn hear_what_is_waiting(&self) {
+        let mut said = self.said.lock().expect("the drain is running");
+        hear_what_is_waiting(&self.terminal, self.started, &mut said);
     }
 
     /// Type at `bdi`, and mark the place in what it has said so far, so its
     /// answer can be told from everything that came before.
     ///
-    /// Refused until the alternate screen has been read. Before `bdi` puts
+    /// Held back until the alternate screen has been read. Before `bdi` puts
     /// the terminal into raw mode the pty's line discipline holds a key until
     /// a newline that never comes, so a key typed then is not answered late
     /// but never, and a test waiting for the answer waits its whole deadline
     /// to say that nothing arrived. `bdi` enters raw mode and then opens the
     /// screen, so the screen on the wire is the line discipline out of the
-    /// way — and a test that has waited for anything drawn after it has read
-    /// it too.
+    /// way.
+    ///
+    /// A wait rather than a refusal, because the driver drains from the
+    /// moment `bdi` starts: whether the screen has arrived by the time a test
+    /// types is then a race the test cannot see or control, and a guard that
+    /// asserts on it fires on some runs and is vacuous on the rest. Waiting
+    /// makes the property hold instead of noticing it did not — and a `bdi`
+    /// that never opens its screen still ends here, at once, naming what was
+    /// waited for.
+    #[track_caller]
     pub fn send(&mut self, keys: &[u8]) -> Mark {
-        assert!(
-            super::contains(&self.everything(), ENTER_ALTERNATE_SCREEN),
-            "typed {:?} before bdi had opened its screen, when the line \
-             discipline would hold it and nothing would answer. Wait for \
-             `ENTER_ALTERNATE_SCREEN` first, or for anything drawn after it. {}",
-            String::from_utf8_lossy(keys),
-            self.timeline()
+        self.wait_until(
+            GIVING_UP,
+            &format!(
+                "opened its screen, so {:?} could be typed at it rather than \
+                 held by the line discipline and never answered — this waits \
+                 for `ENTER_ALTERNATE_SCREEN`",
+                String::from_utf8_lossy(keys)
+            ),
+            |driven| super::contains(&driven.everything(), ENTER_ALTERNATE_SCREEN),
         );
-        let at = Mark(self.said.len());
+        let mut said = self.said.lock().expect("the drain is running");
+        hear_what_is_waiting(&self.terminal, self.started, &mut said);
+        let at = Mark(said.len());
         let mut terminal = self.as_file();
         terminal.write_all(keys).expect("the terminal takes keys");
         terminal.flush().expect("the terminal takes keys");
@@ -207,7 +304,9 @@ impl Driven {
     /// answered by drawing every cell again, so what comes back is the screen
     /// as it stands rather than what changed about it.
     pub fn resize(&mut self, rows: u16, cols: u16) -> Mark {
-        let at = Mark(self.said.len());
+        let mut said = self.said.lock().expect("the drain is running");
+        hear_what_is_waiting(&self.terminal, self.started, &mut said);
+        let at = Mark(said.len());
         let size = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -227,18 +326,21 @@ impl Driven {
     #[track_caller]
     pub fn answer_to(&mut self, since: Mark, patience: Duration) -> Vec<u8> {
         let giving_up = Instant::now() + patience;
-        self.wait_until(patience, "answered", |driven| driven.said.len() > since.0);
-        // Then drain, so a frame arriving in several reads is answered whole
-        // rather than by its first chunk. A poll that returns nothing is the
-        // end of it: `bdi` writes a frame in one burst.
+        self.wait_until(patience, "answered", |driven| driven.heard() > since.0);
+        // Then let it settle, so a frame arriving in several reads is answered
+        // whole rather than by its first chunk. A glance that hears nothing is
+        // the end of it: `bdi` writes a frame in one burst. Emptied at the end
+        // of the glance rather than watched across it, so nothing is left in
+        // the pty for the drain to append after the answer has been taken.
         while Instant::now() < giving_up {
-            let before = self.said.len();
-            self.read_some();
-            if self.said.len() == before {
+            let before = self.heard();
+            std::thread::sleep(A_GLANCE);
+            self.hear_what_is_waiting();
+            if self.heard() == before {
                 break;
             }
         }
-        self.said[since.0..]
+        self.said.lock().expect("the drain is running")[since.0..]
             .iter()
             .flat_map(|said| said.bytes.iter().copied())
             .collect()
@@ -249,8 +351,9 @@ impl Driven {
     /// a failure that only said "nothing arrived" would leave the reader
     /// where the whole bead started.
     pub fn timeline(&self) -> String {
-        let mut told = format!("bdi wrote {} times:", self.said.len());
-        for said in &self.said {
+        let said = self.said.lock().expect("the drain is running");
+        let mut told = format!("bdi wrote {} times:", said.len());
+        for said in said.iter() {
             told.push_str(&format!(
                 "\n  +{:.3}s  {} bytes",
                 said.at.as_secs_f64(),
@@ -275,31 +378,17 @@ impl Driven {
     /// was never written — a wait can only say what arrived.
     pub fn everything(&self) -> Vec<u8> {
         self.said
+            .lock()
+            .expect("the drain is running")
             .iter()
             .flat_map(|said| said.bytes.iter().copied())
             .collect()
     }
 
-    /// One poll, and whatever was ready when it returned.
-    fn read_some(&mut self) {
-        let mut polling = libc::pollfd {
-            fd: self.terminal.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        unsafe { libc::poll(&mut polling, 1, A_GLANCE.as_millis() as i32) };
-        let mut buffer = [0u8; 8192];
-        let mut terminal = self.as_file();
-        let read = terminal.read(&mut buffer);
-        std::mem::forget(terminal);
-        if let Ok(count) = read {
-            if count > 0 {
-                self.said.push(Said {
-                    at: self.started.elapsed(),
-                    bytes: buffer[..count].to_vec(),
-                });
-            }
-        }
+    /// How many runs of bytes have arrived, which is what a wait watches for
+    /// movement rather than the bytes themselves.
+    fn heard(&self) -> usize {
+        self.said.lock().expect("the drain is running").len()
     }
 
     /// The master as a `File`, which every caller must `forget` rather than
@@ -311,9 +400,90 @@ impl Driven {
 }
 
 impl Drop for Driven {
+    /// Reap `bdi` while the master is still being drained, and only then stop
+    /// draining. A process killed mid-write is waiting on a queue somebody has
+    /// to empty, and the only handle to the far end is the one this holds:
+    /// stopping first is a `wait` for a child that cannot finish dying.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.draining.store(false, Ordering::Relaxed);
+        if let Some(drain) = self.drain.take() {
+            let _ = drain.join();
+        }
         let _ = std::fs::remove_dir_all(&self.home);
     }
+}
+
+/// Read the master until told to stop, timestamping each run of bytes from
+/// when `bdi` started.
+///
+/// One poll and one read a turn, so a stop is answered within a glance. The
+/// poll is outside the lock and the read inside it, which is what lets
+/// [`Driven::send`] hold the lock and know no read is in flight: a mark taken
+/// there divides what `bdi` wrote before the key from what it wrote after,
+/// and a read that had already happened but not yet been appended would land
+/// on the wrong side of it.
+///
+/// It gives up when the pty has hung up and given up the last of what it
+/// held. A hangup is the only slave handles there are closing, which is
+/// `bdi`'s own stdio and so `bdi` gone, and a poll reports it whatever it was
+/// asked to wait for — so a loop that read on and polled again would come
+/// straight back every time, and spin a core for as long as the test kept the
+/// `Driven`. Draining after that guards nothing either: what is left to hear
+/// from a process that has been reaped is what the pty already holds, and the
+/// waits empty it themselves.
+fn drain_into(
+    terminal: &OwnedFd,
+    said: &Mutex<Vec<Said>>,
+    started: Instant,
+    draining: &AtomicBool,
+    held_back: Duration,
+) {
+    while draining.load(Ordering::Relaxed) {
+        if !held_back.is_zero() {
+            std::thread::sleep(held_back);
+        }
+        let mut polling = libc::pollfd {
+            fd: terminal.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        unsafe { libc::poll(&mut polling, 1, A_GLANCE.as_millis() as i32) };
+        let hung_up = polling.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0;
+        let mut said = said.lock().expect("the drain owns what it heard");
+        match read_now(terminal, started) {
+            Some(heard) => said.push(heard),
+            // Nothing left, on a pty nothing will write to again.
+            None if hung_up => return,
+            None => {}
+        }
+    }
+}
+
+/// Everything the pty holds now, appended. The caller holds the lock the
+/// drain appends through, so no read is in flight and nothing read is
+/// unappended: what this leaves behind is a pty a read would find empty.
+fn hear_what_is_waiting(terminal: &OwnedFd, started: Instant, said: &mut Vec<Said>) {
+    while let Some(waiting) = read_now(terminal, started) {
+        said.push(waiting);
+    }
+}
+
+/// One read of whatever is ready, or `None` where nothing is.
+///
+/// Never blocks: the master is non-blocking, and `a_pty` says why.
+fn read_now(terminal: &OwnedFd, started: Instant) -> Option<Said> {
+    let mut buffer = [0u8; 8192];
+    let read = unsafe {
+        libc::read(
+            terminal.as_raw_fd(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+        )
+    };
+    (read > 0).then(|| Said {
+        at: started.elapsed(),
+        bytes: buffer[..read as usize].to_vec(),
+    })
 }

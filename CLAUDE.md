@@ -47,7 +47,20 @@ module opening up in `src/lib.rs`, which says why. Fixtures under
 `tests/fixtures/` are faithful captures of what `bd list`, `bd query` and
 `herdr agent list` put on the wire.
 
-Two things to know before writing a test:
+Three things to know before writing a test:
+
+A pty test drives `bdi` through `tests/terminal/driver.rs`, which drains the
+terminal on a thread of its own from the moment `bdi` starts. That is not a
+convenience. A terminal a person is sitting at empties itself whatever the
+person is doing, and a harness that reads only when a test asks puts `bdi`
+under backpressure no terminal applies: the tty's output queue fills, the next
+write blocks, and everything `bdi` would have done after drawing does not
+happen. The queue's size is the platform's, so the same test passes on one
+machine and hangs on another with nothing in the code to say why — on macOS it
+is small enough to fill during the first frame, which cost `bdi-54w.2` an
+evening reading a ten-second wait for a collection as a defect in `bd`. So
+never read the master yourself, and never take a test's silence as a licence to
+stop draining.
 
 A test that walks the selection over the screen calls `walk::until` in
 `src/view/walk.rs`, which presses inside a count taken before the walk starts

@@ -7,12 +7,19 @@
 //! true and says nothing about why — bdi-7ao.52 lost a test to it, and wrote
 //! the fact down where the next test file would never read it.
 //!
-//! So the driver refuses the key instead. Whether the terminal is in raw mode
-//! is not on the wire, but what follows it is: `bdi` enters raw mode and then
-//! opens the alternate screen, so a driver that has read the alternate screen
-//! knows the line discipline is out of the way, and one that has not does not
-//! type. This types before it has read anything, deliberately, and asks for
-//! the refusal — at once, and naming what it should have waited for.
+//! So the driver does not type until it has read the alternate screen.
+//! Whether the terminal is in raw mode is not on the wire, but what follows
+//! it is: `bdi` enters raw mode and then opens the screen, so a driver that
+//! has read the alternate screen knows the line discipline is out of the way.
+//!
+//! Waiting for it rather than refusing to type without it is what makes the
+//! property hold rather than be noticed: the driver drains from the moment
+//! `bdi` starts, so whether the screen has arrived by the time a test types
+//! is a race the test can neither see nor control, and a driver that
+//! asserted on it would fire on some runs and be vacuous on the rest. So the
+//! subject here is the `bdi` for which the wait can never end — one whose
+//! config does not parse, which exits without ever opening a screen. The key
+//! is refused at once, and the refusal names what it was waiting for.
 
 mod terminal;
 
@@ -20,7 +27,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::{Duration, Instant};
 
 use terminal::driver::Driven;
-use terminal::{a_home_naming_one_project, said_by};
+use terminal::{a_home_whose_config_does_not_parse, said_by};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -29,12 +36,13 @@ const COLS: u16 = 120;
 const SHOW_BINDINGS: &[u8] = b"?";
 
 /// Long enough to tell a refusal from a wait: the driver's own deadline is
-/// ten seconds, and a refusal is a comparison against what has been read.
+/// ten seconds, and a `bdi` that cannot read its config exits within
+/// milliseconds.
 const A_REFUSAL_TAKES: Duration = Duration::from_secs(5);
 
 #[test]
 fn a_key_typed_before_the_first_frame_is_refused_at_once() {
-    let home = a_home_naming_one_project("typed-early");
+    let home = a_home_whose_config_does_not_parse("typed-early");
     let mut bdi = Driven::bdi(ROWS, COLS, home, &[]);
 
     let typed_at = Instant::now();
@@ -47,10 +55,10 @@ fn a_key_typed_before_the_first_frame_is_refused_at_once() {
     let refusal = said_by(&refusal);
     assert!(
         refusal.contains("ENTER_ALTERNATE_SCREEN"),
-        "the refusal does not say what to wait for: {refusal}"
+        "the refusal does not say what it was waiting for: {refusal}"
     );
     assert!(
         took < A_REFUSAL_TAKES,
-        "the driver took {took:?} to refuse the key, which is a wait rather than a refusal"
+        "the driver took {took:?} to refuse the key, which is a deadline rather than a refusal"
     );
 }

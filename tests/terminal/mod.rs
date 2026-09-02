@@ -60,7 +60,9 @@ pub const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
     let mut ours = 0;
     let mut theirs = 0;
-    let size = libc::winsize {
+    // Apple's `openpty` takes the size as `*mut winsize`, Linux's as
+    // `*const`; a `*mut` coerces to either.
+    let mut size = libc::winsize {
         ws_row: rows,
         ws_col: cols,
         ws_xpixel: 0,
@@ -73,7 +75,7 @@ pub fn a_pty(rows: u16, cols: u16) -> (OwnedFd, std::fs::File) {
                 &mut theirs,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &size,
+                std::ptr::from_mut(&mut size),
             )
         },
         0,
@@ -116,7 +118,10 @@ pub fn own_the_terminal(spawned_by: u32) -> std::io::Result<()> {
         if libc::setsid() == -1 {
             return Err(std::io::Error::last_os_error());
         }
-        if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1 {
+        // `ioctl` takes a `c_ulong` request everywhere, but Apple's libc
+        // declares `TIOCSCTTY` a `c_uint`, so it is widened to whatever the
+        // platform's `ioctl` asks for.
+        if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
             return Err(std::io::Error::last_os_error());
         }
     }
