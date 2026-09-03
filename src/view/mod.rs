@@ -71,6 +71,8 @@ pub enum Action {
     Focus,
     /// Show the selected bead whole, as `bd show` would.
     ShowBead,
+    /// Move the bead view to the next bead the bead it is showing names.
+    NextRelated,
     /// Go back to the forest from the bead view, onto the row it was opened
     /// from.
     Back,

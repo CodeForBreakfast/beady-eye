@@ -629,16 +629,27 @@ pub fn status_word(status: &Status) -> String {
 }
 
 /// The title of the bead view: the bead, the way back out, and — where the
-/// window is too short for the whole bead — how to see the rest. The way
-/// back comes first, because a title too long for the screen is cut from
-/// its end.
+/// window is too short for the whole bead — how to see the rest, and — where
+/// the forest can take the reader to a bead this one names — the keys that
+/// do it. The way back comes first, because a title too long for the screen
+/// is cut from its end.
 ///
 /// *Back* rather than *close*: closing is what `bd close` does to a bead,
-/// and leaving this view does nothing to one.
-pub fn way_back_from_bead(id: &str, scrolls: bool) -> String {
+/// and leaving this view does nothing to one. It is also the whole of what
+/// `Esc` means here now that the view can be moved through: pressed on a
+/// bead the reader followed something to, it goes back to the one they came
+/// from, and pressed on the bead they opened, out to the forest.
+///
+/// The keys are named rather than the act, because the act takes two of them
+/// and neither is guessable: a reader who cannot see that `Tab` reaches the
+/// rows will not find out that `Enter` follows one.
+pub fn way_back_from_bead(id: &str, scrolls: bool, follows: bool) -> String {
     let mut said = format!("{id} · Esc to go back");
     if scrolls {
         said.push_str(" · j, k to scroll");
+    }
+    if follows {
+        said.push_str(" · Tab, Enter to follow");
     }
     said
 }

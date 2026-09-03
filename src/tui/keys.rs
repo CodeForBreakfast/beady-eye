@@ -103,6 +103,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
+        keys: &[alone(KeyCode::Tab, "Tab")],
+        action: Action::NextRelated,
+        does: "move to the next bead the shown bead names; Enter follows it",
+        hint: None,
+    },
+    Binding {
         keys: &[ctrl('r', "^R")],
         action: Action::Refresh,
         does: "collect from the trackers again now",
@@ -280,6 +286,7 @@ pub(super) mod tests {
             Action::ToggleFilter,
             Action::Focus,
             Action::ShowBead,
+            Action::NextRelated,
             Action::Back,
             Action::CopyId,
             Action::ShowBindings,
@@ -306,6 +313,7 @@ pub(super) mod tests {
                 | Action::ToggleFilter
                 | Action::Focus
                 | Action::ShowBead
+                | Action::NextRelated
                 | Action::Back
                 | Action::CopyId
                 | Action::ShowBindings
@@ -450,7 +458,6 @@ pub(super) mod tests {
             key(KeyCode::Char('r')),
             key(KeyCode::Char('c')),
             key(KeyCode::Char('z')),
-            key(KeyCode::Tab),
         ] {
             assert_eq!(action(pressed), None, "for {pressed:?}");
         }

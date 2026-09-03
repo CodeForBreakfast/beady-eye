@@ -154,8 +154,15 @@ impl Forest {
     /// beads above it in its tree, the group holding the tree where the
     /// filter has put it in one, and the project.
     fn ancestry(&self) -> Vec<Handle> {
-        let mut chain: Vec<Handle> = self.cursor.iter().cloned().collect();
-        let place = match &self.cursor {
+        self.ancestry_of(self.cursor.as_ref())
+    }
+
+    /// The same chain above any line, so what a lost cursor falls back to and
+    /// what has to be opened to reach a line are one answer rather than two
+    /// that agree until the forest changes shape.
+    fn ancestry_of(&self, from: Option<&Handle>) -> Vec<Handle> {
+        let mut chain: Vec<Handle> = from.into_iter().cloned().collect();
+        let place = match from {
             Some(Handle::Bead(place)) => place,
             // A run is only ever seen from the bead it hangs under, so that
             // bead is the first forebear a lost run falls back to.
@@ -244,6 +251,7 @@ impl Forest {
             Action::ToggleFilter => self.toggle_filter(),
             Action::Focus
             | Action::ShowBead
+            | Action::NextRelated
             | Action::Back
             | Action::CopyId
             | Action::ShowBindings
@@ -433,6 +441,85 @@ impl Forest {
         self.selected != was
     }
 
+    /// Where the selection sits, where it sits on a bead at all.
+    ///
+    /// A place and not a key, because a bead drawn more than once is drawn
+    /// once per way down to it, and a caller keeping this to come back to is
+    /// keeping the copy the reader was looking at.
+    pub fn place(&self) -> Option<&Place> {
+        self.lines.get(self.selected)?.place.as_ref()
+    }
+
+    /// Put the selection on a bead the snapshot holds, wherever the forest
+    /// draws it, opening whatever is folded over it. Reports whether the
+    /// selection is on it now.
+    pub fn go_to(&mut self, key: &BeadKey) -> bool {
+        let Some(place) = self.place_of(key) else {
+            return false;
+        };
+        self.go_to_place(&place)
+    }
+
+    /// Put the selection back on a line it held before, opening whatever has
+    /// been folded over it since. Reports whether the selection is on it now,
+    /// which it is not where the snapshot has stopped drawing that line.
+    pub fn go_to_place(&mut self, place: &Place) -> bool {
+        if !self.drawn(place) {
+            return false;
+        }
+        self.open_over(place);
+        self.cursor = Some(Handle::Bead(place.clone()));
+        self.lay_out();
+        self.cursor.as_ref() == Some(&Handle::Bead(place.clone()))
+    }
+
+    /// Whether the forest can take the reader to a bead: whether any tree it
+    /// holds draws one.
+    ///
+    /// Asked of the snapshot rather than worked out from how roots are
+    /// found, so it goes on being the same question when they are found
+    /// another way.
+    pub fn draws(&self, key: &BeadKey) -> bool {
+        self.snapshot.locate(key).is_some()
+    }
+
+    /// Where the forest first draws a bead, going down the trees in the order
+    /// the screen draws them: the trees the filter shows before the ones it
+    /// hid, and within a tree the first way down that reaches it.
+    ///
+    /// The first copy rather than the shallowest, because that is the one a
+    /// reader scanning down the screen would have found themselves.
+    fn place_of(&self, key: &BeadKey) -> Option<Place> {
+        self.snapshot
+            .trees
+            .iter()
+            .chain(&self.snapshot.collected)
+            .filter(|tree| tree.project == key.project)
+            .find_map(|tree| way_to(tree, &key.id))
+    }
+
+    /// Open everything shut over a line: everything the line hangs under, and
+    /// the run of quiet children each forebear may be counting it in.
+    ///
+    /// The run is asked for beside each forebear rather than left to the
+    /// ancestry, which answers for a line that is drawn — and a bead inside a
+    /// run is not drawn at all, so nothing above it can name it.
+    ///
+    /// Set rather than let go of, because a fold the reader shut by hand
+    /// stays shut until something asks otherwise, and asking to be taken to a
+    /// bead underneath it is asking.
+    fn open_over(&mut self, place: &Place) {
+        let over = self.ancestry_of(Some(&Handle::Bead(place.clone())));
+        // Past the line itself, whose own fold is about the children under it
+        // rather than about reaching it.
+        for above in over.into_iter().skip(1) {
+            if let Handle::Bead(under) = &above {
+                self.folds.set(Handle::Elided(under.clone()), true);
+            }
+            self.folds.set(above, true);
+        }
+    }
+
     fn step_to(&mut self, target: Option<usize>) {
         if let Some(target) = target {
             self.selected = target;
@@ -589,6 +676,37 @@ impl Forest {
         }
         self.locate(place).is_some()
     }
+}
+
+/// The first way down a tree that reaches a bead, as the place the line at
+/// the end of it stands on. Nothing where the tree holds no such bead.
+///
+/// The walk carries the beads it came through, which is what cuts a loop: a
+/// way down that comes back to a bead it came through stops there, so a
+/// cyclic tree is walked once rather than for ever.
+fn way_to(tree: &Tree, id: &str) -> Option<Place> {
+    let root = Place::root(root_key(tree));
+    if tree.beads.first()?.id == id {
+        return Some(root);
+    }
+    stepped_to(tree, id, 0, &[], &root)
+}
+
+/// The first way down from `at` that reaches a bead, given the beads stepped
+/// through to reach `at` and the place it stands on.
+fn stepped_to(tree: &Tree, id: &str, at: usize, above: &[usize], place: &Place) -> Option<Place> {
+    let mut way = above.to_vec();
+    way.push(at);
+    links_below(tree, at, above).into_iter().find_map(|link| {
+        let stepped = place.step_to(BeadKey {
+            project: tree.project.clone(),
+            id: tree.beads[link.bead].id.clone(),
+        });
+        if tree.beads[link.bead].id == id {
+            return Some(stepped);
+        }
+        stepped_to(tree, id, link.bead, &way, &stepped)
+    })
 }
 
 /// The line `scope` names, and everything drawn beneath it.
@@ -5434,5 +5552,141 @@ credential_command = "secret harbour"
             "{:#?}",
             sketch(&forest)
         );
+    }
+
+    // ---- going to a bead the reader has not walked to --------------------
+
+    /// The forest can say where the selection is, as a place: a bead drawn
+    /// under two parents is drawn twice, and a caller keeping this to come
+    /// back to is keeping the copy the reader was looking at.
+    #[test]
+    fn the_forest_says_where_the_selection_is() {
+        let forest = flatten(snapshot());
+
+        assert_eq!(
+            forest.place().map(|place| place.key().clone()),
+            Some(key("orbital", "orb-7"))
+        );
+    }
+
+    /// Nothing where the selection is not on a bead at all, which is a line
+    /// with nowhere to come back to rather than a line with no name.
+    #[test]
+    fn a_line_that_is_not_a_bead_is_nowhere_to_come_back_to() {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::Move(Motion::FirstRow));
+
+        assert_eq!(forest.place(), None, "{:#?}", sketch(&forest));
+    }
+
+    /// A bead the trees hold is one the forest can go to, whether or not it
+    /// is drawn this instant; one no tree holds is not. The question is asked
+    /// of the snapshot, so it goes on being the same question when roots are
+    /// found another way.
+    #[test]
+    fn the_forest_draws_the_beads_its_trees_hold_and_no_others() {
+        let forest = flatten(snapshot());
+
+        assert!(forest.draws(&key("orbital", "orb-7.1.1")));
+        assert!(!forest.draws(&key("orbital", "orb-404")));
+        assert!(
+            !forest.draws(&key("ferry", "orb-7")),
+            "a bead is (project, id), so one project's id is not another's"
+        );
+    }
+
+    /// The whole point: `orb-7.1` is drawn shut, so `orb-7.1.1` is on no line
+    /// at all. Going to it opens what is over it and lands on it.
+    #[test]
+    fn going_to_a_bead_under_a_shut_fold_opens_it_and_lands_there() {
+        let mut forest = flatten(snapshot());
+        assert!(
+            !drawn_here(&forest, "true the mount"),
+            "the bead is drawn already, so this would test nothing: {:#?}",
+            sketch(&forest)
+        );
+
+        assert!(forest.go_to(&key("orbital", "orb-7.1.1")));
+
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+        assert!(
+            drawn_here(&forest, "true the mount"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A tree the filter took out of the forest is drawn in the group below
+    /// its project, and that group has a fold of its own. Both open, and the
+    /// project's with them.
+    #[test]
+    fn going_to_a_bead_in_a_tree_the_filter_hid_opens_the_group_over_it() {
+        let mut forest = flatten(snapshot());
+
+        assert!(forest.go_to(&key("harbour", "hbr-3.1")));
+
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3.1")));
+    }
+
+    /// A fold the reader shut by hand stays shut until something asks
+    /// otherwise, and asking to be taken to a bead underneath it is asking.
+    #[test]
+    fn going_to_a_bead_opens_a_fold_the_reader_shut_by_hand() {
+        let mut forest = flatten(snapshot());
+        forest.go_to(&key("orbital", "orb-7.1"));
+        forest.apply(Action::CollapseSubtree);
+        assert!(
+            !drawn_here(&forest, "true the mount"),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        assert!(forest.go_to(&key("orbital", "orb-7.1.1")));
+
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+    }
+
+    /// A bead no tree holds is nowhere to go, and the forest is left exactly
+    /// as it was rather than half-opened on the way to nothing.
+    #[test]
+    fn going_to_a_bead_no_tree_holds_moves_nothing() {
+        let mut forest = flatten(snapshot());
+        let was = sketch(&forest);
+        let selected = forest.selected_line();
+
+        assert!(!forest.go_to(&key("orbital", "orb-404")));
+
+        assert_eq!(sketch(&forest), was);
+        assert_eq!(forest.selected_line(), selected);
+    }
+
+    /// A bead drawn under two parents is two lines, and coming back means the
+    /// one the reader was on. A key could not say which; a place does.
+    #[test]
+    fn coming_back_to_a_place_lands_on_the_copy_that_was_left() {
+        let mut forest = flatten(drawn_twice_in_one_tree());
+        forest.apply(Action::ExpandSubtree);
+        let twice: Vec<Place> = forest
+            .lines()
+            .iter()
+            .filter_map(|line| line.place.clone())
+            .filter(|place| *place.key() == key("orbital", "orb-9.1"))
+            .collect();
+        assert_eq!(
+            twice.len(),
+            2,
+            "the fixture draws it twice: {:#?}",
+            sketch(&forest)
+        );
+
+        forest.apply(Action::Move(Motion::FirstRow));
+        assert!(forest.go_to_place(&twice[1]));
+
+        assert_eq!(forest.place(), Some(&twice[1]));
+        assert_ne!(forest.place(), Some(&twice[0]), "the other copy of it");
+    }
+
+    fn drawn_here(forest: &Forest, said: &str) -> bool {
+        sketch(forest).iter().any(|row| row.contains(said))
     }
 }

@@ -171,6 +171,18 @@ pub(super) trait View {
     /// the view down when the answer is no.
     fn bead_still_shown(&self) -> bool;
 
+    /// Go to the bead the bead view's ring is on, reporting whether it went.
+    ///
+    /// Nothing where the ring is on no bead, or on one the forest draws
+    /// nowhere — the loop leaves the key to mean what it meant before, which
+    /// is to focus the pane.
+    fn follow(&mut self) -> bool;
+
+    /// Go back to the bead a reference was followed from, reporting whether
+    /// there was one. Nothing on the bead the view was opened on, which is
+    /// where the way back leads out of the view altogether.
+    fn retrace(&mut self) -> bool;
+
     /// Select whatever is drawn on one row of the screen, reporting whether
     /// the screen has changed.
     ///
@@ -384,19 +396,32 @@ fn answered(
             *showing = Showing::Forest;
             true
         }
-        // The bead view is the hub: a motion moves the bead, Enter and `f`
-        // focus its pane, and Esc goes back. `q` goes back too, as it does
-        // from the bindings, so the forest a reader was looking at is still
-        // there to quit from. A refresh lands behind it and leaves it up;
-        // the bindings go up over the forest, since the key that takes them
-        // away lands there.
+        // The bead view is the hub: a motion moves the bead, Tab moves it on
+        // to the next bead this one names, Enter goes to that bead or else
+        // focuses the pane, `f` focuses it whatever the view is on, and Esc
+        // goes back — to the bead a reference was followed from where there
+        // is one, and out to the forest on the bead the view was opened on.
+        // `q` leaves altogether, as it does from the bindings, so the forest
+        // a reader was looking at is still there to quit from — the whole way
+        // back out rather than one step of it, which is what makes it worth
+        // having beside Esc. A refresh lands behind the view and leaves it
+        // up; the bindings go up over the forest, since the key that takes
+        // them away lands there.
         Event::Key(key) if *showing == Showing::Bead => match action(key) {
-            Some(Action::Back | Action::Quit) => {
+            Some(Action::Back) => {
+                if !view.retrace() {
+                    *showing = Showing::Forest;
+                }
+                true
+            }
+            Some(Action::Quit) => {
                 *showing = Showing::Forest;
                 true
             }
             Some(Action::Move(motion)) => view.scroll(motion),
-            Some(Action::Focus | Action::ShowBead) => view.apply(Action::Focus),
+            Some(Action::NextRelated) => view.apply(Action::NextRelated),
+            Some(Action::ShowBead) => view.follow() || view.apply(Action::Focus),
+            Some(Action::Focus) => view.apply(Action::Focus),
             Some(Action::CopyId) => view.apply(Action::CopyId),
             Some(Action::ShowBindings) => {
                 *showing = Showing::Bindings;
@@ -436,6 +461,12 @@ fn answered(
             // own. What it does not share is which projects it names, because
             // a key nobody aimed at a project asks about all of them.
             Some(Action::Refresh) => asked_for(view, outstanding, Wanted::Everything),
+            // The ring is over a window that is not up, so there is nothing
+            // here for these to step. Answered where the key is read rather
+            // than passed down for the forest to decline, so what a key means
+            // in each view is settled in the one place that knows which view
+            // is up.
+            Some(Action::NextRelated) => false,
             Some(action) => view.apply(action),
             None => false,
         },
@@ -794,6 +825,19 @@ mod tests {
         /// Whether the selection is on a row with no bead to show, for the
         /// tests about Enter on one.
         not_a_bead: bool,
+        /// Whether the bead view's ring is on a bead the forest can go to,
+        /// for the tests about the key that follows one. Off, so a test that
+        /// says nothing about references gets Enter meaning what it meant
+        /// before there were any.
+        on_a_reference: bool,
+        /// Whether a reference has been followed and there is a bead to go
+        /// back to, for the tests about the way back.
+        somewhere_to_go_back_to: bool,
+        /// How many times the view was asked to follow a reference and to go
+        /// back, in the order the loop asked, so a test can tell a key the
+        /// loop swallowed from one it passed on.
+        followed: usize,
+        retraced: usize,
         /// Whether a collection takes the selection off the bead the view
         /// was opened on, for the tests about one landing behind the view.
         collection_moves_the_selection: bool,
@@ -933,6 +977,16 @@ mod tests {
 
         fn bead_still_shown(&self) -> bool {
             !(self.collection_moves_the_selection && self.collected > 0)
+        }
+
+        fn follow(&mut self) -> bool {
+            self.followed += 1;
+            self.on_a_reference
+        }
+
+        fn retrace(&mut self) -> bool {
+            self.retraced += 1;
+            self.somewhere_to_go_back_to
         }
 
         fn clicked(&mut self, row: u16) -> bool {
@@ -1308,6 +1362,189 @@ mod tests {
 
     /// `q` in the bead view goes back, as it does from the bindings: the
     /// forest a reader was looking at is still there to quit from.
+    /// `Enter` in the bead view asks the view to follow first, and focuses the
+    /// pane only where there was nothing to follow. One key, two meanings,
+    /// decided by what the window is on rather than by a second binding.
+    #[test]
+    fn enter_in_the_bead_view_focuses_the_pane_where_there_is_nothing_to_follow() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Enter)),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.followed, 1, "the follow was not tried");
+        assert_eq!(view.applied, [Action::ShowBead, Action::Focus]);
+    }
+
+    #[test]
+    fn enter_on_a_bead_the_window_names_follows_it_and_focuses_nothing() {
+        let mut view = Recorder {
+            on_a_reference: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Enter)),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.followed, 1);
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead],
+            "the pane was focused on a press that went somewhere"
+        );
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Bead],
+            "following a bead left the view"
+        );
+    }
+
+    /// `Esc` goes back a bead where there is one, and leaves for the forest
+    /// only when there is not — the browser's back, which is what `back`
+    /// already means to everyone.
+    #[test]
+    fn esc_goes_back_a_bead_before_it_leaves_the_view() {
+        let mut view = Recorder {
+            somewhere_to_go_back_to: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Esc)),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.retraced, 1);
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Bead],
+            "Esc left the view with a bead still to go back to"
+        );
+    }
+
+    #[test]
+    fn esc_leaves_the_view_where_there_is_no_bead_to_go_back_to() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Esc)),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.retraced, 1, "the way back was not tried");
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Forest]
+        );
+    }
+
+    /// `q` is the whole way out rather than one step of it, which is what
+    /// makes it worth having beside `Esc`: a reader three beads deep gets
+    /// back to the forest they were reading without pressing four times.
+    #[test]
+    fn q_leaves_the_bead_view_whatever_there_is_to_go_back_to() {
+        let mut view = Recorder {
+            somewhere_to_go_back_to: true,
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Key(key(KeyCode::Char('q'))),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.retraced, 0, "q asked for a step back");
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Forest]
+        );
+    }
+
+    /// `Tab` reaches the view only from the bead view. In the forest there is
+    /// no window naming beads, so it is a key that does nothing rather than
+    /// one that moves the selection.
+    #[test]
+    fn tab_steps_the_ring_in_the_bead_view_and_does_nothing_in_the_forest() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = typing([
+            key(KeyCode::Tab),
+            key(KeyCode::Enter),
+            key(KeyCode::Tab),
+            key(KeyCode::Tab),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::NextRelated, Action::NextRelated],
+            "the Tab pressed in the forest reached the view"
+        );
+    }
+
     #[test]
     fn quitting_from_the_bead_view_takes_two_presses_and_the_first_goes_back() {
         let mut view = Recorder::default();

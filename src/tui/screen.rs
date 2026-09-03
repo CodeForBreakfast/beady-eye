@@ -22,6 +22,7 @@ use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
+use crate::view::lines::Place;
 use crate::view::phrase;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
@@ -81,9 +82,22 @@ struct Shown {
     /// Where the bead view is looking, while one is up. Held here and not on
     /// the forest because it is about a window over the rows, not the rows.
     show: Show,
-    /// The bead the view was opened on, so a collection that moves the
-    /// selection off it can be told from one that leaves it there.
+    /// The bead the view is on, so a collection that moves the selection off
+    /// it can be told from one that leaves it there.
+    ///
+    /// The bead the window is showing rather than the one it was opened on:
+    /// following a reference moves the selection, and a guard reading the
+    /// bead a reader has left would take the window down on the very move
+    /// they asked for.
     viewing: Option<BeadKey>,
+    /// The beads followed to reach the one the window is on, each with where
+    /// the window was looking when it was left, most recent last.
+    ///
+    /// A place and not a key, because going back means the copy of the bead
+    /// the reader was looking at, and a bead the forest draws under two
+    /// parents is drawn twice. The `Show` beside it is what puts them back
+    /// on the row they followed rather than at the top of the bead.
+    trail: Vec<(Place, Show)>,
     /// What this run of `bdi` cannot do, said at the foot until it can.
     ///
     /// Seeded with what was settled before the first collection, which holds
@@ -139,6 +153,7 @@ impl Shown {
             collecting: Vec::new(),
             show: Show::default(),
             viewing: None,
+            trail: Vec::new(),
             standing: at_startup,
         };
         // Asked for here rather than waited for: the first frame is drawn on
@@ -384,6 +399,9 @@ impl Shown {
         // The pane is on the band's own clock. What a collection can do to
         // the band is move the selection off the pane it is showing.
         self.follow();
+        // And what it can do to the bead window is rewrite what the bead it
+        // is on names, under a reader who is looking at one of them.
+        self.settle_ring();
     }
 
     fn apply(&mut self, action: Action) -> bool {
@@ -403,8 +421,14 @@ impl Shown {
             if opened {
                 self.show = Show::default();
                 self.viewing = self.selected_bead().cloned();
+                // The way back out of a window is the forest it was opened
+                // over, whatever the last one was opened over.
+                self.trail.clear();
             }
             return opened;
+        }
+        if action == Action::NextRelated {
+            return self.step_related();
         }
         if action == Action::CopyId {
             return self.copy_id();
@@ -439,6 +463,109 @@ impl Shown {
         }
         self.copied = Some(id);
         true
+    }
+
+    /// Move the window on to the next bead the shown bead names, reporting
+    /// whether it moved.
+    ///
+    /// Only beads the forest can take the reader to are stepped on to. A
+    /// reference the forest draws nowhere is still on the page and still says
+    /// so; putting the ring on it would offer a reader an Enter that does
+    /// nothing.
+    fn step_related(&mut self) -> bool {
+        let Some(node) = show::selected(&self.forest) else {
+            return false;
+        };
+        let related = show::related(node);
+        let from = self.show.on().and_then(|id| show::at(node, id));
+        let to = show::stepped(from, related.len(), |at| {
+            show::followable(&self.forest, related[at])
+        });
+        let Some(to) = to else {
+            return false;
+        };
+        let to = related[to].id.clone();
+        self.show.go_to(&to);
+        true
+    }
+
+    /// The bead the window's ring is on, where it is on one the forest draws.
+    fn related_key(&self) -> Option<BeadKey> {
+        let node = show::selected(&self.forest)?;
+        let on = show::related(node)
+            .into_iter()
+            .find(|named| Some(named.id.as_str()) == self.show.on())?;
+        show::key_of(&self.forest, on)
+    }
+
+    /// Take the ring off a bead a collection has taken away: one this bead no
+    /// longer names, or one no tree draws any more.
+    ///
+    /// A ring is an offer to press `Enter`, and the offer has to go when what
+    /// it points at does. Left standing it is drawn on whichever bead has
+    /// taken that row, so the reader sees a ring that has not moved and a key
+    /// that goes somewhere they never pointed at.
+    fn settle_ring(&mut self) {
+        if self.show.on().is_none() {
+            return;
+        }
+        let still_there = show::selected(&self.forest)
+            .map(show::related)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|named| Some(named.id.as_str()) == self.show.on())
+            .is_some_and(|named| show::followable(&self.forest, named));
+        if !still_there {
+            self.show.go_nowhere();
+        }
+    }
+
+    /// Follow the reference the ring is on, reporting whether the window
+    /// moved.
+    ///
+    /// The selection moves to the bead, and the window follows it there
+    /// because the window is drawn from the selection. What is kept to come
+    /// back to is where the reader was — the copy of the bead they were
+    /// reading, and the row of it they pressed on.
+    fn follow_related(&mut self) -> bool {
+        let Some(key) = self.related_key() else {
+            return false;
+        };
+        let Some(came_from) = self.forest.place().cloned() else {
+            return false;
+        };
+        if !self.forest.go_to(&key) {
+            return false;
+        }
+        self.trail.push((came_from, self.show.clone()));
+        self.show = Show::default();
+        self.viewing = Some(key);
+        self.moved(true);
+        true
+    }
+
+    /// Go back to the bead the reader followed a reference from, reporting
+    /// whether there was one to go back to.
+    ///
+    /// A bead the forest has stopped drawing since is passed over rather than
+    /// landed on, so a collection that takes a step of the way back out of
+    /// the tree leaves the reader further back rather than nowhere.
+    ///
+    /// The ring that comes back with it is settled here as well, because a
+    /// collection settles the window the reader is looking at and reaches
+    /// none of the ones parked behind it. The way back is where a stale one
+    /// arrives.
+    fn retrace(&mut self) -> bool {
+        while let Some((place, show)) = self.trail.pop() {
+            if self.forest.go_to_place(&place) {
+                self.show = show;
+                self.viewing = self.selected_bead().cloned();
+                self.settle_ring();
+                self.moved(true);
+                return true;
+            }
+        }
+        false
     }
 
     /// The bead the selection is on: a bead's own row, or a tree's header,
@@ -532,7 +659,13 @@ fn paint(
         Over::Bindings => key_bindings(frame, frame.area(), &bindings()),
         Over::Bead(show) => {
             if let Some(node) = show::selected(forest) {
-                show::show(frame, frame.area(), node, show);
+                // Whether any bead this one names can be gone to is the
+                // forest's to answer, and the title says which keys are worth
+                // pressing on the strength of it.
+                let follows = show::related(node)
+                    .into_iter()
+                    .any(|related| show::followable(forest, related));
+                show::show(frame, frame.area(), node, show, follows);
             }
         }
     }
@@ -613,6 +746,14 @@ impl View for Screen {
         self.shown.bead_still_shown()
     }
 
+    fn follow(&mut self) -> bool {
+        self.shown.follow_related()
+    }
+
+    fn retrace(&mut self) -> bool {
+        self.shown.retrace()
+    }
+
     fn clicked(&mut self, row: u16) -> bool {
         let screen = self.terminal.get_frame().area();
         self.shown.clicked(screen, row)
@@ -650,6 +791,7 @@ mod tests {
     use crate::app::Wanted;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::config::Scope;
+    use crate::model::edges::Related;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
         a_provider, Counts, Filter, Node, ProviderState, TrackerState, Tree,
@@ -758,7 +900,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 15 more bindings · no room on a screen this short",
+                "  … 16 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -842,6 +984,7 @@ mod tests {
                 "  ?         show these key bindings",
                 "  q, ^C     quit",
                 "  Esc       go back to the forest from the bead view",
+                "  Tab       move to the next bead the shown bead names; Enter follows it",
                 "  ^R        collect from the trackers again now",
                 "  E         expand the selected node and everything under it",
                 "  C         collapse the selected node and everything under it",
@@ -877,7 +1020,7 @@ mod tests {
             drawn[0], "  Enter     show the selected bead, o…",
             "a line too long for forty columns, cut with the cut marked"
         );
-        assert_eq!(drawn[14], "  Right, l  expand, or move to the fi…");
+        assert_eq!(drawn[15], "  Right, l  expand, or move to the fi…");
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
 
@@ -1835,6 +1978,321 @@ mod tests {
             "and nowhere further, so nothing to redraw"
         );
         assert_eq!(shown.forest.selected_line(), at);
+    }
+
+    // ---- following a bead the window names --------------------------------
+
+    /// A grove whose first child names three beads: its parent, which the
+    /// forest draws; a bead the tracker's answer does not hold, which it
+    /// cannot; and a sibling, which it does.
+    ///
+    /// The unfollowable one sits in the middle on purpose — the ring has to
+    /// step over it rather than stop at it, and a fixture with it at either
+    /// end would pass on a ring that simply stopped.
+    fn a_grove_that_names_its_beads() -> Snapshot {
+        let mut snapshot = a_described_grove(6);
+        let names = |id: &str, edge: Edge, status: Option<Status>| Related {
+            id: id.to_string(),
+            edge,
+            status,
+            title: Some("a bead in the grove".to_string()),
+        };
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                if node.id != "grv-1.1" {
+                    continue;
+                }
+                node.parent = Some(names("grv-1", Edge::ParentChild, Some(Status::InProgress)));
+                node.depends_on = vec![names("grv-404", Edge::Blocks, None)];
+                node.blocks = vec![names("grv-1.2", Edge::Blocks, Some(Status::InProgress))];
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// The window open on `grv-1.1`, which is the bead that names the others.
+    fn shown_on_the_bead_that_names_beads() -> Shown {
+        let mut shown = shown(a_grove_that_names_its_beads());
+        shown.apply(Action::ExpandOrChild);
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+        assert!(shown.apply(Action::ShowBead));
+        shown
+    }
+
+    /// The window opens on no reference at all, so `Enter` still means what it
+    /// meant before there were any: focus the pane.
+    #[test]
+    fn the_window_opens_on_none_of_the_beads_it_names() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+
+        assert_eq!(shown.show.on(), None);
+        assert!(!shown.follow_related(), "nothing to follow from nowhere");
+    }
+
+    /// `Tab` puts it on the first bead this one names that the forest can
+    /// take the reader to — here its parent, which is the root above it.
+    #[test]
+    fn tab_puts_the_window_on_the_first_bead_it_can_follow() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+
+        assert!(shown.apply(Action::NextRelated));
+
+        assert_eq!(shown.show.on(), Some("grv-1"));
+        assert_eq!(
+            shown.related_key(),
+            Some(bead("grove", "grv-1")),
+            "the ring is on the parent, which is the tree's root"
+        );
+    }
+
+    /// `grv-404` is drawn on the page and says the answer does not hold it.
+    /// The ring steps over it to the sibling below, so no ring the reader can
+    /// see is an `Enter` that does nothing.
+    #[test]
+    fn the_ring_steps_over_a_bead_the_forest_cannot_go_to() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+
+        assert!(shown.apply(Action::NextRelated));
+
+        assert_eq!(
+            shown.related_key(),
+            Some(bead("grove", "grv-1.2")),
+            "the ring landed on the bead in the middle, which goes nowhere"
+        );
+    }
+
+    /// Only the forest can say whether a bead this one names can be gone to,
+    /// and the title offers the keys on the strength of its answer. Asserted
+    /// on the frame the screen draws rather than on the phrase, because the
+    /// phrase is told what to say and this is about who tells it.
+    #[test]
+    fn the_title_offers_the_keys_that_follow_where_the_forest_can_go_to_one() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+
+        let drawn = bead_view(&mut shown, 80, 24);
+
+        assert!(
+            drawn.iter().any(|row| row.contains("Tab, Enter to follow")),
+            "{drawn:#?}"
+        );
+    }
+
+    /// And a bead whose every reference the forest draws nowhere offers
+    /// neither key: a reader told about `Tab` there presses it for nothing.
+    #[test]
+    fn the_title_offers_no_keys_where_the_forest_can_go_to_none_of_them() {
+        let mut shown = shown(a_described_grove(6));
+        shown.apply(Action::ExpandOrChild);
+        assert!(shown.apply(Action::ShowBead));
+
+        let drawn = bead_view(&mut shown, 80, 24);
+
+        assert!(
+            !drawn.iter().any(|row| row.contains("to follow")),
+            "{drawn:#?}"
+        );
+    }
+
+    /// It is still drawn, and still says so — degrade, never disappear. The
+    /// ring passing over it is not the page leaving it out.
+    #[test]
+    fn a_bead_the_forest_cannot_go_to_is_still_drawn_and_still_says_so() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        let inner = bead_window_inner(&mut shown, 80, 24);
+
+        assert!(
+            inner.iter().any(|row| row.contains("grv-404")),
+            "{inner:#?}"
+        );
+    }
+
+    /// Stepping past the last comes round to the first rather than stopping,
+    /// which is what makes one key enough to reach every bead this one names.
+    #[test]
+    fn stepping_past_the_last_bead_comes_round_to_the_first() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        assert!(shown.apply(Action::NextRelated));
+        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1.2")));
+
+        assert!(shown.apply(Action::NextRelated));
+
+        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1")));
+    }
+
+    /// A collection can rewrite what the bead the reader is on names, and the
+    /// ring stays on the bead rather than on the row.
+    ///
+    /// `codex review` on this change, and it is right: while the ring was an
+    /// ordinal it survived a reordering and came to stand for a different
+    /// bead — so the ring appeared not to move, and `Enter` went somewhere
+    /// nobody had pointed at. There is nothing on the screen to say it has
+    /// happened, which is what makes it worth a test rather than a caveat.
+    #[test]
+    fn a_collection_that_reorders_what_a_bead_names_leaves_the_ring_on_its_bead() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1")));
+
+        shown.collected(what_the_bead_names_reordered());
+
+        assert_eq!(
+            shown.related_key(),
+            Some(bead("grove", "grv-1")),
+            "the ring moved to whatever took that row"
+        );
+    }
+
+    /// And a collection that stops the bead naming it takes the ring off
+    /// altogether. A ring is an offer to press `Enter`, and the offer goes
+    /// when what it points at does.
+    #[test]
+    fn a_collection_that_drops_the_bead_the_ring_is_on_takes_the_ring_off() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1")));
+
+        shown.collected(a_described_grove(6));
+
+        assert_eq!(shown.show.on(), None);
+        assert!(
+            !shown.follow_related(),
+            "Enter still goes somewhere from a ring that is not drawn"
+        );
+    }
+
+    /// A collection reaches the window the reader is looking at, and none of
+    /// the ones parked behind it on the way back — so the way back is where a
+    /// ring the collection invalidated arrives, one press after it could have
+    /// been settled.
+    ///
+    /// `codex review` on this change, and it is right: the first fix settled
+    /// only the current `Show`, so retracing restored a ring drawn on a bead
+    /// the reader could no longer go to, and `Enter` fell through to focusing
+    /// the pane. Same class as the finding above it, one level up.
+    #[test]
+    fn a_ring_the_collection_invalidated_is_settled_by_the_way_back_too() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        assert!(shown.follow_related());
+        shown.collected(a_described_grove(6));
+
+        assert!(shown.retrace());
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+        assert_eq!(
+            shown.show.on(),
+            None,
+            "the way back restored a ring on a bead that is no longer named"
+        );
+    }
+
+    /// The same beads, named in the other order — so an ordinal kept across
+    /// the collection stands for a different bead while the reader's ring has
+    /// not moved.
+    fn what_the_bead_names_reordered() -> Snapshot {
+        let mut snapshot = a_grove_that_names_its_beads();
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                if node.id != "grv-1.1" {
+                    continue;
+                }
+                let parent = node.parent.take().expect("the fixture names a parent");
+                node.blocks = vec![parent];
+                node.parent = None;
+                node.depends_on = vec![Related {
+                    id: "grv-1.2".to_string(),
+                    edge: Edge::Blocks,
+                    status: Some(Status::InProgress),
+                    title: Some("a bead in the grove".to_string()),
+                }];
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// The move the whole feature is for, and the assertion is that the
+    /// window is *still up* rather than anything about the bead it now shows.
+    ///
+    /// `bead_still_shown` closes the window when the selection leaves the bead
+    /// `viewing` names, to catch a collection moving it out from under the
+    /// reader. A follow moves the selection deliberately, and a guard written
+    /// for the involuntary move cannot tell one from the other — so a follow
+    /// that did not write `viewing` would close the window on the very press
+    /// that asked for the bead.
+    #[test]
+    fn following_a_bead_moves_the_selection_to_it_and_leaves_the_window_up() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+
+        assert!(shown.follow_related());
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+        assert!(
+            shown.bead_still_shown(),
+            "the window closed on the press that asked for the bead"
+        );
+    }
+
+    /// The window is drawn from the selection, so following one redraws it on
+    /// the bead arrived at without anything asking it to.
+    #[test]
+    fn the_window_shows_the_bead_that_was_followed_to() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        assert!(shown.follow_related());
+
+        let inner = bead_window_inner(&mut shown, 80, 12);
+
+        assert!(inner.iter().any(|row| row.contains("grv-1 ")), "{inner:#?}");
+    }
+
+    /// Going back is the bead followed from, and the row of it that was
+    /// followed — landing at the top of the bead would lose the reader's
+    /// place in a bead they had scrolled through.
+    #[test]
+    fn going_back_returns_to_the_bead_followed_from_and_the_ring_it_was_on() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        let was = shown.show.clone();
+        assert!(shown.follow_related());
+
+        assert!(shown.retrace());
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+        assert_eq!(shown.show, was, "the window is where it was left");
+        assert!(shown.bead_still_shown(), "the way back closed the window");
+    }
+
+    /// On the bead the window was opened on there is nowhere further back, and
+    /// saying so is what leaves the view for the forest.
+    #[test]
+    fn there_is_nowhere_back_from_the_bead_the_window_was_opened_on() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+
+        assert!(!shown.retrace());
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+    }
+
+    /// The way back out of a window is the forest it was opened over, whatever
+    /// the last one was opened over: a reader who followed three beads, left,
+    /// and opened another has no way back to the first three and does not
+    /// expect one.
+    #[test]
+    fn opening_the_window_again_forgets_the_way_back() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        assert!(shown.apply(Action::NextRelated));
+        assert!(shown.follow_related());
+
+        assert!(shown.apply(Action::ShowBead));
+
+        assert!(!shown.retrace(), "a way back to a window that was left");
+        assert_eq!(shown.show.on(), None, "and no ring carried over with it");
     }
 
     /// Opening the view again starts it from the top: a reader who scrolled
