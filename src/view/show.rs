@@ -2,20 +2,26 @@
 //! window over the forest.
 
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Clear};
 use ratatui::Frame;
 
 use crate::model::edges::Related;
 use crate::model::snapshot::Node;
-use crate::model::types::Edge;
+use crate::model::types::{Edge, Status};
+use crate::view::draw::tone::{fg, status_style, DIM, LIVE};
 use crate::view::fitted::{indent, Fitted};
 use crate::view::forest::Forest;
 use crate::view::markdown;
 use crate::view::phrase;
 use crate::view::row::{agent_marker, status_glyph};
 use crate::view::Motion;
+
+/// `bd show`'s own colour for the id at the head of the page, read off `bd`
+/// 1.2.2's output. Literal rather than named for the reason `tone.rs`'s
+/// are: `bd` sends a 24-bit value that does not move with the theme.
+const ID: Color = Color::Rgb(89, 194, 255);
 
 /// The section names `bd show` prints, verbatim, in the order it prints
 /// them. Terminology comes from beads, and a heading is terminology.
@@ -144,37 +150,44 @@ fn show_window(area: Rect, width: u16, rows: usize) -> Rect {
 /// is.
 pub fn said(node: &Node, width: usize) -> Vec<Vec<Span<'static>>> {
     let mut rows = vec![vec![
-        Span::raw(format!("{} {}", status_glyph(&node.status), node.id)),
+        glyph(&node.status),
+        Span::raw(" "),
+        Span::styled(node.id.clone(), Style::new().fg(ID)),
         Span::raw(indent()),
         Span::raw(node.title.clone()),
     ]];
 
-    let mut facts = vec![
-        phrase::status_word(&node.status),
-        format!("P{}", node.priority),
-        node.issue_type.clone(),
-    ];
+    let mut facts = vec![format!("P{}", node.priority), node.issue_type.clone()];
     facts.extend(node.owner.clone());
-    rows.push(plain(facts.join(" · ")));
+    rows.push(indented(vec![
+        Span::styled(
+            phrase::status_word(&node.status),
+            status_style(&node.status),
+        ),
+        Span::raw(format!(" · {}", facts.join(" · "))),
+    ]));
     if let Some(agent) = &node.agent {
-        rows.push(plain(agent_marker(agent)));
+        rows.push(indented(vec![Span::styled(
+            agent_marker(agent),
+            Style::new().fg(LIVE),
+        )]));
     }
 
     let room = width.saturating_sub(indent().len());
     let prose = |text: &str| {
         markdown::rows(text, room)
             .into_iter()
-            .map(|row| {
-                let mut said = vec![Span::raw(indent())];
-                said.extend(row);
-                said
-            })
+            .map(indented)
             .collect::<Vec<_>>()
     };
     let tied = |arrow: char, related: &[Related]| {
         related
             .iter()
-            .map(|related| plain(format!("{arrow} {}", related_row(related))))
+            .map(|related| {
+                let mut row = vec![Span::raw(format!("{arrow} "))];
+                row.extend(related_row(related));
+                indented(row)
+            })
             .collect::<Vec<_>>()
     };
 
@@ -200,20 +213,33 @@ pub fn said(node: &Node, width: usize) -> Vec<Vec<Span<'static>>> {
 }
 
 /// One row indented under a heading.
-fn plain(said: String) -> Vec<Span<'static>> {
-    vec![Span::raw(format!("{}{said}", indent()))]
+fn indented(row: Vec<Span<'static>>) -> Vec<Span<'static>> {
+    let mut said = vec![Span::raw(indent())];
+    said.extend(row);
+    said
+}
+
+/// A status glyph in the colour the forest paints it, so the same thing is
+/// the same colour on both sides of the border.
+fn glyph(status: &Status) -> Span<'static> {
+    Span::styled(status_glyph(status).to_string(), status_style(status))
 }
 
 /// A related bead as `bd show` lists one: its glyph, id and title, and the
-/// kind of edge where the arrow alone would not say. A bead the answer does
-/// not hold has no glyph and no title, and says so in their place.
-fn related_row(related: &Related) -> String {
+/// kind of edge where the arrow alone would not say. A closed one is dimmed
+/// the way `bd show` dims it, the glyph aside. A bead the answer does not
+/// hold has no glyph and no title, and says so in their place.
+fn related_row(related: &Related) -> Vec<Span<'static>> {
     let Some(status) = &related.status else {
-        return format!("{}{}{}", related.id, indent(), phrase::not_in_the_answer());
+        return vec![Span::raw(format!(
+            "{}{}{}",
+            related.id,
+            indent(),
+            phrase::not_in_the_answer()
+        ))];
     };
     let mut said = format!(
-        "{} {}{}{}",
-        status_glyph(status),
+        " {}{}{}",
         related.id,
         indent(),
         related.title.as_deref().unwrap_or_default()
@@ -221,7 +247,10 @@ fn related_row(related: &Related) -> String {
     if let Edge::Other(kind) = &related.edge {
         said.push_str(&format!(" · {}", phrase::edge_kind(kind)));
     }
-    said
+    vec![
+        glyph(status),
+        Span::styled(said, fg(status.is_closed().then_some(DIM))),
+    ]
 }
 
 /// Draw the bead in a window over the forest.
@@ -271,8 +300,10 @@ mod tests {
     use crate::model::edges::Related;
     use crate::model::join::{AgentRef, JoinSource};
     use crate::model::types::{Edge, PaneStatus, Status};
-    use crate::view::painted::Painted;
+    use crate::view::draw::tone::{status_colour, DIM, LIVE};
+    use crate::view::painted::{Painted, Run};
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
 
     fn related(id: &str, edge: Edge, status: Status, title: &str) -> Related {
         Related {
@@ -652,5 +683,225 @@ mod tests {
                 "└──────────────────────────────────────────┘",
             ]
         );
+    }
+
+    // ---- colour ----------------------------------------------------------
+
+    /// The run a word is drawn in, found by what it says rather than where it
+    /// falls: a run's place on a row moves with the width and the border.
+    fn run_saying(painted: &[Run], said: &str) -> Run {
+        painted
+            .iter()
+            .find(|run| run.said.contains(said))
+            .unwrap_or_else(|| panic!("{said:?} is drawn: {painted:?}"))
+            .clone()
+    }
+
+    fn painted(node: &Node, width: u16, height: u16) -> Painted {
+        Painted::drawn_by(width, height, |frame| {
+            show(frame, frame.area(), node, &mut Show::default())
+        })
+    }
+
+    /// One of each status the forest gives a colour, so a loop over them
+    /// covers the palette.
+    fn every_coloured_status() -> [Status; 5] {
+        [
+            Status::InProgress,
+            Status::Blocked,
+            Status::Closed,
+            Status::Deferred,
+            Status::Other("triage".into()),
+        ]
+    }
+
+    /// The same thing is the same colour on both sides of the border: the
+    /// glyph at the top of the window goes through the rule the forest's
+    /// glyph goes through.
+    #[test]
+    fn the_glyph_is_painted_the_colour_the_forest_paints_it() {
+        for status in every_coloured_status() {
+            let bead = Node {
+                status: status.clone(),
+                ..a_bead()
+            };
+            let top = painted(&bead, 44, 22).row(1);
+
+            let glyph = run_saying(&top, &status_glyph(&status).to_string());
+            assert_eq!(glyph.said, status_glyph(&status).to_string(), "{top:?}");
+            assert_eq!(
+                glyph.style.fg,
+                status_colour(&status),
+                "{status:?}: {top:?}"
+            );
+        }
+    }
+
+    /// `bd` sends no escape for an open bead, and the window has no
+    /// brightness scale of its own, so an open glyph is the terminal's own.
+    #[test]
+    fn an_open_glyph_is_the_terminals_own() {
+        let open = Node {
+            status: Status::Open,
+            ..a_bead()
+        };
+        let top = painted(&open, 44, 22).row(1);
+
+        assert_eq!(
+            run_saying(&top, "○").style.fg,
+            Some(Color::Reset),
+            "{top:?}"
+        );
+    }
+
+    /// The agent is the one thing on the page `bd` cannot say, and it keeps
+    /// the colour the forest gives it.
+    #[test]
+    fn the_agent_marker_is_painted_live_as_the_forest_paints_it() {
+        let marker = painted(&a_bead(), 44, 22).row(3);
+
+        assert_eq!(
+            run_saying(&marker, "◍ lifting the mast · working").style.fg,
+            Some(LIVE),
+            "{marker:?}"
+        );
+    }
+
+    /// Read off `bd show` 1.2.2's own output: the id at the head of the page
+    /// is always this blue, whatever the status.
+    #[test]
+    fn the_id_is_painted_the_blue_bd_show_paints_it() {
+        let top = painted(&a_bead(), 44, 22).row(1);
+
+        assert_eq!(
+            run_saying(&top, "orb-7.1").style.fg,
+            Some(Color::Rgb(89, 194, 255)),
+            "{top:?}"
+        );
+        assert_eq!(
+            run_saying(&top, "re-point the dish").style.fg,
+            Some(Color::Reset),
+            "the title is the terminal's own: {top:?}"
+        );
+    }
+
+    /// `bd show` says the status word in the status colour and leaves the
+    /// priority, the type and the owner in the terminal's own.
+    #[test]
+    fn the_facts_row_says_the_status_in_its_colour_and_the_rest_plain() {
+        for status in every_coloured_status() {
+            let bead = Node {
+                status: status.clone(),
+                ..a_bead()
+            };
+            let facts = painted(&bead, 44, 22).row(2);
+
+            let word = run_saying(&facts, &phrase::status_word(&status));
+            assert_eq!(
+                word.style.fg,
+                status_colour(&status),
+                "{status:?}: {facts:?}"
+            );
+            assert_eq!(
+                run_saying(&facts, "P2 · task · kim").style.fg,
+                Some(Color::Reset),
+                "{status:?}: {facts:?}"
+            );
+        }
+    }
+
+    /// A related bead's glyph is the same glyph the forest and the head of
+    /// the window paint, and it takes the same colour.
+    #[test]
+    fn a_related_beads_glyph_is_painted_the_colour_of_its_status() {
+        let painted = painted(&a_bead(), 44, 22);
+        let depends_on = painted.row(17);
+        let blocks = painted.row(20);
+
+        assert_eq!(
+            run_saying(&depends_on, "✓").style.fg,
+            status_colour(&Status::Closed),
+            "{depends_on:?}"
+        );
+        assert_eq!(
+            run_saying(&blocks, "○").style.fg,
+            Some(Color::Reset),
+            "{blocks:?}"
+        );
+    }
+
+    /// `bd show` dims a closed related bead's id and title to the grey it
+    /// dims a finished row to, and leaves the arrow alone; an open one is
+    /// the terminal's own.
+    #[test]
+    fn a_closed_related_bead_is_dimmed_as_bd_show_dims_one() {
+        let painted = painted(&a_bead(), 44, 22);
+        let depends_on = painted.row(17);
+        let blocks = painted.row(20);
+
+        assert_eq!(
+            run_saying(&depends_on, "orb-7.3  lay the feeder cable")
+                .style
+                .fg,
+            Some(DIM),
+            "{depends_on:?}"
+        );
+        assert_eq!(
+            run_saying(&depends_on, "→").style.fg,
+            Some(Color::Reset),
+            "the arrow says the edge, not the state: {depends_on:?}"
+        );
+        assert_eq!(
+            run_saying(&blocks, "orb-7.4  file the licence").style.fg,
+            Some(Color::Reset),
+            "{blocks:?}"
+        );
+    }
+
+    /// `bd show` prints a section heading bold and in no colour, and the
+    /// window draws it as `bd show` does.
+    #[test]
+    fn a_heading_is_bold_and_no_colour_as_bd_show_prints_one() {
+        let heading = run_saying(&painted(&a_bead(), 44, 22).row(5), DESCRIPTION);
+
+        assert!(
+            heading.style.add_modifier.contains(Modifier::BOLD),
+            "{heading:?}"
+        );
+        assert_eq!(heading.style.fg, Some(Color::Reset), "{heading:?}");
+    }
+
+    /// Colour is the second channel and never the only one: the glyph and
+    /// the status word say the status, so a terminal that drops colour loses
+    /// nothing on either the bead's own rows or a related bead's.
+    #[test]
+    fn nothing_in_the_window_is_told_apart_by_colour_alone() {
+        for status in every_coloured_status().into_iter().chain([Status::Open]) {
+            let bead = Node {
+                status: status.clone(),
+                depends_on: vec![related(
+                    "orb-7.3",
+                    Edge::Blocks,
+                    status.clone(),
+                    "the cable",
+                )],
+                ..a_bead()
+            };
+            let rows = painted(&bead, 44, 22).rows();
+            let glyph = status_glyph(&status).to_string();
+
+            assert!(
+                rows[1].contains(&glyph),
+                "{status:?} lost its glyph: {rows:#?}"
+            );
+            assert!(
+                rows[2].contains(&phrase::status_word(&status)),
+                "{status:?} lost its word: {rows:#?}"
+            );
+            assert!(
+                rows[17].contains(&format!("→ {glyph} orb-7.3")),
+                "{status:?} lost its glyph on a related row: {rows:#?}"
+            );
+        }
     }
 }

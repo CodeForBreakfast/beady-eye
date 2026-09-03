@@ -6,7 +6,7 @@ use ratatui::style::{Color, Style};
 use crate::model::types::Status;
 use crate::view::row::Row;
 
-pub(super) const LIVE: Color = Color::Green;
+pub(crate) const LIVE: Color = Color::Green;
 pub(super) const LOOK_AT_THIS: Color = Color::Yellow;
 
 /// `bd list`'s own colours for a status, read off `bd` 1.2.2's output. They
@@ -22,7 +22,7 @@ const CLOSED: Color = Color::Rgb(128, 144, 160);
 
 /// `bd` draws a deferred bead's glyph and every cell of a finished row in
 /// this one grey, so one name serves both.
-pub(super) const DIM: Color = Color::Rgb(108, 118, 128);
+pub(crate) const DIM: Color = Color::Rgb(108, 118, 128);
 
 /// The top of the brightness scale, and the one tier `bd list` could not
 /// draw: a row a live agent is on. It is the terminal's own foreground, not a
@@ -68,13 +68,13 @@ pub(super) fn tone(row: &Row) -> Style {
 ///
 /// Colour is the second channel and never the only one: the glyph already says
 /// the status, so a terminal with no colour loses nothing.
-pub(super) fn status_style(status: &Status) -> Style {
+pub(crate) fn status_style(status: &Status) -> Style {
     fg(status_colour(status))
 }
 
 /// `bd`'s colour for a status, or none where `bd` sends no escape and the
 /// glyph should take the brightness of the row it sits on.
-pub(super) fn status_colour(status: &Status) -> Option<Color> {
+pub(crate) fn status_colour(status: &Status) -> Option<Color> {
     match status {
         Status::InProgress => Some(IN_PROGRESS),
         Status::Blocked => Some(BLOCKED),
@@ -89,7 +89,7 @@ pub(super) fn status_colour(status: &Status) -> Option<Color> {
 
 /// A style that says a colour, or one that says nothing and lets the line's
 /// own reach the span.
-pub(super) fn fg(colour: Option<Color>) -> Style {
+pub(crate) fn fg(colour: Option<Color>) -> Style {
     colour.map_or_else(Style::new, |colour| Style::new().fg(colour))
 }
 

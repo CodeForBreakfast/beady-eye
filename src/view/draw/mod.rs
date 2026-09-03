@@ -12,7 +12,7 @@ mod foot;
 mod groups;
 mod project;
 mod tail;
-mod tone;
+pub(crate) mod tone;
 
 use std::collections::BTreeMap;
 
