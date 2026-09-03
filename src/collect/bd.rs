@@ -215,11 +215,14 @@ impl Reader<'_> {
     /// do nothing. Clearing the inherited variables stays as well; together
     /// they mean a misconfiguration fails loudly.
     ///
-    /// `--readonly` has bd refuse the writes `bdi` never makes, so for every
-    /// subcommand but one the rule is enforced by bd rather than resting on
-    /// `bdi` being well behaved. `sql` is the exception: it is a general
-    /// executor, bd's own help for it warns that direct database access
-    /// bypasses the storage layer, and `--readonly` does not veto it —
+    /// Every subcommand composed here is a read, and that is the whole of why
+    /// `bdi` never writes to a tracker: the rule rests on the command lines
+    /// below rather than on bd. `--readonly` vetoes bd's mutating subcommands,
+    /// so a mutating call arriving here later is refused rather than run — a
+    /// guard on the next edit, and a veto over subcommands rather than a
+    /// property of the tracker's files. `sql` is outside even that: it is a
+    /// general executor, bd's own help for it warns that direct database
+    /// access bypasses the storage layer, and `--readonly` does not veto it —
     /// measured against this project's own tracker on 2026-09-01. What holds
     /// there instead is `WORKING_ROOT`, a constant nothing composes, reached
     /// from one method that takes no argument.
