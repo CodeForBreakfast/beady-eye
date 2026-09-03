@@ -498,14 +498,13 @@ fn asked_for(view: &mut dyn View, outstanding: &mut Outstanding, wanted: Wanted)
 ///
 /// `a_read_goes_before_its_project_can_be_said_to_have_stopped_being_read`
 /// holds that against the shortest patience the key can name, through the
-/// predicate rather than by comparing two constants. **What it cannot see is
-/// this constant ceasing to be the window.** The window is a parameter and
-/// `Outstanding` takes any value for it, so a later change reading it from
-/// config would edit `tui::run` and leave this sitting at 200ms with the
-/// test still passing. A `debug_assert!(window < patience)` in `waiting`
-/// would cover that and is not available: the tests that are about the
-/// window construct one longer than the patience on purpose.
-pub(super) const WINDOW: TimeDelta = TimeDelta::milliseconds(200);
+/// predicate rather than by comparing two constants, and on the pair
+/// `Outstanding::for_a_run` builds rather than on this constant — so it
+/// holds whichever value the window comes to be read from. A
+/// `debug_assert!(window < patience)` in `waiting` would cover it too and is
+/// not available: the tests that are about the window construct one longer
+/// than the patience on purpose.
+const WINDOW: TimeDelta = TimeDelta::milliseconds(200);
 
 /// What has been asked for and not yet collected.
 ///
@@ -561,6 +560,16 @@ pub(super) struct Outstanding {
 }
 
 impl Outstanding {
+    /// Nothing outstanding, at the two waits a run drives with: the patience
+    /// its config names, and `WINDOW`.
+    ///
+    /// The only place production pairs them, so that a guard calling this
+    /// holds the relationship between them against the pair a run is built
+    /// with rather than against `WINDOW`.
+    pub(super) fn for_a_run(patience: TimeDelta) -> Self {
+        Self::waiting(patience, WINDOW)
+    }
+
     pub(super) fn waiting(patience: TimeDelta, window: TimeDelta) -> Self {
         Self {
             awaited: Vec::new(),
@@ -2591,6 +2600,12 @@ mod tests {
         /// shortest patience the config key can name has run out, so a
         /// project waiting out a window is never drawn as one whose tracker
         /// has stopped answering.
+        ///
+        /// It names no window of its own: the pair is the one
+        /// `Outstanding::for_a_run` builds, and the read is held for as long
+        /// as that pair says its window is. So a window wired to a config key
+        /// arrives here as the length of the wait, and this holds the
+        /// relationship at whatever value production has come to use.
         #[test]
         fn a_read_goes_before_its_project_can_be_said_to_have_stopped_being_read() {
             let shortest = Tui {
@@ -2599,10 +2614,14 @@ mod tests {
             }
             .unanswered_after();
             let (ask, asked) = mpsc::channel();
-            let mut outstanding = Outstanding::waiting(shortest, WINDOW);
+            let mut outstanding = Outstanding::for_a_run(shortest);
             outstanding.ask(atlas(), at(0));
 
-            let out = at(0) + WINDOW;
+            let held_for = outstanding
+                .sends_in(at(0))
+                .expect("the read just asked for is waiting out its window");
+            let out = at(0)
+                + TimeDelta::from_std(held_for).expect("a window is a length chrono can carry");
             outstanding.sends(&ask, out);
 
             assert_eq!(

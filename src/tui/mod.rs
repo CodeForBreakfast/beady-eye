@@ -29,7 +29,7 @@ mod screen;
 mod wire;
 
 pub(crate) use armed::Armed;
-use drive::{drive, Outstanding, View, WINDOW};
+use drive::{drive, Outstanding, View};
 use screen::Screen;
 use wire::wire;
 
@@ -91,7 +91,7 @@ pub fn run(
     // It is this read coming back that arms every project for its first poll,
     // which is why nothing is armed here: a project armed at startup would
     // ask for a second read of what is already being collected.
-    let mut outstanding = Outstanding::waiting(patience, WINDOW);
+    let mut outstanding = Outstanding::for_a_run(patience);
     outstanding.ask(Wanted::Everything, Utc::now());
 
     let mut screen = Screen::showing(awaiting, panes, at_startup, tail_every)?;
