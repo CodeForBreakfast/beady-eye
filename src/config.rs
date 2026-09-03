@@ -266,9 +266,22 @@ impl Tui {
         Duration::from_millis(self.tail_refresh_millis)
     }
 
-    /// The same, as the clock arithmetic beside a project's name counts in.
+    /// The same, as the clock arithmetic beside a project's name counts in,
+    /// or the longest interval there is where the config named a patience
+    /// longer than that.
+    ///
+    /// Saturating rather than refusing, because every value up there says the
+    /// same thing — a collection this patience gives up on is one no run
+    /// reaches — and because the patience is only ever compared against, so
+    /// the longest interval there is is an answer every reader of it holds.
+    /// `TimeDelta` runs out twice on the way: at `i64` seconds, and again
+    /// three decimal places short of that, so a patience past the second
+    /// limit is a thousandth of the way to the first.
     pub fn unanswered_after(&self) -> TimeDelta {
-        TimeDelta::seconds(self.unanswered_after_seconds.try_into().unwrap_or(i64::MAX))
+        i64::try_from(self.unanswered_after_seconds)
+            .ok()
+            .and_then(TimeDelta::try_seconds)
+            .unwrap_or(TimeDelta::MAX)
     }
 }
 
@@ -689,6 +702,55 @@ path = "/home/user/dev/cinder"
 
         assert_eq!(cfg.tui.unanswered_after(), TimeDelta::seconds(90));
         assert_eq!(Tui::default().unanswered_after(), TimeDelta::seconds(30));
+    }
+
+    /// The bound itself, taken off `chrono` rather than written down: the
+    /// longest patience an interval can hold is read back as itself, and one
+    /// second more is the longest interval there is.
+    #[test]
+    fn a_patience_longer_than_an_interval_can_hold_is_the_longest_there_is() {
+        let longest: u64 = TimeDelta::MAX
+            .num_seconds()
+            .try_into()
+            .expect("the longest interval there is runs forwards");
+
+        assert_eq!(
+            patient_for(longest).unanswered_after(),
+            TimeDelta::seconds(TimeDelta::MAX.num_seconds())
+        );
+        assert_eq!(patient_for(longest + 1).unanswered_after(), TimeDelta::MAX);
+    }
+
+    /// The other limit, a thousandfold past the one above: a patience too
+    /// large to be a signed count of seconds at all. No config file reaches
+    /// it — TOML counts in signed 64-bit and refuses the literal — so what
+    /// stands here is the crate's own `Tui`, whose fields anything may set,
+    /// and nothing but a value up here tells the two limits apart.
+    #[test]
+    fn a_patience_too_large_to_count_in_signed_seconds_is_the_longest_there_is() {
+        assert_eq!(patient_for(u64::MAX).unanswered_after(), TimeDelta::MAX);
+    }
+
+    /// The same rule as far out as a config file can put it: `i64::MAX`
+    /// seconds, the largest integer TOML carries, already a thousandfold past
+    /// what an interval holds — and the exact value the old fallback
+    /// substituted for every value it caught.
+    #[test]
+    fn a_config_naming_a_patience_no_interval_can_hold_is_read_as_the_longest_there_is() {
+        let cfg = Config::from_toml(&format!(
+            "{ONE_PROJECT}[tui]\nunanswered_after_seconds = {}\n",
+            i64::MAX
+        ))
+        .expect("parses");
+
+        assert_eq!(cfg.tui.unanswered_after(), TimeDelta::MAX);
+    }
+
+    fn patient_for(seconds: u64) -> Tui {
+        Tui {
+            unanswered_after_seconds: seconds,
+            ..Tui::default()
+        }
     }
 
     /// The whole of a project entry: a path. A tracker is read in `bdi`'s own
