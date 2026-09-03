@@ -247,6 +247,8 @@ mod tests {
     use super::*;
     use crate::tui::fixtures::{atlas, A_MOMENT};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
     /// A source that reports only when the test says so.
@@ -298,6 +300,36 @@ mod tests {
         });
 
         assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    /// The other half of that silence. `OnCue` stands in for the source
+    /// everywhere else, so this is the only place `Inbound` is asked what a
+    /// name that arrived means — and the answer is the project to collect
+    /// for, not just that something moved.
+    #[test]
+    fn a_project_named_on_the_inbound_channel_is_reported_as_that_project() {
+        let (to_the_loop, events) = mpsc::channel();
+        let (changed, changes) = mpsc::channel();
+        let open = changed.clone();
+        thread::spawn(move || {
+            report(
+                &mut Inbound {
+                    changes,
+                    _open: open,
+                },
+                &to_the_loop,
+            );
+        });
+
+        changed
+            .send("atlas".to_string())
+            .expect("the source is listening");
+
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(atlas())),
+            "the loop was told which project a writer said had moved"
+        );
     }
 
     /// The loop's threads are the loop's: each ends when the loop stops
@@ -507,5 +539,45 @@ mod tests {
 
         assert!(socket.is_some());
         assert_eq!(notice, None);
+    }
+
+    /// The seam nothing else crosses. `collect::changes` is tested up to the
+    /// `Receiver<String>` it hands over, and everything above reads that
+    /// receiver as a given, so the run from a writer on the socket to an
+    /// event on the loop's channel is asserted here or nowhere. What it adds
+    /// over the test at the rule is that the two halves agree on what a
+    /// message is: a line the channel accepts comes out as the project the
+    /// collection reads.
+    #[test]
+    fn a_writer_on_the_socket_moves_the_project_it_named_on_the_loops_channel() {
+        let (to_the_loop, events) = mpsc::channel();
+        let (changed, changes) = mpsc::channel();
+        let at = a_socket_path("reported");
+
+        let _socket = changes::listen(
+            Some(at.clone()),
+            &Reported::watching(["atlas".to_string()]),
+            changed.clone(),
+        )
+        .expect("a socket of this test's own");
+
+        thread::spawn(move || {
+            report(
+                &mut Inbound {
+                    changes,
+                    _open: changed,
+                },
+                &to_the_loop,
+            );
+        });
+
+        let mut writer = UnixStream::connect(&at).expect("bdi is listening");
+        writeln!(writer, "atlas").expect("the channel takes a line");
+
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Changed(atlas())),
+            "what a writer said on the socket reached the loop as a project to collect for"
+        );
     }
 }
