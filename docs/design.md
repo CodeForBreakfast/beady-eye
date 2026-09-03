@@ -1036,14 +1036,23 @@ environment = "direnv"
   precedence between the two would be a mechanism nothing on the screen says.
 - **An authentication failure is distinguished from the others.**
   `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`,
-  `not-installed`, `unstartable`, `parse`, or `unknown-flag`. They want
-  different responses and reporting them as one string does not help anyone.
-  The middle two are the two ways bd never ran, and they are two different
-  things to do about it: install bd, or repair the bd or the project directory
-  that is already there. The last is bd refusing the command
-  line before it runs, in cobra's words (`unknown flag`, `unknown shorthand
-  flag`, `unknown command`): a bd older than a flag `bdi` uses, which is what
-  a bd below README's floor looks like, and the screen names the floor. Only
+  `not-installed`, `unstartable`, `installed-unstartable`, `parse`, or
+  `unknown-flag`. They want different responses and reporting them as one
+  string does not help anyone. The middle three are the ways bd never ran, and
+  they are three different things to do about it: install bd, repair the bd or
+  the project directory that is already there, or go and find out which of
+  those it is. The third answer exists because the other two each make a claim
+  about the machine and the kernel's refusal does not always earn either.
+  `bdi` asks whether anything is there under bd's name on every refused spawn,
+  and one `PATH` entry nothing may search refuses that question on the same
+  permission it refused the spawn on — so a machine with no bd at all can fail
+  `EACCES`, and neither *installed* nor *not installed* may be said of it.
+  `unstartable` is that answer, and it is also the one anything unable to tell
+  the three apart falls to, so what it claims stays true either way. The last
+  is bd refusing the command line before it runs, in cobra's words (`unknown
+  flag`, `unknown shorthand flag`, `unknown command`): a bd older than a flag
+  `bdi` uses, which is what a bd below README's floor looks like, and the
+  screen names the floor. Only
   bd's own refusal counts: a credential command or direnv saying the same
   words to a flag it lacks is a configured command that failed, as before,
   and not a bd to replace.

@@ -36,7 +36,8 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
         TrackerFailure::Auth => "the tracker refused the credential it was given",
         TrackerFailure::Unavailable => "the tracker did not answer",
         TrackerFailure::NotInstalled => "bd is not installed",
-        TrackerFailure::Unstartable => "bd is installed and could not be started",
+        TrackerFailure::Unstartable => "bd could not be started",
+        TrackerFailure::InstalledUnstartable => "bd is installed and could not be started",
         TrackerFailure::Parse => "bd answered with something bdi cannot read",
         TrackerFailure::UnknownFlag => concat!(
             "bd does not know a flag bdi uses · bdi needs bd ",
@@ -522,6 +523,7 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
         | FailureKind::Unavailable
         | FailureKind::NotInstalled
         | FailureKind::Unstartable
+        | FailureKind::InstalledUnstartable
         | FailureKind::Parse
         | FailureKind::Unsupported
         | FailureKind::UnknownFlag => "that pane could not be read",
@@ -1287,6 +1289,7 @@ mod tests {
                 | FailureKind::Unavailable
                 | FailureKind::NotInstalled
                 | FailureKind::Unstartable
+                | FailureKind::InstalledUnstartable
                 | FailureKind::Parse
                 | FailureKind::Unsupported
                 | FailureKind::UnknownFlag => "could not be read",
@@ -1316,9 +1319,9 @@ mod tests {
         assert_eq!(distinct.len(), said.len(), "{said:?}");
     }
 
-    /// The two ways bd never ran leave the reader two different things to
-    /// do: install bd, or repair the bd or the directory that is there.
-    /// One phrase for both said neither.
+    /// The three ways bd never ran leave the reader three different things to
+    /// do: install bd, repair the bd or the directory that is there, or go
+    /// and find out which of those it is. One phrase for them said none.
     #[test]
     fn a_bd_that_is_not_installed_is_told_apart_from_one_that_will_not_start() {
         says(
@@ -1328,6 +1331,31 @@ mod tests {
         says(
             tracker_failure(TrackerFailure::Unstartable),
             "could not be started",
+        );
+        says(
+            tracker_failure(TrackerFailure::InstalledUnstartable),
+            "is installed and could not be started",
+        );
+    }
+
+    /// Only the failure that established an installation may assert one.
+    ///
+    /// The weaker of the two is what a spawn the search could not reach
+    /// comes to, and there `bdi` has looked for bd and been refused rather
+    /// than found it — so a sentence claiming the machine has bd would send
+    /// a reader who has never installed it hunting something that was never
+    /// there. It is also the arm anything that cannot tell the two apart
+    /// falls to, which is why the claim is the thing it does not make.
+    #[test]
+    fn only_a_bd_that_was_found_is_said_to_be_installed() {
+        assert!(
+            !tracker_failure(TrackerFailure::Unstartable).contains("installed"),
+            "a failure that established no installation asserted one: {}",
+            tracker_failure(TrackerFailure::Unstartable)
+        );
+        says(
+            tracker_failure(TrackerFailure::InstalledUnstartable),
+            "installed",
         );
     }
 

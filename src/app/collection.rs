@@ -345,6 +345,7 @@ fn unlistable(kind: FailureKind) -> ProviderState {
     match kind {
         FailureKind::NotInstalled => ProviderState::Absent,
         FailureKind::Unstartable
+        | FailureKind::InstalledUnstartable
         | FailureKind::Auth
         | FailureKind::Unavailable
         | FailureKind::Gone

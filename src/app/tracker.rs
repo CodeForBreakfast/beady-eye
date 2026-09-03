@@ -370,6 +370,7 @@ pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
         | FailureKind::Unsupported => TrackerFailure::Unavailable,
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
+        FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
         FailureKind::Parse => TrackerFailure::Parse,
         FailureKind::UnknownFlag => TrackerFailure::UnknownFlag,
     }
@@ -380,7 +381,12 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::app::run;
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
     use crate::collect::agents::testing::{named, pane, Fake as Provider};
+    use crate::collect::run::{Env, RealRunner, Runner};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
@@ -1202,6 +1208,50 @@ orbital = ["bdi-404"]
         );
     }
 
+    /// The sentence a reader is given for a spawn the kernel refused, taken
+    /// from a machine rather than from a `FailureKind` chosen by hand.
+    ///
+    /// One unsearchable directory on `PATH` refuses the search that would
+    /// find bd and the `execve` that would run it alike, so the spawn fails
+    /// `EACCES` on a machine that has no bd at all. Nothing in that establishes
+    /// an installation, and a phrase asserting one sends the reader hunting a
+    /// bd that was never there.
+    ///
+    /// It runs the whole seam — the spawn, the classification, the mapping
+    /// and the phrase — because each of those is right on its own today and
+    /// the false sentence is what they add up to.
+    #[test]
+    fn a_spawn_no_search_could_reach_does_not_tell_the_reader_bd_is_installed() {
+        let locked = an_unsearchable_directory("no-claim-to-make");
+        let mut env = Env::new();
+        env.insert("PATH".to_string(), locked.display().to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], None, &env)
+            .expect_err("the one directory on PATH cannot be searched");
+        let readable_again = std::fs::set_permissions(&locked, Permissions::from_mode(0o755));
+
+        let said = crate::view::phrase::tracker_failure(tracker_failure(failure.kind));
+        readable_again.expect("the mode is ours to set");
+        std::fs::remove_dir_all(&locked).expect("the directory is ours to remove");
+
+        assert!(
+            !said.contains("installed"),
+            "a machine with no bd on it was told bd is installed: {said}"
+        );
+    }
+
+    /// A directory nothing may search, with a `bd` inside it that no search
+    /// can reach. The mode is put back before the directory is removed.
+    fn an_unsearchable_directory(named: &str) -> PathBuf {
+        let locked =
+            std::env::temp_dir().join(format!("bdi-locked-{named}-{}", std::process::id()));
+        std::fs::create_dir_all(&locked).expect("the directory is ours to make");
+        std::fs::set_permissions(&locked, Permissions::from_mode(0o644))
+            .expect("the mode is ours to set");
+        locked
+    }
+
     #[test]
     fn every_way_a_tracker_fails_keeps_its_own_kind() {
         let kinds = [
@@ -1209,6 +1259,10 @@ orbital = ["bdi-404"]
             (FailureKind::Unavailable, TrackerFailure::Unavailable),
             (FailureKind::NotInstalled, TrackerFailure::NotInstalled),
             (FailureKind::Unstartable, TrackerFailure::Unstartable),
+            (
+                FailureKind::InstalledUnstartable,
+                TrackerFailure::InstalledUnstartable,
+            ),
             (FailureKind::Parse, TrackerFailure::Parse),
             (FailureKind::Unsupported, TrackerFailure::Unavailable),
             (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),

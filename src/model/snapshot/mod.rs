@@ -101,9 +101,12 @@ pub enum TrackerFailure {
     Unavailable,
     /// Nothing is installed under bd's name for the tracker to be read with.
     NotInstalled,
-    /// bd is there and never ran: no execute bit, or a project directory
-    /// that is not there to run it in.
+    /// bd never ran, and whether bd is there was not established: a `PATH`
+    /// entry nothing may search hides bd and a machine with no bd alike.
     Unstartable,
+    /// bd is there and never ran: no execute bit, a dangling symlink, or a
+    /// project directory that is not there to run it in.
+    InstalledUnstartable,
     /// bd answered with something `bdi` cannot read.
     Parse,
     /// bd does not know a flag `bdi` uses, so it refused the command line

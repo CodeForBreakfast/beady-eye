@@ -22,7 +22,9 @@ pub fn from_the_current_directory(
         // bd that never ran has said nothing about this directory.
         if matches!(
             failure.kind,
-            FailureKind::NotInstalled | FailureKind::Unstartable
+            FailureKind::NotInstalled
+                | FailureKind::Unstartable
+                | FailureKind::InstalledUnstartable
         ) {
             return Err(failure.into());
         }

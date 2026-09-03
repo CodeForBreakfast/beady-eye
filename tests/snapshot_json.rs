@@ -596,7 +596,7 @@ fn a_provider_that_will_not_answer_is_told_apart_from_one_that_is_not_there() {
 /// not the absence a machine with no herdr at all reports.
 #[test]
 fn a_provider_that_is_there_and_will_not_start_is_not_reported_as_absent() {
-    let broken = Canned::default().failing("herdr agent list", FailureKind::Unstartable);
+    let broken = Canned::default().failing("herdr agent list", FailureKind::InstalledUnstartable);
 
     let emitted = emit(&broken, &orbital(), Filter::LiveAgents);
 

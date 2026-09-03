@@ -33,9 +33,17 @@ pub enum FailureKind {
     Busy,
     /// Nothing is installed under that name for the command to run.
     NotInstalled,
-    /// The program is there and the run could not be started: no execute
-    /// bit, or a directory it was to be run in that is not there.
+    /// The run could not be started, and whether anything is installed under
+    /// that name was not established: an unsearchable directory on `PATH`
+    /// refuses the search and the spawn on the same permission, and a
+    /// working directory that was never there explains the error on its own.
+    /// It is the weaker of the two, and the one a caller that cannot tell
+    /// falls to, so what it says of the machine stays true either way.
     Unstartable,
+    /// Something was found under that name and the run could not be started:
+    /// a symlink whose target has gone, no execute bit, a directory under
+    /// the name. This is the one that earns the word installed.
+    InstalledUnstartable,
     /// The command ran and returned something we cannot read.
     Parse,
     /// The tracker cannot run what it was asked at all, so asking it again
@@ -162,35 +170,57 @@ impl RunFailure {
     }
 
     pub fn unstartable(program: &str, cause: impl fmt::Display) -> Self {
+        Self::could_not_be_started(FailureKind::Unstartable, program, cause)
+    }
+
+    /// The detail is the same sentence for both: it reports the kernel's
+    /// refusal, which is all either kind knows, and the claim the two are
+    /// told apart by is made in the phrase rather than here.
+    fn could_not_be_started(kind: FailureKind, program: &str, cause: impl fmt::Display) -> Self {
         Self {
-            kind: FailureKind::Unstartable,
+            kind,
             program: program.to_string(),
             detail: format!("{program} could not be started: {cause}"),
         }
     }
 
-    /// Which of the two a refused spawn was.
+    /// Which of the three a refused spawn was.
     ///
-    /// `NotInstalled` is the answer that costs the reader their notice, so
-    /// it is the one that has to be earned rather than defaulted to, and
-    /// the error alone cannot earn it. `ENOENT` is what the kernel answers
-    /// to a working directory that is not there, and to a program whose own
+    /// Both of the answers that say something about the machine have to be
+    /// earned, and the same probe earns them. `NotInstalled` is the one that
+    /// costs the reader their notice; `InstalledUnstartable` is the one that
+    /// sends them looking for a program to repair. Neither may be defaulted
+    /// to, and what is left when neither is earned is `Unstartable`, which
+    /// claims nothing beyond the refusal itself.
+    ///
+    /// The error alone earns neither. `ENOENT` is what the kernel answers to
+    /// a working directory that is not there, and to a program whose own
     /// interpreter or loader is missing, as readily as to a name nothing
-    /// holds — it reports the interpreter's absence as the program's. So
-    /// both are asked after instead: anything found under that name, or a
-    /// directory that was never there to look in, means this is a machine
-    /// that has the thing and could not start it.
+    /// holds — it reports the interpreter's absence as the program's. And
+    /// `EACCES` is what it answers for a whole family: an unsearchable
+    /// directory on `PATH`, which one entry produces on a machine that has
+    /// no such program anywhere, alongside a program that is plainly there
+    /// without its execute bit.
+    ///
+    /// So the probe is asked on every refusal rather than on `ENOENT` alone.
+    /// It cannot see past an unsearchable directory — `lstat` and `execve`
+    /// fail on the same missing search permission — and that is the case
+    /// where nothing is established and nothing is claimed. It sees through
+    /// the rest.
     fn could_not_start(
         program: &str,
         cwd: Option<&Path>,
         env: &Env,
         cause: &std::io::Error,
     ) -> Self {
+        let under_that_name = installed(program, cwd, env);
         let nothing_was_installed = cause.kind() == std::io::ErrorKind::NotFound
-            && !installed(program, cwd, env)
+            && !under_that_name
             && cwd.is_none_or(Path::is_dir);
         if nothing_was_installed {
             Self::not_installed(program, cause)
+        } else if under_that_name {
+            Self::could_not_be_started(FailureKind::InstalledUnstartable, program, cause)
         } else {
             Self::unstartable(program, cause)
         }
@@ -690,7 +720,7 @@ mod tests {
             .expect_err("the file has no execute bit");
         std::fs::remove_file(&program).expect("the file is ours to remove");
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
     }
 
     /// A working directory that is not there raises the same `ENOENT` as a
@@ -704,7 +734,7 @@ mod tests {
             .run("sh", &["-c", "true"], Some(&gone), &Env::new())
             .expect_err("the directory is not there");
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
     }
 
     /// A program is installed and its interpreter is not. The kernel reports
@@ -721,7 +751,7 @@ mod tests {
             .expect_err("the interpreter is not there");
         std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
     }
 
     /// The `PATH` searched is the child's own. `environment` hands over
@@ -740,7 +770,7 @@ mod tests {
             .expect_err("the interpreter is not there");
         std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
     }
 
     /// A `PATH` entry that is relative names a directory under the child's
@@ -766,7 +796,7 @@ mod tests {
             .expect_err("the interpreter is not there");
         std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
     }
 
     /// A symlink whose target has gone is the plainest case of a program
@@ -786,7 +816,74 @@ mod tests {
             .expect_err("the target is not there");
         std::fs::remove_file(&program).expect("the link is ours to remove");
 
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+    }
+
+    /// One `PATH` entry nothing may search is enough to refuse the spawn,
+    /// on a machine holding no such program anywhere. glibc gathers the
+    /// `EACCES` across the whole search and answers with it at the end, so
+    /// the entry need not be the only one or the first.
+    ///
+    /// The probe cannot see past it either — `lstat` wants the same search
+    /// permission `execve` was refused — and that is the point rather than a
+    /// gap: nothing here establishes an installation, so nothing may be said
+    /// of one. The reader who is told bd is installed goes hunting a bd that
+    /// was never on the machine.
+    #[test]
+    fn a_spawn_no_search_could_reach_says_nothing_about_an_installation() {
+        let locked = an_unsearchable_directory("nothing-inside-it");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), locked.display().to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], None, &env)
+            .expect_err("the one directory on PATH cannot be searched");
+        make_searchable_again(&locked);
+
         assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// The other half of the same errno, and the reason the probe is asked
+    /// on every refusal rather than on `ENOENT` alone: a program that is
+    /// plainly there without its execute bit fails `EACCES` too, and there
+    /// the search permission the probe needs is the one it has. So `lstat`
+    /// answers, the installation is established, and the reader is told the
+    /// thing they can act on.
+    #[test]
+    fn a_program_found_on_path_without_its_execute_bit_is_installed_and_broken() {
+        let dir = std::env::temp_dir().join(format!("bdi-no-execute-bit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the directory is ours to make");
+        let program = dir.join("bdi-without-its-execute-bit");
+        std::fs::write(&program, "#!/bin/sh\nexit 0\n").expect("the file is ours to write");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644))
+            .expect("the mode is ours to set");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), dir.to_string_lossy().to_string());
+
+        let failure = RealRunner
+            .run("bdi-without-its-execute-bit", &[], None, &env)
+            .expect_err("the file has no execute bit");
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+    }
+
+    /// A directory nothing may search.
+    fn an_unsearchable_directory(named: &str) -> PathBuf {
+        let locked =
+            std::env::temp_dir().join(format!("bdi-locked-{named}-{}", std::process::id()));
+        std::fs::create_dir_all(&locked).expect("the directory is ours to make");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644))
+            .expect("the mode is ours to set");
+        locked
+    }
+
+    /// Put the mode back before removing it, since nothing may look inside a
+    /// directory it cannot search, this test process included.
+    fn make_searchable_again(locked: &Path) {
+        std::fs::set_permissions(locked, std::fs::Permissions::from_mode(0o755))
+            .expect("the mode is ours to set");
+        std::fs::remove_dir_all(locked).expect("the directory is ours to remove");
     }
 
     /// A directory holding one executable script naming an interpreter that
@@ -807,7 +904,8 @@ mod tests {
 
     /// Both missing at once. A directory that was never there to look in is
     /// no evidence that nothing is installed, so the answer is the one that
-    /// does not cost the reader a notice.
+    /// does not cost the reader a notice — and it is no evidence that
+    /// anything *is* installed either, so it is the one that claims neither.
     #[test]
     fn a_missing_program_in_a_missing_directory_is_reported_as_the_directory() {
         let gone = nothing_holds("no-such-directory-either");
