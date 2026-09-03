@@ -32,6 +32,18 @@ command at a profile its artifacts were not built at and cargo compiles the
 graph again without saying so — `checkOf` reads each build back and fails on
 that rather than pass slowly.
 
+A change is checked twice, once on its pull request and once on the squash, and
+the second run pays for it only when the tree is new. CI seeds each check's
+output into the shared cache, so a squash carrying a tree its pull request
+already checked substitutes every one of them: `nix flake check` prints
+`running 0 flake checks` and the job finishes in about thirty seconds instead
+of five minutes. That is nix saying the inputs are identical rather than a
+check being skipped — a tree no pull request saw, main having moved under a
+branch between its verdict and its squash, hashes differently and still gets a
+real build. What it costs you is that re-running a green job cannot force a
+real check of that tree: nothing about the tree has changed, so it substitutes
+again.
+
 Once it is pushed, `read-ci-verdict [<commit>]` says whether CI passed for it,
 and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
 

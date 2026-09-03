@@ -46,7 +46,18 @@ jobs:
       # checks are named because they carry different halves of it: the
       # dependency build for the release profile hangs off build-and-test, and
       # the one for dev off clippy.
-      - name: seed the source-independent builds into the shared cache
+      #
+      # The checks themselves go in beside them, and they are seeded for a
+      # different reason: this repository is checked twice per change, once on
+      # the pull request and once on the squash. A squash makes a new commit
+      # but almost always the same tree, and a derivation is addressed by its
+      # inputs — so the run on main asks for the output paths this run has
+      # just produced, and substitutes each check rather than running it a
+      # second time. A tree no pull request saw, main having moved between a
+      # branch's verdict and its squash, addresses differently, finds nothing
+      # here, and still gets a real build. That case is the reason `push:
+      # main` stays.
+      - name: seed the dependency builds and this tree's checks into the shared cache
         run: |
           mapfile -t roots < <(nix path-info --derivation \
             .#checks.x86_64-linux.build-and-test \
@@ -67,17 +78,50 @@ jobs:
               }
           done
 
+          # The checks are read off the flake for the same reason the check
+          # step above names nothing: a check added to `checks` has to become
+          # a check this seeds, or main goes quietly back to running that one
+          # for itself.
+          mapfile -t names < <(nix eval --raw \
+            --apply 'checks: builtins.concatStringsSep "\n" (builtins.attrNames checks)' \
+            .#checks.x86_64-linux)
+          checks=()
+          for name in "${names[@]}"; do
+            checks+=(".#checks.x86_64-linux.$name")
+          done
+
+          # Both counts, because mapfile leaves an empty array where the
+          # command inside it failed and says nothing about it. Without them
+          # the step would push the dependency builds, exit 0, and go on
+          # reading as though it seeded the checks while main paid for them
+          # again — every gate green and the change undone.
+          test "${#names[@]}" -gt 0
+          mapfile -t checkDrvs < <(nix path-info --derivation "${checks[@]}")
+          test "${#checkDrvs[@]}" -eq "${#names[@]}"
+          drvs+=("${checkDrvs[@]}")
+
           # --outputs answers from the derivation, so it names paths that were
           # never realised: once bd itself substitutes, nothing builds its
           # module closure and that output is not on this machine to push.
           mapfile -t paths < <(nix-store -q --outputs "${drvs[@]}")
+          test "${#paths[@]}" -gt 0
           seed=()
           for path in "${paths[@]}"; do
             if nix-store --check-validity "$path" 2>/dev/null; then
               seed+=("$path")
             fi
           done
-          test "${#seed[@]}" -gt 0
+
+          # None of it being here is the run this seeding exists to produce:
+          # every check substituted, so nothing was built, so there is nothing
+          # on this machine that the cache does not already hold. Counting the
+          # realised paths instead would fail that run for succeeding.
+          if [ "${#seed[@]}" -eq 0 ]; then
+            echo "nothing to seed — this run built none of it, so the cache"
+            echo "already holds everything this step would have pushed."
+            exit 0
+          fi
+
           printf 'seeding %s\n' "${seed[@]}"
 
           # --inputs-from takes attic from this flake's locked nixpkgs. A bare
