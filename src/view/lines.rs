@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
-    Counts, FailedProject, HiddenTree, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
+    Counts, FailedProject, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
 };
 use crate::model::tree::{self, Link};
 use crate::model::types::Edge;
@@ -272,7 +272,6 @@ impl GroupKind {
 pub enum Item {
     Failed(FailedProject),
     Conflict(Conflict),
-    Hidden(HiddenTree),
     Loose(LoosePane),
     Unconfigured(UnconfiguredPane),
 }

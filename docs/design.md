@@ -1531,8 +1531,9 @@ nothing else: the sequence travels through herdr and ssh the way the rest of
 would be a new one with a new seam. A terminal that does not honour OSC 52
 drops the sequence, so there the key does nothing — and the foot still says
 *copied*, because `bdi` cannot tell. That is the degrade this accepts. On a row
-that is not a bead — a project's line, a group, the hidden-trees line — `y`
-does nothing and says nothing, as `Enter` does.
+that is not a bead — a project's line, a group's line — `y` does nothing and
+says nothing, as `Enter` does. A hidden tree's root is a root, so both keys
+work there as they do on any other.
 
 The band yields its rows before the forest yields any: on a short screen the
 forest is the thing this tool exists to show.
@@ -1606,8 +1607,8 @@ directories no configured project covers; conflicts nothing could settle; trees
 the live-agent filter is holding back; unattributed panes. An empty group draws
 nothing. Each line carries its count, so folding a group never loses what it
 holds, and each opens to name its members: a failed project with its reason, a
-conflict in full, a hidden tree by project and root with its title, a pane by
-id and state with the directory it is working in — the directory being what
+conflict in full, a hidden tree as its root's row with its tree beneath, a pane
+by id and state with the directory it is working in — the directory being what
 both pane groups are asking the reader to look at, one to place the agent and
 the other to configure the project.
 
@@ -1624,6 +1625,15 @@ would read as "nothing to see here" while hiding broken ones, so it also says
 how many of them carry findings: *4 trees with no live agent · 1 with
 findings*. The findings stay hidden — the reader asked for that — but the group
 admits they exist.
+
+A hidden tree is a tree, and the group is only where the filter put it. The
+tree is still in hand — the filter is a display choice over what was collected,
+not a second reading — so inside the group each hidden tree is drawn exactly as
+its project would draw it: the same root row, with its glyph, its fraction and
+what it is shut over; the same findings under it; the same fold, resting where
+the tree's own work rests it; and the same answers to every key, so Enter shows
+the root and `y` copies its id. Nothing about a tree with no live agent differs
+from any other tree except where it sits.
 
 Per-tree findings are not groups: a tree's dangling beads, its cycles and the
 nodes the tracker stopped at are drawn as note lines directly under its root's

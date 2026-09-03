@@ -119,10 +119,10 @@ impl Show {
 
 /// The bead the selection is on, where it is on one.
 ///
-/// A bead's row and a tree's header both stand for a bead; a project's
-/// line, a group and a thing in one stand for none. A root whose tree would
-/// not read carries its key and no bead behind it, so it answers none too:
-/// there is nothing of it to show.
+/// A bead's row and a tree's header both stand for a bead, wherever the
+/// header is drawn; a project's line, a group and a thing in one stand for
+/// none. A root whose tree would not read carries its key and no bead
+/// behind it, so it answers none too: there is nothing of it to show.
 pub fn selected(forest: &Forest) -> Option<&Node> {
     forest
         .lines()

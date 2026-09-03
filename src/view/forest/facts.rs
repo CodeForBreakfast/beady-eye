@@ -10,25 +10,32 @@
 
 use std::collections::BTreeMap;
 
+use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Snapshot, Tree};
 use crate::model::tree::Link;
-use crate::view::lines::{facts_of, run_size, split, split_by, BeadFacts};
+use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFacts};
 
-/// One snapshot's answers: a tree's for each of its trees, in the same
-/// order, and every project's counts over its trees.
+/// One snapshot's answers: a tree's for every tree it holds, shown or
+/// hidden, by its root, and every project's counts over its shown trees.
+///
+/// A hidden tree is a tree, and the filter only decides where it is drawn,
+/// so it is answered as the shown ones are rather than when a reader opens
+/// the group holding it.
 pub(super) struct Facts {
-    trees: Vec<TreeFacts>,
+    trees: BTreeMap<BeadKey, TreeFacts>,
     projects: BTreeMap<String, Counts>,
 }
 
 impl Facts {
     pub(super) fn of(snapshot: &Snapshot) -> Self {
+        let mut trees = BTreeMap::new();
+        for tree in snapshot.trees.iter().chain(&snapshot.collected) {
+            trees
+                .entry(root_key(tree))
+                .or_insert_with(|| TreeFacts::of(tree));
+        }
         Facts {
-            trees: snapshot
-                .trees
-                .iter()
-                .map(|tree| TreeFacts::of(tree))
-                .collect(),
+            trees,
             projects: snapshot
                 .trees
                 .chunk_by(|a, b| a.project == b.project)
@@ -42,9 +49,11 @@ impl Facts {
         }
     }
 
-    /// Beside each of the snapshot's trees.
-    pub(super) fn trees(&self) -> &[TreeFacts] {
-        &self.trees
+    /// One of the snapshot's trees' answers, by its root.
+    pub(super) fn tree(&self, root: &BeadKey) -> &TreeFacts {
+        self.trees
+            .get(root)
+            .expect("every tree the snapshot holds was answered when it was taken")
     }
 
     /// Every bead in the project's trees, counted once. Nothing for a

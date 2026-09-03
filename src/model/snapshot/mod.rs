@@ -471,12 +471,22 @@ impl Snapshot {
             .all(|tree| tree.tracker == TrackerState::Ok)
     }
 
-    /// Where a key sits: the tree holding it and its place among that tree's
-    /// beads. Bead ids are unique only within a tracker, so both halves of
-    /// the key are matched together here and neither is ever matched alone
-    /// anywhere else.
+    /// The tree a root names, shown or hidden. A filter is a display choice
+    /// over what was collected, so what it hid is still in hand and still
+    /// answers for itself.
+    pub fn tree(&self, root: &BeadKey) -> Option<&Tree> {
+        self.collected
+            .iter()
+            .find(|tree| tree.project == root.project && tree.root == root.id)
+            .map(Arc::as_ref)
+    }
+
+    /// Where a key sits: the tree holding it, shown or hidden, and its place
+    /// among that tree's beads. Bead ids are unique only within a tracker, so
+    /// both halves of the key are matched together here and neither is ever
+    /// matched alone anywhere else.
     pub fn locate(&self, key: &BeadKey) -> Option<(&Tree, usize)> {
-        self.trees
+        self.collected
             .iter()
             .filter(|tree| tree.project == key.project)
             .find_map(|tree| {
@@ -831,6 +841,35 @@ render = "⏸ waiting"
             snap.locate(&key("ferry", "orb-7.1"))
                 .map(|(t, _)| t.project.as_str()),
             Some("ferry")
+        );
+    }
+
+    /// A filter is a display choice over what was collected, so a bead in a
+    /// tree the filter hid is still the bead its key names: the show key on
+    /// a hidden tree's row has to find it, and so does the row's own tree.
+    #[test]
+    fn a_bead_in_a_hidden_tree_is_still_named_by_its_key() {
+        let snap = built(vec![tree(), ferry()], Filter::LiveAgents);
+        assert_eq!(snap.hidden_trees.len(), 1, "{:?}", snap.hidden_trees);
+        let hidden = key("ferry", &snap.hidden_trees[0].root);
+
+        assert_eq!(
+            snap.node(&hidden).map(|n| n.title.as_str()),
+            Some("berth the ferry")
+        );
+        assert_eq!(
+            snap.node(&key("ferry", "orb-7.1"))
+                .map(|n| n.title.as_str()),
+            Some("paint the hull")
+        );
+        assert_eq!(
+            snap.tree(&hidden).map(|t| t.title.as_str()),
+            Some("berth the ferry")
+        );
+        assert_eq!(
+            snap.tree(&key("ferry", "orb-7.1")),
+            None,
+            "a bead that is not a root names no tree"
         );
     }
 

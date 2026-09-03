@@ -10,7 +10,6 @@ mod handle;
 mod layout;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Filter, Snapshot, Tree};
@@ -199,11 +198,7 @@ impl Forest {
     }
 
     fn tree_of(&self, place: &Place) -> Option<&Tree> {
-        self.snapshot
-            .trees
-            .iter()
-            .find(|tree| root_key(tree) == place.tree)
-            .map(Arc::as_ref)
+        self.snapshot.tree(&place.tree)
     }
 
     /// Apply one action, reporting whether it changed anything.
@@ -312,7 +307,7 @@ impl Forest {
     fn rounds_to_settle(&self) -> usize {
         let beads: usize = self
             .snapshot
-            .trees
+            .collected
             .iter()
             .map(|tree| tree.beads.len())
             .sum();
@@ -485,13 +480,33 @@ impl Forest {
             // over it, or the tracker stopped reporting it. Take the nearest
             // line that is. Nothing needs drawing again for it: the fold
             // state no longer turns on where the selection sits.
-            self.cursor = self
-                .scan(self.selected, false)
-                .or_else(|| self.scan(self.selected, true))
-                .and_then(|at| self.handle_at(at));
+            self.cursor = self.group_shut_over_the_cursors_tree().or_else(|| {
+                self.scan(self.selected, false)
+                    .or_else(|| self.scan(self.selected, true))
+                    .and_then(|at| self.handle_at(at))
+            });
         }
         self.selected = self.find_cursor().unwrap_or(0);
         was
+    }
+
+    /// The hidden-trees group, where the filter has taken the cursor's tree
+    /// into it and the group is shut over it. The group's line is where the
+    /// tree went, which is more than the nearest row can say; open, the
+    /// tree's rows are drawn there under the same handles and the cursor
+    /// follows them without help.
+    fn group_shut_over_the_cursors_tree(&self) -> Option<Handle> {
+        let (Handle::Bead(place) | Handle::Elided(place)) = self.cursor.as_ref()? else {
+            return None;
+        };
+        let hidden = self
+            .snapshot
+            .hidden_trees
+            .iter()
+            .any(|hidden| hidden.project == place.tree.project && hidden.root == place.tree.id);
+        let group = Handle::Group(GroupKind::HiddenTrees);
+        let shut = !self.folds.expanded(&group, GroupKind::HiddenTrees.live());
+        (hidden && shut).then_some(group)
     }
 
     fn settle_cursor(&mut self) {
@@ -584,7 +599,7 @@ mod tests {
         TrackerState, A_PROVIDER,
     };
     use crate::model::tree::{self, Assembled, Nesting};
-    use crate::model::types::Pane;
+    use crate::model::types::{Bead, Pane};
     use crate::view::lines::{
         counts_beneath, facts_of, links_below, marker, prefix, progress_of, run_size, split,
         walks_on_this_thread, way_below, Group, Item, Note, ProjectLine, OPEN, SHUT,
@@ -594,6 +609,7 @@ mod tests {
     use crate::view::walk::{self, Rows};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
 
     /// Orbital's tree as bd writes it. `orb-7.7` waits on a bead no row holds,
     /// so the tree reports it; `orb-7.1.2` is a node bd stopped at; `orb-7.4`
@@ -1524,12 +1540,26 @@ credential_command = "secret harbour"
     /// opens on readiness draws exactly the same screen under all of them and
     /// a green suite would say nothing about it.
     fn ready_alone(project: &str, json: &str, panes: &[Pane], ready: &[&str]) -> Snapshot {
-        let rows = assembled(json);
+        ready_together(project, &[json], panes, ready)
+    }
+
+    /// Several roots of one project, joined together so that a pane the
+    /// fixture names lands on whichever root's bead names it.
+    fn together(project: &str, jsons: &[&str], panes: &[Pane]) -> Snapshot {
+        ready_together(project, jsons, panes, &[])
+    }
+
+    fn ready_together(project: &str, jsons: &[&str], panes: &[Pane], ready: &[&str]) -> Snapshot {
+        let roots: Vec<Assembled> = jsons.iter().map(|json| assembled(json)).collect();
+        let rows: Vec<Bead> = roots
+            .iter()
+            .flat_map(|root| root.beads.iter().cloned())
+            .collect();
         let cfg = cfg();
         let joined = join::resolve(
             &[ProjectRows {
                 project,
-                rows: &rows.beads,
+                rows: &rows,
             }],
             panes,
             &cfg,
@@ -1538,18 +1568,23 @@ credential_command = "secret harbour"
             ready: ready.iter().map(|id| (*id).to_string()).collect(),
             ..Readiness::default()
         };
-        let tree = build_tree(
-            project,
-            &rows,
-            &joined,
-            &readiness,
-            &BTreeMap::new(),
-            &cfg,
-            now(),
-        );
+        let trees = roots
+            .iter()
+            .map(|root| {
+                build_tree(
+                    project,
+                    root,
+                    &joined,
+                    &readiness,
+                    &BTreeMap::new(),
+                    &cfg,
+                    now(),
+                )
+            })
+            .collect();
         snapshot::build(
             Collected {
-                trees: vec![tree],
+                trees,
                 failed_projects: Vec::new(),
                 read_at: every_project_read(),
             },
@@ -3314,7 +3349,7 @@ credential_command = "secret harbour"
             .map(|(at, _)| at)
             .collect();
 
-        assert_eq!(items.len(), 6, "{:#?}", sketch(&forest));
+        assert_eq!(items.len(), 5, "{:#?}", sketch(&forest));
         for at in items {
             assert!(
                 selectable(&forest.lines()[at]),
@@ -3604,6 +3639,286 @@ credential_command = "secret harbour"
             .expect("the filter hid a tree")
     }
 
+    /// Put the selection on the first hidden tree's row: open the group,
+    /// which rests shut, and step into it.
+    fn select_hidden_tree(forest: &mut Forest) {
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid a tree");
+        forest.select_line(group);
+        assert_eq!(forest.selected_line(), group);
+        forest.apply(Action::ExpandOrChild);
+        forest.apply(Action::ExpandOrChild);
+        assert!(
+            matches!(
+                forest.lines()[forest.selected_line()].content,
+                Content::Bead(_)
+            ),
+            "{:#?}",
+            sketch(forest)
+        );
+    }
+
+    /// The selected line and everything drawn beneath it, sketched.
+    fn beneath_the_selection(forest: &Forest) -> Vec<String> {
+        let scope = forest
+            .handle_at(forest.selected_line())
+            .expect("the selection is on a line it can hold");
+        subtree_of(forest.lines(), &scope)
+            .iter()
+            .map(|line| format!("{}{}", line.prefix, said(&line.content)))
+            .collect()
+    }
+
+    /// A hidden tree's row is its root's row, so it stands for that bead as
+    /// a tree's header does: the show key and `y` have a bead to work on.
+    #[test]
+    fn a_hidden_trees_row_stands_for_its_root() {
+        let mut forest = flatten(snapshot());
+        select_hidden_tree(&mut forest);
+
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    }
+
+    /// A hidden tree is a tree, and the group is only where the filter put
+    /// it: it is drawn there as its project would draw it, rests as its
+    /// project would rest it, and opens onto the same rows.
+    #[test]
+    fn a_hidden_tree_is_drawn_in_the_group_as_its_project_would_draw_it() {
+        let mut forest = flatten(snapshot());
+        select_hidden_tree(&mut forest);
+        assert_eq!(
+            beneath_the_selection(&forest),
+            ["  └─▸ ○ hbr-3 dredge the channel"],
+            "nothing live or ready beneath it, so it rests shut"
+        );
+
+        assert!(forest.apply(Action::ExpandOrChild));
+
+        let in_the_group = beneath_the_selection(&forest);
+        assert_eq!(
+            in_the_group,
+            [
+                "  └── ○ hbr-3 dredge the channel",
+                "      └── ○ .1 survey the silt"
+            ]
+        );
+        forest.apply(Action::ToggleFilter);
+        assert_eq!(forest.snapshot().filter, Filter::All);
+        select(&mut forest, &key("harbour", "hbr-3"));
+        assert_eq!(
+            beneath_the_selection(&forest),
+            in_the_group,
+            "the same rows under its project, the fold the reader opened included"
+        );
+    }
+
+    /// Opening a hidden tree is the reader's choice and not the filter's, so
+    /// letting go of the folds shuts it again: the group is shut with the
+    /// rest, and opened once more by hand it holds the row shut over its
+    /// tree, as the filter left it.
+    #[test]
+    fn the_default_puts_an_opened_hidden_tree_back() {
+        let mut forest = flatten(snapshot());
+        select_hidden_tree(&mut forest);
+        let shut = beneath_the_selection(&forest);
+        forest.apply(Action::ExpandOrChild);
+        assert_ne!(beneath_the_selection(&forest), shut, "the tree opened");
+
+        forest.apply(Action::RestoreDefault);
+
+        assert_eq!(
+            hidden_trees_group(&forest).count,
+            1,
+            "the group is drawn shut: {:#?}",
+            sketch(&forest)
+        );
+        select_hidden_tree(&mut forest);
+        assert_eq!(beneath_the_selection(&forest), shut);
+    }
+
+    /// A tree that is only its root has nothing to open onto, and a fold
+    /// over nothing would be a key that does nothing.
+    #[test]
+    fn a_hidden_tree_with_nothing_beneath_its_root_offers_no_fold() {
+        let lone = r#"[{"id":"hbr-1","title":"moor the lightship","status":"open"}]"#;
+        let mut forest = flatten(gather(
+            vec![tree_of("harbour", lone)],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+        select_hidden_tree(&mut forest);
+        let row = forest.selected_line();
+
+        assert_eq!(forest.lines()[row].folded, None);
+        assert_eq!(
+            beneath_the_selection(&forest),
+            ["  └── ○ hbr-1 moor the lightship"]
+        );
+        assert!(!forest.apply(Action::ExpandOrChild), "nothing to open onto");
+    }
+
+    /// A hidden tree's facts are a tree's facts, answered when the forest
+    /// takes the snapshot: drawing it, opening it and moving through it ask
+    /// nothing of the tree.
+    #[test]
+    fn a_keystroke_in_the_hidden_trees_group_walks_no_subtree() {
+        let mut forest = flatten(snapshot());
+        let before = walks_on_this_thread();
+
+        select_hidden_tree(&mut forest);
+        forest.apply(Action::ExpandOrChild);
+        forest.apply(Action::Move(Motion::NextRow));
+
+        assert_eq!(walks_on_this_thread() - before, 0);
+    }
+
+    /// A hidden tree's findings are drawn under its root as any tree's are,
+    /// whether the root is folded or not. The group holding it shut is what
+    /// keeps them off the screen, and the group's line admits to them.
+    #[test]
+    fn a_hidden_trees_findings_are_drawn_under_its_root_as_any_trees_are() {
+        let mut forest = flatten(gather(
+            vec![tree_of("orbital", ORBITAL), tree_of("harbour", SLIPWAY)],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+        select_hidden_tree(&mut forest);
+
+        assert_eq!(
+            beneath_the_selection(&forest),
+            [
+                "  └─▸ ○ hbr-9 re-deck the slipway",
+                "      └── ! Dangling(1)"
+            ]
+        );
+    }
+
+    /// `E` on the hidden-trees group opens every hidden tree to the bottom.
+    /// The walk's budget is counted off the beads, and a hidden tree's beads
+    /// are as much of the forest as a shown tree's: a budget counted off the
+    /// shown trees alone runs out on a forest that shows none.
+    #[test]
+    fn expanding_the_hidden_trees_group_reaches_the_bottom_of_a_deep_hidden_tree() {
+        let chain = r#"[
+          {"id":"hbr-5","title":"root","status":"open"},
+          {"id":"hbr-5.1","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"hbr-5","type":"parent-child"}]},
+          {"id":"hbr-5.1.1","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"hbr-5.1","type":"parent-child"}]},
+          {"id":"hbr-5.1.1.1","title":"three","status":"open",
+           "dependencies":[{"depends_on_id":"hbr-5.1.1","type":"parent-child"}]}
+        ]"#;
+        let mut forest = flatten(gather(
+            vec![tree_of("harbour", chain)],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+        assert!(forest.snapshot().trees.is_empty(), "every tree is hidden");
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the group is drawn");
+        forest.select_line(group);
+        assert_eq!(forest.selected_line(), group);
+
+        forest.apply(Action::ExpandSubtree);
+
+        assert_eq!(
+            lines_of(&forest, "hbr-5.1.1.1").len(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    fn on_the_hidden_trees_group(forest: &Forest) -> bool {
+        matches!(
+            forest.lines()[forest.selected_line()].content,
+            Content::Group(group) if group.kind == GroupKind::HiddenTrees
+        )
+    }
+
+    /// A tree the filter takes from under the selection goes into the
+    /// hidden-trees group, and so does the selection: with the group shut
+    /// over it, the group's line is where the tree went, which is more than
+    /// whatever row happened to be nearest can say.
+    #[test]
+    fn putting_the_filter_back_over_the_selected_tree_moves_the_selection_to_the_group() {
+        let mut forest = flatten(built(Filter::All));
+        select(&mut forest, &key("harbour", "hbr-3"));
+
+        forest.apply(Action::ToggleFilter);
+
+        assert_eq!(forest.snapshot().filter, Filter::LiveAgents);
+        assert!(on_the_hidden_trees_group(&forest), "{:#?}", sketch(&forest));
+    }
+
+    /// The same where a refresh is what hides it: the agent that kept the
+    /// tree on the screen has gone, and the selection was on a bead inside.
+    /// A pane on no bead keeps a group drawn below the hidden trees, so the
+    /// nearest row to where the selection was is not the group's line.
+    #[test]
+    fn a_refresh_that_hides_the_selected_tree_moves_the_selection_to_the_group() {
+        let mut staffed = alone("orbital", TOWER, &panes_on(&["tow-1.1", "nobody"]));
+        staffed.refilter(Filter::LiveAgents);
+        let mut forest = flatten(staffed);
+        select(&mut forest, &key("orbital", "tow-1.1"));
+
+        forest.refresh(alone("orbital", TOWER, &panes_on(&["nobody"])));
+
+        assert_eq!(forest.snapshot().hidden_trees.len(), 1);
+        assert_eq!(forest.snapshot().unattributed.len(), 1);
+        assert!(on_the_hidden_trees_group(&forest), "{:#?}", sketch(&forest));
+    }
+
+    /// With the group open, the tree's rows are drawn there under the same
+    /// handles, so the selection simply follows the tree into the group.
+    #[test]
+    fn with_the_group_open_the_selection_follows_the_tree_the_filter_hides() {
+        let mut forest = flatten(built(Filter::All));
+        forest
+            .folds
+            .set(Handle::Group(GroupKind::HiddenTrees), true);
+        select(&mut forest, &key("harbour", "hbr-3"));
+
+        forest.apply(Action::ToggleFilter);
+
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    }
+
+    /// Only the cursor's own tree going into the group takes the selection
+    /// there. Letting go of the folds shuts one over a bead in a tree that is
+    /// still drawn, and the selection takes the nearest row as it always has,
+    /// however many other trees of the same project the group is shut over.
+    #[test]
+    fn a_fold_shutting_over_the_selection_keeps_it_out_of_the_hidden_trees_group() {
+        let mut staffed = together("orbital", &[TOWER, HARBOUR], &panes_on(&["tow-1.1"]));
+        staffed.refilter(Filter::LiveAgents);
+        let mut forest = flatten(staffed);
+        assert_eq!(forest.snapshot().hidden_trees.len(), 1);
+        select(&mut forest, &key("orbital", "tow-1.1"));
+        forest.apply(Action::ToggleFold);
+        forest.apply(Action::Move(Motion::NextRow));
+        assert_eq!(cursor(&forest), Some(&key("orbital", "tow-1.1.1")));
+
+        forest.apply(Action::RestoreDefault);
+
+        assert_eq!(
+            cursor(&forest),
+            Some(&key("orbital", "tow-1.2")),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
     /// Only a hidden tree takes findings out of the forest with it. Every
     /// other group holds its own subject in full, so none of them has
     /// anything undrawn to admit to.
@@ -3641,8 +3956,6 @@ credential_command = "secret harbour"
             Handle::Group(GroupKind::HiddenTrees),
             Handle::Group(GroupKind::Unattributed),
         ];
-        let expected = in_the_snapshot(&snapshot);
-
         for state in 0..1 << handles.len() {
             let mut forest = flatten(snapshot.clone());
             for (bit, handle) in handles.iter().enumerate() {
@@ -3650,7 +3963,15 @@ credential_command = "secret harbour"
             }
             forest.refresh(snapshot.clone());
 
-            assert_eq!(on_screen(&forest), expected, "fold state {state:b}");
+            let hidden_trees_open = forest.lines().iter().any(|line| {
+                matches!(line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+                    && line.folded == Some(true)
+            });
+            assert_eq!(
+                on_screen(&forest),
+                in_the_snapshot(&snapshot, hidden_trees_open),
+                "fold state {state:b}"
+            );
         }
     }
 
@@ -3666,10 +3987,25 @@ credential_command = "secret harbour"
         unconfigured_panes: usize,
     }
 
-    fn in_the_snapshot(snapshot: &Snapshot) -> Reported {
+    /// What the screen owes the reader: everything in the shown trees, and
+    /// the hidden trees' findings too once the group holding them is open —
+    /// shut, that group's line admits to them as a count instead.
+    fn in_the_snapshot(snapshot: &Snapshot, hidden_trees_open: bool) -> Reported {
+        let drawn: Vec<&Tree> = snapshot
+            .trees
+            .iter()
+            .map(Arc::as_ref)
+            .chain(
+                snapshot
+                    .hidden_trees
+                    .iter()
+                    .filter(|_| hidden_trees_open)
+                    .filter_map(|hidden| snapshot.tree(&key(&hidden.project, &hidden.root))),
+            )
+            .collect();
         Reported {
-            dangling: snapshot.trees.iter().map(|t| t.dangling.len()).sum(),
-            cycles: snapshot.trees.iter().map(|t| t.cycles.len()).sum(),
+            dangling: drawn.iter().map(|t| t.dangling.len()).sum(),
+            cycles: drawn.iter().map(|t| t.cycles.len()).sum(),
             conflicts: snapshot.conflicts.len(),
             failed_projects: snapshot.failed_projects.len(),
             loose_panes: snapshot.unattributed.len(),

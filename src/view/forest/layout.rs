@@ -62,7 +62,34 @@ pub(super) fn draw(snapshot: &Snapshot, facts: &Facts, folds: &Folds) -> Vec<Lin
 /// anything in it.
 pub(super) fn group_drawn(snapshot: &Snapshot, kind: GroupKind) -> bool {
     let (_, loose) = recovery(snapshot);
-    !group_items(snapshot, kind, &loose).is_empty()
+    group_of(snapshot, kind, &loose).is_some()
+}
+
+/// What a group's own line says: how many things it holds, and how many of
+/// them carry findings the screen is not drawing. Nothing where it holds
+/// nothing, which is a group not drawn.
+///
+/// Only a hidden tree has findings to admit to: the filter took its
+/// dangling and looping counts and its anomalies off the screen with it,
+/// and a group that said only how many trees it hides would read as
+/// "nothing to see" when some of them are broken.
+fn group_of(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Option<Group> {
+    let (count, with_findings) = match kind {
+        GroupKind::HiddenTrees => (
+            snapshot.hidden_trees.len(),
+            snapshot
+                .hidden_trees
+                .iter()
+                .filter(|hidden| hidden.findings)
+                .count(),
+        ),
+        _ => (group_items(snapshot, kind, loose).len(), 0),
+    };
+    (count > 0).then_some(Group {
+        kind,
+        count,
+        with_findings,
+    })
 }
 
 /// The group one thing sits in, where the snapshot still holds it.
@@ -110,7 +137,6 @@ impl Layout<'_> {
                 self.draw_project(
                     project,
                     &run[..held],
-                    &self.facts.trees()[from..from + held],
                     &recovered[from..from + held],
                     &mut lines,
                 );
@@ -147,7 +173,6 @@ impl Layout<'_> {
         &self,
         project: &str,
         trees: &[Arc<Tree>],
-        facts: &[TreeFacts],
         panes: &[Vec<LoosePane>],
         lines: &mut Vec<Line>,
     ) {
@@ -177,12 +202,18 @@ impl Layout<'_> {
         if !open {
             return;
         }
+        self.draw_trees(trees.iter().map(Arc::as_ref).collect(), lines);
+    }
+
+    /// Trees in a row under one line, each with what the snapshot answered
+    /// for it.
+    fn draw_trees(&self, trees: Vec<&Tree>, lines: &mut Vec<Line>) {
         let count = trees.len();
-        for (n, tree) in trees.iter().enumerate() {
+        for (n, tree) in trees.into_iter().enumerate() {
             TreeLayout {
                 folds: self.folds,
                 tree,
-                facts: &facts[n],
+                facts: self.facts.tree(&root_key(tree)),
             }
             .draw(n + 1 == count, lines);
         }
@@ -350,36 +381,53 @@ impl TreeLayout<'_> {
 impl Layout<'_> {
     fn draw_groups(&self, loose: &[LoosePane], lines: &mut Vec<Line>) {
         for kind in GroupKind::ALL {
-            let items = group_items(self.snapshot, kind, loose);
-            if items.is_empty() {
+            let Some(group) = group_of(self.snapshot, kind, loose) else {
                 continue;
-            }
+            };
             let open = self.folds.expanded(&Handle::Group(kind), kind.live());
             lines.push(Line {
                 prefix: marker(open).to_string(),
                 depth: 0,
                 folded: Some(open),
                 place: None,
-                content: Content::Group(Group {
-                    kind,
-                    count: items.len(),
-                    with_findings: with_findings(&items),
-                }),
+                content: Content::Group(group),
             });
             if !open {
                 continue;
             }
-            let count = items.len();
-            for (n, item) in items.into_iter().enumerate() {
-                let last = n + 1 == count;
-                lines.push(Line {
-                    prefix: prefix(&[], last, false, None),
-                    depth: 1,
-                    folded: None,
-                    place: None,
-                    content: Content::Item(item),
-                });
+            match kind {
+                GroupKind::HiddenTrees => self.draw_trees(self.hidden_trees(), lines),
+                _ => self.draw_items(group_items(self.snapshot, kind, loose), lines),
             }
+        }
+    }
+
+    /// The trees the filter hid, which the snapshot still holds: a hidden
+    /// tree is a tree, and the group is only where the filter put it, so
+    /// each is drawn as its project would draw it.
+    fn hidden_trees(&self) -> Vec<&Tree> {
+        self.snapshot
+            .hidden_trees
+            .iter()
+            .filter_map(|hidden| {
+                self.snapshot.tree(&BeadKey {
+                    project: hidden.project.clone(),
+                    id: hidden.root.clone(),
+                })
+            })
+            .collect()
+    }
+
+    fn draw_items(&self, items: Vec<Item>, lines: &mut Vec<Line>) {
+        let count = items.len();
+        for (n, item) in items.into_iter().enumerate() {
+            lines.push(Line {
+                prefix: prefix(&[], n + 1 == count, false, None),
+                depth: 1,
+                folded: None,
+                place: None,
+                content: Content::Item(item),
+            });
         }
     }
 }
@@ -435,12 +483,8 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Vec
             .cloned()
             .map(Item::Conflict)
             .collect(),
-        GroupKind::HiddenTrees => snapshot
-            .hidden_trees
-            .iter()
-            .cloned()
-            .map(Item::Hidden)
-            .collect(),
+        // Hidden trees are drawn as trees rather than as things in a group.
+        GroupKind::HiddenTrees => Vec::new(),
         GroupKind::Unattributed => loose.iter().cloned().map(Item::Loose).collect(),
         GroupKind::Unconfigured => snapshot
             .unconfigured
@@ -449,15 +493,6 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Vec
             .map(Item::Unconfigured)
             .collect(),
     }
-}
-
-/// The hidden trees whose findings went with them, which the filter noted
-/// on each as it hid it.
-fn with_findings(items: &[Item]) -> usize {
-    items
-        .iter()
-        .filter(|item| matches!(item, Item::Hidden(hidden) if hidden.findings))
-        .count()
 }
 
 /// The one line of a forest with nothing in it. Under no tree and in no

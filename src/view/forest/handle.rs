@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::join::{BeadKey, Conflict};
+use crate::model::join::Conflict;
 use crate::view::lines::{Content, GroupKind, Item, Line, Place};
 
 /// What a line that folds is known by, so both the fold and the selection
@@ -39,8 +39,6 @@ pub(super) enum ItemKey {
     /// and an unconfigured pane is one under no configured project at all.
     Pane(String),
     Project(String),
-    /// A hidden tree, by the root it was hidden by.
-    Tree(BeadKey),
     /// A disagreement, by the whole of what it says. No one field identifies
     /// every arm — several panes naming one bead in another project make
     /// several conflicts sharing that bead — and the value is made entirely
@@ -57,10 +55,6 @@ pub(super) fn item_key(item: &Item) -> Option<ItemKey> {
         Item::Loose(pane) => ItemKey::Pane(pane.pane.clone()),
         Item::Unconfigured(pane) => ItemKey::Pane(pane.pane.clone()),
         Item::Failed(failed) => ItemKey::Project(failed.project.clone()),
-        Item::Hidden(hidden) => ItemKey::Tree(BeadKey {
-            project: hidden.project.clone(),
-            id: hidden.root.clone(),
-        }),
         Item::Conflict(conflict) => ItemKey::Conflict(conflict.clone()),
     })
 }

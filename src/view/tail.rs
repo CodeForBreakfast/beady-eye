@@ -95,8 +95,7 @@ fn named_pane(item: &Item) -> Option<&str> {
         Item::Conflict(
             Conflict::BeadAndPaneDisagree { .. } | Conflict::SeveralPanesNameOneBead { .. },
         )
-        | Item::Failed(_)
-        | Item::Hidden(_) => None,
+        | Item::Failed(_) => None,
     }
 }
 

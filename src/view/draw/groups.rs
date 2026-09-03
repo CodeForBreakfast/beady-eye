@@ -70,14 +70,6 @@ pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
     match item {
         Item::Failed(failed) => sentence(prefix, phrase::failed_project(failed), LOOK_AT_THIS),
         Item::Conflict(conflict) => sentence(prefix, phrase::conflict(conflict), LOOK_AT_THIS),
-        Item::Hidden(hidden) => Fitted::new(
-            vec![Span::raw(format!(
-                "{prefix}{} · {}",
-                hidden.project, hidden.root
-            ))],
-            vec![Span::raw(hidden.title.clone())],
-            Vec::new(),
-        ),
         Item::Loose(pane) => loose_line(prefix, &pane.pane, &pane.pane_status, &pane.cwd),
         Item::Unconfigured(pane) => loose_line(prefix, &pane.pane, &pane.pane_status, &pane.cwd),
     }

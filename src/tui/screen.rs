@@ -659,6 +659,7 @@ mod tests {
     use crate::tui::keys::tests::key;
     use crate::tui::keys::{action, BINDINGS};
     use crate::view::bindings::bindings_window;
+    use crate::view::lines::{Content, GroupKind};
     use crate::view::painted::{Painted, Run};
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
@@ -1754,6 +1755,36 @@ mod tests {
         assert_eq!(forest_band(&mut shown, 80, 24), before);
     }
 
+    /// Put the selection on the hidden grove's row: the hidden-trees group is
+    /// the last line and rests shut, so open it and step in.
+    fn select_hidden_tree(shown: &mut Shown) {
+        shown.apply(Action::Move(Motion::LastRow));
+        assert!(
+            matches!(
+                shown.forest.lines()[shown.forest.selected_line()].content,
+                Content::Group(group) if group.kind == GroupKind::HiddenTrees
+            ),
+            "the last line is the hidden-trees group"
+        );
+        shown.apply(Action::ExpandOrChild);
+        shown.apply(Action::ExpandOrChild);
+    }
+
+    /// A hidden tree's row names its root, so Enter there shows that bead
+    /// as it does on any root's row: the filter took the tree off the
+    /// screen, not the bead out of hand.
+    #[test]
+    fn enter_on_a_hidden_trees_row_shows_its_root() {
+        let mut shown = shown(a_hidden_grove_above_a_shown_tree());
+        select_hidden_tree(&mut shown);
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+
+        assert!(shown.apply(Action::ShowBead));
+
+        let inner = bead_window_inner(&mut shown, 80, 24);
+        assert_eq!(inner[0], "◐ grv-1  a bead in the grove");
+    }
+
     /// Leaving the view puts the reader back on the row it was opened from,
     /// with the forest exactly as they left it: the motions that moved the
     /// bead moved nothing under it.
@@ -2575,18 +2606,32 @@ mod tests {
         assert_eq!(on_the_clipboard(&clipboard.written()), "grv-1");
     }
 
-    /// A project line, a group and the hidden-trees line name no bead, so
-    /// there is nothing to copy and nothing has gone wrong — the same as
-    /// Enter there.
+    /// A project line and a group's line name no bead, so there is nothing
+    /// to copy and nothing has gone wrong — the same as Enter there.
     #[test]
     fn y_on_a_row_that_is_not_a_bead_writes_nothing() {
         let (mut shown, clipboard) = shown_copying(a_hidden_grove_above_a_shown_tree());
         shown.apply(Action::Move(Motion::LastRow));
-        assert_eq!(cursor(&shown), None, "the hidden-trees line names no bead");
+        assert_eq!(
+            cursor(&shown),
+            None,
+            "the hidden-trees group's line names no bead"
+        );
 
         assert!(!shown.apply(Action::CopyId));
 
         assert_eq!(clipboard.written(), b"");
+    }
+
+    /// A hidden tree's row names its root, so `y` there copies that id.
+    #[test]
+    fn y_on_a_hidden_trees_row_copies_its_root() {
+        let (mut shown, clipboard) = shown_copying(a_hidden_grove_above_a_shown_tree());
+        select_hidden_tree(&mut shown);
+
+        press(&mut shown, KeyCode::Char('y'));
+
+        assert_eq!(on_the_clipboard(&clipboard.written()), "grv-1");
     }
 
     /// The row at the foot of a frame of this screen, as drawn.
