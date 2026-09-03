@@ -1,10 +1,10 @@
 //! The forest and the tail, drawn into a ratatui frame.
 //!
-//! One module for each thing drawn — a project's line, a bead's, the groups
-//! below the trees, the foot, the tail — one for the bands they are drawn
-//! into, and one for the colours they are drawn in. What is left here is the
-//! frame itself: which kind of line each row is, and the few cells that more
-//! than one kind draws with.
+//! One module for each thing drawn — a project's line, a bead's, the groups,
+//! the foot, the tail — one for the bands they are drawn into, and one for
+//! the colours they are drawn in. What is left here is the frame itself:
+//! which kind of line each row is, and the few cells that more than one kind
+//! draws with.
 
 mod bands;
 mod bead;
@@ -188,7 +188,7 @@ pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitt
             let (said, colour) = finding(*note);
             sentence(&line.prefix, said, colour)
         }
-        Content::Group(group) => group_line(&line.prefix, *group),
+        Content::Group(group) => group_line(&line.prefix, group),
         Content::Item(item) => item_line(&line.prefix, item),
         Content::Scoped { project } => scoped_line(&line.prefix, project),
     }
@@ -266,8 +266,8 @@ mod tests {
     use crate::config::Scope;
     use crate::model::join::{AgentRef, BeadKey, JoinSource};
     use crate::model::snapshot::{
-        a_provider, Counts, Filter, LoosePane, Node, ProviderState, Snapshot, TrackerFailure,
-        TrackerState, Tree,
+        a_provider, Counts, Filter, HiddenTree, LoosePane, Node, ProviderState, Snapshot,
+        TrackerFailure, TrackerState, Tree,
     };
     use crate::model::tree::Link;
     use crate::model::types::{Edge, Status};
@@ -281,7 +281,6 @@ mod tests {
 
     pub(super) const OPEN: &str = "▾ ";
     pub(super) const SHUT: &str = "▸ ";
-    pub(super) const NO_FOLD: &str = "  ";
     pub(super) const BRANCH: &str = "  ├── ";
     pub(super) const LAST: &str = "  └── ";
 
@@ -375,14 +374,12 @@ mod tests {
         row::cells(node, "nix-9670s", None, None)
     }
 
-    /// A project whose roots all read, so its line is its name and its counts
-    /// and there are no panes to recover.
+    /// A project whose roots all read, so its line is its name and its counts.
     pub(super) fn project(name: &str, counts: Counts) -> ProjectLine {
         ProjectLine {
             project: name.into(),
             counts,
             every_root_read: true,
-            recovery: None,
         }
     }
 
@@ -624,6 +621,47 @@ mod tests {
         );
     }
 
+    /// A project's fraction is over every tree it holds, said in the words the
+    /// reader sees: the filter takes a tree off the screen and leaves the
+    /// count where it was. The group line is what says the filter is holding
+    /// one back, so a fixture that quietly showed both trees fails here rather
+    /// than agreeing with the fraction by coincidence.
+    #[test]
+    fn a_projects_fraction_counts_the_tree_the_filter_holds_back() {
+        let beads = vec![node("nix-4410b", "raise the mast", Status::Open)];
+        let mut held_back = tree(
+            "summit-works",
+            "nix-4410b",
+            "raise the mast",
+            Counts::over(&beads),
+        );
+        held_back.children = under_the_root(&beads);
+        held_back.beads = beads;
+
+        let shown = grove(2);
+        let mut snapshot = snapshot(
+            vec![shown.clone(), held_back.clone()],
+            Vec::new(),
+            ProviderState::Answering,
+        );
+        snapshot.filter = Filter::LiveAgents;
+        snapshot.trees = vec![Arc::new(shown)];
+        snapshot.hidden_trees = vec![HiddenTree::of(&held_back)];
+
+        let frame = frame_of(&flatten(snapshot), 60, 8).rows();
+
+        assert!(
+            frame
+                .iter()
+                .any(|row| row.contains("1 tree with no live agent")),
+            "{frame:#?}"
+        );
+        assert!(
+            frame[0].contains("0/4"),
+            "three beads on screen and one held back is four: {frame:#?}"
+        );
+    }
+
     /// The bead's own case, at the whole-frame level: a `bdi` that could not
     /// open its socket says so at the foot, and it is the same row and the
     /// same shape a herdr failure uses. Nothing above the foot changes,
@@ -743,8 +781,8 @@ mod tests {
     }
 
     /// The definition of done's third case: a root nobody could read renders
-    /// as the root it is, the reason it failed, and — on its project's line —
-    /// the panes still working there.
+    /// as the root it is, the reason it failed, and — under its project's
+    /// line, after the root — the panes still working there.
     #[test]
     fn a_root_that_would_not_read_draws_its_reason_and_its_projects_panes() {
         let failed =
@@ -754,13 +792,15 @@ mod tests {
             vec![pane("wCM:p9", PaneStatus::Working)],
             ProviderState::Answering,
         ));
-        let frame = frame_of(&forest, 77, 4).rows();
+        let frame = frame_of(&forest, 77, 8).rows();
 
         assert_eq!(
-            frame[..2],
+            frame[..4],
             [
-                "▾ summit-works  ⚠ 30s ago                                    ◍ wCM:p9 working",
-                "  └── ⚠ nix-9670s  the tracker did not answer                                ",
+                "▾ summit-works  ⚠ 30s ago                                                    ",
+                "  ├── ⚠ nix-9670s  the tracker did not answer                                ",
+                "  └── ⚠ 1 unattributed pane                                                  ",
+                "      └── ◍ wCM:p9 working  /tmp/bdi-ground/summit-works                        ",
             ]
         );
     }

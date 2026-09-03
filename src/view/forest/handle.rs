@@ -22,7 +22,9 @@ pub(super) enum Handle {
     /// The run of quiet closed children under one drawn bead. A bead has at
     /// most one run per copy of it, so the copy names it.
     Elided(Place),
-    Group(GroupKind),
+    /// A group, by its kind and the project it hangs under where it is one
+    /// of a project's own.
+    Group(GroupKind, Option<String>),
     Item(ItemKey),
     /// A project, by its name, which the config makes unique.
     Project(String),
@@ -35,9 +37,9 @@ pub(super) enum Handle {
 /// move the selection to a neighbour with nothing on screen to say so.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ItemKey {
-    /// A pane, by its id, which is unique in a herdr session. It serves both
-    /// groups that hold panes: `recovery` puts a pane in exactly one of them,
-    /// and an unconfigured pane is one under no configured project at all.
+    /// A pane, by the key naming it across every session on the box — so one
+    /// key serves both groups that hold panes, whichever of the two this pane
+    /// landed in.
     Pane(PaneKey),
     Project(String),
     /// A disagreement, by the whole of what it says. No one field identifies
@@ -116,7 +118,7 @@ pub(super) fn handle_of(line: &Line) -> Option<Handle> {
         Content::Bead(_) | Content::Unread(_) => line.place.clone().map(Handle::Bead),
         Content::Project(line) => Some(Handle::Project(line.project.clone())),
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
-        Content::Group(group) => Some(Handle::Group(group.kind)),
+        Content::Group(group) => Some(Handle::Group(group.kind, group.project.clone())),
         Content::Item(item) => item_key(item).map(Handle::Item),
         Content::Note(_) | Content::Scoped { .. } => None,
     }

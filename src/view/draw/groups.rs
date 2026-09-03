@@ -1,4 +1,4 @@
-//! The groups drawn below the trees, and the things inside them.
+//! The groups drawn in the forest, and the things inside them.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
@@ -15,10 +15,10 @@ use super::{pane_marker, sentence};
 /// What lifts the live-agent filter, said beside the trees it is holding back.
 const SHOW_ALL: &str = "a to show all";
 
-/// One of the groups below the trees. The hidden trees are the only group
-/// nothing went wrong in — the filter put them there and a key takes them
-/// back out — so they are the only one drawn without a warning.
-pub(super) fn group_line(prefix: &str, group: Group) -> Fitted {
+/// The line a group is drawn as. The hidden trees are the only group nothing
+/// went wrong in — the filter put them there and a key takes them back out —
+/// so they are the only one drawn without a warning.
+pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
     let (said, hidden) = match group.kind {
         GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
         GroupKind::Conflicts => (phrase::conflicts(group.count), false),
@@ -133,6 +133,14 @@ mod tests {
     use crate::view::draw::tests::*;
     use crate::view::forest::flatten;
 
+    /// Every kind of group there is, whichever side of the trees it is drawn
+    /// on: a group's line says the same thing wherever it hangs.
+    fn every_kind() -> impl Iterator<Item = GroupKind> {
+        GroupKind::BELOW_THE_TREES
+            .into_iter()
+            .chain(GroupKind::UNDER_A_PROJECT)
+    }
+
     /// The filter hides trees, and it takes their findings with them. Saying
     /// only how many trees are hidden would read as "nothing to see here"
     /// while some of them are broken.
@@ -140,20 +148,21 @@ mod tests {
     fn the_hidden_trees_group_admits_that_what_it_hides_is_not_empty() {
         let quiet = Group {
             kind: GroupKind::HiddenTrees,
+            project: Some("summit-works".into()),
             count: 4,
             with_findings: 0,
         };
         let broken = Group {
             with_findings: 2,
-            ..quiet
+            ..quiet.clone()
         };
 
         assert_eq!(
-            Painted::of(group_line(SHUT, quiet), 64, 1).rows(),
+            Painted::of(group_line(SHUT, &quiet), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent                       a to show all"]
         );
         assert_eq!(
-            Painted::of(group_line(SHUT, broken), 64, 1).rows(),
+            Painted::of(group_line(SHUT, &broken), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent · 2 with findings     a to show all"]
         );
     }
@@ -176,13 +185,16 @@ mod tests {
         hidden.children = under_the_root(&beads);
         hidden.beads = beads;
 
-        let mut snapshot = snapshot(Vec::new(), Vec::new(), ProviderState::Answering);
+        let mut snapshot = snapshot(vec![hidden.clone()], Vec::new(), ProviderState::Answering);
         snapshot.filter = Filter::LiveAgents;
+        snapshot.trees.clear();
         snapshot.hidden_trees = vec![HiddenTree::of(&hidden)];
-        let frame = frame_of(&flatten(snapshot), 64, 2).rows();
+        let frame = frame_of(&flatten(snapshot), 64, 3).rows();
 
         assert!(
-            frame[0].contains("1 tree with no live agent · 1 with findings"),
+            frame
+                .iter()
+                .any(|row| row.contains("1 tree with no live agent · 1 with findings")),
             "{frame:#?}"
         );
     }
@@ -204,13 +216,14 @@ mod tests {
     /// The hidden trees are not: the user asked for them to be hidden.
     #[test]
     fn only_the_group_nothing_went_wrong_in_is_drawn_without_a_warning() {
-        for kind in GroupKind::ALL {
+        for kind in every_kind() {
             let group = Group {
                 kind,
+                project: None,
                 count: 2,
                 with_findings: 0,
             };
-            let drawn = Painted::of(group_line(SHUT, group), 80, 1).rows();
+            let drawn = Painted::of(group_line(SHUT, &group), 80, 1).rows();
             let marked = drawn[0].contains(WARNING);
 
             assert_eq!(
@@ -241,13 +254,14 @@ mod tests {
     /// as the one control it is, whatever the group beside each says.
     #[test]
     fn a_groups_fold_arrow_is_drawn_in_the_terminals_own_colour() {
-        for kind in GroupKind::ALL {
+        for kind in every_kind() {
             let group = Group {
                 kind,
+                project: None,
                 count: 2,
                 with_findings: 0,
             };
-            let painted = Painted::of(group_line(SHUT, group), 80, 1).row(0);
+            let painted = Painted::of(group_line(SHUT, &group), 80, 1).row(0);
 
             assert_eq!(
                 painted[0].style.fg,
@@ -311,7 +325,7 @@ path = "/tmp/bdi-ground/beady-eye"
 
         assert_eq!(
             row_naming(&frame, "wCW:p6"),
-            "  ├── ◍ wCW:p6 working  bdi-3um.5 · writing the parser and its tests  \
+            "      ├── ◍ wCW:p6 working  bdi-3um.5 · writing the parser and its tests  \
              /tmp/bdi-ground/beady-eye"
         );
     }
@@ -323,7 +337,7 @@ path = "/tmp/bdi-ground/beady-eye"
 
         assert_eq!(
             row_naming(&frame, "wCW:p1"),
-            "  ├── ◍ wCW:p1 done  /tmp/bdi-ground/beady-eye"
+            "      ├── ◍ wCW:p1 done  /tmp/bdi-ground/beady-eye"
         );
     }
 

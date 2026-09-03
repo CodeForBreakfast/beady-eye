@@ -102,8 +102,10 @@ pub struct Line {
     /// because only the flattening knows which ancestors still have siblings
     /// below them, which is what decides where a `│` runs.
     pub prefix: String,
-    /// How far under its tree's header this line sits. Zero for a header, for
-    /// a group, and for the lines beneath a group.
+    /// How far under a project's line this line sits. Zero for a project and
+    /// for a group below the trees; one for a root, for one of a project's
+    /// own groups and for a thing in a group below the trees; and one more
+    /// for each level under those.
     pub depth: u16,
     /// Whether this line's fold is open, where it has one at all.
     pub folded: Option<bool>,
@@ -141,7 +143,7 @@ pub enum Content {
     },
     /// Something true of the tree above rather than of any one bead in it.
     Note(Note),
-    /// One of the groups below the trees.
+    /// One of the groups.
     Group(Group),
     /// One thing in such a group.
     Item(Item),
@@ -154,17 +156,18 @@ pub enum Content {
     },
 }
 
-/// A project's own line: what it is, how much of it there is, and the panes
-/// `bdi` could recover for it where a root would not read.
+/// A project's own line: what it is and how much of it there is.
 ///
 /// It holds the project's own facts rather than its trees: a line is compared
 /// whole on every keystroke, and none of a tree's nodes are drawn here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectLine {
     pub project: String,
-    /// Every bead in the project's drawn trees, counted once. A bead standing
-    /// in several of them is still one bead, which is the rule a tree's own
-    /// counts already keep.
+    /// Every bead in the project's trees, shown or hidden, counted once. A
+    /// bead standing in several of them is still one bead, which is the rule
+    /// a tree's own counts already keep. The filter decides where a tree is
+    /// drawn under the project and not whether the project holds it, so `a`
+    /// moves nothing on this line.
     pub counts: Counts,
     /// Whether every root of the project answered the last time it was read.
     ///
@@ -173,22 +176,6 @@ pub struct ProjectLine {
     /// and the mark beside the name is the only thing that says so where the
     /// project is folded shut over its roots.
     pub every_root_read: bool,
-    /// What could still be found out about a project one of whose roots would
-    /// not read. Absent where every root read: there is nothing to recover,
-    /// and saying so on every healthy project would bury the ones where it
-    /// matters.
-    pub recovery: Option<Recovery>,
-}
-
-/// The live panes found working in a project no bead could be read to
-/// attribute them to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recovery {
-    pub panes: Vec<LoosePane>,
-    /// Whether `panes` is all of them. A pane working under no configured
-    /// project could belong here and cannot be told, so one of those anywhere
-    /// leaves every recovery partial.
-    pub complete: bool,
 }
 
 /// A root `bdi` was told about and drew no row for, and what its tracker
@@ -221,9 +208,13 @@ pub enum Note {
     NoRoots,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
     pub kind: GroupKind,
+    /// The project this group is one of, for a group drawn under a project's
+    /// line; nothing for a group below the trees. Part of what the group is
+    /// known by, so a fold on one project's group is not a fold on another's.
+    pub project: Option<String>,
     pub count: usize,
     /// How many of the things this group holds carry findings the screen is
     /// not drawing, because the group holds them rather than showing them.
@@ -235,8 +226,9 @@ pub struct Group {
     pub with_findings: usize,
 }
 
-/// The groups below the trees, in the order they are drawn: the projects with
-/// nothing to show first, what the filter chose to hide last.
+/// The groups, in the order they are drawn. Two of them are a project's own
+/// and hang under its line; the rest have no project line to hang under and
+/// sit below the trees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GroupKind {
     FailedProjects,
@@ -247,13 +239,21 @@ pub enum GroupKind {
 }
 
 impl GroupKind {
-    pub const ALL: [GroupKind; 5] = [
+    /// The groups drawn below the trees, in that order: the projects with
+    /// nothing to show first. A failed project has no line of its own, a
+    /// pane in no configured project has no project, and a conflict can
+    /// reach across two.
+    pub const BELOW_THE_TREES: [GroupKind; 3] = [
         GroupKind::FailedProjects,
         GroupKind::Unconfigured,
         GroupKind::Conflicts,
-        GroupKind::HiddenTrees,
-        GroupKind::Unattributed,
     ];
+
+    /// The groups drawn under each project's line, after its trees, in that
+    /// order: the trees the filter is holding back, then the panes working in
+    /// its paths that no bead claims. Everything beneath a project is under
+    /// its one line, so a reader has one place to look.
+    pub const UNDER_A_PROJECT: [GroupKind; 2] = [GroupKind::HiddenTrees, GroupKind::Unattributed];
 
     /// Whether what a group holds is live, which is what rests it open. A
     /// count is not a view: a shut group over live panes says they exist and

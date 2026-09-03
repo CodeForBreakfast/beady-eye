@@ -353,19 +353,6 @@ pub fn conflict(conflict: &Conflict) -> String {
     }
 }
 
-/// A tree whose tracker could not be read, and no live pane naming its
-/// project to show in place of the beads.
-pub fn no_live_panes() -> &'static str {
-    "no live pane names this project"
-}
-
-/// The live panes shown for a tree whose tracker could not be read are the
-/// ones naming its project. A pane working outside every configured project
-/// names none, so it could belong to this tree and there is no way to tell.
-pub fn panes_may_be_incomplete() -> &'static str {
-    "and possibly more · a live pane under no configured project could belong here"
-}
-
 /// A root that drew no row and whose tracker named no reason. Nothing should
 /// reach this, and a root that quietly left the screen would be the one kind
 /// of wrong answer `bdi` exists to prevent.
@@ -794,8 +781,6 @@ mod tests {
         for kind in every_failure_kind() {
             said.push(pane_unreadable(kind).to_string());
         }
-        said.push(no_live_panes().to_string());
-        said.push(panes_may_be_incomplete().to_string());
         said.push(root_unread().to_string());
         said.push(root_not_found().to_string());
         for count in [1, 3] {
@@ -1315,8 +1300,6 @@ mod tests {
     #[test]
     fn the_failure_phrases_are_static() {
         let _: fn(TrackerFailure) -> &'static str = tracker_failure;
-        let _: fn() -> &'static str = no_live_panes;
-        let _: fn() -> &'static str = panes_may_be_incomplete;
         let _: fn(JoinSource) -> Option<&'static str> = join_caveat;
         let _: fn() -> &'static str = no_bead_to_tail;
         let _: fn() -> &'static str = no_agent_to_tail;

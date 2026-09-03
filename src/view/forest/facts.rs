@@ -16,7 +16,7 @@ use crate::model::tree::Link;
 use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFacts};
 
 /// One snapshot's answers: a tree's for every tree it holds, shown or
-/// hidden, by its root, and every project's counts over its shown trees.
+/// hidden, by its root, and every project's counts over all of its trees.
 ///
 /// A hidden tree is a tree, and the filter only decides where it is drawn,
 /// so it is answered as the shown ones are rather than when a reader opens
@@ -37,7 +37,7 @@ impl Facts {
         Facts {
             trees,
             projects: snapshot
-                .trees
+                .collected
                 .chunk_by(|a, b| a.project == b.project)
                 .map(|trees| {
                     (
@@ -56,8 +56,8 @@ impl Facts {
             .expect("every tree the snapshot holds was answered when it was taken")
     }
 
-    /// Every bead in the project's trees, counted once. Nothing for a
-    /// project with no trees, which is what its line counts.
+    /// Every bead in the project's trees, shown or hidden, counted once.
+    /// Nothing for a project with no trees, which is what its line counts.
     pub(super) fn project(&self, project: &str) -> Counts {
         self.projects.get(project).cloned().unwrap_or_default()
     }

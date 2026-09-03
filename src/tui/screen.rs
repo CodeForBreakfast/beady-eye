@@ -1757,17 +1757,18 @@ mod tests {
         assert_eq!(forest_band(&mut shown, 80, 24), before);
     }
 
-    /// Put the selection on the hidden grove's row: the hidden-trees group is
-    /// the last line and rests shut, so open it and step in.
+    /// Put the selection on the hidden grove's row: the line over its
+    /// project's hidden trees rests shut, so open it and step in.
     fn select_hidden_tree(shown: &mut Shown) {
-        shown.apply(Action::Move(Motion::LastRow));
-        assert!(
-            matches!(
-                shown.forest.lines()[shown.forest.selected_line()].content,
-                Content::Group(group) if group.kind == GroupKind::HiddenTrees
-            ),
-            "the last line is the hidden-trees group"
-        );
+        let group = shown
+            .forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid the grove");
+        assert!(shown.forest.select_line(group));
         shown.apply(Action::ExpandOrChild);
         shown.apply(Action::ExpandOrChild);
     }
@@ -2618,12 +2619,8 @@ mod tests {
     #[test]
     fn y_on_a_row_that_is_not_a_bead_writes_nothing() {
         let (mut shown, clipboard) = shown_copying(a_hidden_grove_above_a_shown_tree());
-        shown.apply(Action::Move(Motion::LastRow));
-        assert_eq!(
-            cursor(&shown),
-            None,
-            "the hidden-trees group's line names no bead"
-        );
+        shown.apply(Action::Move(Motion::FirstRow));
+        assert_eq!(cursor(&shown), None, "a project's line names no bead");
 
         assert!(!shown.apply(Action::CopyId));
 

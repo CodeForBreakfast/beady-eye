@@ -37,7 +37,8 @@ const THE_ROOT: &[u8] = "bdi-2bb".as_bytes();
 const A_WORD_OF_ITS_TITLE: &[u8] = "scrollable".as_bytes();
 
 /// `a`, which shows every tree rather than only those with a live agent. No
-/// pane sits in the temp `HOME`, so without it the one tree here is hidden.
+/// pane sits in the temp `HOME`, so without it the one tree here sits behind
+/// its project's *no live agent* line and draws no row of its own.
 const SHOW_EVERY_TREE: &[u8] = b"a";
 
 #[test]

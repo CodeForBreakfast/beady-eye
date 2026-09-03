@@ -198,11 +198,12 @@ warning rather than a verdict, because a genuinely long-running bead trips it.
 ### The default filter
 
 **When herdr is available, the default view is trees with at least one live
-agent** — the work actually in flight. Trees with no agent are not dropped; they
-collapse to a single line so nothing disappears silently:
+agent** — the work actually in flight. Trees with no agent are not dropped; a
+project's collapse to one line under it, so nothing disappears silently and
+everything beneath a project is still under its one node:
 
 ```
-▸ 4 trees with no live agent             a to show all
+  ├─▸ 4 trees with no live agent             a to show all
 ```
 
 `a` toggles to the unfiltered set, and the choice is the reader's: it survives
@@ -394,18 +395,18 @@ reachable alongside the read set, rather than the projects being narrowed to
 the read set and the rest dropped. Two things need it now. The join places a
 pane by which configured project holds its directory, so a scoped run whose
 projects were only the read set would report every pane on the other
-desktops as *in a directory no configured project covers*, and every
-unreadable tracker as *possibly more*. Panes are placed against the config
-as written, and a pane under an excluded project is neither drawn nor
-reported: not loose, because it is on another desktop's work; not
-unconfigured, because the config names its project; and not a claim on a
-read project's bead of an id it names, because its own tracker was never
-read and says nothing about that bead. A read bead naming a pane that sits
-in an excluded project is still reported, as a pane in that project. And
-reloading the config while running will have to re-derive the read set from
-the new file, so it is kept a function of config, directory and flags rather
-than a value computed once at start. Later, a reference that crosses
-trackers will need it to resolve and show a foreign bead from a scoped run.
+desktops as *in a directory no configured project covers*. Panes are placed
+against the config as written, and a pane under an excluded project is
+neither drawn nor reported: not loose, because it is on another desktop's
+work; not unconfigured, because the config names its project; and not a
+claim on a read project's bead of an id it names, because its own tracker
+was never read and says nothing about that bead. A read bead naming a pane
+that sits in an excluded project is still reported, as a pane in that
+project. And reloading the config while running will have to re-derive the
+read set from the new file, so it is kept a function of config, directory and
+flags rather than a value computed once at start. Later, a reference that
+crosses trackers will need it to resolve and show a foreign bead from a
+scoped run.
 
 ## Conventions are configuration
 
@@ -743,7 +744,8 @@ sentence a reader needs there is about the configuration rather than the pane.
 2. Per project, one `bd list --all --limit 0 --json` plus the wisps, and the
    tree under each root is built from the edges those rows carry.
 3. `herdr agent list`, if reachable, is joined onto the nodes.
-4. The default filter collapses trees with no live agent to a count.
+4. The default filter collapses trees with no live agent to a count under
+   their project's line.
 
 **What a nesting means.** A bead's descendants are the things that must
 complete before it can. beads says that with two edge kinds running opposite
@@ -1109,9 +1111,9 @@ depend on it.
 
 **A root that cannot be read must degrade, not disappear**: it renders where
 its row would have been, named and marked with the reason it would not read,
-and the live panes recovered for its project render on that project's own
-line. A root shown without its beads beats a root silently missing — the same
-principle as the default filter.
+and the live panes still working in its project render under that project's
+own line, as they do under any project's. A root shown without its beads beats
+a root silently missing — the same principle as the default filter.
 
 ### Bead ids are not unique across trackers
 
@@ -1375,28 +1377,42 @@ hang under it as ordinary bead rows. The selected bead's pane tails below, and
 the foot of the screen carries the keys and every notice.
 
 A project's line says what only a project can answer — which project, how
-fresh its rows are, how much work it holds, and, where a root would not read,
-the live panes still found working there. Everything else is a bead's, and a
-root is a bead: its status, its agent, its anomalies and its pane are drawn and
-reached exactly as any other row's are, on a row at depth one under the
-project. A count on a project line is over its trees with each bead counted
-once, because a bead standing in several of them is still one bead. A project
-rests open: the forest is what is being worked, and a project shut over it
-says only that it exists.
+fresh its rows are and how much work it holds. Everything else is a bead's,
+and a root is a bead: its status, its agent, its anomalies and its pane are
+drawn and reached exactly as any other row's are, on a row at depth one under
+the project. A count on a project line is over every tree the project holds,
+shown or held back by the filter, with each bead counted once, because a bead
+standing in several of them is still one bead. A project rests open: the
+forest is what is being worked, and a project shut over it says only that it
+exists.
+
+**Everything beneath a project is under its one line.** Graeme: *"everything
+beneath a project should be below the single, top-level node, including trees
+with no live agent and unattributed panes that are clearly in a path belonging
+to the project. at the moment i have to look in 3 different places to see
+everything"*. So after a project's roots come two lines of the project's own,
+each drawn only where it holds something: the trees the live-agent filter is
+holding back, shut, and the panes working in the project's paths that no bead
+claims, open. Three places became one, and a reader folds the project shut over
+all of it at once.
 
 ```
 ▾ summit-works  ✓ 9s ago                             8/21  3 agents  ⚠ 3
-  └── ◐ nix-9670s  DMS → noctalia v5                 8/21  ◍ shell selector · working
-      ├── ● .20  wallpaper timer calls dms                 ◍ rebuilt generation 541 · working
-      ├── ◐ .1   wire the niri theme include               ◍ wCM:p6 · idle · inferred, not confirmed
-      │   ├── ○ .4   restore app theming                   1/4
-      │   │   ├── ○ .8   make the switch permanent
-      │   │   │   └── ○ .9   confirm quickshell wedges gone
-      │   │   └── ✓ .5   retire the DMS remnants
-      │   └── ○ .17  apply the two niri settings
-      ├┄┄ ◐ .16  guard a key in both layers               ⚠ claimed · no pane
-      ├─▸ ✓ .3   land the session shell                   2/9  3 unfinished beads beneath this
-      └─▸ ✓ 13 more beads · closed, and nobody on them
+  ├── ◐ nix-9670s  DMS → noctalia v5                 8/21  ◍ shell selector · working
+  │   ├── ● .20  wallpaper timer calls dms                 ◍ rebuilt generation 541 · working
+  │   ├── ◐ .1   wire the niri theme include               ◍ wCM:p6 · idle · inferred, not confirmed
+  │   │   ├── ○ .4   restore app theming                   1/4
+  │   │   │   ├── ○ .8   make the switch permanent
+  │   │   │   │   └── ○ .9   confirm quickshell wedges gone
+  │   │   │   └── ✓ .5   retire the DMS remnants
+  │   │   └── ○ .17  apply the two niri settings
+  │   ├┄┄ ◐ .16  guard a key in both layers               ⚠ claimed · no pane
+  │   ├─▸ ✓ .3   land the session shell                   2/9  3 unfinished beads beneath this
+  │   └─▸ ✓ 13 more beads · closed, and nobody on them
+  ├─▸ 4 trees with no live agent                     a to show all
+  └── ⚠ 2 unattributed panes
+      ├── ◍ wCM:pD waiting at a prompt  nix-9670s.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
+      └── ◍ wCM:pE idle                              /tmp/bdi-ground/summit-works
 
 ▾ homelab  ⠋ 1m ago                                  2/7   1 agent
   ├─▸ ◐ hl-sgqyv  heartbeat cadence                  2/7   ◍ pinning the cadence · idle
@@ -1404,10 +1420,6 @@ says only that it exists.
 
 ▾ ⚠ 1 pane in a directory no configured project covers
   └── ◍ wCM:pF idle                                  /srv/spike
-▸ 4 trees with no live agent                         a to show all
-▾ ⚠ 2 unattributed panes
-  ├── ◍ wCM:pD waiting at a prompt  nix-9670s.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
-  └── ◍ wCM:pE idle                                  /tmp/bdi-ground/summit-works
 ────────────────────────────────── wCM:p9 ──────────────────────────────────
   · rebuilt .#thinkpad, generation 541
 ⚠ no herdr session · which agents are alive is unknown   Enter show   a all   ? keys   q quit
@@ -1641,24 +1653,30 @@ BST 2026-09-02) so that `Enter` shows the bead and focus stays one key from
 the row for anyone who learns `f`; the forty-column rule below is why `f` is
 in `?` and not on the keys row.
 
-### The groups below the trees
+### The groups
 
-Five, in this order — severity first, and the mock's last two kept in the
-mock's order: projects whose tracker could not be read at all; panes in
-directories no configured project covers; conflicts nothing could settle; trees
-the live-agent filter is holding back; unattributed panes. An empty group draws
-nothing. Each line carries its count, so folding a group never loses what it
-holds, and each opens to name its members: a failed project with its reason, a
-conflict in full, a hidden tree as its root's row with its tree beneath, a pane
-by id and state with the directory it is working in — the directory being what
-both pane groups are asking the reader to look at, one to place the agent and
-the other to configure the project. An unattributed pane's row also says what
-the pane reported about itself, ahead of the directory: its `display_agent`,
-then its caption by the rule the agent cell uses, the row's `·` between them
-and either half left out where the pane did not report it. No bead's row will
-say these for a loose pane, so its own row does; a pane that reported nothing
-keeps the row it had. The title block is cut from the right, so a narrow row
-gives up the directory first and the pane's id and state last.
+Five kinds, and two of them are a project's own. Under each project's line,
+after its roots, in this order: the trees the live-agent filter is holding
+back, then the panes working in the project's paths that no bead claims. Below
+the trees, in this order — severity first: projects whose tracker could not be
+read at all, panes in directories no configured project covers, conflicts
+nothing could settle. Those three have no project line to hang under: a failed
+project has no line of its own, a pane in no configured project has no project,
+and a conflict can reach across two. An empty group draws nothing. Each line
+carries its count, so folding a group never loses what it holds, and each opens
+to name its members: a failed project with its reason, a conflict in full, a
+hidden tree as its root's row with its tree beneath, a pane by id and state
+with the directory it is working in — the directory being what both pane groups
+are asking the reader to look at, one to place the agent and the other to
+configure the project. A project's group is known by its kind and its project,
+so a fold on one project's quiet trees is not a fold on another's. An
+unattributed pane's row also says what the pane reported about itself, ahead
+of the directory: its `display_agent`, then its caption by the rule the agent
+cell uses, the row's `·` between them and either half left out where the pane
+did not report it. No bead's row will say these for a loose pane, so its own
+row does; a pane that reported nothing keeps the row it had. The title block
+is cut from the right, so a narrow row gives up the directory first and the
+pane's id and state last.
 
 The groups rest by the same rule as the trees. A count is not a view of what it
 holds, so a group over live panes — unconfigured, conflicts, unattributed —
@@ -1677,29 +1695,33 @@ admits they exist.
 A hidden tree is a tree, and the group is only where the filter put it. The
 tree is still in hand — the filter is a display choice over what was collected,
 not a second reading — so inside the group each hidden tree is drawn exactly as
-its project would draw it: the same root row, with its glyph, its fraction and
-what it is shut over; the same findings under it; the same fold, resting where
-the tree's own work rests it; and the same answers to every key, so Enter shows
-the root and `y` copies its id. Nothing about a tree with no live agent differs
-from any other tree except where it sits.
+its project would draw it, one level further in: the same root row, with its
+glyph, its fraction and what it is shut over; the same findings under it; and
+the same answers to every key, so Enter shows the root and `y` copies its id.
+The one thing that differs is where it rests. Graeme: *"the top-level trees
+with no live agent should not be expanded by default"*. So a hidden tree's root
+rests shut whatever is beneath it, where the same tree shown under its project
+rests open onto the work a reader could start; a fold the reader opens on it is
+theirs, and survives a refresh and `a` alike.
 
 Per-tree findings are not groups: a tree's dangling beads, its cycles and the
 nodes the tracker stopped at are drawn as note lines directly under its root's
 row, whether that root is folded or not, so folding the root cannot lose one.
 
-**Live panes in a project whose tracker could not be read** move out of the
-unattributed group onto that project's own line, so every loose pane is on
-screen exactly once and the two counts add up. The line says when that list
-may be short: a pane under no configured project could belong here and cannot
-be told, so one of those anywhere leaves every such recovery marked *and
-possibly more*.
+**Every loose pane is on screen exactly once, under its own project.** A pane
+in a project's paths that no bead claims is the project's whether or not its
+roots read, so a project whose tracker could not be read at all still draws its
+line where such panes are working in it, with the failure reported where it
+always was, in the group below the trees.
 
 ### The filter is the reader's, and survives a refresh
 
-`a` toggles between the trees with a live agent and every tree. It is a
-state of the view, not a fold: a refresh carries it onto the new snapshot
-exactly as it carries the folds and the cursor, so the hidden-trees group a
-reader opened by pressing `a` does not shut itself again thirty seconds later.
+`a` toggles between the trees with a live agent and every tree: it moves a
+project's quiet trees out from behind their line to sit under the project as
+the trees with an agent do, and back. It is a state of the view, not a fold: a
+refresh carries it onto the new snapshot exactly as it carries the folds and
+the cursor, so the trees a reader brought out by pressing `a` do not go back
+behind their line thirty seconds later.
 It was doing so — the filter lived on the snapshot a refresh replaced wholesale
 — and because the group's own line is the only place on the screen that names
 a key, losing the answer to it read as the group shutting itself. Carrying it

@@ -150,8 +150,9 @@ impl Forest {
             .collect()
     }
 
-    /// What the cursor is on, then everything above it in its tree, nearest
-    /// first.
+    /// What the cursor is on, then everything above it, nearest first: the
+    /// beads above it in its tree, the group holding the tree where the
+    /// filter has put it in one, and the project.
     fn ancestry(&self) -> Vec<Handle> {
         let mut chain: Vec<Handle> = self.cursor.iter().cloned().collect();
         let place = match &self.cursor {
@@ -164,16 +165,40 @@ impl Forest {
             }
             // Only the snapshot a pane was found in still knows which group
             // held it, so a pane that goes away falls back to that group
-            // rather than to the top of the forest.
+            // rather than to the top of the forest — and to the project the
+            // group is one of, where it is.
             Some(Handle::Item(key)) => {
-                chain.extend(layout::group_holding(&self.snapshot, key).map(Handle::Group));
+                if let Some(group) = layout::group_holding(&self.snapshot, key) {
+                    if let Handle::Group(_, Some(project)) = &group {
+                        chain.push(Handle::Project(project.clone()));
+                    }
+                    chain.insert(1, group);
+                }
+                return chain;
+            }
+            Some(Handle::Group(_, Some(project))) => {
+                chain.push(Handle::Project(project.clone()));
                 return chain;
             }
             _ => return chain,
         };
         chain.extend(place.forebears().map(Handle::Bead));
+        if self.hidden(&place.tree) {
+            chain.push(Handle::Group(
+                GroupKind::HiddenTrees,
+                Some(place.tree.project.clone()),
+            ));
+        }
         chain.push(Handle::Project(place.tree.project.clone()));
         chain
+    }
+
+    /// Whether the filter is holding the tree a root names back.
+    fn hidden(&self, root: &BeadKey) -> bool {
+        self.snapshot
+            .hidden_trees
+            .iter()
+            .any(|hidden| hidden.project == root.project && hidden.root == root.id)
     }
 
     /// The tree a place was drawn in and the way down it, as the beads
@@ -480,33 +505,43 @@ impl Forest {
             // over it, or the tracker stopped reporting it. Take the nearest
             // line that is. Nothing needs drawing again for it: the fold
             // state no longer turns on where the selection sits.
-            self.cursor = self.group_shut_over_the_cursors_tree().or_else(|| {
-                self.scan(self.selected, false)
-                    .or_else(|| self.scan(self.selected, true))
-                    .and_then(|at| self.handle_at(at))
-            });
+            self.cursor = self
+                .forebear_drawn_over_the_cursors_hidden_tree()
+                .or_else(|| {
+                    self.scan(self.selected, false)
+                        .or_else(|| self.scan(self.selected, true))
+                        .and_then(|at| self.handle_at(at))
+                });
         }
         self.selected = self.find_cursor().unwrap_or(0);
         was
     }
 
-    /// The hidden-trees group, where the filter has taken the cursor's tree
-    /// into it and the group is shut over it. The group's line is where the
-    /// tree went, which is more than the nearest row can say; open, the
-    /// tree's rows are drawn there under the same handles and the cursor
-    /// follows them without help.
-    fn group_shut_over_the_cursors_tree(&self) -> Option<Handle> {
+    /// Where the filter has taken the cursor's tree into the group holding
+    /// its project's hidden trees, the nearest of the cursor's forebears that
+    /// is drawn: the tree's root, resting shut over the cursor, where the
+    /// group is open, and the group's line where it is shut. Either is where
+    /// the tree went, which is more than the nearest row can say.
+    ///
+    /// Only the cursor's own tree going into the group does this. A fold
+    /// shutting over the selection in a tree still drawn leaves it on the
+    /// nearest row, as it always has.
+    fn forebear_drawn_over_the_cursors_hidden_tree(&self) -> Option<Handle> {
         let (Handle::Bead(place) | Handle::Elided(place)) = self.cursor.as_ref()? else {
             return None;
         };
-        let hidden = self
-            .snapshot
-            .hidden_trees
-            .iter()
-            .any(|hidden| hidden.project == place.tree.project && hidden.root == place.tree.id);
-        let group = Handle::Group(GroupKind::HiddenTrees);
-        let shut = !self.folds.expanded(&group, GroupKind::HiddenTrees.live());
-        (hidden && shut).then_some(group)
+        if !self.hidden(&place.tree) {
+            return None;
+        }
+        self.ancestry()
+            .into_iter()
+            .skip(1)
+            .find(|forebear| self.line_holding(forebear).is_some())
+    }
+
+    /// Which line carries a handle, where one does.
+    fn line_holding(&self, handle: &Handle) -> Option<usize> {
+        (0..self.lines.len()).find(|at| self.handle_at(*at).as_ref() == Some(handle))
     }
 
     fn settle_cursor(&mut self) {
@@ -521,32 +556,27 @@ impl Forest {
     /// one line carries it — which is what lets a step onto the lower copy
     /// survive the redraw that follows it.
     fn find_cursor(&self) -> Option<usize> {
-        let cursor = self.cursor.as_ref()?;
-        (0..self.lines.len()).find(|at| self.handle_at(*at).as_ref() == Some(cursor))
+        self.line_holding(self.cursor.as_ref()?)
     }
 
     fn first_handle(&self) -> Option<Handle> {
         if let Some(tree) = self.snapshot.trees.first() {
             return Some(Handle::Bead(Place::root(root_key(tree))));
         }
-        GroupKind::ALL
-            .iter()
-            .find(|kind| layout::group_drawn(&self.snapshot, **kind))
-            .copied()
-            .map(Handle::Group)
+        layout::every_group(&self.snapshot)
+            .find(|(kind, project)| layout::group_drawn(&self.snapshot, *kind, project.as_deref()))
+            .map(|(kind, project)| Handle::Group(kind, project))
     }
 
     /// Whether the snapshot still holds what a handle names.
     fn present(&self, handle: &Handle) -> bool {
         match handle {
             Handle::Bead(place) | Handle::Elided(place) => self.drawn(place),
-            Handle::Group(kind) => layout::group_drawn(&self.snapshot, *kind),
+            Handle::Group(kind, project) => {
+                layout::group_drawn(&self.snapshot, *kind, project.as_deref())
+            }
             Handle::Item(key) => layout::group_holding(&self.snapshot, key).is_some(),
-            Handle::Project(project) => self
-                .snapshot
-                .trees
-                .iter()
-                .any(|tree| &tree.project == project),
+            Handle::Project(project) => layout::project_drawn(&self.snapshot, project),
         }
     }
 
@@ -1183,7 +1213,16 @@ credential_command = "secret harbour"
             Content::Bead(row) => format!("{} {} {}", row.glyph, row.id, row.title),
             Content::Elided { count, .. } => format!("… {count} more"),
             Content::Note(note) => format!("! {note:?}"),
-            Content::Group(group) => format!("[{:?}] {}", group.kind, group.count),
+            Content::Group(group) => format!(
+                "[{:?}{}] {}",
+                group.kind,
+                group
+                    .project
+                    .as_ref()
+                    .map(|project| format!(" {project}"))
+                    .unwrap_or_default(),
+                group.count
+            ),
             Content::Item(item) => format!("- {item:?}"),
             Content::Scoped { project } => format!("~ reading {project}"),
         }
@@ -1637,23 +1676,26 @@ credential_command = "secret harbour"
             sketch(&forest),
             vec![
                 "▾ orbital",
-                "  └── ◐ orb-7 lift the ground station",
-                "      ├── ! Dangling(1)",
-                "      ├─▸ ○ .1 re-point the dish",
-                "      ├── ○ .7 log the survey marks",
-                "      ├── ✓ .4 clear the access road",
-                "      └─▸ … 3 more",
+                "  ├── ◐ orb-7 lift the ground station",
+                "  │   ├── ! Dangling(1)",
+                "  │   ├─▸ ○ .1 re-point the dish",
+                "  │   ├── ○ .7 log the survey marks",
+                "  │   ├── ✓ .4 clear the access road",
+                "  │   └─▸ … 3 more",
+                "  └── [Unattributed orbital] 2",
+                "      ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None })",
                 "▾ ferry",
-                "  └── ⚠ fer-2 unread",
+                "  ├── ⚠ fer-2 unread",
+                "  └── [Unattributed ferry] 1",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None })",
+                "▾ harbour",
+                "  └─▸ [HiddenTrees harbour] 1",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
                 "  └── - Unconfigured(UnconfiguredPane { pane: PaneKey { session: \"default\", id: \"w:pF\" }, cwd: \"/srv/spike\", pane_status: Idle })",
                 "▾ [Conflicts] 1",
                 "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"orbital\", id: \"orb-7.1\" }, panes: [PaneKey { session: \"default\", id: \"w:p3\" }, PaneKey { session: \"default\", id: \"w:p4\" }] })",
-                "▸ [HiddenTrees] 1",
-                "▾ [Unattributed] 2",
-                "  ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None })",
-                "  └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None })",
             ]
         );
     }
@@ -1724,8 +1766,8 @@ credential_command = "secret harbour"
             sketch(&forest)[..3],
             [
                 "▾ orbital",
-                "  └─▸ ◐ orb-7 lift the ground station",
-                "      └── ! Dangling(1)",
+                "  ├─▸ ◐ orb-7 lift the ground station",
+                "  │   └── ! Dangling(1)",
             ]
         );
     }
@@ -1991,6 +2033,9 @@ credential_command = "secret harbour"
     /// A group over live panes is a fold `bdi` chose, and a count is not a
     /// view of what it holds: it says they exist and nothing about which they
     /// are. What collection and the filter did is a report, and rests shut.
+    /// In the order the groups are drawn: orbital's and ferry's loose panes,
+    /// harbour's hidden tree, then the failed project, the unconfigured pane
+    /// and the conflict below the trees.
     #[test]
     fn a_group_rests_open_when_what_it_holds_is_live() {
         let forest = flatten(snapshot());
@@ -2003,14 +2048,14 @@ credential_command = "secret harbour"
             })
             .collect();
 
-        assert_eq!(markers, vec![SHUT, OPEN, OPEN, SHUT, OPEN]);
+        assert_eq!(markers, vec![OPEN, OPEN, SHUT, SHUT, OPEN, OPEN]);
     }
 
     #[test]
     fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
         let forest = flatten(snapshot());
 
-        assert!(sketch(&forest).contains(&"      └─▸ … 3 more".to_string()));
+        assert!(sketch(&forest).contains(&"  │   └─▸ … 3 more".to_string()));
     }
 
     /// The count is the only account the screen gives of the beads it stands
@@ -2023,7 +2068,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             sketch(&forest)[forest.selected_line()],
-            "      └─▸ … 3 more"
+            "  │   └─▸ … 3 more"
         );
     }
 
@@ -2043,10 +2088,10 @@ credential_command = "secret harbour"
         assert_eq!(
             from_the_run[..4],
             [
-                "      └── … 3 more",
-                "          ├── ✓ .2 survey the mast",
-                "          ├── ✓ .3 pour the pad",
-                "          └── ✓ .5 set the guard rail",
+                "  │   └── … 3 more",
+                "  │       ├── ✓ .2 survey the mast",
+                "  │       ├── ✓ .3 pour the pad",
+                "  │       └── ✓ .5 set the guard rail",
             ]
         );
     }
@@ -2328,10 +2373,10 @@ credential_command = "secret harbour"
 
         let drawn = sketch(&forest);
         assert!(
-            drawn.contains(&"          └── ✓ .5 set the guard rail".to_string()),
+            drawn.contains(&"  │       └── ✓ .5 set the guard rail".to_string()),
             "{drawn:#?}"
         );
-        assert_eq!(drawn[forest.selected_line()], "      └── … 3 more");
+        assert_eq!(drawn[forest.selected_line()], "  │   └── … 3 more");
     }
 
     /// A run has no bead of its own, so a line the cursor is holding must not
@@ -2996,6 +3041,10 @@ credential_command = "secret harbour"
         assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
     }
 
+    /// The bead the selection was on is gone with its whole tree, and the
+    /// nearest of its forebears the new snapshot still draws is its
+    /// project's line: orbital still has panes working in it that no bead
+    /// claims, so the line is still there to fall back to.
     #[test]
     fn a_refresh_that_drops_the_selected_bead_leaves_the_selection_somewhere_real() {
         let mut forest = flatten(snapshot());
@@ -3011,8 +3060,14 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         ));
 
-        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
-        assert!(forest.selected_line() < forest.lines().len());
+        assert!(
+            matches!(
+                &forest.lines()[forest.selected_line()].content,
+                Content::Project(line) if line.project == "orbital"
+            ),
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 
     /// `a` is a display choice over what was already collected, so what it
@@ -3148,26 +3203,46 @@ credential_command = "secret harbour"
         assert_eq!(sketch(&forest), before);
     }
 
-    /// The panes are the project's, not any one root's: `recovery` puts every
-    /// unattributed pane of a project on one of its trees, so a project line
-    /// is where they were always heading.
+    /// A pane working in a project's paths that no bead claims is the
+    /// project's, so it is drawn under the project's own line rather than in
+    /// a group below the trees: one place to look for everything beneath a
+    /// project, whether or not its roots read.
     #[test]
-    fn the_panes_of_a_project_whose_root_would_not_read_are_drawn_on_its_line() {
+    fn every_loose_pane_hangs_under_its_own_projects_line() {
         let forest = flatten(snapshot());
-        let found = header_of(&forest, "ferry")
-            .recovery
-            .as_ref()
-            .expect("ferry has a root that would not read");
+        let loose: Vec<(&str, String)> = forest
+            .lines()
+            .iter()
+            .enumerate()
+            .filter_map(|(at, line)| match &line.content {
+                Content::Item(Item::Loose(pane)) => {
+                    Some((pane.project.as_str(), project_above(&forest, at)))
+                }
+                _ => None,
+            })
+            .collect();
 
         assert_eq!(
-            found
-                .panes
-                .iter()
-                .map(|p| p.pane.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["w:p9"]
+            loose.len(),
+            forest.snapshot().unattributed.len(),
+            "{:#?}",
+            sketch(&forest)
         );
-        assert!(!found.complete, "w:pF could belong here");
+        for (project, above) in loose {
+            assert_eq!(project, above, "{:#?}", sketch(&forest));
+        }
+    }
+
+    /// The project whose line is the nearest one above `at`.
+    fn project_above(forest: &Forest, at: usize) -> String {
+        forest.lines()[..at]
+            .iter()
+            .rev()
+            .find_map(|line| match &line.content {
+                Content::Project(line) => Some(line.project.clone()),
+                _ => None,
+            })
+            .expect("a line under a project has one above it")
     }
 
     /// A root that would not read says so on a line of its own under its
@@ -3197,14 +3272,22 @@ credential_command = "secret harbour"
         );
     }
 
-    /// A project every one of whose roots read has nothing to recover, and
-    /// says nothing rather than saying it found no panes. A project that says
-    /// that on every healthy line buries the one where it matters.
+    /// A project with no loose pane draws no line saying so: a group's line
+    /// on every healthy project buries the one where it matters.
     #[test]
-    fn a_project_whose_roots_all_read_recovers_nothing_and_says_nothing() {
+    fn a_project_with_no_loose_pane_draws_no_line_for_them() {
         let forest = flatten(snapshot());
 
-        assert_eq!(header_of(&forest, "orbital").recovery, None);
+        assert!(
+            !forest.lines().iter().any(|line| matches!(
+                &line.content,
+                Content::Group(group)
+                    if group.kind == GroupKind::Unattributed
+                        && group.project.as_deref() == Some("harbour")
+            )),
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 
     /// The defect: a root drew as a tree header, which is not a bead row, so
@@ -3299,7 +3382,7 @@ credential_command = "secret harbour"
             .map(|(at, _)| at)
             .collect();
 
-        assert_eq!(panes.len(), 2, "{:#?}", sketch(&forest));
+        assert_eq!(panes.len(), 3, "{:#?}", sketch(&forest));
         for at in panes {
             forest.apply(Action::Move(Motion::FirstRow));
             walk::until(
@@ -3337,8 +3420,10 @@ credential_command = "secret harbour"
     #[test]
     fn every_kind_of_thing_a_group_holds_can_hold_the_selection() {
         let mut forest = flatten(built(Filter::LiveAgents));
-        for kind in GroupKind::ALL {
-            forest.folds.set(Handle::Group(kind), true);
+        let groups: Vec<(GroupKind, Option<String>)> =
+            layout::every_group(forest.snapshot()).collect();
+        for (kind, project) in groups {
+            forest.folds.set(Handle::Group(kind, project), true);
         }
         forest.refresh(built(Filter::LiveAgents));
 
@@ -3350,7 +3435,7 @@ credential_command = "secret harbour"
             .map(|(at, _)| at)
             .collect();
 
-        assert_eq!(items.len(), 5, "{:#?}", sketch(&forest));
+        assert_eq!(items.len(), 6, "{:#?}", sketch(&forest));
         for at in items {
             assert!(
                 selectable(&forest.lines()[at]),
@@ -3381,6 +3466,204 @@ credential_command = "secret harbour"
             "{:#?}",
             forest.lines()[forest.selected_line()]
         );
+    }
+
+    /// A project's group that empties leaves the selection on the project's
+    /// line, which is where the group hung: the project is still there, and
+    /// the top of the forest is not where the reader was.
+    #[test]
+    fn a_selection_on_a_pane_whose_group_empties_falls_back_to_its_project() {
+        let mut forest = flatten(snapshot());
+        select_item(&mut forest, "w:p9");
+
+        forest.refresh(built_without_ferrys_panes());
+
+        assert!(
+            matches!(
+                &forest.lines()[forest.selected_line()].content,
+                Content::Project(line) if line.project == "ferry"
+            ),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The same from the group's own line.
+    #[test]
+    fn a_selection_on_a_projects_group_that_empties_falls_back_to_the_project() {
+        let mut forest = flatten(snapshot());
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group)
+                    if group.kind == GroupKind::Unattributed
+                        && group.project.as_deref() == Some("ferry"))
+            })
+            .expect("ferry has a pane no bead claims");
+        assert!(forest.select_line(group));
+
+        forest.refresh(built_without_ferrys_panes());
+
+        assert!(
+            matches!(
+                &forest.lines()[forest.selected_line()].content,
+                Content::Project(line) if line.project == "ferry"
+            ),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The same snapshot with the one pane working in ferry gone, which
+    /// empties the group ferry's line holds it in.
+    fn built_without_ferrys_panes() -> Snapshot {
+        let mut snapshot = snapshot();
+        snapshot.unattributed.retain(|pane| pane.project != "ferry");
+        snapshot
+    }
+
+    /// The handle a project's group is held by carries the project, so a
+    /// reader opening one project's quiet trees opens nobody else's.
+    #[test]
+    fn opening_one_projects_hidden_trees_leaves_another_projects_shut() {
+        let colliding = edited(SLIPWAY, "hbr-9", "hbr-3");
+        let mut forest = flatten(gather(
+            vec![tree_of("harbour", HARBOUR), tree_of("orbital", &colliding)],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+        select_hidden_tree(&mut forest);
+        assert_eq!(cursor(&forest), Some(&key("orbital", "hbr-3")));
+
+        let harbours = forest
+            .lines()
+            .iter()
+            .find(|line| {
+                matches!(&line.content, Content::Group(group)
+                    if group.kind == GroupKind::HiddenTrees
+                        && group.project.as_deref() == Some("harbour"))
+            })
+            .expect("harbour's quiet trees have a line");
+        assert_eq!(harbours.folded, Some(false), "{:#?}", sketch(&forest));
+    }
+
+    /// A project with quiet trees and loose panes both: opening the line over
+    /// its quiet trees draws them one level in, and the line over its loose
+    /// panes still follows at the depth it started at, hanging under the
+    /// project and not under the trees just opened.
+    #[test]
+    fn a_projects_loose_panes_follow_its_opened_quiet_trees_at_their_own_depth() {
+        let mut quiet = alone("orbital", TOWER, &panes_on(&["nobody"]));
+        quiet.refilter(Filter::LiveAgents);
+        let mut forest = flatten(quiet);
+        assert_eq!(
+            sketch(&forest)[..4],
+            [
+                "▾ orbital",
+                "  ├─▸ [HiddenTrees orbital] 1",
+                "  └── [Unattributed orbital] 1",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None })",
+            ]
+        );
+
+        select_hidden_tree(&mut forest);
+
+        assert_eq!(
+            sketch(&forest)[..5],
+            [
+                "▾ orbital",
+                "  ├── [HiddenTrees orbital] 1",
+                "  │   └─▸ ○ tow-1 raise the tower",
+                "  └── [Unattributed orbital] 1",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None })",
+            ]
+        );
+    }
+
+    /// The filter decides where a project's trees are drawn and not whether
+    /// the project holds them, so its line counts every bead of every tree
+    /// and `a` moves nothing on it.
+    #[test]
+    fn a_projects_line_counts_the_trees_the_filter_holds_back() {
+        let mut forest = flatten(snapshot());
+        let counted = header_of(&forest, "harbour").counts.clone();
+        assert_eq!(counted.total, 2, "{:#?}", sketch(&forest));
+
+        forest.apply(Action::ToggleFilter);
+
+        assert_eq!(forest.snapshot().filter, Filter::All);
+        assert_eq!(header_of(&forest, "harbour").counts, counted);
+    }
+
+    /// A project whose tracker could not be read at all can still have panes
+    /// working in its paths, and they are the project's: its line is drawn
+    /// for them, and the failure stays where it is reported, in the group
+    /// below the trees.
+    #[test]
+    fn a_failed_projects_loose_panes_hang_under_its_own_line() {
+        let forest = flatten(gather(
+            vec![tree_of("orbital", ORBITAL)],
+            vec![FailedProject {
+                project: "ferry".into(),
+                tracker: TrackerFailure::Unstartable,
+            }],
+            Filter::LiveAgents,
+        ));
+        let drawn = sketch(&forest);
+        let ferry = drawn
+            .iter()
+            .position(|line| line == "▾ ferry")
+            .unwrap_or_else(|| panic!("ferry has a line: {drawn:#?}"));
+
+        assert_eq!(
+            drawn[ferry..ferry + 4],
+            [
+                "▾ ferry",
+                "  └── [Unattributed ferry] 1",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None })",
+                "▸ [FailedProjects] 1",
+            ]
+        );
+    }
+
+    /// A forest of projects drawn only for the panes working in their paths
+    /// holds no root, so there is nothing for `select_first_root` to open on.
+    /// The selection still settles somewhere and stays: `lay_out` runs before
+    /// it and leaves the cursor on the first thing the forest holds, so a key
+    /// that lays the forest out again and says nothing about the selection
+    /// finds it already held.
+    #[test]
+    fn a_project_drawn_only_for_its_loose_panes_keeps_the_line_it_opened_on() {
+        let mut forest = flatten(gather(
+            Vec::new(),
+            vec![FailedProject {
+                project: "ferry".into(),
+                tracker: TrackerFailure::Unstartable,
+            }],
+            Filter::LiveAgents,
+        ));
+        let drawn = sketch(&forest);
+        assert!(
+            !drawn
+                .iter()
+                .any(|line| line.contains('◐') || line.contains('○')),
+            "no root is drawn, which is what leaves nothing to open on: {drawn:#?}"
+        );
+        let opened_on = forest.selected_line();
+        assert_eq!(
+            drawn[opened_on], "  └── [Unattributed orbital] 2",
+            "the selection settles on the first thing drawn, not on nothing: {drawn:#?}"
+        );
+
+        for action in [Action::ToggleFilter, Action::RestoreDefault] {
+            forest.apply(action);
+            assert_eq!(
+                sketch(&forest)[forest.selected_line()],
+                drawn[opened_on],
+                "{action:?}"
+            );
+        }
     }
 
     /// The pane id on the line the selection sits on, where it sits on one.
@@ -3503,16 +3786,23 @@ credential_command = "secret harbour"
                 .filter(|line| line.contains("Loose"))
                 .count()
         };
-        forest.apply(Action::Move(Motion::LastRow));
-        // The last line is a pane now that a group's lines can be reached,
-        // and a pane has no fold, so `h` steps out to the group holding it.
-        forest.apply(Action::CollapseOrParent);
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group)
+                    if group.kind == GroupKind::Unattributed
+                        && group.project.as_deref() == Some("orbital"))
+            })
+            .expect("orbital has panes no bead claims");
+        forest.select_line(group);
+
+        // Ferry's one loose pane is under ferry's own line, and stays.
+        assert!(forest.apply(Action::ToggleFold));
+        assert_eq!(loose(&forest), 1, "{:#?}", sketch(&forest));
 
         assert!(forest.apply(Action::ToggleFold));
-        assert_eq!(loose(&forest), 0, "{:#?}", sketch(&forest));
-
-        assert!(forest.apply(Action::ToggleFold));
-        assert_eq!(loose(&forest), 2, "{:#?}", sketch(&forest));
+        assert_eq!(loose(&forest), 3, "{:#?}", sketch(&forest));
     }
 
     /// The panes under no configured project open into their own directories,
@@ -3523,7 +3813,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         forest
             .folds
-            .set(Handle::Group(GroupKind::Unconfigured), true);
+            .set(Handle::Group(GroupKind::Unconfigured, None), true);
         forest.refresh(snapshot());
 
         let drawn = sketch(&forest);
@@ -3553,7 +3843,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let group = hidden_trees_group(&flatten(snapshot));
+        let group = hidden_trees_group(&flatten(snapshot), "harbour");
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 1);
@@ -3561,7 +3851,7 @@ credential_command = "secret harbour"
 
     #[test]
     fn a_hidden_tree_with_nothing_wrong_in_it_is_only_counted_as_hidden() {
-        let group = hidden_trees_group(&flatten(snapshot()));
+        let group = hidden_trees_group(&flatten(snapshot()), "harbour");
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 0);
@@ -3586,7 +3876,7 @@ credential_command = "secret harbour"
         );
         snapshot.collected.clear();
 
-        let group = hidden_trees_group(&flatten(snapshot));
+        let group = hidden_trees_group(&flatten(snapshot), "harbour");
 
         assert_eq!(group.count, 1);
         assert_eq!(group.with_findings, 1);
@@ -3604,7 +3894,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         );
 
-        let group = hidden_trees_group(&flatten(snapshot));
+        let group = hidden_trees_group(&flatten(snapshot), "harbour");
 
         assert_eq!(group.count, 2);
         assert_eq!(group.with_findings, 1);
@@ -3612,32 +3902,40 @@ credential_command = "secret harbour"
 
     /// Bead ids are numbered per tracker and the trackers do not coordinate,
     /// so two projects can each hold a root called `hbr-3` and they are
-    /// different beads. A match that asked the root alone would report
-    /// harbour as hiding the finding that is in orbital's.
+    /// different beads. Each is hidden under its own project, and a match
+    /// that asked the root alone would report harbour as hiding the finding
+    /// that is in orbital's.
     #[test]
     fn a_hidden_tree_does_not_take_a_finding_from_the_same_root_in_another_project() {
         let colliding = edited(SLIPWAY, "hbr-9", "hbr-3");
-        let snapshot = gather(
+        let forest = flatten(gather(
             vec![tree_of("harbour", HARBOUR), tree_of("orbital", &colliding)],
             Vec::new(),
             Filter::LiveAgents,
-        );
+        ));
 
-        let group = hidden_trees_group(&flatten(snapshot));
+        let harbour = hidden_trees_group(&forest, "harbour");
+        let orbital = hidden_trees_group(&forest, "orbital");
 
-        assert_eq!(group.count, 2);
-        assert_eq!(group.with_findings, 1);
+        assert_eq!((harbour.count, harbour.with_findings), (1, 0));
+        assert_eq!((orbital.count, orbital.with_findings), (1, 1));
     }
 
-    fn hidden_trees_group(forest: &Forest) -> Group {
+    /// The line over one project's hidden trees.
+    fn hidden_trees_group(forest: &Forest, project: &str) -> Group {
         forest
             .lines()
             .iter()
-            .find_map(|line| match line.content {
-                Content::Group(group) if group.kind == GroupKind::HiddenTrees => Some(group),
+            .find_map(|line| match &line.content {
+                Content::Group(group)
+                    if group.kind == GroupKind::HiddenTrees
+                        && group.project.as_deref() == Some(project) =>
+                {
+                    Some(group.clone())
+                }
                 _ => None,
             })
-            .expect("the filter hid a tree")
+            .unwrap_or_else(|| panic!("the filter hid a tree of {project}"))
     }
 
     /// Put the selection on the first hidden tree's row: open the group,
@@ -3647,7 +3945,7 @@ credential_command = "secret harbour"
             .lines()
             .iter()
             .position(|line| {
-                matches!(line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
             })
             .expect("the filter hid a tree");
         forest.select_line(group);
@@ -3686,16 +3984,16 @@ credential_command = "secret harbour"
     }
 
     /// A hidden tree is a tree, and the group is only where the filter put
-    /// it: it is drawn there as its project would draw it, rests as its
-    /// project would rest it, and opens onto the same rows.
+    /// it: it is drawn there as its project would draw it, one level further
+    /// in under the group's line, and opens onto the same rows.
     #[test]
     fn a_hidden_tree_is_drawn_in_the_group_as_its_project_would_draw_it() {
         let mut forest = flatten(snapshot());
         select_hidden_tree(&mut forest);
         assert_eq!(
             beneath_the_selection(&forest),
-            ["  └─▸ ○ hbr-3 dredge the channel"],
-            "nothing live or ready beneath it, so it rests shut"
+            ["      └─▸ ○ hbr-3 dredge the channel"],
+            "a hidden tree rests shut"
         );
 
         assert!(forest.apply(Action::ExpandOrChild));
@@ -3704,8 +4002,8 @@ credential_command = "secret harbour"
         assert_eq!(
             in_the_group,
             [
-                "  └── ○ hbr-3 dredge the channel",
-                "      └── ○ .1 survey the silt"
+                "      └── ○ hbr-3 dredge the channel",
+                "          └── ○ .1 survey the silt"
             ]
         );
         forest.apply(Action::ToggleFilter);
@@ -3713,8 +4011,39 @@ credential_command = "secret harbour"
         select(&mut forest, &key("harbour", "hbr-3"));
         assert_eq!(
             beneath_the_selection(&forest),
-            in_the_group,
+            [
+                "  └── ○ hbr-3 dredge the channel",
+                "      └── ○ .1 survey the silt"
+            ],
             "the same rows under its project, the fold the reader opened included"
+        );
+    }
+
+    /// Graeme: *"the top-level trees with no live agent should not be
+    /// expanded by default"*. A hidden tree rests shut whatever is beneath
+    /// it, where the same tree shown under its project rests open onto the
+    /// work a reader could start; it is the one thing about a hidden tree
+    /// that differs from the same tree shown.
+    #[test]
+    fn a_hidden_tree_rests_shut_even_over_work_that_would_open_it_shown() {
+        let ready = ready_alone("orbital", HARBOUR, &[], &["hbr-3.1"]);
+        assert_eq!(
+            lines_of(&flatten(ready.clone()), "hbr-3.1").len(),
+            1,
+            "shown, the tree rests open onto its ready work"
+        );
+
+        let mut hidden = ready;
+        hidden.refilter(Filter::LiveAgents);
+        let mut forest = flatten(hidden);
+        select_hidden_tree(&mut forest);
+
+        assert_eq!(forest.lines()[forest.selected_line()].folded, Some(false));
+        assert_eq!(
+            lines_of(&forest, "hbr-3.1").len(),
+            0,
+            "{:#?}",
+            sketch(&forest)
         );
     }
 
@@ -3733,7 +4062,7 @@ credential_command = "secret harbour"
         forest.apply(Action::RestoreDefault);
 
         assert_eq!(
-            hidden_trees_group(&forest).count,
+            hidden_trees_group(&forest, "harbour").count,
             1,
             "the group is drawn shut: {:#?}",
             sketch(&forest)
@@ -3758,7 +4087,7 @@ credential_command = "secret harbour"
         assert_eq!(forest.lines()[row].folded, None);
         assert_eq!(
             beneath_the_selection(&forest),
-            ["  └── ○ hbr-1 moor the lightship"]
+            ["      └── ○ hbr-1 moor the lightship"]
         );
         assert!(!forest.apply(Action::ExpandOrChild), "nothing to open onto");
     }
@@ -3793,8 +4122,8 @@ credential_command = "secret harbour"
         assert_eq!(
             beneath_the_selection(&forest),
             [
-                "  └─▸ ○ hbr-9 re-deck the slipway",
-                "      └── ! Dangling(1)"
+                "      └─▸ ○ hbr-9 re-deck the slipway",
+                "          └── ! Dangling(1)"
             ]
         );
     }
@@ -3824,7 +4153,7 @@ credential_command = "secret harbour"
             .lines()
             .iter()
             .position(|line| {
-                matches!(line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
             })
             .expect("the group is drawn");
         forest.select_line(group);
@@ -3842,7 +4171,7 @@ credential_command = "secret harbour"
 
     fn on_the_hidden_trees_group(forest: &Forest) -> bool {
         matches!(
-            forest.lines()[forest.selected_line()].content,
+            &forest.lines()[forest.selected_line()].content,
             Content::Group(group) if group.kind == GroupKind::HiddenTrees
         )
     }
@@ -3880,19 +4209,40 @@ credential_command = "secret harbour"
         assert!(on_the_hidden_trees_group(&forest), "{:#?}", sketch(&forest));
     }
 
-    /// With the group open, the tree's rows are drawn there under the same
-    /// handles, so the selection simply follows the tree into the group.
+    /// With the group open, the tree's root is drawn there under the same
+    /// handle, so the selection simply follows the tree into the group.
     #[test]
     fn with_the_group_open_the_selection_follows_the_tree_the_filter_hides() {
         let mut forest = flatten(built(Filter::All));
-        forest
-            .folds
-            .set(Handle::Group(GroupKind::HiddenTrees), true);
+        forest.folds.set(
+            Handle::Group(GroupKind::HiddenTrees, Some("harbour".into())),
+            true,
+        );
         select(&mut forest, &key("harbour", "hbr-3"));
 
         forest.apply(Action::ToggleFilter);
 
         assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    }
+
+    /// With the group open and the selection on a bead inside a tree that
+    /// rested open on its own account, the root the tree now rests shut
+    /// under is where the tree went, which is more than the nearest row can
+    /// say. A fold the reader had opened by hand would have kept the bead
+    /// drawn, and the selection with it.
+    #[test]
+    fn with_the_group_open_a_bead_inside_the_hidden_tree_falls_back_to_its_root() {
+        let mut forest = flatten(ready_alone("orbital", HARBOUR, &[], &["hbr-3.1"]));
+        forest.folds.set(
+            Handle::Group(GroupKind::HiddenTrees, Some("orbital".into())),
+            true,
+        );
+        select(&mut forest, &key("orbital", "hbr-3.1"));
+
+        forest.apply(Action::ToggleFilter);
+
+        assert_eq!(forest.snapshot().filter, Filter::LiveAgents);
+        assert_eq!(cursor(&forest), Some(&key("orbital", "hbr-3")));
     }
 
     /// Only the cursor's own tree going into the group takes the selection
@@ -3929,34 +4279,38 @@ credential_command = "secret harbour"
         let others: Vec<Group> = forest
             .lines()
             .iter()
-            .filter_map(|line| match line.content {
-                Content::Group(group) if group.kind != GroupKind::HiddenTrees => Some(group),
+            .filter_map(|line| match &line.content {
+                Content::Group(group) if group.kind != GroupKind::HiddenTrees => {
+                    Some(group.clone())
+                }
                 _ => None,
             })
             .collect();
 
-        assert_eq!(others.len(), 4);
+        assert_eq!(others.len(), 5);
         assert!(
             others.iter().all(|group| group.with_findings == 0),
             "{others:#?}"
         );
     }
 
-    /// Every fold state over every root, every group and one interior node:
-    /// 256 of them, which is small enough to visit rather than sample.
+    /// Every fold state over every root, every group the snapshot draws and
+    /// one interior node: a few hundred of them, which is small enough to
+    /// visit rather than sample.
     #[test]
     fn nothing_reported_disappears_under_any_fold_state() {
         let snapshot = snapshot();
-        let handles = [
+        let mut handles = vec![
             Handle::Bead(Place::root(key("orbital", "orb-7"))),
             Handle::Bead(Place::root(key("ferry", "fer-2"))),
             Handle::Bead(Place::root(key("orbital", "orb-7")).step_to(key("orbital", "orb-7.1"))),
-            Handle::Group(GroupKind::FailedProjects),
-            Handle::Group(GroupKind::Unconfigured),
-            Handle::Group(GroupKind::Conflicts),
-            Handle::Group(GroupKind::HiddenTrees),
-            Handle::Group(GroupKind::Unattributed),
         ];
+        handles.extend(
+            layout::every_group(&snapshot)
+                .filter(|(kind, project)| layout::group_drawn(&snapshot, *kind, project.as_deref()))
+                .map(|(kind, project)| Handle::Group(kind, project)),
+        );
+        assert_eq!(handles.len(), 9, "{handles:#?}");
         for state in 0..1 << handles.len() {
             let mut forest = flatten(snapshot.clone());
             for (bit, handle) in handles.iter().enumerate() {
@@ -3965,7 +4319,7 @@ credential_command = "secret harbour"
             forest.refresh(snapshot.clone());
 
             let hidden_trees_open = forest.lines().iter().any(|line| {
-                matches!(line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
                     && line.folded == Some(true)
             });
             assert_eq!(
@@ -3977,7 +4331,7 @@ credential_command = "secret harbour"
     }
 
     /// The five degraded kinds, plus the two sorts of loose pane — the ones
-    /// the recovery moves about, and the ones no configured project covers.
+    /// drawn under their project, and the ones no configured project covers.
     #[derive(Debug, Default, PartialEq, Eq)]
     struct Reported {
         dangling: usize,
@@ -4027,9 +4381,6 @@ credential_command = "secret harbour"
                     // snapshot, so there is no count for it to reach.
                     Note::NoRoots => {}
                 },
-                Content::Project(line) => {
-                    found.loose_panes += line.recovery.as_ref().map_or(0, |r| r.panes.len());
-                }
                 Content::Group(Group { kind, count, .. }) => match kind {
                     GroupKind::Conflicts => found.conflicts += count,
                     GroupKind::FailedProjects => found.failed_projects += count,
@@ -4658,7 +5009,7 @@ credential_command = "secret harbour"
     }
 
     /// The lines the selection stands over, and itself: everything from it to
-    /// the first line drawn shallower than it is.
+    /// the first line drawn at its own depth or shallower.
     ///
     /// Read off the screen rather than asked of the forest, so a walk that
     /// pointed the folds of the wrong lines is answered by the drawing and
@@ -4666,9 +5017,11 @@ credential_command = "secret harbour"
     fn from_the_selection_down(forest: &Forest) -> impl Iterator<Item = &Line> {
         let at = forest.selected_line();
         let depth = forest.lines()[at].depth;
-        forest.lines()[at..]
-            .iter()
-            .take_while(move |line| line.depth >= depth)
+        forest.lines()[at..].iter().take(1).chain(
+            forest.lines()[at + 1..]
+                .iter()
+                .take_while(move |line| line.depth > depth),
+        )
     }
 
     /// Six shapes of tree, each of them the one tree of its project, so the

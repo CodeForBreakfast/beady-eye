@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use crate::config::Scope;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Counts, LoosePane, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Counts, Snapshot, Tree};
 use crate::model::tree::Link;
 use crate::view::lines::{
     first_copy, marker, notes_of, prefix, root_key, way_below, Content, Group, GroupKind, Item,
-    Line, Note, Place, ProjectLine, Recovery, Unread, INDENT,
+    Line, Note, Place, ProjectLine, Unread, INDENT,
 };
 use crate::view::row;
 
@@ -60,46 +60,95 @@ pub(super) fn draw(snapshot: &Snapshot, facts: &Facts, folds: &Folds) -> Vec<Lin
 
 /// Whether a group is drawn at all, which is whether the snapshot has put
 /// anything in it.
-pub(super) fn group_drawn(snapshot: &Snapshot, kind: GroupKind) -> bool {
-    let (_, loose) = recovery(snapshot);
-    group_of(snapshot, kind, &loose).is_some()
+pub(super) fn group_drawn(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> bool {
+    group_of(snapshot, kind, project).is_some()
+}
+
+/// Whether a project's line is drawn: where anything hangs under it — a tree
+/// shown or hidden, or a pane working in its paths that no bead claims — or
+/// where nothing has read it yet, which is every project on the first frame
+/// of a run.
+///
+/// A project with nothing beneath it is drawn only where nothing has read
+/// it. A tracker that answered and held nothing, and one that refused, are
+/// both read: the first has nothing to draw and the second is reported among
+/// the failed projects, and a line here would say of either that its rows
+/// were still coming.
+pub(super) fn project_drawn(snapshot: &Snapshot, project: &str) -> bool {
+    snapshot.trees.iter().any(|tree| tree.project == project)
+        || snapshot
+            .hidden_trees
+            .iter()
+            .any(|hidden| hidden.project == project)
+        || snapshot
+            .unattributed
+            .iter()
+            .any(|pane| pane.project == project)
+        || !snapshot.read_at.contains_key(project)
 }
 
 /// What a group's own line says: how many things it holds, and how many of
 /// them carry findings the screen is not drawing. Nothing where it holds
 /// nothing, which is a group not drawn.
 ///
+/// `project` is the project the group is one of, for the two kinds drawn
+/// under a project's line, and nothing for the kinds below the trees.
+///
 /// Only a hidden tree has findings to admit to: the filter took its
 /// dangling and looping counts and its anomalies off the screen with it,
 /// and a group that said only how many trees it hides would read as
 /// "nothing to see" when some of them are broken.
-fn group_of(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Option<Group> {
+fn group_of(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Option<Group> {
     let (count, with_findings) = match kind {
-        GroupKind::HiddenTrees => (
-            snapshot.hidden_trees.len(),
-            snapshot
+        GroupKind::HiddenTrees => {
+            let hidden = snapshot
                 .hidden_trees
                 .iter()
-                .filter(|hidden| hidden.findings)
-                .count(),
-        ),
-        _ => (group_items(snapshot, kind, loose).len(), 0),
+                .filter(|hidden| Some(hidden.project.as_str()) == project);
+            (
+                hidden.clone().count(),
+                hidden.filter(|hidden| hidden.findings).count(),
+            )
+        }
+        _ => (group_items(snapshot, kind, project).len(), 0),
     };
     (count > 0).then_some(Group {
         kind,
+        project: project.map(str::to_string),
         count,
         with_findings,
     })
 }
 
+/// Every group the snapshot could draw, in the order it draws them: each
+/// project's own, then the ones below the trees.
+pub(super) fn every_group(
+    snapshot: &Snapshot,
+) -> impl Iterator<Item = (GroupKind, Option<String>)> + '_ {
+    snapshot
+        .projects
+        .iter()
+        .flat_map(|project| {
+            GroupKind::UNDER_A_PROJECT
+                .into_iter()
+                .map(move |kind| (kind, Some(project.clone())))
+        })
+        .chain(
+            GroupKind::BELOW_THE_TREES
+                .into_iter()
+                .map(|kind| (kind, None)),
+        )
+}
+
 /// The group one thing sits in, where the snapshot still holds it.
-pub(super) fn group_holding(snapshot: &Snapshot, key: &ItemKey) -> Option<GroupKind> {
-    let (_, loose) = recovery(snapshot);
-    GroupKind::ALL.into_iter().find(|kind| {
-        group_items(snapshot, *kind, &loose)
-            .iter()
-            .any(|item| item_key(item).as_ref() == Some(key))
-    })
+pub(super) fn group_holding(snapshot: &Snapshot, key: &ItemKey) -> Option<Handle> {
+    every_group(snapshot)
+        .find(|(kind, project)| {
+            group_items(snapshot, *kind, project.as_deref())
+                .iter()
+                .any(|item| item_key(item).as_ref() == Some(key))
+        })
+        .map(|(kind, project)| Handle::Group(kind, project))
 }
 
 /// A snapshot, what it answered, and the folds set over it, which is all
@@ -112,38 +161,17 @@ struct Layout<'a> {
 
 impl Layout<'_> {
     fn draw(&self) -> Vec<Line> {
-        let (recovered, loose) = recovery(self.snapshot);
         let mut lines = Vec::new();
-        let mut from = 0;
         // Every project the config names, in that order — the ones with rows
         // and the ones no collection has reached, which is every project on
         // the first frame of a run. Walking the projects rather than the
-        // trees is what lets one be drawn before it has any: a project's
-        // trees arrive together, so the run of them at `from` is that
-        // project's, and so is the same run of the panes recovered for them.
-        //
-        // A project with no trees is drawn only where nothing has read it. A
-        // tracker that answered and held nothing, and one that refused, are
-        // both read: the first has nothing to draw and the second is reported
-        // among the failed projects, and a line here would say of either that
-        // its rows were still coming.
+        // trees is what lets one be drawn before it has any.
         for project in &self.snapshot.projects {
-            let run = &self.snapshot.trees[from..];
-            let held = run
-                .iter()
-                .take_while(|tree| tree.project == *project)
-                .count();
-            if held > 0 || !self.snapshot.read_at.contains_key(project) {
-                self.draw_project(
-                    project,
-                    &run[..held],
-                    &recovered[from..from + held],
-                    &mut lines,
-                );
-                from += held;
+            if project_drawn(self.snapshot, project) {
+                self.draw_project(project, &mut lines);
             }
         }
-        self.draw_groups(&loose, &mut lines);
+        self.draw_groups(&mut lines);
         // Asked of the drawn lines rather than of the snapshot's fields, so
         // a later kind of line cannot be left out of the question.
         if lines.is_empty() {
@@ -153,14 +181,16 @@ impl Layout<'_> {
         lines
     }
 
-    /// A project's own line, and the roots that hang under it.
+    /// A project's own line, and everything that hangs under it: the roots
+    /// the filter shows, then the project's own groups — the trees the
+    /// filter is holding back, and the panes in its paths that no bead
+    /// claims.
     ///
-    /// The project line says what is the project's — its name, how much work
-    /// it holds, and the panes recovered where a root would not read — and
-    /// every root below it is a bead row like any other. A root is a bead, and
-    /// a reader asks a bead's questions of it: what is its status, who is on
-    /// it, what is it doing. A line that answered those in a project's terms
-    /// answered none of them.
+    /// The project line says what is the project's — its name and how much
+    /// work it holds — and every root below it is a bead row like any other.
+    /// A root is a bead, and a reader asks a bead's questions of it: what is
+    /// its status, who is on it, what is it doing. A line that answered those
+    /// in a project's terms answered none of them.
     ///
     /// The project is named rather than taken from its first tree, because a
     /// project waiting on the collection that will fill it in has no tree to
@@ -169,22 +199,11 @@ impl Layout<'_> {
     /// counted, and nothing under it until the rows arrive. Its fold is kept
     /// on the same handle as ever, so a reader who shuts a project while it
     /// is still being read finds it shut when its rows land.
-    fn draw_project(
-        &self,
-        project: &str,
-        trees: &[Arc<Tree>],
-        panes: &[Vec<LoosePane>],
-        lines: &mut Vec<Line>,
-    ) {
+    fn draw_project(&self, project: &str, lines: &mut Vec<Line>) {
         let project = project.to_string();
-        let unread = trees.iter().any(|tree| tree.tracker != TrackerState::Ok);
         // A project rests open: the forest is what is being worked, and a
         // project shut over it says only that it exists.
         let open = self.folds.expanded(&Handle::Project(project.clone()), true);
-        let recovery = unread.then(|| Recovery {
-            panes: panes.iter().flatten().cloned().collect(),
-            complete: self.snapshot.unconfigured.is_empty(),
-        });
 
         lines.push(Line {
             prefix: marker(open).to_string(),
@@ -194,50 +213,166 @@ impl Layout<'_> {
             content: Content::Project(ProjectLine {
                 every_root_read: self.snapshot.every_root_read(&project),
                 counts: self.facts.project(&project),
-                project,
-                recovery,
+                project: project.clone(),
             }),
         });
 
         if !open {
             return;
         }
-        self.draw_trees(trees.iter().map(Arc::as_ref).collect(), lines);
-    }
-
-    /// Trees in a row under one line, each with what the snapshot answered
-    /// for it.
-    fn draw_trees(&self, trees: Vec<&Tree>, lines: &mut Vec<Line>) {
-        let count = trees.len();
-        for (n, tree) in trees.into_iter().enumerate() {
+        let trees: Vec<&Tree> = self
+            .snapshot
+            .trees
+            .iter()
+            .filter(|tree| tree.project == project)
+            .map(Arc::as_ref)
+            .collect();
+        let groups: Vec<Group> = GroupKind::UNDER_A_PROJECT
+            .into_iter()
+            .filter_map(|kind| group_of(self.snapshot, kind, Some(&project)))
+            .collect();
+        let mut entries = trees.len() + groups.len();
+        let mut trunk = Vec::new();
+        for tree in trees {
+            entries -= 1;
             TreeLayout {
                 folds: self.folds,
                 tree,
                 facts: self.facts.tree(&root_key(tree)),
+                rests_shut: false,
             }
-            .draw(n + 1 == count, lines);
+            .draw(&mut trunk, entries == 0, lines);
+        }
+        for group in groups {
+            entries -= 1;
+            self.draw_group(group, &mut trunk, entries == 0, lines);
+        }
+    }
+
+    /// One group, on a line under whatever `trunk` says is above it, and what
+    /// it holds beneath that line where it is open.
+    ///
+    /// A hidden tree is a tree, and the group is only where the filter put it:
+    /// each is drawn as its project would draw it, one level further in. The
+    /// one thing that differs is where it rests — shut, whatever is beneath
+    /// it, because the reader asked for trees with nobody on them to be out
+    /// of the way and an open one is not.
+    fn draw_group(&self, group: Group, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
+        let open = self.folds.expanded(
+            &Handle::Group(group.kind, group.project.clone()),
+            group.kind.live(),
+        );
+        let prefix = if trunk.is_empty() && group.project.is_none() {
+            marker(open).to_string()
+        } else {
+            prefix(trunk, last, !open, None)
+        };
+        let depth = trunk.len() as u16 + u16::from(group.project.is_some());
+        let kind = group.kind;
+        let project = group.project.clone();
+        lines.push(Line {
+            prefix,
+            depth,
+            folded: Some(open),
+            place: None,
+            content: Content::Group(group),
+        });
+        if !open {
+            return;
+        }
+        if project.is_some() {
+            trunk.push(!last);
+        }
+        match kind {
+            GroupKind::HiddenTrees => {
+                let hidden = self.hidden_trees(project.as_deref());
+                let count = hidden.len();
+                for (n, tree) in hidden.into_iter().enumerate() {
+                    TreeLayout {
+                        folds: self.folds,
+                        tree,
+                        facts: self.facts.tree(&root_key(tree)),
+                        rests_shut: true,
+                    }
+                    .draw(trunk, n + 1 == count, lines);
+                }
+            }
+            _ => self.draw_items(
+                group_items(self.snapshot, kind, project.as_deref()),
+                trunk,
+                lines,
+            ),
+        }
+        if project.is_some() {
+            trunk.pop();
+        }
+    }
+
+    /// The trees the filter hid from one project, which the snapshot still
+    /// holds.
+    fn hidden_trees(&self, project: Option<&str>) -> Vec<&Tree> {
+        self.snapshot
+            .hidden_trees
+            .iter()
+            .filter(|hidden| Some(hidden.project.as_str()) == project)
+            .filter_map(|hidden| {
+                self.snapshot.tree(&BeadKey {
+                    project: hidden.project.clone(),
+                    id: hidden.root.clone(),
+                })
+            })
+            .collect()
+    }
+
+    fn draw_items(&self, items: Vec<Item>, trunk: &[bool], lines: &mut Vec<Line>) {
+        let count = items.len();
+        let depth = trunk.len() as u16 + 1;
+        for (n, item) in items.into_iter().enumerate() {
+            lines.push(Line {
+                prefix: prefix(trunk, n + 1 == count, false, None),
+                depth,
+                folded: None,
+                place: None,
+                content: Content::Item(item),
+            });
+        }
+    }
+
+    /// The groups below the trees: what has no project line to hang under.
+    fn draw_groups(&self, lines: &mut Vec<Line>) {
+        for kind in GroupKind::BELOW_THE_TREES {
+            let Some(group) = group_of(self.snapshot, kind, None) else {
+                continue;
+            };
+            self.draw_group(group, &mut Vec::new(), true, lines);
         }
     }
 }
 
 /// One tree being drawn: the tree, what it answered when the snapshot was
-/// taken, and the folds set over it.
+/// taken, the folds set over it, and whether its root rests shut whatever is
+/// beneath it — which is how a tree the filter is holding back rests, and no
+/// other.
 struct TreeLayout<'a> {
     folds: &'a Folds,
     tree: &'a Tree,
     facts: &'a TreeFacts,
+    rests_shut: bool,
 }
 
 impl TreeLayout<'_> {
-    fn draw(&self, last: bool, lines: &mut Vec<Line>) {
+    /// `trunk` is the way down to whatever this tree hangs under, as the
+    /// box-drawing says it: empty for a root directly under its project.
+    fn draw(&self, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
         let root = Place::root(root_key(self.tree));
+        let depth = trunk.len() as u16 + 1;
         let Some(node) = self.tree.beads.first() else {
             // No nodes, so no row: the root is named on a line of its own
             // rather than left out, because a root that would not read is the
             // one a reader most needs to see is there.
             lines.push(Line {
-                prefix: prefix(&[], last, false, None),
-                depth: 1,
+                prefix: prefix(trunk, last, false, None),
+                depth,
                 folded: None,
                 place: Some(root),
                 content: Content::Unread(Unread {
@@ -253,14 +388,15 @@ impl TreeLayout<'_> {
         let kids = self.children_entries(0, &[]);
         let bead = self.facts.bead(self.tree, 0, &[]);
         let open = !kids.is_empty()
-            && self
-                .folds
-                .expanded(&Handle::Bead(root.clone()), bead.opens_a_fold);
+            && self.folds.expanded(
+                &Handle::Bead(root.clone()),
+                !self.rests_shut && bead.opens_a_fold,
+            );
 
         let folded = (!kids.is_empty()).then_some(open);
         lines.push(Line {
-            prefix: prefix(&[], last, !kids.is_empty() && !open, None),
-            depth: 1,
+            prefix: prefix(trunk, last, !kids.is_empty() && !open, None),
+            depth,
             folded,
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
@@ -275,7 +411,9 @@ impl TreeLayout<'_> {
         if open {
             entries.extend(kids);
         }
-        self.draw_children(entries, &root, &[0], &mut vec![!last], lines);
+        trunk.push(!last);
+        self.draw_children(entries, &root, &[0], trunk, lines);
+        trunk.pop();
     }
 
     /// `above` is the way down to `parent`, the parent itself included: the
@@ -379,60 +517,6 @@ impl TreeLayout<'_> {
 }
 
 impl Layout<'_> {
-    fn draw_groups(&self, loose: &[LoosePane], lines: &mut Vec<Line>) {
-        for kind in GroupKind::ALL {
-            let Some(group) = group_of(self.snapshot, kind, loose) else {
-                continue;
-            };
-            let open = self.folds.expanded(&Handle::Group(kind), kind.live());
-            lines.push(Line {
-                prefix: marker(open).to_string(),
-                depth: 0,
-                folded: Some(open),
-                place: None,
-                content: Content::Group(group),
-            });
-            if !open {
-                continue;
-            }
-            match kind {
-                GroupKind::HiddenTrees => self.draw_trees(self.hidden_trees(), lines),
-                _ => self.draw_items(group_items(self.snapshot, kind, loose), lines),
-            }
-        }
-    }
-
-    /// The trees the filter hid, which the snapshot still holds: a hidden
-    /// tree is a tree, and the group is only where the filter put it, so
-    /// each is drawn as its project would draw it.
-    fn hidden_trees(&self) -> Vec<&Tree> {
-        self.snapshot
-            .hidden_trees
-            .iter()
-            .filter_map(|hidden| {
-                self.snapshot.tree(&BeadKey {
-                    project: hidden.project.clone(),
-                    id: hidden.root.clone(),
-                })
-            })
-            .collect()
-    }
-
-    fn draw_items(&self, items: Vec<Item>, lines: &mut Vec<Line>) {
-        let count = items.len();
-        for (n, item) in items.into_iter().enumerate() {
-            lines.push(Line {
-                prefix: prefix(&[], n + 1 == count, false, None),
-                depth: 1,
-                folded: None,
-                place: None,
-                content: Content::Item(item),
-            });
-        }
-    }
-}
-
-impl Layout<'_> {
     /// The scope, where the directory chose it. A scope the reader typed is
     /// silent, and a run reading everything has nothing to say.
     fn say_what_the_directory_chose(&self, lines: &mut Vec<Line>) {
@@ -450,26 +534,9 @@ impl Layout<'_> {
     }
 }
 
-/// Give each unreadable tree the live panes working in its project, and
-/// keep the rest loose. A pane is one or the other and never both, so what
-/// the headers show and what the group counts still add up to every pane.
-fn recovery(snapshot: &Snapshot) -> (Vec<Vec<LoosePane>>, Vec<LoosePane>) {
-    let mut recovered = vec![Vec::new(); snapshot.trees.len()];
-    let mut loose = Vec::new();
-    for pane in &snapshot.unattributed {
-        let home = snapshot
-            .trees
-            .iter()
-            .position(|tree| tree.tracker != TrackerState::Ok && tree.project == pane.project);
-        match home {
-            Some(tree) => recovered[tree].push(pane.clone()),
-            None => loose.push(pane.clone()),
-        }
-    }
-    (recovered, loose)
-}
-
-fn group_items(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Vec<Item> {
+/// The things one group holds. `project` is the project the group is one of,
+/// where it is a project's own.
+fn group_items(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Vec<Item> {
     match kind {
         GroupKind::FailedProjects => snapshot
             .failed_projects
@@ -485,7 +552,13 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, loose: &[LoosePane]) -> Vec
             .collect(),
         // Hidden trees are drawn as trees rather than as things in a group.
         GroupKind::HiddenTrees => Vec::new(),
-        GroupKind::Unattributed => loose.iter().cloned().map(Item::Loose).collect(),
+        GroupKind::Unattributed => snapshot
+            .unattributed
+            .iter()
+            .filter(|pane| Some(pane.project.as_str()) == project)
+            .cloned()
+            .map(Item::Loose)
+            .collect(),
         GroupKind::Unconfigured => snapshot
             .unconfigured
             .iter()

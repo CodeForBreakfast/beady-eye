@@ -290,7 +290,8 @@ pub const THE_DESCRIBED_SUBTREE: &str = include_str!("../fixtures/bd_described_s
 /// again.
 ///
 /// `a` is needed because no pane sits in the temp `HOME`, so the live-agent
-/// filter hides the one tree there is. The moves are what make the walk the
+/// filter holds the one tree there is behind its project's *no live agent*
+/// line rather than drawing its row. The moves are what make the walk the
 /// same on every machine: which row the selection rests on at startup follows
 /// what herdr says about the panes this machine is running, and `g` is deaf
 /// to all of it. They are done twice because the key that opens a tree is

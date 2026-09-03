@@ -7,22 +7,22 @@ use ratatui::text::Span;
 
 use crate::model::snapshot::{Counts, TrackerState};
 use crate::view::fitted::Fitted;
-use crate::view::lines::{ProjectLine, Recovery, Unread};
+use crate::view::lines::{ProjectLine, Unread};
 use crate::view::phrase;
 use crate::view::row::WARNING;
 use crate::view::{Freshness, Mark};
 
 use super::tone::{LIVE, LOOK_AT_THIS};
-use super::{beside, done, pane_marker, structure};
+use super::{beside, done, structure};
 
-/// A project's own line: what it is, how fresh it is, how much work it holds,
-/// and the live panes recovered for it where a root would not read.
+/// A project's own line: what it is, how fresh it is and how much work it
+/// holds.
 ///
 /// It says nothing about any one root, because every root below it says that
-/// for itself. What is left is what only a project can answer: which project,
-/// when it was last read, how much of it there is, and — where a root refused
-/// — which panes `bdi` found working here that no bead could be attributed
-/// to.
+/// for itself, and nothing about the panes working here that no bead claims,
+/// because each of those has a row of its own under the line. What is left is
+/// what only a project can answer: which project, when it was last read, and
+/// how much of it there is.
 ///
 /// How fresh it is sits directly beside the name, because it is a claim about
 /// that name's rows and nothing else's. It is handed in rather than held on
@@ -44,12 +44,12 @@ pub(super) fn project_line(
         Span::raw(project.project.clone()),
     ];
 
-    let mut state = summary(&project.counts);
-    if let Some(found) = &project.recovery {
-        beside(&mut state, recovered(found));
-    }
-
-    Fitted::new(identity, freshness(how_fresh, now), state).title_or_nothing()
+    Fitted::new(
+        identity,
+        freshness(how_fresh, now),
+        summary(&project.counts),
+    )
+    .title_or_nothing()
 }
 
 /// The mark and the age beside a project's name, in that order and both of
@@ -154,29 +154,6 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
     said
 }
 
-/// The live panes found working in a project no bead could be read to
-/// attribute them to. Where they cannot be known to be all of them it says so
-/// — a list that is quietly short is the one way this can be read wrongly,
-/// because it looks exactly like a complete one.
-fn recovered(found: &Recovery) -> Span<'static> {
-    let panes = &found.panes;
-    let mut said = Vec::new();
-    said.push(if panes.is_empty() {
-        phrase::no_live_panes().to_string()
-    } else {
-        panes
-            .iter()
-            .map(|pane| pane_marker(&pane.pane.id, &pane.pane_status))
-            .collect::<Vec<_>>()
-            .join(" · ")
-    });
-    if !found.complete {
-        said.push(phrase::panes_may_be_incomplete().to_string());
-    }
-
-    Span::styled(said.join(" · "), Style::new().fg(LOOK_AT_THIS))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,26 +163,14 @@ mod tests {
     use crate::model::anomaly::Anomaly;
     use std::sync::Arc;
 
-    use crate::model::snapshot::{LoosePane, Node, ProviderState, Snapshot, TrackerFailure, Tree};
-    use crate::model::types::{PaneStatus, Status};
+    use crate::model::snapshot::{Node, ProviderState, Snapshot, TrackerFailure, Tree};
+    use crate::model::types::Status;
     use crate::view::draw::tone::status_colour;
     use crate::view::draw::{fitted, tests::*};
     use crate::view::forest::flatten;
     use crate::view::row;
 
     // ---- a project's line ------------------------------------------------
-
-    /// The same, for a project where a root refused and whose panes had to be
-    /// recovered from herdr instead.
-    fn recovering(name: &str, panes: &[LoosePane], complete: bool) -> ProjectLine {
-        ProjectLine {
-            recovery: Some(Recovery {
-                panes: panes.to_vec(),
-                complete,
-            }),
-            ..project(name, counts(0, 0, 0, 0))
-        }
-    }
 
     /// A project line with nothing to say about how fresh it is, which is
     /// every line whose subject is something else.
@@ -313,29 +278,6 @@ mod tests {
 
         says(&drawn[0], &format!("{WARNING} 1"));
         does_not_say(&drawn[0], "agent");
-    }
-
-    /// The gap goes *between* the counts and the panes recovered after them.
-    /// A project can have one root that read and another that refused, so
-    /// both cells are on the row at once — and run together they read as one
-    /// cell naming neither, `2/7◍ wCM:p9`. In front of the counts the same
-    /// two columns say nothing, because the block is set against the row's
-    /// right edge and the padding swallows them.
-    ///
-    /// The block is written out here rather than asked of the code that drew
-    /// it, and read off the row's end, so nothing satisfies it but those
-    /// words in that order with those two columns between them.
-    #[test]
-    fn a_projects_recovered_panes_are_held_apart_from_its_counts() {
-        let mut recovering = project("harbour", counts(2, 7, 0, 0));
-        recovering.recovery = Some(Recovery {
-            panes: vec![pane("wCM:p9", PaneStatus::Working)],
-            complete: true,
-        });
-
-        let drawn = Painted::of(line(&recovering, OPEN), 60, 1).rows();
-
-        assert!(drawn[0].ends_with("2/7  ◍ wCM:p9 working"), "{drawn:?}");
     }
 
     /// Narrower than the identity itself there is nothing left to protect, and
@@ -863,64 +805,6 @@ mod tests {
 
         says(&drawn[0], "nix-9670s");
         says(&drawn[0], "this root drew no rows, and nothing said why");
-    }
-
-    /// The design has a project whose roots would not read render its panes.
-    /// They are named the way a bead's agent is named, so one reads as the
-    /// other.
-    #[test]
-    fn a_project_with_a_root_it_could_not_read_shows_the_panes_working_in_it() {
-        let panes = [
-            pane("wCM:p9", PaneStatus::Working),
-            pane("wCM:p6", PaneStatus::Idle),
-        ];
-
-        assert_eq!(
-            Painted::of(
-                line(&recovering("summit-works", &panes, true), NO_FOLD),
-                80,
-                1
-            )
-            .rows(),
-            vec![
-                "  summit-works                                  ◍ wCM:p9 working · ◍ wCM:p6 idle"
-                    .to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn a_project_with_no_pane_to_show_says_that_rather_than_nothing() {
-        let drawn = Painted::of(line(&recovering("summit-works", &[], true), OPEN), 120, 1).rows();
-
-        says(&drawn[0], "no live pane names this project");
-    }
-
-    /// A pane list that cannot be known to be whole says so. A silently short
-    /// list is the one way this line can be read wrongly, because it looks
-    /// exactly like a complete one.
-    #[test]
-    fn a_pane_list_that_may_be_short_says_so_rather_than_reading_as_complete() {
-        let panes = [pane("wCM:p9", PaneStatus::Working)];
-
-        let whole = Painted::of(
-            line(&recovering("summit-works", &panes, true), OPEN),
-            200,
-            1,
-        )
-        .rows();
-        let partial = Painted::of(
-            line(&recovering("summit-works", &panes, false), OPEN),
-            200,
-            1,
-        )
-        .rows();
-
-        does_not_say(&whole[0], "and possibly more");
-        says(
-            &partial[0],
-            "and possibly more · a live pane under no configured project could belong here",
-        );
     }
 
     /// The identity of a root outlasts everything else on its line: a reader
