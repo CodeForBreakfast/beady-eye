@@ -74,6 +74,7 @@ coin one — and say so.**
 | agent, pane, session | herdr | the worker; its terminal; the server holding them |
 | `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
 | snapshot | herdr (`herdr api snapshot`) | one poll's whole state |
+| **ground** | *coined* | the terminal's own foreground, untreated, which the liveness scale is measured from rather than being a step on. `bdi` holds a symbol and the terminal holds the value, so a scale with the default among its steps has one interval nobody can size — and a theme setting `color7` or `color15` to its foreground, which is how themes are written, closes that interval to nothing. Neither project has the concept: neither draws a scale. |
 | **badge** | *coined* | a rendering of one metadata value. beads has `label`, but a label is a bead's own tag; this renders a `metadata` entry, which neither project has a display term for. |
 | **unattributed** | *coined* | a live pane in a configured project resolving to no bead. Neither project names this, because neither knows about the other. |
 | **unconfigured** | *coined* | a directory no `[[projects]]` entry covers, and the panes working in it. `bdi` has not failed to attribute them; it was never told the project exists. |
@@ -1484,25 +1485,42 @@ and kept whole where it does not carry that prefix followed by a dot — the
 dangling and re-parented nodes, and the root itself — because a bare suffix
 would place it under a root it does not belong to.
 
-**Three tiers of brightness say how live a row is**, which is the one thing
+**A ground and two tiers say how live a row is**, which is the one thing
 about a bead `bd list` has no way to know and so the one thing this scale is
-spent on: an agent on it keeps the terminal's default foreground; nobody on it
-and still going drops to the theme's colour 8; finished and unworked takes the
-grey `bd` dims a closed row to, and a run dims with the rows it stands for.
-The scale runs down from the default rather than up from it because a theme's
-default is already the brightest thing on its page and nothing can sit above
-it: the first version painted a staffed row `White`, and on a theme where
-`color15` and the foreground are the same hex — the one it was built on — the
-top two tiers were one. Colour 8 is the rung every theme sets and few rows
-otherwise use, so the middle tier follows the reader's theme rather than a
-hardcoded grey; the cost, accepted, is that every ordinary row dims. Finished
-here means what it means to a run — closed, no agent, no anomaly — so a closed
-bead whose pane is still alive keeps its brightness, because that is exactly
-the row worth looking at. The box-drawing is held at the terminal's default
-while the row around it moves: it says how the tree is shaped, not how a bead
-is going, and `bd` leaves its own tree prefix undimmed on a closed row too.
-Colour is never the only channel: the glyph says the status and the words say
-the rest, so a terminal with no colour loses nothing.
+spent on. The ordinary row — nobody on it, still going — is the ground: the
+terminal's own foreground, untreated, which is what most of the forest is
+most of the time. An agent on it steps up from there by a weight; finished
+and unworked steps down to the theme's colour 8, and a run steps down with
+the rows it stands for.
+
+The ground is the terminal's default because a theme's default is already the
+brightest thing on its page and nothing can sit above it: `color7` and
+`color15` are near-white in most themes, light ones included, so a tier
+painted either of those is a tier painted like the ground on half the field.
+The step up is therefore a weight rather than a colour — a font weight is the
+one treatment here whose size is the reader's font rather than the reader's
+theme, because the brightening a terminal does on bold is a remap of palette
+slots 0-7 and the default foreground has no slot to remap.
+
+**Colour buys the scale one interval and no more, which is why there are two
+tiers and not three.** No theme reliably sets a slot between its foreground
+and its colour 8, and none under colour 8 that a reader could still make out,
+so a third tone would be a third value the theme picked without reference to
+the other two — and a tone `bdi` pins itself instead is worse, because only
+one side of the pair then moves when the theme does and the interval is
+nobody's property at all. Colour 8 is the rung every theme sets and few rows
+otherwise use.
+
+Finished here means what it means to a run — closed, no agent, no anomaly —
+so a closed bead whose pane is still alive keeps its tier, because that is
+exactly the row worth looking at. The box-drawing is held on the ground while
+the row around it steps off it: it says how the tree is shaped, not how a
+bead is going, and `bd` leaves its own tree prefix undimmed on a closed row
+too. Holding it there takes saying the weight it does not take as well as the
+colour it does, because a tone is drawn under the whole row and a weight in
+one composes with a weight in the other where a colour replaces it. Colour is
+never the only channel: the glyph says the status and the words say the rest,
+so a terminal with no colour loses nothing.
 
 **Priority and issue type are not drawn**, and not for want of columns. A row
 has exactly two colour-carrying channels — the glyph carries the status,

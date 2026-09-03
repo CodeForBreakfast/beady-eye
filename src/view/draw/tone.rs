@@ -13,9 +13,16 @@ use crate::view::row::Row;
 ///
 /// | row | drawn |
 /// |---|---|
-/// | an agent is on it | the terminal's default |
-/// | nobody on it, still going | the theme's colour 8 |
-/// | finished, nobody on it | the grey `bd` dims a closed row to |
+/// | an agent is on it | the ground, and a weight |
+/// | nobody on it, still going | the ground: the terminal's own foreground |
+/// | finished, nobody on it | one rung under it, at the theme's colour 8 |
+///
+/// The ordinary row is the ground, and the scale steps up from it and down.
+/// Colour buys one of those steps and no more: there is no slot a theme
+/// reliably sets between its foreground and its colour 8, and none below
+/// colour 8 that a reader could still make out, so a third tone would be a
+/// third value the theme picked without reference to the other two. The step
+/// up is a weight for that reason and not for emphasis.
 ///
 /// Finished means what it means to `lines::split`: closed, no agent, no
 /// anomaly. A closed bead whose pane is still alive is exactly the row worth
@@ -54,7 +61,7 @@ pub(crate) fn status_style(status: &Status) -> Style {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
     use crate::model::anomaly::Anomaly;
     use crate::view::draw::bead::{bead_line, elided_run};
@@ -145,29 +152,43 @@ mod tests {
     }
 
     /// `bd` sends no escape at all for an open bead's glyph, and inheriting is
-    /// what lets the row's own brightness reach it. A glyph pinned to the
-    /// terminal's default would leave an unworked row reading as two colours.
+    /// what lets the row's own treatment reach it. A glyph pinned to the
+    /// terminal's default would leave a staffed row reading as two weights.
+    ///
+    /// Asked of a staffed row because the ground is also what the box-drawing
+    /// beside it holds: on an ordinary row a glyph that inherits and a glyph
+    /// pinned to the default are the same bytes, and the assertion would pass
+    /// whichever it was.
     #[test]
-    fn an_open_glyph_takes_the_brightness_of_the_row_it_sits_on() {
-        let unworked = node("nix-9670s.1", "a bead", Status::Open);
+    fn an_open_glyph_takes_the_treatment_of_the_row_it_sits_on() {
+        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        staffed.agent = Some(a_pane());
 
-        let painted = Painted::of(bead_line(&row(&unworked), BRANCH, 3), 90, 1).row(0);
+        let painted = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 90, 1).row(0);
 
         assert!(painted[1].said.starts_with('○'), "{painted:?}");
-        assert_eq!(painted[1].style.fg, Some(Color::DarkGray), "{painted:?}");
+        assert_eq!(
+            painted[1].style.add_modifier,
+            Modifier::BOLD,
+            "the glyph took the row's weight: {painted:?}"
+        );
+        assert_eq!(
+            painted[0].style.add_modifier,
+            Modifier::empty(),
+            "and the box-drawing beside it did not: {painted:?}"
+        );
     }
 
     /// The tier that earns the screen. `bd list` has no notion of a live
     /// agent, so it has no way to say which row is the one you came for.
     ///
-    /// The staffed row is the terminal's own foreground and the unworked one
-    /// sits below it, rather than the other way up: a theme's default is
-    /// already the brightest thing on its page, so there is nothing above it
-    /// for a staffed row to be painted — on the theme this was measured on,
-    /// `color15` and the default resolve to the same hex, and the two tiers
-    /// were one. The scale is shifted down instead of extended up.
+    /// It is a weight rather than a colour because there is no colour above
+    /// the ground to reach for: a theme's own foreground is routinely the
+    /// same value as its colour 7 and its colour 15, so a staffed row painted
+    /// either of those is a staffed row painted like every other. A weight
+    /// steps off the colour axis altogether and cannot land on it.
     #[test]
-    fn a_row_with_an_agent_on_it_is_the_terminals_own_and_one_without_falls_below_it() {
+    fn a_row_with_an_agent_on_it_is_the_ground_and_a_weight_and_one_without_is_the_ground() {
         let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
 
@@ -189,9 +210,19 @@ mod tests {
             "an agent on it, so the row is the terminal's own: {bright:?}"
         );
         assert_eq!(
+            the_words(&bright).style.add_modifier,
+            Modifier::BOLD,
+            "and a weight is what puts it above the ground: {bright:?}"
+        );
+        assert_eq!(
             the_words(&plain).style.fg,
-            Some(Color::DarkGray),
-            "nobody on it, so the row drops to the theme's colour 8: {plain:?}"
+            Some(Color::Reset),
+            "nobody on it, so the row is the ground itself: {plain:?}"
+        );
+        assert_eq!(
+            the_words(&plain).style.add_modifier,
+            Modifier::empty(),
+            "untreated, which is what makes it the ground: {plain:?}"
         );
     }
 
@@ -206,9 +237,12 @@ mod tests {
     }
 
     /// What `bd` already does to a closed row, arrived at from the other
-    /// side: a finished branch nobody is on falls back into the page.
+    /// side: a finished branch nobody is on falls back into the page. It goes
+    /// to the theme's colour 8 rather than to a grey of `bdi`'s own, because
+    /// the distance a rung keeps from the ground is only fixed where the
+    /// theme chooses both.
     #[test]
-    fn a_finished_row_nobody_is_on_is_dimmed_to_the_grey_bd_dims_one_to() {
+    fn a_finished_row_nobody_is_on_drops_to_the_one_rung_under_the_ground() {
         let painted = Painted::of(
             bead_line(
                 &row(&node("nix-9670s.1", "a bead", Status::Closed)),
@@ -225,11 +259,7 @@ mod tests {
             Some(Color::Rgb(128, 144, 160)),
             "the glyph keeps its own status colour: {painted:?}"
         );
-        assert_eq!(
-            painted[2].style.fg,
-            Some(Color::Rgb(108, 118, 128)),
-            "{painted:?}"
-        );
+        assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
     }
 
     /// Exactly the row worth looking at, and dimming it is how it would be
@@ -243,11 +273,12 @@ mod tests {
         let painted = Painted::of(bead_line(&row(&alive), BRANCH, 3), 110, 1).row(0);
 
         assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
+        assert_eq!(painted[2].style.add_modifier, Modifier::BOLD, "{painted:?}");
     }
 
     /// Finished means what it means in `lines::split` — closed, no agent, no
     /// anomaly — so an anomaly alone is enough to keep a row out of the dim.
-    /// Nobody is on it, so it takes the middle tier, not the top.
+    /// Nobody is on it, so it sits on the ground rather than above it.
     #[test]
     fn a_closed_bead_with_an_anomaly_against_it_is_not_dimmed() {
         let mut odd = node("nix-9670s.1", "a bead", Status::Closed);
@@ -255,7 +286,75 @@ mod tests {
 
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 110, 1).row(0);
 
-        assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
+        assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
+        assert_eq!(
+            painted[2].style.add_modifier,
+            Modifier::empty(),
+            "{painted:?}"
+        );
+    }
+
+    // ---- what holds the scale apart --------------------------------------
+
+    /// The whole scale, so a claim about the tiers together is made over all
+    /// of them rather than over the two whoever wrote it had in mind.
+    fn every_tier() -> [(&'static str, Style); 3] {
+        [
+            ("staffed", palette::TIER_STAFFED),
+            ("open", palette::TIER_OPEN),
+            ("finished", palette::TIER_FINISHED),
+        ]
+    }
+
+    /// Every other assertion about the scale pins one tier to one value, and
+    /// a value nobody compares is one a theme can quietly close the distance
+    /// to. These two say what has to hold of the tiers *together*, which is
+    /// the part no assertion about a single value reaches.
+    ///
+    /// This one: a tier `bdi` resolves itself keeps a distance from its
+    /// neighbours that is a property of this code rather than of the reader's
+    /// terminal — and a resolved tier and a deferred one cannot be held any
+    /// distance apart at all, because only one of them moves when the theme
+    /// does.
+    #[test]
+    fn no_tier_is_a_value_the_readers_theme_cannot_move() {
+        for (tier, drawn) in every_tier() {
+            assert!(
+                !matches!(drawn.fg, Some(Color::Rgb(..)) | Some(Color::Indexed(..))),
+                "the {tier} tier is pinned to {:?}",
+                drawn.fg
+            );
+        }
+    }
+
+    /// And this one: colour buys the scale one interval and no more, so a
+    /// third tone would be a third value the theme picked without reference to
+    /// the other two. No theme reliably sets a slot between its foreground and
+    /// its colour 8, and none under colour 8 that a reader could still make
+    /// out — so the tier that is not a tone is a weight, which is a step off
+    /// the colour axis and cannot land back on it however a theme is written.
+    #[test]
+    fn the_scale_spends_colour_once_and_carries_its_other_tier_on_a_weight() {
+        assert_eq!(
+            palette::TIER_OPEN.add_modifier,
+            Modifier::empty(),
+            "the ordinary row is untreated, which is what makes it the ground"
+        );
+        assert_eq!(
+            palette::TIER_STAFFED.fg,
+            palette::TIER_OPEN.fg,
+            "the two tiers still going stand on that ground"
+        );
+        assert_ne!(
+            palette::TIER_STAFFED.add_modifier,
+            palette::TIER_OPEN.add_modifier,
+            "and a weight is the whole of what tells them apart"
+        );
+        assert_ne!(
+            palette::TIER_OPEN.fg,
+            palette::TIER_FINISHED.fg,
+            "leaving one colour interval, the one under the ground"
+        );
     }
 
     // ---- what the scale may not be the only carrier of --------------------
@@ -325,10 +424,11 @@ mod tests {
     }
 
     /// The box-drawing says how the tree is shaped, not how a bead is going,
-    /// so it holds the terminal's default while the row around it moves.
-    /// `bd list` leaves its own tree prefix undimmed on a closed row too.
+    /// so it is held on the ground while the row around it steps off it in
+    /// either direction. `bd list` leaves its own tree prefix undimmed on a
+    /// closed row too.
     #[test]
-    fn the_box_drawing_a_row_hangs_under_never_takes_the_rows_brightness() {
+    fn the_box_drawing_a_row_hangs_under_never_takes_the_rows_tier() {
         let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
         let unworked = node("nix-9670s.1", "a bead", Status::Open);
@@ -339,6 +439,11 @@ mod tests {
 
             assert!(painted[0].said.starts_with(BRANCH), "{painted:?}");
             assert_eq!(painted[0].style.fg, Some(Color::Reset), "{painted:?}");
+            assert_eq!(
+                painted[0].style.add_modifier,
+                Modifier::empty(),
+                "{painted:?}"
+            );
         }
     }
 

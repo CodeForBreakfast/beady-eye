@@ -41,29 +41,40 @@ pub(crate) const ATTENTION: Style = Style::new().fg(Color::Yellow);
 
 // ---- how live a row is -------------------------------------------------
 
-/// A row an agent is on: the terminal's own foreground, not a brighter
-/// colour, because a theme's default is already the brightest thing on its
-/// page and nothing can sit above it. The scale is shifted down from here
-/// rather than extended up.
-pub(crate) const TIER_STAFFED: Style = Style::new().fg(Color::Reset);
+/// A row an agent is on: the ground and a weight.
+///
+/// A theme's own foreground is routinely the same value as its colour 7 or
+/// its colour 15, so there is no colour above the ground to reach for. A
+/// weight is what is left, and it is the one treatment here whose size is the
+/// reader's font rather than the reader's theme: the brightening a terminal
+/// does on bold is a remap of palette slots 0-7, and the default foreground
+/// has no slot to remap.
+pub(crate) const TIER_STAFFED: Style = Style::new().fg(Color::Reset).add_modifier(Modifier::BOLD);
 
-/// Nobody on it and still going. One rung below the terminal's default, at
-/// the theme's colour 8, which every theme sets and few rows on the page
-/// otherwise use. Named rather than literal so it follows the reader's
-/// terminal, not `bd`'s palette.
-pub(crate) const TIER_OPEN: Style = Style::new().fg(Color::DarkGray);
+/// Nobody on it and still going, which is most of the forest most of the
+/// time: the terminal's own foreground, untreated. It is the ground the other
+/// two are measured from rather than a rung between them, so the commonest
+/// row on the page is the one the scale spends nothing on.
+pub(crate) const TIER_OPEN: Style = Style::new().fg(Color::Reset);
 
-/// Finished, nobody on it: the grey `bd` dims a closed row to. It holds
-/// `STATUS_DEFERRED`'s value and is a claim about the scale rather than about
-/// a status, so moving the scale leaves `bd`'s own colour where it is.
-pub(crate) const TIER_FINISHED: Style = Style::new().fg(Color::Rgb(108, 118, 128));
+/// Finished, nobody on it: one rung under the ground, at the theme's colour
+/// 8, which every theme sets and few rows on the page otherwise use. Named
+/// rather than literal because a rung pinned to a number keeps no distance
+/// from a ground it never sees — only the theme knows what its foreground is,
+/// so only a value the theme also chooses can stay a fixed way from it.
+pub(crate) const TIER_FINISHED: Style = Style::new().fg(Color::DarkGray);
 
 // ---- chrome, and content that is not a row -----------------------------
 
 /// Box-drawing and fold arrows: how the tree is shaped rather than how a bead
-/// is going, so it is held at the terminal's default while the row around it
-/// dims or brightens.
-pub(crate) const STRUCTURE: Style = Style::new().fg(Color::Reset);
+/// is going, so it is held on the ground while the row around it steps off
+/// it. Naming the colour is not enough to stay there — a tone is patched
+/// under the whole row and a weight in one composes with a weight in the
+/// other, where a colour replaces it — so this says the weight it does not
+/// take as well as the colour it does.
+pub(crate) const STRUCTURE: Style = Style::new()
+    .fg(Color::Reset)
+    .remove_modifier(Modifier::BOLD);
 
 /// Metadata, chrome, an affordance, a rule.
 pub(crate) const QUIET: Style = Style::new().fg(Color::DarkGray);
@@ -79,11 +90,11 @@ pub(crate) const QUIET: Style = Style::new().fg(Color::DarkGray);
 pub(crate) const VOICE: Style = Style::new().fg(Color::Reset).add_modifier(Modifier::DIM);
 
 /// The page under the bead window's head: its facts, its prose and its
-/// related rows. The rung directly under the terminal's default, which is
-/// where the forest draws a row nobody is on, so the few things the window
-/// holds at the default read as emphasis rather than as the page. It holds
-/// `TIER_OPEN`'s value and is a claim about a page of text rather than about
-/// the scale.
+/// related rows. The rung directly under the terminal's default, so the few
+/// things the window holds at the default read as emphasis rather than as the
+/// page. It holds `QUIET`'s value and is a claim about a page of text rather
+/// than about a row, so the forest's scale can move without the window
+/// following it.
 pub(crate) const PAGE: Style = Style::new().fg(Color::DarkGray);
 
 /// `bdi`'s own sentence about the forest where nothing went wrong in it: the

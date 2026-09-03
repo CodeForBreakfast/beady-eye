@@ -33,6 +33,7 @@
 pub mod driver;
 pub mod shims;
 
+use std::collections::BTreeMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -270,63 +271,117 @@ pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 /// The row of the screen `bdi` drew some text on, counted from zero.
 ///
-/// A frame reaches the pty as runs of cells, each preceded by the escape that
-/// moves the cursor to where its first cell goes, so the row a run was drawn
-/// on is the row that escape names. That is the only thing in the stream that
-/// says where anything is, and the alternative for a test that needs a row is
-/// to work it out from the geometry it is testing — which is that arithmetic
-/// written a second time, and green whenever both copies are wrong the same
-/// way.
+/// The stream is put back together into the screen it would have drawn, and
+/// the needle looked for there, because a row does not reach the pty as one
+/// run: a frame is written as the cells that differ from a blank screen, so
+/// every cell already blank is skipped and a row's words arrive with a cursor
+/// move between each of them. Every row drawn at the terminal's own
+/// foreground is that row — a staffed one, and under this scale an ordinary
+/// one too — and a search over the bytes finds nothing on any of them while
+/// finding whole rows elsewhere.
+///
+/// The alternative for a test that needs a row is to work it out from the
+/// geometry it is testing, which is that arithmetic written a second time and
+/// green whenever both copies are wrong the same way.
 ///
 /// Nothing where the text was drawn on no row, or in more than one place: a
 /// needle met twice would hand back whichever came first, and a test built on
 /// it would press somewhere nobody chose. Read a frame `bdi` was made to
 /// repaint whole, since one drawn as a difference from the frame before holds
-/// only the cells that moved.
+/// only the cells that moved and the rest of this screen is the frame before,
+/// which is not here to be put back.
 pub fn row_of(screen: &[u8], needle: &[u8]) -> Option<u16> {
-    let moves: Vec<(usize, u16)> = screen
-        .windows(CSI.len())
-        .enumerate()
-        .filter(|(_, at)| *at == CSI)
-        .filter_map(|(at, _)| {
-            let opens = at + CSI.len();
-            move_to(&screen[opens..]).map(|(row, length)| (opens + length, row))
-        })
-        .collect();
-
-    let drawn: Vec<usize> = screen
-        .windows(needle.len())
-        .enumerate()
-        .filter(|(_, at)| *at == needle)
-        .map(|(at, _)| at)
-        .collect();
-    let [at] = drawn[..] else {
-        return None;
-    };
-
-    moves
-        .iter()
-        .rev()
-        .find(|(after, _)| *after <= at)
-        .map(|(_, row)| *row)
+    let needle = std::str::from_utf8(needle).ok()?;
+    let mut found = None;
+    for (row, said) in drawn_rows(screen) {
+        for _ in said.match_indices(needle) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(row);
+        }
+    }
+    found
 }
 
 /// The escape that opens a control sequence.
 const CSI: &[u8] = b"\x1b[";
 
-/// The row a cursor move names, counted from zero, and how long the sequence
-/// is — where the sequence at hand is a cursor move at all.
-fn move_to(sequence: &[u8]) -> Option<(u16, usize)> {
-    let end = sequence
+/// Every row the stream put anything on, as the text that would be on it,
+/// with the cells nothing was written to left as the blanks they are.
+fn drawn_rows(screen: &[u8]) -> BTreeMap<u16, String> {
+    let mut rows: BTreeMap<u16, Vec<char>> = BTreeMap::new();
+    let mut at = (0u16, 0u16);
+    let mut rest = screen;
+
+    while !rest.is_empty() {
+        if rest[0] == ESC {
+            let length = escape(rest);
+            if let Some(moved) = move_to(&rest[..length]) {
+                at = moved;
+            }
+            rest = &rest[length..];
+            continue;
+        }
+
+        let text = rest
+            .iter()
+            .position(|byte| *byte == ESC)
+            .unwrap_or(rest.len());
+        let said = String::from_utf8_lossy(&rest[..text]).into_owned();
+        let row = rows.entry(at.0).or_default();
+        for glyph in said.chars() {
+            let column = at.1 as usize;
+            if row.len() <= column {
+                row.resize(column + 1, ' ');
+            }
+            row[column] = glyph;
+            at.1 += 1;
+        }
+        rest = &rest[text..];
+    }
+
+    rows.into_iter()
+        .map(|(row, said)| (row, said.into_iter().collect()))
+        .collect()
+}
+
+/// The byte an escape sequence opens with.
+const ESC: u8 = 0x1b;
+
+/// How long the escape sequence at the head of this stream is. A control
+/// sequence runs to its final byte; anything else is taken as the two bytes
+/// of the escape alone, which is right for the escapes ratatui and crossterm
+/// send here and wrong for a string one — nothing draws with those, and a
+/// stream that gained one would put its payload on a row as text.
+fn escape(sequence: &[u8]) -> usize {
+    if !sequence.starts_with(CSI) {
+        return sequence.len().min(2);
+    }
+    sequence[CSI.len()..]
         .iter()
-        .position(|byte| !byte.is_ascii_digit() && *byte != b';')?;
-    if sequence[end] != b'H' {
+        .position(|byte| (0x40..=0x7e).contains(byte))
+        .map_or(sequence.len(), |end| CSI.len() + end + 1)
+}
+
+/// Where a cursor move puts the cursor, counted from zero — where the
+/// sequence at hand is a cursor move at all.
+fn move_to(sequence: &[u8]) -> Option<(u16, u16)> {
+    let inside = sequence.strip_prefix(CSI)?;
+    let (parameters, end) = inside.split_at(inside.len().checked_sub(1)?);
+    if end != b"H" {
         return None;
     }
-    let (row, _) = std::str::from_utf8(&sequence[..end])
-        .ok()?
-        .split_once(';')?;
-    Some((row.parse::<u16>().ok()?.checked_sub(1)?, end + 1))
+    let parameters = std::str::from_utf8(parameters).ok()?;
+    let (row, column) = match parameters.split_once(';') {
+        Some(both) => both,
+        None if parameters.is_empty() => ("1", "1"),
+        None => (parameters, "1"),
+    };
+    Some((
+        row.parse::<u16>().ok()?.checked_sub(1)?,
+        column.parse::<u16>().ok()?.checked_sub(1)?,
+    ))
 }
 
 /// A runtime directory of this run's own, so it opens its own inbound socket
