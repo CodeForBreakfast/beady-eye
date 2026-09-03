@@ -117,7 +117,13 @@ pub fn run(
     let mut outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
     outstanding.ask(Wanted::Everything, Utc::now());
 
-    let mut screen = Screen::showing(awaiting, panes, at_startup, cfg.tui.tail_refresh())?;
+    let mut screen = Screen::showing(
+        awaiting,
+        panes,
+        at_startup,
+        cfg.tui.tail_refresh(),
+        cfg.theme.background,
+    )?;
     screen.collecting(outstanding.awaited());
 
     drive(

@@ -12,6 +12,8 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
+use crate::config::Background;
+
 // ---- `bd`'s own, quoted ------------------------------------------------
 
 /// `bd list`'s colours for a status, read off `bd` 1.2.2's output. They are
@@ -81,13 +83,44 @@ pub(crate) const QUIET: Style = Style::new().fg(Color::DarkGray);
 
 /// In the tail band only: these are `bdi`'s words and not the pane's.
 /// `design.md`'s account of the band makes this the whole of what tells the
-/// two apart, and a reader with `NO_COLOR` set is sent every attribute and no
-/// colour — so the one place a tone stands alone is the one place it cannot
-/// be a colour. Dim over the terminal's own foreground rather than over a
-/// grey, because every mechanism a terminal has for dim moves a colour toward
-/// the background, and colour 8 is already as near it as a readable slot
-/// gets.
-pub(crate) const VOICE: Style = Style::new().fg(Color::Reset).add_modifier(Modifier::DIM);
+/// two apart, so it is the one tone on the screen with nothing beside it.
+///
+/// The one slot here the reader's background selects, and the reason there
+/// is a `[theme]` key at all. Every other slot is a value the reader's own
+/// theme resolves — its foreground, or one of its sixteen — or one of
+/// `bd`'s, which are absolute so that a status is the colour in `bdi` that
+/// it is in `bd`. Neither kind has a light form to choose. This one is a
+/// treatment `bdi` composes itself, and the terminal resolves it against
+/// the background rather than against the palette.
+///
+/// **Dim over the default foreground is the composition that inverts.** It
+/// is git's `GIT_COLOR_FAINT_DEFAULT`, SGR `2;39`, and the terminals that
+/// implement dim by scaling the foreground toward black — xterm, VTE,
+/// Alacritty, Windows Terminal — leave a light theme's near-black
+/// foreground darker than plain text rather than fainter. Windows
+/// Terminal's issue #16493 measured it: faint is "the darkest of the three
+/// in each line", which against white is bold by another name. A band whose
+/// whole distinction is that `bdi` speaks under the pane becomes one where
+/// it shouts over it.
+///
+/// So a dark background is answered with the attribute, which a reader with
+/// `NO_COLOR` set still has, and a light one at colour 8, where the theme's
+/// own choice of a tone between its foreground and its background carries
+/// the distinction and no arithmetic of the terminal's is involved. Not a
+/// slant: italic, underline and `CODE`'s cyan are prose's namespace and do
+/// not leak out of `markdown.rs`, and the band is `bdi` scanning its own
+/// words at the reader rather than rendered prose.
+///
+/// **A light background and `NO_COLOR` together leave the band no tone**,
+/// because the one channel that survives colour being off is the one a
+/// light background inverts. Such a reader has the rule and which of the
+/// two states the band is in, and nothing else says whose words a row is.
+pub(crate) fn voice(background: Background) -> Style {
+    match background {
+        Background::Dark => Style::new().fg(Color::Reset).add_modifier(Modifier::DIM),
+        Background::Light => Style::new().fg(Color::DarkGray),
+    }
+}
 
 /// The page under the bead window's head: its facts, its prose and its
 /// related rows. The rung directly under the terminal's default, so the few
@@ -131,3 +164,49 @@ pub(crate) const HEADING: Style = Style::new().add_modifier(Modifier::BOLD);
 pub(crate) const EMPHASIS: Style = Style::new().add_modifier(Modifier::ITALIC);
 pub(crate) const STRONG: Style = Style::new().add_modifier(Modifier::BOLD);
 pub(crate) const LINK: Style = Style::new().add_modifier(Modifier::UNDERLINED);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::Background;
+
+    /// The reader's declaration has to reach a value, or `[theme]` is a
+    /// setting nothing reads and a reader who sets it is worse off than one
+    /// who never found it.
+    #[test]
+    fn the_declared_background_selects_between_palettes() {
+        assert_ne!(voice(Background::Dark), voice(Background::Light));
+    }
+
+    /// And the dark background carries the band on an attribute, which is
+    /// the reason it is the one an undeclared reader gets: an attribute is
+    /// what a reader with `NO_COLOR` set is still sent, and the light
+    /// background has no way to give them one.
+    #[test]
+    fn the_dark_background_carries_the_band_on_an_attribute() {
+        assert!(
+            voice(Background::Dark).add_modifier.contains(Modifier::DIM),
+            "the background most readers get is the one colour can be off on"
+        );
+    }
+
+    /// Prose keeps a namespace of its own — `markdown.rs`'s cyan, its
+    /// italic and its underline are for rendered text and must not leak out
+    /// of it — and the band is the far side of that line: `bdi` scanning
+    /// its own words at the reader rather than an author's words being
+    /// read.
+    #[test]
+    fn neither_background_answers_the_band_out_of_proses_namespace() {
+        for background in [Background::Dark, Background::Light] {
+            let said = voice(background);
+            assert!(
+                !said
+                    .add_modifier
+                    .intersects(Modifier::ITALIC | Modifier::UNDERLINED),
+                "{background:?} took a treatment that is markdown.rs's"
+            );
+            assert_ne!(said.fg, CODE.fg, "{background:?} took prose's own colour");
+        }
+    }
+}

@@ -33,7 +33,7 @@ use crate::view::row::{AGENT, WARNING};
 use crate::view::{Freshness, Notice};
 
 pub use bands::{half_screen, line_at, regions};
-pub use tail::draw_tail;
+pub use tail::{draw_tail, Band};
 
 use bands::scroll_offset;
 use bead::{bead_line, elided_run};

@@ -23,6 +23,8 @@ pub struct Config {
     pub join: Join,
     #[serde(default)]
     pub tui: Tui,
+    #[serde(default)]
+    pub theme: Theme,
     /// Which of `projects` this run reads, and what chose them. The rest stay
     /// here rather than being dropped: a pane is placed by which configured
     /// project holds its directory, whether or not that project is read.
@@ -231,6 +233,41 @@ pub struct Tui {
     pub tail_refresh_millis: u64,
 }
 
+/// What the reader's terminal is, in the one respect `bdi` can neither see
+/// nor ask.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Theme {
+    pub background: Background,
+}
+
+/// The background the reader's terminal draws on.
+///
+/// The reader says it because `bdi` cannot find it out. A terminal query
+/// degrades either to a wait or to a confident wrong answer, and a wrong
+/// answer of that kind is intermittent — right in one terminal and wrong in
+/// another, right outside a multiplexer and wrong inside it — so nobody can
+/// see what is producing it. A declaration is wrong the same way on every
+/// terminal from the first frame, which is what makes it something the
+/// reader notices and one line fixes.
+///
+/// Their background rather than their theme, and that is the whole axis
+/// rather than a stand-in for a richer one. A theme brings its own
+/// foreground and its own colour 8, so `bdi` needs neither; what no theme
+/// can tell it is which side of the background a treatment of `bdi`'s own
+/// will land on.
+///
+/// Dark is what an undeclared reader gets, because it is what the shipped
+/// tones were chosen against: the default changes nothing for anyone
+/// already reading `bdi`.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Background {
+    #[default]
+    Dark,
+    Light,
+}
+
 impl Default for Anomalies {
     fn default() -> Self {
         Self {
@@ -296,6 +333,7 @@ impl Config {
             anomalies: Anomalies::default(),
             join: Join::default(),
             tui: Tui::default(),
+            theme: Theme::default(),
             scope: Scope::default(),
         }
     }
@@ -564,6 +602,9 @@ pane_key = "herdr_pane"
 refresh_seconds = 5
 unanswered_after_seconds = 90
 tail_refresh_millis = 100
+
+[theme]
+background = "light"
 "#;
 
     const ONE_PROJECT: &str = r#"
@@ -657,6 +698,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
+        assert_eq!(cfg.theme.background, Background::Light);
     }
 
     #[test]
@@ -671,6 +713,39 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);
+        assert_eq!(cfg.theme.background, Background::Dark);
+    }
+
+    /// `bdi` cannot see the reader's background, so a reader who says
+    /// nothing is answered from the shipped default rather than from
+    /// anything about the machine. That is what makes a wrong answer stable
+    /// and attributable: it is wrong the same way on every terminal, and
+    /// one documented key fixes it for good.
+    #[test]
+    fn an_undeclared_background_is_the_fallback() {
+        assert_eq!(Theme::default().background, Background::Dark);
+        assert_eq!(
+            Config::from_toml(ONE_PROJECT)
+                .expect("parses")
+                .theme
+                .background,
+            Background::Dark
+        );
+    }
+
+    /// And a background the reader misspelled is refused rather than read
+    /// as the fallback. A typo answered silently with the default is the
+    /// failure the key exists to remove, arriving through the key: the
+    /// reader has said which background they are on, believes they have been
+    /// heard, and has nothing on screen to tell them otherwise.
+    #[test]
+    fn a_background_that_is_not_one_of_the_two_is_refused() {
+        let mistyped = format!("{ONE_PROJECT}\n[theme]\nbackground = \"Light\"\n");
+
+        let refused =
+            Config::from_toml(&mistyped).expect_err("a background bdi has no palette for");
+
+        assert!(refused.to_string().contains("background"), "{refused}");
     }
 
     /// The interval is written in seconds and read as a duration; nothing

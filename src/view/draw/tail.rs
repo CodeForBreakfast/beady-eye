@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
+use crate::config::Background;
 use crate::view::fitted::{columns, indent, Fitted};
 use crate::view::palette;
 use crate::view::phrase;
@@ -16,13 +17,26 @@ use super::sentence;
 /// What the rule above the tail is drawn from.
 const RULE: char = '─';
 
+/// The band, and the background it is drawn on.
+///
+/// The one part of the frame the reader's background decides, which is why
+/// the background is carried here and nowhere else: what tells `bdi`'s own
+/// rows from the pane's is a treatment the terminal resolves against the
+/// background, and every other tone on the screen is either the reader's
+/// own or `bd`'s.
+pub struct Band<'a> {
+    pub tail: &'a Tail,
+    pub background: Background,
+}
+
 /// Draw the tail into the band `regions` reserved for it: a rule naming the
 /// pane, and as much of what that pane last wrote as fits beneath it.
 ///
 /// The newest lines are the ones kept. A pane's last line is what it is
 /// doing now, and a tail that dropped it to keep older ones would be
 /// answering yesterday's question.
-pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
+pub fn draw_tail(frame: &mut Frame, area: Rect, band: Band<'_>) {
+    let Band { tail, background } = band;
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -52,7 +66,7 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
                     sentence(
                         &indent(),
                         phrase::pane_being_read().to_string(),
-                        palette::VOICE,
+                        palette::voice(background),
                     ),
                     row(1),
                 );
@@ -62,7 +76,7 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
             frame.render_widget(rule(None, area.width as usize), row(0));
             if room > 0 {
                 frame.render_widget(
-                    sentence(&indent(), (*why).to_string(), palette::VOICE),
+                    sentence(&indent(), (*why).to_string(), palette::voice(background)),
                     row(1),
                 );
             }
@@ -119,8 +133,23 @@ mod tests {
     /// The tail drawn into a band that starts partway down the screen, which
     /// is the only place it ever is.
     fn tail_frame(tail: &Tail, width: u16, height: u16, at: u16) -> Painted {
+        tail_frame_on(Background::Dark, tail, width, height, at)
+    }
+
+    /// The same, for a reader who has said which background they are on.
+    fn tail_frame_on(
+        background: Background,
+        tail: &Tail,
+        width: u16,
+        height: u16,
+        at: u16,
+    ) -> Painted {
         Painted::drawn_by(width, height, |frame| {
-            draw_tail(frame, Rect::new(0, at, width, height - at), tail);
+            draw_tail(
+                frame,
+                Rect::new(0, at, width, height - at),
+                Band { tail, background },
+            );
         })
     }
 
@@ -221,18 +250,37 @@ mod tests {
     }
 
     /// A pane line the pane chose nothing for.
-    fn a_plain_pane_line(said: &str) -> Style {
+    fn a_plain_pane_line(background: Background, said: &str) -> Style {
         drawn_style(
-            &tail_frame(&tailing("w:p1", &[said]), BAND, 2, 0).row(1),
+            &tail_frame_on(background, &tailing("w:p1", &[said]), BAND, 2, 0).row(1),
             said,
         )
     }
 
-    /// What `bdi` says in the band is dimmer than what the pane says, which
-    /// is the whole of what stops a reader taking `bdi`'s own words for the
-    /// pane's. Nothing in the symbols says which of the two a row is.
+    /// The two rows the band writes in `bdi`'s own voice, with the words
+    /// each says.
+    fn every_row_bdi_says_itself() -> [(Tail, &'static str); 2] {
+        [
+            (
+                Tail::Reading { pane: key("w:p1") },
+                phrase::pane_being_read(),
+            ),
+            (
+                Tail::Silent(phrase::no_bead_to_tail()),
+                phrase::no_bead_to_tail(),
+            ),
+        ]
+    }
+
+    /// On a dark background, what `bdi` says in the band is dimmer than
+    /// what the pane says, which is what stops a reader taking `bdi`'s own
+    /// words for the pane's. Nothing in the symbols says which of the two a
+    /// row is.
+    ///
+    /// Dark rather than either background, because dim is the treatment a
+    /// light one inverts. This is the tone an undeclared reader gets.
     #[test]
-    fn what_bdi_says_in_the_band_is_drawn_dimmer_than_what_the_pane_says() {
+    fn what_bdi_says_on_a_dark_background_is_drawn_dimmer_than_the_pane() {
         let waiting = tail_frame(&Tail::Reading { pane: key("w:p1") }, 40, 2, 0).row(1);
         assert!(
             waiting.iter().any(|run| {
@@ -262,20 +310,18 @@ mod tests {
     /// that `bdi` has to stand apart from: one in the pane's own colours is
     /// already told from `bdi` by those, and one the pane drew dim is the
     /// pane choosing `bdi`'s tone, which no band can hold against it.
+    /// On the dark background, and on that one only. Dim over the default
+    /// foreground is the composition a light background inverts, so a light
+    /// reader is answered at colour 8 and has no attribute to be left with
+    /// — their band falls back to the rule and to which state it is in,
+    /// which is what every reader had before the attribute was chosen. The
+    /// dark background is what an undeclared reader gets, so this is the
+    /// case that covers most of them.
     #[test]
-    fn what_tells_bdi_from_the_pane_is_not_carried_by_colour() {
-        let pane = a_plain_pane_line("rebuilt .#thinkpad");
+    fn what_tells_bdi_from_the_pane_on_a_dark_background_is_not_colour() {
+        let pane = a_plain_pane_line(Background::Dark, "rebuilt .#thinkpad");
 
-        for (voice, said) in [
-            (
-                Tail::Reading { pane: key("w:p1") },
-                phrase::pane_being_read(),
-            ),
-            (
-                Tail::Silent(phrase::no_bead_to_tail()),
-                phrase::no_bead_to_tail(),
-            ),
-        ] {
+        for (voice, said) in every_row_bdi_says_itself() {
             let spoken = drawn_style(&tail_frame(&voice, BAND, 2, 0).row(1), said);
 
             assert_ne!(
@@ -283,6 +329,41 @@ mod tests {
                 as_a_reader_with_no_colour_sees_it(pane),
                 "with no colour, {said:?} is drawn as the pane's own line is"
             );
+        }
+    }
+
+    /// On both grounds, `bdi`'s own words are told from the pane's by
+    /// something. Which channel carries it is the background's to decide;
+    /// that it is carried is not, because `design.md`'s account of the band
+    /// makes the tone the whole of what says whose words a row is.
+    #[test]
+    fn what_bdi_says_is_told_from_the_pane_on_either_background() {
+        for background in [Background::Dark, Background::Light] {
+            let pane = a_plain_pane_line(background, "rebuilt .#thinkpad");
+
+            for (voice, said) in every_row_bdi_says_itself() {
+                let spoken =
+                    drawn_style(&tail_frame_on(background, &voice, BAND, 2, 0).row(1), said);
+
+                assert_ne!(spoken, pane, "on a {background:?} background, {said:?}");
+            }
+        }
+    }
+
+    /// And the reader's declaration reaches the band, which is the whole of
+    /// what the `[theme]` key buys. A key nothing downstream read would
+    /// leave a light reader who found it and set it exactly where they
+    /// started, with one more reason to think `bdi` had heard them.
+    #[test]
+    fn the_declared_background_reaches_the_band() {
+        for (voice, said) in every_row_bdi_says_itself() {
+            let undeclared = drawn_style(&tail_frame(&voice, BAND, 2, 0).row(1), said);
+            let light = drawn_style(
+                &tail_frame_on(Background::Light, &voice, BAND, 2, 0).row(1),
+                said,
+            );
+
+            assert_ne!(light, undeclared, "{said:?} is drawn on neither background");
         }
     }
 
@@ -365,7 +446,14 @@ mod tests {
             Tail::Silent(phrase::no_bead_to_tail()),
         ] {
             let screen = Painted::drawn_by(20, 2, |frame| {
-                draw_tail(frame, Rect::new(0, 0, 20, 1), &tail);
+                draw_tail(
+                    frame,
+                    Rect::new(0, 0, 20, 1),
+                    Band {
+                        tail: &tail,
+                        background: Background::Dark,
+                    },
+                );
             });
 
             assert_eq!(
@@ -379,7 +467,14 @@ mod tests {
     #[test]
     fn a_band_with_no_rows_draws_nothing() {
         let screen = Painted::drawn_by(20, 1, |frame| {
-            draw_tail(frame, Rect::new(0, 0, 20, 0), &tailing("w:p1", &["x"]));
+            draw_tail(
+                frame,
+                Rect::new(0, 0, 20, 0),
+                Band {
+                    tail: &tailing("w:p1", &["x"]),
+                    background: Background::Dark,
+                },
+            );
         });
 
         assert_eq!(screen.rows()[0], " ".repeat(20));

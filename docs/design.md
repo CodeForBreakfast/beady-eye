@@ -21,7 +21,7 @@ figure nobody can retire.
 
 ## The problem
 
-Work is tracked in [beads](https://github.com/steveyegge/beads) and done by
+Work is tracked in [beads](https://github.com/gastownhall/beads) and done by
 coding agents running in terminal panes. Two systems hold the truth and neither
 holds all of it:
 
@@ -1585,8 +1585,9 @@ sequence that is not an SGR is dropped whole, and an SGR parameter the fold
 does not know is skipped rather than refused. The rows arrive wrapped at the
 pane's own width, so the band shows a clipped view of a wider pane, each row
 cut with `…` where it runs past the band; there is no reflow, because a pane's
-screen is a rectangle at its own geometry. What is dimmed is what `bdi` says
-in the band, which is the whole of what tells its words from the pane's.
+screen is a rectangle at its own geometry. What `bdi` says in the band is
+toned apart from what the pane says, which is the whole of what tells its words
+from the pane's; which tone that is depends on the reader's background, below.
 
 The pane is read on the band's own clock and not on the trackers'. herdr
 answers a read in a few milliseconds, and no herdr event carries a pane's
@@ -1636,6 +1637,60 @@ work there as they do on any other.
 
 The band yields its rows before the forest yields any: on a short screen the
 forest is the thing this tool exists to show.
+
+### The reader says what their background is
+
+`bdi` cannot see the reader's background and does not ask. A `[theme]` section
+carries it — `background = "dark"` or `"light"`, absent meaning dark. A value
+that is neither is refused rather than read as the default, because a typo
+answered silently is the failure the key exists to remove: the reader has said
+which background they are on and has nothing on screen to tell them they were
+not heard.
+
+```toml
+[theme]
+background = "light"
+```
+
+**One thing on the screen reads it, and that is the band's own voice.** Every
+other tone `bdi` draws is the terminal's own foreground, one of its sixteen
+slots, or one of `bd`'s absolute literals. The reader's theme resolves the first
+two against whatever background it has; the third is fixed on purpose, so that a
+status is the colour in `bdi` that it is in `bd`. None of the three has a light
+form to choose. The band's voice is the one treatment `bdi` composes itself, and
+the terminal resolves it against the background rather than against the palette:
+dim over the default foreground is `GIT_COLOR_FAINT_DEFAULT`'s composition, and
+the terminals that implement dim by scaling the foreground toward black leave it
+*darker* than plain text on a light background, so the one distinction the band
+rests on runs backwards. A dark background is answered with the attribute, a
+light one at colour 8.
+
+**Two costs a reader should be told rather than left to find.** A light
+background with `NO_COLOR` set leaves the band no tone at all, because the
+channel that survives colour being off is the channel a light background
+inverts; there the rule and which of the band's states it is in are what is
+left. And a light reader who never sets the key gets the dark palette, and so
+gets the inverted band — which is the price of not detecting, and is why the
+default is documented as a guess rather than presented as a reading of the
+terminal.
+
+**The key is read once, when the screen opens.** A config edit that changes it
+is accepted and reaches the collector, so the projects drawn follow it, but the
+band goes on drawing against the background the run started with until `bdi` is
+restarted. What a re-read reaches is the collector; what it does not reach is
+the screen. `[tui]` shows both sides of that split: `refresh_seconds` is read
+again whenever the projects are armed, so a new interval takes at once, while
+`unanswered_after_seconds` and `tail_refresh_millis` are handed over once at
+startup and hold their first value for the run.
+
+**Why the reader says rather than `bdi` asking.** A terminal query degrades to a
+wait or to a confident wrong answer, and a wrong query answer is intermittent —
+right in one terminal and wrong in another, right outside a multiplexer and
+wrong inside it — so nobody can see what is producing it. A declaration is wrong
+the same way on every terminal from the first frame, which is what makes it
+something the reader notices and one documented line fixes for good.
+`docs/visual-language.md` §*4* carries the evidence, including what two years of
+detection cost delta.
 
 ### The bead
 

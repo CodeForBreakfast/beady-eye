@@ -17,6 +17,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
+use crate::config::Background;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
@@ -618,6 +619,10 @@ impl Shown {
 pub(super) struct Screen {
     terminal: DefaultTerminal,
     shown: Shown,
+    /// The background this terminal draws on, as the reader declared it.
+    /// Held beside the terminal rather than with what the run has read,
+    /// because that is what it is a fact about.
+    background: Background,
 }
 
 impl Screen {
@@ -626,12 +631,14 @@ impl Screen {
         panes: Box<dyn Panes>,
         at_startup: Vec<Notice>,
         tail_every: Duration,
+        background: Background,
     ) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
             terminal,
+            background,
             shown: Shown::of(
                 snapshot,
                 panes,
@@ -676,7 +683,7 @@ impl Screen {
 fn paint(
     frame: &mut Frame,
     forest: &mut Forest,
-    tail: &Tail,
+    tail: draw::Band<'_>,
     over: Over<'_>,
     foot: draw::Foot,
     collecting: &[Awaited],
@@ -816,8 +823,12 @@ impl View for Screen {
             copied: copied.as_deref(),
             keys: &key_row(),
         };
+        let band = draw::Band {
+            tail,
+            background: self.background,
+        };
         self.terminal
-            .draw(|frame| paint(frame, forest, tail, over, foot, collecting, now))?;
+            .draw(|frame| paint(frame, forest, band, over, foot, collecting, now))?;
         Ok(())
     }
 }
@@ -1191,7 +1202,18 @@ mod tests {
             keys: &keys,
         };
         Painted::drawn_by(width, height, |frame| {
-            paint(frame, forest, tail, over, foot, collecting, an_instant());
+            paint(
+                frame,
+                forest,
+                draw::Band {
+                    tail,
+                    background: Background::Dark,
+                },
+                over,
+                foot,
+                collecting,
+                an_instant(),
+            );
         })
     }
 
