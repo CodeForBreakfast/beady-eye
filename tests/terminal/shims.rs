@@ -19,6 +19,12 @@ use std::time::{Duration, Instant};
 /// written down.
 const SHIMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/shims");
 
+/// The shim that shadows `named`, for a test that runs one directly rather
+/// than through `bdi`.
+pub fn shim(named: &str) -> PathBuf {
+    Path::new(SHIMS).join(named)
+}
+
 /// A `bd` that answers for the beads a test wrote down, or as it always did
 /// where a test wrote none, until it is told to hang — and then holds every
 /// call until it is dropped.
@@ -194,13 +200,17 @@ impl ShimmedTracker {
     }
 }
 
-/// The shims ahead of the real programs, so they shadow them and hand on to
-/// them — bar `direnv`, which the suite runs without. All three live in the
-/// one directory, so all three are shadowed together whichever of them a
-/// test came for.
+/// The shims ahead of the real programs, so they shadow them. All three live
+/// in the one directory, so all three are shadowed together whichever of them
+/// a test came for.
+///
+/// `bd` is the only one that hands a call on to the program it shadows;
+/// `herdr` and `direnv` refuse what they have no answer for. The herdr a
+/// hand-on would reach is the one holding the panes of whoever is running the
+/// suite, and `agent focus` moves one of them.
 ///
 /// It prepends, so nothing here takes a program off `PATH`: the real binary
-/// is still behind the shim, which is what lets a shim hand on to it. A test
+/// is still behind the shim, which is what lets `bd` hand on to it. A test
 /// asserting what `bdi` does with a program **absent** cannot use this, and
 /// cannot tell that it did not: on a machine that has the program it would be
 /// testing the shim, and on one that does not it would pass without having
@@ -240,6 +250,31 @@ pub fn shims_first_with_nothing_called(absent: &str, beside: &Path) -> (String, 
     (
         "PATH".to_string(),
         format!("{}:{}", ours.display(), elsewhere.join(":")),
+    )
+}
+
+/// The shims first, and `stands_in` immediately behind them, so a program
+/// there is what a call handed on reaches.
+///
+/// A test asserting that a shim did **not** hand a call on cannot leave the
+/// real program where the handing on would land. The real `herdr` answers for
+/// the session the reader of this suite is sitting in, so a test that got it
+/// wrong would demonstrate the hazard by causing it. This puts a program the
+/// test owns there instead, which makes handing on something a test can watch
+/// happen rather than something it has to argue cannot.
+///
+/// Ordering is the whole of it, and that is why nothing is dropped here.
+/// `shadowed` takes the first match outside the shim directory, so a stand-in
+/// ahead of everything inherited wins whatever else is installed. The helper
+/// above drops directories because its subject is a program being **absent**,
+/// which order cannot express; dropping for precedence would take every other
+/// program in those directories with it — `dirname`, which `shadowed` itself
+/// runs, on a machine that keeps `herdr` in a shared `bin`.
+pub fn shims_first_over_a_stand_in(stands_in: &Path) -> (String, String) {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    (
+        "PATH".to_string(),
+        format!("{SHIMS}:{}:{inherited}", stands_in.display()),
     )
 }
 
@@ -473,7 +508,7 @@ impl Drop for ShimmedHerdr {
 /// `/bin/sh` and no `/usr/bin/env`, from a failure that said only that
 /// nothing was held.
 fn shim_by_hand(named: &str) -> String {
-    match std::process::Command::new(format!("{SHIMS}/{named}"))
+    match std::process::Command::new(shim(named))
         .arg("--version")
         .output()
     {

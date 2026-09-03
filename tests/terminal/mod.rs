@@ -184,11 +184,17 @@ fn die_with(_spawned_by: u32) -> std::io::Result<()> {
 /// a test about `bd` needs: nothing else is run before `bd` is reached, on
 /// this machine or on one with no direnv.
 ///
-/// What is drawn is still whatever the machine has to say — `bdi` asks herdr
-/// for the live agents, and on a machine running one it answers. Nothing here
-/// asserts on any of it. These tests read escape sequences, so a frame full of
-/// somebody's real panes and a frame saying there is no herdr are the same
-/// frame to them.
+/// What is drawn is still whatever the machine has to say, where a test gives
+/// `bdi` no `PATH` of its own: `bdi` asks herdr for the live agents by a
+/// `PATH` lookup, and on a machine running one it answers with that reader's
+/// own panes. Nothing here asserts on any of it. These tests read escape
+/// sequences, so a frame full of somebody's real panes and a frame saying
+/// there is no herdr are the same frame to them.
+///
+/// A test that puts the shims on `PATH` no longer reaches that herdr: the
+/// shim refuses a call it has no answer for rather than handing it on. What
+/// is left is the run with no `PATH` at all, which is a read and never a
+/// focus.
 pub fn a_home_naming_one_project(named: &str) -> PathBuf {
     a_home_naming_one_project_settled(named, "")
 }

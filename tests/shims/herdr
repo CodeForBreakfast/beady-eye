@@ -11,15 +11,15 @@
 # subcommand, as herdr takes it, and the name is what picks the answer below.
 #
 #   BDI_SHIM_HERDR_SESSIONS     file holding what `session list --json` answers
-#                               with. Unset, the list goes to the herdr this
-#                               shadows.
+#                               with. Unset, the list is refused.
 #   BDI_SHIM_HERDR_AGENTS       directory holding what `agent list` answers
 #                               with, one file per session, named
-#                               `<session>.json`. Unset, the list goes to the
-#                               herdr this shadows; set and holding no file
-#                               for the session asked, the list fails as a
-#                               session that will not answer does.
+#                               `<session>.json`. Unset, the list is refused;
+#                               set and holding no file for the session asked,
+#                               the list fails as a session that will not
+#                               answer does.
 #   BDI_SHIM_HERDR_VISIBLE      file holding what `agent read` answers with.
+#                               Unset, the read is refused.
 #   BDI_SHIM_HERDR_HANGS_WHILE  path to the flag. While it is there, every
 #                               `agent read` waits for it to go away.
 #   BDI_SHIM_HERDR_HOLDING      path this writes while it is holding a read, so
@@ -39,7 +39,9 @@
 #                               stopped. A delay is not a hold: nothing can
 #                               wait for one to have started.
 #
-# Unset, it is the herdr it shadows.
+# A call this has not been given an answer for is refused, whether the
+# subcommand is one it knows or not. It never reaches the herdr it shadows:
+# that one holds the reader's own panes.
 #
 # Plain `sh`, and POSIX, for the reason the bd shim beside this one gives.
 set -u
@@ -86,7 +88,17 @@ if [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
   fi
 fi
 
+# Anything not answered above is refused rather than handed to the herdr this
+# shadows. That herdr answers for the session whoever is running the suite is
+# sitting in, and `agent focus` moves a pane in it — so handing on is a write
+# to a real workspace from a suite that goes green either way. The machine
+# that has no herdr is the machine `nix flake check` runs on, which is why
+# passing calls through read as safe: the safety was present where nothing
+# could go wrong and absent where everything could. 127 and a line on stderr
+# is what a machine with no herdr already got, so both now fail alike.
+asked=$*
 if [ -n "$SESSION" ]; then
-  exec "$(dirname "$0")/shadowed" herdr --session "$SESSION" "$@"
+  asked="--session $SESSION $*"
 fi
-exec "$(dirname "$0")/shadowed" herdr "$@"
+printf 'herdr: the shim was asked "%s", which it has not learned to answer and will not hand on to the herdr it shadows. Teach it in tests/shims/herdr.\n' "$asked" >&2
+exit 127
