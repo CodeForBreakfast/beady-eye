@@ -39,6 +39,14 @@ const STAFFED: Color = Color::Reset;
 /// terminal, not `bd`'s palette.
 const UNSTAFFED: Color = Color::DarkGray;
 
+/// The page under the bead window's head: its facts, its prose and its
+/// related rows. The rung directly under the terminal's default, which is
+/// where the forest draws a row nobody is on, so the few things the window
+/// holds at the default — the title, a heading, an arrow — read as emphasis
+/// rather than as the page. Below it `DIM` keeps meaning finished, and a
+/// closed related row falls to it as a finished row of the forest does.
+pub(crate) const PAGE: Color = UNSTAFFED;
+
 /// How live a row is, which is the one thing about a bead `bd list` has no
 /// way to know — and so the one this scale is spent on.
 ///

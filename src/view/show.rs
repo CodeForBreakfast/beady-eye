@@ -10,7 +10,7 @@ use ratatui::Frame;
 use crate::model::edges::Related;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
-use crate::view::draw::tone::{fg, status_style, DIM, LIVE};
+use crate::view::draw::tone::{fg, status_style, DIM, LIVE, PAGE};
 use crate::view::fitted::{indent, Fitted};
 use crate::view::forest::Forest;
 use crate::view::markdown;
@@ -22,6 +22,11 @@ use crate::view::Motion;
 /// 1.2.2's output. Literal rather than named for the reason `tone.rs`'s
 /// are: `bd` sends a 24-bit value that does not move with the theme.
 const ID: Color = Color::Rgb(89, 194, 255);
+
+/// The terminal's own foreground, held under the page's tone by the few
+/// things meant to stand out from a page of text: a heading, and an arrow
+/// that says the edge as the forest's box-drawing says the shape.
+const STANDS_OUT: Style = Style::new().fg(Color::Reset);
 
 /// The section names `bd show` prints, verbatim, in the order it prints
 /// them. Terminology comes from beads, and a heading is terminology.
@@ -184,7 +189,7 @@ pub fn said(node: &Node, width: usize) -> Vec<Vec<Span<'static>>> {
         related
             .iter()
             .map(|related| {
-                let mut row = vec![Span::raw(format!("{arrow} "))];
+                let mut row = vec![Span::styled(format!("{arrow} "), STANDS_OUT)];
                 row.extend(related_row(related));
                 indented(row)
             })
@@ -204,12 +209,25 @@ pub fn said(node: &Node, width: usize) -> Vec<Vec<Span<'static>>> {
         rows.push(Vec::new());
         rows.push(vec![Span::styled(
             heading,
-            Style::new().add_modifier(Modifier::BOLD),
+            STANDS_OUT.add_modifier(Modifier::BOLD),
         )]);
         rows.extend(body);
     }
 
     rows
+}
+
+/// What a row of the window is drawn in under the spans that name no colour
+/// of their own. The head — the bead's glyph, id and title — is the
+/// terminal's own, as the row the reader came for is in the forest; the page
+/// beneath it sits one rung below, so what the page holds at the default
+/// reads as emphasis rather than as the page.
+fn tone_of(row: usize) -> Style {
+    if row == 0 {
+        STANDS_OUT
+    } else {
+        Style::new().fg(PAGE)
+    }
 }
 
 /// One row indented under a heading.
@@ -285,7 +303,7 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show) {
         .enumerate()
     {
         frame.render_widget(
-            Fitted::new(row, Vec::new(), Vec::new()),
+            Fitted::new(row, Vec::new(), Vec::new()).toned(tone_of(view.from + n)),
             Rect {
                 y: inner.y + n as u16,
                 ..inner
@@ -300,7 +318,7 @@ mod tests {
     use crate::model::edges::Related;
     use crate::model::join::{AgentRef, JoinSource};
     use crate::model::types::{Edge, PaneStatus, Status};
-    use crate::view::draw::tone::{status_colour, DIM, LIVE};
+    use crate::view::draw::tone::{status_colour, DIM, LIVE, PAGE};
     use crate::view::painted::{Painted, Run};
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
@@ -737,10 +755,11 @@ mod tests {
         }
     }
 
-    /// `bd` sends no escape for an open bead, and the window has no
-    /// brightness scale of its own, so an open glyph is the terminal's own.
+    /// `bd` sends no escape for an open bead, so the glyph inherits its row's
+    /// brightness as the forest's does — and the head of the page is the
+    /// terminal's own.
     #[test]
-    fn an_open_glyph_is_the_terminals_own() {
+    fn an_open_glyph_at_the_head_of_the_page_is_the_terminals_own() {
         let open = Node {
             status: Status::Open,
             ..a_bead()
@@ -785,10 +804,10 @@ mod tests {
         );
     }
 
-    /// `bd show` says the status word in the status colour and leaves the
-    /// priority, the type and the owner in the terminal's own.
+    /// `bd show` says the status word in the status colour; the priority,
+    /// the type and the owner are the page's, one rung below the head.
     #[test]
-    fn the_facts_row_says_the_status_in_its_colour_and_the_rest_plain() {
+    fn the_facts_row_says_the_status_in_its_colour_and_the_rest_on_the_page() {
         for status in every_coloured_status() {
             let bead = Node {
                 status: status.clone(),
@@ -804,14 +823,15 @@ mod tests {
             );
             assert_eq!(
                 run_saying(&facts, "P2 · task · kim").style.fg,
-                Some(Color::Reset),
+                Some(PAGE),
                 "{status:?}: {facts:?}"
             );
         }
     }
 
     /// A related bead's glyph is the same glyph the forest and the head of
-    /// the window paint, and it takes the same colour.
+    /// the window paint, and it takes the same colour — or, for an open one,
+    /// the brightness of the row it sits on, which on the page is the page's.
     #[test]
     fn a_related_beads_glyph_is_painted_the_colour_of_its_status() {
         let painted = painted(&a_bead(), 44, 22);
@@ -823,16 +843,12 @@ mod tests {
             status_colour(&Status::Closed),
             "{depends_on:?}"
         );
-        assert_eq!(
-            run_saying(&blocks, "○").style.fg,
-            Some(Color::Reset),
-            "{blocks:?}"
-        );
+        assert_eq!(run_saying(&blocks, "○").style.fg, Some(PAGE), "{blocks:?}");
     }
 
     /// `bd show` dims a closed related bead's id and title to the grey it
     /// dims a finished row to, and leaves the arrow alone; an open one is
-    /// the terminal's own.
+    /// the page's, as a row nobody is on is the forest's middle rung.
     #[test]
     fn a_closed_related_bead_is_dimmed_as_bd_show_dims_one() {
         let painted = painted(&a_bead(), 44, 22);
@@ -853,7 +869,7 @@ mod tests {
         );
         assert_eq!(
             run_saying(&blocks, "orb-7.4  file the licence").style.fg,
-            Some(Color::Reset),
+            Some(PAGE),
             "{blocks:?}"
         );
     }
@@ -903,5 +919,86 @@ mod tests {
                 "{status:?} lost its glyph on a related row: {rows:#?}"
             );
         }
+    }
+
+    /// White is the exception. Every non-blank run the window draws on the
+    /// terminal's own foreground — or on `White` — is one of the few things
+    /// meant to stand out from a page of text: the way back, the bead's own
+    /// title, a heading, an arrow. A span dropped back to `Span::raw` lands
+    /// on this list and turns it red.
+    #[test]
+    fn what_stands_out_from_the_page_is_the_way_back_the_title_the_headings_and_the_arrows() {
+        let bead = a_bead();
+        let painted = painted(&bead, 44, 22);
+
+        let own: Vec<String> = (0..22)
+            .flat_map(|y| painted.row(y))
+            .filter(|run| matches!(run.style.fg, Some(Color::Reset | Color::White)))
+            .map(|run| {
+                run.said
+                    .replace(['│', '─', '┌', '┐', '└', '┘'], "")
+                    .trim()
+                    .to_string()
+            })
+            .filter(|said| !said.is_empty())
+            .collect();
+
+        assert_eq!(
+            own,
+            vec![
+                phrase::way_back_from_bead(&bead.id, false),
+                bead.title.clone(),
+                DESCRIPTION.to_string(),
+                NOTES.to_string(),
+                PARENT.to_string(),
+                UP.to_string(),
+                DEPENDS_ON.to_string(),
+                OUT.to_string(),
+                BLOCKS.to_string(),
+                BACK.to_string(),
+            ],
+            "{painted:?}"
+        );
+    }
+
+    /// The page under the head sits one rung below the terminal's own, at
+    /// the tone the forest draws a row nobody is on: the prose, and a related
+    /// bead's id and title.
+    #[test]
+    fn the_page_is_drawn_at_the_tone_the_forest_draws_a_row_nobody_is_on() {
+        let painted = painted(&a_bead(), 44, 22);
+
+        for (y, said) in [
+            (6, "Point it at the new bird."),
+            (11, "The crane is booked for Tuesday."),
+            (14, "orb-7  lift the ground station"),
+        ] {
+            let run = run_saying(&painted.row(y), said);
+            assert_eq!(run.style.fg, Some(Color::DarkGray), "{said}: {run:?}");
+        }
+    }
+
+    /// Emphasis in the prose is by weight, not by white: a bold word keeps
+    /// the page's tone under its modifier, and a code span keeps the colour
+    /// markdown gives it.
+    #[test]
+    fn emphasis_in_the_prose_is_by_weight_and_a_code_span_by_its_own_colour() {
+        let bead = Node {
+            description: "Point it at the **new** bird, `now`.\n\nThe old one is gone.".to_string(),
+            ..a_bead()
+        };
+        let prose = painted(&bead, 44, 22).row(6);
+
+        let bold = run_saying(&prose, "new");
+        assert!(
+            bold.style.add_modifier.contains(Modifier::BOLD),
+            "{prose:?}"
+        );
+        assert_eq!(bold.style.fg, Some(PAGE), "{prose:?}");
+        assert_eq!(
+            run_saying(&prose, "now").style.fg,
+            Some(Color::Cyan),
+            "{prose:?}"
+        );
     }
 }
