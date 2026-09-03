@@ -91,7 +91,7 @@ somebody reads the caller for another reason, which is not something you can
 schedule — so when you change a caller, check what the arms below its early
 return are still reached by.
 
-Two things a mutation run will meet, so a survivor is read as what it is:
+Three things a mutation run will meet here, so the tally is read as what it is:
 
 `impl View for Screen` in `src/tui/` is reached by the pty harness under
 `tests/terminal/` and by nothing else, so a survivor there is a path no pty
@@ -143,6 +143,35 @@ the test process grows to whatever memory cap the run is under in seconds and
 is killed there, which scores it caught. Run cargo-mutants under a cap that
 kills the one process and lets the run carry on, or that kill is the end of
 the run.
+
+An `unviable` is a fourth answer, and the best hidden of the four, because a
+run carrying them reads as a clean pass. cargo-mutants replaces a function's
+body with a value of its return type, and where the only value it can reach is
+`Default::default()` on a type that has no `Default`, the mutant does not
+compile: it is scored unviable and the function is never tested at all. Nothing
+in the summary line says so, because the viable mutants elsewhere in the run
+were all caught. Measured on the change that landed as `068213c` (#75), whose
+whole subject was `view::tail`'s three-state match — 144 mutants, 90 caught, 54
+unviable, zero missed and zero timeout, with `src/view/tail.rs` contributing
+exactly two of them, one site listed twice, both `replace tail -> Tail with
+Default::default()` and both unviable because `Tail` has no `Default`. The
+match the change existed to build was scored by nothing while the tally read
+zero missed.
+
+So read this one off the file list rather than the summary line, and read it as
+a subtraction rather than a tally: a file with unviable mutants is ordinary,
+and a file with *only* unviable mutants is the hole. Strip the line and column
+from the paths in `mutants.out`'s `unviable.txt`, subtract the paths in
+`caught.txt`, `missed.txt` and `timeout.txt`, and what survives is every file
+the run scored nothing in.
+
+It is the vacuous run arriving from the other direction, which is why a reader
+who knows that one will not expect this one. A diff with no mutable production
+line — documentation, or tests alone — makes cargo-mutants print *No mutants to
+filter* and exit 0, the same 0 a run that caught everything exits: it scores
+nothing and says so, and the count is what tells you. Here it scores plenty,
+and the nothing is confined to the file you came to ask about; the file list is
+what tells you, and no count carries it.
 
 ## PR policy
 
