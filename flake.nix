@@ -135,6 +135,49 @@
           exec nix flake check -L "$@"
         '';
 
+        # GitHub records `cancelled` for a job its own `timeout-minutes` killed,
+        # and there is nothing else to read it off: the run, the job and the log
+        # all say exactly what they say for a run somebody cancelled by hand.
+        # The check-run annotation is the only place the difference is written
+        # down, so this is what tells the two apart. It prints the limit and
+        # exits non-zero when the annotations name none.
+        limitTheJobExceeded = ''
+          limit_the_job_exceeded() {
+            ${pkgs.gnugrep}/bin/grep -m1 'exceeded the maximum execution time'
+          }
+        '';
+
+        # The sentence above is GitHub's, not ours, so nothing in this tree
+        # fails when it changes. This is what says the pattern still matches the
+        # one that was measured, against both annotation sets from the push that
+        # measured it.
+        limitTheJobExceededTest = pkgs.runCommand "limit-the-job-exceeded-test" { } ''
+          set -u
+          ${limitTheJobExceeded}
+
+          timed_out='The job has exceeded the maximum execution time of 1m0s
+          The operation was canceled.'
+          by_hand='The run was canceled by @GraemeF.
+          The operation was canceled.'
+
+          found="$(printf '%s\n' "$timed_out" | limit_the_job_exceeded)" || found=""
+          case "$found" in
+            *'maximum execution time of 1m0s'*) ;;
+            *)
+              echo "FAIL: the timeout annotation was not recognised, or its limit"
+              echo "was not what came back. Got: '$found'"
+              exit 1
+              ;;
+          esac
+
+          if printf '%s\n' "$by_hand" | limit_the_job_exceeded; then
+            echo "FAIL: a run cancelled by hand was read as one that timed out."
+            exit 1
+          fi
+
+          touch $out
+        '';
+
         # `gh run list` answers with an empty list for four different reasons
         # and only one of them means "wait", so this has to tell them apart —
         # `read-ci-verdict --help` says how.
@@ -150,6 +193,8 @@
           gh=${pkgs.gh}/bin/gh
           jq=${pkgs.jq}/bin/jq
           grep=${pkgs.gnugrep}/bin/grep
+
+          ${limitTheJobExceeded}
 
           case "''${1:-}" in
             -h|--help)
@@ -180,8 +225,19 @@
           A cancelled run is neither green nor red: the commit has no verdict.
           On a pull request it is the branch moving: a push cancels the run on
           the head it replaced, and the verdict lives on the new head, which
-          this names. A run cancelled with its head still in place was
-          cancelled by hand and wants starting again.
+          this names.
+
+          A run cancelled with its head still in place is one of two things,
+          and GitHub records them identically — same run conclusion, same job
+          conclusion, and a log ending "The operation was canceled." either
+          way. Only the check-run annotation says which, so this reads that:
+
+            ran out of time     ci.yml caps the job at timeout-minutes, and a
+                                job that reaches the cap is killed and recorded
+                                cancelled. Starting it again reproduces
+                                whatever hung and spends the cap over again.
+            cancelled by hand   Nothing else did it, so it wants starting
+                                again.
           USAGE
               exit 0
               ;;
@@ -318,6 +374,53 @@
                 echo "  ''${moved#* }"
                 exit 1
               fi
+
+              # Nobody cancelled a run its own timeout killed, so "start it
+              # again" is the one instruction that cannot help: the rerun hangs
+              # the same way and spends the timeout over again.
+              #
+              # Every cancelled job of every cancelled run is asked, because one
+              # timed-out job among several cancelled ones is still a commit
+              # whose rerun will hang, and asking only the first reports the
+              # timeout or misses it depending on which order gh answered in.
+              #
+              # A gh that fails answers with nothing, which is what a run
+              # cancelled by hand also answers with, so a question that could
+              # not be asked would come out as "start it again". Each call says
+              # so instead.
+              github_would_not_say() {
+                echo "NO VERDICT — a run for $subject was cancelled, and GitHub would"
+                echo "not say whether its own timeout did it. That reads exactly like a"
+                echo "cancellation by hand, so this is not telling you to start it again."
+                echo "Ask again."
+                exit 1
+              }
+
+              limit=""
+              for run in $(printf '%s' "$latest" |
+                  $jq -r '.[] | select(.conclusion == "cancelled") | .databaseId'); do
+                checks="$($gh api "repos/{owner}/{repo}/actions/runs/$run/jobs" \
+                    --jq '.jobs[] | select(.conclusion == "cancelled") | .check_run_url')" ||
+                  github_would_not_say
+                for check in $checks; do
+                  messages="$($gh api "$check/annotations" --jq '.[].message')" ||
+                    github_would_not_say
+                  if [ -z "$limit" ]; then
+                    limit="$(printf '%s\n' "$messages" | limit_the_job_exceeded)" || limit=""
+                  fi
+                done
+              done
+
+              if [ -n "$limit" ]; then
+                echo "NO VERDICT — a run for $subject ran itself out of time:"
+                echo "  $limit"
+                echo "Nothing cancelled it and starting it again reproduces whatever"
+                echo "hung. The log names it: libtest prints \"has been running for"
+                echo "over 60 seconds\" for a test that never returned, and the job"
+                echo "log says only that the operation was canceled."
+                exit 1
+              fi
+
               echo "NO VERDICT — a run for $subject was cancelled with $branch still"
               echo "heading there, so nothing superseded it. Start it again."
               exit 1
@@ -1032,6 +1135,7 @@
           # build without them sees the narrow surface. See src/lib.rs.
           dead-code = checkOf "dead-code" artifacts.dev [ pkgs.clippy ] "cargo clippy -- -D warnings";
           fmt = checkOf "fmt" null [ pkgs.rustfmt ] "cargo fmt --check";
+          limit-the-job-exceeded-test = limitTheJobExceededTest;
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;
