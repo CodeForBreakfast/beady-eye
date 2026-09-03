@@ -70,8 +70,13 @@ pub(crate) const QUIET: Style = Style::new().fg(Color::DarkGray);
 
 /// In the tail band only: these are `bdi`'s words and not the pane's.
 /// `design.md`'s account of the band makes this the whole of what tells the
-/// two apart, so it holds `QUIET`'s value and is not it.
-pub(crate) const VOICE: Style = Style::new().fg(Color::DarkGray);
+/// two apart, and a reader with `NO_COLOR` set is sent every attribute and no
+/// colour — so the one place a tone stands alone is the one place it cannot
+/// be a colour. Dim over the terminal's own foreground rather than over a
+/// grey, because every mechanism a terminal has for dim moves a colour toward
+/// the background, and colour 8 is already as near it as a readable slot
+/// gets.
+pub(crate) const VOICE: Style = Style::new().fg(Color::Reset).add_modifier(Modifier::DIM);
 
 /// The page under the bead window's head: its facts, its prose and its
 /// related rows. The rung directly under the terminal's default, which is

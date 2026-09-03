@@ -111,8 +111,9 @@ mod tests {
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
+    use ratatui::style::Style;
 
-    use crate::view::painted::Painted;
+    use crate::view::painted::{Painted, Run};
     use crate::view::phrase;
 
     /// The tail drawn into a band that starts partway down the screen, which
@@ -198,6 +199,35 @@ mod tests {
         );
     }
 
+    /// Wide enough for the longest phrase the band says, which a narrower one
+    /// cuts an ellipsis into and so splits the run holding it.
+    const BAND: u16 = 60;
+
+    /// What is left of a style when the reader has `NO_COLOR` set: crossterm
+    /// writes nothing at all for `SetColors` and has no such guard on
+    /// `SetAttribute`, so the modifiers arrive and no colour does.
+    fn as_a_reader_with_no_colour_sees_it(style: Style) -> Style {
+        Style::new()
+            .add_modifier(style.add_modifier)
+            .remove_modifier(style.sub_modifier)
+    }
+
+    /// The style the words are drawn in, from the row they are on.
+    fn drawn_style(row: &[Run], words: &str) -> Style {
+        row.iter()
+            .find(|run| run.said.contains(words))
+            .unwrap_or_else(|| panic!("no run saying {words:?} in {row:?}"))
+            .style
+    }
+
+    /// A pane line the pane chose nothing for.
+    fn a_plain_pane_line(said: &str) -> Style {
+        drawn_style(
+            &tail_frame(&tailing("w:p1", &[said]), BAND, 2, 0).row(1),
+            said,
+        )
+    }
+
     /// What `bdi` says in the band is dimmer than what the pane says, which
     /// is the whole of what stops a reader taking `bdi`'s own words for the
     /// pane's. Nothing in the symbols says which of the two a row is.
@@ -207,7 +237,8 @@ mod tests {
         assert!(
             waiting.iter().any(|run| {
                 run.said.contains(phrase::pane_being_read())
-                    && run.style.fg == Some(Color::DarkGray)
+                    && run.style.fg == Some(Color::Reset)
+                    && run.style.add_modifier.contains(Modifier::DIM)
             }),
             "the row saying the pane is being read: {waiting:?}"
         );
@@ -219,6 +250,40 @@ mod tests {
             }),
             "the pane's own line: {said:?}"
         );
+    }
+
+    /// `design.md:1570` makes the band the one place on the screen where
+    /// nothing but the tone says whose words a row is — none of the glyphs
+    /// and symbols carrying that distinction everywhere else are in it. So
+    /// the tone has to be a channel a reader with `NO_COLOR` set still has,
+    /// and both sides of the comparison are read with the colour taken off.
+    ///
+    /// The pane is compared plain because that is the only line it can draw
+    /// that `bdi` has to stand apart from: one in the pane's own colours is
+    /// already told from `bdi` by those, and one the pane drew dim is the
+    /// pane choosing `bdi`'s tone, which no band can hold against it.
+    #[test]
+    fn what_tells_bdi_from_the_pane_is_not_carried_by_colour() {
+        let pane = a_plain_pane_line("rebuilt .#thinkpad");
+
+        for (voice, said) in [
+            (
+                Tail::Reading { pane: key("w:p1") },
+                phrase::pane_being_read(),
+            ),
+            (
+                Tail::Silent(phrase::no_bead_to_tail()),
+                phrase::no_bead_to_tail(),
+            ),
+        ] {
+            let spoken = drawn_style(&tail_frame(&voice, BAND, 2, 0).row(1), said);
+
+            assert_ne!(
+                as_a_reader_with_no_colour_sees_it(spoken),
+                as_a_reader_with_no_colour_sees_it(pane),
+                "with no colour, {said:?} is drawn as the pane's own line is"
+            );
+        }
     }
 
     /// What herdr wrote for a real pane on this machine, read the way the
