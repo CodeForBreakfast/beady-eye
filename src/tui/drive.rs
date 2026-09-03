@@ -6,6 +6,7 @@
 //! terminal, a forest or a tail, and nothing that produces an event names
 //! the loop.
 
+use std::collections::BTreeMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
@@ -13,12 +14,12 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::{Awaited, Wanted};
+use crate::app::{Asked, Awaited, Wanted};
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion};
 
-use super::armed::Armed;
+use super::armed::{Armed, Arming};
 use super::keys::action;
 use super::reload::{Reload, Reloaded};
 
@@ -264,9 +265,10 @@ fn wait(events: &Receiver<Event>, holds_for: Option<Duration>) -> Option<Waited>
 pub(super) fn drive(
     view: &mut dyn View,
     events: &Receiver<Event>,
-    ask: &Sender<Wanted>,
+    ask: &Sender<Asked>,
     mut outstanding: Outstanding,
     mut armed: Vec<Armed>,
+    arms: &Arming,
     mut reload: Option<Reload>,
 ) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
@@ -316,10 +318,15 @@ pub(super) fn drive(
         // A run reading a config file looks at it here; a run that found no
         // file to read has nothing to look at, and never will — the whole of
         // what it is working to came from the directory it was started in.
-        let reloaded = reload
-            .as_mut()
-            .map_or(Reloaded::Untouched, |reload| reload.checks(now));
-        let noticed = view.reloaded(reloaded);
+        let noticed = looked_at(
+            view,
+            reload.as_mut(),
+            &mut armed,
+            arms,
+            ask,
+            &mut outstanding,
+            now,
+        );
 
         if woken || told || noticed {
             drawn_at = now;
@@ -328,6 +335,81 @@ pub(super) fn drive(
     }
 
     Ok(())
+}
+
+/// Look at the config file where the run has one, and do what a config the
+/// reader has written asks of the rest of the run. Whether the screen changed
+/// for what the check found.
+///
+/// The file is read here, on the loop's own thread, and what a reload
+/// produces is what goes behind the collector's seam. The two are not the
+/// same cost and they are not the same wait: a check is a few kilobytes off
+/// the page cache and a handful of local `git` calls, once per edit, where
+/// the collector's queue is bounded only by a tracker that never answers.
+/// Put the check behind that seam and a reader who breaks their config while
+/// a tracker is hung is never told it will not load — which is the
+/// disappearance the notice exists to prevent. So the check stays where the
+/// reader's answer can be drawn on the next frame, and the collection it
+/// causes goes where every other collection already goes.
+///
+/// Three things follow a config the reader has written: the projects that
+/// poll become the ones it names, the collector is told to work to it, and
+/// every project is read under it. The last two are in that order because a
+/// collection carries no config with it — the collector reads under whatever
+/// it is working to when the read arrives — so a read that overtook the
+/// config would draw a whole screen read under the file the reader has just
+/// replaced. Nothing here arranges that: the channel is in order, and the
+/// read waits out its window behind the config already on it.
+fn looked_at(
+    view: &mut dyn View,
+    reload: Option<&mut Reload>,
+    armed: &mut Vec<Armed>,
+    arms: &Arming,
+    ask: &Sender<Asked>,
+    outstanding: &mut Outstanding,
+    now: DateTime<Utc>,
+) -> bool {
+    let Some(reload) = reload else {
+        return view.reloaded(Reloaded::Untouched);
+    };
+    let reloaded = reload.checks(now);
+    let noticed = view.reloaded(reloaded);
+    if reloaded != Reloaded::Fresh {
+        return noticed;
+    }
+    let written = reload.in_force();
+    *armed = still_armed(std::mem::take(armed), arms(written));
+    if ask
+        .send(Asked::Reloaded(Box::new(written.clone())))
+        .is_err()
+    {
+        return noticed;
+    }
+    let told = asked_for(view, outstanding, Wanted::Everything);
+    told || noticed
+}
+
+/// The projects that poll, as the config the reader has just written names
+/// them: one the file has gained polls, one it has lost stops asking, and one
+/// it still names polls as the file now says — `Armed::still_due` is where
+/// what the file settles and what its last read settled are told apart.
+///
+/// A project the file has gained is disarmed, exactly as every project is at
+/// startup: what arms it is the read this reload asks for coming back, and
+/// arming it here would ask a second time for what is already being
+/// collected.
+fn still_armed(standing: Vec<Armed>, named: Vec<Armed>) -> Vec<Armed> {
+    let mut standing: BTreeMap<String, Armed> = standing
+        .into_iter()
+        .map(|project| (project.project().to_string(), project))
+        .collect();
+    named
+        .into_iter()
+        .map(|named| match standing.remove(named.project()) {
+            Some(standing) => standing.still_due(named),
+            None => named,
+        })
+        .collect()
 }
 
 /// Ask for whatever the projects that arm themselves are now due to ask for.
@@ -701,7 +783,7 @@ impl Outstanding {
     /// One at a time, as it has always been: a collection is dozens of round
     /// trips per project and two at once would double what a tracker is
     /// asked without halving anything.
-    pub(super) fn sends(&mut self, ask: &Sender<Wanted>, now: DateTime<Utc>) {
+    pub(super) fn sends(&mut self, ask: &Sender<Asked>, now: DateTime<Utc>) {
         if self.sent {
             return;
         }
@@ -711,7 +793,7 @@ impl Outstanding {
         if now < next.asked_at + self.window {
             return;
         }
-        if ask.send(next.wanted.clone()).is_err() {
+        if ask.send(Asked::Read(next.wanted.clone())).is_err() {
             self.awaited.clear();
             return;
         }
@@ -839,6 +921,7 @@ impl Outstanding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
@@ -1076,6 +1159,43 @@ mod tests {
         None
     }
 
+    /// The reads that reached the collector, in order.
+    ///
+    /// Every test but the ones about a config the reader has written is
+    /// asking about these, and a run with no file to look at puts nothing
+    /// else on the channel — so a `Reloaded` reaching here is a loop that
+    /// told the collector about a config nobody wrote.
+    fn reads(asked: impl IntoIterator<Item = Asked>) -> Vec<Wanted> {
+        asked.into_iter().map(read).collect()
+    }
+
+    /// One of them.
+    fn read(asked: Asked) -> Wanted {
+        match asked {
+            Asked::Read(wanted) => wanted,
+            Asked::Reloaded(cfg) => {
+                panic!("nobody wrote a config, and the collector was sent {cfg:?}")
+            }
+        }
+    }
+
+    /// One poll per project the config names, at the interval these tests
+    /// wait out, and none for a project whose own key says it does not poll
+    /// — which is what a run makes of the config where the command line said
+    /// nothing about polling.
+    ///
+    /// A run with nothing to look at never asks for this; the tests about a
+    /// config the reader has written are the ones it answers.
+    fn polling_every_interval() -> Arming {
+        Box::new(|cfg: &Config| {
+            cfg.read()
+                .map(|project| {
+                    Armed::polling(project.name.clone(), project.poll.then_some(AN_INTERVAL))
+                })
+                .collect()
+        })
+    }
+
     fn waiting(events: Vec<Event>) -> Receiver<Event> {
         let (to, from) = mpsc::channel();
         for event in events {
@@ -1141,6 +1261,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1172,6 +1293,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1212,6 +1334,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1241,6 +1364,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1272,6 +1396,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1314,6 +1439,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1349,6 +1475,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1382,6 +1509,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1428,6 +1556,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1454,6 +1583,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1492,6 +1622,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1519,6 +1650,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1551,6 +1683,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1582,6 +1715,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1610,6 +1744,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1640,6 +1775,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1675,6 +1811,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1714,6 +1851,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1816,6 +1954,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1837,11 +1976,12 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
-        assert_eq!(asked.try_iter().collect::<Vec<_>>(), [Wanted::Everything]);
+        assert_eq!(reads(asked.try_iter()), [Wanted::Everything]);
         assert_eq!(
             view.applied,
             [Action::Move(Motion::NextRow)],
@@ -1865,6 +2005,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1910,6 +2051,7 @@ mod tests {
             &ask,
             gathering(A_LONG_WINDOW),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -1940,6 +2082,7 @@ mod tests {
             &ask,
             gathering(A_LONG_WINDOW),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2067,6 +2210,181 @@ mod tests {
         )
     }
 
+    const ATLAS_ALONE: &str = "[[projects]]\nname = \"atlas\"\npath = \"/srv/work/atlas\"\n";
+    const FERRY_ALONE: &str = "[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
+    const ATLAS_AND_FERRY: &str = "[[projects]]\nname = \"atlas\"\npath = \"/srv/work/atlas\"\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
+    const ATLAS_TOLD_INSTEAD: &str = "[[projects]]\nname = \"atlas\"\npath = \"/srv/work/atlas\"\npoll = false\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
+
+    fn a_config(text: &str) -> Config {
+        Config::from_toml(text).expect("the fixture parses")
+    }
+
+    /// A config file of this test's own, saying `written`, which `bdi` is
+    /// working to `in_force` and looks at every `AN_INTERVAL` from now.
+    ///
+    /// A real file and a real parse, unlike `a_config_looked_at_every`: what
+    /// these tests are about is the config a check produces reaching the rest
+    /// of the run, so the check has to produce one.
+    fn a_config_file_saying(named: &str, written: &str, in_force: &str) -> Reload {
+        let path =
+            std::env::temp_dir().join(format!("bdi-drive-{named}-{}.toml", std::process::id()));
+        std::fs::write(&path, written).expect("the config is ours to write");
+        Reload::watching(
+            path,
+            AN_INTERVAL,
+            a_config(in_force),
+            Box::new(Config::from_toml),
+            Utc::now(),
+        )
+    }
+
+    /// The collector is told about a config the reader has written, and told
+    /// before the collection that reads under it.
+    ///
+    /// Both halves matter and the order is the half that is easy to lose. A
+    /// collection carries no config with it — the collector reads under
+    /// whatever it is working to when the read reaches it — so a read that
+    /// overtook the config would be a whole screen of projects read under the
+    /// file the reader has just replaced, and the next thing to correct it
+    /// would be whatever asked next. Nothing here arranges that: the two go
+    /// down one channel in order, and the read waits out its window behind
+    /// the config that has already gone.
+    #[test]
+    fn a_config_the_reader_has_written_reaches_the_collector_before_the_read_under_it() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            &polling_every_interval(),
+            Some(a_config_file_saying("gained", ATLAS_AND_FERRY, ATLAS_ALONE)),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            asked.try_iter().collect::<Vec<_>>(),
+            [
+                Asked::Reloaded(Box::new(a_config(ATLAS_AND_FERRY))),
+                Asked::Read(Wanted::Everything)
+            ],
+            "the collector was handed the config the reader wrote, and then \
+             asked to read every project under it"
+        );
+    }
+
+    /// The whole sequence a config the reader has written sets off, driven
+    /// until the first project asks for itself: `armed` is what the run was
+    /// polling, `written` is what the reader has left in the file, and what
+    /// comes back is everything that reached the collector.
+    ///
+    /// It has to be the whole sequence rather than the set of polls. Nothing
+    /// the reload does arms a project — a project the file names is disarmed
+    /// exactly as every project is at startup — and what arms them is the
+    /// read the reload asked for coming back, so the answer to *which
+    /// projects poll* is one round trip past the edit.
+    fn until_a_project_asks_for_itself(
+        named: &str,
+        armed: Vec<Armed>,
+        in_force: &str,
+        written: &str,
+    ) -> Vec<Asked> {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let (send, events) = mpsc::channel();
+
+        let holding = thread::spawn(move || {
+            let mut reached = Vec::new();
+            while let Ok(one) = asked.recv_timeout(A_MOMENT) {
+                let arms_them = one == Asked::Read(Wanted::Everything);
+                let polled = matches!(one, Asked::Read(Wanted::Project(_)));
+                reached.push(one);
+                if arms_them {
+                    send.send(Event::Collected(Box::new(a_snapshot())))
+                        .expect("the loop's end of the channel is open");
+                }
+                if polled {
+                    break;
+                }
+            }
+            drop(send);
+            reached
+        });
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            armed,
+            &polling_every_interval(),
+            Some(a_config_file_saying(named, written, in_force)),
+        )
+        .expect("the loop runs");
+
+        holding.join().expect("the thread ran")
+    }
+
+    /// The projects that poll are the projects the config now names: the one
+    /// the file gained asks for itself, and the one it lost stops asking.
+    #[test]
+    fn the_projects_that_poll_are_the_ones_the_config_now_names() {
+        let reached = until_a_project_asks_for_itself(
+            "swapped",
+            vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            ATLAS_ALONE,
+            FERRY_ALONE,
+        );
+
+        assert_eq!(
+            reached.last(),
+            Some(&Asked::Read(ferry())),
+            "the project the config gained asked for itself once its read \
+             came back"
+        );
+        assert!(
+            !reached.contains(&Asked::Read(atlas())),
+            "and the project the config lost asked for nothing: {reached:?}"
+        );
+    }
+
+    /// And a project the reader has stopped polling stops polling, though the
+    /// file still names it and `bdi` goes on reading it.
+    ///
+    /// `poll` is one of the settings a project's own entry carries, and a
+    /// reader turning it off has said something about the run they are
+    /// looking at rather than about the next one: they have deployed
+    /// something that reports this project's changes and want to see whether
+    /// it is working. A poll that outlived the edit would be `bdi` quietly
+    /// covering for the very producer they are testing.
+    #[test]
+    fn a_project_the_reader_has_stopped_polling_asks_no_more() {
+        let reached = until_a_project_asks_for_itself(
+            "told-instead",
+            vec![
+                Armed::polling("atlas".to_string(), Some(AN_INTERVAL)),
+                Armed::polling("ferry".to_string(), Some(AN_INTERVAL)),
+            ],
+            ATLAS_AND_FERRY,
+            ATLAS_TOLD_INSTEAD,
+        );
+
+        assert_eq!(
+            reached.last(),
+            Some(&Asked::Read(ferry())),
+            "the project the edit left alone asked for itself"
+        );
+        assert!(
+            !reached.contains(&Asked::Read(atlas())),
+            "and the one it stopped polling asked for nothing, though it is \
+             still read: {reached:?}"
+        );
+    }
+
     /// When the band's interval is up the loop asks it to read its pane
     /// again, and not before: the band is what decides whether anything is
     /// due, so the loop asks on every wake and the first wake is the
@@ -2087,6 +2405,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2121,6 +2440,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2180,6 +2500,7 @@ mod tests {
             &ask,
             at_once(),
             vec![overdue],
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2220,11 +2541,12 @@ mod tests {
             &ask,
             started(),
             vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
-        holding.join().expect("the thread ran").ok()
+        holding.join().expect("the thread ran").ok().map(read)
     }
 
     /// The invariant the refresh path rests on, and neither half can see it
@@ -2320,12 +2642,13 @@ mod tests {
             &ask,
             started(),
             vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
         let (first, asked) = holding.join().expect("the thread ran");
-        let reached_the_collector: Vec<_> = first.into_iter().chain(asked.try_iter()).collect();
+        let reached_the_collector = reads(first.into_iter().chain(asked.try_iter()));
         let asked_at = *view.asked_at().first().expect("atlas asked once");
         let last_looked = *view.reread_at.last().expect("the loop went round");
         assert!(
@@ -2378,6 +2701,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2446,6 +2770,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2479,6 +2804,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2508,6 +2834,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2543,6 +2870,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2584,6 +2912,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2613,6 +2942,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2641,12 +2971,13 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
         assert_eq!(
-            asked.try_iter().collect::<Vec<_>>(),
+            reads(asked.try_iter()),
             [atlas()],
             "the two behind it wait for the one in flight to come back"
         );
@@ -2672,11 +3003,12 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
-        assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), ferry()]);
+        assert_eq!(reads(asked.try_iter()), [atlas(), ferry()]);
     }
 
     /// A project reported for again while it is being read is read again: the
@@ -2697,11 +3029,12 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
-        assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), atlas()]);
+        assert_eq!(reads(asked.try_iter()), [atlas(), atlas()]);
     }
 
     /// Whatever waits behind a collection is bounded by the projects there
@@ -2726,12 +3059,13 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
         assert_eq!(
-            asked.try_iter().collect::<Vec<_>>(),
+            reads(asked.try_iter()),
             [atlas(), Wanted::Everything],
             "ferry was going to be read by the whole collection anyway"
         );
@@ -2760,12 +3094,13 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
         assert_eq!(
-            asked.try_iter().collect::<Vec<_>>(),
+            reads(asked.try_iter()),
             [Wanted::Everything, Wanted::Everything],
             "three ticks over one collection asked for one more, not two"
         );
@@ -2787,13 +3122,14 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
-            asked.try_iter().collect::<Vec<_>>(),
+            reads(asked.try_iter()),
             [atlas(), ferry()],
             "the collection was over, so the second change asked for its own"
         );
@@ -2810,7 +3146,7 @@ mod tests {
             collector(
                 Box::new(move |_| {
                     let _ = held.recv();
-                    a_snapshot()
+                    Some(a_snapshot())
                 }),
                 &asked,
                 &collecting,
@@ -2838,6 +3174,7 @@ mod tests {
                 &ask,
                 at_once(),
                 nothing_armed(),
+                &polling_every_interval(),
                 nothing_watched(),
             );
             let _ = finished.send(());
@@ -2867,6 +3204,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2893,6 +3231,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2923,6 +3262,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2946,6 +3286,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2968,6 +3309,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -2992,6 +3334,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3018,6 +3361,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3056,6 +3400,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3086,6 +3431,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3111,6 +3457,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3136,6 +3483,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3168,6 +3516,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3202,6 +3551,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
@@ -3235,7 +3585,7 @@ mod tests {
 
         /// Asked at `at(0)`, sent, and never answered — so everything after
         /// it waits.
-        fn hung_on(project: Wanted) -> (Outstanding, Sender<Wanted>, Receiver<Wanted>) {
+        fn hung_on(project: Wanted) -> (Outstanding, Sender<Asked>, Receiver<Asked>) {
             let (ask, asked) = mpsc::channel();
             let mut outstanding = at_once();
             outstanding.ask(project, at(0));
@@ -3360,7 +3710,7 @@ mod tests {
             }
 
             assert_eq!(
-                asked.try_iter().collect::<Vec<_>>(),
+                reads(asked.try_iter()),
                 [Wanted::Everything],
                 "sent two seconds after the first press, not two after the last"
             );
@@ -3397,7 +3747,7 @@ mod tests {
             outstanding.sends(&ask, out);
 
             assert_eq!(
-                asked.try_iter().collect::<Vec<_>>(),
+                reads(asked.try_iter()),
                 [atlas()],
                 "the window was out, so the read went"
             );
@@ -3436,7 +3786,7 @@ mod tests {
             outstanding.sends(&ask, at(8));
 
             assert_eq!(
-                asked.try_iter().collect::<Vec<_>>(),
+                reads(asked.try_iter()),
                 [atlas(), ferry(), Wanted::Project("harbour".to_string())]
             );
         }

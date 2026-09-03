@@ -11,6 +11,7 @@ use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 
+use crate::app::Asked;
 use crate::collect::agents::Agents;
 use crate::collect::bd;
 use crate::collect::discovery;
@@ -18,7 +19,7 @@ use crate::collect::herdr;
 use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
 use crate::model::snapshot::Filter;
-use crate::tui::{Armed, Reload, CHECKED_EVERY};
+use crate::tui::{Armed, Arming, Reload, CHECKED_EVERY};
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
@@ -155,7 +156,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         reading: Reading::asked_for(&cli),
         roots: &cli.beads,
     };
-    let (cfg, read_from) = match &cli.config {
+    let (mut cfg, read_from) = match &cli.config {
         Some(named) => read_config(&RealRunner, &expand_tilde(named, home), &launch),
         None => config_for_wherever_bdi_was_run(
             &RealRunner,
@@ -186,24 +187,33 @@ pub fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(NO_TERMINAL));
     }
 
-    let refresh = cfg.tui.refresh();
-    let waits = cfg.tui.clone();
+    // The config the run starts on, kept back for the loop to be set up
+    // from. The collector takes the other copy below and works to whatever
+    // the reader writes after it, so this is the one that says what the
+    // first frame draws.
+    let started_on = cfg.clone();
     let polling = Polling::asked_for(&cli);
-    let projects = cfg
-        .read()
-        .map(|project| Armed::polling(project.name.clone(), polling.after_a_read(project, refresh)))
-        .collect();
+    // Asked again whenever the reader writes a config, so the set of
+    // projects that poll is the set the file names. The command line is what
+    // it carries that a config cannot: `--poll` and `--no-poll` overrule
+    // every project's own key, and they are settled here.
+    let arms: Arming = Box::new(move |cfg: &Config| {
+        cfg.read()
+            .map(|project| {
+                Armed::polling(
+                    project.name.clone(),
+                    polling.after_a_read(project, cfg.tui.refresh()),
+                )
+            })
+            .collect()
+    });
     // Built before the config goes to the collector, and holding a copy of
     // it: what a re-read is compared against is the config this run is
     // working to, and after this line the collector owns the only other one.
     //
-    // A re-read runs the whole of the startup pipeline, `git worktree list`
-    // per project included, on the loop's own thread — so a config the
-    // reader has just saved costs a hitch before the next frame. A
-    // collection is on a worker thread for exactly that reason, and this is
-    // not, because a config is written a few times a week where a tracker is
-    // read every few seconds. What would move it is a second worker seam,
-    // which belongs with the first thing that needs one.
+    // The file is read on the loop's own thread and what a re-read produces
+    // goes behind the collector's seam — `drive::looked_at` is where that
+    // split is decided and why.
     let reload = read_from.map(|path| {
         let cwd = cwd.clone();
         let reading = Reading::asked_for(&cli);
@@ -233,13 +243,21 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let agents: Arc<dyn Agents> = Arc::new(herdr::Herdr::new(&RealRunner as &dyn Runner));
     let listing = Arc::clone(&agents);
     crate::tui::run(
-        &waits,
+        &started_on,
         filter,
-        cfg.scope.clone(),
-        projects,
+        arms,
         agents,
-        Box::new(move |wanted| {
-            collection.collect(&cfg, &listing, &trackers, wanted, filter, Utc::now())
+        Box::new(move |asked| match asked {
+            // Nothing is drawn for a config the reader has written: what it
+            // changes is what every read after it reads, and the loop asks
+            // for one of those behind it.
+            Asked::Reloaded(written) => {
+                cfg = *written;
+                None
+            }
+            Asked::Read(wanted) => {
+                Some(collection.collect(&cfg, &listing, &trackers, &wanted, filter, Utc::now()))
+            }
         }),
         reload,
     )?;

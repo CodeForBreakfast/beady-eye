@@ -47,6 +47,21 @@ pub enum Wanted {
     Project(String),
 }
 
+/// Everything the collector is asked for.
+///
+/// A read is one of two things rather than the only one, because a config
+/// the reader has written is not a read: it draws nothing by itself, and
+/// what it changes is what every read after it reads. Sending it down the
+/// same channel is what puts it in order against them — the collector works
+/// to it before the collection that reads under it, without either having to
+/// know when the other was decided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    Read(Wanted),
+    /// The config the collector works to from here on.
+    Reloaded(Box<Config>),
+}
+
 /// A read that has been asked for and has not come back: what it is to
 /// read, when it was asked for, and how long it may wait before that is
 /// worth saying.
@@ -163,7 +178,7 @@ impl Collection {
                         project.name.clone(),
                         Read {
                             at: now,
-                            work: Ok(work),
+                            work: Ok(*work),
                             taken_at: at,
                         },
                     );
@@ -948,6 +963,50 @@ mod tests {
         assert!(
             !trees_of(&after, "orbital").is_empty(),
             "and everything it read is drawn"
+        );
+    }
+
+    /// A project the reader has rewritten in the file is read again, however
+    /// still its tracker has stood.
+    ///
+    /// The fingerprint cannot cover this and is not meant to: it answers for
+    /// the tracker, and what changed is how the tracker is reached and what
+    /// is asked of it. The rows in hand were taken under the settings the
+    /// reader has just replaced, so a skip against them keeps a read nothing
+    /// in the config now asks for — and keeps it for as long as the tracker
+    /// stands still, which is the reader's own idle project.
+    #[test]
+    fn a_project_the_reader_has_rewritten_is_read_again_though_its_tracker_has_not_moved() {
+        let trackers = orbital();
+        let mut standing = Collection::default();
+        standing.collect(
+            &one_project(),
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let first = asked_of(&trackers, "orbital");
+
+        let after = standing.collect(
+            &one_project_reached_with_a_credential(),
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            asked_of(&trackers, "orbital") - first,
+            4,
+            "the cascade ran again rather than being skipped against a read taken \
+             under the settings the reader has just replaced"
+        );
+        assert!(
+            !trees_of(&after, "orbital").is_empty(),
+            "and what it read under the new settings is drawn"
         );
     }
 

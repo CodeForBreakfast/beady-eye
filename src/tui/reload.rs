@@ -121,6 +121,16 @@ impl Reload {
         }
     }
 
+    /// The config the run is working to, as the last check left it.
+    ///
+    /// Read after a check that answered `Fresh`, which is the only answer
+    /// that moves it: the rest of the run is handed this rather than the
+    /// `Reloaded` carrying it, so a verdict the foot draws stays a verdict
+    /// and stays cheap to copy.
+    pub(super) fn in_force(&self) -> &Config {
+        &self.in_force
+    }
+
     /// How long until the config is next compared against the file, or
     /// nothing where it never will be.
     pub(super) fn checks_in(&self, now: DateTime<Utc>) -> Option<Duration> {

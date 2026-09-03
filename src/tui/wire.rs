@@ -12,14 +12,14 @@ use std::thread;
 use ratatui::crossterm::event::{self, KeyEventKind, MouseButton, MouseEventKind};
 use signal_hook::iterator::Signals;
 
-use crate::app::Wanted;
+use crate::app::{Asked, Wanted};
 use crate::collect::agents::Agents;
 use crate::collect::changes::{self, Reported, Socket};
 use crate::collect::panes::{Aside, Panes};
-use crate::model::snapshot::Snapshot;
 use crate::view::{Motion, Notice};
 
 use super::drive::Event;
+use super::Collecting;
 
 /// The inbound channel, or nothing and the two things said in its place.
 ///
@@ -64,7 +64,7 @@ fn said_at_the_foot(refused: &changes::Refused) -> Notice {
 /// say about itself.
 pub(super) type Wired = (
     Receiver<Event>,
-    Sender<Wanted>,
+    Sender<Asked>,
     Box<dyn Panes>,
     Option<Socket>,
     Vec<Notice>,
@@ -74,7 +74,7 @@ pub(super) type Wired = (
 pub(super) fn wire(
     reported: Reported,
     agents: Arc<dyn Agents>,
-    collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    collect: Collecting,
     asked_to_stop: Signals,
 ) -> Wired {
     let (to_the_loop, events) = mpsc::channel();
@@ -168,16 +168,17 @@ fn report(source: &mut dyn Changes, to: &Sender<Event>) {
 ///
 /// One collection is dozens of remote round trips per project, and the view
 /// has to stay under the user's hands throughout.
-pub(super) fn collector(
-    mut collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
-    asked: &Receiver<Wanted>,
-    to: &Sender<Event>,
-) {
-    while let Ok(wanted) = asked.recv() {
-        if to
-            .send(Event::Collected(Box::new(collect(&wanted))))
-            .is_err()
-        {
+///
+/// A config the reader has written comes down the same channel and answers
+/// with nothing, which is what keeps it in order against the reads: it is
+/// taken before the collection that reads under it, and the loop that sent
+/// both has to know nothing about where either has got to.
+pub(super) fn collector(mut collect: Collecting, asked: &Receiver<Asked>, to: &Sender<Event>) {
+    while let Ok(asked) = asked.recv() {
+        let Some(snapshot) = collect(asked) else {
+            continue;
+        };
+        if to.send(Event::Collected(Box::new(snapshot))).is_err() {
             return;
         }
     }

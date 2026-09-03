@@ -9,7 +9,7 @@
 mod collection;
 mod tracker;
 
-pub use collection::{run, Awaited, Collection, Wanted};
+pub use collection::{run, Asked, Awaited, Collection, Wanted};
 
 /// The fake trackers and panes both halves read in their tests.
 ///
@@ -84,6 +84,21 @@ mod fixtures {
 [[projects]]
 name = "orbital"
 path = "{ORBITAL}"
+"#
+        ))
+        .expect("the config parses")
+    }
+
+    /// The one project, as the reader has just rewritten its entry: the same
+    /// tracker at the same path, reached with a credential command that was
+    /// not there before.
+    pub(super) fn one_project_reached_with_a_credential() -> Config {
+        Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+credential_command = "pass show orbital"
 "#
         ))
         .expect("the config parses")

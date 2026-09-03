@@ -43,11 +43,11 @@ const WOULD_NOT_LOAD: &[u8] = "the config would not load".as_bytes();
 /// drawing a forest: a broken config does not take it down and does not
 /// blank the view.
 ///
-/// It does **not** say the running config stands — nothing consumes a
-/// reloaded config yet, so the collector is working from the copy it was
-/// handed at startup whatever the reload does with its own. What says the
-/// running one stands is `Reload`'s own test, which puts the file back to
-/// exactly what was in force and reads `Unchanged` off it.
+/// It does **not** say the running config stands. A check that finds the
+/// file broken tells nothing else about it, so the collector is not asked
+/// for anything and the forest on the screen is the one it drew before. What
+/// says the running one stands is `Reload`'s own test, which puts the file
+/// back to exactly what was in force and reads `Unchanged` off it.
 const THE_CONFIGURED_PROJECT: &[u8] = THE_FIRST_FRAME;
 
 /// Long enough for a check to fall due and be answered. The interval is

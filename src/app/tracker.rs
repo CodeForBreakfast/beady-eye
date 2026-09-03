@@ -56,6 +56,13 @@ impl From<RootUnread> for TrackerState {
 /// off the screen until some unrelated write moved the tracker, and the panes
 /// cost nothing to compare — they are already in hand when the refresh starts.
 ///
+/// The project's own entry is another. A config the reader has rewritten
+/// reaches the tracker differently and asks it for different things, and the
+/// fingerprint answers for the tracker rather than for the way in — so a
+/// read taken under the entry that has just been replaced would otherwise
+/// stand for as long as the tracker stood still, which on an idle project is
+/// for ever.
+///
 /// The clock is the last of them. `bd ready` does not name a bead before its
 /// `defer_until` and does after, and nothing is written when that instant
 /// passes — measured 2026-09-01 against this project's own tracker, a bead
@@ -64,6 +71,7 @@ impl From<RootUnread> for TrackerState {
 /// which it stops being able to speak for the tracker.
 #[derive(Clone)]
 pub(super) struct ReadAt {
+    project: Project,
     working_root: String,
     named: BTreeSet<String>,
     speaks_until: Option<DateTime<Utc>>,
@@ -74,11 +82,13 @@ impl ReadAt {
     /// say now.
     fn still_speaks_for(
         &self,
+        project: &Project,
         working_root: &str,
         named: &BTreeSet<String>,
         now: DateTime<Utc>,
     ) -> bool {
-        self.working_root == working_root
+        self.project == *project
+            && self.working_root == working_root
             && self.named == *named
             && self.speaks_until.is_none_or(|until| now < until)
     }
@@ -102,9 +112,13 @@ pub(super) enum Refresh {
     /// What the tracker says now, and what it was read against. `None` where
     /// the probe could not answer, which has every later refresh read in full
     /// rather than compare against a state nobody established.
+    ///
+    /// The work is behind a box because `Unchanged` is the usual answer and
+    /// carries nothing: a project that has not moved would otherwise be
+    /// handed back on the stack as the size of one that had.
     Read {
         at: Option<ReadAt>,
-        work: ProjectWork,
+        work: Box<ProjectWork>,
     },
 }
 
@@ -136,18 +150,22 @@ pub(super) fn refresh_project(
         .collect();
 
     if let (Some(working_root), Some(standing)) = (probed.as_deref(), standing) {
-        if standing.still_speaks_for(working_root, &named, now) {
+        if standing.still_speaks_for(project, working_root, &named, now) {
             return Ok(Refresh::Unchanged);
         }
     }
 
     let (work, beads) = read_project(tracker.as_ref(), project, cfg, panes)?;
     let at = probed.map(|working_root| ReadAt {
+        project: project.clone(),
         working_root,
         named,
         speaks_until: speaks_until(&beads, now),
     });
-    Ok(Refresh::Read { at, work })
+    Ok(Refresh::Read {
+        at,
+        work: Box::new(work),
+    })
 }
 
 /// Everything one project's tracker is asked for, and every bead it said it

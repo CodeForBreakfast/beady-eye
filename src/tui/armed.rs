@@ -12,6 +12,16 @@ use chrono::{DateTime, Utc};
 use super::due::due_after;
 use crate::app::Wanted;
 
+/// One disarmed `Armed` per project a config names.
+///
+/// Handed to the loop rather than worked out by one, because how long a
+/// project waits is the command line's as much as the config's: `--poll` and
+/// `--no-poll` overrule what each project's own key says, and that is
+/// settled where `bdi` is run. The loop asks this again whenever the reader
+/// writes a config, so the set of projects that poll is the set the file
+/// names.
+pub(crate) type Arming = Box<dyn Fn(&crate::config::Config) -> Vec<Armed>>;
+
 /// One project's poll: how long after a read it asks to be read again, and
 /// when that next falls due.
 ///
@@ -61,6 +71,24 @@ impl Armed {
 
     pub(super) fn project(&self) -> &str {
         &self.project
+    }
+
+    /// This project polling as the config the reader has just written says,
+    /// still due when it already was.
+    ///
+    /// How often it asks is the file's and takes effect at once — a reader
+    /// who turns a project's `poll` off has said something about this run,
+    /// not about the next one. When it next asks is not the file's: that
+    /// deadline was armed by this project's last read, and an edit anywhere
+    /// in the file must not push out an ask that was already due.
+    ///
+    /// A project the edit stopped polling has no deadline left at all, so it
+    /// asks no more rather than once more.
+    pub(super) fn still_due(self, named: Armed) -> Armed {
+        Armed {
+            at: named.every.and(self.at),
+            ..named
+        }
     }
 
     /// The ask this project is now due to make, where it is due to make one.
