@@ -268,6 +268,67 @@ pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|at| at == needle)
 }
 
+/// The row of the screen `bdi` drew some text on, counted from zero.
+///
+/// A frame reaches the pty as runs of cells, each preceded by the escape that
+/// moves the cursor to where its first cell goes, so the row a run was drawn
+/// on is the row that escape names. That is the only thing in the stream that
+/// says where anything is, and the alternative for a test that needs a row is
+/// to work it out from the geometry it is testing — which is that arithmetic
+/// written a second time, and green whenever both copies are wrong the same
+/// way.
+///
+/// Nothing where the text was drawn on no row, or in more than one place: a
+/// needle met twice would hand back whichever came first, and a test built on
+/// it would press somewhere nobody chose. Read a frame `bdi` was made to
+/// repaint whole, since one drawn as a difference from the frame before holds
+/// only the cells that moved.
+pub fn row_of(screen: &[u8], needle: &[u8]) -> Option<u16> {
+    let moves: Vec<(usize, u16)> = screen
+        .windows(CSI.len())
+        .enumerate()
+        .filter(|(_, at)| *at == CSI)
+        .filter_map(|(at, _)| {
+            let opens = at + CSI.len();
+            move_to(&screen[opens..]).map(|(row, length)| (opens + length, row))
+        })
+        .collect();
+
+    let drawn: Vec<usize> = screen
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, at)| *at == needle)
+        .map(|(at, _)| at)
+        .collect();
+    let [at] = drawn[..] else {
+        return None;
+    };
+
+    moves
+        .iter()
+        .rev()
+        .find(|(after, _)| *after <= at)
+        .map(|(_, row)| *row)
+}
+
+/// The escape that opens a control sequence.
+const CSI: &[u8] = b"\x1b[";
+
+/// The row a cursor move names, counted from zero, and how long the sequence
+/// is — where the sequence at hand is a cursor move at all.
+fn move_to(sequence: &[u8]) -> Option<(u16, usize)> {
+    let end = sequence
+        .iter()
+        .position(|byte| !byte.is_ascii_digit() && *byte != b';')?;
+    if sequence[end] != b'H' {
+        return None;
+    }
+    let (row, _) = std::str::from_utf8(&sequence[..end])
+        .ok()?
+        .split_once(';')?;
+    Some((row.parse::<u16>().ok()?.checked_sub(1)?, end + 1))
+}
+
 /// A runtime directory of this run's own, so it opens its own inbound socket
 /// and carries no notice about having failed to.
 ///

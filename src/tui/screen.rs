@@ -29,7 +29,7 @@ use crate::view::tail::{self, Tail};
 use crate::view::{draw, Action, Freshness, Motion, Notice};
 
 use super::clipboard;
-use super::drive::{Showing, View};
+use super::drive::{Landed, Showing, View};
 use super::due::due_after;
 use super::keys::{bindings, key_row};
 use super::reload::Reloaded;
@@ -381,6 +381,38 @@ impl Shown {
             // Neither holds anything the selection could sit on, and a row
             // past the last line of the forest holds nothing at all.
             None => false,
+        }
+    }
+
+    /// Go to the bead named by the reference the bead window drew on one row
+    /// of `screen`, saying what the click came to.
+    ///
+    /// A click that follows is `Enter` on the ring with the ring put where
+    /// the pointer is, rather than a second way to the same bead: what the
+    /// window keeps to come back to is kept by that one path, and a second
+    /// would have to remember to. Which is also why the ring goes back where
+    /// it was when the bead turns out not to be one the forest can reach —
+    /// the reader pointed at it and arrived nowhere, and a ring left sitting
+    /// on it would be a move they never asked for.
+    fn clicked_bead(&mut self, screen: Rect, row: u16) -> Landed {
+        let landed =
+            show::selected(&self.forest).map(|node| show::drawn_at(screen, node, &self.show, row));
+        let on = match landed {
+            Some(show::Drawn::Related(id)) => id.to_string(),
+            Some(show::Drawn::Page) => return Landed::Nothing,
+            // A selection on no bead has no page either, and the window is
+            // drawn from the selection: there is nothing on the screen for
+            // the click to be about.
+            Some(show::Drawn::Beyond) | None => return Landed::Away,
+        };
+
+        let was = self.show.clone();
+        self.show.go_to(&on);
+        if self.follow_related() {
+            Landed::Followed
+        } else {
+            self.show = was;
+            Landed::Nothing
         }
     }
 
@@ -757,6 +789,11 @@ impl View for Screen {
     fn clicked(&mut self, row: u16) -> bool {
         let screen = self.terminal.get_frame().area();
         self.shown.clicked(screen, row)
+    }
+
+    fn clicked_bead(&mut self, row: u16) -> Landed {
+        let screen = self.terminal.get_frame().area();
+        self.shown.clicked_bead(screen, row)
     }
 
     fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
@@ -2460,6 +2497,102 @@ mod tests {
             assert!(!shown.clicked(screen, row), "the click at row {row} moved");
             assert_eq!(shown.forest.selected_line(), selected);
         }
+    }
+
+    /// A click on a reference the forest can reach goes to that bead, and
+    /// leaves the way back behind it — the same path `Enter` on the ring
+    /// takes, with the ring put where the pointer is.
+    #[test]
+    fn a_click_on_a_reference_goes_to_the_bead_it_names() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        let rows = bead_view(&mut shown, WIDE, TALL);
+
+        assert_eq!(
+            shown.clicked_bead(over(WIDE, TALL), drawn_on(&rows, "↑ ")),
+            Landed::Followed
+        );
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+        assert!(
+            shown.retrace(),
+            "the click left no way back to the bead it followed from"
+        );
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+    }
+
+    /// A click on a reference the forest cannot take the reader to goes
+    /// nowhere and leaves the ring where it was.
+    ///
+    /// The ring is an offer to press `Enter`, so one left sitting on a bead
+    /// the reader pointed at and did not arrive at is a move they never asked
+    /// for — and the next `Tab` would step on from a place they have never
+    /// been.
+    #[test]
+    fn a_click_on_a_reference_the_forest_cannot_reach_goes_nowhere() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        let rows = bead_view(&mut shown, WIDE, TALL);
+        let was = shown.show.on().map(str::to_string);
+
+        assert_eq!(
+            shown.clicked_bead(over(WIDE, TALL), drawn_on(&rows, "grv-404")),
+            Landed::Nothing
+        );
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+        assert_eq!(shown.show.on().map(str::to_string), was);
+    }
+
+    /// A click on the page that names no bead goes nowhere, so a reader who
+    /// aims at a reference and misses by a row keeps the window.
+    #[test]
+    fn a_click_on_the_page_that_names_no_bead_goes_nowhere() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        let rows = bead_view(&mut shown, WIDE, TALL);
+
+        assert_eq!(
+            shown.clicked_bead(over(WIDE, TALL), drawn_on(&rows, "PARENT")),
+            Landed::Nothing
+        );
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+    }
+
+    /// A click off the page — the window's own border, or the forest round it
+    /// — is what takes the window away.
+    #[test]
+    fn a_click_off_the_page_takes_the_window_away() {
+        let mut shown = shown_on_the_bead_that_names_beads();
+        let rows = bead_view(&mut shown, WIDE, TALL);
+        let window = window_of(&rows);
+        assert!(window.y > 0, "the window has to leave a row above it");
+
+        for row in [window.y - 1, window.y, window.bottom() - 1] {
+            assert_eq!(
+                shown.clicked_bead(over(WIDE, TALL), row),
+                Landed::Away,
+                "the click at row {row} did not take the window away: {rows:#?}"
+            );
+        }
+    }
+
+    /// Wide enough for the window's rows to be drawn whole, and tall enough
+    /// for every section of the bead and a row of forest above it.
+    const WIDE: u16 = 80;
+    const TALL: u16 = 24;
+
+    /// The whole of a screen of that size.
+    fn over(width: u16, height: u16) -> Rect {
+        Rect::new(0, 0, width, height)
+    }
+
+    /// The row of a drawn screen something was drawn on — read back off the
+    /// frame rather than counted out, because where the window falls follows
+    /// from the screen's size and the bead's length.
+    fn drawn_on(rows: &[String], drawn_as: &str) -> u16 {
+        let on = rows
+            .iter()
+            .position(|row| row.contains(drawn_as))
+            .unwrap_or_else(|| panic!("{drawn_as:?} was drawn on no row of {rows:#?}"));
+        u16::try_from(on).expect("no screen is that tall")
     }
 
     #[test]

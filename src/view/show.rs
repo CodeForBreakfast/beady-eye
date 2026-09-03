@@ -242,6 +242,67 @@ pub fn selected(forest: &Forest) -> Option<&Node> {
         .and_then(|key| forest.snapshot().node(key))
 }
 
+/// Where the window falls on a screen and what it holds: the bead's page,
+/// the window itself, and the rows inside its border.
+///
+/// Worked out from the screen and the bead every time rather than kept from
+/// the frame that drew: both are the caller's already, and geometry held
+/// between frames is geometry that can disagree with the frame on the
+/// screen.
+struct Laid {
+    page: Page,
+    window: Rect,
+    inner: Rect,
+}
+
+fn lay_out(area: Rect, node: &Node) -> Laid {
+    let width = offered(area.width, FLOOR_WIDTH);
+    let page = said(node, width.saturating_sub(BORDERS) as usize);
+    let window = show_window(area, width, page.rows.len());
+    Laid {
+        inner: Block::bordered().inner(window),
+        page,
+        window,
+    }
+}
+
+/// What the window drew on one row of the screen.
+///
+/// A row rather than a point, because a click reaches the loop as its row
+/// alone. So `Beyond` is off the page up or down the screen — above the
+/// window, below it, or on its border — and the forest showing to either
+/// side of the window, on a row the window is on, is not something this can
+/// tell from the page.
+#[cfg_attr(test, derive(Debug, PartialEq))]
+pub enum Drawn<'a> {
+    /// One of the beads this one names, by its id.
+    Related(&'a str),
+    /// A row of the page that names none: the bead's own facts, its prose, a
+    /// heading, a blank.
+    Page,
+    /// Not the page: the window's border, or the forest round it.
+    Beyond,
+}
+
+/// What the window drew on one row of the screen, for a pointer that has
+/// landed there.
+///
+/// `view` is what the last frame left behind, and a frame is always drawn
+/// before a press is answered, so how far down the bead it had scrolled is
+/// how far down the reader was looking.
+pub fn drawn_at<'a>(area: Rect, node: &'a Node, view: &Show, row: u16) -> Drawn<'a> {
+    let Laid { page, inner, .. } = lay_out(area, node);
+    if !(inner.y..inner.bottom()).contains(&row) {
+        return Drawn::Beyond;
+    }
+    let at = view.from + usize::from(row - inner.y);
+    related(node)
+        .into_iter()
+        .zip(page.related)
+        .find(|(_, drawn)| *drawn == at)
+        .map_or(Drawn::Page, |(named, _)| Drawn::Related(&named.id))
+}
+
 /// Where the window sits: `width` across, as tall as the bead up to what
 /// the screen offers, centred over the forest.
 fn show_window(area: Rect, width: u16, rows: usize) -> Rect {
@@ -404,15 +465,16 @@ fn dimmed_if_closed(status: &Status) -> Style {
 /// it beyond what there was room for — a ring nobody can see is a ring the
 /// reader has lost.
 pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows: bool) {
-    let width = offered(area.width, FLOOR_WIDTH);
-    let page = said(node, width.saturating_sub(BORDERS) as usize);
-    let window = show_window(area, width, page.rows.len());
+    let Laid {
+        page,
+        window,
+        inner,
+    } = lay_out(area, node);
     if window.is_empty() {
         return;
     }
 
     let block = Block::bordered();
-    let inner = block.inner(window);
     view.fit(page.rows.len(), inner.height as usize);
     let on = view
         .on()
@@ -693,6 +755,179 @@ mod tests {
 
         assert!(!view.scroll(Motion::NextRow));
         assert!(!view.scroll(Motion::LastRow));
+    }
+
+    /// Every bead the window names is named again by the row it was drawn on,
+    /// which is what a pointer landing there has to be answered with.
+    #[test]
+    fn the_row_a_reference_was_drawn_on_names_the_bead_it_names() {
+        let bead = a_bead();
+        let mut view = Show::default();
+        let rows = drawn(&bead, &mut view, WIDE, TALL);
+
+        for (id, drawn_as) in [
+            ("orb-7", "orb-7  lift the ground station"),
+            ("orb-7.3", "orb-7.3  lay the feeder cable"),
+            ("orb-7.4", "orb-7.4  file the licence"),
+        ] {
+            assert_eq!(
+                drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, drawn_as)),
+                Drawn::Related(id),
+                "the row {drawn_as:?} was drawn on names another bead: {rows:#?}"
+            );
+        }
+    }
+
+    /// A row of the page that names no bead is the page and nothing more, so
+    /// a reader who aims at a reference and misses by a row keeps the window
+    /// they were aiming in.
+    #[test]
+    fn a_row_of_the_page_that_names_no_bead_is_the_page() {
+        let bead = a_bead();
+        let mut view = Show::default();
+        let rows = drawn(&bead, &mut view, WIDE, TALL);
+
+        for drawn_as in ["PARENT", "Point it at the new bird", "re-point the dish"] {
+            assert_eq!(
+                drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, drawn_as)),
+                Drawn::Page,
+                "the row {drawn_as:?} was drawn on is not the page: {rows:#?}"
+            );
+        }
+    }
+
+    /// The window's own border is not the page. It is the row the way back is
+    /// written on, and the only row off the page a window as tall as the
+    /// screen has — so a reader holding a pointer alone could otherwise not
+    /// leave one.
+    #[test]
+    fn the_windows_border_is_not_the_page() {
+        let bead = a_bead();
+        let mut view = Show::default();
+        let rows = drawn(&bead, &mut view, WIDE, TALL);
+
+        assert_eq!(
+            drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, "┌orb-7.1")),
+            Drawn::Beyond,
+            "the title is drawn on the page: {rows:#?}"
+        );
+        assert_eq!(
+            drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, "└─")),
+            Drawn::Beyond,
+            "the foot of the window is drawn on the page: {rows:#?}"
+        );
+    }
+
+    /// And neither is a row of the screen the window is not drawn on, where
+    /// the forest shows round it.
+    #[test]
+    fn a_row_the_window_is_not_drawn_on_is_not_the_page() {
+        let bead = a_bead();
+        let mut view = Show::default();
+        let over_a_taller_screen = over(WIDE, TALL * 2);
+        let rows = drawn(&bead, &mut view, WIDE, TALL * 2);
+
+        let above = drawn_on(&rows, "┌orb-7.1");
+        assert!(above > 0, "the window starts at the top of the screen");
+        assert_eq!(
+            drawn_at(over_a_taller_screen, &bead, &view, above - 1),
+            Drawn::Beyond,
+            "the row above the window is drawn on the page: {rows:#?}"
+        );
+    }
+
+    /// A window the reader has scrolled answers for the bead now drawn on a
+    /// row, not the one that was there before they moved.
+    #[test]
+    fn a_scrolled_window_names_what_is_drawn_on_a_row_now() {
+        let bead = a_bead();
+        let mut view = Show::default();
+        let short = TALL / 2;
+        let before = drawn(&bead, &mut view, WIDE, short);
+        assert!(
+            !before.iter().any(|row| row.contains("file the licence")),
+            "the whole bead fits, so there is nothing to scroll: {before:#?}"
+        );
+
+        assert!(view.scroll(Motion::LastRow));
+        let after = drawn(&bead, &mut view, WIDE, short);
+
+        assert_eq!(
+            drawn_at(
+                over(WIDE, short),
+                &bead,
+                &view,
+                drawn_on(&after, "orb-7.4  file the licence")
+            ),
+            Drawn::Related("orb-7.4"),
+            "the row the last reference was scrolled onto names another bead: {after:#?}"
+        );
+    }
+
+    /// A reference can be the first row a scrolled window draws, and the row
+    /// above it is then the border rather than the heading it sits under.
+    ///
+    /// Which is what a reader aiming at that reference and missing upward
+    /// hits, and the border takes the window away. The trade is deliberate:
+    /// the alternative leaves a window as tall as the screen — every window
+    /// on a screen of twenty-four rows or fewer — with no row a pointer can
+    /// close it on at all. A frame is drawn and can be seen; a near miss onto
+    /// one costs the press that opens the window again.
+    #[test]
+    fn a_scrolled_window_can_draw_a_reference_under_its_border() {
+        let bead = a_bead();
+        let mut view = Show::default();
+        let barely_taller_than_the_sections = 6;
+        drawn(&bead, &mut view, WIDE, barely_taller_than_the_sections);
+        assert!(view.scroll(Motion::LastRow));
+        let rows = drawn(&bead, &mut view, WIDE, barely_taller_than_the_sections);
+
+        let under_the_border = drawn_on(&rows, "┌orb-7.1") + 1;
+        assert_eq!(
+            drawn_at(
+                over(WIDE, barely_taller_than_the_sections),
+                &bead,
+                &view,
+                under_the_border
+            ),
+            Drawn::Related("orb-7.3"),
+            "no reference is drawn against the border, so this says nothing: {rows:#?}"
+        );
+        assert_eq!(
+            drawn_at(
+                over(WIDE, barely_taller_than_the_sections),
+                &bead,
+                &view,
+                under_the_border - 1
+            ),
+            Drawn::Beyond,
+            "{rows:#?}"
+        );
+    }
+
+    /// Wide enough for the bead's own rows to be drawn whole, and tall enough
+    /// for every section of it.
+    const WIDE: u16 = 44;
+    const TALL: u16 = 22;
+
+    /// The whole of a screen of that size.
+    fn over(width: u16, height: u16) -> Rect {
+        Rect::new(0, 0, width, height)
+    }
+
+    /// The row of a drawn frame something was drawn on.
+    ///
+    /// Read back off the frame rather than counted out, because which row
+    /// anything lands on follows from the window's height and how far the
+    /// view has scrolled — and a test that worked one out would be running
+    /// the arithmetic it is checking a second time, green whenever both
+    /// copies are wrong the same way.
+    fn drawn_on(rows: &[String], drawn_as: &str) -> u16 {
+        let on = rows
+            .iter()
+            .position(|row| row.contains(drawn_as))
+            .unwrap_or_else(|| panic!("{drawn_as:?} was drawn on no row of {rows:#?}"));
+        u16::try_from(on).expect("no screen is that tall")
     }
 
     /// A reader who cannot see how to leave is stuck in a view they may have

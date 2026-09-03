@@ -73,6 +73,24 @@ pub(super) enum Showing {
     Bead,
 }
 
+/// What a click over the bead window came to.
+///
+/// Three answers where a press usually gives two, because taking the window
+/// down is the loop's and what was under the pointer is the view's, and
+/// neither can answer for the other.
+#[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
+pub(super) enum Landed {
+    /// A reference the forest can reach, and the window has gone to the bead
+    /// it names.
+    Followed,
+    /// The page, and nothing on it to go to.
+    Nothing,
+    /// Off the page — the window's own border, or the forest round it —
+    /// which is how a pointer takes the window away.
+    Away,
+}
+
 /// The rows on the screen and what the user has done to them.
 ///
 /// The seam the loop steers the view across: the loop knows the actions and
@@ -190,6 +208,16 @@ pub(super) trait View {
     /// is the loop's other seam: the loop knows where the pointer was and
     /// nothing about what is drawn there.
     fn clicked(&mut self, row: u16) -> bool;
+
+    /// Go to the bead a reference drawn on one row of the bead window names,
+    /// reporting what the click came to.
+    ///
+    /// The same seam again over the window: the loop knows a bead is up and
+    /// where the pointer was, and the view knows what it drew there. What
+    /// the window is drawn over is not the forest's answer to that row, so
+    /// this is a question of its own rather than a `clicked` the view
+    /// answers differently while a window is up.
+    fn clicked_bead(&mut self, row: u16) -> Landed;
 
     /// Draw the screen as it stands at `now`, the instant every project's age
     /// and the frame its mark is on are measured against.
@@ -477,12 +505,19 @@ fn answered(
             *showing = Showing::Forest;
             true
         }
-        // The same over the bead view for a click; a notch moves the bead
-        // the way a key does.
-        Event::Clicked(_) if *showing == Showing::Bead => {
-            *showing = Showing::Forest;
-            true
-        }
+        // Over the bead view a click is answered by whatever it landed on,
+        // because there the rows under the pointer are rows the reader is
+        // looking at — and the references the window draws are the one thing
+        // on that screen a pointer could otherwise not reach.
+        Event::Clicked(row) if *showing == Showing::Bead => match view.clicked_bead(row) {
+            Landed::Followed => true,
+            Landed::Nothing => false,
+            Landed::Away => {
+                *showing = Showing::Forest;
+                true
+            }
+        },
+        // A notch moves the bead, the way a key does.
         Event::Scrolled(motion) if *showing == Showing::Bead => view.scroll(motion),
         Event::Clicked(row) => view.clicked(row),
         Event::Scrolled(motion) => view.apply(Action::Move(motion)),
@@ -822,6 +857,14 @@ mod tests {
         /// because the whole question is which of the two a key reached.
         scrolled: Vec<Motion>,
         clicked: Vec<u16>,
+        /// The rows a click over the bead window asked about, apart from the
+        /// forest's, because the whole question is which of the two the loop
+        /// sent one to.
+        clicked_bead: Vec<u16>,
+        /// What the bead window says a click over it landed on. Nothing where
+        /// a test has not said, which is a click that landed on the page and
+        /// found nothing to go to.
+        lands_on: Option<Landed>,
         /// Whether the selection is on a row with no bead to show, for the
         /// tests about Enter on one.
         not_a_bead: bool,
@@ -992,6 +1035,11 @@ mod tests {
         fn clicked(&mut self, row: u16) -> bool {
             self.clicked.push(row);
             !self.nothing_under_the_pointer
+        }
+
+        fn clicked_bead(&mut self, row: u16) -> Landed {
+            self.clicked_bead.push(row);
+            self.lands_on.unwrap_or(Landed::Nothing)
         }
 
         fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
@@ -1648,17 +1696,15 @@ mod tests {
         assert!(view.scrolled.is_empty(), "{:?}", view.scrolled);
     }
 
-    /// The pointer over the bead view: a notch moves the bead as a key
-    /// would, and a click goes back, for the same reason a click closes the
-    /// bindings — the rows under the pointer are rows nobody can see.
+    /// A notch over the bead view moves the bead as a key would, rather than
+    /// the selection under it.
     #[test]
-    fn a_notch_over_the_bead_view_scrolls_it_and_a_click_goes_back() {
+    fn a_notch_over_the_bead_view_scrolls_it() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![
             Event::Key(key(KeyCode::Enter)),
             Event::Scrolled(Motion::NextRow),
-            Event::Clicked(3),
             Event::Key(key(KeyCode::Char('q'))),
         ]);
 
@@ -1674,19 +1720,106 @@ mod tests {
 
         assert_eq!(view.scrolled, [Motion::NextRow]);
         assert!(
+            view.applied
+                .iter()
+                .all(|action| *action == Action::ShowBead),
+            "the notch moved the selection: {:?}",
+            view.applied
+        );
+    }
+
+    /// A click over the bead view goes to the window rather than to the
+    /// forest, whatever it lands on: the rows under the pointer are the rows
+    /// the reader is looking at, which is what the bindings window cannot
+    /// say.
+    #[test]
+    fn a_click_over_the_bead_view_asks_the_window_and_not_the_forest() {
+        let view = a_click_over_the_bead_view(Landed::Nothing);
+
+        assert_eq!(view.clicked_bead, [3]);
+        assert!(
             view.clicked.is_empty(),
-            "the click reached no row: {:?}",
+            "the click reached the forest as well: {:?}",
             view.clicked
         );
+    }
+
+    /// A click the window went to a bead on leaves the window up, and the
+    /// screen is drawn again for the bead it went to.
+    #[test]
+    fn a_click_that_followed_a_reference_leaves_the_window_up() {
+        let view = a_click_over_the_bead_view(Landed::Followed);
+
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Bead, Showing::Bead]
+        );
+        assert_eq!(view.scrolled, [Motion::NextRow], "{:?}", view.applied);
+    }
+
+    /// A click on the page that went nowhere leaves the window up and the
+    /// screen unredrawn: nothing about it moved.
+    #[test]
+    fn a_click_that_went_nowhere_leaves_the_window_up_and_draws_nothing() {
+        let view = a_click_over_the_bead_view(Landed::Nothing);
+
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Bead, Showing::Bead]
+        );
+        assert_eq!(view.scrolled, [Motion::NextRow], "{:?}", view.applied);
+    }
+
+    /// And a click off the page takes the window away, which is what a click
+    /// over the bead view has always done. The notch behind it lands on the
+    /// forest, which is what says the window has really gone rather than been
+    /// drawn over.
+    #[test]
+    fn a_click_off_the_page_takes_the_window_away() {
+        let view = a_click_over_the_bead_view(Landed::Away);
+
         assert_eq!(
             view.showing,
             [
                 Showing::Forest,
                 Showing::Bead,
-                Showing::Bead,
+                Showing::Forest,
                 Showing::Forest
             ]
         );
+        assert!(view.scrolled.is_empty(), "{:?}", view.scrolled);
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::Move(Motion::NextRow)]
+        );
+    }
+
+    /// Show a bead, click a row over it and turn the wheel, with the window
+    /// answering that click the way the test says. The notch is what asks
+    /// where the loop thinks it is afterwards: over a window it moves the
+    /// bead, and over the forest it moves the selection.
+    fn a_click_over_the_bead_view(lands_on: Landed) -> Recorder {
+        let mut view = Recorder {
+            lands_on: Some(lands_on),
+            ..Recorder::default()
+        };
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Enter)),
+            Event::Clicked(3),
+            Event::Scrolled(Motion::NextRow),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+        view
     }
 
     #[test]
