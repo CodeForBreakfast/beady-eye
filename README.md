@@ -4,7 +4,7 @@ A view of work in flight: a tree of beads, each node annotated with the live
 agent working on it. Every question `bdi` asks a tracker is a read — it shows
 you the work, and changing it stays bd's job.
 
-[beads](https://github.com/steveyegge/beads) knows the work — the tree, the
+[beads](https://github.com/gastownhall/beads) knows the work — the tree, the
 dependency edges, each bead's status and who claimed it.
 [herdr](https://herdr.dev) knows the agents — which pane is alive and what it is
 doing. Nothing joins them, so there is no single answer to "what is left, what is
@@ -14,17 +14,54 @@ closed bead whose agent never exited, a claim whose agent died) is invisible.
 `bdi` is that join. The work is the spine; agents are an annotation.
 
 ```
-▾ summit-works · nix-9670s   DMS → noctalia v5      8/21   3 agents  ⚠ 3
-  ├── ● .20  wallpaper timer calls dms            ◍ wCM:p9  working
-  ├── ● .1   wire the niri theme include          ◍ wCM:p6  idle
-  │   ├── ○ .4   restore app theming
-  │   │   ├── ○ .8   make the switch permanent
-  │   │   │   └── ○ .9   confirm quickshell wedges gone
-  │   │   └── ○ .5   retire the DMS remnants
-  │   └── ○ .17  apply the two niri settings
-  ├── ◐ .16  guard a key in both layers          ⚠ claimed · no pane
-  └── … 13 more
+▾ atlas  ✓ 29s ago                                                   3/12  3 agents  ⚠ 1
+  ├── ○ atlas-1   Payments move to the new gateway                                   2/9
+  │   ├── ◐ atlas-3   The refund path calls the gateway          0/3  ◍ wE3:pE · working
+  │   │   ├── ◐ atlas-5   Retire the old refund worker               ⚠ claimed · no pane
+  │   │   └── ○ atlas-4   Backfill the refund ledger
+  │   ├── ◐ atlas-7   Webhook retries are not idempotent              ◍ wE3:pD · working
+  │   ├── ○ atlas-2   Pin the gateway client version
+  │   ├── ○ atlas-6   Cut the live keys over                                         0/2
+  │   │   └┄┄ ○ atlas-2   Pin the gateway client version
+  │   ├── ✓ atlas-8   Reconcile the settlement report
+  │   └── ✓ atlas-9   Drop the gateway shim
+  ├── ○ atlas-10  Search returns stale results after an edit                         1/3
+  │   ├── ◐ atlas-11  Invalidate the index on write                   ◍ wE3:pF · working
+  │   └── ✓ atlas-12  Measure the reindex cost
+  └── ⚠ 3 unattributed panes
+────────────────────────────────────────────────────────────────────────────────────────
+  no pane · nobody is working this bead
+
+
+
+
+
+Enter show   a all   ? keys   q quit
 ```
+
+That is a real run at 88 columns, against a throwaway tracker holding made-up
+work and joined to the panes that were actually alive on the machine that took
+it. `atlas-5` is the drift: a claim with nothing behind it.
+
+## What it needs
+
+**bd 1.1.0 or newer.** That floor is about the command line `bdi` runs, and a
+bd below it is told apart from a tracker that cannot answer: the project's line
+says bd does not know a flag `bdi` uses, and which bd would. A bd older than
+the one that last wrote a tracker is a separate hazard, on the tracker itself.
+
+**git, where you have it.** `bdi` asks git for three things, and does without
+each: the repository the current directory sits in, the name of its `origin`
+remote, and the working trees a project has. With no git at all a run still
+reads its tracker — a project just takes its directory's name rather than the
+remote's, and, having no working trees to place a pane by, holds only the
+directory the config named.
+
+**herdr is optional.** Without it you still get the trees, the counts and the
+claims, and with no agents to filter on every tree is drawn whatever the filter
+asked for. What herdr adds is the annotation this is all for: which claim has a
+live pane behind it, which pane is working somewhere no bead accounts for, and
+a tail of the selected bead's pane.
 
 ## Install
 
@@ -75,16 +112,10 @@ have a `pkgs`:
 nixpkgs.overlays = [ beady-eye.overlays.default ];
 ```
 
-## What it assumes
+## Configuring it
 
-**bd 1.1.0 or newer, and nothing else.** That floor is about the command line
-`bdi` runs, and a bd below it is told apart from a tracker that cannot answer:
-the project's line says bd does not know a flag `bdi` uses, and which bd would.
-A bd older than the one that last wrote a tracker is a separate hazard, on the
-tracker itself. herdr is optional: without it you still get the
-tree, the counts, the claims and an age-based stale-claim warning. With it you
-also get liveness, exact drift detection, and a tail of the selected bead's
-pane.
+`bdi` reads `~/.config/beady-eye/config.toml`, or whatever file `--config`
+names.
 
 With no config file at all, `bdi` reads the one project the directory it was
 started in belongs to: the repository bd tracks there, named after its `origin`
@@ -93,28 +124,126 @@ environment names it instead. That is the only variable `bdi` reads for a
 name, so a shell that keeps the project's name in another tool's variable
 exports it under this one too.
 
-Each project's tracker is read in the environment `bdi` itself was started in,
-so a tracker your shell can already reach needs nothing configured. A setup
-that keeps one credential per project in each project's own directory, loaded
-by direnv when you enter it, says so per project:
+So a first run inside a repository beads tracks needs no config at all. A
+first run anywhere else has nothing to fall back on and says so:
+
+```console
+$ bdi
+Error: there is no config at /home/you/.config/beady-eye/config.toml, so bdi read the current directory
+
+Caused by:
+    /home/you is not in anything beads tracks
+```
+
+A config is a list of projects, and everything else in it has a default:
 
 ```toml
+[[projects]]
+name = "atlas"
+path = "/home/you/atlas"
+
 [[projects]]
 name = "orbital"
 path = "/srv/work/orbital"
 environment = "direnv"
+
+[[projects]]
+name = "beacon"
+path = "/home/you/dev/beacon"
+credential_command = "secret-tool lookup tracker beacon"
+
+[roots.explicit]
+atlas = ["atlas-1", "atlas-10"]
+
+[[badges]]
+key    = "delivery_pr"
+render = "⇢ {}"
+
+[[badges]]
+key    = "blocked_on"
+match  = "human"
+render = "⏸ waiting"
+
+[join]
+pane_key = "agent_pane"
+
+[anomalies]
+stale_claim_days = 30
+
+[tui]
+refresh_seconds = 30
+unanswered_after_seconds = 30
+tail_refresh_millis = 250
 ```
 
-That project is then read with what entering its directory produces, at the
-cost of one `direnv exec` per refresh. direnv is worth naming when the
-password bd needs is in a project's `.envrc` and nowhere in the shell running
-`bdi`; a single tracker, or a SQLite one, wants the default. `credential_command`
-is the third way in, for a tracker outside both: a command whose stdout is the
-password. A project names one of the three.
+**`[[projects]]`** is the one section with no default. A project is a `name`
+and the `path` its repository is at; the name is how `bdi` tells one tracker's
+beads from another's, so two projects cannot answer to one.
 
-It knows nothing about any particular way of organising agents — no orchestration
-model, no roles, no workflow. Conventions your setup encodes in bead metadata are
-named in config and drawn as badges; `bdi` never learns what they mean.
+Each project's tracker is read in the environment `bdi` itself was started in,
+so a tracker your shell can already reach needs nothing configured. A setup
+that keeps one credential per project in each project's own directory, loaded
+by direnv when you enter it, says `environment = "direnv"`, and that project is
+then read with what entering its directory produces, at the cost of one
+`direnv exec` per refresh. direnv is worth naming when the password bd needs is
+in a project's `.envrc` and nowhere in the shell running `bdi`; a single
+tracker, or a SQLite one, wants the default. `credential_command` is the third
+way in, for a tracker outside both: a command whose stdout is the password. A
+project names one of the three.
+
+**`[roots.explicit]`** names trees to draw beyond the ones `bdi` finds for
+itself, listed under the project whose tracker holds each. Bead prefixes are
+per-tracker and uncoordinated, so an id on its own names nothing `bdi` can go
+and read.
+
+**`[[badges]]`** draws one metadata key beside every bead carrying it. `render`
+is the text, with `{}` standing for the value; `match` narrows the badge to one
+value, and a badge with no `match` draws whatever the key holds. `bdi` knows
+nothing about any particular way of organising agents — no orchestration model,
+no roles, no workflow — so a convention your setup encodes in bead metadata is
+named here and drawn without interpretation.
+
+**`[join] pane_key`** is the metadata key holding the pane an agent sits in.
+That is what ties an agent to its bead exactly, rather than inferring it from
+what the pane calls itself.
+
+**`[anomalies]`** sets how many days a claim may go untouched before `bdi`
+calls it stale. The default matches `bd stale --days`, so it is beads' own
+window rather than a number `bdi` invented.
+
+**`[tui]`** sets three clocks, all of them gaps after an answer rather than
+periods a read happens inside, so a slow tracker stretches its own gap instead
+of piling asks up behind itself. `refresh_seconds` is how long a project waits
+after one read before asking for the next; `unanswered_after_seconds` is how
+long a read may be outstanding before the screen says the tracker has stopped
+answering rather than drawing it as merely being read; `tail_refresh_millis` is
+how often the tail asks herdr for the selected pane again, in milliseconds
+because it is the one interval under a second.
+
+## Running it
+
+A bare `bdi` draws the forest and keeps it live. The screen is three bands:
+the scrollable forest, with a line per project and its trees hanging under it;
+the tail beneath, headed by the selected bead's pane and showing that pane's
+last rows; and one row at the foot carrying every notice on the left and the
+keys on the right.
+
+Move with the arrow keys or `hjkl`. Four keys do most of the rest:
+`Enter` opens the selected bead, `f` brings its pane to the front, `a` shows
+every tree rather than only the ones with a live agent, and `^R` collects from
+the trackers again now. `y` puts the selected bead's id on the clipboard,
+written as OSC 52: no helper program, and it travels through a multiplexer and
+ssh the way the rest of the screen does. A terminal that does not honour the
+sequence drops it, so on one of those the key does nothing rather than failing.
+`q` quits, and `?` lists every binding there is in a window over the forest.
+
+`--json` writes the same snapshot to stdout instead of drawing it. A `bdi`
+whose stdout is not a terminal has nowhere to draw and says so:
+
+```console
+$ bdi | cat
+bdi's view needs a terminal; re-run with --json
+```
 
 ## Which projects a run reads
 
@@ -255,5 +384,7 @@ deliberately none of `bdi`'s.
 
 ## Status
 
-Built, and in daily use against the trackers it was written for. The design
-is in [docs/design.md](docs/design.md), reconciled against what got built.
+Built, unreleased, and in daily use against the trackers it was written for.
+There is no tag yet, so the install commands above are what the first one makes
+work. The design is in [docs/design.md](docs/design.md), reconciled against what
+got built.
