@@ -10,11 +10,10 @@
 # network produces.
 #
 #   BDI_SHIM_BD_ANSWERS      directory holding one file per call, named by the
-#                            call as bdi asks it past the `-C <tracker>
-#                            --readonly` every call opens with: `list --all
-#                            --limit 0 --json`, `blocked --json`. A call with
-#                            a file there is answered with it; any other goes
-#                            to the bd this shadows.
+#                            call as bdi asks it past whatever flags open it:
+#                            `list --all --limit 0 --json`, `blocked --json`,
+#                            `where --json`. A call with a file there is
+#                            answered with it; any other is refused.
 #   BDI_SHIM_BD_UNANSWERED   file this appends each call it had no answer for
 #                            to, so a reader can tell a capture that was not
 #                            served from one that was served wrongly.
@@ -24,7 +23,7 @@
 #                            reader can wait for the hang to have started
 #                            rather than sleeping and hoping.
 #
-# Unset, it is the bd it shadows.
+# Unset, it has no answer to give and refuses every call.
 #
 # Plain `sh`, and POSIX. A nix build sandbox holds `/bin/sh` and nothing else
 # — no `/usr/bin/env`, no `bash` — and the suite runs in one. What decides
@@ -46,12 +45,11 @@ if [ -n "${BDI_SHIM_BD_HANGS_WHILE:-}" ] && [ -e "$BDI_SHIM_BD_HANGS_WHILE" ]; t
   if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then rm -f "$BDI_SHIM_BD_HOLDING"; fi
 fi
 
-# The subcommand and everything after it. Every call from bdi opens with
-# flags naming the tracker (src/collect/bd.rs), so the subcommand is not $1
-# and a shim that tested $1 would answer nothing and fall through to the real
-# bd — which, against a HOME with no tracker, is the very "nothing here" it
-# was written to replace. Scanned rather than counted, so one more leading
-# flag does not put the shim back in that state.
+# The subcommand and everything after it. Most calls from bdi open with flags
+# naming the tracker (src/collect/bd.rs), so the subcommand is not $1 and a
+# shim that tested $1 would key each of those by a flag, find nothing written
+# down under that name, and refuse the lot. Scanned rather than counted, so
+# one more leading flag does not put the shim back in that state.
 asked() {
   while [ $# -gt 0 ]; do
     case $1 in
@@ -68,20 +66,43 @@ asked=$(asked "$@")
 # tracker's working root and skips the whole read when the answer has not
 # moved (src/app/tracker.rs), so a fixed answer would have the first read
 # stand for every refresh after it: a test changing what the tracker holds
-# would see nothing change and nothing go red. Unanswered, the real bd errors
-# and bdi reads in full each time, which is the degradation it was built to
-# take. An answer that moved with the files above would be safe; a constant
-# is not.
+# would see nothing change and nothing go red. Refused, bdi has no root to
+# compare the next read against and reads in full each time, which is the
+# degradation it was built to take. An answer that moved with the files above
+# would be safe; a constant is not.
 case $asked in
-  sql\ *) ;;
-  *)
-    if [ -n "${BDI_SHIM_BD_ANSWERS:-}" ] && [ -f "$BDI_SHIM_BD_ANSWERS/$asked" ]; then
-      exec cat "$BDI_SHIM_BD_ANSWERS/$asked"
-    fi
-    if [ -n "${BDI_SHIM_BD_UNANSWERED:-}" ]; then
-      printf '%s\n' "$asked" >>"$BDI_SHIM_BD_UNANSWERED"
-    fi
+  sql\ *)
+    printf 'bd: the shim refuses "%s" rather than answer it or hand it on. The working root is the one answer that would stop bdi reading in full; the comment above this case says why.\n' "$*" >&2
+    exit 127
     ;;
 esac
 
-exec "$(dirname "$0")/shadowed" bd "$@"
+if [ -n "${BDI_SHIM_BD_ANSWERS:-}" ] && [ -f "$BDI_SHIM_BD_ANSWERS/$asked" ]; then
+  exec cat "$BDI_SHIM_BD_ANSWERS/$asked"
+fi
+
+if [ -n "${BDI_SHIM_BD_UNANSWERED:-}" ]; then
+  printf '%s\n' "$asked" >>"$BDI_SHIM_BD_UNANSWERED"
+fi
+
+# Anything not answered above is refused rather than handed to the bd this
+# shadows. One call carries no `-C`: `bd where --json`, which
+# src/collect/discovery.rs asks to decide whether a directory is one beads
+# tracks. bdi strips BEADS_DIR from every child, so a handed-on one resolves
+# the tracker by walking up from the working directory — which under this
+# repository is the maintainer's own, and it answers exit 0. Answering is
+# what decides the directory is a project, so the hand-on did not read the
+# wrong tracker quietly: it gave the run a success no test wrote down, on the
+# machine somebody runs the suite by hand on and on no other. The machine
+# that has no tracker is the machine `nix flake check` runs on, which is why
+# passing calls through read as safe: the safety was present where nothing
+# could go wrong and absent where everything could.
+#
+# What a person reads is the line BDI_SHIM_BD_UNANSWERED holds, not this one.
+# bdi captures a child's stderr and drops it once the failure is classified
+# (src/collect/run.rs), so this reaches whoever runs the shim by hand and
+# nobody else. 127 is what the shims beside this one exit with, and a
+# non-zero exit is what bdi already took from a bd that could not open the
+# tracker: FailureKind::Unavailable either way.
+printf 'bd: the shim was asked "%s", which nothing wrote an answer for and which it will not hand on to the bd it shadows. An answer for it is a file named "%s" under $BDI_SHIM_BD_ANSWERS.\n' "$*" "$asked" >&2
+exit 127

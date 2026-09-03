@@ -10,8 +10,17 @@
 //! So the safety was present where nothing could go wrong and absent where
 //! everything could.
 //!
+//! The `bd` shim ended the same way, and its one call that carries no `-C`
+//! is the same shape of hazard: `bd where --json` resolves its tracker by
+//! walking up from the working directory, so a handed-on call reaches the
+//! maintainer's own `.beads` from this repository and answers exit 0 —
+//! which is what decides the directory is a project. Its `sql` fall-through
+//! was deliberate rather than accidental, and refusing keeps what that
+//! decision protected: the working root is never answered, so every refresh
+//! reads in full.
+//!
 //! What is asserted here is the absence of a call, and an absence assertion
-//! wants something that could have occurred. The real herdr cannot be that
+//! wants something that could have occurred. The real program cannot be that
 //! something: reaching it is the hazard, so a test that let the handing on
 //! land would prove the point by doing the damage. A stand-in the test owns
 //! sits where the real one would be found instead, and writes down what it
@@ -98,6 +107,10 @@ impl AStandIn {
             "BDI_SHIM_HERDR_HANGS_WHILE",
             "BDI_SHIM_HERDR_HOLDING",
             "BDI_SHIM_HERDR_READ_DELAY",
+            "BDI_SHIM_BD_ANSWERS",
+            "BDI_SHIM_BD_UNANSWERED",
+            "BDI_SHIM_BD_HANGS_WHILE",
+            "BDI_SHIM_BD_HOLDING",
         ] {
             command.env_remove(answered_from);
         }
@@ -281,6 +294,194 @@ fn what_the_shim_has_learned_it_still_answers() {
     assert!(
         ran.status.success(),
         "the shim refused a subcommand it has learned: {ran:?}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout),
+        listed,
+        "the shim did not answer with what the test wrote down"
+    );
+    assert_eq!(
+        stand_in.was_handed(),
+        Vec::<String>::new(),
+        "the shim answered and handed the call on as well"
+    );
+}
+
+/// The `bd` call that carries no tracker, spelled as `bdi` asks it.
+///
+/// `src/collect/discovery.rs` runs this to decide whether the directory is
+/// one beads tracks, and it is the whole of `bdi`'s bd surface that names no
+/// tracker: every other call goes through `Reader::asked` in
+/// `src/collect/bd.rs`, which opens with `-C <path> --readonly`.
+/// `RealRunner` strips `BEADS_DIR` from every child as well, so a delegated
+/// one resolves the tracker by walking up from the working directory —
+/// which in this repository reaches the maintainer's own `.beads` and
+/// answers **exit 0**, measured 2026-09-03. Answering is what decides the
+/// directory is a project, so handing this on does not read the wrong
+/// tracker quietly: it hands the run a success no test wrote down, on the
+/// machine somebody runs the suite by hand on and on no other.
+const NAMES_NO_TRACKER: [&str; 2] = ["where", "--json"];
+
+/// The statement `bdi` asks the tracker's working root with, spelled as
+/// `src/collect/bd.rs` composes it.
+const THE_WORKING_ROOT: &str = "SELECT dolt_hashof_db() AS h";
+
+/// The bead: the one call that names no tracker is refused, and the bd that
+/// would have answered for the maintainer's own never hears it.
+#[test]
+fn the_bd_call_that_names_no_tracker_is_refused_and_not_handed_on() {
+    let stand_in = AStandIn::called("bd", &a_directory_for("bd-names-no-tracker"));
+
+    let ran = stand_in.running(&shim("bd"), &NAMES_NO_TRACKER);
+
+    assert_eq!(
+        stand_in.was_handed(),
+        Vec::<String>::new(),
+        "the shim handed on the one call that names no tracker, which \
+         against this repository resolves to the maintainer's own"
+    );
+    assert!(
+        !ran.status.success(),
+        "the shim answered a call nothing wrote an answer for: {ran:?}"
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        said.contains(&NAMES_NO_TRACKER.join(" ")),
+        "the refusal did not say what it was asked, so a reader running the \
+         shim by hand has to go and find out: {said}"
+    );
+}
+
+/// `sql` is refused whatever is written down for it, and a file is exactly
+/// the hazard rather than the remedy: `bdi` asks it for the tracker's
+/// working root and skips the whole read while the answer has not moved
+/// (`src/app/tracker.rs`), so a constant would have the first read stand for
+/// every refresh after it.
+/// `a_collection_that_drops_the_shown_bead_takes_the_window_down` is the row
+/// that goes red when one does.
+#[test]
+fn the_working_root_is_refused_even_where_a_file_answers_it() {
+    let ours = a_directory_for("bd-sql-answered");
+    let stand_in = AStandIn::called("bd", &ours);
+    let answers = ours.join("bd-answers");
+    std::fs::create_dir_all(&answers).expect("the answers are ours to write");
+    let a_constant = r#"[{"h":"a hash that never moves"}]"#;
+    std::fs::write(
+        answers.join(format!("sql --json {THE_WORKING_ROOT}")),
+        a_constant,
+    )
+    .expect("the answer is ours to write");
+
+    let ran = stand_in
+        .asking(&shim("bd"))
+        .args(["-C", "/nowhere", "--readonly", "sql", "--json"])
+        .arg(THE_WORKING_ROOT)
+        .env("BDI_SHIM_BD_ANSWERS", &answers)
+        .output()
+        .expect("the shim runs");
+
+    assert_eq!(
+        stand_in.was_handed(),
+        Vec::<String>::new(),
+        "the shim handed the working root to the bd it shadows"
+    );
+    assert!(
+        !String::from_utf8_lossy(&ran.stdout).contains("a hash that never moves"),
+        "the shim said what the file held, so every refresh after the first \
+         would find the tracker unmoved and read nothing"
+    );
+    assert!(
+        !ran.status.success(),
+        "the shim reported success for the working root, which is the one \
+         answer it may never give: {ran:?}"
+    );
+}
+
+/// A call a file could have answered and none did is refused too, and
+/// written down where a test reads it. The writing down is the whole of what
+/// a refusal leaves behind: `bdi` captures a child's stderr and drops it
+/// after classifying the failure (`src/collect/run.rs`), so nothing the shim
+/// says there reaches whoever is reading the run.
+#[test]
+fn a_bd_call_no_file_answers_is_refused_and_written_down() {
+    let ours = a_directory_for("bd-unanswered");
+    let stand_in = AStandIn::called("bd", &ours);
+    let unanswered = ours.join("bd-unanswered");
+    let _ = std::fs::remove_file(&unanswered);
+
+    let ran = stand_in
+        .asking(&shim("bd"))
+        .args(["-C", "/nowhere", "--readonly"])
+        .args(["list", "--all", "--limit", "0", "--json"])
+        .env("BDI_SHIM_BD_UNANSWERED", &unanswered)
+        .output()
+        .expect("the shim runs");
+
+    assert_eq!(
+        stand_in.was_handed(),
+        Vec::<String>::new(),
+        "the shim handed on a call it had no answer for"
+    );
+    assert!(
+        !ran.status.success(),
+        "the shim answered a call nothing wrote an answer for: {ran:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&unanswered).unwrap_or_default(),
+        "list --all --limit 0 --json\n",
+        "the refusal was not written down, and the stderr saying it is \
+         dropped by bdi, so a test that trips one has nothing to read"
+    );
+}
+
+/// What the three rows above rest on: the stand-in is reachable under the
+/// name `bd` as well, so an empty `was_handed` is a reading rather than a
+/// hole.
+#[test]
+fn the_stand_in_is_where_a_bd_call_handed_on_would_land() {
+    let stand_in = AStandIn::called("bd", &a_directory_for("bd-reachable"));
+
+    let mut asked = vec!["bd"];
+    asked.extend(NAMES_NO_TRACKER);
+    let ran = stand_in.running(&shim("shadowed"), &asked);
+
+    assert!(
+        ran.status.success(),
+        "nothing stood where a handed-on call would land, so the rows above \
+         assert the absence of something that could not have happened \
+         anyway: {ran:?}"
+    );
+    assert_eq!(
+        stand_in.was_handed(),
+        vec![NAMES_NO_TRACKER.join(" ")],
+        "the stand-in was reached but did not write down what it was asked"
+    );
+}
+
+/// The other half, as for herdr: refusing is not the shim having stopped
+/// working. What a file answers it still answers, and the stand-in hears
+/// nothing.
+#[test]
+fn what_a_file_answers_the_bd_shim_still_says() {
+    let ours = a_directory_for("bd-still-answers");
+    let stand_in = AStandIn::called("bd", &ours);
+    let answers = ours.join("bd-answers");
+    std::fs::create_dir_all(&answers).expect("the answers are ours to write");
+    let listed = r#"[{"id":"bdi-1","title":"a bead","status":"open"}]"#;
+    std::fs::write(answers.join("list --all --limit 0 --json"), listed)
+        .expect("the answer is ours to write");
+
+    let ran = stand_in
+        .asking(&shim("bd"))
+        .args(["-C", "/nowhere", "--readonly"])
+        .args(["list", "--all", "--limit", "0", "--json"])
+        .env("BDI_SHIM_BD_ANSWERS", &answers)
+        .output()
+        .expect("the shim runs");
+
+    assert!(
+        ran.status.success(),
+        "the shim refused a call a file answers: {ran:?}"
     );
     assert_eq!(
         String::from_utf8_lossy(&ran.stdout),

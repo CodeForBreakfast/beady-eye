@@ -158,10 +158,11 @@ impl ShimmedTracker {
     }
 
     /// Every call `bd` was asked that the shim had no answer for, spelled as
-    /// it was asked. Such a call went to the real `bd` instead — which,
-    /// against a `HOME` with no tracker, is exactly the "nothing here" that
-    /// a shim answering nothing would have produced. Empty is the only
-    /// reading that says the capture was served.
+    /// it was asked. Such a call was refused rather than answered, and this
+    /// is where a reader finds that out: `bdi` captures a child's stderr and
+    /// drops it once the failure is classified (`src/collect/run.rs`), so
+    /// what the shim said about the refusal reaches nobody. Empty is the
+    /// only reading that says the capture was served.
     pub fn unanswered(&self) -> Vec<String> {
         std::fs::read_to_string(&self.unanswered)
             .unwrap_or_default()
@@ -204,13 +205,14 @@ impl ShimmedTracker {
 /// in the one directory, so all three are shadowed together whichever of them
 /// a test came for.
 ///
-/// `bd` is the only one that hands a call on to the program it shadows;
-/// `herdr` and `direnv` refuse what they have no answer for. The herdr a
-/// hand-on would reach is the one holding the panes of whoever is running the
-/// suite, and `agent focus` moves one of them.
+/// None of the three hands a call on to the program it shadows. What each
+/// would reach belongs to whoever is running the suite: the herdr holding
+/// their panes, whose `agent focus` moves one of them, and the bd that `bd
+/// where --json` resolves by walking up from the working directory, which
+/// under this repository is their own tracker.
 ///
-/// It prepends, so nothing here takes a program off `PATH`: the real binary
-/// is still behind the shim, which is what lets `bd` hand on to it. A test
+/// It prepends, so nothing here takes a program off `PATH`, which is what
+/// keeps `dirname` and the rest of a shared `bin` reachable. A test
 /// asserting what `bdi` does with a program **absent** cannot use this, and
 /// cannot tell that it did not: on a machine that has the program it would be
 /// testing the shim, and on one that does not it would pass without having
