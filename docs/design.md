@@ -1007,8 +1007,12 @@ environment = "direnv"
   fallback can point bd at the wrong database — only fail to authenticate
   against the right one, which `bdi` reports per project as `auth` while every
   other tree still draws.
-- **`--readonly` has bd enforce the no-writes rule** rather than leaving it to
-  `bdi` being well behaved.
+- **Every command line `bdi` spells is a read, and that is the whole of the
+  no-writes rule.** It is a property of the subcommands `collect/` composes
+  and of nothing beside them. `--readonly` still earns its place on the line:
+  it vetoes bd's mutating subcommands, so a mutating call arriving in
+  `collect/` later is refused rather than run — a guard on the next edit, and
+  a veto over subcommands rather than a property of the tracker's files.
 - **The environment is captured once per project, not per call.** `direnv exec`
   reloads the directory every time it runs. Measured 2026-08-31 with direnv
   2.37.1 (the version this machine ran then and still does at the time of
@@ -1148,10 +1152,10 @@ pings after, so a real write has already moved the root by the time the
 message lands, and an unmoved root means the write was a no-op or the producer
 was wrong.
 
-`bd sql` is the one subcommand `--readonly` does not veto, so the no-writes
-guarantee at that call site rests on `bdi`'s own string literal rather than on
-bd — a constant nothing composes, reached from one function that takes no
-argument.
+`bd sql` is the one subcommand `--readonly` does not veto, so the guard the
+flag gives the rest does not reach it. What stands in its place is `bdi`'s own
+string literal — a constant nothing composes, reached from one function that
+takes no argument.
 
 ### Telling `bdi` a project changed
 
