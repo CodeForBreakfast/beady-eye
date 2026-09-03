@@ -657,4 +657,38 @@ mod tests {
             "a leading `.` is the only one the components leave to fold"
         );
     }
+    /// A `.git` whose symlink dangles is walked past, because that is what
+    /// git does with one: its repository discovery stats the name, and a
+    /// link to nothing fails that stat as surely as a name nothing holds.
+    /// So the directory under it is still in the worktree above, and the
+    /// answer is the worktree's.
+    ///
+    /// **The predicate here is `stat` on purpose, and it is the opposite of
+    /// the one `collect::run`'s installed probe asks with.** That one
+    /// reproduces the kernel's `execvp` lookup, which stops at the entry, so
+    /// it asks `lstat` and a dangling link is something installed. This one
+    /// reproduces git's discovery, which resolves, so a dangling link is
+    /// nothing. Reading either predicate as the crate's rule breaks the
+    /// other site: `symlink_metadata` here would stop at the dangling
+    /// `.git`, fail to read it as a file, and answer nothing where git
+    /// answers the worktree.
+    #[test]
+    fn a_dot_git_whose_symlink_dangles_is_walked_past_as_git_walks_past_it() {
+        let fixture = a_linked_worktree_git_made("worktree-dangling-dot-git");
+        let deep = fixture.linked.join("nested/sub");
+        std::fs::create_dir_all(&deep).expect("the directory is ours to make");
+        let gone = fixture.scratch.join("the-target-a-build-collected");
+        std::os::unix::fs::symlink(&gone, fixture.linked.join("nested/.git"))
+            .expect("the link is ours to make");
+        assert!(
+            std::fs::symlink_metadata(&gone).is_err(),
+            "the link only dangles while nothing holds {}",
+            gone.display()
+        );
+
+        assert_eq!(
+            in_the_main_working_tree(&deep),
+            Some(fixture.checkout.join("nested/sub"))
+        );
+    }
 }

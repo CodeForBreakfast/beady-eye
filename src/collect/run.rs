@@ -459,6 +459,24 @@ mod tests {
             .expect_err("the command exits non-zero")
     }
 
+    /// A path in this process's own scratch space that nothing holds.
+    ///
+    /// A test naming something absent has to establish that rather than
+    /// borrow it from the machine it runs on: a name that happens to be free
+    /// here is a premise the host grants, and the day something holds it the
+    /// test measures a case it was never written for.
+    fn nothing_holds(named: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            std::fs::symlink_metadata(&path).is_err(),
+            "{} is held by something, so a test naming it absent proves nothing",
+            path.display()
+        );
+        path
+    }
+
     #[test]
     fn stdout_comes_back_from_a_command_that_succeeds() {
         let out = RealRunner
@@ -681,13 +699,9 @@ mod tests {
     /// and lost, and the silence `Absent` earns belongs to neither.
     #[test]
     fn a_directory_that_is_not_there_is_not_a_program_that_was_never_installed() {
+        let gone = nothing_holds("no-such-directory");
         let failure = RealRunner
-            .run(
-                "sh",
-                &["-c", "true"],
-                Some(Path::new("/bdi-no-such-directory")),
-                &Env::new(),
-            )
+            .run("sh", &["-c", "true"], Some(&gone), &Env::new())
             .expect_err("the directory is not there");
 
         assert_eq!(failure.kind, FailureKind::Unstartable);
@@ -764,7 +778,7 @@ mod tests {
     fn a_program_whose_symlink_dangles_is_installed_and_broken() {
         let program = std::env::temp_dir().join(format!("bdi-dangling-{}", std::process::id()));
         let _ = std::fs::remove_file(&program);
-        std::os::unix::fs::symlink("/bdi-no-such-target", &program)
+        std::os::unix::fs::symlink(nothing_holds("dangling-target"), &program)
             .expect("the link is ours to make");
 
         let failure = RealRunner
@@ -796,13 +810,9 @@ mod tests {
     /// does not cost the reader a notice.
     #[test]
     fn a_missing_program_in_a_missing_directory_is_reported_as_the_directory() {
+        let gone = nothing_holds("no-such-directory-either");
         let failure = RealRunner
-            .run(
-                "bdi-no-such-program",
-                &[],
-                Some(Path::new("/bdi-no-such-directory")),
-                &Env::new(),
-            )
+            .run("bdi-no-such-program", &[], Some(&gone), &Env::new())
             .expect_err("neither the directory nor the program is there");
 
         assert_eq!(failure.kind, FailureKind::Unstartable);
