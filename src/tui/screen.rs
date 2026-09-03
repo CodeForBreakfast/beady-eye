@@ -502,6 +502,13 @@ enum Over<'a> {
     Bead(&'a mut Show),
 }
 
+#[cfg(panic = "abort")]
+compile_error!(
+    "putting the terminal back is `Screen`'s `Drop`, and a build with \
+     `panic = \"abort\"` runs no `Drop`: a panic under it leaves the alternate \
+     screen up, the terminal in raw mode, and the mouse reporting every move"
+);
+
 impl Drop for Screen {
     fn drop(&mut self) {
         // Ahead of the restore, mirroring the order they were turned on in.
@@ -511,9 +518,7 @@ impl Drop for Screen {
         //
         // Every way the run can end comes through here — the loop returning
         // on 'q', a panic unwinding, and a signal, which the loop answers by
-        // returning. All three rest on the build unwinding: a profile that
-        // sets `panic = "abort"` runs no `Drop` at all and would take this
-        // with it, leaving exactly the terminal described above.
+        // returning.
         let _ = execute!(io::stdout(), DisableMouseCapture);
         ratatui::restore();
     }
