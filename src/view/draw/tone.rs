@@ -61,7 +61,7 @@ mod tests {
     use crate::view::draw::project::project_line;
     use crate::view::draw::tests::*;
     use crate::view::painted::Run;
-    use crate::view::row::{self, AGENT, WARNING};
+    use crate::view::row::{self, Row, AGENT, WARNING};
 
     // ---- styling ---------------------------------------------------------
 
@@ -256,6 +256,72 @@ mod tests {
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 110, 1).row(0);
 
         assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
+    }
+
+    // ---- what the scale may not be the only carrier of --------------------
+
+    /// Every row `tone` can tell one from another, holding still everything it
+    /// does not read. It reads three things — whether an agent is on the row,
+    /// whether the bead is closed, whether anything is wrong with it — so the
+    /// corpus is those three over each status, under one id and one title.
+    fn every_liveness_row() -> Vec<Row> {
+        let mut rows = Vec::new();
+        for status in every_status() {
+            for staffed in [false, true] {
+                for odd in [false, true] {
+                    let mut bead = node("nix-9670s.1", "a bead", status.clone());
+                    bead.agent = staffed.then(a_pane);
+                    if odd {
+                        bead.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+                    }
+                    rows.push(row(&bead));
+                }
+            }
+        }
+        rows
+    }
+
+    /// A floor on the harm and not a detector of the fault. It says a reader
+    /// can still tell the liveness states apart once the tones have run
+    /// together; it does not say they have not run together, and nothing this
+    /// project runs does. Neither `bdi-sw4` nor `bdi-kbd2` would have gone red
+    /// here — `◍` and `✓` were on those rows the whole time while the tones
+    /// collapsed — so a green board here is no evidence the scale is
+    /// separated, and a reader who wants that has to go on looking for it.
+    ///
+    /// The claim is that a row's tier is a function of its words: two rows
+    /// that read the same are drawn the same, so no rung carries a meaning by
+    /// itself. Nothing here names a colour, which is what lets the scale move
+    /// underneath it.
+    #[test]
+    fn no_liveness_state_is_told_apart_by_its_tone_alone() {
+        let mut read: Vec<(String, Style)> = Vec::new();
+
+        for row in every_liveness_row() {
+            let tone = tone(&row);
+            let words = Painted::of(bead_line(&row, BRANCH, 3), 200, 1)
+                .rows()
+                .swap_remove(0);
+
+            if let Some((_, already)) = read.iter().find(|(said, _)| *said == words) {
+                assert_eq!(
+                    *already, tone,
+                    "two liveness states read the same: {words:?}"
+                );
+            }
+            read.push((words, tone));
+        }
+
+        // The one way this goes quietly vacuous is a corpus that stopped
+        // reaching the states it means to. Said of the corpus rather than of
+        // the tones it drew: a count of the distinct tones would be this test
+        // asserting the rungs are apart, which is the claim `visual-language`
+        // establishes cannot be made.
+        assert_eq!(
+            read.len(),
+            every_status().len() * 4,
+            "every status, against both of the other two things `tone` reads"
+        );
     }
 
     /// The box-drawing says how the tree is shaped, not how a bead is going,
