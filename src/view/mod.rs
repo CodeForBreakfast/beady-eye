@@ -297,8 +297,9 @@ mod tests {
             FailureKind::Auth => Some(FailureKind::Unavailable),
             FailureKind::Unavailable => Some(FailureKind::Gone),
             FailureKind::Gone => Some(FailureKind::Busy),
-            FailureKind::Busy => Some(FailureKind::Exec),
-            FailureKind::Exec => Some(FailureKind::Parse),
+            FailureKind::Busy => Some(FailureKind::NotInstalled),
+            FailureKind::NotInstalled => Some(FailureKind::Unstartable),
+            FailureKind::Unstartable => Some(FailureKind::Parse),
             FailureKind::Parse => Some(FailureKind::Unsupported),
             FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
             FailureKind::UnknownFlag => None,
@@ -309,8 +310,9 @@ mod tests {
     pub(super) fn every_tracker_failure() -> impl Iterator<Item = TrackerFailure> {
         std::iter::successors(Some(TrackerFailure::Auth), |failure| match failure {
             TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
-            TrackerFailure::Unavailable => Some(TrackerFailure::Exec),
-            TrackerFailure::Exec => Some(TrackerFailure::Parse),
+            TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
+            TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
+            TrackerFailure::Unstartable => Some(TrackerFailure::Parse),
             TrackerFailure::Parse => Some(TrackerFailure::UnknownFlag),
             TrackerFailure::UnknownFlag => None,
         })

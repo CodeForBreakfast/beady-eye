@@ -20,7 +20,10 @@ pub fn from_the_current_directory(
 ) -> anyhow::Result<Config> {
     if let Err(failure) = runner.run("bd", &["where", "--json"], Some(cwd), &Env::new()) {
         // bd that never ran has said nothing about this directory.
-        if failure.kind == FailureKind::Exec {
+        if matches!(
+            failure.kind,
+            FailureKind::NotInstalled | FailureKind::Unstartable
+        ) {
             return Err(failure.into());
         }
         anyhow::bail!("{} is not in anything beads tracks", cwd.display());
@@ -835,14 +838,14 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_bd_that_cannot_run_says_so_rather_than_blaming_the_directory() {
         let runner = FakeRunner::default().failing(
             "bd where --json",
-            RunFailure::exec("bd", "No such file or directory (os error 2)"),
+            RunFailure::not_installed("bd", "No such file or directory (os error 2)"),
         );
 
         let err = from_the_current_directory(&runner, Path::new("/srv/loose"), None)
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("bd could not be run"), "got: {err}");
+        assert!(err.contains("bd is not installed"), "got: {err}");
         assert!(!err.contains("/srv/loose"), "got: {err}");
     }
 

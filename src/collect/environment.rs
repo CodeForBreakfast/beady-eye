@@ -264,12 +264,12 @@ mod tests {
     fn a_directory_that_cannot_be_entered_fails_the_project_rather_than_falling_back() {
         let runner = FakeRunner::default().failing(
             &entering_the_directory(),
-            RunFailure::exec("direnv", "No such file or directory"),
+            RunFailure::unstartable("direnv", "No such file or directory"),
         );
 
         let failure = tracker_env(&runner, &entered_with_direnv(), Some("hunter2")).unwrap_err();
 
-        assert_eq!(failure.kind, FailureKind::Exec);
+        assert_eq!(failure.kind, FailureKind::Unstartable);
         assert_eq!(failure.program, "direnv");
     }
 
@@ -403,7 +403,7 @@ mod tests {
     fn a_credential_command_that_fails_reaches_the_caller() {
         let runner = FakeRunner::default().failing(
             "sh -c op read the/password",
-            RunFailure::exec("sh", "op: command not found"),
+            RunFailure::not_installed("sh", "op: command not found"),
         );
         let project = Project {
             name: "atlas".to_string(),
@@ -416,7 +416,7 @@ mod tests {
 
         assert_eq!(
             tracker_env(&runner, &project, None).unwrap_err().kind,
-            FailureKind::Exec
+            FailureKind::NotInstalled
         );
     }
 }

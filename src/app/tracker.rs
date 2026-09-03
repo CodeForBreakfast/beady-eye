@@ -368,7 +368,8 @@ pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
         | FailureKind::Gone
         | FailureKind::Busy
         | FailureKind::Unsupported => TrackerFailure::Unavailable,
-        FailureKind::Exec => TrackerFailure::Exec,
+        FailureKind::NotInstalled => TrackerFailure::NotInstalled,
+        FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::Parse => TrackerFailure::Parse,
         FailureKind::UnknownFlag => TrackerFailure::UnknownFlag,
     }
@@ -1206,7 +1207,8 @@ orbital = ["bdi-404"]
         let kinds = [
             (FailureKind::Auth, TrackerFailure::Auth),
             (FailureKind::Unavailable, TrackerFailure::Unavailable),
-            (FailureKind::Exec, TrackerFailure::Exec),
+            (FailureKind::NotInstalled, TrackerFailure::NotInstalled),
+            (FailureKind::Unstartable, TrackerFailure::Unstartable),
             (FailureKind::Parse, TrackerFailure::Parse),
             (FailureKind::Unsupported, TrackerFailure::Unavailable),
             (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
@@ -1378,7 +1380,7 @@ orbital = ["orb-404"]
     #[test]
     fn a_project_whose_tracker_cannot_be_opened_is_named_with_that_failure() {
         let trackers = Fakes::default()
-            .unopenable("orbital", FailureKind::Exec)
+            .unopenable("orbital", FailureKind::Unstartable)
             .with("ferry", colliding_tracker());
 
         let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
@@ -1387,7 +1389,7 @@ orbital = ["orb-404"]
             snap.failed_projects,
             vec![FailedProject {
                 project: "orbital".to_string(),
-                tracker: TrackerFailure::Exec,
+                tracker: TrackerFailure::Unstartable,
             }]
         );
         let roots: Vec<(&str, &str)> = snap

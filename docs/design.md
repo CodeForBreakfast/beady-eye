@@ -176,10 +176,20 @@ the foot says nothing, and the tail band says there is no provider — once, in
 the one place a run has to write something anyway. *Degrade, never disappear*
 is about something that broke; nothing here has.
 
-Which of the two a run is in is inferred rather than configured, on the line
-`collect::discovery` already draws for bd: a provider that could not be spawned
-was never installed, and every other failure is one that ran and would not
-answer.
+Which of the two a run is in is inferred rather than configured, and the line
+is not whether the provider ran. A provider on `PATH` without an execute bit
+never ran either, and neither did one whose directory is not there; both are
+something the reader has, and both used to take the silence reserved for a
+machine that never had one. The line is whether anything is installed to run at
+all: that is the one failure that is not a finding, and every other failure —
+including a provider that is there and will not start — is one the foot says.
+
+Nothing but the kernel can draw that line, and it does not quite: `ENOENT` is
+what it answers both to a name nothing on `PATH` holds and to a working
+directory that is not there. So the directory is asked after, on the failure
+path, and settles it. Both missing at once reads as the directory, because
+until the directory is there nothing can be learnt about what is installed to
+run in it.
 
 The age heuristic earns its keep alone. In one tracker, two beads have sat
 `in_progress` for 54 and 58 days. No herdr needed to see that. It stays a
@@ -1025,9 +1035,12 @@ environment = "direnv"
   it beside `environment = "direnv"` is refused: it is entered one way, and a
   precedence between the two would be a mechanism nothing on the screen says.
 - **An authentication failure is distinguished from the others.**
-  `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`, `exec`,
-  `parse`, or `unknown-flag`. They want different responses and reporting them
-  as one string does not help anyone. The last is bd refusing the command
+  `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`,
+  `not-installed`, `unstartable`, `parse`, or `unknown-flag`. They want
+  different responses and reporting them as one string does not help anyone.
+  The middle two are the two ways bd never ran, and they are two different
+  things to do about it: install bd, or repair the bd or the project directory
+  that is already there. The last is bd refusing the command
   line before it runs, in cobra's words (`unknown flag`, `unknown shorthand
   flag`, `unknown command`): a bd older than a flag `bdi` uses, which is what
   a bd below README's floor looks like, and the screen names the floor. Only
@@ -1284,8 +1297,9 @@ did — never absent, never null; an `orphan-claim` the join refused carries the
 refusing conflict as `refused`, and one it did not omits the field. `agents`
 says which agent provider was asked and how that went, so a consumer knows
 which tier it is reading and which program answered for it: `state` is
-`answering`, `not-answering` where the provider is installed and did not, or
-`absent` where nothing was installed to. A tree's
+`answering`, `not-answering` where the provider is there and did not — which
+covers one that would not start at all — or `absent` where nothing was
+installed to. A tree's
 `tracker` is `ok`, `{ "unreachable": <reason> }` where its tracker could not
 be read, or `root-not-found` where the tracker answered and holds no bead of
 that id — which only a root named in config or on the command line can be,

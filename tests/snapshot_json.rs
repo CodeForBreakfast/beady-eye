@@ -494,6 +494,26 @@ fn a_project_whose_bd_does_not_know_a_flag_is_named_in_the_json_as_such() {
     );
 }
 
+/// The two ways bd never ran carry their own reasons, because they want
+/// different things of the reader: one is a bd to install, the other a bd or
+/// a project directory to repair.
+#[test]
+fn a_bd_that_is_not_installed_and_one_that_will_not_start_carry_different_reasons() {
+    let missing =
+        orbital_with(orbital_tracker().failing(Asked::All, refused(FailureKind::NotInstalled)));
+    let broken =
+        orbital_with(orbital_tracker().failing(Asked::All, refused(FailureKind::Unstartable)));
+
+    assert_eq!(
+        emit(&panes(), &missing, Filter::LiveAgents)["failed_projects"],
+        json!([{"project": "orbital", "tracker": "not-installed"}])
+    );
+    assert_eq!(
+        emit(&panes(), &broken, Filter::LiveAgents)["failed_projects"],
+        json!([{"project": "orbital", "tracker": "unstartable"}])
+    );
+}
+
 /// A configured project whose tracker refused is still a configured project.
 /// Its panes have nowhere to be attributed, which is not the same as `bdi`
 /// never having been told the project exists — and telling those two apart is
@@ -535,12 +555,12 @@ fn a_trackers_own_words_never_reach_the_json() {
     }
 }
 
-/// A machine with no herdr installed. `Exec` is the failure of a program that
-/// never ran, so the contract says the provider is absent rather than that
-/// something the reader had has broken.
+/// A machine with no herdr installed. `NotInstalled` is the one failure that
+/// means nothing was there to run, so the contract says the provider is
+/// absent rather than that something the reader had has broken.
 #[test]
 fn with_no_provider_installed_the_json_says_absent_and_still_carries_every_tree() {
-    let nothing = Canned::default().failing("herdr agent list", FailureKind::Exec);
+    let nothing = Canned::default().failing("herdr agent list", FailureKind::NotInstalled);
 
     let emitted = emit(&nothing, &orbital(), Filter::LiveAgents);
 
@@ -569,6 +589,22 @@ fn a_provider_that_will_not_answer_is_told_apart_from_one_that_is_not_there() {
     );
     assert_eq!(emitted["trees"][0]["root"], "orb-7");
     assert_eq!(emitted["trees"][0]["counts"]["live_agents"], 0);
+}
+
+/// The third way, and the one that used to be read as the first: herdr is
+/// installed and the run could not be started. A consumer sees the finding,
+/// not the absence a machine with no herdr at all reports.
+#[test]
+fn a_provider_that_is_there_and_will_not_start_is_not_reported_as_absent() {
+    let broken = Canned::default().failing("herdr agent list", FailureKind::Unstartable);
+
+    let emitted = emit(&broken, &orbital(), Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["agents"],
+        json!({"provider": "herdr", "state": "not-answering"})
+    );
+    assert_eq!(emitted["trees"][0]["root"], "orb-7");
 }
 
 /// A filtered tree is reported, never dropped.

@@ -35,7 +35,8 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     match failure {
         TrackerFailure::Auth => "the tracker refused the credential it was given",
         TrackerFailure::Unavailable => "the tracker did not answer",
-        TrackerFailure::Exec => "bd could not be run",
+        TrackerFailure::NotInstalled => "bd is not installed",
+        TrackerFailure::Unstartable => "bd is installed and could not be started",
         TrackerFailure::Parse => "bd answered with something bdi cannot read",
         TrackerFailure::UnknownFlag => concat!(
             "bd does not know a flag bdi uses · bdi needs bd ",
@@ -519,7 +520,8 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
         FailureKind::Busy => "that pane is too busy to be read",
         FailureKind::Auth
         | FailureKind::Unavailable
-        | FailureKind::Exec
+        | FailureKind::NotInstalled
+        | FailureKind::Unstartable
         | FailureKind::Parse
         | FailureKind::Unsupported
         | FailureKind::UnknownFlag => "that pane could not be read",
@@ -1283,7 +1285,8 @@ mod tests {
                 FailureKind::Busy => "busy",
                 FailureKind::Auth
                 | FailureKind::Unavailable
-                | FailureKind::Exec
+                | FailureKind::NotInstalled
+                | FailureKind::Unstartable
                 | FailureKind::Parse
                 | FailureKind::Unsupported
                 | FailureKind::UnknownFlag => "could not be read",
@@ -1311,6 +1314,21 @@ mod tests {
         distinct.dedup();
 
         assert_eq!(distinct.len(), said.len(), "{said:?}");
+    }
+
+    /// The two ways bd never ran leave the reader two different things to
+    /// do: install bd, or repair the bd or the directory that is there.
+    /// One phrase for both said neither.
+    #[test]
+    fn a_bd_that_is_not_installed_is_told_apart_from_one_that_will_not_start() {
+        says(
+            tracker_failure(TrackerFailure::NotInstalled),
+            "not installed",
+        );
+        says(
+            tracker_failure(TrackerFailure::Unstartable),
+            "could not be started",
+        );
     }
 
     /// A bd that does not know a flag bdi uses is one the reader replaces,

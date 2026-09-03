@@ -305,10 +305,13 @@ mod tests {
     fn a_missing_herdr_is_a_failure_the_caller_can_degrade_on() {
         let runner = FakeRunner::default().failing(
             "herdr agent list",
-            RunFailure::exec("herdr", "No such file or directory (os error 2)"),
+            RunFailure::not_installed("herdr", "No such file or directory (os error 2)"),
         );
 
-        assert_eq!(agent_list(&runner).unwrap_err().kind, FailureKind::Exec);
+        assert_eq!(
+            agent_list(&runner).unwrap_err().kind,
+            FailureKind::NotInstalled
+        );
     }
 
     #[test]

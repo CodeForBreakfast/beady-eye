@@ -99,8 +99,11 @@ pub enum TrackerFailure {
     Auth,
     /// The tracker did not answer.
     Unavailable,
-    /// bd never ran.
-    Exec,
+    /// Nothing is installed under bd's name for the tracker to be read with.
+    NotInstalled,
+    /// bd is there and never ran: no execute bit, or a project directory
+    /// that is not there to run it in.
+    Unstartable,
     /// bd answered with something `bdi` cannot read.
     Parse,
     /// bd does not know a flag `bdi` uses, so it refused the command line

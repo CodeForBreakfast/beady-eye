@@ -31,8 +31,11 @@ pub enum FailureKind {
     Gone,
     /// It is there, but too busy to answer; the same command may work later.
     Busy,
-    /// The command never ran: not installed, not executable, no such directory.
-    Exec,
+    /// Nothing is installed under that name for the command to run.
+    NotInstalled,
+    /// The program is there and the run could not be started: no execute
+    /// bit, or a directory it was to be run in that is not there.
+    Unstartable,
     /// The command ran and returned something we cannot read.
     Parse,
     /// The tracker cannot run what it was asked at all, so asking it again
@@ -95,6 +98,52 @@ const NOT_KNOWN: [&str; 3] = [
 /// neither is answered by a newer bd.
 const BD: &str = "bd";
 
+/// Whether anything is installed under that name for the child to have run,
+/// asked the way the kernel asked: a name holding no separator is looked for
+/// on `PATH`, and anything else is a path, resolved where the child would
+/// have resolved it.
+///
+/// The `PATH` is the child's rather than this process's. `environment`
+/// captures whatever entering a project's directory produces, `PATH`
+/// included, and that overlay is what the child was given — so a `bd` direnv
+/// supplies and `bdi`'s own shell does not is installed as far as this
+/// question goes.
+///
+/// A relative name is resolved against the child's working directory for the
+/// same reason, whether it is the program's or a `PATH` entry's. The child
+/// searched its `PATH` after entering that directory, so a relative entry
+/// there names somewhere `bdi`'s own directory says nothing about.
+fn installed(program: &str, cwd: Option<&Path>, env: &Env) -> bool {
+    let named = Path::new(program);
+    let where_the_child_looked =
+        |at: &Path| cwd.map_or_else(|| at.to_path_buf(), |directory| directory.join(at));
+    if program.contains(std::path::MAIN_SEPARATOR) {
+        return under_that_name(&where_the_child_looked(named));
+    }
+    env.get(PATH)
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os(PATH))
+        .is_some_and(|path| {
+            std::env::split_paths(&path)
+                .any(|at| under_that_name(&where_the_child_looked(&at).join(named)))
+        })
+}
+
+/// Whether the filesystem holds an entry there, which is a different
+/// question from whether it resolves.
+///
+/// A symlink whose target has gone — a profile collected out from under it,
+/// a build deleted — is something installed and broken, and it is the state
+/// this whole distinction is drawn for. `Path::exists` follows the link and
+/// so answers `false` for one, which is the answer reserved for a name
+/// nothing holds. `symlink_metadata` is the `lstat` that stops at the entry.
+fn under_that_name(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+/// Where a child looks for a program it was named without a path.
+const PATH: &str = "PATH";
+
 /// What herdr says when the pane a command names is not there, and when a
 /// pane is in the alternate screen and working so its history cannot be
 /// scrolled. Measured against herdr 0.8.2 on 2026-08-30. One phrase each,
@@ -104,11 +153,46 @@ const NO_SUCH_PANE: &str = "agent_not_found";
 const PANE_BUSY: &str = "agent_not_idle";
 
 impl RunFailure {
-    pub fn exec(program: &str, cause: impl fmt::Display) -> Self {
+    pub fn not_installed(program: &str, cause: impl fmt::Display) -> Self {
         Self {
-            kind: FailureKind::Exec,
+            kind: FailureKind::NotInstalled,
             program: program.to_string(),
-            detail: format!("{program} could not be run: {cause}"),
+            detail: format!("{program} is not installed: {cause}"),
+        }
+    }
+
+    pub fn unstartable(program: &str, cause: impl fmt::Display) -> Self {
+        Self {
+            kind: FailureKind::Unstartable,
+            program: program.to_string(),
+            detail: format!("{program} could not be started: {cause}"),
+        }
+    }
+
+    /// Which of the two a refused spawn was.
+    ///
+    /// `NotInstalled` is the answer that costs the reader their notice, so
+    /// it is the one that has to be earned rather than defaulted to, and
+    /// the error alone cannot earn it. `ENOENT` is what the kernel answers
+    /// to a working directory that is not there, and to a program whose own
+    /// interpreter or loader is missing, as readily as to a name nothing
+    /// holds — it reports the interpreter's absence as the program's. So
+    /// both are asked after instead: anything found under that name, or a
+    /// directory that was never there to look in, means this is a machine
+    /// that has the thing and could not start it.
+    fn could_not_start(
+        program: &str,
+        cwd: Option<&Path>,
+        env: &Env,
+        cause: &std::io::Error,
+    ) -> Self {
+        let nothing_was_installed = cause.kind() == std::io::ErrorKind::NotFound
+            && !installed(program, cwd, env)
+            && cwd.is_none_or(Path::is_dir);
+        if nothing_was_installed {
+            Self::not_installed(program, cause)
+        } else {
+            Self::unstartable(program, cause)
         }
     }
 
@@ -213,7 +297,9 @@ impl Runner for RealRunner {
         }
         cmd.envs(env);
 
-        let out = cmd.output().map_err(|e| RunFailure::exec(program, e))?;
+        let out = cmd
+            .output()
+            .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))?;
         if !out.status.success() {
             return Err(RunFailure::from_exit(
                 program,
@@ -327,6 +413,8 @@ pub mod testing {
 mod tests {
     use super::testing::FakeRunner;
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
 
     /// The two shapes bd writes when it cannot open a tracker: a credential
     /// the server refuses, and a server that does not answer. Both name a
@@ -558,13 +646,166 @@ mod tests {
     }
 
     #[test]
-    fn a_program_that_is_not_installed_is_an_exec_failure() {
+    fn a_program_that_is_not_installed_says_nothing_is_installed() {
         let failure = RealRunner
             .run("bdi-no-such-program", &[], None, &Env::new())
             .expect_err("nothing by that name is on PATH");
 
-        assert_eq!(failure.kind, FailureKind::Exec);
+        assert_eq!(failure.kind, FailureKind::NotInstalled);
         assert_eq!(failure.program, "bdi-no-such-program");
+    }
+
+    /// A program on `PATH` that the kernel will not start is not a program
+    /// nobody installed, and the reader's answer to the two is different:
+    /// one is a machine that never had the thing, the other a machine that
+    /// had it and lost it.
+    #[test]
+    fn a_program_that_is_there_and_will_not_start_is_told_apart_from_a_missing_one() {
+        let program =
+            std::env::temp_dir().join(format!("bdi-not-executable-{}", std::process::id()));
+        std::fs::write(&program, "#!/bin/sh\nexit 0\n").expect("the file is ours to write");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644))
+            .expect("the mode is ours to set");
+
+        let failure = RealRunner
+            .run(&program.to_string_lossy(), &[], None, &Env::new())
+            .expect_err("the file has no execute bit");
+        std::fs::remove_file(&program).expect("the file is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A working directory that is not there raises the same `ENOENT` as a
+    /// program that is not there, so the directory is asked after and it
+    /// decides: a project whose path has gone is something the reader had
+    /// and lost, and the silence `Absent` earns belongs to neither.
+    #[test]
+    fn a_directory_that_is_not_there_is_not_a_program_that_was_never_installed() {
+        let failure = RealRunner
+            .run(
+                "sh",
+                &["-c", "true"],
+                Some(Path::new("/bdi-no-such-directory")),
+                &Env::new(),
+            )
+            .expect_err("the directory is not there");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A program is installed and its interpreter is not. The kernel reports
+    /// the interpreter's absence as the program's — `ENOENT`, the same as a
+    /// name nothing holds — so the error alone would have called an
+    /// installed provider one nobody installed, and given the reader the
+    /// silence instead of the notice.
+    #[test]
+    fn a_program_whose_interpreter_is_missing_is_not_a_program_nobody_installed() {
+        let (dir, program) = a_script_whose_interpreter_is_missing("by-its-path");
+
+        let failure = RealRunner
+            .run(&program.to_string_lossy(), &[], None, &Env::new())
+            .expect_err("the interpreter is not there");
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// The `PATH` searched is the child's own. `environment` hands over
+    /// whatever entering a project's directory produced, `PATH` included, so
+    /// a program installed only where direnv puts it is installed — and
+    /// asking the `PATH` `bdi` itself runs under would answer about a
+    /// different set of binaries entirely.
+    #[test]
+    fn a_program_installed_only_on_the_childs_own_path_is_found_there() {
+        let (dir, _) = a_script_whose_interpreter_is_missing("by-its-name");
+        let mut env = Env::new();
+        env.insert("PATH".to_string(), dir.to_string_lossy().to_string());
+
+        let failure = RealRunner
+            .run("bdi-broken-interpreter", &[], None, &env)
+            .expect_err("the interpreter is not there");
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A `PATH` entry that is relative names a directory under the child's
+    /// own, because the child searched its `PATH` after entering that
+    /// directory. Resolving one against `bdi`'s directory instead asks about
+    /// somewhere nothing was ever installed, and answers `NotInstalled` for
+    /// a program the child found and could not start.
+    #[test]
+    fn a_relative_path_entry_is_read_from_the_directory_the_child_entered() {
+        let (dir, _) = a_script_whose_interpreter_is_missing("by-a-relative-entry");
+        let under = dir.join("bin");
+        std::fs::create_dir_all(&under).expect("the directory is ours to make");
+        std::fs::rename(
+            dir.join("bdi-broken-interpreter"),
+            under.join("bdi-broken-interpreter"),
+        )
+        .expect("the file is ours to move");
+        let mut env = Env::new();
+        env.insert("PATH".to_string(), "bin".to_string());
+
+        let failure = RealRunner
+            .run("bdi-broken-interpreter", &[], Some(&dir), &env)
+            .expect_err("the interpreter is not there");
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A symlink whose target has gone is the plainest case of a program
+    /// that is installed and broken: something put it there and something
+    /// else took away what it points at. The spawn fails `ENOENT` like a
+    /// name nothing holds, and asking whether the path resolves agrees with
+    /// the error rather than correcting it.
+    #[test]
+    fn a_program_whose_symlink_dangles_is_installed_and_broken() {
+        let program = std::env::temp_dir().join(format!("bdi-dangling-{}", std::process::id()));
+        let _ = std::fs::remove_file(&program);
+        std::os::unix::fs::symlink("/bdi-no-such-target", &program)
+            .expect("the link is ours to make");
+
+        let failure = RealRunner
+            .run(&program.to_string_lossy(), &[], None, &Env::new())
+            .expect_err("the target is not there");
+        std::fs::remove_file(&program).expect("the link is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A directory holding one executable script naming an interpreter that
+    /// is not there, and the path to it.
+    fn a_script_whose_interpreter_is_missing(named: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "bdi-broken-interpreter-{named}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("the directory is ours to make");
+        let program = dir.join("bdi-broken-interpreter");
+        std::fs::write(&program, "#!/bdi-no-such-interpreter\nexit 0\n")
+            .expect("the file is ours to write");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+            .expect("the mode is ours to set");
+        (dir, program)
+    }
+
+    /// Both missing at once. A directory that was never there to look in is
+    /// no evidence that nothing is installed, so the answer is the one that
+    /// does not cost the reader a notice.
+    #[test]
+    fn a_missing_program_in_a_missing_directory_is_reported_as_the_directory() {
+        let failure = RealRunner
+            .run(
+                "bdi-no-such-program",
+                &[],
+                Some(Path::new("/bdi-no-such-directory")),
+                &Env::new(),
+            )
+            .expect_err("neither the directory nor the program is there");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
     }
 
     #[test]

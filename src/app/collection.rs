@@ -337,14 +337,15 @@ impl Collection {
 
 /// What a failed listing says about the provider that failed it.
 ///
-/// The line `collect::discovery` draws for bd, drawn again here: `Exec` is
-/// raised where a process is spawned and nowhere else, so it is the one
-/// failure that means nothing was installed to run. Every other failure is a
-/// provider that is installed and did not answer, which is a finding.
+/// `NotInstalled` is the one failure that means nothing was installed to
+/// run, and it is the only one that is not a finding. A provider that is
+/// there and would not start is something the reader had and lost, so it
+/// stands with the ones that ran and did not answer.
 fn unlistable(kind: FailureKind) -> ProviderState {
     match kind {
-        FailureKind::Exec => ProviderState::Absent,
-        FailureKind::Auth
+        FailureKind::NotInstalled => ProviderState::Absent,
+        FailureKind::Unstartable
+        | FailureKind::Auth
         | FailureKind::Unavailable
         | FailureKind::Gone
         | FailureKind::Busy
@@ -506,7 +507,10 @@ mod tests {
     /// provider nobody installed is not a provider that broke.
     #[test]
     fn a_provider_that_was_never_installed_is_absent_and_every_tree_still_draws() {
-        let nothing = Provider::unlistable(RunFailure::exec(THE_FAKE, "No such file or directory"));
+        let nothing = Provider::unlistable(RunFailure::not_installed(
+            THE_FAKE,
+            "No such file or directory",
+        ));
 
         let snap = run(
             &one_project(),
@@ -521,6 +525,29 @@ mod tests {
         assert_eq!(snap.trees.len(), 1, "trees draw with no provider at all");
         assert!(snap.trees[0].beads.iter().all(|n| n.agent.is_none()));
         assert!(snap.unattributed.is_empty());
+    }
+
+    /// The state this bead exists for: a provider that is installed and
+    /// would not start. It is not a machine that never had one, so it does
+    /// not get that machine's silence — it is a finding, said at the foot,
+    /// like every other provider that is there and did not answer.
+    #[test]
+    fn a_provider_that_is_installed_and_will_not_start_is_a_finding_not_an_absence() {
+        let broken = Provider::unlistable(RunFailure::unstartable(
+            THE_FAKE,
+            "Permission denied (os error 13)",
+        ));
+
+        let snap = run(
+            &one_project(),
+            &broken,
+            &orbital(),
+            Filter::LiveAgents,
+            now(),
+        );
+
+        assert_eq!(snap.agents.state, ProviderState::NotAnswering);
+        assert_eq!(snap.trees.len(), 1, "trees draw without liveness");
     }
 
     /// A provider that answered and holds no pane is neither of those: it

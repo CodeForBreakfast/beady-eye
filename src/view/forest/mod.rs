@@ -1140,7 +1140,7 @@ credential_command = "secret harbour"
             ],
             vec![FailedProject {
                 project: "lunar".into(),
-                tracker: TrackerFailure::Exec,
+                tracker: TrackerFailure::Unstartable,
             }],
             filter,
         )
@@ -4142,7 +4142,7 @@ credential_command = "secret harbour"
                         trees: Vec::new(),
                         failed_projects: vec![FailedProject {
                             project: "lunar".into(),
-                            tracker: TrackerFailure::Exec,
+                            tracker: TrackerFailure::Unstartable,
                         }],
                         read_at: every_project_read(),
                     },

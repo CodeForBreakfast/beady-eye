@@ -705,7 +705,7 @@ mod tests {
     fn a_project_whose_directory_cannot_be_entered_fails_before_bd_is_asked_anything() {
         let runner = FakeRunner::default().failing(
             &entering_the_directory(),
-            RunFailure::exec("direnv", "No such file or directory"),
+            RunFailure::unstartable("direnv", "No such file or directory"),
         );
         let project = Project {
             environment: Environment::Direnv,
@@ -717,7 +717,7 @@ mod tests {
             .err()
             .expect("the project cannot be opened");
 
-        assert_eq!(failure.kind, FailureKind::Exec);
+        assert_eq!(failure.kind, FailureKind::Unstartable);
         assert_eq!(failure.program, "direnv");
         assert!(
             runner
