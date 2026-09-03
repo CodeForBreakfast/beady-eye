@@ -793,14 +793,25 @@ mod tests {
         rereads_in: Option<Duration>,
         /// The instant of each time the loop asked the band to read its pane
         /// again, in the order it asked.
+        ///
+        /// Also the instant the loop looked at everything else that had
+        /// fallen due, and the only record a test has of one: the loop takes
+        /// the clock once a pass and hands that same instant to the projects'
+        /// asks, to the read at the front and to the band. So a test asking
+        /// when the armed projects were last consulted reads this.
         reread_at: Vec<DateTime<Utc>>,
-        /// Told once for every pass of the loop, where a test drives the loop
-        /// a known number of passes rather than for a window of wall clock.
+        /// Sent the instant of every pass of the loop, where a test drives
+        /// the loop by what it does rather than for a window of wall clock.
         /// The loop asks the band to read its pane once a pass whether or not
         /// one is due, so this is where the view sees a pass go by. A pass
-        /// after the test has stopped counting has nobody left to tell, which
-        /// is not a failure.
-        went_round: Option<Sender<()>>,
+        /// after the test has stopped listening has nobody left to tell,
+        /// which is not a failure.
+        ///
+        /// The instant and not a bare tick, because a test can want a pass at
+        /// a particular time rather than an nth pass: a project's poll comes
+        /// round on the clock, so the pass that proves it was declined is the
+        /// first one past its interval however many came before.
+        went_round: Option<Sender<DateTime<Utc>>>,
     }
 
     impl Recorder {
@@ -858,7 +869,7 @@ mod tests {
         fn reread(&mut self, now: DateTime<Utc>) {
             self.reread_at.push(now);
             if let Some(went_round) = &self.went_round {
-                let _ = went_round.send(());
+                let _ = went_round.send(now);
             }
         }
 
@@ -1669,16 +1680,34 @@ mod tests {
     /// loop: that arming happens on the read coming back, and that no second
     /// read is ever sent for an ask nobody answered. Emptying
     /// `Armed::came_back` fails it.
+    ///
+    /// The window it is about opens *after* the one ask the loop is entitled
+    /// to, and the loop is held open until the window has opened rather than
+    /// for a length of wall clock. The ask goes out on the pass its interval
+    /// comes round, so a run that got that pass and no other satisfies the
+    /// assertion below having given the loop no opportunity to misbehave —
+    /// which is a pass, not a flake, and so nothing draws attention to it.
+    /// What the loop is let go on instead is a pass a whole interval past
+    /// that ask: atlas came due again with the ask still outstanding, and
+    /// `Armed::asks` declined it.
     #[test]
     fn a_project_whose_ask_is_never_answered_asks_no_more() {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let (send, events) = mpsc::channel();
+        let (went_round, rounds) = mpsc::channel();
+        view.went_round = Some(went_round);
         send.send(Event::Collected(Box::new(a_snapshot())))
             .expect("the loop's end of the channel is open");
         let holding = thread::spawn(move || {
-            thread::sleep(AN_INTERVAL * 20);
+            let first = asked.recv_timeout(A_MOMENT).ok();
+            let comes_due_again = Utc::now() + an_interval();
+            while rounds
+                .recv_timeout(A_MOMENT)
+                .is_ok_and(|looked_at| looked_at < comes_due_again)
+            {}
             drop(send);
+            (first, asked)
         });
 
         drive(
@@ -1690,12 +1719,26 @@ mod tests {
         )
         .expect("the loop runs");
 
-        holding.join().expect("the thread ran");
-        assert_eq!(
-            asked.try_iter().collect::<Vec<_>>(),
-            [atlas()],
-            "twenty intervals passed and nothing answered the one ask"
+        let (first, asked) = holding.join().expect("the thread ran");
+        let reached_the_collector: Vec<_> = first.into_iter().chain(asked.try_iter()).collect();
+        let asked_at = *view.asked_at().first().expect("atlas asked once");
+        let last_looked = *view.reread_at.last().expect("the loop went round");
+        assert!(
+            last_looked - asked_at >= an_interval(),
+            "the loop last looked at what was due {} after the ask, so atlas \
+             never came due again while that ask stood",
+            last_looked - asked_at
         );
+        assert_eq!(
+            reached_the_collector,
+            [atlas()],
+            "atlas came due again and was declined: nothing had answered it"
+        );
+    }
+
+    /// `AN_INTERVAL` measured the way the loop's own instants are.
+    fn an_interval() -> TimeDelta {
+        TimeDelta::from_std(AN_INTERVAL).expect("a short interval")
     }
 
     /// Short enough that a test waiting out several is not slow, and long
