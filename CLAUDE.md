@@ -1,7 +1,8 @@
 # beady-eye — working notes
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
-root, annotated with the live agent on each node. Read-only.
+root, annotated with the live agent on each node. Every bd command line it
+spells is a read, and `collect/` spells all of them.
 
 `README.md` is the outside view — what `bdi` is for, how to install it, and the
 socket it listens on. This file is for working on it.

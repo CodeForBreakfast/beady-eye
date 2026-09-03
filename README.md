@@ -1,7 +1,8 @@
 # beady-eye
 
-A read-only view of work in flight: a tree of beads, each node annotated with the
-live agent working on it.
+A view of work in flight: a tree of beads, each node annotated with the live
+agent working on it. Every question `bdi` asks a tracker is a read — it shows
+you the work, and changing it stays bd's job.
 
 [beads](https://github.com/steveyegge/beads) knows the work — the tree, the
 dependency edges, each bead's status and who claimed it.
