@@ -149,6 +149,23 @@ Changes reach `main` through a pull request, squash-merged — nothing is pushed
 to `main` directly. The pull request is what puts CI in front of a change
 before the branch everyone else works from carries it.
 
+Read the **file list** before you merge, as a check of its own rather than as
+part of reading the diff: `git diff --stat origin/main HEAD` lists every file
+the branch touches. Take it once you have merged `origin/main` into the branch
+— taken before that merge it also lists what `main` gained meanwhile, in
+reverse, and the list is then not your branch's.
+
+Nothing else here asks that question. Every other gate reads content — the
+build, the tests, `clippy`, `cargo fmt`, a grep over the diff — and a content
+check finds a bad line in a file that belongs. It cannot find a file that
+should not be there at all, because every line of such a file reads as exactly
+what it is and none of it breaks a build. `check-before-push` does not close
+it either: what it refuses is a dirty tree, and a stray file that has been
+committed leaves the tree clean. That is how `f8395eb` (#30) put a kept
+`mutants.out.old.first/` on `main` on 2026-09-02 — 155 files and 84,462 lines
+beside the twelve the change meant to touch, with every gate green. Widening
+`.gitignore` closed that path; the file list is what closes the next one.
+
 ## Where things are
 
 `src/` is five layers:
