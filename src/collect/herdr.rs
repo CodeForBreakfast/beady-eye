@@ -89,9 +89,11 @@ impl Agents for Herdr<'_> {
 
 /// `herdr agent list`, which answers with JSON and needs no flag to.
 ///
-/// It reports on the whole machine, so it is asked once and takes no
-/// project's directory or credential. A failure here is not fatal: the caller
-/// degrades to a tier with no panes in it.
+/// It reports on one herdr session — the one `bdi`'s environment names, or
+/// the default session where nothing does, and nothing from any other
+/// session on the box (`bdi-dd5`) — so it is asked once and takes no
+/// project's directory or credential. A failure here is not fatal: the
+/// caller degrades to a tier with no panes in it.
 fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
     let out = runner.run("herdr", &["agent", "list"], None, &Env::new())?;
     parse_agent_list(&out).map_err(|e| RunFailure::parse("herdr", e))

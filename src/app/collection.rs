@@ -1550,7 +1550,7 @@ path = "{}"
     }
 
     /// The refresh gate reaches the trackers and stops there. A provider
-    /// reports on the whole machine rather than on a project, so a collection
+    /// reports on a herdr session rather than on a project, so a collection
     /// asks it for its panes once — reading two projects, and reading the one
     /// a refresh named.
     #[test]

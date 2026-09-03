@@ -124,8 +124,17 @@ Anything workflow-specific is expressed as configuration, not code. See
   state is a second writer racing whatever else manages these beads.
 - **No Noctalia widget.** The JSON contract is specified here; no widget ships
   until the TUI has proved the data model.
-- **No cross-machine view.** One herdr session on one box. `herdr --remote` is a
-  later consumer of the same collector.
+- **No cross-machine view.** One box. `herdr --remote` is a later consumer of
+  the same collector.
+- **One herdr session.** A box runs several at once, each its own server with
+  its own socket, and `herdr agent list` answers for one: the session named
+  in the caller's environment, which is the one a pane inside herdr sits in,
+  or the default session where nothing names one — `bdi` need not be run from
+  a herdr pane at all. Measured 2026-09-03 with three running (`bdi-dd5`).
+  Pane ids are unique only within a session: two sessions each held a `w1:p1`
+  at the same instant. So the seats in every other session are drawn as
+  absent, and a bead they work as unstaffed. Reading every session from
+  `herdr session list`, keyed on `(session, pane)`, is `bdi-qgm`.
 
 ## Architecture
 
