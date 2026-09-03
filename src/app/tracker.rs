@@ -181,7 +181,20 @@ fn read_project(
         .map(|bead| (bead.id.as_str(), bead.parent.as_deref()))
         .collect();
 
-    let mut ancestors: BTreeMap<String, String> = BTreeMap::new();
+    // The edges are read before discovery rather than after it, because a
+    // bead with no parent is a root only where nothing nests it, and nothing
+    // outside the edges can say whether anything does.
+    let nesting = Nesting::of(&beads);
+
+    let mut ancestors: BTreeMap<String, Climbed> = BTreeMap::new();
+    let mut climbed: BTreeSet<Climbed> = BTreeSet::new();
+    for bead in unfinished(&beads) {
+        climbed.extend(root_of(bead, &parents, &mut ancestors));
+    }
+    for named in panes_naming_a_bead_here(panes, project, cfg) {
+        climbed.extend(root_of(named, &parents, &mut ancestors));
+    }
+
     let mut roots: BTreeSet<String> = cfg
         .roots
         .explicit
@@ -190,17 +203,15 @@ fn read_project(
         .flatten()
         .cloned()
         .collect();
-    for bead in unfinished(&beads) {
-        roots.extend(root_of(bead, &parents, &mut ancestors));
-    }
-    for named in panes_naming_a_bead_here(panes, project, cfg) {
-        roots.extend(root_of(named, &parents, &mut ancestors));
-    }
+    roots.extend(
+        climbed
+            .into_iter()
+            .flat_map(|end| drawn_from(end, &nesting)),
+    );
 
     // A root the answer does not hold is one config named: every other root
     // came out of the answer itself, so a tree cannot fail to assemble on
     // it.
-    let nesting = Nesting::of(&beads);
     let mut read: Vec<(String, Result<Assembled, RootUnread>)> = roots
         .into_iter()
         .map(|root| {
@@ -297,7 +308,40 @@ fn panes_naming_a_bead_here<'a>(
         .filter_map(|pane| pane.display_agent.as_deref())
 }
 
-/// The top of a bead's parent-child chain, or `None` for an id this read
+/// Where a bead's parent chain ran out, and whether that settles where the
+/// bead is drawn.
+///
+/// The chain runs out for two kinds of reason and they want opposite answers,
+/// which is why the end of the climb is a value rather than an id.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Climbed {
+    /// The chain ended at a bead with no parent at all. Nothing above it
+    /// claims it, so whatever nests it says where it belongs.
+    Rootless(String),
+    /// The chain stopped where this read cannot follow it: a parent the
+    /// answer does not hold, or a chain that came back round. Either way the
+    /// bead has something wrong with it that its own tree is there to report,
+    /// so it stands for itself wherever else it is also drawn.
+    Stopped(String),
+}
+
+/// The roots a climb's end is drawn from.
+///
+/// A bead that simply has no parent takes its place under whatever nests it.
+/// Asking `top_of` rather than "is anything nesting it" is what keeps the
+/// component on the screen: the bead that places it may be one nothing
+/// discovers — a closed bead is in the answer's edges and in no rule of
+/// unfinished work — and naming that bead is what leaves the whole thing
+/// somewhere to be drawn from. Where nothing nests the bead at all, `top_of`
+/// answers with the bead itself, which is the rule this replaced.
+fn drawn_from(climbed: Climbed, nesting: &Nesting) -> Vec<String> {
+    match climbed {
+        Climbed::Stopped(id) => vec![id],
+        Climbed::Rootless(id) => nesting.top_of(&id),
+    }
+}
+
+/// Where a bead's parent-child chain ran out, or `None` for an id this read
 /// does not hold.
 ///
 /// `bd dep tree` cannot answer this: `--direction=up` walks dependents, so
@@ -321,8 +365,8 @@ fn panes_naming_a_bead_here<'a>(
 fn root_of<'a>(
     id: &'a str,
     parents: &BTreeMap<&'a str, Option<&'a str>>,
-    ancestors: &mut BTreeMap<String, String>,
-) -> Option<String> {
+    ancestors: &mut BTreeMap<String, Climbed>,
+) -> Option<Climbed> {
     if !parents.contains_key(id) {
         return None;
     }
@@ -330,28 +374,27 @@ fn root_of<'a>(
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     let mut current = id;
 
-    let root = loop {
+    let end = loop {
         if let Some(known) = ancestors.get(current) {
             break known.clone();
         }
         // A parent chain that loops has no top. Stopping where it repeats
         // keeps the bead visible rather than hanging on it.
         if !seen.insert(current) {
-            break current.to_string();
+            break Climbed::Stopped(current.to_string());
         }
         climbed.push(current);
         match parents[current] {
             Some(parent) if parents.contains_key(parent) => current = parent,
-            // A parent this read does not hold, or no parent at all: either
-            // way the chain has nothing further this read can draw.
-            Some(_) | None => break current.to_string(),
+            Some(_) => break Climbed::Stopped(current.to_string()),
+            None => break Climbed::Rootless(current.to_string()),
         }
     };
 
     for climbed in climbed {
-        ancestors.insert(climbed.to_string(), root.clone());
+        ancestors.insert(climbed.to_string(), end.clone());
     }
-    Some(root)
+    Some(end)
 }
 
 /// The kinds bd's collector can produce, in the model's own vocabulary.
@@ -414,11 +457,50 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// Five beads with no parent, each blocking the next: the shape the
+    /// tracker Graeme photographed was full of, with the chain short enough
+    /// to read. Every one of them tops its own parent chain and every one but
+    /// the first is placed by the bead above it.
+    const CHAIN_OF_PARENTLESS: &str = r#"[
+      {"id":"orb-c1","title":"the hub nothing depends on","status":"open",
+       "priority":2,"issue_type":"task",
+       "dependencies":[{"depends_on_id":"orb-c2","type":"blocks"}]},
+      {"id":"orb-c2","title":"the second link","status":"open",
+       "priority":2,"issue_type":"task",
+       "dependencies":[{"depends_on_id":"orb-c3","type":"blocks"}]},
+      {"id":"orb-c3","title":"the third link","status":"open",
+       "priority":2,"issue_type":"task",
+       "dependencies":[{"depends_on_id":"orb-c4","type":"blocks"}]},
+      {"id":"orb-c4","title":"the fourth link","status":"open",
+       "priority":2,"issue_type":"task",
+       "dependencies":[{"depends_on_id":"orb-c5","type":"blocks"}]},
+      {"id":"orb-c5","title":"the bead everything waits on","status":"open",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     fn rooted_at<'a>(snap: &'a Snapshot, root: &str) -> &'a Tree {
         snap.trees
             .iter()
             .find(|t| t.root == root)
             .unwrap_or_else(|| panic!("{root} is drawn"))
+    }
+
+    /// Whether any tree draws the bead at all. The question a count cannot
+    /// ask: a bead drawn nowhere and a bead drawn once are the two sides of
+    /// this change, and only one of them is on the screen.
+    fn drawn(snap: &Snapshot, id: &str) -> bool {
+        snap.trees
+            .iter()
+            .any(|tree| tree.beads.iter().any(|bead| bead.id == id))
+    }
+
+    /// How many trees draw the bead. A tree holds each bead once, so this is
+    /// the count of places the forest puts it.
+    fn drawings(snap: &Snapshot, id: &str) -> usize {
+        snap.trees
+            .iter()
+            .filter(|tree| tree.beads.iter().any(|bead| bead.id == id))
+            .count()
     }
 
     // ---- discovery ----------------------------------------------------
@@ -581,6 +663,230 @@ orbital = ["orb-4"]
             rooted_at(&snap, "orb-7.9").dangling,
             vec!["orb-7.9".to_string()],
             "its own tree names the work the tracker no longer holds"
+        );
+    }
+
+    /// A chain of parentless beads, each blocking the next. Every one of them
+    /// is the top of its own parent chain, and every one but the first is
+    /// placed by the bead above it — so discovery named five roots and the
+    /// deepest bead was drawn in all five of them.
+    ///
+    /// Presence is asserted before the count, and the two are separate
+    /// assertions on purpose: drawn five times is the defect, and drawn no
+    /// times is what a rule that stops promoting parentless beads without
+    /// asking what places them gives instead. A count alone passes both.
+    #[test]
+    fn a_chain_of_parentless_beads_is_drawn_as_one_tree() {
+        let trackers = orbital_with(orbital_holding(CHAIN_OF_PARENTLESS));
+
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
+
+        for link in ["orb-c1", "orb-c2", "orb-c3", "orb-c4", "orb-c5"] {
+            assert!(drawn(&snap, link), "{link} is on the screen");
+        }
+        assert_eq!(
+            drawings(&snap, "orb-c5"),
+            1,
+            "and the deepest is drawn once, rather than under every bead that blocks it"
+        );
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-c1"],
+            "the one bead nothing places stands for the whole chain"
+        );
+    }
+
+    /// The other half of the same rule, and the half that goes silently
+    /// wrong. A parentless bead nothing nests is a root exactly as it was —
+    /// and it has no dangling edge for `what_no_root_reached` to find it by,
+    /// so a rule that only stopped promoting parentless beads would leave it
+    /// off the screen with nothing in the foot to say so.
+    #[test]
+    fn a_parentless_bead_nothing_places_is_still_a_root() {
+        let alone = r#"[{"id":"orb-lone","title":"nothing depends on it","status":"open",
+                         "priority":2,"issue_type":"task"}]"#;
+        let trackers = orbital_with(orbital_tracker().also(beads(alone)));
+
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
+
+        assert!(drawn(&snap, "orb-lone"), "it is on the screen");
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-lone"]);
+    }
+
+    /// A parentless bead whose only placer is closed. Nothing discovers a
+    /// closed bead, so "it is placed, therefore it is not a root" draws
+    /// neither of them — and the answer has lost nothing, so no rule for a
+    /// bead that lost its place reaches it either.
+    ///
+    /// Asking where a tree that drew it would have to start answers it: the
+    /// closed bead becomes the root, which is what a component nothing
+    /// discovered has always been drawn from.
+    #[test]
+    fn a_parentless_bead_placed_only_by_a_closed_bead_is_drawn_under_it() {
+        let under_a_closed_bead = r#"[
+          {"id":"orb-5","title":"finished, and still standing over work",
+           "status":"closed","priority":2,"issue_type":"task",
+           "dependencies":[{"depends_on_id":"orb-5.1","type":"blocks"}]},
+          {"id":"orb-5.1","title":"open, with no parent and one blocker",
+           "status":"open","priority":2,"issue_type":"task"}
+        ]"#;
+        let trackers = orbital_with(orbital_tracker().also(beads(under_a_closed_bead)));
+
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
+
+        assert!(drawn(&snap, "orb-5.1"), "the open bead is on the screen");
+        assert_eq!(drawings(&snap, "orb-5.1"), 1);
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7", "orb-5"],
+            "the closed bead that places it is where the tree drawing it starts"
+        );
+    }
+
+    /// A dependency cycle with no parent anywhere in it. Every bead in it is
+    /// placed by another bead in it, so nothing in it is unplaced — and a
+    /// loop has no top, so the component would be drawn nowhere unless one of
+    /// its own beads stood for it. `top_of` picks one, the same one every
+    /// time, and `assemble` cuts the loop where it comes back round.
+    #[test]
+    fn a_cycle_of_parentless_beads_is_drawn_once_from_a_stable_top() {
+        let looping = r#"[
+          {"id":"orb-l1","title":"blocked by the other","status":"open",
+           "priority":2,"issue_type":"task",
+           "dependencies":[{"depends_on_id":"orb-l2","type":"blocks"}]},
+          {"id":"orb-l2","title":"and blocked by the first","status":"open",
+           "priority":2,"issue_type":"task",
+           "dependencies":[{"depends_on_id":"orb-l1","type":"blocks"}]}
+        ]"#;
+        let trackers = orbital_with(orbital_tracker().also(beads(looping)));
+
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
+
+        for bead in ["orb-l1", "orb-l2"] {
+            assert!(drawn(&snap, bead), "{bead} is on the screen");
+            assert_eq!(drawings(&snap, bead), 1, "{bead} is drawn in one tree");
+        }
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-l1"]);
+        assert_eq!(
+            rooted_at(&snap, "orb-l1").cycles,
+            vec!["orb-l1".to_string()],
+            "and the loop is reported where it was cut"
+        );
+    }
+
+    /// A wisp with no parent has every step of its run hanging under it, so
+    /// nothing places the wisp and it stays a root of its own. That was the
+    /// argument; this is the reading.
+    #[test]
+    fn a_wisp_with_no_parent_is_still_a_root_of_its_own() {
+        let a_run_in_flight = r#"[
+          {"id":"orb-wisp-a1","title":"a run in flight","status":"open",
+           "priority":2,"issue_type":"molecule"},
+          {"id":"orb-wisp-a1.1","title":"its first step","status":"open",
+           "parent":"orb-wisp-a1",
+           "dependencies":[{"depends_on_id":"orb-wisp-a1","type":"parent-child"}],
+           "priority":2,"issue_type":"task"}
+        ]"#;
+        let trackers = orbital_with(orbital_tracker().also(beads(a_run_in_flight)));
+
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-wisp-a1"]);
+        assert_eq!(
+            rooted_at(&snap, "orb-wisp-a1")
+                .beads
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["orb-wisp-a1", "orb-wisp-a1.1"],
+            "and its steps hang under it"
+        );
+    }
+
+    /// A bead whose parent this read cannot resolve stays a root even where
+    /// an edge places it, and is drawn in both places. The parent the answer
+    /// lost is what its tree is there to report, and a reader who has to find
+    /// it under whatever happens to block it does not find it.
+    #[test]
+    fn a_bead_whose_parent_is_lost_stays_a_root_even_where_an_edge_places_it() {
+        let placed_and_orphaned = r#"[
+          {"id":"orb-2","title":"blocked by the orphan","status":"open",
+           "priority":2,"issue_type":"task",
+           "dependencies":[{"depends_on_id":"orb-7.9","type":"blocks"}]},
+          {"id":"orb-7.9","title":"its parent is a digest","status":"open",
+           "parent":"orb-404",
+           "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+           "priority":2,"issue_type":"task"}
+        ]"#;
+        let trackers = orbital_with(orbital_tracker().also(beads(placed_and_orphaned)));
+
+        let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
+
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-7", "orb-2", "orb-7.9"]);
+        assert_eq!(
+            rooted_at(&snap, "orb-7.9").dangling,
+            vec!["orb-7.9".to_string()],
+            "and the parent the answer lost is still reported"
+        );
+    }
+
+    /// A root config names is a root whether or not an edge places it. The
+    /// rule reads what the tracker said, and config is not the tracker.
+    #[test]
+    fn a_root_config_names_is_a_root_even_where_an_edge_places_it() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+
+[roots.explicit]
+orbital = ["orb-c3"]
+"#
+        ))
+        .expect("the config parses");
+        let tracker = orbital_holding(CHAIN_OF_PARENTLESS);
+
+        let (work, _) = read_project(&tracker, &cfg.projects[0], &cfg, &[])
+            .expect("the tracker answers every call");
+
+        let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
+        assert_eq!(roots, vec!["orb-c1", "orb-c3"]);
+    }
+
+    /// A pane naming a bead the chain buries. Its climb ends at a parentless
+    /// bead like any other, so it takes its place in the tree rather than
+    /// being stood up beside it — and standing it up is the duplication
+    /// Graeme pointed at, because the bead a pane names is exactly the one he
+    /// saw drawn under every ancestor as well.
+    ///
+    /// What keeps it on the screen is the fold: a line rests open when
+    /// something live is beneath it. What stops being true is that the bead
+    /// being worked is near the top of the forest, which is a rule of its own
+    /// if it is wanted.
+    #[test]
+    fn a_pane_naming_a_buried_bead_draws_it_where_the_tree_puts_it() {
+        let watching = Provider::holding(vec![named(
+            pane("w:p1", ORBITAL, PaneStatus::Working),
+            "orb-c5",
+        )]);
+        let trackers = orbital_with(orbital_holding(CHAIN_OF_PARENTLESS));
+
+        let snap = run(&one_project(), &watching, &trackers, Filter::All, now());
+
+        assert!(drawn(&snap, "orb-c5"), "the bead the pane names is drawn");
+        assert_eq!(drawings(&snap, "orb-c5"), 1);
+        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-c1"],
+            "a pane on a buried bead does not stand it up beside its own tree"
         );
     }
 

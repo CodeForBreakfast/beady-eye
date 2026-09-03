@@ -216,7 +216,7 @@ of the screen says that which agents are alive is unknown.
 Roots come from bd, unioned and deduped:
 
 1. Every unfinished bead — `open`, `in_progress`, `blocked` or `deferred` —
-   and every unfinished wisp, walked to its root via `parent` ancestors. This
+   and every unfinished wisp, walked up its `parent` ancestors. This
    uses bd's own statuses and needs no convention, and it is read off the
    `list --all` and `query ephemeral=true --all` answers the forest is drawn
    from rather than asked of bd as a subset of them: measured 2026-09-02
@@ -225,6 +225,33 @@ Roots come from bd, unioned and deduped:
    `in_progress` and `blocked`, which turned a tracker into a handful of
    roots; since `dd2c3b5` the climb starts from every unfinished bead, so
    every tree with anything left to do is drawn.
+
+   **Where the climb ends is not always the root.** The `parent` field and the
+   dependency edges are two relations, and a bead with no parent used to be
+   its own root while an edge also nested it under everything that depends on
+   it — so a chain of *n* parentless beads drew as *n* trees, the deepest of
+   them in all *n*. A climb that ends at a bead with **no parent at all**
+   therefore defers to the edges: the root is where a tree that draws that
+   bead has to start, which is the bead itself where nothing nests it, and
+   otherwise the top of whatever does. Measured on this project's tracker
+   2026-09-03, 37 of 73 open beads had no parent, so this is the common
+   wiring rather than an exotic one.
+
+   A climb that ends because the **parent is set and this read cannot follow
+   it** — a parent the answer does not hold, or a chain that comes back round
+   — does not defer. That bead has something wrong with it that only its own
+   tree reports, and a reader does not find a lost parent buried under
+   whatever happens to block it. It is a root wherever else it is also drawn.
+
+   Two consequences worth stating, because both look like defects cold. **A
+   closed bead can be the root of a drawn tree**: the answer's edges hold
+   every bead, and a parentless bead placed only by a closed one has to be
+   drawn from that closed bead or from nowhere — which is rule 5's behaviour,
+   reached by a bead that lost nothing. And **the bead being worked is no
+   longer near the top of the forest**: it sits at its own depth, kept on
+   screen by the fold, which rests every line above something live open.
+   Proximity to the top, if it is wanted, is a rule of its own and not this
+   one.
 2. Roots named explicitly in config, or as `bdi <bead-id>` arguments. Both
    carry the project whose tracker holds the bead, because the key is
    `(project, id)`: config lists the ids under the project, and an argument is
