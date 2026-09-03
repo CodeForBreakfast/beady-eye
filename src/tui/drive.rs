@@ -2238,19 +2238,19 @@ mod tests {
         )
     }
 
-    /// The collector is told about a config the reader has written, and told
-    /// before the collection that reads under it.
+    /// The collector is told the config the reader has written, and it is
+    /// that one rather than the one the run started on.
     ///
-    /// Both halves matter and the order is the half that is easy to lose. A
-    /// collection carries no config with it — the collector reads under
-    /// whatever it is working to when the read reaches it — so a read that
-    /// overtook the config would be a whole screen of projects read under the
-    /// file the reader has just replaced, and the next thing to correct it
-    /// would be whatever asked next. Nothing here arranges that: the two go
-    /// down one channel in order, and the read waits out its window behind
-    /// the config that has already gone.
+    /// The order the two arrive in is asserted below and is not what this
+    /// discriminates *while the ask and the read share one ordered channel*.
+    /// No edit to `looked_at` puts the read first today, because the ask only
+    /// queues and the send is a pass later. Take that construction away — a
+    /// second channel, a queue between them — and the assertion is the thing
+    /// that notices, which is why it is worth keeping: a collection carries
+    /// no config with it, so a read that overtook one would draw a whole
+    /// screen read under the file the reader has just replaced.
     #[test]
-    fn a_config_the_reader_has_written_reaches_the_collector_before_the_read_under_it() {
+    fn the_collector_is_told_the_config_the_reader_has_written() {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
