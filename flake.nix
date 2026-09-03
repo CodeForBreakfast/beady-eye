@@ -441,6 +441,253 @@
           esac
         '';
 
+        # `cargo-mutants --in-diff` exits 0 on a diff it cannot score, and that
+        # is the same 0 a run which caught every mutant exits. Two runs reach
+        # it, both measured at 27.1.0: a diff holding no mutable production
+        # line prints "No mutants to filter" and writes no mutants.out at all,
+        # and a diff whose every mutant is unviable prints "No mutants were
+        # viable" and writes one whose every scored row is zero. Neither tested
+        # the change. This is the count that tells them from a run that did,
+        # and it refuses them, so the reader is not the guard.
+        #
+        # It reads the run's own output directory rather than the repository's,
+        # because a vacuous run leaves an earlier mutants.out exactly where it
+        # stood — same inode, same counts, and no mutants.out.old beside it —
+        # so the tree's copy answers for whichever run last wrote one.
+        refuseARunThatScoredNothing = ''
+          refuse_a_run_that_scored_nothing() {
+            jq=${pkgs.jq}/bin/jq
+            outcomes="$1/mutants.out/outcomes.json"
+
+            if [ ! -f "$outcomes" ]; then
+              echo "Nothing was scored: the run wrote no $outcomes."
+              echo "cargo-mutants writes none when the diff holds no mutable"
+              echo "production line, so this says nothing about the change."
+              exit 1
+            fi
+
+            scored="$($jq '.caught + .missed + .timeout' "$outcomes")"
+            if [ "$scored" = 0 ]; then
+              echo "Nothing was scored: $($jq -r '"\(.total_mutants) generated, \(.unviable) unviable"' "$outcomes")."
+              echo "An unviable mutant does not compile, so it tests nothing,"
+              echo "and this says nothing about the change."
+              exit 1
+            fi
+
+            echo "Scored $scored mutants."
+          }
+        '';
+
+        # Both runs above pass anybody reading the exit code, so this guard is
+        # worth having only if it fires. These are those two runs, reduced to
+        # the tally the count is read off. The third row is the control: a
+        # guard that refused everything would pass the first two, and nothing
+        # in them could tell it apart from one that works.
+        refuseARunThatScoredNothingTest =
+          pkgs.runCommand "refuse-a-run-that-scored-nothing-test" { } ''
+          set -u
+          ${refuseARunThatScoredNothing}
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          tally() {
+            mkdir -p "$1/mutants.out"
+            printf '%s\n' "$2" > "$1/mutants.out/outcomes.json"
+          }
+
+          # A diff with no mutable production line. cargo-mutants writes
+          # nothing, so the directory it was pointed at stays empty.
+          mkdir -p "$TMPDIR/nothing"
+          output="$( refuse_a_run_that_scored_nothing "$TMPDIR/nothing" 2>&1 )" &&
+            fail "it accepted a run that wrote no tally at all:"
+          case "$output" in
+            *"wrote no"*) ;;
+            *) fail "the refusal did not say the run wrote no tally:" ;;
+          esac
+
+          # A diff whose every mutant is unviable. Here there is a tally, and
+          # every row of it that means a mutant was tested is zero.
+          tally "$TMPDIR/unviable" \
+            '{"total_mutants":1,"caught":0,"missed":0,"timeout":0,"unviable":1}'
+          output="$( refuse_a_run_that_scored_nothing "$TMPDIR/unviable" 2>&1 )" &&
+            fail "it accepted a run whose every mutant was unviable:"
+          case "$output" in
+            *"1 generated, 1 unviable"*) ;;
+            *) fail "the refusal did not say what the run generated:" ;;
+          esac
+
+          # A run that tested the change.
+          tally "$TMPDIR/scored" \
+            '{"total_mutants":5,"caught":4,"missed":1,"timeout":0,"unviable":0}'
+          output="$( refuse_a_run_that_scored_nothing "$TMPDIR/scored" 2>&1 )" ||
+            fail "it refused a run that scored five mutants:"
+          case "$output" in
+            *"Scored 5 mutants"*) ;;
+            *) fail "it accepted the run without saying what it scored:" ;;
+          esac
+
+          touch $out
+        '';
+
+        # cargo-mutants copies the working tree and tests that, so the filter
+        # has to describe the working tree too. Taken from HEAD it would name
+        # committed lines while the uncommitted edits beside them went
+        # unmutated, and the run would report a tally for a revision nobody
+        # was testing.
+        #
+        # The merge base rather than the ref itself, which is what `...` means
+        # and is the whole of why that form is written everywhere here: a diff
+        # against the ref carries in reverse whatever landed on it while you
+        # worked, and cargo-mutants scores those lines on your tree as your
+        # tally.
+        scopeToTheChange = ''
+          scope_to_the_change() {
+            git=${pkgs.git}/bin/git
+
+            # An untracked file that is not ignored is copied into the tree
+            # cargo-mutants tests, and `git diff` cannot see one at all — so a
+            # new module's lines would be in the source under test and outside
+            # the filter, and nothing would mutate any of them. That is a full
+            # tally saying nothing about the file the change is about.
+            loose="$($git ls-files --others --exclude-standard -- '*.rs')"
+            if [ -n "$loose" ]; then
+              echo "These Rust files are untracked, so they are in the tree"
+              echo "cargo-mutants tests and out of the diff that scopes it:"
+              printf '%s\n' "$loose"
+              echo
+              echo "Stage them (git add -N is enough) and run this again."
+              exit 1
+            fi
+
+            base="$($git merge-base "$1" HEAD)" || exit 1
+            echo "Scoping to the change since $($git rev-parse --short "$base"), the merge base with $1."
+            $git diff "$base" > "$2" || exit 1
+          }
+        '';
+
+        # Both properties above are silent when they break: a filter naming the
+        # wrong revision still produces a diff, still generates mutants, and
+        # still prints a tally. These are the two lines that must be in it and
+        # the one that must not.
+        scopeToTheChangeTest = pkgs.runCommand "scope-to-the-change-test"
+          { nativeBuildInputs = [ pkgs.git ]; } ''
+          set -u
+          ${scopeToTheChange}
+
+          export HOME="$TMPDIR"
+          export GIT_CONFIG_GLOBAL="$TMPDIR/gitconfig"
+          export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+          export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+          git config --global init.defaultBranch main
+
+          repo="$TMPDIR/repo"
+          git init --quiet "$repo"
+          printf 'base\n' > "$repo/a.txt"
+          git -C "$repo" add a.txt
+          git -C "$repo" commit --quiet -m base
+
+          git -C "$repo" checkout --quiet -b work
+          printf 'a line I committed\n' >> "$repo/a.txt"
+          git -C "$repo" commit --quiet -am mine
+
+          # The base moves under the branch, as it does whenever somebody
+          # else merges while you work.
+          git -C "$repo" checkout --quiet main
+          printf 'a line somebody else landed\n' > "$repo/b.txt"
+          git -C "$repo" add b.txt
+          git -C "$repo" commit --quiet -m theirs
+          git -C "$repo" checkout --quiet work
+
+          printf 'a line I have not committed\n' >> "$repo/a.txt"
+
+          ( cd "$repo" && scope_to_the_change main "$TMPDIR/change.diff" )
+          scoped="$(cat "$TMPDIR/change.diff")"
+
+          fail() { echo "FAIL: $1"; printf '%s\n' "$scoped"; exit 1; }
+
+          case "$scoped" in
+            *"a line I committed"*) ;;
+            *) fail "the change I committed was left out of the diff:" ;;
+          esac
+
+          # cargo-mutants tests the working tree, so a filter that stops at
+          # HEAD leaves this line in the source under test and out of the
+          # filter, and nothing mutates it.
+          case "$scoped" in
+            *"a line I have not committed"*) ;;
+            *) fail "the change I had not committed was left out of the diff:" ;;
+          esac
+
+          # Taken against the ref rather than the merge base, this arrives in
+          # reverse and is scored on your tree as your tally.
+          case "$scoped" in
+            *"a line somebody else landed"*)
+              fail "what landed on the base while I worked is in my diff:" ;;
+          esac
+
+          # A new module arrives untracked, and cargo-mutants tests it while
+          # git diff cannot see it.
+          mkdir -p "$repo/src"
+          printf 'pub fn fresh() -> bool { true }\n' > "$repo/src/loose.rs"
+          scoped="$( cd "$repo" && scope_to_the_change main "$TMPDIR/change.diff" 2>&1 )" &&
+            fail "it scoped a run whose new module was untracked:"
+          case "$scoped" in
+            *src/loose.rs*) ;;
+            *) fail "the refusal did not name the untracked module:" ;;
+          esac
+
+          touch $out
+        '';
+
+        # The count above only reaches a seat that runs it, so this is the
+        # command to run in place of cargo-mutants: it scopes the run to the
+        # change, gives it an output directory of its own, and refuses one that
+        # scored nothing. Everything else passes through.
+        #
+        # The fetch is the one read-ci-verdict needs, for the same reason.
+        # Three dots take the merge base, so a stale origin/main takes an older
+        # one and hands cargo-mutants whatever landed on the base while you
+        # worked — scored on your tree, as your tally. A fetch can lose a race
+        # for a ref another worktree is moving, which is no reason to abandon
+        # the run, so this names the commit it resolved rather than insisting
+        # on one.
+        #
+        # The memory cap CLAUDE.local.md describes wraps this rather than
+        # living in it — `systemd-run --user --scope ...
+        # mutation-test-this-change` — because the cap is about the machine
+        # this runs on and the count is about the diff.
+        mutationTestThisChange =
+          pkgs.writeShellScriptBin "mutation-test-this-change" ''
+          set -u
+
+          git=${pkgs.git}/bin/git
+
+          ${refuseARunThatScoredNothing}
+          ${scopeToTheChange}
+
+          cd "$($git rev-parse --show-toplevel)" || exit 1
+
+          $git fetch --quiet origin ||
+            echo "Could not fetch; origin/main is as you left it."
+
+          # Named under /tmp rather than TMPDIR: a seat whose dev shell is too
+          # old for this command reaches a current one with `nix develop
+          # <ref> --command`, and that shell's TMPDIR is torn down when the
+          # command returns, taking the artefacts this points at with it.
+          run="$(mktemp -d /tmp/mutation-test-this-change.XXXXXX)"
+          scope_to_the_change origin/main "$run/change.diff"
+
+          ${pkgs.cargo-mutants}/bin/cargo-mutants mutants \
+            --in-diff "$run/change.diff" --output "$run" "$@"
+          status=$?
+
+          echo
+          refuse_a_run_that_scored_nothing "$run"
+          echo "Its artefacts are under $run/mutants.out."
+
+          exit $status
+        '';
+
         # A guard nobody has watched fire is the shape this project keeps
         # finding, and the dirty-tree refusal is the one guard here that is CI
         # correctness rather than workflow: a green check of a tree nix cannot
@@ -1024,6 +1271,7 @@
           rerunBdiOnChange
           checkBeforePush
           readCiVerdict
+          mutationTestThisChange
         ];
 
         # A check runs against the same source and the same vendored crates as
@@ -1139,6 +1387,8 @@
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;
+          refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
+          scope-to-the-change-test = scopeToTheChangeTest;
           screen-walks = checkOf "screen-walks" null [ screenWalksAreBounded ]
             "screen-walks-are-bounded";
           screen-walks-test = screenWalksAreBoundedTest;
