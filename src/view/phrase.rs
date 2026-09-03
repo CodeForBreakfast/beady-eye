@@ -60,6 +60,9 @@ pub fn notice(notice: Notice) -> &'static str {
         Notice::AnotherBdiHadTheInboundChannel => {
             "another bdi held the inbound channel · every project is polled instead"
         }
+        Notice::ConfigWouldNotReload => {
+            "the config would not load · bdi is still on the one before the edit"
+        }
     }
 }
 
@@ -78,6 +81,10 @@ pub fn brief_notice(notice: Notice) -> &'static str {
         // keeps only *polled* has what the notice this one replaced already
         // gave them, and still nothing to do about it.
         Notice::AnotherBdiHadTheInboundChannel => "another bdi had it",
+        // What survives the cut is that the edit did not take, because that
+        // is the half the reader cannot see: their editor is still showing
+        // them the text they wrote.
+        Notice::ConfigWouldNotReload => "config not reloaded",
     }
 }
 

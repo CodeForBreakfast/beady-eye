@@ -111,6 +111,22 @@ pub enum Notice {
     /// startup, and nothing re-checks — so all this ever reports is what was
     /// true then, and the holder may have gone since.
     AnotherBdiHadTheInboundChannel,
+    /// The config file has been written and will not load, so `bdi` is
+    /// working to the config it had before the edit. Not a fall back to
+    /// defaults: what the reader sees is still every project they
+    /// configured.
+    ///
+    /// The only notice here that comes and goes. It goes up on a read that
+    /// failed and comes off on the next that did not, whether or not that
+    /// one brought anything new — a reader who undoes the edit has fixed the
+    /// file, and a screen that went on saying otherwise would leave them
+    /// changing a config that was already right.
+    ///
+    /// Why it would not load is not said. The reader wrote the file a moment
+    /// ago and their editor is where the line and the column are; what this
+    /// has to tell them is the part they cannot see, which is that `bdi` did
+    /// not take it.
+    ConfigWouldNotReload,
 }
 
 /// How fresh one project's rows are, said beside its name.
@@ -325,7 +341,8 @@ mod tests {
         std::iter::successors(Some(Notice::AgentsUnknown), |fact| match fact {
             Notice::AgentsUnknown => Some(Notice::NoInboundChannel),
             Notice::NoInboundChannel => Some(Notice::AnotherBdiHadTheInboundChannel),
-            Notice::AnotherBdiHadTheInboundChannel => None,
+            Notice::AnotherBdiHadTheInboundChannel => Some(Notice::ConfigWouldNotReload),
+            Notice::ConfigWouldNotReload => None,
         })
     }
 

@@ -18,7 +18,7 @@ use crate::collect::herdr;
 use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
 use crate::model::snapshot::Filter;
-use crate::tui::Armed;
+use crate::tui::{Armed, Reload, CHECKED_EVERY};
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
@@ -155,7 +155,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         reading: Reading::asked_for(&cli),
         roots: &cli.beads,
     };
-    let cfg = match &cli.config {
+    let (cfg, read_from) = match &cli.config {
         Some(named) => read_config(&RealRunner, &expand_tilde(named, home), &launch),
         None => config_for_wherever_bdi_was_run(
             &RealRunner,
@@ -187,13 +187,45 @@ pub fn run() -> anyhow::Result<ExitCode> {
     }
 
     let refresh = cfg.tui.refresh();
-    let patience = cfg.tui.unanswered_after();
-    let tail_every = cfg.tui.tail_refresh();
+    let waits = cfg.tui.clone();
     let polling = Polling::asked_for(&cli);
     let projects = cfg
         .read()
         .map(|project| Armed::polling(project.name.clone(), polling.after_a_read(project, refresh)))
         .collect();
+    // Built before the config goes to the collector, and holding a copy of
+    // it: what a re-read is compared against is the config this run is
+    // working to, and after this line the collector owns the only other one.
+    //
+    // A re-read runs the whole of the startup pipeline, `git worktree list`
+    // per project included, on the loop's own thread — so a config the
+    // reader has just saved costs a hitch before the next frame. A
+    // collection is on a worker thread for exactly that reason, and this is
+    // not, because a config is written a few times a week where a tracker is
+    // read every few seconds. What would move it is a second worker seam,
+    // which belongs with the first thing that needs one.
+    let reload = read_from.map(|path| {
+        let cwd = cwd.clone();
+        let reading = Reading::asked_for(&cli);
+        let roots = cli.beads.clone();
+        Reload::watching(
+            path,
+            CHECKED_EVERY,
+            cfg.clone(),
+            Box::new(move |text| {
+                config_for_this_run(
+                    text,
+                    &RealRunner,
+                    &Launch {
+                        cwd: &cwd,
+                        reading: reading.clone(),
+                        roots: &roots,
+                    },
+                )
+            }),
+            Utc::now(),
+        )
+    });
     let mut collection = crate::app::Collection::default();
     let trackers = bd::Cli::new(&RealRunner);
     // One provider for the run, asked by the collection on its thread and by
@@ -201,8 +233,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let agents: Arc<dyn Agents> = Arc::new(herdr::Herdr::new(&RealRunner as &dyn Runner));
     let listing = Arc::clone(&agents);
     crate::tui::run(
-        patience,
-        tail_every,
+        &waits,
         filter,
         cfg.scope.clone(),
         projects,
@@ -210,6 +241,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Box::new(move |wanted| {
             collection.collect(&cfg, &listing, &trackers, wanted, filter, Utc::now())
         }),
+        reload,
     )?;
 
     Ok(ExitCode::SUCCESS)
@@ -217,10 +249,20 @@ pub fn run() -> anyhow::Result<ExitCode> {
 
 /// A path the user named is read as written: a config that is not there is an
 /// error, never a reason to look somewhere else.
-fn read_config(runner: &dyn Runner, path: &Path, launch: &Launch<'_>) -> anyhow::Result<Config> {
+///
+/// The path comes back beside the config because it is the file the run goes
+/// on looking at, and this is where which file that is gets settled.
+fn read_config(
+    runner: &dyn Runner,
+    path: &Path,
+    launch: &Launch<'_>,
+) -> anyhow::Result<(Config, Option<PathBuf>)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading the config at {}", path.display()))?;
-    config_for_this_run(&text, runner, launch)
+    Ok((
+        config_for_this_run(&text, runner, launch)?,
+        Some(path.to_path_buf()),
+    ))
 }
 
 /// A config file's text, as the config this run reads: scoped, holding the
@@ -272,9 +314,12 @@ fn config_for_wherever_bdi_was_run(
     runner: &dyn Runner,
     path: &Path,
     launch: &Launch<'_>,
-) -> anyhow::Result<Config> {
+) -> anyhow::Result<(Config, Option<PathBuf>)> {
     match std::fs::read_to_string(path) {
-        Ok(text) => config_for_this_run(&text, runner, launch),
+        Ok(text) => Ok((
+            config_for_this_run(&text, runner, launch)?,
+            Some(path.to_path_buf()),
+        )),
         Err(absent) if absent.kind() == ErrorKind::NotFound => {
             let named = std::env::var(PROJECT_IN_THE_ENVIRONMENT).ok();
             let cfg = discovery::from_the_current_directory(runner, launch.cwd, named.as_deref())
@@ -288,7 +333,14 @@ fn config_for_wherever_bdi_was_run(
                 Reading::Named(names) => cfg.scoped_to(names)?,
                 Reading::EveryProject | Reading::WhereBdiWasStarted => cfg,
             };
-            cfg.with_roots_named_on_the_command_line(launch.roots)
+            // No file, so nothing to look at again. A config file written
+            // while this run is going is a config file this run never read,
+            // and what it says about scope, roots and where each project is
+            // worked was settled against a directory rather than against it.
+            Ok((
+                cfg.with_roots_named_on_the_command_line(launch.roots)?,
+                None,
+            ))
         }
         Err(unreadable) => {
             Err(unreadable).with_context(|| format!("reading the config at {}", path.display()))
@@ -435,7 +487,7 @@ detached
         let path = a_config_file_holding("started-in-orbital", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(&runner, &path, &started_in("/srv/work/orbital/src"))
+        let (cfg, _) = read_config(&runner, &path, &started_in("/srv/work/orbital/src"))
             .expect("the config is ours to read");
 
         assert_eq!(read_by(&cfg), ["orbital"]);
@@ -463,7 +515,7 @@ detached
         let path = a_config_file_holding("started-inside", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(
+        let (cfg, _) = read_config(
             &runner,
             &path,
             &started_in("/srv/work/orbital/ground-station/src"),
@@ -484,7 +536,7 @@ detached
         let path = a_config_file_holding("started-in-a-worktree", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(&runner, &path, &started_in("/tmp/seat-a/wt/src"))
+        let (cfg, _) = read_config(&runner, &path, &started_in("/tmp/seat-a/wt/src"))
             .expect("the config is ours to read");
 
         assert_eq!(read_by(&cfg), ["orbital"]);
@@ -515,7 +567,7 @@ detached
             "worktree /home/elsewhere\nHEAD 4d3c1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d\nbranch refs/heads/main\n",
         );
 
-        let cfg = read_config(&runner, &path, &started_in("/home/elsewhere/notes"))
+        let (cfg, _) = read_config(&runner, &path, &started_in("/home/elsewhere/notes"))
             .expect("the config is ours to read");
 
         assert_eq!(read_by(&cfg), ["orbital", "ferry"]);
@@ -531,7 +583,7 @@ detached
         let path = a_config_file_holding("all-projects", TWO_PROJECTS);
         let runner = two_repositories();
 
-        let cfg = read_config(
+        let (cfg, _) = read_config(
             &runner,
             &path,
             &Launch {
@@ -559,7 +611,7 @@ detached
         let path = a_config_file_holding("project-outranks", TWO_PROJECTS);
         let runner = never_entering("/srv/work/orbital", two_repositories());
 
-        let cfg = read_config(
+        let (cfg, _) = read_config(
             &runner,
             &path,
             &Launch {
@@ -583,7 +635,7 @@ detached
         let path = a_config_file_holding("root-widens", TWO_PROJECTS);
         let runner = two_repositories();
 
-        let cfg = read_config(
+        let (cfg, _) = read_config(
             &runner,
             &path,
             &Launch {
@@ -637,7 +689,7 @@ detached
         let path = a_config_file_holding("bare-root", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(
+        let (cfg, _) = read_config(
             &runner,
             &path,
             &Launch {
@@ -667,7 +719,7 @@ detached
             .with("git worktree list --porcelain", A_WORKTREE_PER_SEAT)
             .with("git remote get-url origin", "git@host:owner/orbital.git");
 
-        let cfg =
+        let (cfg, _) =
             config_for_wherever_bdi_was_run(&runner, &absent, &started_in("/srv/work/orbital/src"))
                 .expect("the directory is a project");
 
@@ -697,7 +749,7 @@ detached
     fn a_config_the_command_line_names_learns_its_working_trees() {
         let path = a_config_file("named-config");
 
-        let cfg = read_config(&ARepositoryWorkedInTwoPlaces, &path, &every_project())
+        let (cfg, _) = read_config(&ARepositoryWorkedInTwoPlaces, &path, &every_project())
             .expect("the config is ours to read");
 
         assert_eq!(
@@ -715,7 +767,7 @@ detached
     fn the_config_found_where_bdi_looks_learns_its_working_trees() {
         let path = a_config_file("default-config");
 
-        let cfg =
+        let (cfg, _) =
             config_for_wherever_bdi_was_run(&ARepositoryWorkedInTwoPlaces, &path, &every_project())
                 .expect("the config is ours to read");
 

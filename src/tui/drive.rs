@@ -20,6 +20,7 @@ use crate::view::{Action, Motion};
 
 use super::armed::Armed;
 use super::keys::action;
+use super::reload::{Reload, Reloaded};
 
 /// Everything that reaches the loop.
 ///
@@ -133,6 +134,15 @@ pub(super) trait View {
     /// still on its way.
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration>;
 
+    /// Take what a check of the config file found, reporting whether the
+    /// screen has changed.
+    ///
+    /// Handed the outcome rather than a verdict, for the reason `tailed` is
+    /// handed the provider's answer: what the foot says about a config that
+    /// will not load is the view's to decide, and the loop's part is knowing
+    /// when the file was looked at.
+    fn reloaded(&mut self, reloaded: Reloaded) -> bool;
+
     /// Take note that the reader has pressed something — a key, a button, a
     /// wheel notch — before the loop works out what it means, reporting
     /// whether the screen has changed for the press alone.
@@ -217,6 +227,7 @@ pub(super) fn drive(
     ask: &Sender<Wanted>,
     mut outstanding: Outstanding,
     mut armed: Vec<Armed>,
+    mut reload: Option<Reload>,
 ) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
     let mut drawn_at = Utc::now();
@@ -224,7 +235,14 @@ pub(super) fn drive(
 
     while let Some(waited) = wait(
         events,
-        sleeps_for(view, &outstanding, &armed, drawn_at, Utc::now()),
+        sleeps_for(
+            view,
+            &outstanding,
+            &armed,
+            reload.as_ref(),
+            drawn_at,
+            Utc::now(),
+        ),
     ) {
         let woken = match waited {
             // Nothing has happened and a deadline is up. Where it is the
@@ -255,8 +273,15 @@ pub(super) fn drive(
         let told = asks_for_what_is_due(view, &mut outstanding, &mut armed, now);
         outstanding.sends(ask, now);
         view.reread(now);
+        // A run reading a config file looks at it here; a run that found no
+        // file to read has nothing to look at, and never will — the whole of
+        // what it is working to came from the directory it was started in.
+        let reloaded = reload
+            .as_mut()
+            .map_or(Reloaded::Untouched, |reload| reload.checks(now));
+        let noticed = view.reloaded(reloaded);
 
-        if woken || told {
+        if woken || told || noticed {
             drawn_at = now;
             view.draw(showing, drawn_at)?;
         }
@@ -297,13 +322,14 @@ fn ran_out(view: &dyn View, drawn_at: DateTime<Utc>, now: DateTime<Utc>) -> bool
 }
 
 /// How long the loop may sleep: until what is drawn stops being true, until a
-/// project asks for itself, until the read at the front is due to leave, or
-/// until the band is due to read its pane again — whichever comes first, and
-/// nothing where none of them will.
+/// project asks for itself, until the read at the front is due to leave,
+/// until the band is due to read its pane again, or until the config file is
+/// due to be looked at — whichever comes first, and nothing where none of
+/// them will.
 ///
-/// Four deadlines where there was one, and the loop tells them apart only by
-/// doing all four things when it wakes. What that costs is asking each of
-/// the four whether it is due on a wake that was one of the others'; what it
+/// Five deadlines where there was one, and the loop tells them apart only by
+/// doing all five things when it wakes. What that costs is asking each of
+/// the five whether it is due on a wake that was one of the others'; what it
 /// saves is a second way for the loop to be woken.
 ///
 /// Two instants, because the screen's deadline is about the frame on it and
@@ -315,6 +341,7 @@ fn sleeps_for(
     view: &dyn View,
     outstanding: &Outstanding,
     armed: &[Armed],
+    reload: Option<&Reload>,
     drawn_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Option<Duration> {
@@ -323,11 +350,16 @@ fn sleeps_for(
         .holds_for(drawn_at)
         .map(|held| held.saturating_sub(since_drawn));
 
-    [holds_for, outstanding.sends_in(now), view.rereads_in(now)]
-        .into_iter()
-        .chain(armed.iter().map(|project| project.asks_in(now)))
-        .flatten()
-        .min()
+    [
+        holds_for,
+        outstanding.sends_in(now),
+        view.rereads_in(now),
+        reload.and_then(|reload| reload.checks_in(now)),
+    ]
+    .into_iter()
+    .chain(armed.iter().map(|project| project.asks_in(now)))
+    .flatten()
+    .min()
 }
 
 /// Answer one event, reporting whether the screen has changed — or nothing
@@ -853,6 +885,13 @@ mod tests {
             true
         }
 
+        /// Nothing on this view says anything about a config, and no test
+        /// here hands the loop a file to look at. What a check does to the
+        /// foot is `Shown`'s, where a test can read the row it lands on.
+        fn reloaded(&mut self, _reloaded: Reloaded) -> bool {
+            false
+        }
+
         /// The same rule `Shown` keeps, so a loop test is asking the loop
         /// what it asks a real screen: a read outstanding is a frame away
         /// from being out of date, and this view has no ages on it.
@@ -928,6 +967,13 @@ mod tests {
         Vec::new()
     }
 
+    /// A run with no config file to look at again. What the loop does with
+    /// one is `Reload`'s own tests and the pty test that drives the binary;
+    /// what these say is that the loop reaches everything else without one.
+    fn nothing_watched() -> Option<Reload> {
+        None
+    }
+
     fn waiting(events: Vec<Event>) -> Receiver<Event> {
         let (to, from) = mpsc::channel();
         for event in events {
@@ -987,7 +1033,15 @@ mod tests {
             key(KeyCode::Char('k')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.applied,
@@ -1010,7 +1064,15 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -1042,7 +1104,15 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -1063,7 +1133,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -1086,7 +1164,15 @@ mod tests {
             key(KeyCode::Char('q')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -1120,7 +1206,15 @@ mod tests {
             key(KeyCode::Char('k')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -1147,7 +1241,15 @@ mod tests {
             key(KeyCode::Esc),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.scrolled, [Motion::NextRow, Motion::HalfScreenDown]);
         assert_eq!(
@@ -1172,7 +1274,15 @@ mod tests {
             Event::Key(key(KeyCode::Char('q'))),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.applied,
@@ -1209,7 +1319,15 @@ mod tests {
             key(KeyCode::Char('j')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -1231,7 +1349,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -1258,7 +1384,15 @@ mod tests {
             Event::Key(key(KeyCode::Char('j'))),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.showing,
@@ -1291,7 +1425,15 @@ mod tests {
             Event::Key(key(KeyCode::Char('q'))),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.scrolled, [Motion::NextRow]);
         assert!(
@@ -1319,7 +1461,15 @@ mod tests {
             Event::Key(key(KeyCode::Char('j'))),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [Wanted::Everything]);
         assert_eq!(
@@ -1339,7 +1489,15 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Key(control('r'))]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -1382,6 +1540,7 @@ mod tests {
             &ask,
             gathering(A_LONG_WINDOW),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -1411,6 +1570,7 @@ mod tests {
             &ask,
             gathering(A_LONG_WINDOW),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -1436,6 +1596,7 @@ mod tests {
                 &Recorder::default(),
                 &at_once(),
                 &nothing_armed(),
+                None,
                 Utc::now(),
                 Utc::now()
             ),
@@ -1452,7 +1613,14 @@ mod tests {
         sooner.came_back(&ferry(), now);
 
         assert_eq!(
-            sleeps_for(&Recorder::default(), &outstanding, &[sooner], now, now),
+            sleeps_for(
+                &Recorder::default(),
+                &outstanding,
+                &[sooner],
+                None,
+                now,
+                now
+            ),
             Some(AN_INTERVAL),
             "the poll comes round long before the window is out"
         );
@@ -1461,6 +1629,7 @@ mod tests {
                 &Recorder::default(),
                 &outstanding,
                 &nothing_armed(),
+                None,
                 now,
                 now
             ),
@@ -1482,10 +1651,50 @@ mod tests {
         };
 
         assert_eq!(
-            sleeps_for(&view, &outstanding, &nothing_armed(), now, now),
+            sleeps_for(&view, &outstanding, &nothing_armed(), None, now, now),
             Some(AN_INTERVAL),
             "the pane falls due long before the window is out"
         );
+    }
+
+    /// The config check has to be in the deadline set, and nothing about a
+    /// running `bdi` says so: a screen with an age on it goes stale every
+    /// second, so the loop wakes far more often than the check falls due and
+    /// looks at the file on somebody else's clock. A screen saying nothing
+    /// that goes stale is where the term is the whole of it — a `bdi` with
+    /// no age drawn, no read outstanding and no project polling would sleep
+    /// until the reader touched a key, and a config edited under it would
+    /// never be read.
+    #[test]
+    fn a_loop_with_nothing_else_due_still_wakes_to_look_at_the_config() {
+        let now = Utc::now();
+        let reload = a_config_looked_at_every(AN_INTERVAL, now);
+
+        assert_eq!(
+            sleeps_for(
+                &Recorder::default(),
+                &at_once(),
+                &nothing_armed(),
+                Some(&reload),
+                now,
+                now
+            ),
+            Some(AN_INTERVAL),
+            "nothing else is going to wake it"
+        );
+    }
+
+    /// A file `bdi` would look at every `every`, from `now`. Nothing here
+    /// reads it — `checks_in` answers off the deadline alone — so the path
+    /// names nothing and the parse is never reached.
+    fn a_config_looked_at_every(every: Duration, now: DateTime<Utc>) -> Reload {
+        Reload::watching(
+            std::path::PathBuf::from("/a/config/nothing/here/opens"),
+            every,
+            crate::config::Config::naming(Vec::new()),
+            Box::new(crate::config::Config::from_toml),
+            now,
+        )
     }
 
     /// When the band's interval is up the loop asks it to read its pane
@@ -1502,7 +1711,15 @@ mod tests {
         let events = going_round(&mut view, 1, Vec::new());
         let started = Utc::now();
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         let first = view
             .reread_at
@@ -1528,7 +1745,15 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert!(
             view.reread_at.len() >= A_FEW_PASSES,
@@ -1553,12 +1778,12 @@ mod tests {
 
         let drawn_at = now - TimeDelta::milliseconds(30);
         assert_eq!(
-            sleeps_for(&view, &at_once(), &nothing_armed(), drawn_at, now),
+            sleeps_for(&view, &at_once(), &nothing_armed(), None, drawn_at, now),
             Some(phrase::FRAME - Duration::from_millis(30)),
         );
         let drawn_at = now - TimeDelta::milliseconds(100);
         assert_eq!(
-            sleeps_for(&view, &at_once(), &nothing_armed(), drawn_at, now),
+            sleeps_for(&view, &at_once(), &nothing_armed(), None, drawn_at, now),
             Some(Duration::ZERO),
             "the frame ran out before the loop asked, so it wakes at once"
         );
@@ -1579,7 +1804,15 @@ mod tests {
         let mut overdue = Armed::polling("atlas".to_string(), Some(AN_INTERVAL));
         overdue.came_back(&atlas(), Utc::now() - TimeDelta::hours(1));
 
-        drive(&mut view, &events, &ask, at_once(), vec![overdue]).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            vec![overdue],
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -1617,6 +1850,7 @@ mod tests {
             &ask,
             started(),
             vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -1716,6 +1950,7 @@ mod tests {
             &ask,
             started(),
             vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -1767,7 +2002,15 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.collecting(), [vec![atlas()]]);
         assert_eq!(view.drawn(), 2);
@@ -1827,7 +2070,15 @@ mod tests {
         // loop's.
         let events = going_round(&mut view, 2, vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert!(
             view.drawn() > 2,
@@ -1852,7 +2103,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -1873,7 +2132,15 @@ mod tests {
         let before = Utc::now();
         let events = waiting(vec![Event::Changed(atlas())]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         let asked_at = view.asked_at();
         assert_eq!(asked_at.len(), 1, "one collection was started");
@@ -1900,7 +2167,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -1933,7 +2208,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -1954,7 +2237,15 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Changed(atlas()), Event::Changed(ferry())]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             view.collecting(),
@@ -1974,7 +2265,15 @@ mod tests {
             Event::Key(control('r')),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -1997,7 +2296,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), ferry()]);
     }
@@ -2014,7 +2321,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(asked.try_iter().collect::<Vec<_>>(), [atlas(), atlas()]);
     }
@@ -2035,7 +2350,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -2061,7 +2384,15 @@ mod tests {
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
@@ -2080,7 +2411,15 @@ mod tests {
             Event::Changed(ferry()),
         ]);
 
-        drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
 
         assert_eq!(view.collected, 1);
         assert_eq!(
@@ -2123,7 +2462,14 @@ mod tests {
         let (finished, ended) = mpsc::channel();
         let driving = thread::spawn(move || {
             let mut view = Recorder::default();
-            let outcome = drive(&mut view, &events, &ask, at_once(), nothing_armed());
+            let outcome = drive(
+                &mut view,
+                &events,
+                &ask,
+                at_once(),
+                nothing_armed(),
+                nothing_watched(),
+            );
             let _ = finished.send(());
             (view, outcome)
         });
@@ -2151,6 +2497,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2176,6 +2523,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2205,6 +2553,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2227,6 +2576,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2248,6 +2598,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2271,6 +2622,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2296,6 +2648,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2333,6 +2686,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2362,6 +2716,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2386,6 +2741,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2410,6 +2766,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2441,6 +2798,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 
@@ -2474,6 +2832,7 @@ mod tests {
             &ask,
             at_once(),
             nothing_armed(),
+            nothing_watched(),
         )
         .expect("the loop runs");
 

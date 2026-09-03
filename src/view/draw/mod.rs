@@ -98,13 +98,13 @@ impl<'a> Reads<'a> {
     }
 }
 
-/// What the row at the foot of the screen is handed: what this run could not
+/// What the row at the foot of the screen is handed: what this run cannot
 /// do, what the reader has just copied, and the keys.
 ///
 /// `keys` arrives already named. What a key is called belongs with the
 /// mapping that answers it, and this file has never known one.
 pub struct Foot<'a> {
-    pub at_startup: &'a [Notice],
+    pub standing: &'a [Notice],
     /// The id the reader has just put on the clipboard, until their next
     /// key or click.
     pub copied: Option<&'a str>,
@@ -153,7 +153,7 @@ pub fn draw(
 
     frame.render_widget(
         status_bar(
-            &notices(forest.snapshot().agents.state, foot.at_startup),
+            &notices(forest.snapshot().agents.state, foot.standing),
             foot.copied,
             foot.keys,
             bands.keys.width as usize,
@@ -573,7 +573,7 @@ mod tests {
 
     fn frame_with(
         forest: &Forest,
-        at_startup: &[Notice],
+        standing: &[Notice],
         collecting: &[Awaited],
         width: u16,
         height: u16,
@@ -586,7 +586,7 @@ mod tests {
                 collecting,
                 drawn_at(),
                 Foot {
-                    at_startup,
+                    standing,
                     copied: None,
                     keys: A_KEY_ROW,
                 },

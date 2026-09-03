@@ -30,6 +30,7 @@ use super::clipboard;
 use super::drive::{Showing, View};
 use super::due::due_after;
 use super::keys::{bindings, key_row};
+use super::reload::Reloaded;
 
 /// The forest on the alternate screen and the tail beneath it.
 ///
@@ -82,6 +83,15 @@ struct Shown {
     /// The bead the view was opened on, so a collection that moves the
     /// selection off it can be told from one that leaves it there.
     viewing: Option<BeadKey>,
+    /// What this run of `bdi` cannot do, said at the foot until it can.
+    ///
+    /// Seeded with what was settled before the first collection, which holds
+    /// for the session. A config that will not reload joins them and leaves
+    /// again, which is why these are held here rather than beside the
+    /// terminal: what the foot says is a fact about the view, and a fact
+    /// nothing without a tty could reach would be a fact no test could
+    /// either.
+    standing: Vec<Notice>,
 }
 
 /// Where the band under the forest is with the read it is waiting on.
@@ -108,6 +118,7 @@ impl Shown {
         panes: Box<dyn Panes>,
         clipboard: Box<dyn io::Write>,
         every: Duration,
+        at_startup: Vec<Notice>,
     ) -> Self {
         let forest = forest::flatten(snapshot);
         let mut shown = Self {
@@ -127,6 +138,7 @@ impl Shown {
             collecting: Vec::new(),
             show: Show::default(),
             viewing: None,
+            standing: at_startup,
         };
         // Asked for here rather than waited for: the first frame is drawn on
         // the answer to this arriving, not on the provider getting round to it.
@@ -248,6 +260,35 @@ impl Shown {
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
         self.due
             .map(|due| (due - now).to_std().unwrap_or(Duration::ZERO))
+    }
+
+    /// Take what a check of the config file found, reporting whether the
+    /// screen is any different for it.
+    ///
+    /// The notice is about whether the file loaded, and nothing else: a read
+    /// that brought a config identical to the one in force is a read that
+    /// worked, and takes the notice off exactly as one bringing a new config
+    /// does. Tying it to whether the config *changed* would leave a reader
+    /// who undid a broken edit looking at a foot that still said their
+    /// config was broken, with no edit left that would clear it but one
+    /// changing the config to something they did not want.
+    fn reloaded(&mut self, reloaded: Reloaded) -> bool {
+        let broken = match reloaded {
+            Reloaded::Untouched => return false,
+            Reloaded::Unchanged | Reloaded::Fresh => false,
+            Reloaded::Broken => true,
+        };
+        let said = self.standing.contains(&Notice::ConfigWouldNotReload);
+        if said == broken {
+            return false;
+        }
+        if broken {
+            self.standing.push(Notice::ConfigWouldNotReload);
+        } else {
+            self.standing
+                .retain(|notice| *notice != Notice::ConfigWouldNotReload);
+        }
+        true
     }
 
     /// Take what the provider said, reporting whether the screen is any different
@@ -417,9 +458,6 @@ impl Shown {
 pub(super) struct Screen {
     terminal: DefaultTerminal,
     shown: Shown,
-    /// What this run of `bdi` could not do, settled before the first
-    /// collection and true until the session ends.
-    at_startup: Vec<Notice>,
 }
 
 impl Screen {
@@ -434,8 +472,13 @@ impl Screen {
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
             terminal,
-            shown: Shown::of(snapshot, panes, Box::new(io::stdout()), tail_every),
-            at_startup,
+            shown: Shown::of(
+                snapshot,
+                panes,
+                Box::new(io::stdout()),
+                tail_every,
+                at_startup,
+            ),
         };
 
         // Capture costs the reader the terminal's own mouse: while `bdi` is
@@ -545,6 +588,10 @@ impl View for Screen {
         self.shown.reread(now);
     }
 
+    fn reloaded(&mut self, reloaded: Reloaded) -> bool {
+        self.shown.reloaded(reloaded)
+    }
+
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
         self.shown.rereads_in(now)
     }
@@ -577,6 +624,7 @@ impl View for Screen {
             show,
             collecting,
             copied,
+            standing,
             ..
         } = &mut self.shown;
         let over = match showing {
@@ -585,7 +633,7 @@ impl View for Screen {
             Showing::Bead => Over::Bead(show),
         };
         let foot = draw::Foot {
-            at_startup: &self.at_startup,
+            standing,
             copied: copied.as_deref(),
             keys: &key_row(),
         };
@@ -658,6 +706,12 @@ mod tests {
     fn an_instant() -> DateTime<Utc> {
         use chrono::TimeZone;
         Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap()
+    }
+
+    /// A run that found everything it looked for at startup, so the foot
+    /// begins with nothing on it but the keys.
+    fn nothing_said() -> Vec<Notice> {
+        Vec::new()
     }
 
     /// The bead this view exists for: a binding added to the table and left
@@ -949,7 +1003,7 @@ mod tests {
     ) -> Painted {
         let keys = key_row();
         let foot = draw::Foot {
-            at_startup: &[],
+            standing: &[],
             copied,
             keys: &keys,
         };
@@ -1256,6 +1310,7 @@ mod tests {
             Box::new(Asking::default()),
             Box::new(io::sink()),
             EVERY,
+            nothing_said(),
         )
     }
 
@@ -1274,6 +1329,7 @@ mod tests {
                 Box::new(panes.clone()),
                 Box::new(io::sink()),
                 every,
+                nothing_said(),
             ),
             panes,
         )
@@ -2233,6 +2289,85 @@ mod tests {
         .expect("a gap an instant can hold counts in milliseconds a u64 holds")
     }
 
+    #[test]
+    fn a_config_that_would_not_load_is_said_at_the_foot() {
+        let mut shown = shown(a_staffed_grove(6));
+
+        assert!(shown.reloaded(Reloaded::Broken), "the foot has changed");
+        assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
+    }
+
+    /// The sequence a reader who breaks their config and undoes the edit
+    /// walks: the file is back to exactly what `bdi` is already working to,
+    /// so nothing reloads — and the notice has to come off all the same. A
+    /// foot that cleared it only on a config that *changed* would leave them
+    /// with no edit that clears it but one changing the config to something
+    /// they did not want.
+    #[test]
+    fn undoing_a_broken_edit_takes_the_notice_off_though_nothing_reloaded() {
+        let mut shown = shown(a_staffed_grove(6));
+        shown.reloaded(Reloaded::Broken);
+
+        assert!(shown.reloaded(Reloaded::Unchanged), "the foot has changed");
+        assert_eq!(shown.standing, []);
+    }
+
+    #[test]
+    fn a_config_that_loads_again_takes_the_notice_off() {
+        let mut shown = shown(a_staffed_grove(6));
+        shown.reloaded(Reloaded::Broken);
+
+        assert!(shown.reloaded(Reloaded::Fresh), "the foot has changed");
+        assert_eq!(shown.standing, []);
+    }
+
+    /// A check that read nothing says nothing, which is what leaves the
+    /// notice up between one check and the next: the file is still broken and
+    /// nobody has written it since.
+    #[test]
+    fn a_check_that_read_nothing_leaves_the_foot_as_it_was() {
+        let mut shown = shown(a_staffed_grove(6));
+        shown.reloaded(Reloaded::Broken);
+
+        assert!(!shown.reloaded(Reloaded::Untouched), "nothing has changed");
+        assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
+    }
+
+    /// Being told again what the foot already says is not a change. The loop
+    /// draws on this, and a check every couple of seconds that always
+    /// reported one would redraw the screen for ever.
+    #[test]
+    fn a_foot_told_again_what_it_already_says_has_not_changed() {
+        let mut shown = shown(a_staffed_grove(6));
+
+        assert!(!shown.reloaded(Reloaded::Unchanged), "nothing to take off");
+        shown.reloaded(Reloaded::Broken);
+        assert!(!shown.reloaded(Reloaded::Broken), "already said");
+        assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
+    }
+
+    /// What was settled before the first collection stands whatever the
+    /// config does: the notice that comes and goes is the only one that does.
+    #[test]
+    fn a_config_notice_leaves_the_notices_settled_at_startup_alone() {
+        let mut shown = Shown::of(
+            a_staffed_grove(6),
+            Box::new(Asking::default()),
+            Box::new(io::sink()),
+            EVERY,
+            vec![Notice::NoInboundChannel],
+        );
+
+        shown.reloaded(Reloaded::Broken);
+        assert_eq!(
+            shown.standing,
+            [Notice::NoInboundChannel, Notice::ConfigWouldNotReload]
+        );
+
+        shown.reloaded(Reloaded::Fresh);
+        assert_eq!(shown.standing, [Notice::NoInboundChannel]);
+    }
+
     /// The gap `tail_refresh_millis` can be given and still be waited out.
     /// One millisecond more is the test below, and the two of them are what
     /// pin the answer to the bound rather than to somewhere past it.
@@ -2411,6 +2546,7 @@ mod tests {
                 Box::new(Asking::default()),
                 Box::new(clipboard.clone()),
                 EVERY,
+                nothing_said(),
             ),
             clipboard,
         )
@@ -2540,6 +2676,7 @@ mod tests {
             Box::new(Asking::default()),
             Box::new(Refusing),
             EVERY,
+            nothing_said(),
         );
 
         assert!(!shown.apply(Action::CopyId));

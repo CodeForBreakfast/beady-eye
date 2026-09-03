@@ -14,16 +14,16 @@ use super::tone::LOOK_AT_THIS;
 
 /// Everything the status bar has to say, in the order it should give it up.
 ///
-/// The provider's is read off the snapshot behind this frame and can change
-/// under the reader; the rest were settled before the first collection and
-/// hold for the session. Consequence decides the order, not provenance: a
+/// The provider's is read off the snapshot behind this frame; the rest are
+/// what the view is standing on, most of them settled before the first
+/// collection. Consequence decides the order, not provenance: a
 /// provider nobody can reach empties the agent column, which is what the
 /// reader came for, so it is the last thing a narrow screen takes away.
 ///
 /// A provider nobody installed says nothing here. The reader has lost
 /// nothing — they never had an agent column — and a warning about a program
 /// they have never heard of is a warning they cannot act on.
-pub(super) fn notices(agents: ProviderState, at_startup: &[Notice]) -> Vec<Notice> {
+pub(super) fn notices(agents: ProviderState, standing: &[Notice]) -> Vec<Notice> {
     let collected = match agents {
         ProviderState::Answering | ProviderState::Absent => None,
         ProviderState::NotAnswering => Some(Notice::AgentsUnknown),
@@ -31,7 +31,7 @@ pub(super) fn notices(agents: ProviderState, at_startup: &[Notice]) -> Vec<Notic
 
     collected
         .into_iter()
-        .chain(at_startup.iter().copied())
+        .chain(standing.iter().copied())
         .collect()
 }
 

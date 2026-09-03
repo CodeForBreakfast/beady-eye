@@ -4,17 +4,16 @@
 //! has to start it in. `run` below says why that order is the one it is.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 use crate::app::Wanted;
 use crate::collect::agents::Agents;
 use crate::collect::changes::Reported;
-use crate::config::Scope;
+use crate::config::{Scope, Tui};
 use crate::model::snapshot::{Filter, Snapshot};
 
 #[cfg(test)]
@@ -25,20 +24,26 @@ mod clipboard;
 mod drive;
 mod due;
 mod keys;
+mod reload;
 mod screen;
 mod wire;
 
 pub(crate) use armed::Armed;
+pub(crate) use reload::{Reload, CHECKED_EVERY};
+
 use drive::{drive, Outstanding, View};
 use screen::Screen;
 use wire::wire;
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
 ///
-/// `patience` is how long a read may go unanswered before the project it
-/// names says its rows have stopped coming rather than that they are on
-/// their way. `tail_every` is how long the band under the forest waits after
-/// the provider answers before asking for the selected pane again.
+/// `waits` is the config's `[tui]` table, which is where both of the loop's
+/// own clocks come from: how long a read may go unanswered before the project
+/// it names says its rows have stopped coming rather than that they are on
+/// their way, and how long the band under the forest waits after the provider
+/// answers before asking for the selected pane again. `reload` is the config
+/// file to look at as the run goes on, where the run read one — a run that
+/// found no file has nothing to look at and passes nothing.
 ///
 /// The screen opens on the projects the config names, before any of them has
 /// been read, and every collection — the first one included — runs on a
@@ -59,13 +64,13 @@ use wire::wire;
 /// back rests on `Screen`'s `Drop` — which rests in turn on the build
 /// unwinding, the condition `Drop for Screen` states.
 pub fn run(
-    patience: TimeDelta,
-    tail_every: Duration,
+    waits: &Tui,
     filter: Filter,
     scope: Scope,
     armed: Vec<Armed>,
     agents: Arc<dyn Agents>,
     collect: Box<dyn FnMut(&Wanted) -> Snapshot + Send>,
+    reload: Option<Reload>,
 ) -> anyhow::Result<()> {
     // Taken here rather than on the thread that waits on them, so that they
     // are ours before the screen is opened below. A registration racing the
@@ -91,11 +96,11 @@ pub fn run(
     // It is this read coming back that arms every project for its first poll,
     // which is why nothing is armed here: a project armed at startup would
     // ask for a second read of what is already being collected.
-    let mut outstanding = Outstanding::for_a_run(patience);
+    let mut outstanding = Outstanding::for_a_run(waits.unanswered_after());
     outstanding.ask(Wanted::Everything, Utc::now());
 
-    let mut screen = Screen::showing(awaiting, panes, at_startup, tail_every)?;
+    let mut screen = Screen::showing(awaiting, panes, at_startup, waits.tail_refresh())?;
     screen.collecting(outstanding.awaited());
 
-    drive(&mut screen, &events, &ask, outstanding, armed)
+    drive(&mut screen, &events, &ask, outstanding, armed, reload)
 }
