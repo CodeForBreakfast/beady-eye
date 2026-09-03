@@ -1,15 +1,14 @@
 //! The groups drawn in the forest, and the things inside them.
 
-use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
 use crate::model::types::PaneStatus;
 use crate::view::fitted::{Fitted, GAP};
 use crate::view::lines::{Group, GroupKind, Item};
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::WARNING;
 
-use super::tone::{LIVE, LOOK_AT_THIS};
 use super::{pane_marker, sentence};
 
 /// What lifts the live-agent filter, said beside the trees it is holding back.
@@ -27,22 +26,19 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
     };
 
-    let (said, colour) = if hidden {
-        (said, Color::Reset)
+    let (said, style) = if hidden {
+        (said, palette::PLAIN)
     } else {
-        (format!("{WARNING} {said}"), LOOK_AT_THIS)
+        (format!("{WARNING} {said}"), palette::ATTENTION)
     };
     let state = if hidden {
-        vec![Span::styled(SHOW_ALL, Style::new().fg(Color::DarkGray))]
+        vec![Span::styled(SHOW_ALL, palette::QUIET)]
     } else {
         Vec::new()
     };
 
     Fitted::new(
-        vec![
-            Span::raw(prefix.to_string()),
-            Span::styled(said, Style::new().fg(colour)),
-        ],
+        vec![Span::raw(prefix.to_string()), Span::styled(said, style)],
         Vec::new(),
         state,
     )
@@ -60,7 +56,7 @@ pub(super) fn scoped_line(prefix: &str, project: &str) -> Fitted {
         Vec::new(),
         vec![Span::styled(
             phrase::all_projects_reads_the_rest(),
-            Style::new().fg(Color::DarkGray),
+            palette::QUIET,
         )],
     )
 }
@@ -68,8 +64,12 @@ pub(super) fn scoped_line(prefix: &str, project: &str) -> Fitted {
 /// One thing inside such a group.
 pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
     match item {
-        Item::Failed(failed) => sentence(prefix, phrase::failed_project(failed), LOOK_AT_THIS),
-        Item::Conflict(conflict) => sentence(prefix, phrase::conflict(conflict), LOOK_AT_THIS),
+        Item::Failed(failed) => {
+            sentence(prefix, phrase::failed_project(failed), palette::ATTENTION)
+        }
+        Item::Conflict(conflict) => {
+            sentence(prefix, phrase::conflict(conflict), palette::ATTENTION)
+        }
         Item::Loose(pane) => loose_line(
             prefix,
             &pane.pane.id,
@@ -106,7 +106,7 @@ fn loose_line(
     Fitted::new(
         vec![Span::styled(
             format!("{prefix}{}", pane_marker(pane, status)),
-            Style::new().fg(LIVE),
+            palette::AGENT,
         )],
         title,
         Vec::new(),
@@ -124,6 +124,7 @@ mod tests {
     use crate::model::types::PaneStatus;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
 
     use crate::model::anomaly::Anomaly;
     use crate::model::snapshot::{
@@ -246,7 +247,7 @@ mod tests {
 
         assert_eq!(painted[0].said, LAST);
         assert_eq!(painted[0].style.fg, Some(Color::Reset));
-        assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS));
+        assert_eq!(painted[1].style.fg, palette::ATTENTION.fg);
     }
 
     /// The fold arrow is a control rather than a word, and every group has

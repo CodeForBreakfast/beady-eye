@@ -10,8 +10,9 @@ thing next time. `bdi` draws five surfaces, and each acquired its colours in
 its own bead from its own argument. This is the first reading that puts them
 side by side.
 
-It is a review and a recommendation. Nothing here is implemented; the beads
-this spawns are where that happens.
+It is a review and a recommendation, and the beads it spawns are where the
+work happens. Answer 2's list has landed as `src/view/palette.rs`; everything
+else here is still a recommendation.
 
 Everything below was read at `22acc0d`, over `src/` excluding
 `src/view/sgr.rs`, which replays the colours a pane wrote and chooses none of
@@ -615,10 +616,17 @@ the only one no theme can collapse. A palette of `Color`s cannot express
 half the treatments in the table above; a palette of `Style`s expresses all
 of them, `REVERSED` and the weights included.
 
-The list is the deliverable of this answer. Where it lives is an
-implementation question; that it is one list, that every site goes through it,
-and that no site spells a `Color::` or a `Modifier::` of its own, is the
-requirement.
+The list is the deliverable of this answer. That it is one list, that every
+site goes through it, and that no site spells a `Color::` or a `Modifier::` of
+its own, is the requirement.
+
+It lives in `src/view/palette.rs`, and the `palette` flake check is what holds
+every other module to it — test code aside, where a literal is what pins a
+value rather than choosing one. The list carries three slots the table above
+does not: `PLAIN`, the terminal's default where nothing went wrong, and `HEAD`
+and `PAGE`, the bead window's two tones. Each holds another slot's value and
+is a claim of its own, so `bdi-1xf9` can move the window without moving the
+scale and `bdi-kbd2` the scale without moving the window.
 
 ### 3. The property a tier relationship must hold, and how it could be tested
 

@@ -884,6 +884,132 @@
           touch $out
         '';
 
+        # A colour or a weight spelled at the site that draws it is how this
+        # view reached three palettes and six inline greys: each literal is
+        # convenient where it is written, and the cost lands on whoever next
+        # has to change what a grey means. src/view/palette.rs is the one
+        # list, and this is what holds every other module to it.
+        #
+        # src/view/sgr.rs is exempt. It folds a pane's own escapes back into
+        # styles, so the colours it names are the pane's rather than choices
+        # of bdi's, and no palette can hold them.
+        #
+        # Test code is exempt too, and for the opposite reason: a test that
+        # pins bd's own 24-bit value, or the escape a pane sent, is the only
+        # thing holding the palette to what it is quoting. Route those through
+        # the palette and they assert it against itself.
+        coloursComeFromThePalette = pkgs.writeShellScriptBin "colours-come-from-the-palette" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+
+          # A test module is `#[cfg(test)]` at column 0 above an item that
+          # opens a block, and it ends at the next line closing one at column
+          # 0. Two things sit between the attribute and that item: further
+          # attributes, and a bare `mod foo;`, which opens nothing.
+          #
+          # The two miss in opposite directions. Reading a bare declaration as
+          # a block skips every production line after it and says nothing —
+          # the failure this check exists to prevent, inside the check.
+          # Stopping at an intervening attribute refuses a test module's own
+          # literals, which is loud and wrong rather than silent and wrong.
+          loose="$(find src -name '*.rs' \
+            ! -path 'src/view/palette.rs' \
+            ! -path 'src/view/sgr.rs' |
+            sort | xargs awk '
+              FNR == 1 { in_test = 0; pending = 0 }
+              pending && (/^[ \t]*$/ || /^[ \t]*\/\// || /^#\[/) { next }
+              pending { pending = 0; if (/\{[ \t]*$/) { in_test = 1 }; next }
+              /^#\[cfg\(test\)\]/ { pending = 1; next }
+              in_test && /^\}/ { in_test = 0; next }
+              in_test { next }
+              /Color::|Modifier::/ {
+                printf "  %s:%d: %s\n", FILENAME, FNR, $0
+              }
+            ')"
+
+          if [ -n "$loose" ]; then
+            echo "These lines name a colour or a weight outside the palette:"
+            printf '%s\n' "$loose"
+            echo
+            echo "Give it a name in src/view/palette.rs saying what it means,"
+            echo "and draw through that. A slot is a Style, so a weight is a"
+            echo "slot too. Two slots may hold one value where they are two"
+            echo "claims."
+            exit 1
+          fi
+        '';
+
+        # Every module in this tree already draws through the palette, so the
+        # check above passes whether or not it can still find a literal. This
+        # is what says it can — and that each of the three things it lets
+        # through is let through on purpose rather than missed.
+        coloursComeFromThePaletteTest = pkgs.runCommand "colours-come-from-the-palette-test"
+          { nativeBuildInputs = [ coloursComeFromThePalette ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree/src/view"
+          drawn="$tree/src/view/draw.rs"
+          printf '//! A module that draws.\n\nfn plain() {}\n' > "$drawn"
+          printf '//! The palette.\nconst QUIET: Style = Style::new().fg(Color::DarkGray);\n' \
+            > "$tree/src/view/palette.rs"
+          printf '//! A pane rewound.\nfn replay() { Color::Red; }\n' > "$tree/src/view/sgr.rs"
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          output="$( colours-come-from-the-palette "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 0 ] ||
+            fail "it refused a tree whose only literals are the palette's and sgr.rs's:"
+
+          # A production line, which is the whole point.
+          printf '//! A module that draws.\n\nfn plain() { Color::DarkGray; }\n' > "$drawn"
+          output="$( colours-come-from-the-palette "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status:"
+          # Read the listing rather than the whole output: the advice under
+          # it names src/view/palette.rs, so a pattern over everything the
+          # check said matches the exempt module in every run alike.
+          named="$( printf '%s\n' "$output" | grep '^  src/' )"
+          case "$named" in
+            *src/view/draw.rs:3*) ;;
+            *) fail "the refusal did not name the line:" ;;
+          esac
+          count="$( printf '%s\n' "$named" | grep -c . )"
+          [ "$count" = 1 ] ||
+            fail "one production line, so one line listed, got $count:"
+
+          # A weight, which a palette of Colors could not have held.
+          printf '//! A module that draws.\n\nfn plain() { Modifier::BOLD; }\n' > "$drawn"
+          output="$( colours-come-from-the-palette "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "it allowed a Modifier outside the palette:"
+
+          # The same literal inside a test module, which is where a value is
+          # pinned rather than chosen.
+          printf '//! A module that draws.\n\n#[cfg(test)]\nmod tests {\n    fn t() { Color::DarkGray; }\n}\n' \
+            > "$drawn"
+          output="$( colours-come-from-the-palette "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 0 ] || fail "it refused a literal inside a test module:"
+
+          # A second attribute between `#[cfg(test)]` and the module it is
+          # on. The item is still what says where the block opens.
+          printf '//! A module that draws.\n\n#[cfg(test)]\n#[allow(clippy::pedantic)]\nmod tests {\n    fn t() { Color::DarkGray; }\n}\n' \
+            > "$drawn"
+          output="$( colours-come-from-the-palette "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 0 ] ||
+            fail "an attribute under #[cfg(test)] hid the test module from it:"
+
+          # The attribute above a bare declaration opens no block, so what
+          # follows is production and is still read. Skipping to the next
+          # closing brace here would swallow the rest of the file.
+          printf '//! A module that draws.\n\n#[cfg(test)]\nmod fixtures;\n\nfn plain() { Color::DarkGray; }\n' \
+            > "$drawn"
+          output="$( colours-come-from-the-palette "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] ||
+            fail "a bare #[cfg(test)] declaration hid the production line under it:"
+
+          touch $out
+        '';
+
         # A test that walks the selection down the screen has to stop
         # somewhere. Stopping when the code under test reports the screen no
         # longer moves is the form a mutation turns into a hang: cargo-mutants
@@ -1497,6 +1623,9 @@
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;
+          palette = checkOf "palette" null [ coloursComeFromThePalette ]
+            "colours-come-from-the-palette";
+          palette-test = coloursComeFromThePaletteTest;
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
           scope-to-the-change-test = scopeToTheChangeTest;
           name-the-runs-directory-test = nameTheRunsDirectoryTest;

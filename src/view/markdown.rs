@@ -2,8 +2,10 @@
 //! window scrolls.
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Span;
+
+use crate::view::palette;
 
 /// `text` laid out in `width` columns: one row per screen row, styled where
 /// the markdown says so.
@@ -153,10 +155,6 @@ fn split_at_columns(
     (head, rest)
 }
 
-/// The tone a code span or a code block is drawn in, patched over whatever
-/// style the text round it has.
-const CODE: Color = Color::Cyan;
-
 /// `bd show`'s own bullet.
 const BULLET: &str = "• ";
 
@@ -212,7 +210,7 @@ impl Rendering {
             Event::End(TagEnd::Paragraph | TagEnd::HtmlBlock) => self.close(),
             Event::Start(Tag::Heading { .. }) => {
                 self.open_block();
-                self.push_style(Modifier::BOLD);
+                self.push_style(palette::HEADING);
             }
             Event::End(TagEnd::Heading(_)) => {
                 self.styles.pop();
@@ -221,7 +219,7 @@ impl Rendering {
             Event::Start(Tag::CodeBlock(_)) => {
                 self.open_block();
                 self.line().verbatim = true;
-                self.styles.push(self.style().fg(CODE));
+                self.styles.push(self.style().patch(palette::CODE));
             }
             Event::End(TagEnd::CodeBlock) => {
                 self.styles.pop();
@@ -252,13 +250,13 @@ impl Rendering {
                 self.close();
                 self.prefixes.pop();
             }
-            Event::Start(Tag::Emphasis) => self.push_style(Modifier::ITALIC),
-            Event::Start(Tag::Strong) => self.push_style(Modifier::BOLD),
+            Event::Start(Tag::Emphasis) => self.push_style(palette::EMPHASIS),
+            Event::Start(Tag::Strong) => self.push_style(palette::STRONG),
             Event::End(TagEnd::Emphasis | TagEnd::Strong) => {
                 self.styles.pop();
             }
             Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
-                self.push_style(Modifier::UNDERLINED);
+                self.push_style(palette::LINK);
                 self.links.push(dest_url.to_string());
             }
             Event::End(TagEnd::Link | TagEnd::Image) => {
@@ -267,7 +265,7 @@ impl Rendering {
                 self.say(&format!(" ({destination})"));
             }
             Event::Code(said) => {
-                let style = self.style().fg(CODE);
+                let style = self.style().patch(palette::CODE);
                 self.say_in(&said, style);
             }
             Event::Text(said)
@@ -298,8 +296,10 @@ impl Rendering {
         self.styles.last().copied().unwrap_or_default()
     }
 
-    fn push_style(&mut self, modifier: Modifier) {
-        self.styles.push(self.style().add_modifier(modifier));
+    /// A palette slot patched over whatever the text round it is in, so a
+    /// weight composes onto the page's own tone rather than replacing it.
+    fn push_style(&mut self, style: Style) {
+        self.styles.push(self.style().patch(style));
     }
 
     /// Start a block of its own: a blank line between it and whatever came

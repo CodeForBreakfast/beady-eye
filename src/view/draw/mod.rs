@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::Frame;
 
@@ -27,6 +27,7 @@ use crate::model::types::PaneStatus;
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine};
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{AGENT, WARNING};
 use crate::view::{Freshness, Notice};
@@ -39,7 +40,6 @@ use bead::{bead_line, elided_run};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
 use project::{project_line, unread_line};
-use tone::LOOK_AT_THIS;
 
 /// What every project line's freshness is drawn from: when each project was
 /// last read, which projects have a read outstanding, and the instant this
@@ -185,8 +185,8 @@ pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitt
         Content::Bead(row) => bead_line(row, &line.prefix, id_width),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Note(note) => {
-            let (said, colour) = finding(*note);
-            sentence(&line.prefix, said, colour)
+            let (said, style) = finding(*note);
+            sentence(&line.prefix, said, style)
         }
         Content::Group(group) => group_line(&line.prefix, group),
         Content::Item(item) => item_line(&line.prefix, item),
@@ -195,30 +195,27 @@ pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitt
 }
 
 /// A line that is one sentence and nothing else.
-pub(super) fn sentence(prefix: &str, said: String, colour: Color) -> Fitted {
+pub(super) fn sentence(prefix: &str, said: String, style: Style) -> Fitted {
     Fitted::new(
-        vec![
-            Span::raw(prefix.to_string()),
-            Span::styled(said, Style::new().fg(colour)),
-        ],
+        vec![Span::raw(prefix.to_string()), Span::styled(said, style)],
         Vec::new(),
         Vec::new(),
     )
 }
 
-/// A finding about the tree above, in `bdi`'s words for it, and the colour
-/// it is said in.
+/// A finding about the tree above, in `bdi`'s words for it, and what it is
+/// said in.
 ///
 /// An empty forest is the one note nothing went wrong in — the trackers
 /// answered and there was no work — so it alone is drawn plain, the way
 /// `group_line` draws the hidden trees.
-fn finding(note: Note) -> (String, Color) {
+fn finding(note: Note) -> (String, Style) {
     let said = match note {
         Note::Dangling(count) => phrase::dangling(count),
         Note::Cycle(count) => phrase::cycle(count),
-        Note::NoRoots => return (phrase::no_roots().to_string(), Color::Reset),
+        Note::NoRoots => return (phrase::no_roots().to_string(), palette::PLAIN),
     };
-    (format!("{WARNING} {said}"), LOOK_AT_THIS)
+    (format!("{WARNING} {said}"), palette::ATTENTION)
 }
 
 /// How far along something is. A tree and one epic inside it ask the same
@@ -250,7 +247,7 @@ pub(super) fn pane_marker(pane: &str, status: &PaneStatus) -> String {
 /// row around it dims or brightens. `bd list` leaves its own tree prefix
 /// undimmed on a closed row too.
 pub(super) fn structure(prefix: &str) -> Span<'static> {
-    Span::styled(prefix.to_string(), Style::new().fg(Color::Reset))
+    Span::styled(prefix.to_string(), palette::STRUCTURE)
 }
 
 #[cfg(test)]
@@ -258,6 +255,7 @@ mod tests {
     use super::*;
     use crate::model::types::testing::key;
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
     use ratatui::style::Modifier;
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -412,7 +410,7 @@ mod tests {
 
         assert_eq!(painted[0].said, LAST);
         assert_eq!(painted[0].style.fg, Some(Color::Reset));
-        assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS));
+        assert_eq!(painted[1].style.fg, palette::ATTENTION.fg);
     }
 
     /// Every other note is a fault and wears a warning. Nothing went wrong in

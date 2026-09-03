@@ -1,15 +1,16 @@
 //! A bead's own line, and the run of closed siblings drawn in place of the
 //! several beads it stands for.
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::model::types::Status;
 use crate::view::fitted::{Fitted, GAP};
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
 
-use super::tone::{fg, status_style, tone, DIM, LIVE, LOOK_AT_THIS};
+use super::tone::{status_style, tone};
 use super::{beside, done, structure};
 
 /// A run of closed siblings said as a count, carrying the glyph each of them
@@ -31,7 +32,7 @@ pub(super) fn elided_run(prefix: &str, count: usize) -> Fitted {
         Vec::new(),
         Vec::new(),
     )
-    .toned(Style::new().fg(DIM))
+    .toned(palette::TIER_FINISHED)
 }
 
 /// One bead's line, under the box-drawing run its ancestors leave.
@@ -52,17 +53,17 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     }
 
     let mut state: Vec<Span<'static>> = Vec::new();
-    let mut say = |text: &str, colour: Option<Color>| {
-        beside(&mut state, Span::styled(text.to_string(), fg(colour)));
+    let mut say = |text: &str, style: Style| {
+        beside(&mut state, Span::styled(text.to_string(), style));
     };
     if let Some(progress) = row.progress {
-        say(&done(progress.closed, progress.total), None);
+        say(&done(progress.closed, progress.total), Style::new());
     }
     if let Some(agent) = &row.agent {
-        say(agent, Some(LIVE));
+        say(agent, palette::AGENT);
     }
     if let Some(anomalies) = &row.anomalies {
-        say(anomalies, Some(LOOK_AT_THIS));
+        say(anomalies, palette::ATTENTION);
     }
     // After the row's own two, because those name one bead and these count
     // several: a number met before the name it belongs beside reads as the
@@ -71,7 +72,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
         if shut_over.live_agents > 0 {
             say(
                 &format!("{AGENT} {}", phrase::agents_beneath(shut_over.live_agents)),
-                Some(LIVE),
+                palette::AGENT,
             );
         }
         if shut_over.anomalies > 0 {
@@ -80,12 +81,12 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
                     "{WARNING} {}",
                     phrase::anomalies_beneath(shut_over.anomalies)
                 ),
-                Some(LOOK_AT_THIS),
+                palette::ATTENTION,
             );
         }
     }
     for note in &row.notes {
-        say(note, Some(LOOK_AT_THIS));
+        say(note, palette::ATTENTION);
     }
 
     Fitted::new(identity, title, state).toned(tone(row))
@@ -95,12 +96,13 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
 
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::join::AgentRef;
     use crate::model::snapshot::Node;
-    use crate::view::draw::tone::status_colour;
+    use crate::view::draw::tone::status_style;
     use crate::view::draw::{fitted, tests::*};
 
     #[test]
@@ -240,10 +242,14 @@ mod tests {
                 .and_then(|run| run.style.fg)
         };
 
-        assert_eq!(colour_of("3 agents beneath"), Some(LIVE), "{painted:?}");
+        assert_eq!(
+            colour_of("3 agents beneath"),
+            palette::AGENT.fg,
+            "{painted:?}"
+        );
         assert_eq!(
             colour_of("2 beads beneath"),
-            Some(LOOK_AT_THIS),
+            palette::ATTENTION.fg,
             "{painted:?}"
         );
     }
@@ -433,7 +439,7 @@ mod tests {
             painted[1].said,
             row::status_glyph(&Status::Closed).to_string()
         );
-        assert_eq!(painted[1].style.fg, status_colour(&Status::Closed));
+        assert_eq!(painted[1].style.fg, status_style(&Status::Closed).fg);
     }
 
     /// A reader follows the vertical rules down a tree. A sentence that took
@@ -446,6 +452,6 @@ mod tests {
 
         assert_eq!(painted[0].said, BRANCH);
         assert_eq!(painted[0].style.fg, Some(Color::Reset));
-        assert_eq!(painted[2].style.fg, Some(DIM));
+        assert_eq!(painted[2].style.fg, palette::TIER_FINISHED.fg);
     }
 }

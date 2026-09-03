@@ -2,7 +2,7 @@
 //! window over the forest.
 
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Clear};
 use ratatui::Frame;
@@ -11,23 +11,14 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
-use crate::view::draw::tone::{fg, status_style, DIM, LIVE, PAGE};
+use crate::view::draw::tone::status_style;
 use crate::view::fitted::{indent, Fitted};
 use crate::view::forest::Forest;
 use crate::view::markdown;
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{agent_marker, status_glyph};
 use crate::view::Motion;
-
-/// `bd show`'s own colour for the id at the head of the page, read off `bd`
-/// 1.2.2's output. Literal rather than named for the reason `tone.rs`'s
-/// are: `bd` sends a 24-bit value that does not move with the theme.
-const ID: Color = Color::Rgb(89, 194, 255);
-
-/// The terminal's own foreground, held under the page's tone by the few
-/// things meant to stand out from a page of text: a heading, and an arrow
-/// that says the edge as the forest's box-drawing says the shape.
-const STANDS_OUT: Style = Style::new().fg(Color::Reset);
 
 /// The section names `bd show` prints, verbatim, in the order it prints
 /// them. Terminology comes from beads, and a heading is terminology.
@@ -272,7 +263,7 @@ pub fn said(node: &Node, width: usize) -> Page {
     let mut rows = vec![vec![
         glyph(&node.status),
         Span::raw(" "),
-        Span::styled(node.id.clone(), Style::new().fg(ID)),
+        Span::styled(node.id.clone(), palette::IDENTITY),
         Span::raw(indent()),
         Span::raw(node.title.clone()),
     ]];
@@ -289,7 +280,7 @@ pub fn said(node: &Node, width: usize) -> Page {
     if let Some(agent) = &node.agent {
         rows.push(indented(vec![Span::styled(
             agent_marker(agent),
-            Style::new().fg(LIVE),
+            palette::AGENT,
         )]));
     }
 
@@ -304,7 +295,7 @@ pub fn said(node: &Node, width: usize) -> Page {
         related
             .iter()
             .map(|related| {
-                let mut row = vec![Span::styled(format!("{arrow} "), STANDS_OUT)];
+                let mut row = vec![Span::styled(format!("{arrow} "), palette::STRUCTURE)];
                 row.extend(related_row(related));
                 indented(row)
             })
@@ -323,10 +314,7 @@ pub fn said(node: &Node, width: usize) -> Page {
             continue;
         }
         rows.push(Vec::new());
-        rows.push(vec![Span::styled(
-            heading,
-            STANDS_OUT.add_modifier(Modifier::BOLD),
-        )]);
+        rows.push(vec![Span::styled(heading, palette::SECTION)]);
         if names_beads {
             related.extend(rows.len()..rows.len() + body.len());
         }
@@ -343,9 +331,9 @@ pub fn said(node: &Node, width: usize) -> Page {
 /// reads as emphasis rather than as the page.
 fn tone_of(row: usize) -> Style {
     if row == 0 {
-        STANDS_OUT
+        palette::HEAD
     } else {
-        Style::new().fg(PAGE)
+        palette::PAGE
     }
 }
 
@@ -384,10 +372,18 @@ fn related_row(related: &Related) -> Vec<Span<'static>> {
     if let Edge::Other(kind) = &related.edge {
         said.push_str(&format!(" · {}", phrase::edge_kind(kind)));
     }
-    vec![
-        glyph(status),
-        Span::styled(said, fg(status.is_closed().then_some(DIM))),
-    ]
+    vec![glyph(status), Span::styled(said, dimmed_if_closed(status))]
+}
+
+/// A related row falls to the finished tier when the bead it names is
+/// closed, as a finished row of the forest does, and otherwise says nothing
+/// so the page's own tone reaches it.
+fn dimmed_if_closed(status: &Status) -> Style {
+    if status.is_closed() {
+        palette::TIER_FINISHED
+    } else {
+        Style::new()
+    }
 }
 
 /// Draw the bead in a window over the forest.
@@ -427,7 +423,7 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
     }
     let block = block.title(Span::styled(
         phrase::way_back_from_bead(&node.id, view.scrolls(), follows),
-        Style::new().add_modifier(Modifier::BOLD),
+        palette::TITLE,
     ));
     frame.render_widget(Clear, window);
     frame.render_widget(block, window);
@@ -463,7 +459,8 @@ mod tests {
     use crate::model::join::{AgentRef, JoinSource};
     use crate::model::types::testing::key;
     use crate::model::types::{Edge, PaneStatus, Status};
-    use crate::view::draw::tone::{status_colour, DIM, LIVE, PAGE};
+    use ratatui::style::Modifier;
+
     use crate::view::painted::{Painted, Run};
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
@@ -909,7 +906,7 @@ mod tests {
             assert_eq!(glyph.said, status_glyph(&status).to_string(), "{top:?}");
             assert_eq!(
                 glyph.style.fg,
-                status_colour(&status),
+                status_style(&status).fg,
                 "{status:?}: {top:?}"
             );
         }
@@ -941,7 +938,7 @@ mod tests {
 
         assert_eq!(
             run_saying(&marker, "◍ lifting the mast · working").style.fg,
-            Some(LIVE),
+            palette::AGENT.fg,
             "{marker:?}"
         );
     }
@@ -978,12 +975,12 @@ mod tests {
             let word = run_saying(&facts, &phrase::status_word(&status));
             assert_eq!(
                 word.style.fg,
-                status_colour(&status),
+                status_style(&status).fg,
                 "{status:?}: {facts:?}"
             );
             assert_eq!(
                 run_saying(&facts, "P2 · task · kim").style.fg,
-                Some(PAGE),
+                palette::PAGE.fg,
                 "{status:?}: {facts:?}"
             );
         }
@@ -1000,10 +997,14 @@ mod tests {
 
         assert_eq!(
             run_saying(&depends_on, "✓").style.fg,
-            status_colour(&Status::Closed),
+            status_style(&Status::Closed).fg,
             "{depends_on:?}"
         );
-        assert_eq!(run_saying(&blocks, "○").style.fg, Some(PAGE), "{blocks:?}");
+        assert_eq!(
+            run_saying(&blocks, "○").style.fg,
+            palette::PAGE.fg,
+            "{blocks:?}"
+        );
     }
 
     /// `bd show` dims a closed related bead's id and title to the grey it
@@ -1019,7 +1020,7 @@ mod tests {
             run_saying(&depends_on, "orb-7.3  lay the feeder cable")
                 .style
                 .fg,
-            Some(DIM),
+            palette::TIER_FINISHED.fg,
             "{depends_on:?}"
         );
         assert_eq!(
@@ -1029,7 +1030,7 @@ mod tests {
         );
         assert_eq!(
             run_saying(&blocks, "orb-7.4  file the licence").style.fg,
-            Some(PAGE),
+            palette::PAGE.fg,
             "{blocks:?}"
         );
     }
@@ -1154,7 +1155,7 @@ mod tests {
             bold.style.add_modifier.contains(Modifier::BOLD),
             "{prose:?}"
         );
-        assert_eq!(bold.style.fg, Some(PAGE), "{prose:?}");
+        assert_eq!(bold.style.fg, palette::PAGE.fg, "{prose:?}");
         assert_eq!(
             run_saying(&prose, "now").style.fg,
             Some(Color::Cyan),

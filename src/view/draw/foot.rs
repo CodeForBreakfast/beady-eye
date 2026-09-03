@@ -1,16 +1,14 @@
 //! The row at the foot of the screen: the keys and every notice the view
 //! carries.
 
-use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::model::snapshot::{AgentProvider, ProviderState};
 use crate::view::fitted::{columns, Fitted, GAP};
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::WARNING;
 use crate::view::Notice;
-
-use super::tone::LOOK_AT_THIS;
 
 /// Everything the status bar has to say, in the order it should give it up.
 ///
@@ -82,10 +80,7 @@ pub(super) fn status_bar(
     }
 
     Fitted::new(
-        vec![Span::styled(
-            said(notices, width),
-            Style::new().fg(LOOK_AT_THIS),
-        )],
+        vec![Span::styled(said(notices, width), palette::ATTENTION)],
         copied,
         vec![keys],
     )
@@ -350,7 +345,7 @@ mod tests {
             painted
                 .iter()
                 .any(|run| run.said.contains("polled, not reported")
-                    && run.style.fg == Some(LOOK_AT_THIS)),
+                    && run.style.fg == palette::ATTENTION.fg),
             "{painted:?}"
         );
     }
@@ -424,9 +419,9 @@ mod tests {
         .row(0);
 
         assert!(
-            painted
-                .iter()
-                .any(|run| run.said.contains("another bdi") && run.style.fg == Some(LOOK_AT_THIS)),
+            painted.iter().any(
+                |run| run.said.contains("another bdi") && run.style.fg == palette::ATTENTION.fg
+            ),
             "{painted:?}"
         );
     }

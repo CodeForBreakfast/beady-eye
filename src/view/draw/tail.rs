@@ -2,11 +2,11 @@
 //! last said as there is room for.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crate::view::fitted::{columns, indent, Fitted};
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::sgr;
 use crate::view::tail::Tail;
@@ -52,7 +52,7 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
                     sentence(
                         &indent(),
                         phrase::pane_being_read().to_string(),
-                        Color::DarkGray,
+                        palette::VOICE,
                     ),
                     row(1),
                 );
@@ -62,7 +62,7 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
             frame.render_widget(rule(None, area.width as usize), row(0));
             if room > 0 {
                 frame.render_widget(
-                    sentence(&indent(), (*why).to_string(), Color::DarkGray),
+                    sentence(&indent(), (*why).to_string(), palette::VOICE),
                     row(1),
                 );
             }
@@ -85,8 +85,7 @@ fn as_the_pane_drew_it(said: Line<'static>) -> Fitted {
 /// A tail with no pane draws the rule alone. The band is reserved either
 /// way, and the rule is what says where the forest stopped.
 fn rule(pane: Option<&str>, width: usize) -> Line<'static> {
-    let drawn =
-        |n: usize| Span::styled(RULE.to_string().repeat(n), Style::new().fg(Color::DarkGray));
+    let drawn = |n: usize| Span::styled(RULE.to_string().repeat(n), palette::QUIET);
 
     let named = match pane {
         Some(pane) => format!(" {pane} "),
@@ -110,6 +109,7 @@ mod tests {
     use super::*;
     use crate::model::types::testing::key;
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
     use ratatui::style::Modifier;
 
     use crate::view::painted::Painted;

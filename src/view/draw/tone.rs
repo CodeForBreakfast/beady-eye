@@ -1,51 +1,12 @@
-//! What a row is drawn in: `bd`'s own colour for a bead's status, and the
-//! brightness scale that says how live the row it sits on is.
+//! What a row is drawn in: which of the palette's slots a bead's status and
+//! the liveness of the row it sits on choose. The values are the palette's;
+//! what is here is the rule that picks between them.
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 
 use crate::model::types::Status;
+use crate::view::palette;
 use crate::view::row::Row;
-
-pub(crate) const LIVE: Color = Color::Green;
-pub(super) const LOOK_AT_THIS: Color = Color::Yellow;
-
-/// `bd list`'s own colours for a status, read off `bd` 1.2.2's output. They
-/// are literal rather than named because `bd`'s are: it sends 24-bit values
-/// that do not move with the terminal's theme, so a named colour here would
-/// track the theme away from the tool this is matching.
-///
-/// `open` is absent on purpose. `bd` sends no escape at all for it, and a
-/// glyph that inherits is what lets a row's own brightness reach it.
-const IN_PROGRESS: Color = Color::Rgb(255, 180, 84);
-const BLOCKED: Color = Color::Rgb(242, 109, 120);
-const CLOSED: Color = Color::Rgb(128, 144, 160);
-
-/// `bd` draws a deferred bead's glyph and every cell of a finished row in
-/// this one grey, so one name serves both.
-pub(crate) const DIM: Color = Color::Rgb(108, 118, 128);
-
-/// The top of the brightness scale, and the one tier `bd list` could not
-/// draw: a row a live agent is on. It is the terminal's own foreground, not a
-/// brighter colour, because a theme's default is already the brightest thing
-/// on its page and nothing can sit above it — `color15` and the default
-/// resolve to one hex on the theme this was measured against, and a staffed
-/// row painted `White` was indistinguishable from an unworked one. So the
-/// scale is shifted down from here rather than extended up.
-const STAFFED: Color = Color::Reset;
-
-/// Nobody on it and still going. One rung below the terminal's default, at
-/// the theme's colour 8, which every theme sets and few rows on the page
-/// otherwise use. Named rather than literal so it follows the reader's
-/// terminal, not `bd`'s palette.
-const UNSTAFFED: Color = Color::DarkGray;
-
-/// The page under the bead window's head: its facts, its prose and its
-/// related rows. The rung directly under the terminal's default, which is
-/// where the forest draws a row nobody is on, so the few things the window
-/// holds at the default — the title, a heading, an arrow — read as emphasis
-/// rather than as the page. Below it `DIM` keeps meaning finished, and a
-/// closed related row falls to it as a finished row of the forest does.
-pub(crate) const PAGE: Color = UNSTAFFED;
 
 /// How live a row is, which is the one thing about a bead `bd list` has no
 /// way to know — and so the one this scale is spent on.
@@ -61,50 +22,39 @@ pub(crate) const PAGE: Color = UNSTAFFED;
 /// looking at, and dimming it is how it would be missed.
 pub(super) fn tone(row: &Row) -> Style {
     let finished = row.status.is_closed() && row.agent.is_none() && row.anomalies.is_none();
-    let tier = if row.agent.is_some() {
-        STAFFED
+    if row.agent.is_some() {
+        palette::TIER_STAFFED
     } else if finished {
-        DIM
+        palette::TIER_FINISHED
     } else {
-        UNSTAFFED
-    };
-
-    Style::new().fg(tier)
+        palette::TIER_OPEN
+    }
 }
 
-/// The colour a bead's status is drawn in.
+/// What a bead's status is drawn in: `bd`'s own colour for it, or nothing
+/// where `bd` sends no escape and the glyph should take the brightness of the
+/// row it sits on.
 ///
 /// Colour is the second channel and never the only one: the glyph already says
 /// the status, so a terminal with no colour loses nothing.
 pub(crate) fn status_style(status: &Status) -> Style {
-    fg(status_colour(status))
-}
-
-/// `bd`'s colour for a status, or none where `bd` sends no escape and the
-/// glyph should take the brightness of the row it sits on.
-pub(crate) fn status_colour(status: &Status) -> Option<Color> {
     match status {
-        Status::InProgress => Some(IN_PROGRESS),
-        Status::Blocked => Some(BLOCKED),
-        Status::Closed => Some(CLOSED),
-        Status::Deferred => Some(DIM),
-        Status::Open => None,
+        Status::InProgress => palette::STATUS_IN_PROGRESS,
+        Status::Blocked => palette::STATUS_BLOCKED,
+        Status::Closed => palette::STATUS_CLOSED,
+        Status::Deferred => palette::STATUS_DEFERRED,
+        Status::Open => palette::STATUS_OPEN,
         // The one status `bd` has no colour for, because it has no such
         // status. It takes the colour of the note already beside it.
-        Status::Other(_) => Some(LOOK_AT_THIS),
+        Status::Other(_) => palette::ATTENTION,
     }
-}
-
-/// A style that says a colour, or one that says nothing and lets the line's
-/// own reach the span.
-pub(crate) fn fg(colour: Option<Color>) -> Style {
-    colour.map_or_else(Style::new, |colour| Style::new().fg(colour))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
 
     use crate::model::anomaly::Anomaly;
     use crate::view::draw::bead::{bead_line, elided_run};
@@ -116,7 +66,7 @@ mod tests {
     // ---- styling ---------------------------------------------------------
 
     /// One of each status, so a loop over them covers the set. The compiler
-    /// holds `status_colour` total; this list is only what a test walks.
+    /// holds `status_style` total; this list is only what a test walks.
     fn every_status() -> [Status; 6] {
         [
             Status::InProgress,
@@ -148,7 +98,10 @@ mod tests {
     /// the glyph already says which status it is.
     #[test]
     fn no_colour_is_given_to_two_statuses_and_only_open_goes_without_one() {
-        let coloured: Vec<Color> = every_status().iter().filter_map(status_colour).collect();
+        let coloured: Vec<Color> = every_status()
+            .iter()
+            .filter_map(|status| status_style(status).fg)
+            .collect();
 
         for (nth, colour) in coloured.iter().enumerate() {
             assert!(
@@ -161,7 +114,7 @@ mod tests {
             every_status().len() - 1,
             "one status goes without a colour and it is open"
         );
-        assert_eq!(status_colour(&Status::Open), None);
+        assert_eq!(status_style(&Status::Open).fg, None);
     }
 
     // ---- bd's palette, and the brightness only bdi can draw ---------------
@@ -378,13 +331,13 @@ mod tests {
         assert!(
             painted
                 .iter()
-                .any(|run| run.said.contains(AGENT) && run.style.fg == Some(LIVE)),
+                .any(|run| run.said.contains(AGENT) && run.style.fg == palette::AGENT.fg),
             "{painted:?}"
         );
         assert!(
             painted
                 .iter()
-                .any(|run| run.said.contains(WARNING) && run.style.fg == Some(LOOK_AT_THIS)),
+                .any(|run| run.said.contains(WARNING) && run.style.fg == palette::ATTENTION.fg),
             "{painted:?}"
         );
     }
@@ -398,6 +351,6 @@ mod tests {
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 120, 1).row(0);
 
         assert_eq!(painted[1].said, "?", "{painted:?}");
-        assert_eq!(painted[1].style.fg, Some(LOOK_AT_THIS), "{painted:?}");
+        assert_eq!(painted[1].style.fg, palette::ATTENTION.fg, "{painted:?}");
     }
 }

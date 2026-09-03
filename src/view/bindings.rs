@@ -1,12 +1,12 @@
 //! The key bindings view: every binding drawn in a window over the forest.
 
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Clear};
 use ratatui::Frame;
 
 use crate::view::fitted::{columns, indent, Fitted, CUT, GAP};
+use crate::view::palette;
 
 /// The first line of the key bindings view, and the way back out of it.
 const CLOSE_BINDINGS: &str = "Key bindings · press any key to close";
@@ -73,10 +73,7 @@ pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) 
         return;
     }
 
-    let block = Block::bordered().title(Span::styled(
-        CLOSE_BINDINGS,
-        Style::new().add_modifier(Modifier::BOLD),
-    ));
+    let block = Block::bordered().title(Span::styled(CLOSE_BINDINGS, palette::TITLE));
     let inner = block.inner(window);
     frame.render_widget(Clear, window);
     frame.render_widget(block, window);

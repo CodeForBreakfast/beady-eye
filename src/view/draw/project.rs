@@ -2,17 +2,16 @@
 //! holds — and the roots beneath it that would not read.
 
 use chrono::{DateTime, Utc};
-use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
 use crate::model::snapshot::{Counts, TrackerState};
 use crate::view::fitted::Fitted;
 use crate::view::lines::{ProjectLine, Unread};
+use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::WARNING;
 use crate::view::{Freshness, Mark};
 
-use super::tone::{LIVE, LOOK_AT_THIS};
 use super::{beside, done, structure};
 
 /// A project's own line: what it is, how fresh it is and how much work it
@@ -71,22 +70,18 @@ fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'stat
         return Vec::new();
     };
     let mark = match how_fresh.mark {
-        Mark::Refused | Mark::Unanswered => LOOK_AT_THIS,
-        Mark::Collecting | Mark::Read => Color::DarkGray,
+        Mark::Refused | Mark::Unanswered => palette::ATTENTION,
+        Mark::Collecting | Mark::Read => palette::QUIET,
     };
 
-    let mut said = vec![Span::styled(
-        phrase::mark(how_fresh, now),
-        Style::new().fg(mark),
-    )];
+    let mut said = vec![Span::styled(phrase::mark(how_fresh, now), mark)];
     said.extend(
         phrase::last_read(how_fresh, now)
             .map(|age| {
                 // One space rather than a `GAP`: the mark and the age are two
                 // halves of one claim about this project's rows, and a gap
                 // between them would read as two cells.
-                [" ".to_string(), age]
-                    .map(|said| Span::styled(said, Style::new().fg(Color::DarkGray)))
+                [" ".to_string(), age].map(|said| Span::styled(said, palette::QUIET))
             })
             .into_iter()
             .flatten(),
@@ -102,7 +97,7 @@ fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'stat
 pub(super) fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fitted {
     let identity = vec![
         structure(prefix),
-        Span::styled(WARNING.to_string(), Style::new().fg(LOOK_AT_THIS)),
+        Span::styled(WARNING.to_string(), palette::ATTENTION),
         Span::raw(format!(" {:id_width$}", unread.root)),
     ];
     let why = match unread.tracker {
@@ -113,7 +108,7 @@ pub(super) fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fit
 
     Fitted::new(
         identity,
-        vec![Span::styled(why.to_string(), Style::new().fg(LOOK_AT_THIS))],
+        vec![Span::styled(why.to_string(), palette::ATTENTION)],
         Vec::new(),
     )
 }
@@ -136,10 +131,7 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
         };
         beside(
             &mut said,
-            Span::styled(
-                format!("{} {agent}", counts.live_agents),
-                Style::new().fg(LIVE),
-            ),
+            Span::styled(format!("{} {agent}", counts.live_agents), palette::AGENT),
         );
     }
     if counts.anomalies > 0 {
@@ -147,7 +139,7 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
             &mut said,
             Span::styled(
                 format!("{WARNING} {}", counts.anomalies),
-                Style::new().fg(LOOK_AT_THIS),
+                palette::ATTENTION,
             ),
         );
     }
@@ -158,6 +150,7 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::style::Color;
 
     use crate::app::{Awaited, Wanted};
     use crate::model::anomaly::Anomaly;
@@ -165,7 +158,7 @@ mod tests {
 
     use crate::model::snapshot::{Node, ProviderState, Snapshot, TrackerFailure, Tree};
     use crate::model::types::Status;
-    use crate::view::draw::tone::status_colour;
+    use crate::view::draw::tone::status_style;
     use crate::view::draw::{fitted, tests::*};
     use crate::view::forest::flatten;
     use crate::view::row;
@@ -552,7 +545,7 @@ mod tests {
         assert!(
             painted
                 .iter()
-                .any(|run| run.said.contains(WARNING) && run.style.fg == Some(LOOK_AT_THIS)),
+                .any(|run| run.said.contains(WARNING) && run.style.fg == palette::ATTENTION.fg),
             "{painted:?}"
         );
         assert!(
@@ -704,7 +697,7 @@ mod tests {
         assert!(
             painted
                 .iter()
-                .any(|run| run.said.contains('⠿') && run.style.fg == Some(LOOK_AT_THIS)),
+                .any(|run| run.said.contains('⠿') && run.style.fg == palette::ATTENTION.fg),
             "{painted:?}"
         );
         assert!(
@@ -722,7 +715,7 @@ mod tests {
     /// glyph, and the colour that glyph is painted. Before this it was drawn
     /// on a header that spoke a project's language and answered none of it.
     ///
-    /// Asked through `status_glyph` and `status_colour` rather than written
+    /// Asked through `status_glyph` and `status_style` rather than written
     /// out, so the mappings stay in the one place each owns.
     #[test]
     fn a_root_is_drawn_with_its_own_status_glyph_like_any_other_bead() {
@@ -746,7 +739,7 @@ mod tests {
         assert!(
             painted.iter().any(
                 |run| run.said.contains(row::status_glyph(&Status::InProgress))
-                    && run.style.fg == status_colour(&Status::InProgress)
+                    && run.style.fg == status_style(&Status::InProgress).fg
             ),
             "{painted:?}"
         );

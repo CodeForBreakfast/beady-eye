@@ -5,9 +5,11 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
+
+use crate::view::palette;
 
 /// The mark left where a line ran out of width, so a cut line reads as cut
 /// rather than as one that had nothing more to say.
@@ -79,7 +81,7 @@ impl Fitted {
     /// The row under the cursor, drawn so the eye finds it without reading it.
     #[must_use]
     pub fn selected(mut self) -> Self {
-        self.whole = self.whole.add_modifier(Modifier::REVERSED);
+        self.whole = self.whole.patch(palette::SELECTED);
         self
     }
 
