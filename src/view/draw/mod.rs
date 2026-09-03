@@ -365,6 +365,8 @@ mod tests {
             project: "summit-works".into(),
             cwd: "/tmp/bdi-ground/summit-works".into(),
             pane_status: status,
+            display_agent: None,
+            title: None,
         }
     }
 

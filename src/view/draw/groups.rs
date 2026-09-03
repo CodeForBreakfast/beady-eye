@@ -4,7 +4,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
 use crate::model::types::PaneStatus;
-use crate::view::fitted::Fitted;
+use crate::view::fitted::{Fitted, GAP};
 use crate::view::lines::{Group, GroupKind, Item};
 use crate::view::phrase;
 use crate::view::row::WARNING;
@@ -70,21 +70,45 @@ pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
     match item {
         Item::Failed(failed) => sentence(prefix, phrase::failed_project(failed), LOOK_AT_THIS),
         Item::Conflict(conflict) => sentence(prefix, phrase::conflict(conflict), LOOK_AT_THIS),
-        Item::Loose(pane) => loose_line(prefix, &pane.pane, &pane.pane_status, &pane.cwd),
-        Item::Unconfigured(pane) => loose_line(prefix, &pane.pane, &pane.pane_status, &pane.cwd),
+        Item::Loose(pane) => loose_line(
+            prefix,
+            &pane.pane,
+            &pane.pane_status,
+            phrase::pane_report(pane.display_agent.as_deref(), pane.title.as_deref()),
+            &pane.cwd,
+        ),
+        Item::Unconfigured(pane) => {
+            loose_line(prefix, &pane.pane, &pane.pane_status, None, &pane.cwd)
+        }
     }
 }
 
-/// A live pane in one of the groups: which pane it is, and the directory it is
-/// working in. The directory is what both groups are asking the reader to
-/// look at — one to place the agent, the other to configure the project.
-fn loose_line(prefix: &str, pane: &str, status: &PaneStatus, cwd: &str) -> Fitted {
+/// A live pane in one of the groups: which pane it is, what it reported about
+/// itself, and the directory it is working in. The directory is what both
+/// groups are asking the reader to look at — one to place the agent, the
+/// other to configure the project — and the report is what places the agent
+/// without leaving the row, so it comes first and the directory is what a
+/// narrow row gives up before it.
+fn loose_line(
+    prefix: &str,
+    pane: &str,
+    status: &PaneStatus,
+    report: Option<String>,
+    cwd: &str,
+) -> Fitted {
+    let mut title = Vec::new();
+    if let Some(report) = report {
+        title.push(Span::raw(report));
+        title.push(Span::raw(" ".repeat(GAP)));
+    }
+    title.push(Span::raw(cwd.to_string()));
+
     Fitted::new(
         vec![Span::styled(
             format!("{prefix}{}", pane_marker(pane, status)),
             Style::new().fg(LIVE),
         )],
-        vec![Span::raw(cwd.to_string())],
+        title,
         Vec::new(),
     )
 }
@@ -92,6 +116,12 @@ fn loose_line(prefix: &str, pane: &str, status: &PaneStatus, cwd: &str) -> Fitte
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::herdr::parse_agent_list;
+    use crate::config::Config;
+    use crate::model::join;
+    use crate::model::snapshot::{a_provider, build, Collected, LoosePane};
+    use crate::model::types::PaneStatus;
+    use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
 
     use crate::model::anomaly::Anomaly;
@@ -225,5 +255,120 @@ mod tests {
             );
             assert!(painted[0].said.starts_with(SHUT), "{kind:?}: {painted:?}");
         }
+    }
+
+    // ---- what a loose pane says about itself -----------------------------
+
+    /// The row of a pane no bead claims, drawn from what herdr puts on the
+    /// wire: the capture, through the snapshot, to the frame, so the words
+    /// on the row are the words herdr sent and not a fixture's paraphrase.
+    /// Every pane in the capture whose directory is the project's is loose,
+    /// because no tracker rows are read to claim one.
+    fn frame_over_the_capture() -> Vec<String> {
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "beady-eye"
+path = "/tmp/bdi-ground/beady-eye"
+"#,
+        )
+        .expect("the config parses");
+        let panes = parse_agent_list(include_str!(
+            "../../../tests/fixtures/herdr_agent_list.json"
+        ))
+        .expect("the capture parses");
+        let joined = join::resolve(&[], &panes, &cfg);
+        let snapshot = build(
+            Collected::default(),
+            &panes,
+            &joined,
+            &cfg,
+            a_provider(ProviderState::Answering),
+            Filter::All,
+            Utc.with_ymd_and_hms(2026, 8, 30, 10, 22, 14).unwrap(),
+        );
+        frame_of(&flatten(snapshot), 120, 24).rows()
+    }
+
+    fn row_naming(frame: &[String], pane: &str) -> String {
+        frame
+            .iter()
+            .find(|row| row.contains(pane))
+            .unwrap_or_else(|| panic!("{pane} is on no row of {frame:#?}"))
+            .trim_end()
+            .to_string()
+    }
+
+    /// `wCW:p6` stamped a `display_agent`, a title and a label for each
+    /// state, and is working: the row says who it says it is, then the label
+    /// for the state it is in — the caption rule a bead's agent already gets
+    /// — then where it is.
+    #[test]
+    fn an_unattributed_pane_says_what_herdr_reported_about_it() {
+        let frame = frame_over_the_capture();
+
+        assert_eq!(
+            row_naming(&frame, "wCW:p6"),
+            "  ├── ◍ wCW:p6 working  bdi-3um.5 · writing the parser and its tests  \
+             /tmp/bdi-ground/beady-eye"
+        );
+    }
+
+    /// `wCW:p1` stamped nothing at all, and its row is the one it had.
+    #[test]
+    fn a_pane_that_reported_nothing_keeps_the_row_it_had() {
+        let frame = frame_over_the_capture();
+
+        assert_eq!(
+            row_naming(&frame, "wCW:p1"),
+            "  ├── ◍ wCW:p1 done  /tmp/bdi-ground/beady-eye"
+        );
+    }
+
+    fn reporting(display_agent: Option<&str>, title: Option<&str>) -> LoosePane {
+        LoosePane {
+            display_agent: display_agent.map(str::to_string),
+            title: title.map(str::to_string),
+            ..pane("w:p3", PaneStatus::Working)
+        }
+    }
+
+    /// Either half of the report stands alone, with no separator left over
+    /// for the half that is not there.
+    #[test]
+    fn half_a_report_is_said_without_its_separator() {
+        let named = Item::Loose(reporting(Some("orch: core-json"), None));
+        let captioned = Item::Loose(reporting(
+            None,
+            Some("parse bd dep-tree JSON into typed rows"),
+        ));
+
+        assert_eq!(
+            Painted::of(item_line(LAST, &named), 96, 1).rows()[0].trim_end(),
+            "  └── ◍ w:p3 working  orch: core-json  /tmp/bdi-ground/summit-works"
+        );
+        assert_eq!(
+            Painted::of(item_line(LAST, &captioned), 96, 1).rows()[0].trim_end(),
+            "  └── ◍ w:p3 working  parse bd dep-tree JSON into typed rows  /tmp/bdi-ground/summit-works"
+        );
+    }
+
+    /// Cut from the right: the directory goes first, then the tail of what
+    /// the pane said, and the pane's id and state stay to the end.
+    #[test]
+    fn a_narrow_row_gives_up_the_directory_before_the_panes_own_words() {
+        let item = Item::Loose(reporting(
+            Some("bdi-3um.5"),
+            Some("writing the parser and its tests"),
+        ));
+
+        assert_eq!(
+            Painted::of(item_line(LAST, &item), 48, 1).rows(),
+            vec!["  └── ◍ w:p3 working  bdi-3um.5 · writing the p…"]
+        );
+        assert_eq!(
+            Painted::of(item_line(LAST, &item), 20, 1).rows(),
+            vec!["  └── ◍ w:p3 working"]
+        );
     }
 }

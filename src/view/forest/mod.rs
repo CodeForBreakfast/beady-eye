@@ -1651,8 +1651,8 @@ credential_command = "secret harbour"
                 "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"orbital\", id: \"orb-7.1\" }, panes: [\"w:p3\", \"w:p4\"] })",
                 "▸ [HiddenTrees] 1",
                 "▾ [Unattributed] 2",
-                "  ├── - Loose(LoosePane { pane: \"w:p3\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working })",
-                "  └── - Loose(LoosePane { pane: \"w:p4\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle })",
+                "  ├── - Loose(LoosePane { pane: \"w:p3\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None })",
+                "  └── - Loose(LoosePane { pane: \"w:p4\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None })",
             ]
         );
     }

@@ -121,6 +121,8 @@ pub fn build(
                 project: project.name.clone(),
                 cwd,
                 pane_status: pane.agent_status.clone(),
+                display_agent: pane.display_agent.clone(),
+                title: pane.caption().map(str::to_string),
             }),
             None => unconfigured.push(UnconfiguredPane {
                 pane: pane.pane_id.clone(),
@@ -548,6 +550,8 @@ mod tests {
                 project: "orbital".to_string(),
                 cwd: "/srv/work/orbital".to_string(),
                 pane_status: PaneStatus::Blocked,
+                display_agent: None,
+                title: None,
             }],
             "a pane in a known project that no bead claims is unattributed"
         );
@@ -662,6 +666,8 @@ mod tests {
                 project: "ferry".to_string(),
                 cwd: "/tmp/seat-a/wt/src".to_string(),
                 pane_status: PaneStatus::Idle,
+                display_agent: None,
+                title: None,
             }],
             "reported where it is, placed where its main working tree is"
         );
@@ -761,5 +767,46 @@ mod tests {
             "two failures with no root must stay apart from one another"
         );
         assert!(snap.trees.is_empty());
+    }
+
+    /// What herdr reported about a loose pane reaches the snapshot with it.
+    /// `wCW:p6` in the capture stamped a `display_agent`, a title and a label
+    /// per state; the caption is the label for the state it is in, by the
+    /// rule a bead's agent already gets.
+    #[test]
+    fn a_loose_pane_carries_what_herdr_reported_about_it() {
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "beady-eye"
+path = "/tmp/bdi-ground/beady-eye"
+"#,
+        )
+        .expect("the config parses");
+        let p = panes(include_str!(
+            "../../../tests/fixtures/herdr_agent_list.json"
+        ));
+        let j = join::resolve(&[], &p, &cfg);
+
+        let snap = build(
+            Collected::default(),
+            &p,
+            &j,
+            &cfg,
+            a_provider(ProviderState::Answering),
+            Filter::All,
+            now(),
+        );
+
+        let p6 = snap
+            .unattributed
+            .iter()
+            .find(|p| p.pane == "wCW:p6")
+            .expect("in beady-eye's directory and on no bead");
+        assert_eq!(p6.display_agent.as_deref(), Some("bdi-3um.5"));
+        assert_eq!(
+            p6.title.as_deref(),
+            Some("writing the parser and its tests")
+        );
     }
 }

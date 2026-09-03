@@ -341,12 +341,19 @@ pub struct HiddenTree {
 }
 
 /// A live pane in a configured project that no bead in it claims.
+///
+/// What the pane reported about itself comes with it, under the names
+/// `AgentRef` gives the same things: the `display_agent` the agent in it
+/// stamped, and its caption as `title`. No bead's row will say them for this
+/// pane, so its own row has to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LoosePane {
     pub pane: String,
     pub project: String,
     pub cwd: String,
     pub pane_status: PaneStatus,
+    pub display_agent: Option<String>,
+    pub title: Option<String>,
 }
 
 /// A live pane whose directory sits under no `[[projects]]` entry. `bdi` has

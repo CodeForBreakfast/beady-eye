@@ -537,6 +537,8 @@ mod tests {
             project: "orbital".to_string(),
             cwd: "/tmp/bdi-ground/orbital".to_string(),
             pane_status: PaneStatus::Working,
+            display_agent: None,
+            title: None,
         }
     }
 
@@ -548,6 +550,8 @@ mod tests {
             project: "orbital".to_string(),
             cwd: "/tmp/bdi-ground/orbital".to_string(),
             pane_status: PaneStatus::Idle,
+            display_agent: None,
+            title: None,
         }
     }
 

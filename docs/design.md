@@ -1301,7 +1301,7 @@ name to the socket after any command that wrote something.
   ],
   "hidden_trees": [ { "project": "summit-works", "root": "nix-bgej6", "title": "…", "reason": "no-live-agent" } ],
   "failed_projects": [ { "project": "homelab", "tracker": "auth" } ],
-  "unattributed": [ { "pane": "wCM:pD", "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked" } ],
+  "unattributed": [ { "pane": "wCM:pD", "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification" } ],
   "unconfigured": [ { "pane": "wCM:pF", "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": []
 }
@@ -1333,7 +1333,10 @@ names each project whose tracker could not be read at all, with the reason.
 `unattributed` and `unconfigured` are the two ways a live pane resolves to no
 bead, and a consumer tells them apart by the `project` key: an `unattributed`
 entry always carries it, an `unconfigured` entry never does. The absence is the
-contract, so test for the key rather than reading a null.
+contract, so test for the key rather than reading a null. An `unattributed`
+entry also carries what the pane reported about itself, under the names a
+node's `agent` gives the same things — `display_agent`, and its caption as
+`title` — each null where the pane reported nothing.
 
 ## TUI
 
@@ -1373,7 +1376,7 @@ says only that it exists.
   └── ◍ wCM:pF idle                                  /srv/spike
 ▸ 4 trees with no live agent                         a to show all
 ▾ ⚠ 2 unattributed panes
-  ├── ◍ wCM:pD waiting at a prompt                   /tmp/bdi-ground/summit-works
+  ├── ◍ wCM:pD waiting at a prompt  nix-9670s.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
   └── ◍ wCM:pE idle                                  /tmp/bdi-ground/summit-works
 ────────────────────────────────── wCM:p9 ──────────────────────────────────
   · rebuilt .#thinkpad, generation 541
@@ -1619,7 +1622,13 @@ holds, and each opens to name its members: a failed project with its reason, a
 conflict in full, a hidden tree as its root's row with its tree beneath, a pane
 by id and state with the directory it is working in — the directory being what
 both pane groups are asking the reader to look at, one to place the agent and
-the other to configure the project.
+the other to configure the project. An unattributed pane's row also says what
+the pane reported about itself, ahead of the directory: its `display_agent`,
+then its caption by the rule the agent cell uses, the row's `·` between them
+and either half left out where the pane did not report it. No bead's row will
+say these for a loose pane, so its own row does; a pane that reported nothing
+keeps the row it had. The title block is cut from the right, so a narrow row
+gives up the directory first and the pane's id and state last.
 
 The groups rest by the same rule as the trees. A count is not a view of what it
 holds, so a group over live panes — unconfigured, conflicts, unattributed —

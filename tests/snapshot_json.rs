@@ -340,7 +340,9 @@ fn readiness_reaches_the_json_as_bd_reported_it() {
 }
 
 /// A pane belonging to no bead is reported with the project its directory
-/// sits in, so a consumer groups it without resolving the path again.
+/// sits in, so a consumer groups it without resolving the path again, and
+/// with what it reported about itself under the names a node's `agent`
+/// carries the same things — null where it reported nothing, never absent.
 #[test]
 fn a_pane_on_no_bead_is_reported_with_its_project() {
     let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
@@ -349,9 +351,9 @@ fn a_pane_on_no_bead_is_reported_with_its_project() {
         emitted["unattributed"],
         json!([
             {"pane": "w:p2", "project": "orbital", "cwd": "/srv/work/orbital",
-             "pane_status": "idle"},
+             "pane_status": "idle", "display_agent": "orb-7", "title": null},
             {"pane": "w:p9", "project": "orbital", "cwd": "/srv/work/orbital",
-             "pane_status": "blocked"},
+             "pane_status": "blocked", "display_agent": null, "title": null},
         ])
     );
 }
@@ -769,7 +771,8 @@ fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
     assert_eq!(
         emitted["unattributed"],
         json!([{"pane": "w:p5", "project": "harbour", "cwd": "/srv/work/harbour",
-                "pane_status": "working"}]),
+                "pane_status": "working", "display_agent": null,
+                "title": "the channel"}]),
         "the pane in the failed project is still reported"
     );
 }

@@ -344,6 +344,18 @@ impl ShimmedHerdr {
         std::fs::rename(&beside, &self.visible).expect("the pane is ours to replace");
     }
 
+    /// The session `agent list` reports from here, in place of the one pane
+    /// `beside` wrote: `agents` is what herdr puts on the wire for the whole
+    /// list, envelope included, so a test writes exactly what it wants a
+    /// pane to have said about itself.
+    ///
+    /// Written beside and renamed onto, for the reason `shows` gives.
+    pub fn lists(&self, agents: &str) {
+        let beside = self.agents.with_extension("next");
+        std::fs::write(&beside, agents).expect("the session is ours to write");
+        std::fs::rename(&beside, &self.agents).expect("the session is ours to replace");
+    }
+
     /// Stop answering pane reads. Every one from here waits until this is
     /// dropped or `let_go` is called.
     pub fn hang(&self) {

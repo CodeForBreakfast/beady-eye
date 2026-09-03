@@ -441,6 +441,18 @@ pub fn all_projects_reads_the_rest() -> &'static str {
     "--all-projects reads every project"
 }
 
+/// What a pane reported about itself, for a row no bead's row speaks for:
+/// the `display_agent` the agent in it stamped, then its caption. herdr's
+/// order, and the row's own `·` between them, because both are free text.
+/// A half the pane did not report takes its separator with it.
+pub fn pane_report(display_agent: Option<&str>, caption: Option<&str>) -> Option<String> {
+    let said: Vec<&str> = display_agent.into_iter().chain(caption).collect();
+    if said.is_empty() {
+        return None;
+    }
+    Some(said.join(" · "))
+}
+
 /// Live panes that resolved to no bead.
 pub fn unattributed(count: usize) -> String {
     let pane = if count == 1 { "pane" } else { "panes" };
@@ -1706,5 +1718,25 @@ mod tests {
         ] {
             assert_eq!(unrecognised_status(&status), None, "{status:?}");
         }
+    }
+
+    /// What a pane reported about itself, in herdr's order: who it says it
+    /// is, then what it says it is doing. A half that is missing takes its
+    /// separator with it, and nothing reported is nothing said.
+    #[test]
+    fn a_panes_report_is_its_display_agent_then_its_caption() {
+        assert_eq!(
+            pane_report(Some("bdi-3um.5"), Some("writing the parser")).as_deref(),
+            Some("bdi-3um.5 · writing the parser")
+        );
+        assert_eq!(
+            pane_report(Some("bdi-3um.5"), None).as_deref(),
+            Some("bdi-3um.5")
+        );
+        assert_eq!(
+            pane_report(None, Some("writing the parser")).as_deref(),
+            Some("writing the parser")
+        );
+        assert_eq!(pane_report(None, None), None);
     }
 }

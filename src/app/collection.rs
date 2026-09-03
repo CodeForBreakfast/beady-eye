@@ -1441,6 +1441,8 @@ path = "{}"
                 project: "ferry".to_string(),
                 cwd: fixture.linked.display().to_string(),
                 pane_status: PaneStatus::Idle,
+                display_agent: None,
+                title: None,
             }],
             "reported where it sits, placed by where its main working tree is"
         );
