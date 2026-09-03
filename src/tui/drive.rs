@@ -785,6 +785,13 @@ mod tests {
         /// The instant of each time the loop asked the band to read its pane
         /// again, in the order it asked.
         reread_at: Vec<DateTime<Utc>>,
+        /// Told once for every pass of the loop, where a test drives the loop
+        /// a known number of passes rather than for a window of wall clock.
+        /// The loop asks the band to read its pane once a pass whether or not
+        /// one is due, so this is where the view sees a pass go by. A pass
+        /// after the test has stopped counting has nobody left to tell, which
+        /// is not a failure.
+        went_round: Option<Sender<()>>,
     }
 
     impl Recorder {
@@ -841,6 +848,9 @@ mod tests {
 
         fn reread(&mut self, now: DateTime<Utc>) {
             self.reread_at.push(now);
+            if let Some(went_round) = &self.went_round {
+                let _ = went_round.send(());
+            }
         }
 
         fn rereads_in(&self, _now: DateTime<Utc>) -> Option<Duration> {
@@ -909,6 +919,41 @@ mod tests {
 
     fn typing(keys: [KeyEvent; 4]) -> Receiver<Event> {
         waiting(keys.into_iter().map(Event::Key).collect())
+    }
+
+    /// Everything the loop will see, on a channel held open until the loop
+    /// has gone round `passes` times and closed then.
+    ///
+    /// The counterpart to `waiting` for the tests about what the loop does
+    /// when nothing is happening: a list that ran out would close the channel
+    /// and end the run before the first deadline was up. What holds it open
+    /// is the loop saying it has gone round, so how many passes it gets is
+    /// the test's to decide. A window of wall clock instead asks the machine
+    /// how much work fits in one, and a machine with several of these running
+    /// at once has answered "one pass in a hundred milliseconds" — which
+    /// fails a test wanting more, with nothing wrong with the loop.
+    ///
+    /// `A_MOMENT` bounds a loop that has stopped going round at all, so that
+    /// one fails on the count the test asserts rather than hanging the suite.
+    /// There is nothing to join: the thread's last act is the drop that ends
+    /// the run.
+    fn going_round(view: &mut Recorder, passes: usize, first: Vec<Event>) -> Receiver<Event> {
+        let (to, from) = mpsc::channel();
+        for event in first {
+            to.send(event)
+                .expect("the loop's end of the channel is open");
+        }
+        let (went_round, rounds) = mpsc::channel();
+        view.went_round = Some(went_round);
+        thread::spawn(move || {
+            for _ in 0..passes {
+                if rounds.recv_timeout(A_MOMENT).is_err() {
+                    break;
+                }
+            }
+            drop(to);
+        });
+        from
     }
 
     #[test]
@@ -1434,20 +1479,15 @@ mod tests {
             ..Recorder::default()
         };
         let (ask, _asked) = mpsc::channel();
-        let (send, events) = mpsc::channel::<Event>();
-        let holding = thread::spawn(move || {
-            thread::sleep(AN_INTERVAL * 5);
-            drop(send);
-        });
+        let events = going_round(&mut view, 1, Vec::new());
         let started = Utc::now();
 
         drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
-        holding.join().expect("the thread ran");
 
         let first = view
             .reread_at
             .first()
-            .expect("the interval came round at least once in five of them");
+            .expect("the loop went round before it was let go");
         assert!(
             *first - started >= TimeDelta::from_std(AN_INTERVAL).expect("a short interval"),
             "the band was asked at {first}, before its interval was up from {started}"
@@ -1466,18 +1506,13 @@ mod tests {
             ..Recorder::default()
         };
         let (ask, _asked) = mpsc::channel();
-        let (send, events) = mpsc::channel::<Event>();
-        let holding = thread::spawn(move || {
-            thread::sleep(AN_INTERVAL * 5);
-            drop(send);
-        });
+        let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
 
         drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
-        holding.join().expect("the thread ran");
 
         assert!(
-            view.reread_at.len() > 1,
-            "the band was asked more than once in five intervals: {}",
+            view.reread_at.len() >= A_FEW_PASSES,
+            "the loop was let go after {} passes, so the frames below say nothing about repeated wakes",
             view.reread_at.len()
         );
         assert_eq!(view.drawn(), 1, "the first frame, and no other");
@@ -1658,6 +1693,10 @@ mod tests {
     /// enough that a loop doing its work in between is not racing it.
     const AN_INTERVAL: Duration = Duration::from_millis(20);
 
+    /// Enough passes of the loop that what it does on a second one is being
+    /// asked about, and few enough that waiting them out is quick.
+    const A_FEW_PASSES: usize = 5;
+
     /// What is outstanding as a run has it when the loop starts: the first
     /// collection asked for and not yet come back. Nothing is armed until it
     /// does.
@@ -1730,15 +1769,11 @@ mod tests {
     fn a_frame_running_out_redraws_the_screen_and_nothing_else() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let (send, events) = mpsc::channel();
-        send.send(Event::Changed(atlas()))
-            .expect("the loop's end of the channel is open");
-        // Long enough for several frames, and bounded so a loop that never
-        // turned still ends rather than hanging the suite.
-        thread::spawn(move || {
-            thread::sleep(phrase::FRAME * 4);
-            let _ = send.send(Event::Key(key(KeyCode::Char('q'))));
-        });
+        // Two passes: the collection starting, and the frame it drew running
+        // out. A window of wall clock would ask instead how many frames a
+        // real 320 ms buys, which is the scheduler's answer and not the
+        // loop's.
+        let events = going_round(&mut view, 2, vec![Event::Changed(atlas())]);
 
         drive(&mut view, &events, &ask, at_once(), nothing_armed()).expect("the loop runs");
 
