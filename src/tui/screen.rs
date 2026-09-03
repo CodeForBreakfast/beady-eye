@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
+use ratatui::layout::Rect;
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Awaited;
@@ -303,6 +304,29 @@ impl Shown {
         self.moved(changed)
     }
 
+    /// Put the selection on the line the forest drew on one row of `screen`.
+    ///
+    /// Which line a row holds is a fact about the frame rather than about the
+    /// click — the bands divide the screen, and the forest scrolls under its
+    /// own — so the geometry is asked here, where the forest is, and the
+    /// screen is all the terminal has to say about it.
+    fn clicked(&mut self, screen: Rect, row: u16) -> bool {
+        let bands = draw::regions(screen);
+
+        match draw::line_at(
+            bands.forest,
+            self.forest.selected_line(),
+            self.forest.lines().len(),
+            row,
+        ) {
+            Some(at) => self.select(at),
+            // The tail is an echo of a pane and the key row is a legend.
+            // Neither holds anything the selection could sit on, and a row
+            // past the last line of the forest holds nothing at all.
+            None => false,
+        }
+    }
+
     /// Take a copied id off the foot, reporting whether one was on it. The
     /// reader's next press is what takes it off, whatever the press turns
     /// out to mean — it was feedback on a keystroke, not a fact about the
@@ -537,21 +561,8 @@ impl View for Screen {
     }
 
     fn clicked(&mut self, row: u16) -> bool {
-        let bands = draw::regions(self.terminal.get_frame().area());
-        let forest = &self.shown.forest;
-
-        match draw::line_at(
-            bands.forest,
-            forest.selected_line(),
-            forest.lines().len(),
-            row,
-        ) {
-            Some(at) => self.shown.select(at),
-            // The tail is an echo of a pane and the key row is a legend.
-            // Neither holds anything the selection could sit on, and a row
-            // past the last line of the forest holds nothing at all.
-            None => false,
-        }
+        let screen = self.terminal.get_frame().area();
+        self.shown.clicked(screen, row)
     }
 
     fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
@@ -1849,6 +1860,53 @@ mod tests {
             "the fixture has to move the tail at all"
         );
         assert_eq!(by_click.tailing, by_key.tailing);
+    }
+
+    /// A click selects the line the forest drew on that row. Which line that
+    /// is is a question about the screen rather than about the click: a
+    /// forest scrolled under its window draws a different line on the same
+    /// row, and a click that answered from the row alone would select the
+    /// wrong bead on every screen the forest has outgrown.
+    #[test]
+    fn a_click_selects_the_line_the_forest_drew_on_that_row() {
+        let screen = Rect::new(0, 0, 60, 24);
+        let band = draw::regions(screen).forest;
+        let mut shown = shown(a_grove(30));
+
+        assert!(shown.clicked(screen, band.y + 3));
+        assert_eq!(shown.forest.selected_line(), 3);
+
+        to_the_last_row(&mut shown);
+        let last = shown.forest.selected_line();
+        assert!(
+            last + 1 > band.height as usize,
+            "the grove has to outgrow the band for the scroll to be the \
+             difference between the two clicks"
+        );
+        assert!(shown.clicked(screen, band.y));
+        assert_eq!(
+            shown.forest.selected_line(),
+            last + 1 - band.height as usize,
+            "the last line is on the band's last row, so its first row holds \
+             the line a bandful before it"
+        );
+    }
+
+    /// The tail is an echo of a pane and the key row is a legend. A click on
+    /// either holds nothing the selection could sit on, and leaves it where
+    /// it was.
+    #[test]
+    fn a_click_beneath_the_forest_selects_nothing() {
+        let screen = Rect::new(0, 0, 60, 24);
+        let bands = draw::regions(screen);
+        let mut shown = shown(a_grove(30));
+        shown.clicked(screen, bands.forest.y + 3);
+        let selected = shown.forest.selected_line();
+
+        for row in [bands.tail.y, bands.keys.y] {
+            assert!(!shown.clicked(screen, row), "the click at row {row} moved");
+            assert_eq!(shown.forest.selected_line(), selected);
+        }
     }
 
     #[test]

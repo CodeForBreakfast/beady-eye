@@ -1,0 +1,148 @@
+[
+ {
+  "id": "bdi-0tp",
+  "title": "Every outside program is optional: one seam per capability, and a setup that lacks one runs without it",
+  "description": "bdi reads two programs, bd and herdr, and is about to be public. README\npromises \"bd, and nothing else\" and design.md calls herdr \"a provider, not a\ndependency\". The code keeps neither promise yet. Measured 2026-09-02 at\n58e1f79:\n\n- herdr is reached by name from `Collection::collect` (`herdr::agent_list`)\n  and wired by name in `tui::wire` (`Herdr::new(RealRunner, ..)`). A machine\n  with no herdr gets a foot notice about herdr on every frame of every run.\n- bd is reached by name from `app::tracker`, and its argv is known to 155\n  test sites across 7 files. A change to one bd flag is a change in all of\n  them, and two seats on unrelated beads collide in app/mod.rs's fixtures.\n- every project without a credential_command is entered with `direnv exec`,\n  the zero-config run included. A machine without direnv reads no tracker.\n  README does not name direnv.\n- the change probe is `SELECT dolt_hashof_db()`. On bd's default SQLite\n  backend it fails on every refresh, silently, at one process each.\n- the variable naming the project when there is no config is COMMY_PROJECT.\n\nGraeme asked on 2026-09-02 for the architecture to let capabilities be\noptional (no herdr; other ways of reaching beads; other ways of hearing about\nchanges) and for modularisation that lets seats work concurrently without\ncolliding. Both have one answer: a seam per outside program, with the adapter\nbehind it owning that program's vocabulary, its wire shape and its tests.\n\n## What is a seam today, and what is not\n\n    seam                where             adapter        status\n    Runner              collect::run      RealRunner     real\n    Panes (read,focus)  collect::panes    Herdr          wired by name\n    Changes (sources)   tui::wire         Inbound socket private to tui\n    View                tui::drive        Screen         real\n    collect closure     tui::run          Collection     real\n    agent list          herdr::agent_list called directly  missing\n    tracker             bd::* called directly              missing\n    entering a project  direnv, or credential_command      missing\n\nRunner is at the wrong altitude for optionality. It makes any program\nfakeable, but every caller still spells the program's argv, so a fake tracker\nis eight canned bd calls and nothing but bd's CLI can be a tracker.\n\n## The children, in the order a public user hits them\n\n1. entering a project needs no direnv (P1, public blocker)\n2. the tracker is a seam and app/ stops spelling bd's argv (P1, contention)\n3. the agent provider is a seam and a setup with none is silent (P1)\n4. a tracker with no Dolt probe stops paying for one (P2, after 2)\n5. the project variable is bdi's own (P2)\n6. change sources behind one seam outside tui/, with a file watcher as the\n   zero-setup producer (P3, after bdi-rer.9 and 2)\n7. phrase.rs split by band (P3, contention)\n8. forest/mod.rs tests split by concern (P3, contention)\n\n1, 2 and 3 all edit `Collection::collect` and `app::tracker`, so they are\nsequenced by dependency edge rather than run at once; 5, 7 and 8 touch none\nof those files and run alongside.\n\n## Vocabulary\n\nNeither bd nor herdr names \"the thing behind a seam\". design.md already\nsays provider for the agents side and tracker for the beads side; keep\nthose. Anything a seat has to coin goes in design.md's terminology table.\n\n## Related, not gated on this\n\n- bdi-7ao.65.6 asks whether the layers become workspace crates. These seams\n  are the lines such a split would cut along (model and seams; one crate per\n  adapter; tui). The seams land first either way.\n- bdi-rer.9 is finishing the per-source poll option on top of #30's\n  per-project `Armed`; child 6 waits for it.\n- bdi-iby is the public epic. Child 1 is a public blocker of the same kind\n  as its own, and belongs here because the fix is a seam. bdi-0tp.5, the\n  project variable's name, was filed here and moved under bdi-iby: its fix\n  is a rename, not a seam.\n\n",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "epic",
+  "owner": "80714+GraemeF@users.noreply.github.com",
+  "created_at": "2026-09-02T06:04:14Z",
+  "created_by": "Graeme Foster",
+  "updated_at": "2026-09-02T06:08:23Z",
+  "dependencies": [
+   {
+    "issue_id": "bdi-0tp",
+    "depends_on_id": "bdi-7ao",
+    "type": "parent-child",
+    "created_at": "2026-09-02T06:08:21Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   }
+  ],
+  "dependency_count": 0,
+  "dependent_count": 0,
+  "comment_count": 0,
+  "parent": "bdi-7ao"
+ },
+ {
+  "id": "bdi-0tp.9",
+  "title": "A credential command or direnv that cannot be run is reported on screen as bd's failure",
+  "description": "`collect::run::RunFailure::from_exit` classifies the stderr and exit of every subprocess bdi runs, and the screen phrases the result as bd's. A credential command or a direnv that cannot be run (`Exec`) reaches the same mapping through `tracker_env`, so a missing `direnv` or a typo in `credential_command` is drawn as \"bd could not be run\". The reader is sent to check bd when bd was never reached.\n\nSurfaced by the `bdi-54w.6` seat at https://chat.example.invalid/#narrow/id/41074 while gating cobra's unknown-flag arm on the program being bd; that change covers the new kind only and leaves `Exec` program-blind. Not measured beyond that report.\n\n## Done when\n\n- A failure to run a credential command or an environment tool is reported on screen as that program's, naming which one, and a bd failure as bd's.\n- Tested with a runner whose `sh` or `direnv` cannot be executed, asserting the words the screen shows.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "80714+GraemeF@users.noreply.github.com",
+  "created_at": "2026-09-02T18:11:38Z",
+  "created_by": "Graeme Foster",
+  "updated_at": "2026-09-02T18:11:38Z",
+  "dependencies": [
+   {
+    "issue_id": "bdi-0tp.9",
+    "depends_on_id": "bdi-0tp",
+    "type": "parent-child",
+    "created_at": "2026-09-02T18:11:38Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   }
+  ],
+  "dependency_count": 0,
+  "dependent_count": 0,
+  "comment_count": 0,
+  "parent": "bdi-0tp"
+ },
+ {
+  "id": "bdi-0tp.8",
+  "title": "forest/mod.rs's tests are one module every forest change appends to",
+  "description": "src/view/forest/mod.rs is 4,467 lines, of which 540 are production. The rest\nis one `mod tests`, and it is where a seat adding a fold test and a seat\nadding a motion test both append. 50 commits touched forest.rs before the\nsplit and 8 have touched forest/mod.rs since, measured 2026-09-02 at\n58e1f79.\n\n## Shape\n\nA forest/tests/ directory module: `mod tests { mod folding; mod motion; mod\nselection; .. }` declared in tests/mod.rs, with the shared fixtures there.\nNo #[path]: the screen-walks check reads a test module in a file of its own\n(dde4449) and cannot follow #[path] (bdi-vtn).\n\n## Done when\n\n- forest/mod.rs is production code and `mod tests;`.\n- screen-walks still refuses an unbounded walk in each new file. Prove it by\n  adding one and watching the check fail before taking it out.\n- cargo-mutants' doubled count is unchanged; lib.rs's cfg pair is its cause,\n  not this.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "chore",
+  "owner": "80714+GraemeF@users.noreply.github.com",
+  "created_at": "2026-09-02T06:04:18Z",
+  "created_by": "Graeme Foster",
+  "updated_at": "2026-09-02T06:04:18Z",
+  "dependencies": [
+   {
+    "issue_id": "bdi-0tp.8",
+    "depends_on_id": "bdi-0tp",
+    "type": "parent-child",
+    "created_at": "2026-09-02T06:04:18Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   }
+  ],
+  "dependency_count": 0,
+  "dependent_count": 0,
+  "comment_count": 0,
+  "parent": "bdi-0tp"
+ },
+ {
+  "id": "bdi-0tp.6",
+  "title": "Change sources sit behind one seam outside tui/, and a local tracker's files are a producer nobody has to build",
+  "description": "Since #30, three things tell bdi a project's work has moved on: a writer on\nthe inbound socket, the poll each project arms for itself in `tui::armed`\nafter its own read comes back, and ^R. All three feed one window and one\nqueue in the loop, and the loop neither knows nor cares which one spoke.\nThat is the seam; what is left is where it sits and what feeds it.\n\n`Changes` is a private trait in `tui::wire` with one adapter, `Inbound`,\nwhich wraps the socket; `wire` builds it by name. A second external producer\nmeans opening tui/. And the public user's problem stays: README's socket\nprotocol asks them to build a producer before they get push, and the worked\nexample is a shell wrapper around bd.\n\nFor a tracker backed by a local file (SQLite, or a JSONL export) a producer\nalready exists in the filesystem. Watching `.beads/` for writes names the\nproject whose directory moved, exactly as a socket writer does, and costs a\nDolt-backed project nothing: it has no file to watch and keeps its socket or\nits poll.\n\nbdi-rer.9 is finishing the per-source poll option in config and on the\ncommand line; it lands first, and this bead waits for it because both edit\n`config.rs`, `cli.rs` and README.\n\n## Shape\n\n- `Changes` moves out of `tui::wire` to sit beside the socket in collect/,\n  keeping rer.9's names, so a producer is added without opening tui/.\n- A file-watch producer per project whose tracker is a local file, enabled\n  where the tracker seam's adapter says it is one. Which crate does the\n  watching is the seat's to choose against what is maintained now, not from\n  memory.\n- It feeds the loop the way the socket does, so the window and the read are\n  unchanged.\n\n## Done when\n\n- A write to a local tracker's file reads that project without a poll,\n  tested with a real file and a fake loop end.\n- A Dolt-backed project gets no watcher.\n- tui/ names no producer.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "feature",
+  "owner": "80714+GraemeF@users.noreply.github.com",
+  "created_at": "2026-09-02T06:04:17Z",
+  "created_by": "Graeme Foster",
+  "updated_at": "2026-09-02T06:04:17Z",
+  "dependencies": [
+   {
+    "issue_id": "bdi-0tp.6",
+    "depends_on_id": "bdi-rer.9",
+    "type": "blocks",
+    "created_at": "2026-09-02T06:04:19Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   },
+   {
+    "issue_id": "bdi-0tp.6",
+    "depends_on_id": "bdi-0tp",
+    "type": "parent-child",
+    "created_at": "2026-09-02T06:04:16Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   },
+   {
+    "issue_id": "bdi-0tp.6",
+    "depends_on_id": "bdi-0tp.2",
+    "type": "blocks",
+    "created_at": "2026-09-02T06:04:19Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   }
+  ],
+  "dependency_count": 2,
+  "dependent_count": 0,
+  "comment_count": 0,
+  "parent": "bdi-0tp"
+ },
+ {
+  "id": "bdi-0tp.7",
+  "title": "phrase.rs is one file every screen change edits",
+  "description": "src/view/phrase.rs is 554 production lines and holds every word bdi shows,\nby design. It is also the file most often in two seats' diffs at once: 24\ncommits over the crate's history and 10 of the last 60, measured 2026-09-02\nat 58e1f79, behind only forest.rs and draw.rs, both since split under\nbdi-7ao.33.\n\nThe property worth keeping is the one CLAUDE.md names: every word in one\nplace, under one module name. The property to lose is one file.\n\n## Shape\n\nphrase/ as a directory module with the same `phrase::` surface, split by the\nband the words are drawn in (bead rows, project lines, groups and\nconflicts, the tail, the foot) so a seat on the tail and a seat on the foot\nedit different files. phrase/mod.rs re-exports; the test that checks every\nphrase function is reached (the one that binds each to a `fn() -> &str`)\nmoves with them and still enumerates all of them.\n\n## Done when\n\n- `phrase::` names resolve as they do now; no caller changes.\n- Each file opens with a //! naming the band it holds, per bdi-7ao.65.\n- The reachability test still enumerates every phrase.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "chore",
+  "owner": "80714+GraemeF@users.noreply.github.com",
+  "created_at": "2026-09-02T06:04:17Z",
+  "created_by": "Graeme Foster",
+  "updated_at": "2026-09-02T06:04:17Z",
+  "dependencies": [
+   {
+    "issue_id": "bdi-0tp.7",
+    "depends_on_id": "bdi-0tp",
+    "type": "parent-child",
+    "created_at": "2026-09-02T06:04:17Z",
+    "created_by": "Graeme Foster",
+    "metadata": "{}"
+   }
+  ],
+  "dependency_count": 0,
+  "dependent_count": 0,
+  "comment_count": 0,
+  "parent": "bdi-0tp"
+ }
+]

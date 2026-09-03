@@ -54,6 +54,23 @@ pub const GIVING_UP: Duration = Duration::from_secs(10);
 /// How long a poll blocks before looking at the clock again.
 const A_GLANCE: Duration = Duration::from_millis(50);
 
+/// The left button pressed on this row of the screen, as a terminal reports
+/// one: xterm's SGR encoding, which is what crossterm reads and what `bdi`
+/// asks the terminal for when it takes the mouse.
+///
+/// The row is counted from zero, as every other row in this harness is, and
+/// goes on the wire counted from one. The column is the first, because
+/// nothing `bdi` does with a click reads it.
+pub fn clicked_on(row: u16) -> Vec<u8> {
+    format!("\x1b[<0;1;{}M", row + 1).into_bytes()
+}
+
+/// One notch of the wheel away from the reader, in the same encoding. It
+/// carries a row because a mouse report always does; nothing reads it, since
+/// a notch is answered by whatever is on the screen rather than by what is
+/// under the pointer.
+pub const A_NOTCH_DOWN: &[u8] = b"\x1b[<65;1;1M";
+
 /// A run of bytes `bdi` wrote, and how long after it started it wrote them.
 struct Said {
     at: Duration,

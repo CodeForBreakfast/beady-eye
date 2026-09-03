@@ -15,7 +15,11 @@
 //!   killed before its `Drop` leaves nothing running — [`own_the_terminal`];
 //! * typing at it and timestamping what comes back — [`driver::Driven`];
 //! * making `bd` slow, so a stalled loop can be told from a slow one —
-//!   [`shims::ShimmedTracker`] and `tests/shims/`.
+//!   [`shims::ShimmedTracker`] and `tests/shims/`;
+//! * a run whose inbound socket is its own, so its foot carries no notice
+//!   about having failed to open one — [`a_socket_of_its_own`];
+//! * a forest with a tracker's beads in it, opened and walked to a known
+//!   row — [`over_the_described_subtree`] and [`THE_DESCRIBED_SUBTREE`].
 //!
 //! The size is why this is a harness rather than a shell one-liner: `script
 //! -T` with stdout to a file gives a 0x0 pty, and ratatui then draws an empty
@@ -33,6 +37,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::time::Duration;
 
 /// The terminal is on the alternate screen from here. Waited for rather than
 /// slept through: the screen opens in tens of milliseconds and every tracker
@@ -255,4 +260,72 @@ pub fn bdi_on(theirs: &std::fs::File, home: &Path, environment: &[(String, Strin
 
 pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|at| at == needle)
+}
+
+/// A runtime directory of this run's own, so it opens its own inbound socket
+/// and carries no notice about having failed to.
+///
+/// The foot gives up the keys to make room for notices, and a notice shifts
+/// the rows of the forest a window is drawn over. A run that cannot open its
+/// socket carries one — because the machine has no runtime directory, which
+/// the build sandbox has not, or because another `bdi` holds it, which this
+/// machine's does — so without this the screen a test reads differs between
+/// machines for a reason that has nothing to do with what it asserts.
+pub fn a_socket_of_its_own(home: &Path) -> (String, String) {
+    ("XDG_RUNTIME_DIR".to_string(), home.display().to_string())
+}
+
+/// What `bd list --all --limit 0 --json` said about one open epic of this
+/// project's own tracker and the four open beads under it.
+///
+/// The captures beside it carry no descriptions, and a bead window with
+/// nothing in it is one that cannot be scrolled and can hardly be told from
+/// the next bead's. These rows carry the prose their beads were written
+/// with, which is what the window is for.
+pub const THE_DESCRIBED_SUBTREE: &str = include_str!("../fixtures/bd_described_subtree.json");
+
+/// The keys that open that capture's tree and leave the selection on its
+/// header: every tree rather than only the staffed ones, back to the first
+/// row, down onto the tree, open it — and back to the first row and down
+/// again.
+///
+/// `a` is needed because no pane sits in the temp `HOME`, so the live-agent
+/// filter hides the one tree there is. The moves are what make the walk the
+/// same on every machine: which row the selection rests on at startup follows
+/// what herdr says about the panes this machine is running, and `g` is deaf
+/// to all of it. They are done twice because the key that opens a tree is
+/// also the key that steps into one, so where the selection is afterwards is
+/// a fact about the fold rather than about the walk.
+const OPEN_THE_TREE: &[u8] = b"agjlgj";
+
+/// Where that walk leaves the forest, counting the rows of the screen from
+/// zero: the project, its one tree, the anomaly its dangling edges raise,
+/// and then the four beads. Whatever herdr says about this machine's panes
+/// is drawn under all of them, so these rows are the same everywhere.
+pub const THE_TREES_HEADER: u16 = 1;
+pub const THE_FIRST_BEAD: u16 = 3;
+
+/// A `bdi` on a pty of this size over [`THE_DESCRIBED_SUBTREE`], with its
+/// tree open and the selection on the tree's header.
+///
+/// The tracker comes back with it because a test that refreshes has to say
+/// what the next collection finds.
+pub fn over_the_described_subtree(
+    named: &str,
+    rows: u16,
+    cols: u16,
+    settled: Duration,
+) -> (driver::Driven, shims::ShimmedTracker) {
+    let home = a_home_naming_one_project(named);
+    let tracker = shims::ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let mut environment = tracker.environment();
+    environment.push(a_socket_of_its_own(&home));
+
+    let mut bdi = driver::Driven::bdi(rows, cols, home, &environment);
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, driver::GIVING_UP);
+    bdi.settle(settled, driver::GIVING_UP);
+    bdi.send(OPEN_THE_TREE);
+    bdi.settle(settled, driver::GIVING_UP);
+    (bdi, tracker)
 }

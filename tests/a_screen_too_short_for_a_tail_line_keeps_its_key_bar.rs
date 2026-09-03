@@ -22,12 +22,11 @@
 
 mod terminal;
 
-use std::path::Path;
 use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::{shims_first_with_nothing_called, ShimmedHerdr, ShimmedTracker};
-use terminal::{a_home_naming_one_project, contains, ENTER_ALTERNATE_SCREEN};
+use terminal::{a_home_naming_one_project, a_socket_of_its_own, contains, ENTER_ALTERNATE_SCREEN};
 
 /// The height every other pty test here runs at, and where the band is seven
 /// rows. The run that meets the guard starts here and is shortened, because
@@ -166,17 +165,4 @@ fn a_short_screen_draws_the_keys_and_not_the_bands_reading_line() {
         String::from_utf8_lossy(&screen),
         bdi.timeline()
     );
-}
-
-/// A runtime directory of this run's own, so it opens its own inbound socket
-/// and carries no notice about having failed to.
-///
-/// The foot is the row under test and it gives up the keys to make room for
-/// notices. A run that cannot open its socket carries one — because the
-/// machine has no runtime directory, which the build sandbox has not, or
-/// because another `bdi` holds it, which this machine's does — so without
-/// this the key row is present on some machines and absent on others for a
-/// reason that has nothing to do with the tail.
-fn a_socket_of_its_own(home: &Path) -> (String, String) {
-    ("XDG_RUNTIME_DIR".to_string(), home.display().to_string())
 }

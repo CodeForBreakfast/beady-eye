@@ -47,7 +47,7 @@ module opening up in `src/lib.rs`, which says why. Fixtures under
 `tests/fixtures/` are faithful captures of what `bd list`, `bd query` and
 `herdr agent list` put on the wire.
 
-Three things to know before writing a test:
+Four things to know before writing a test:
 
 A pty test drives `bdi` through `tests/terminal/driver.rs`, which drains the
 terminal on a thread of its own from the moment `bdi` starts. That is not a
@@ -61,6 +61,17 @@ is small enough to fill during the first frame, which cost `bdi-54w.2` an
 evening reading a ten-second wait for a collection as a defect in `bd`. So
 never read the master yourself, and never take a test's silence as a licence to
 stop draining.
+
+An absence assertion has to name the thing whose absence it means, and on this
+screen that is rarely a bead's id. The bead window is drawn from the
+*selection* rather than from the bead it was opened on, so a screen that
+wrongly kept a window up after a collection draws it over whatever the
+selection landed on and under that bead's name — and a test looking for the
+opened bead's title to be gone finds it gone. It executes the line it is about,
+cannot observe it, and passes. What says a window is up is the words every
+window says (`Esc to go back`), and the same question is worth asking of any
+`!contains` on this screen: could the thing you named have moved rather than
+gone?
 
 A test that walks the selection over the screen calls `walk::until` in
 `src/view/walk.rs`, which presses inside a count taken before the walk starts
@@ -81,25 +92,43 @@ return are still reached by.
 
 Two things a mutation run will meet, so a survivor is read as what it is:
 
-`impl View for Screen` in `src/tui/` is half reached by mutation and half not,
-and the line runs where the pty harness under `tests/terminal/` happens to
-drive. Measured 2026-09-03 over all of `src/tui/` — 200 mutants, 150 caught,
-12 missed, 38 unviable, nothing timed out — the impl is 21 of them, and
-`collected`, `collecting`, `holds_for`, `tailed`, `apply` and `draw` are
-caught by tests that run a real `bdi` on a real terminal and assert on the
-cells it painted. `pressed`, `scroll`, `bead_still_shown` and `clicked`
-survive because nothing in the harness sends a mouse event, opens a bead
-window or copies an id; `reread` and `rereads_in` survive because the shimmed
-herdr answers every read with the same file, so a reread that does not happen
-leaves the frame the last one painted.
+`impl View for Screen` in `src/tui/` is reached by the pty harness under
+`tests/terminal/` and by nothing else, so a survivor there is a path no pty
+test takes rather than a method no test can reach. There is no negotiation to
+do: a pty test sends a mouse report by writing xterm's SGR encoding at `bdi`
+the way it writes a key, and crossterm parses it whether or not the terminal
+ever answered the capture request. Measured 2026-09-03 over the impl's own 21
+mutants: 20 caught, and the one that survives is
+`rereads_in -> Some(Duration::default())`.
 
-So read a survivor there as a gap in `tests/terminal/`, and ask which path no
-pty test takes. `Shown`, in the same file, has no survivor at all: the unit
-tests around it catch every viable mutant in it, which is why the adapter has
-little of its own left to miss. `clicked` is where it has some, working out
-the forest's geometry itself instead of delegating, and a mutant surviving in
-an adapter that holds behaviour of its own says the behaviour is in the wrong
-layer, not that a test is missing.
+That one is equivalent rather than uncaught, and it was measured rather than
+argued: `sleeps_for` returns zero, so the loop stops sleeping and spins, but
+`Shown::reread` still gates on its own deadline and the band asked for its
+pane 38 times over the window it asks 34 times over unmutated. Same bytes, same
+instants, and a core.
+
+The other one — `rereads_in -> None` — is the cautionary tale, because it is
+catchable and the obvious instrument cannot catch it. **The band's clock is
+never the only one running:** a project that has been read ages in seconds,
+that age is a deadline, and the loop reads the pane on every wake whichever
+deadline woke it. So a `bdi` that has forgotten the band's clock entirely
+still shows what changed, once a second instead of four times a second, and a
+test that swaps what a pane says and waits for the new words passes either
+way. Timing that one answer does separate them here — ten runs each, 250–252ms
+against 606–855ms — but the second figure is a second minus however long `bdi`
+took to start, so the two bands meet on a machine slower than this one.
+**Counting is what has no phase in it**: over a two-second window at a 50ms
+interval the band asks 34 times with its clock and 2 without, and 2 is the
+ceiling the ages impose on every machine.
+
+`Shown`, in the same file, has no survivor at all: the unit tests around it
+catch every viable mutant in it, which is why the adapter has little of its
+own left to miss. Keep it that way. `clicked` used to work out the forest's
+geometry itself instead of delegating, and it was the one method of the impl
+whose mutants a pty test could not reach for a reason that was not the
+harness's — a mutant surviving in an adapter that holds behaviour of its own
+says the behaviour is in the wrong layer, not that a test is missing. Moving
+the geometry to `Shown::clicked` is what closed it.
 
 A `Timeout` is a third mutation answer and the tally cannot say which kind it
 is. Some are genuinely non-terminating in production and not gaps: the three

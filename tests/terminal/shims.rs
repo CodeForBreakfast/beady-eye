@@ -255,6 +255,7 @@ pub struct ShimmedHerdr {
     visible: PathBuf,
     hangs_while: PathBuf,
     holding: PathBuf,
+    reads: PathBuf,
 }
 
 /// The one pane every test here reads. Its `cwd` is under no configured
@@ -270,6 +271,7 @@ impl ShimmedHerdr {
             visible: beside.join("herdr-visible"),
             hangs_while: beside.join("herdr-hangs"),
             holding: beside.join("herdr-holding"),
+            reads: beside.join("herdr-reads"),
         };
         std::fs::write(
             &herdr.agents,
@@ -303,7 +305,43 @@ impl ShimmedHerdr {
                 "BDI_SHIM_HERDR_HOLDING".to_string(),
                 self.holding.display().to_string(),
             ),
+            (
+                "BDI_SHIM_HERDR_READS".to_string(),
+                self.reads.display().to_string(),
+            ),
         ]
+    }
+
+    /// How many times the band has asked for a pane.
+    ///
+    /// The count rather than the clock, for a test about how often the band
+    /// reads: an answer's latency is the gap to whatever wakes the loop next,
+    /// and every deadline the loop holds is in that gap. How many times it
+    /// asked over a window of its own choosing is the band's alone, and the
+    /// slowest thing that could otherwise wake it — a project's line ageing —
+    /// ticks once a second and puts a ceiling on what a band with no clock
+    /// can reach.
+    pub fn reads(&self) -> usize {
+        std::fs::read_to_string(&self.reads)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
+
+    /// What every pane read from here answers with, in place of what it
+    /// answered before.
+    ///
+    /// The shim `cat`s one file, so this is how a pane that is *doing*
+    /// something is reached: a second answer that differs from the first is
+    /// what the band's own clock is for, and a band that never read again
+    /// would go on showing the first for ever.
+    ///
+    /// Written beside and renamed onto, because the reader is another process
+    /// and a `cat` of a file half written is an answer neither text.
+    pub fn shows(&self, said: &str) {
+        let beside = self.visible.with_extension("next");
+        std::fs::write(&beside, said).expect("the pane is ours to write");
+        std::fs::rename(&beside, &self.visible).expect("the pane is ours to replace");
     }
 
     /// Stop answering pane reads. Every one from here waits until this is

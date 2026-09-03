@@ -15,6 +15,9 @@
 #   BDI_SHIM_HERDR_HOLDING      path this writes while it is holding a read, so
 #                               a reader can wait for the hold to have started
 #                               rather than sleeping and hoping.
+#   BDI_SHIM_HERDR_READS        file this appends a line to per `agent read`,
+#                               so a reader can count how often the band asked
+#                               rather than time how late one answer was.
 #   BDI_SHIM_HERDR_READ_DELAY   seconds to wait before `agent read`, for
 #                               measuring a herdr that is slow rather than
 #                               stopped. A delay is not a hold: nothing can
@@ -32,6 +35,9 @@ if [ "${1:-}" = "agent" ] && [ "${2:-}" = "list" ] && [ -n "${BDI_SHIM_HERDR_AGE
 fi
 
 if [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
+  if [ -n "${BDI_SHIM_HERDR_READS:-}" ]; then
+    printf 'read\n' >>"$BDI_SHIM_HERDR_READS"
+  fi
   if [ -n "${BDI_SHIM_HERDR_READ_DELAY:-}" ]; then
     sleep "$BDI_SHIM_HERDR_READ_DELAY"
   fi
