@@ -35,7 +35,7 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
 
     match tail {
         Tail::Pane { pane, lines } => {
-            frame.render_widget(rule(Some(pane), area.width as usize), row(0));
+            frame.render_widget(rule(Some(&pane.id), area.width as usize), row(0));
             let styled = sgr::lines(lines);
             for (n, said) in styled
                 .into_iter()
@@ -46,7 +46,7 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, tail: &Tail) {
             }
         }
         Tail::Reading { pane } => {
-            frame.render_widget(rule(Some(pane), area.width as usize), row(0));
+            frame.render_widget(rule(Some(&pane.id), area.width as usize), row(0));
             if room > 0 {
                 frame.render_widget(
                     sentence(
@@ -108,6 +108,7 @@ fn rule(pane: Option<&str>, width: usize) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::types::testing::key;
     use pretty_assertions::assert_eq;
     use ratatui::style::Modifier;
 
@@ -124,7 +125,7 @@ mod tests {
 
     fn tailing(pane: &str, lines: &[&str]) -> Tail {
         Tail::Pane {
-            pane: pane.into(),
+            pane: key(pane),
             lines: lines.iter().map(|line| (*line).to_string()).collect(),
         }
     }
@@ -182,7 +183,7 @@ mod tests {
         assert_eq!(
             tail_frame(
                 &Tail::Reading {
-                    pane: "wCM:p9".to_string()
+                    pane: key("wCM:p9")
                 },
                 40,
                 3,
@@ -202,15 +203,7 @@ mod tests {
     /// pane's. Nothing in the symbols says which of the two a row is.
     #[test]
     fn what_bdi_says_in_the_band_is_drawn_dimmer_than_what_the_pane_says() {
-        let waiting = tail_frame(
-            &Tail::Reading {
-                pane: "w:p1".to_string(),
-            },
-            40,
-            2,
-            0,
-        )
-        .row(1);
+        let waiting = tail_frame(&Tail::Reading { pane: key("w:p1") }, 40, 2, 0).row(1);
         assert!(
             waiting.iter().any(|run| {
                 run.said.contains(phrase::pane_being_read())
@@ -236,12 +229,13 @@ mod tests {
         use crate::collect::run::testing::FakeRunner;
         use crate::view::tail;
 
-        const ARGV: &str = "herdr agent read wDV:p1 --source visible --lines 6 --format ansi";
+        const ARGV: &str =
+            "herdr --session default agent read wDV:p1 --source visible --lines 6 --format ansi";
         let runner = FakeRunner::default().with(
             ARGV,
             include_str!("../../../tests/fixtures/herdr_agent_read_ansi.txt"),
         );
-        tail::read("wDV:p1".to_string(), Herdr::new(&runner).read("wDV:p1", 6))
+        tail::read(key("wDV:p1"), Herdr::new(&runner).read(&key("wDV:p1"), 6))
     }
 
     /// The bead: the band draws the pane's own colour and attributes, read
@@ -302,9 +296,7 @@ mod tests {
     #[test]
     fn a_band_one_row_high_writes_nothing_under_its_rule() {
         for tail in [
-            Tail::Reading {
-                pane: "w:p1".to_string(),
-            },
+            Tail::Reading { pane: key("w:p1") },
             Tail::Silent(phrase::no_bead_to_tail()),
         ] {
             let screen = Painted::drawn_by(20, 2, |frame| {

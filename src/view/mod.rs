@@ -90,12 +90,17 @@ pub enum Action {
 /// bar is where they meet, and it is handed them in the order it should give
 /// them up, so it draws a notice without knowing which kind it has and a
 /// third kind needs no third path to the screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notice {
     /// The agent provider is installed and would not answer, so no row can
     /// show an agent. A provider nobody installed is not this: nothing was
     /// lost, so there is nothing to say.
     AgentsUnknown,
+    /// The provider answered and named this session among the ones it runs,
+    /// and the session would not answer for its panes. Every other session's
+    /// seats are drawn; this one's are unknown, and a bead one of them is
+    /// working reads as unstaffed until it answers.
+    SessionUnanswered(String),
     /// Nothing can tell `bdi` a project has changed, so every project is
     /// polled on the refresh interval and the view is as stale as that.
     NoInboundChannel,
@@ -339,7 +344,8 @@ mod tests {
     /// Every fact said at the foot of the screen. See [`every_failure_kind`].
     pub(super) fn every_notice() -> impl Iterator<Item = Notice> {
         std::iter::successors(Some(Notice::AgentsUnknown), |fact| match fact {
-            Notice::AgentsUnknown => Some(Notice::NoInboundChannel),
+            Notice::AgentsUnknown => Some(Notice::SessionUnanswered("a session".to_string())),
+            Notice::SessionUnanswered(_) => Some(Notice::NoInboundChannel),
             Notice::NoInboundChannel => Some(Notice::AnotherBdiHadTheInboundChannel),
             Notice::AnotherBdiHadTheInboundChannel => Some(Notice::ConfigWouldNotReload),
             Notice::ConfigWouldNotReload => None,

@@ -243,14 +243,15 @@ pub fn shims_first_with_nothing_called(absent: &str, beside: &Path) -> (String, 
     )
 }
 
-/// A `herdr` that reports the session a test wrote down, and holds its pane
+/// A `herdr` that reports the sessions a test wrote down, and holds its pane
 /// reads on command.
 ///
 /// A machine with no herdr is the ordinary one in a build sandbox, and a `bdi`
-/// that finds none has no pane on any row to read. So the session is written
-/// to a file rather than found: what is on the wire is a capture, and every
+/// that finds none has no pane on any row to read. So the sessions are written
+/// to files rather than found: what is on the wire is a capture, and every
 /// test that needs a pane gets the same one whatever the machine is running.
 pub struct ShimmedHerdr {
+    sessions: PathBuf,
     agents: PathBuf,
     visible: PathBuf,
     hangs_while: PathBuf,
@@ -263,32 +264,74 @@ pub struct ShimmedHerdr {
 /// which is the shortest road to a row that names a pane.
 pub const A_PANE: &str = "wT:p1";
 
+/// The session that pane is in: the one herdr runs where nothing names
+/// another.
+pub const A_SESSION: &str = "default";
+
 impl ShimmedHerdr {
-    /// A herdr reporting one working pane, whose scripts sit under `beside`.
+    /// A herdr running one session holding one working pane, whose scripts
+    /// sit under `beside`.
     pub fn beside(beside: &Path) -> Self {
         let herdr = Self {
-            agents: beside.join("herdr-agents.json"),
+            sessions: beside.join("herdr-sessions.json"),
+            agents: beside.join("herdr-agents"),
             visible: beside.join("herdr-visible"),
             hangs_while: beside.join("herdr-hangs"),
             holding: beside.join("herdr-holding"),
             reads: beside.join("herdr-reads"),
         };
-        std::fs::write(
-            &herdr.agents,
-            format!(
+        std::fs::create_dir_all(&herdr.agents).expect("the directory is ours to make");
+        herdr.runs(&[A_SESSION]);
+        herdr.holds_in(
+            A_SESSION,
+            &format!(
                 r#"{{"result":{{"agents":[{{"pane_id":"{A_PANE}","cwd":"/","agent_status":"working"}}]}}}}"#
             ),
-        )
-        .expect("the session is ours to write");
+        );
         std::fs::write(&herdr.visible, "rebuilt .#thinkpad, generation 541\n")
             .expect("the pane is ours to write");
         herdr
+    }
+
+    /// The sessions this herdr is running, in place of the one it started
+    /// with. Each is written as `herdr session list --json` writes a running
+    /// one, and answers `agent list` with what `holds_in` gave it — or, given
+    /// nothing, fails to answer at all.
+    pub fn runs(&self, sessions: &[&str]) {
+        let listed: Vec<String> = sessions
+            .iter()
+            .map(|session| {
+                format!(
+                    r#"{{"default":{},"name":"{session}","running":true,"session_dir":"/nowhere/{session}","socket_path":"/nowhere/{session}/herdr.sock"}}"#,
+                    *session == A_SESSION
+                )
+            })
+            .collect();
+        std::fs::write(
+            &self.sessions,
+            format!(r#"{{"sessions":[{}]}}"#, listed.join(",")),
+        )
+        .expect("the sessions are ours to write");
+    }
+
+    /// What `agent list` answers for `session`: a capture of it.
+    ///
+    /// Written beside and renamed onto, for the reason `shows` gives.
+    pub fn holds_in(&self, session: &str, agents: &str) {
+        let answer = self.agents.join(format!("{session}.json"));
+        let beside = answer.with_extension("next");
+        std::fs::write(&beside, agents).expect("the session is ours to write");
+        std::fs::rename(&beside, &answer).expect("the session is ours to replace");
     }
 
     /// What `bdi` has to run with for the shim to be the `herdr` it finds.
     pub fn environment(&self) -> Vec<(String, String)> {
         vec![
             shims_first_on_path(),
+            (
+                "BDI_SHIM_HERDR_SESSIONS".to_string(),
+                self.sessions.display().to_string(),
+            ),
             (
                 "BDI_SHIM_HERDR_AGENTS".to_string(),
                 self.agents.display().to_string(),
@@ -322,10 +365,33 @@ impl ShimmedHerdr {
     /// ticks once a second and puts a ceiling on what a band with no clock
     /// can reach.
     pub fn reads(&self) -> usize {
+        self.read_panes().len()
+    }
+
+    /// Every pane the band has asked for, as `<session> <pane>`, in the order
+    /// it asked. Which session a read went to is a fact only the shim can
+    /// report: a pane of the same id in another session draws the same band.
+    pub fn read_panes(&self) -> Vec<String> {
         std::fs::read_to_string(&self.reads)
             .unwrap_or_default()
             .lines()
-            .count()
+            .filter_map(|line| line.strip_prefix("read "))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Every pane the reader has asked herdr to focus, as `<session> <pane>`,
+    /// in the order it asked. A focus is the only write `bdi` performs, and
+    /// one sent to the wrong session moves somebody else's terminal — which
+    /// is a fact only the shim can report, since both sessions answer to the
+    /// same pane id.
+    pub fn focused_panes(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.reads)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.strip_prefix("focus "))
+            .map(str::to_string)
+            .collect()
     }
 
     /// What every pane read from here answers with, in place of what it
@@ -344,16 +410,12 @@ impl ShimmedHerdr {
         std::fs::rename(&beside, &self.visible).expect("the pane is ours to replace");
     }
 
-    /// The session `agent list` reports from here, in place of the one pane
-    /// `beside` wrote: `agents` is what herdr puts on the wire for the whole
-    /// list, envelope included, so a test writes exactly what it wants a
-    /// pane to have said about itself.
-    ///
-    /// Written beside and renamed onto, for the reason `shows` gives.
+    /// What the one session `beside` started with reports from here, in
+    /// place of the one pane it wrote: `agents` is what herdr puts on the
+    /// wire for the whole list, envelope included, so a test writes exactly
+    /// what it wants a pane to have said about itself.
     pub fn lists(&self, agents: &str) {
-        let beside = self.agents.with_extension("next");
-        std::fs::write(&beside, agents).expect("the session is ours to write");
-        std::fs::rename(&beside, &self.agents).expect("the session is ours to replace");
+        self.holds_in(A_SESSION, agents);
     }
 
     /// Stop answering pane reads. Every one from here waits until this is

@@ -43,7 +43,7 @@ fn now() -> DateTime<Utc> {
 
 fn roots(filter: Filter) -> Vec<String> {
     let cfg = Config::from_toml(CONFIG).expect("the config parses");
-    let panes = Canned::default().answering("herdr agent list", PANES);
+    let panes = Canned::default().herdr_holding(PANES);
     let snapshot = beady_eye::app::run(&cfg, &Herdr::new(&panes), &trackers(), filter, now());
     snapshot
         .trees

@@ -87,7 +87,7 @@ fn beads(rows: &str) -> Vec<Bead> {
 
 /// The herdr session as these tests find it.
 fn panes() -> Canned {
-    Canned::default().answering("herdr agent list", PANES)
+    Canned::default().herdr_holding(PANES)
 }
 
 /// Orbital's tracker holding `rows` in place of its usual tree, with the same
@@ -206,7 +206,8 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(emitted["generated_at"], "2026-08-30T12:00:00Z");
     assert_eq!(
         emitted["agents"],
-        json!({"provider": "herdr", "state": "answering"})
+        json!({"provider": "herdr", "state": "answering",
+               "sessions": [{"name": "default", "state": "answering"}]})
     );
     assert_eq!(emitted["filter"], "live-agents");
     assert_eq!(emitted["hidden_trees"], json!([]));
@@ -295,7 +296,7 @@ fn the_agent_records_which_direction_of_the_join_resolved_it() {
     assert_eq!(
         node(tree, "orb-7")["agent"],
         json!({
-            "pane": "w:p1",
+            "pane": {"session": "default", "id": "w:p1"},
             "pane_status": "working",
             "title": "the dish",
             "source": "agent_pane",
@@ -350,9 +351,9 @@ fn a_pane_on_no_bead_is_reported_with_its_project() {
     assert_eq!(
         emitted["unattributed"],
         json!([
-            {"pane": "w:p2", "project": "orbital", "cwd": "/srv/work/orbital",
+            {"pane": {"session": "default", "id": "w:p2"}, "project": "orbital", "cwd": "/srv/work/orbital",
              "pane_status": "idle", "display_agent": "orb-7", "title": null},
-            {"pane": "w:p9", "project": "orbital", "cwd": "/srv/work/orbital",
+            {"pane": {"session": "default", "id": "w:p9"}, "project": "orbital", "cwd": "/srv/work/orbital",
              "pane_status": "blocked", "display_agent": null, "title": null},
         ])
     );
@@ -368,7 +369,7 @@ fn a_pane_under_no_configured_project_is_its_own_array() {
 
     assert_eq!(
         emitted["unconfigured"],
-        json!([{"pane": "w:pF", "cwd": "/srv/spike", "pane_status": "idle"}])
+        json!([{"pane": {"session": "default", "id": "w:pF"}, "cwd": "/srv/spike", "pane_status": "idle"}])
     );
     assert!(
         emitted["unconfigured"][0].get("project").is_none(),
@@ -379,7 +380,7 @@ fn a_pane_under_no_configured_project_is_its_own_array() {
             .as_array()
             .expect("unattributed is an array")
             .iter()
-            .any(|pane| pane["pane"] == "w:pF"),
+            .any(|pane| pane["pane"]["id"] == "w:pF"),
         "a pane is in one array or the other, never both"
     );
 }
@@ -409,7 +410,7 @@ fn a_contested_pane_is_reported_with_its_own_account_of_itself() {
             .expect("conflicts is an array")
             .contains(&json!({
                 "conflict": "several-beads-name-one-pane",
-                "pane": "w:p1",
+                "pane": {"session": "default", "id": "w:p1"},
                 "caption": "the dish",
                 "beads": [
                     {"project": "orbital", "id": "orb-7"},
@@ -432,8 +433,8 @@ fn a_join_disagreement_is_reported_at_the_top_level() {
         json!([{
             "conflict": "bead-and-pane-disagree",
             "bead": {"project": "orbital", "id": "orb-7"},
-            "named_by_bead": "w:p1",
-            "named_by_pane": "w:p2",
+            "named_by_bead": {"session": "default", "id": "w:p1"},
+            "named_by_pane": {"session": "default", "id": "w:p2"},
         }])
     );
 }
@@ -535,7 +536,7 @@ fn a_pane_in_a_refused_project_is_unattributed_rather_than_unconfigured() {
     );
     assert_eq!(
         emitted["unconfigured"],
-        json!([{"pane": "w:pF", "cwd": "/srv/spike", "pane_status": "idle"}]),
+        json!([{"pane": {"session": "default", "id": "w:pF"}, "cwd": "/srv/spike", "pane_status": "idle"}]),
         "only the pane outside every configured project"
     );
 }
@@ -562,13 +563,13 @@ fn a_trackers_own_words_never_reach_the_json() {
 /// absent rather than that something the reader had has broken.
 #[test]
 fn with_no_provider_installed_the_json_says_absent_and_still_carries_every_tree() {
-    let nothing = Canned::default().failing("herdr agent list", FailureKind::NotInstalled);
+    let nothing = Canned::default().herdr_failing(FailureKind::NotInstalled);
 
     let emitted = emit(&nothing, &orbital(), Filter::LiveAgents);
 
     assert_eq!(
         emitted["agents"],
-        json!({"provider": "herdr", "state": "absent"})
+        json!({"provider": "herdr", "state": "absent", "sessions": []})
     );
     assert_eq!(emitted["trees"][0]["root"], "orb-7");
     assert_eq!(emitted["trees"][0]["counts"]["live_agents"], 0);
@@ -581,13 +582,13 @@ fn with_no_provider_installed_the_json_says_absent_and_still_carries_every_tree(
 /// because only this one is a finding.
 #[test]
 fn a_provider_that_will_not_answer_is_told_apart_from_one_that_is_not_there() {
-    let no_session = Canned::default().failing("herdr agent list", FailureKind::Unavailable);
+    let no_session = Canned::default().herdr_failing(FailureKind::Unavailable);
 
     let emitted = emit(&no_session, &orbital(), Filter::LiveAgents);
 
     assert_eq!(
         emitted["agents"],
-        json!({"provider": "herdr", "state": "not-answering"})
+        json!({"provider": "herdr", "state": "not-answering", "sessions": []})
     );
     assert_eq!(emitted["trees"][0]["root"], "orb-7");
     assert_eq!(emitted["trees"][0]["counts"]["live_agents"], 0);
@@ -598,13 +599,13 @@ fn a_provider_that_will_not_answer_is_told_apart_from_one_that_is_not_there() {
 /// not the absence a machine with no herdr at all reports.
 #[test]
 fn a_provider_that_is_there_and_will_not_start_is_not_reported_as_absent() {
-    let broken = Canned::default().failing("herdr agent list", FailureKind::InstalledUnstartable);
+    let broken = Canned::default().herdr_failing(FailureKind::InstalledUnstartable);
 
     let emitted = emit(&broken, &orbital(), Filter::LiveAgents);
 
     assert_eq!(
         emitted["agents"],
-        json!({"provider": "herdr", "state": "not-answering"})
+        json!({"provider": "herdr", "state": "not-answering", "sessions": []})
     );
     assert_eq!(emitted["trees"][0]["root"], "orb-7");
 }
@@ -612,7 +613,7 @@ fn a_provider_that_is_there_and_will_not_start_is_not_reported_as_absent() {
 /// A filtered tree is reported, never dropped.
 #[test]
 fn a_tree_with_no_live_agent_is_reported_and_the_flag_shows_it() {
-    let nobody = Canned::default().answering("herdr agent list", r#"{"result":{"agents":[]}}"#);
+    let nobody = Canned::default().herdr_holding(r#"{"result":{"agents":[]}}"#);
     let trackers = orbital_with(Fake::holding(beads(UNSTAFFED_TREE)).ready(["orb-7.4"]));
 
     let filtered = emit(&nobody, &trackers, Filter::LiveAgents);
@@ -687,7 +688,7 @@ fn across_two_projects_with(harbour: Fake) -> Fakes {
 
 /// The herdr session with one live pane in each project's directory.
 fn panes_across() -> Canned {
-    Canned::default().answering("herdr agent list", PANES_ACROSS)
+    Canned::default().herdr_holding(PANES_ACROSS)
 }
 
 fn emit_over(cfg: &Config, runner: &Canned, trackers: &Fakes, filter: Filter) -> Value {
@@ -737,8 +738,8 @@ fn a_bare_id_in_two_trackers_names_two_beads() {
     assert_eq!(node(orbital, "orb-7.1")["blocked_by"], json!(["orb-9"]));
     assert_eq!(node(harbour, "orb-7.1")["blocked_by"], json!([]));
 
-    assert_eq!(node(orbital, "orb-7")["agent"]["pane"], "w:p1");
-    assert_eq!(node(harbour, "orb-7")["agent"]["pane"], "w:p5");
+    assert_eq!(node(orbital, "orb-7")["agent"]["pane"]["id"], "w:p1");
+    assert_eq!(node(harbour, "orb-7")["agent"]["pane"]["id"], "w:p5");
     assert_eq!(emitted["conflicts"], json!([]));
 }
 
@@ -766,11 +767,11 @@ fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
     assert_eq!(trees.len(), 1);
     assert_eq!(trees[0]["project"], "orbital");
     assert_eq!(node(&trees[0], "orb-7.1")["title"], "re-point the dish");
-    assert_eq!(node(&trees[0], "orb-7")["agent"]["pane"], "w:p1");
+    assert_eq!(node(&trees[0], "orb-7")["agent"]["pane"]["id"], "w:p1");
 
     assert_eq!(
         emitted["unattributed"],
-        json!([{"pane": "w:p5", "project": "harbour", "cwd": "/srv/work/harbour",
+        json!([{"pane": {"session": "default", "id": "w:p5"}, "project": "harbour", "cwd": "/srv/work/harbour",
                 "pane_status": "working", "display_agent": null,
                 "title": "the channel"}]),
         "the pane in the failed project is still reported"
@@ -799,7 +800,7 @@ fn a_claim_whose_pane_is_under_no_configured_path_says_that_on_the_bead() {
             "refused": {
                 "conflict": "pane-in-another-project",
                 "bead": {"project": "orbital", "id": "orb-7"},
-                "pane": "w:p1",
+                "pane": {"session": "default", "id": "w:p1"},
                 "pane_project": null,
             },
         }]),
@@ -809,5 +810,84 @@ fn a_claim_whose_pane_is_under_no_configured_path_says_that_on_the_bead() {
         node(tree, "orb-7.3")["anomalies"][0],
         json!({"rule": "orphan-claim"}),
         "a claim that named no pane has no refusal to carry"
+    );
+}
+
+/// A pane in `beacon`, the same session's name on a box running the default
+/// beside it, and `persistent-agents` running and not answering.
+const PANES_IN_BEACON: &str = r#"{"id":"cli:agent:list","result":{"agents":[
+  {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"}
+]}}"#;
+
+/// A box running three sessions: the default holds nothing, `beacon` holds
+/// the seat the bead names, and `persistent-agents` will not answer.
+fn three_sessions() -> Canned {
+    Canned::default()
+        .answering("herdr --session default agent list", NO_PANES)
+        .herdr_running(&[("beacon", Some(PANES_IN_BEACON)), ("persistent-agents", None)])
+}
+
+const NO_PANES: &str = r#"{"result":{"agents":[]}}"#;
+
+/// Every session the provider runs is in the JSON with how it answered, so a
+/// consumer can tell a seat that is not there from a session it could not
+/// see into — and the seats of the sessions that answered are drawn, keyed
+/// on their session.
+#[test]
+fn a_session_that_will_not_answer_is_named_and_the_others_seats_are_still_drawn() {
+    let emitted = emit(&three_sessions(), &orbital(), Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["agents"],
+        json!({"provider": "herdr", "state": "answering",
+               "sessions": [{"name": "default", "state": "answering"},
+                            {"name": "beacon", "state": "answering"},
+                            {"name": "persistent-agents", "state": "not-answering"}]})
+    );
+    assert_eq!(
+        node(&emitted["trees"][0], "orb-7")["agent"]["pane"],
+        json!({"session": "beacon", "id": "w:p1"}),
+        "the bead's key names the pane by id, and the one session holding it is its"
+    );
+}
+
+/// A bead's key names a pane id alone, and two sessions each hold one. The
+/// bead gets neither, the disagreement names the sessions, and both panes are
+/// still in the JSON, each under its own session.
+#[test]
+fn a_pane_id_two_sessions_hold_is_a_conflict_naming_the_sessions() {
+    let held_twice = Canned::default()
+        .answering("herdr --session default agent list", PANES_IN_BEACON)
+        .herdr_running(&[("beacon", Some(PANES_IN_BEACON))]);
+
+    let emitted = emit(&held_twice, &orbital(), Filter::LiveAgents);
+
+    let tree = &emitted["trees"][0];
+    assert_eq!(node(tree, "orb-7")["agent"], json!(null));
+    assert_eq!(
+        emitted["conflicts"],
+        json!([{
+            "conflict": "pane-id-in-several-sessions",
+            "bead": {"project": "orbital", "id": "orb-7"},
+            "pane_id": "w:p1",
+            "sessions": ["default", "beacon"],
+        }])
+    );
+    assert_eq!(
+        node(tree, "orb-7")["anomalies"][0]["refused"]["conflict"],
+        "pane-id-in-several-sessions"
+    );
+    let loose: Vec<&Value> = emitted["unattributed"]
+        .as_array()
+        .expect("unattributed is an array")
+        .iter()
+        .map(|pane| &pane["pane"])
+        .collect();
+    assert_eq!(
+        loose,
+        [
+            &json!({"session": "default", "id": "w:p1"}),
+            &json!({"session": "beacon", "id": "w:p1"}),
+        ]
     );
 }

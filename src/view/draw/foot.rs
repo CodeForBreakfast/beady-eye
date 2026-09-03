@@ -4,7 +4,7 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::model::snapshot::ProviderState;
+use crate::model::snapshot::{AgentProvider, ProviderState};
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::phrase;
 use crate::view::row::WARNING;
@@ -14,24 +14,29 @@ use super::tone::LOOK_AT_THIS;
 
 /// Everything the status bar has to say, in the order it should give it up.
 ///
-/// The provider's is read off the snapshot behind this frame; the rest are
+/// The provider's are read off the snapshot behind this frame; the rest are
 /// what the view is standing on, most of them settled before the first
 /// collection. Consequence decides the order, not provenance: a
 /// provider nobody can reach empties the agent column, which is what the
-/// reader came for, so it is the last thing a narrow screen takes away.
+/// reader came for, so it is the last thing a narrow screen takes away, and
+/// a session nobody can reach empties that session's part of it.
 ///
 /// A provider nobody installed says nothing here. The reader has lost
 /// nothing — they never had an agent column — and a warning about a program
 /// they have never heard of is a warning they cannot act on.
-pub(super) fn notices(agents: ProviderState, standing: &[Notice]) -> Vec<Notice> {
-    let collected = match agents {
+pub(super) fn notices(agents: &AgentProvider, standing: &[Notice]) -> Vec<Notice> {
+    let collected = match agents.state {
         ProviderState::Answering | ProviderState::Absent => None,
         ProviderState::NotAnswering => Some(Notice::AgentsUnknown),
     };
+    let unanswered = agents
+        .unanswered()
+        .map(|session| Notice::SessionUnanswered(session.to_string()));
 
     collected
         .into_iter()
-        .chain(standing.iter().copied())
+        .chain(unanswered)
+        .chain(standing.iter().cloned())
         .collect()
 }
 
@@ -102,16 +107,13 @@ pub(super) fn status_bar(
 /// ran out of room rather than as a fact the reader has lost — and a foot with
 /// two notices on it can be cut before the second one has begun.
 fn said(notices: &[Notice], width: usize) -> String {
-    let mut words = notices
-        .iter()
-        .map(|notice| phrase::notice(*notice))
-        .collect::<Vec<_>>();
+    let mut words = notices.iter().map(phrase::notice).collect::<Vec<_>>();
 
     for (at, notice) in notices.iter().enumerate().rev() {
         if columns(&[Span::raw(marked(&words))]) <= width {
             break;
         }
-        words[at] = phrase::brief_notice(*notice);
+        words[at] = phrase::brief_notice(notice);
     }
 
     marked(&words)
@@ -119,7 +121,7 @@ fn said(notices: &[Notice], width: usize) -> String {
 
 /// The notices as one run of text, each behind the mark that says it is a
 /// warning and clear of the one before it.
-fn marked(words: &[&'static str]) -> String {
+fn marked(words: &[String]) -> String {
     words
         .iter()
         .map(|said| format!("{WARNING} {said}"))
@@ -132,6 +134,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use crate::model::snapshot::a_provider;
     use crate::view::draw::tests::*;
 
     // ---- the key bar -----------------------------------------------------
@@ -434,7 +437,10 @@ mod tests {
     #[test]
     fn the_snapshots_notice_outranks_the_sessions() {
         assert_eq!(
-            notices(ProviderState::NotAnswering, &[Notice::NoInboundChannel]),
+            notices(
+                &a_provider(ProviderState::NotAnswering),
+                &[Notice::NoInboundChannel]
+            ),
             vec![Notice::AgentsUnknown, Notice::NoInboundChannel]
         );
     }
@@ -446,10 +452,13 @@ mod tests {
     #[test]
     fn a_provider_that_was_never_installed_is_not_warned_about() {
         assert_eq!(
-            notices(ProviderState::Absent, &[Notice::NoInboundChannel]),
+            notices(
+                &a_provider(ProviderState::Absent),
+                &[Notice::NoInboundChannel]
+            ),
             vec![Notice::NoInboundChannel]
         );
-        assert_eq!(notices(ProviderState::Absent, &[]), Vec::new());
+        assert_eq!(notices(&a_provider(ProviderState::Absent), &[]), Vec::new());
     }
 
     /// A session fact reaches the foot whether or not the collection behind
@@ -458,14 +467,20 @@ mod tests {
     #[test]
     fn a_session_notice_stands_alone_where_the_snapshot_is_well() {
         assert_eq!(
-            notices(ProviderState::Answering, &[Notice::NoInboundChannel]),
+            notices(
+                &a_provider(ProviderState::Answering),
+                &[Notice::NoInboundChannel]
+            ),
             vec![Notice::NoInboundChannel]
         );
     }
 
     #[test]
     fn a_session_with_nothing_wrong_leaves_the_foot_to_the_keys() {
-        assert_eq!(notices(ProviderState::Answering, &[]), Vec::new());
+        assert_eq!(
+            notices(&a_provider(ProviderState::Answering), &[]),
+            Vec::new()
+        );
     }
 
     /// Keys can be rediscovered; a herdr that is silently absent cannot. So on

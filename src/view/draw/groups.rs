@@ -72,13 +72,13 @@ pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
         Item::Conflict(conflict) => sentence(prefix, phrase::conflict(conflict), LOOK_AT_THIS),
         Item::Loose(pane) => loose_line(
             prefix,
-            &pane.pane,
+            &pane.pane.id,
             &pane.pane_status,
             phrase::pane_report(pane.display_agent.as_deref(), pane.title.as_deref()),
             &pane.cwd,
         ),
         Item::Unconfigured(pane) => {
-            loose_line(prefix, &pane.pane, &pane.pane_status, None, &pane.cwd)
+            loose_line(prefix, &pane.pane.id, &pane.pane_status, None, &pane.cwd)
         }
     }
 }
@@ -120,6 +120,7 @@ mod tests {
     use crate::config::Config;
     use crate::model::join;
     use crate::model::snapshot::{a_provider, build, Collected, LoosePane};
+    use crate::model::types::testing::A_SESSION;
     use crate::model::types::PaneStatus;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
@@ -273,9 +274,10 @@ path = "/tmp/bdi-ground/beady-eye"
 "#,
         )
         .expect("the config parses");
-        let panes = parse_agent_list(include_str!(
-            "../../../tests/fixtures/herdr_agent_list.json"
-        ))
+        let panes = parse_agent_list(
+            A_SESSION,
+            include_str!("../../../tests/fixtures/herdr_agent_list.json"),
+        )
         .expect("the capture parses");
         let joined = join::resolve(&[], &panes, &cfg);
         let snapshot = build(

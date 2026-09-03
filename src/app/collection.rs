@@ -16,8 +16,8 @@ use crate::collect::worktree;
 use crate::config::{Config, Project};
 use crate::model::join::{self, ProjectRows};
 use crate::model::snapshot::{
-    self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Snapshot, TrackerFailure,
-    TrackerState, Tree,
+    self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Session, SessionState,
+    Snapshot, TrackerFailure, TrackerState, Tree,
 };
 use crate::model::types::Pane;
 
@@ -141,23 +141,11 @@ impl Collection {
         // The provider is the second tier: without its panes there is no agent
         // to join and no filter to apply, and every tracker still reads.
         //
-        // Read again however few projects `wanted` names: it is one local
-        // call, the join it feeds is across every project, and a project with
-        // a producer is never polled — so a refresh naming it is the only
-        // chance the agent join gets.
-        let (panes, provider) = match agents.list() {
-            Ok(panes) => (
-                panes.into_iter().map(placed).collect(),
-                AgentProvider::answering(agents.name()),
-            ),
-            Err(failure) => (
-                Vec::new(),
-                AgentProvider {
-                    provider: agents.name(),
-                    state: unlistable(failure.kind),
-                },
-            ),
-        };
+        // Read again however few projects `wanted` names: it is a few local
+        // calls, the join it feeds is across every project, and a project
+        // with a producer is never polled — so a refresh naming it is the
+        // only chance the agent join gets.
+        let (panes, provider) = every_pane(agents);
 
         for (project, answer) in self.refresh_together(cfg, trackers, wanted, &panes, now) {
             match answer {
@@ -335,6 +323,44 @@ impl Collection {
     }
 }
 
+/// Every pane on the machine, and how asking for them went.
+///
+/// The provider is asked which sessions it runs, once, and then each session
+/// for its panes. A session that will not answer is a finding about that
+/// session and takes nothing from the others: its state is carried beside
+/// the panes of the sessions that did answer, which are drawn as they would
+/// be had it never existed. A provider that will not say which sessions it
+/// runs is the older, whole failure, and holds no session to report.
+fn every_pane(agents: &dyn Agents) -> (Vec<Pane>, AgentProvider) {
+    let sessions = match agents.sessions() {
+        Ok(sessions) => sessions,
+        Err(failure) => {
+            return (
+                Vec::new(),
+                AgentProvider {
+                    provider: agents.name(),
+                    state: unlistable(failure.kind),
+                    sessions: Vec::new(),
+                },
+            )
+        }
+    };
+
+    let mut panes = Vec::new();
+    let mut read = Vec::with_capacity(sessions.len());
+    for name in sessions {
+        let state = match agents.list(&name) {
+            Ok(listed) => {
+                panes.extend(listed.into_iter().map(placed));
+                SessionState::Answering
+            }
+            Err(_) => SessionState::NotAnswering,
+        };
+        read.push(Session { name, state });
+    }
+    (panes, AgentProvider::answering(agents.name(), read))
+}
+
 /// What a failed listing says about the provider that failed it.
 ///
 /// `NotInstalled` is the one failure that means nothing was installed to
@@ -372,14 +398,16 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::collect::agents::testing::{
-        named, pane, Asked as AskedOfTheProvider, Fake as Provider, THE_FAKE,
+        in_session, named, pane, titled, Asked as AskedOfTheProvider, Fake as Provider, THE_FAKE,
     };
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::collect::tracker::Tracker;
     use crate::collect::worktree::testing::a_linked_worktree_git_made;
     use crate::model::anomaly::Anomaly;
+    use crate::model::join::{BeadKey, Conflict};
     use crate::model::snapshot::LoosePane;
+    use crate::model::types::testing::{key, A_SESSION};
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
@@ -595,7 +623,11 @@ mod tests {
             now(),
         );
 
-        let loose: Vec<&str> = snap.unattributed.iter().map(|p| p.pane.as_str()).collect();
+        let loose: Vec<&str> = snap
+            .unattributed
+            .iter()
+            .map(|p| p.pane.id.as_str())
+            .collect();
         assert_eq!(loose, vec!["w:p9"]);
         assert_eq!(snap.unattributed[0].project, "orbital");
     }
@@ -1371,7 +1403,7 @@ mod tests {
 
         assert_eq!(snap.unconfigured, vec![]);
         assert!(
-            !snap.unattributed.iter().any(|pane| pane.pane == "w:p2"),
+            !snap.unattributed.iter().any(|pane| pane.pane.id == "w:p2"),
             "ferry's pane was reported by a run reading orbital: {:#?}",
             snap.unattributed
         );
@@ -1437,7 +1469,7 @@ path = "{}"
         assert_eq!(
             snap.unattributed,
             vec![LoosePane {
-                pane: "w:p2".to_string(),
+                pane: key("w:p2"),
                 project: "ferry".to_string(),
                 cwd: fixture.linked.display().to_string(),
                 pane_status: PaneStatus::Idle,
@@ -1470,7 +1502,18 @@ path = "{}"
 
         assert_eq!(snap.unattributed, vec![]);
         assert_eq!(snap.unconfigured, vec![]);
-        assert_eq!(provider.asked(), vec![AskedOfTheProvider::List]);
+        assert_eq!(provider.asked(), one_session_read());
+    }
+
+    /// What a collection asks a provider running the one session a test's
+    /// panes are in: which sessions there are, and then that session's panes.
+    fn one_session_read() -> Vec<AskedOfTheProvider> {
+        vec![
+            AskedOfTheProvider::Sessions,
+            AskedOfTheProvider::List {
+                session: A_SESSION.to_string(),
+            },
+        ]
     }
 
     /// The view draws one project line over each run of a project's trees, so
@@ -1552,29 +1595,140 @@ path = "{}"
     }
 
     /// The refresh gate reaches the trackers and stops there. A provider
-    /// reports on a herdr session rather than on a project, so a collection
-    /// asks it for its panes once — reading two projects, and reading the one
-    /// a refresh named.
+    /// reports on the sessions on the machine rather than on a project, so a
+    /// collection asks it which sessions there are once and each session for
+    /// its panes once — reading two projects, and reading the one a refresh
+    /// named.
     #[test]
-    fn a_collection_asks_the_provider_for_its_panes_once() {
-        let panes = panes_in_both();
+    fn a_collection_asks_the_provider_for_its_sessions_once_and_each_session_once() {
+        let panes = Provider::holding(vec![
+            named(pane("w:p1", ORBITAL, PaneStatus::Working), "x-1.1"),
+            in_session(pane("w:p2", FERRY, PaneStatus::Idle), "beacon"),
+        ]);
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
+        let both_sessions_read = vec![
+            AskedOfTheProvider::Sessions,
+            AskedOfTheProvider::List {
+                session: A_SESSION.to_string(),
+            },
+            AskedOfTheProvider::List {
+                session: "beacon".to_string(),
+            },
+        ];
 
         collect(&mut standing, &panes, &trackers, &Wanted::Everything);
 
         assert_eq!(
             panes.asked(),
-            vec![AskedOfTheProvider::List],
-            "two projects were read, and the machine holding them was asked once"
+            both_sessions_read,
+            "two projects were read, and each session on the machine was asked once"
         );
 
         collect(&mut standing, &panes, &trackers, &orbital_alone());
 
         assert_eq!(
             panes.asked(),
-            vec![AskedOfTheProvider::List, AskedOfTheProvider::List],
-            "a refresh naming one project reads every pane on the machine, once"
+            [both_sessions_read.clone(), both_sessions_read].concat(),
+            "a refresh naming one project reads every session on the machine, once each"
+        );
+    }
+
+    /// A session that will not answer takes nothing from the others: its
+    /// panes are unknown and it is named as such, and every other session's
+    /// seats are drawn as they would be had it never existed.
+    #[test]
+    fn a_session_that_will_not_answer_is_named_and_the_others_still_draw() {
+        let panes = Provider::holding(vec![named(
+            in_session(pane("w:p1", ORBITAL, PaneStatus::Working), "beacon"),
+            "x-1.1",
+        )])
+        .not_answering_for(
+            "persistent-agents",
+            RunFailure {
+                kind: FailureKind::Unavailable,
+                program: THE_FAKE.to_string(),
+                detail: "no socket".to_string(),
+            },
+        );
+
+        let snap = run(
+            &two_projects(),
+            &panes,
+            &colliding_trackers(),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.agents.state, ProviderState::Answering);
+        assert_eq!(
+            snap.agents.sessions,
+            vec![
+                Session {
+                    name: A_SESSION.to_string(),
+                    state: SessionState::Answering,
+                },
+                Session {
+                    name: "beacon".to_string(),
+                    state: SessionState::Answering,
+                },
+                Session {
+                    name: "persistent-agents".to_string(),
+                    state: SessionState::NotAnswering,
+                },
+            ]
+        );
+        assert_eq!(
+            snap.agents.unanswered().collect::<Vec<_>>(),
+            ["persistent-agents"]
+        );
+        let seat = node(tree_of(&snap, "orbital"), "x-1.1")
+            .agent
+            .as_ref()
+            .expect("the seat in beacon is on its bead");
+        assert_eq!(seat.pane.session, "beacon");
+    }
+
+    /// A pane id names a pane only within its session, and a seat writes the
+    /// id alone. Where one session holds it the bead gets that pane; where two
+    /// do, the bead gets neither and the disagreement says which sessions.
+    #[test]
+    fn a_pane_id_two_sessions_hold_is_awarded_to_nobody_and_reported() {
+        let panes = Provider::holding(vec![
+            titled(pane("w:p1", ORBITAL, PaneStatus::Working), "in default"),
+            titled(
+                in_session(pane("w:p1", ORBITAL, PaneStatus::Idle), "beacon"),
+                "in beacon",
+            ),
+        ]);
+
+        let snap = run(&one_project(), &panes, &orbital(), Filter::All, now());
+
+        let claimed = node(tree_of(&snap, "orbital"), "orb-7.1");
+        assert_eq!(claimed.agent, None, "neither pane is awarded");
+        assert_eq!(
+            claimed.anomalies,
+            vec![Anomaly::OrphanClaim {
+                refused: Some(Conflict::PaneIdInSeveralSessions {
+                    bead: BeadKey {
+                        project: "orbital".to_string(),
+                        id: "orb-7.1".to_string(),
+                    },
+                    pane_id: "w:p1".to_string(),
+                    sessions: vec![A_SESSION.to_string(), "beacon".to_string()],
+                }),
+            }]
+        );
+        assert_eq!(snap.conflicts.len(), 1);
+        let loose: Vec<(&str, &str)> = snap
+            .unattributed
+            .iter()
+            .map(|pane| (pane.pane.session.as_str(), pane.pane.id.as_str()))
+            .collect();
+        assert_eq!(
+            loose,
+            vec![(A_SESSION, "w:p1"), ("beacon", "w:p1")],
+            "both panes are still drawn, each under its session"
         );
     }
 

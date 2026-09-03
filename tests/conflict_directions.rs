@@ -106,9 +106,10 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
         })
         .collect();
 
-    let panes = parse_agent_list(&format!(
-        r#"{{"id":"cli:agent:list","result":{{"agents":[{agents}]}}}}"#
-    ))
+    let panes = parse_agent_list(
+        "default",
+        &format!(r#"{{"id":"cli:agent:list","result":{{"agents":[{agents}]}}}}"#),
+    )
     .expect("the panes parse");
 
     let trees: Vec<ProjectRows> = assembled
@@ -215,7 +216,7 @@ fn pane_the_tail_points_at(snapshot: &Snapshot, conflict: &Conflict) -> Option<S
         "the selection reached the disagreement's row"
     );
 
-    tail::target(&forest).pane().map(str::to_string)
+    tail::target(&forest).pane().map(|pane| pane.id.clone())
 }
 
 fn arm(conflict: &Conflict) -> &'static str {
@@ -224,6 +225,7 @@ fn arm(conflict: &Conflict) -> &'static str {
         Conflict::SeveralPanesNameOneBead { .. } => "several-panes-name-one-bead",
         Conflict::SeveralBeadsNameOnePane { .. } => "several-beads-name-one-pane",
         Conflict::PaneInAnotherProject { .. } => "pane-in-another-project",
+        Conflict::PaneIdInSeveralSessions { .. } => "pane-id-in-several-sessions",
     }
 }
 

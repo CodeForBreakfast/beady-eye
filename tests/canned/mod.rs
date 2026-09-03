@@ -70,10 +70,50 @@ impl Canned {
         self
     }
 
+    /// A herdr running one session, the default, whose `agent list` answers
+    /// `agents` — the two calls a collection makes of a herdr with one
+    /// session, staged together because neither is any use alone.
+    pub fn herdr_holding(self, agents: &str) -> Self {
+        self.answering("herdr session list --json", ONE_SESSION)
+            .answering("herdr --session default agent list", agents)
+    }
+
+    /// A herdr that fails at the first thing it is asked, which is for its
+    /// sessions, so nothing after it is asked at all.
+    pub fn herdr_failing(self, kind: FailureKind) -> Self {
+        self.failing("herdr session list --json", kind)
+    }
+
+    /// A herdr running the default session and `others` beside it, each
+    /// answering `agent list` as staged — with `agents`, or, given none,
+    /// with a failure to answer at all.
+    pub fn herdr_running(mut self, others: &[(&str, Option<&str>)]) -> Self {
+        let mut listed = vec![ONE_SESSION_ROW.to_string()];
+        for (session, agents) in others {
+            listed.push(format!(
+                r#"{{"default":false,"name":"{session}","running":true,"session_dir":"/h/sessions/{session}","socket_path":"/h/sessions/{session}/herdr.sock"}}"#
+            ));
+            let asked = format!("herdr --session {session} agent list");
+            self = match agents {
+                Some(agents) => self.answering(&asked, agents),
+                None => self.failing(&asked, FailureKind::Unavailable),
+            };
+        }
+        self.answering(
+            "herdr session list --json",
+            &format!(r#"{{"sessions":[{}]}}"#, listed.join(",")),
+        )
+    }
+
     pub fn calls(&self) -> Vec<Call> {
         self.calls.lock().unwrap().clone()
     }
 }
+
+/// The default session as `herdr session list --json` writes it, and what
+/// it says on a box running that session and nothing else.
+const ONE_SESSION_ROW: &str = r#"{"default":true,"name":"default","running":true,"session_dir":"/h","socket_path":"/h/herdr.sock"}"#;
+const ONE_SESSION: &str = r#"{"sessions":[{"default":true,"name":"default","running":true,"session_dir":"/h","socket_path":"/h/herdr.sock"}]}"#;
 
 /// A failure as a tracker writes one: naming the database and the SQL user it
 /// turned away, which is what must never reach the output.

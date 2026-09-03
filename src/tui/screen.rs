@@ -19,6 +19,7 @@ use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
+use crate::model::types::PaneKey;
 use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::phrase;
@@ -46,7 +47,7 @@ struct Shown {
     tail: Tail,
     /// The pane the band on screen is about, so a selection moving within it
     /// does not spend a call on the provider for the answer already drawn.
-    tailing: Option<String>,
+    tailing: Option<PaneKey>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
     /// How long after the provider answers the pane on the band is asked for
@@ -123,7 +124,7 @@ impl Shown {
         let forest = forest::flatten(snapshot);
         let mut shown = Self {
             tail: tail::tail(&forest),
-            tailing: tail::target(&forest).pane().map(str::to_string),
+            tailing: tail::target(&forest).pane().cloned(),
             forest,
             panes,
             clipboard,
@@ -205,7 +206,7 @@ impl Shown {
     /// replaces, so it is superseded here, and a read the band it replaces
     /// was due is not due any more.
     fn retail(&mut self) {
-        self.tailing = tail::target(&self.forest).pane().map(str::to_string);
+        self.tailing = tail::target(&self.forest).pane().cloned();
         self.tail = tail::tail(&self.forest);
         if self.reading == Reading::Outstanding {
             self.reading = Reading::Superseded;
@@ -248,7 +249,7 @@ impl Shown {
     /// Ask the provider for a pane. Nothing is due while the answer is on its
     /// way;
     /// what arms the next read is that answer landing.
-    fn read(&mut self, pane: String) {
+    fn read(&mut self, pane: PaneKey) {
         self.panes.read(&pane, tail::LINES);
         self.reading = Reading::Outstanding;
         self.due = None;
@@ -313,7 +314,7 @@ impl Shown {
             // names the pane, so a refusal about one the reader has left
             // would be drawn as a refusal about the one they are on.
             Answer::Focused { pane, focused } => match tail::focused(focused) {
-                Some(said) if self.tailing.as_deref() == Some(pane.as_str()) => {
+                Some(said) if self.tailing.as_ref() == Some(&pane) => {
                     self.tail = said;
                     true
                 }
@@ -324,7 +325,7 @@ impl Shown {
 
     /// Follow the selection, where it has left the pane the tail is showing.
     fn follow(&mut self) {
-        if tail::moved_on(&self.forest, self.tailing.as_deref()) {
+        if tail::moved_on(&self.forest, self.tailing.as_ref()) {
             self.retail();
         }
     }
@@ -654,6 +655,7 @@ mod tests {
         a_provider, Counts, Filter, Node, ProviderState, TrackerState, Tree,
     };
     use crate::model::tree::Link;
+    use crate::model::types::testing::key as pane_key;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
@@ -1144,25 +1146,25 @@ mod tests {
     }
 
     impl Panes for Asking {
-        fn read(&self, pane: &str, lines: u16) {
+        fn read(&self, pane: &PaneKey, lines: u16) {
             self.reads
                 .lock()
                 .expect("no test panics holding this")
-                .push(format!("{pane} {lines}"));
+                .push(format!("{} {lines}", pane.id));
         }
 
-        fn focus(&self, pane: &str) {
+        fn focus(&self, pane: &PaneKey) {
             self.focuses
                 .lock()
                 .expect("no test panics holding this")
-                .push(pane.to_string());
+                .push(pane.id.clone());
         }
     }
 
     /// What the provider said about a pane it read.
     fn read(pane: &str, lines: &[&str]) -> Answer {
         Answer::Read {
-            pane: pane.to_string(),
+            pane: pane_key(pane),
             read: Ok(lines.iter().map(|line| (*line).to_string()).collect()),
         }
     }
@@ -1274,7 +1276,7 @@ mod tests {
     /// The provider refusing to bring a pane to the front.
     fn refused(pane: &str) -> Answer {
         Answer::Focused {
-            pane: pane.to_string(),
+            pane: pane_key(pane),
             focused: Err(RunFailure {
                 kind: FailureKind::Gone,
                 program: "a provider".to_string(),
@@ -1922,7 +1924,7 @@ mod tests {
             let tree = Arc::make_mut(tree);
             for (at, node) in tree.beads.iter_mut().enumerate() {
                 node.agent = Some(AgentRef {
-                    pane: format!("w:p{at}"),
+                    pane: pane_key(&format!("w:p{at}")),
                     pane_status: PaneStatus::Working,
                     title: None,
                     source: JoinSource::AgentPane,
@@ -2087,7 +2089,7 @@ mod tests {
         assert_eq!(
             shown.tail,
             Tail::Reading {
-                pane: A_SELECTED_PANE.to_string()
+                pane: pane_key(A_SELECTED_PANE)
             }
         );
         assert_eq!(
@@ -2116,7 +2118,7 @@ mod tests {
         assert_eq!(
             shown.tail,
             Tail::Pane {
-                pane: A_SELECTED_PANE.to_string(),
+                pane: pane_key(A_SELECTED_PANE),
                 lines: vec!["rebuilt .#thinkpad".to_string()],
             }
         );
@@ -2150,7 +2152,8 @@ mod tests {
             other => panic!("the band is still waiting on a pane: {other:?}"),
         };
         assert_ne!(
-            resting_on, A_SELECTED_PANE,
+            resting_on,
+            pane_key(A_SELECTED_PANE),
             "the selection left the pane the read is out for"
         );
 
@@ -2173,7 +2176,11 @@ mod tests {
         );
         assert_eq!(
             panes.reads(),
-            [opened_on, vec![format!("{resting_on} {}", tail::LINES)]].concat(),
+            [
+                opened_on,
+                vec![format!("{} {}", resting_on.id, tail::LINES)]
+            ]
+            .concat(),
             "and that pane is what the provider is asked for next"
         );
     }
@@ -2203,7 +2210,7 @@ mod tests {
         assert_eq!(
             shown.tail,
             Tail::Pane {
-                pane: A_SELECTED_PANE.to_string(),
+                pane: pane_key(A_SELECTED_PANE),
                 lines: vec!["what it says".to_string()],
             },
             "and the rows on the band stand"
@@ -2298,7 +2305,7 @@ mod tests {
         assert_eq!(
             shown.tail,
             Tail::Pane {
-                pane: A_SELECTED_PANE.to_string(),
+                pane: pane_key(A_SELECTED_PANE),
                 lines: vec!["second".to_string()],
             }
         );
@@ -2456,11 +2463,11 @@ mod tests {
         let Tail::Reading { pane: landed_on } = shown.tail.clone() else {
             panic!("the row below is another agent's pane: {:?}", shown.tail);
         };
-        assert_ne!(landed_on, A_SELECTED_PANE);
+        assert_ne!(landed_on, pane_key(A_SELECTED_PANE));
 
         assert_eq!(
             panes.reads().last(),
-            Some(&format!("{landed_on} {}", tail::LINES)),
+            Some(&format!("{} {}", landed_on.id, tail::LINES)),
             "the pane landed on is asked for at once"
         );
         assert_eq!(
@@ -2493,7 +2500,7 @@ mod tests {
             an_instant(),
         );
         assert!(shown.tailed(
-            read(&resting_on, &["about the pane rested on"]),
+            read(&resting_on.id, &["about the pane rested on"]),
             an_instant()
         ));
 
@@ -2733,7 +2740,7 @@ mod tests {
     fn a_frame_puts_the_tail_in_the_band_reserved_for_it() {
         let mut forest = an_open_grove(30);
         let tail = Tail::Pane {
-            pane: "w:p1".to_string(),
+            pane: pane_key("w:p1"),
             lines: vec!["rebuilt .#thinkpad".to_string()],
         };
 

@@ -144,7 +144,7 @@ pub fn abbreviate<'a>(id: &'a str, root: &str) -> &'a str {
 /// this is and not about the work, and beside the caption would read as doubt
 /// about what the agent is doing.
 pub fn agent_marker(agent: &AgentRef) -> String {
-    let doing = agent.title.as_deref().unwrap_or(&agent.pane);
+    let doing = agent.title.as_deref().unwrap_or(&agent.pane.id);
     let mut said = vec![
         format!("{AGENT} {doing}"),
         phrase::pane_state(&agent.pane_status),
@@ -168,6 +168,7 @@ mod tests {
     use super::*;
     use crate::model::badges::Badged;
     use crate::model::join::JoinSource;
+    use crate::model::types::testing::key;
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
@@ -198,7 +199,7 @@ mod tests {
 
     fn agent(source: JoinSource) -> AgentRef {
         AgentRef {
-            pane: "wCM:p9".into(),
+            pane: key("wCM:p9"),
             pane_status: PaneStatus::Working,
             title: Some("shell selector".into()),
             source,

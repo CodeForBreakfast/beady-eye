@@ -1082,7 +1082,11 @@ orbital = ["bdi-404"]
         );
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["orb-7"], "rules 1 to 3 are untouched");
-        let loose: Vec<&str> = snap.unattributed.iter().map(|p| p.pane.as_str()).collect();
+        let loose: Vec<&str> = snap
+            .unattributed
+            .iter()
+            .map(|p| p.pane.id.as_str())
+            .collect();
         assert_eq!(loose, vec!["w:p4"], "the pane is reported, not dropped");
     }
 
@@ -1339,7 +1343,7 @@ orbital = ["orb-404"]
         assert_eq!(
             snap.unattributed
                 .iter()
-                .map(|pane| pane.pane.as_str())
+                .map(|pane| pane.pane.id.as_str())
                 .collect::<Vec<&str>>(),
             vec!["w:p1", "w:p9"],
             "the panes working in it are recovered rather than lost with it"

@@ -4,6 +4,7 @@ use crate::collect::panes::Panes;
 use crate::collect::run::RunFailure;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::snapshot::{ProviderState, Snapshot};
+use crate::model::types::PaneKey;
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Item};
 use crate::view::phrase;
@@ -22,8 +23,8 @@ pub const LINES: u16 = 6;
 /// it takes on one where herdr is slow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tail {
-    Pane { pane: String, lines: Vec<String> },
-    Reading { pane: String },
+    Pane { pane: PaneKey, lines: Vec<String> },
+    Reading { pane: PaneKey },
     Silent(&'static str),
 }
 
@@ -34,7 +35,7 @@ pub enum Tail {
 /// and named, and nothing joined it to a bead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target<'a> {
-    Pane(&'a str),
+    Pane(&'a PaneKey),
     /// A bead nobody is working.
     NoAgent,
     /// A tree's own line, one of the groups below the forest, or something in
@@ -43,7 +44,7 @@ pub enum Target<'a> {
 }
 
 impl Target<'_> {
-    pub fn pane(&self) -> Option<&str> {
+    pub fn pane(&self) -> Option<&PaneKey> {
         match self {
             Target::Pane(pane) => Some(pane),
             Target::NoAgent | Target::NotABead => None,
@@ -81,10 +82,11 @@ pub fn target(forest: &Forest) -> Target<'_> {
 /// The pane one of the groups' entries names, where it names exactly one.
 ///
 /// A loose pane and an unconfigured one are panes; that is the whole of what
-/// they are. A conflict is not, but two of its four shapes turn on a single
-/// pane and name it. The other two name two panes and several, so there is
-/// nothing to pick rather than nothing to show.
-fn named_pane(item: &Item) -> Option<&str> {
+/// they are. A conflict is not, but two of its five shapes turn on a single
+/// pane and name it. The other three name two panes, several, and an id held
+/// in several sessions, so there is nothing to pick rather than nothing to
+/// show.
+fn named_pane(item: &Item) -> Option<&PaneKey> {
     match item {
         Item::Loose(loose) => Some(&loose.pane),
         Item::Unconfigured(unconfigured) => Some(&unconfigured.pane),
@@ -93,7 +95,9 @@ fn named_pane(item: &Item) -> Option<&str> {
             | Conflict::PaneInAnotherProject { pane, .. },
         ) => Some(pane),
         Item::Conflict(
-            Conflict::BeadAndPaneDisagree { .. } | Conflict::SeveralPanesNameOneBead { .. },
+            Conflict::BeadAndPaneDisagree { .. }
+            | Conflict::SeveralPanesNameOneBead { .. }
+            | Conflict::PaneIdInSeveralSessions { .. },
         )
         | Item::Failed(_) => None,
     }
@@ -126,14 +130,12 @@ pub fn tail(forest: &Forest) -> Tail {
     match target(forest) {
         Target::NotABead => Tail::Silent(phrase::no_bead_to_tail()),
         Target::NoAgent => Tail::Silent(phrase::no_agent_to_tail()),
-        Target::Pane(pane) => Tail::Reading {
-            pane: pane.to_string(),
-        },
+        Target::Pane(pane) => Tail::Reading { pane: pane.clone() },
     }
 }
 
 /// The tail for what herdr said about a pane it was asked to read.
-pub fn read(pane: String, read: Result<Vec<String>, RunFailure>) -> Tail {
+pub fn read(pane: PaneKey, read: Result<Vec<String>, RunFailure>) -> Tail {
     match read {
         Ok(lines) => Tail::Pane { pane, lines },
         Err(failure) => Tail::Silent(phrase::pane_unreadable(failure.kind)),
@@ -150,7 +152,7 @@ pub fn read(pane: String, read: Result<Vec<String>, RunFailure>) -> Tail {
 /// So the tail stands only while the selection still names the pane it was
 /// read from: scrolling within that pane's rows leaves it where it is, and
 /// its rows are read again on the tail's own clock.
-pub fn moved_on(forest: &Forest, showing: Option<&str>) -> bool {
+pub fn moved_on(forest: &Forest, showing: Option<&PaneKey>) -> bool {
     match target(forest).pane() {
         Some(pane) => showing != Some(pane),
         None => true,
@@ -191,6 +193,7 @@ mod tests {
         Tree, UnconfiguredPane,
     };
     use crate::model::tree::Link;
+    use crate::model::types::testing::key as pane_key;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::forest;
     use crate::view::lines::GroupKind;
@@ -213,12 +216,12 @@ mod tests {
     }
 
     impl Panes for Fake {
-        fn read(&self, pane: &str, lines: u16) {
-            self.asked.borrow_mut().push(format!("{pane} {lines}"));
+        fn read(&self, pane: &PaneKey, lines: u16) {
+            self.asked.borrow_mut().push(format!("{} {lines}", pane.id));
         }
 
-        fn focus(&self, pane: &str) {
-            self.focused.borrow_mut().push(pane.to_string());
+        fn focus(&self, pane: &PaneKey) {
+            self.focused.borrow_mut().push(pane.id.clone());
         }
     }
 
@@ -232,7 +235,7 @@ mod tests {
 
     fn agent_on(pane: &str) -> AgentRef {
         AgentRef {
-            pane: pane.to_string(),
+            pane: pane_key(pane),
             pane_status: PaneStatus::Working,
             title: None,
             source: JoinSource::AgentPane,
@@ -343,7 +346,7 @@ mod tests {
         assert_eq!(
             tail(&selecting(1, ProviderState::Answering)),
             Tail::Reading {
-                pane: "w:p1".to_string()
+                pane: pane_key("w:p1")
             }
         );
         assert_eq!(
@@ -357,11 +360,11 @@ mod tests {
     fn what_herdr_read_is_the_band_under_the_forest() {
         assert_eq!(
             read(
-                "w:p1".to_string(),
+                pane_key("w:p1"),
                 Ok(vec!["rebuilt .#thinkpad, generation 541".to_string()])
             ),
             Tail::Pane {
-                pane: "w:p1".to_string(),
+                pane: pane_key("w:p1"),
                 lines: vec!["rebuilt .#thinkpad, generation 541".to_string()],
             }
         );
@@ -408,7 +411,7 @@ mod tests {
     #[test]
     fn a_pane_that_has_gone_degrades_to_a_phrase() {
         assert_eq!(
-            read("w:p1".to_string(), Err(failure(FailureKind::Gone))),
+            read(pane_key("w:p1"), Err(failure(FailureKind::Gone))),
             Tail::Silent(phrase::pane_unreadable(FailureKind::Gone))
         );
     }
@@ -422,7 +425,7 @@ mod tests {
     #[test]
     fn every_way_a_read_can_fail_is_said_rather_than_drawn_blank() {
         for kind in every_failure_kind() {
-            let band = read("w:p1".to_string(), Err(failure(kind)));
+            let band = read(pane_key("w:p1"), Err(failure(kind)));
 
             let Tail::Silent(said) = band else {
                 panic!("{kind:?} left the band drawing a pane rather than saying so")
@@ -468,12 +471,15 @@ mod tests {
     #[test]
     fn the_tail_is_read_again_only_where_the_selection_has_left_the_pane() {
         assert!(
-            !moved_on(&selecting(1, ProviderState::Answering), Some("w:p1")),
+            !moved_on(
+                &selecting(1, ProviderState::Answering),
+                Some(&pane_key("w:p1"))
+            ),
             "the selection is still on the pane the tail is showing"
         );
         assert!(moved_on(
             &selecting(2, ProviderState::Answering),
-            Some("w:p1")
+            Some(&pane_key("w:p1"))
         ));
         assert!(moved_on(&selecting(1, ProviderState::Answering), None));
     }
@@ -497,7 +503,7 @@ mod tests {
     fn two_beads_on_one_pane_do_not_read_it_twice() {
         assert!(!moved_on(
             &selecting(4, ProviderState::Answering),
-            Some("w:p1")
+            Some(&pane_key("w:p1"))
         ));
     }
 
@@ -508,12 +514,12 @@ mod tests {
     fn a_tail_that_stands_is_the_tail_the_new_row_calls_for() {
         for from in 0..5 {
             let was = selecting(from, ProviderState::Answering);
-            let showing = target(&was).pane().map(str::to_string);
+            let showing = target(&was).pane().cloned();
             let on_screen = tail(&was);
 
             for onto in 0..5 {
                 let now = selecting(onto, ProviderState::Answering);
-                if !moved_on(&now, showing.as_deref()) {
+                if !moved_on(&now, showing.as_ref()) {
                     assert_eq!(
                         tail(&now),
                         on_screen,
@@ -533,7 +539,7 @@ mod tests {
 
     fn loose() -> LoosePane {
         LoosePane {
-            pane: "w:p2".to_string(),
+            pane: pane_key("w:p2"),
             project: "orbital".to_string(),
             cwd: "/tmp/bdi-ground/orbital".to_string(),
             pane_status: PaneStatus::Working,
@@ -546,7 +552,7 @@ mod tests {
     /// refresh in a different order than it went in.
     fn another_loose() -> LoosePane {
         LoosePane {
-            pane: "w:p10".to_string(),
+            pane: pane_key("w:p10"),
             project: "orbital".to_string(),
             cwd: "/tmp/bdi-ground/orbital".to_string(),
             pane_status: PaneStatus::Idle,
@@ -557,7 +563,7 @@ mod tests {
 
     fn unconfigured() -> UnconfiguredPane {
         UnconfiguredPane {
-            pane: "w:p3".to_string(),
+            pane: pane_key("w:p3"),
             cwd: "/tmp/bdi-ground/lander".to_string(),
             pane_status: PaneStatus::Working,
         }
@@ -566,14 +572,14 @@ mod tests {
     fn pane_in_another_project() -> Conflict {
         Conflict::PaneInAnotherProject {
             bead: key("orb-7.2"),
-            pane: "w:p4".to_string(),
+            pane: pane_key("w:p4"),
             pane_project: None,
         }
     }
 
     fn several_beads_name_one_pane() -> Conflict {
         Conflict::SeveralBeadsNameOnePane {
-            pane: "w:p5".to_string(),
+            pane: pane_key("w:p5"),
             caption: None,
             beads: vec![key("orb-7.2"), key("orb-7.3")],
         }
@@ -582,15 +588,15 @@ mod tests {
     fn bead_and_pane_disagree() -> Conflict {
         Conflict::BeadAndPaneDisagree {
             bead: key("orb-7.2"),
-            named_by_bead: "w:p6".to_string(),
-            named_by_pane: "w:p7".to_string(),
+            named_by_bead: pane_key("w:p6"),
+            named_by_pane: pane_key("w:p7"),
         }
     }
 
     fn several_panes_name_one_bead() -> Conflict {
         Conflict::SeveralPanesNameOneBead {
             bead: key("orb-7.3"),
-            panes: vec!["w:p8".to_string(), "w:p9".to_string()],
+            panes: vec![pane_key("w:p8"), pane_key("w:p9")],
         }
     }
 
@@ -737,7 +743,7 @@ mod tests {
             assert_eq!(
                 tail(&forest),
                 Tail::Reading {
-                    pane: pane.to_string()
+                    pane: pane_key(pane)
                 },
                 "on {item:?}"
             );
@@ -836,17 +842,17 @@ mod tests {
         assert_eq!(
             on_arrival,
             Tail::Reading {
-                pane: "w:p2".to_string()
+                pane: pane_key("w:p2")
             }
         );
         assert!(
-            !moved_on(&forest, Some("w:p2")),
+            !moved_on(&forest, Some(&pane_key("w:p2"))),
             "the selection has not left the pane, so its rows stand"
         );
 
         forest.apply(Action::Move(Motion::PreviousRow));
         assert!(
-            moved_on(&forest, Some("w:p2")),
+            moved_on(&forest, Some(&pane_key("w:p2"))),
             "the row above is the group's own line and names no pane"
         );
 
@@ -865,12 +871,12 @@ mod tests {
 
         for from in 0..rows {
             let was = stepping(from, ProviderState::Answering);
-            let showing = target(&was).pane().map(str::to_string);
+            let showing = target(&was).pane().cloned();
             let on_screen = tail(&was);
 
             for onto in 0..rows {
                 let now = stepping(onto, ProviderState::Answering);
-                if !moved_on(&now, showing.as_deref()) {
+                if !moved_on(&now, showing.as_ref()) {
                     assert_eq!(
                         tail(&now),
                         on_screen,
@@ -903,7 +909,7 @@ mod tests {
     fn a_refresh_that_reorders_a_group_leaves_the_selection_on_the_same_pane() {
         let mut forest = with_groups_open(ProviderState::Answering);
         step_onto(&mut forest, onto(&Item::Loose(loose())));
-        assert_eq!(target(&forest).pane(), Some("w:p2"));
+        assert_eq!(target(&forest).pane(), Some(&pane_key("w:p2")));
 
         let mut reordered = snapshot_with_groups(ProviderState::Answering);
         reordered.unattributed.reverse();
@@ -912,11 +918,11 @@ mod tests {
 
         assert_eq!(
             target(&forest).pane(),
-            Some("w:p2"),
+            Some(&pane_key("w:p2")),
             "the group came back in a different order and took the selection with it"
         );
         assert!(
-            !moved_on(&forest, Some("w:p2")),
+            !moved_on(&forest, Some(&pane_key("w:p2"))),
             "the pane selected is the pane on screen, so its rows stand"
         );
     }

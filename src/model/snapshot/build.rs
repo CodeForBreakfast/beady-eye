@@ -117,7 +117,7 @@ pub fn build(
             // work: neither drawn nor reported.
             Some(project) if !cfg.reads(&project.name) => {}
             Some(project) => unattributed.push(LoosePane {
-                pane: pane.pane_id.clone(),
+                pane: pane.key(),
                 project: project.name.clone(),
                 cwd,
                 pane_status: pane.agent_status.clone(),
@@ -125,7 +125,7 @@ pub fn build(
                 title: pane.caption().map(str::to_string),
             }),
             None => unconfigured.push(UnconfiguredPane {
-                pane: pane.pane_id.clone(),
+                pane: pane.key(),
                 cwd,
                 pane_status: pane.agent_status.clone(),
             }),
@@ -162,6 +162,7 @@ mod tests {
     use crate::model::snapshot::{a_provider, ProviderState};
     use crate::model::snapshot::{FailedProject, TrackerFailure};
     use crate::model::tree::unroll;
+    use crate::model::types::testing::key;
     use crate::model::types::{Edge, PaneStatus, Status};
     use pretty_assertions::assert_eq;
     use std::path::{Path, PathBuf};
@@ -374,7 +375,7 @@ mod tests {
             .agent
             .as_ref()
             .expect("the bead named a pane");
-        assert_eq!(claimed.pane, "w:p1");
+        assert_eq!(claimed.pane, key("w:p1"));
         assert_eq!(claimed.source, JoinSource::AgentPane);
         assert_eq!(claimed.title.as_deref(), Some("lifting the mast"));
 
@@ -397,7 +398,7 @@ mod tests {
                 id: "orb-7.4".to_string(),
             },
             AgentRef {
-                pane: "w:pB".to_string(),
+                pane: key("w:pB"),
                 pane_status: PaneStatus::Working,
                 title: None,
                 source: JoinSource::AgentPane,
@@ -546,7 +547,7 @@ mod tests {
         assert_eq!(
             snap.unattributed,
             vec![LoosePane {
-                pane: "w:p9".to_string(),
+                pane: key("w:p9"),
                 project: "orbital".to_string(),
                 cwd: "/srv/work/orbital".to_string(),
                 pane_status: PaneStatus::Blocked,
@@ -566,13 +567,13 @@ mod tests {
         assert_eq!(
             snap.unconfigured,
             vec![UnconfiguredPane {
-                pane: "w:pF".to_string(),
+                pane: key("w:pF"),
                 cwd: "/srv/spike".to_string(),
                 pane_status: PaneStatus::Idle,
             }]
         );
         assert!(
-            !snap.unattributed.iter().any(|p| p.pane == "w:pF"),
+            !snap.unattributed.iter().any(|p| p.pane == key("w:pF")),
             "a pane is in one list or the other, never both"
         );
     }
@@ -662,7 +663,7 @@ mod tests {
         assert_eq!(
             snap.unattributed,
             vec![LoosePane {
-                pane: "w:p2".to_string(),
+                pane: key("w:p2"),
                 project: "ferry".to_string(),
                 cwd: "/tmp/seat-a/wt/src".to_string(),
                 pane_status: PaneStatus::Idle,
@@ -728,8 +729,8 @@ mod tests {
                     project: "orbital".to_string(),
                     id: "orb-7".to_string(),
                 },
-                named_by_bead: "w:p1".to_string(),
-                named_by_pane: "w:p2".to_string(),
+                named_by_bead: key("w:p1"),
+                named_by_pane: key("w:p2"),
             }],
             "a disagreement computed by the join must not stop at the model boundary"
         );
@@ -801,7 +802,7 @@ path = "/tmp/bdi-ground/beady-eye"
         let p6 = snap
             .unattributed
             .iter()
-            .find(|p| p.pane == "wCW:p6")
+            .find(|p| p.pane.id == "wCW:p6")
             .expect("in beady-eye's directory and on no bead");
         assert_eq!(p6.display_agent.as_deref(), Some("bdi-3um.5"));
         assert_eq!(

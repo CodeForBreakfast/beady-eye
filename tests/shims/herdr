@@ -7,17 +7,33 @@
 # and to hold a pane read outstanding — a state a working herdr never reaches,
 # and the one that tells a stalled loop from a slow one.
 #
-#   BDI_SHIM_HERDR_AGENTS       file holding what `agent list` answers with.
-#                               Unset, the list goes to the herdr this shadows.
+# `bdi` names the session it is asking with `--session <name>` ahead of the
+# subcommand, as herdr takes it, and the name is what picks the answer below.
+#
+#   BDI_SHIM_HERDR_SESSIONS     file holding what `session list --json` answers
+#                               with. Unset, the list goes to the herdr this
+#                               shadows.
+#   BDI_SHIM_HERDR_AGENTS       directory holding what `agent list` answers
+#                               with, one file per session, named
+#                               `<session>.json`. Unset, the list goes to the
+#                               herdr this shadows; set and holding no file
+#                               for the session asked, the list fails as a
+#                               session that will not answer does.
 #   BDI_SHIM_HERDR_VISIBLE      file holding what `agent read` answers with.
 #   BDI_SHIM_HERDR_HANGS_WHILE  path to the flag. While it is there, every
 #                               `agent read` waits for it to go away.
 #   BDI_SHIM_HERDR_HOLDING      path this writes while it is holding a read, so
 #                               a reader can wait for the hold to have started
 #                               rather than sleeping and hoping.
-#   BDI_SHIM_HERDR_READS        file this appends a line to per `agent read`,
-#                               so a reader can count how often the band asked
-#                               rather than time how late one answer was.
+#   BDI_SHIM_HERDR_READS        file this appends a line to per `agent read` —
+#                               `read <session> <pane>` — so a reader can count
+#                               how often the band asked rather than time how
+#                               late one answer was, and see which session's
+#                               pane it asked for. An `agent focus` appends
+#                               `focus <session> <pane>` to the same file and
+#                               answers in place of the herdr this shadows, so
+#                               a test can see the only write `bdi` performs
+#                               without a real session to move.
 #   BDI_SHIM_HERDR_READ_DELAY   seconds to wait before `agent read`, for
 #                               measuring a herdr that is slow rather than
 #                               stopped. A delay is not a hold: nothing can
@@ -30,13 +46,28 @@ set -u
 
 GIVING_UP=1200 # 60s at 50ms, so a leaked shim dies on its own.
 
+SESSION=""
+if [ "${1:-}" = "--session" ]; then
+  SESSION="${2:-}"
+  shift 2
+fi
+
+if [ "${1:-}" = "session" ] && [ "${2:-}" = "list" ] && [ -n "${BDI_SHIM_HERDR_SESSIONS:-}" ]; then
+  exec cat "$BDI_SHIM_HERDR_SESSIONS"
+fi
+
 if [ "${1:-}" = "agent" ] && [ "${2:-}" = "list" ] && [ -n "${BDI_SHIM_HERDR_AGENTS:-}" ]; then
-  exec cat "$BDI_SHIM_HERDR_AGENTS"
+  exec cat "$BDI_SHIM_HERDR_AGENTS/$SESSION.json"
+fi
+
+if [ "${1:-}" = "agent" ] && [ "${2:-}" = "focus" ] && [ -n "${BDI_SHIM_HERDR_READS:-}" ]; then
+  printf 'focus %s %s\n' "$SESSION" "${3:-}" >>"$BDI_SHIM_HERDR_READS"
+  exit 0
 fi
 
 if [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
   if [ -n "${BDI_SHIM_HERDR_READS:-}" ]; then
-    printf 'read\n' >>"$BDI_SHIM_HERDR_READS"
+    printf 'read %s %s\n' "$SESSION" "${3:-}" >>"$BDI_SHIM_HERDR_READS"
   fi
   if [ -n "${BDI_SHIM_HERDR_READ_DELAY:-}" ]; then
     sleep "$BDI_SHIM_HERDR_READ_DELAY"
@@ -55,4 +86,7 @@ if [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
   fi
 fi
 
+if [ -n "$SESSION" ]; then
+  exec "$(dirname "$0")/shadowed" herdr --session "$SESSION" "$@"
+fi
 exec "$(dirname "$0")/shadowed" herdr "$@"

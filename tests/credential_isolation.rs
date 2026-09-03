@@ -64,7 +64,7 @@ const NO_PANES: &str = r#"{"id":"cli:agent:list","result":{"agents":[]}}"#;
 
 fn across_two_projects() -> Canned {
     Canned::default()
-        .answering("herdr agent list", NO_PANES)
+        .herdr_holding(NO_PANES)
         .answering("sh -c pass show orbital/tracker", "orbital-secret\n")
         .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
         .answering_every("bd", NOTHING)
@@ -72,7 +72,7 @@ fn across_two_projects() -> Canned {
 
 fn on_the_ambient_credential() -> Canned {
     Canned::default()
-        .answering("herdr agent list", NO_PANES)
+        .herdr_holding(NO_PANES)
         .answering_every("bd", NOTHING)
 }
 
@@ -135,7 +135,7 @@ fn each_call_carries_the_credential_of_the_tracker_it_is_for_and_no_other() {
         .filter(|call| !call.argv.starts_with("bd "))
         .collect();
     assert!(
-        elsewhere.iter().any(|call| call.argv == "herdr agent list"),
+        elsewhere.iter().any(|call| call.argv.starts_with("herdr ")),
         "herdr was never asked, so nothing here says what it was given"
     );
     assert_eq!(

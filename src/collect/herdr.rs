@@ -1,8 +1,15 @@
 //! herdr's command line as the way to the panes on this machine.
 //!
-//! The one module that spells `herdr agent …` or reads its envelope. Each
-//! question the seam asks is one herdr invocation, answered in herdr's own
-//! JSON and parsed here and nowhere else.
+//! The one module that spells `herdr session …` or `herdr agent …`, or reads
+//! their envelopes. Each question the seam asks is one herdr invocation,
+//! answered in herdr's own JSON and parsed here and nowhere else.
+//!
+//! A box runs several sessions at once, each its own server with its own
+//! socket, and `herdr agent list` answers for one of them: the one named on
+//! the command line, else the one `bdi`'s environment names, else the
+//! default. `bdi` may be run outside herdr, so it takes the sessions from
+//! `herdr session list` and names each on the command line, and nothing here
+//! treats the session `bdi` happens to sit in as special.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -11,7 +18,7 @@ use serde::Deserialize;
 
 use crate::collect::agents::Agents;
 use crate::collect::run::{Env, RunFailure, Runner};
-use crate::model::types::{Pane, PaneStatus};
+use crate::model::types::{Pane, PaneKey, PaneStatus};
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -21,6 +28,33 @@ struct Envelope {
 #[derive(Deserialize)]
 struct AgentList {
     agents: Vec<Agent>,
+}
+
+/// What `herdr session list --json` answers, which has no envelope.
+#[derive(Deserialize)]
+struct SessionList {
+    sessions: Vec<Session>,
+}
+
+/// One session as herdr writes it. It says where the session's socket is as
+/// well, which `bdi` never reads: herdr is asked by the session's name.
+#[derive(Deserialize)]
+struct Session {
+    name: String,
+    running: bool,
+}
+
+/// Parse the output of `herdr session list --json` into the names of the
+/// sessions that are running. A session that is not running has no server
+/// to answer for it and holds no pane.
+pub fn parse_session_list(s: &str) -> anyhow::Result<Vec<String>> {
+    let listed: SessionList = serde_json::from_str(s)?;
+    Ok(listed
+        .sessions
+        .into_iter()
+        .filter(|session| session.running)
+        .map(|session| session.name)
+        .collect())
 }
 
 /// One pane as herdr writes it.
@@ -42,20 +76,33 @@ struct Agent {
     agent_status: PaneStatus,
 }
 
-impl From<Agent> for Pane {
-    fn from(agent: Agent) -> Self {
-        let mut pane = Pane::answered(agent.pane_id, agent.cwd, agent.agent_status);
-        pane.display_agent = agent.display_agent;
-        pane.title = agent.title;
-        pane.state_labels = agent.state_labels;
+impl Agent {
+    /// This pane as `bdi` holds it, in the session that listed it. The
+    /// listing does not name the session: a session answers for its own
+    /// panes, and which one was asked is the caller's to remember.
+    fn in_session(self, session: &str) -> Pane {
+        let mut pane = Pane::answered(
+            session.to_string(),
+            self.pane_id,
+            self.cwd,
+            self.agent_status,
+        );
+        pane.display_agent = self.display_agent;
+        pane.title = self.title;
+        pane.state_labels = self.state_labels;
         pane
     }
 }
 
-/// Parse the output of `herdr agent list`.
-pub fn parse_agent_list(s: &str) -> anyhow::Result<Vec<Pane>> {
+/// Parse the output of `herdr agent list`, asked of `session`.
+pub fn parse_agent_list(session: &str, s: &str) -> anyhow::Result<Vec<Pane>> {
     let envelope: Envelope = serde_json::from_str(s)?;
-    Ok(envelope.result.agents.into_iter().map(Pane::from).collect())
+    Ok(envelope
+        .result
+        .agents
+        .into_iter()
+        .map(|agent| agent.in_session(session))
+        .collect())
 }
 
 /// herdr as the provider of a run's panes, reached through one runner.
@@ -74,32 +121,56 @@ impl Agents for Herdr<'_> {
         "herdr"
     }
 
-    fn list(&self) -> Result<Vec<Pane>, RunFailure> {
-        agent_list(self.runner)
+    fn sessions(&self) -> Result<Vec<String>, RunFailure> {
+        session_list(self.runner)
     }
 
-    fn read(&self, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
+    fn list(&self, session: &str) -> Result<Vec<Pane>, RunFailure> {
+        agent_list(self.runner, session)
+    }
+
+    fn read(&self, pane: &PaneKey, lines: u16) -> Result<Vec<String>, RunFailure> {
         agent_read(self.runner, pane, lines)
     }
 
-    fn focus(&self, pane: &str) -> Result<(), RunFailure> {
+    fn focus(&self, pane: &PaneKey) -> Result<(), RunFailure> {
         agent_focus(self.runner, pane)
     }
 }
 
-/// `herdr agent list`, which answers with JSON and needs no flag to.
-///
-/// It reports on one herdr session — the one `bdi`'s environment names, or
-/// the default session where nothing does, and nothing from any other
-/// session on the box (`bdi-dd5`) — so it is asked once and takes no
-/// project's directory or credential. A failure here is not fatal: the
-/// caller degrades to a tier with no panes in it.
-fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
-    let out = runner.run("herdr", &["agent", "list"], None, &Env::new())?;
-    parse_agent_list(&out).map_err(|e| RunFailure::parse("herdr", e))
+/// `herdr session list --json`: every session on the box, whichever one
+/// `bdi` is in, if any. Asked once per collection and takes no project's
+/// directory or credential. A failure here is not fatal: the caller degrades
+/// to a tier with no panes in it.
+fn session_list(runner: &dyn Runner) -> Result<Vec<String>, RunFailure> {
+    let out = runner.run("herdr", &["session", "list", "--json"], None, &Env::new())?;
+    parse_session_list(&out).map_err(|e| RunFailure::parse("herdr", e))
 }
 
-/// `herdr agent read <pane>`, as the lines it drew.
+/// `herdr --session <name> agent list`, which answers with JSON and needs no
+/// flag to.
+///
+/// The session is named on the command line every time, because `agent
+/// list` otherwise answers for whichever session `bdi`'s own environment
+/// names — the one the pane `bdi` sits in, or the default outside herdr —
+/// and nothing from any other (`bdi-dd5`). A failure here is one session's:
+/// the caller reports it and draws the rest.
+fn agent_list(runner: &dyn Runner, session: &str) -> Result<Vec<Pane>, RunFailure> {
+    let out = runner.run(
+        "herdr",
+        &["--session", session, "agent", "list"],
+        None,
+        &Env::new(),
+    )?;
+    parse_agent_list(session, &out).map_err(|e| RunFailure::parse("herdr", e))
+}
+
+/// `herdr --session <session> agent read <pane>`, as the lines it drew.
+///
+/// The session is named for the reason `agent_list` names it, and here the
+/// cost of leaving it off is quieter: a pane id is minted per session, so a
+/// read that named none would read whichever session `bdi` sits in and draw
+/// that session's pane of the same id under this one's name.
 ///
 /// Always the visible screen. herdr's other snapshots are not `bdi`'s to ask
 /// for: `recent` and `recent-unwrapped` scroll a pane's history, which herdr
@@ -113,12 +184,22 @@ fn agent_list(runner: &dyn Runner) -> Result<Vec<Pane>, RunFailure> {
 /// With its styling, as SGR sequences in the rows: what the pane drew is the
 /// colour it drew it in, and the tail reads that off the text where it draws
 /// it. Every row is wrapped at the pane's own width, and ends `\r\n`.
-fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
+fn agent_read(runner: &dyn Runner, pane: &PaneKey, lines: u16) -> Result<Vec<String>, RunFailure> {
     let lines = lines.to_string();
     let out = runner.run(
         "herdr",
         &[
-            "agent", "read", pane, "--source", "visible", "--lines", &lines, "--format", "ansi",
+            "--session",
+            &pane.session,
+            "agent",
+            "read",
+            &pane.id,
+            "--source",
+            "visible",
+            "--lines",
+            &lines,
+            "--format",
+            "ansi",
         ],
         None,
         &Env::new(),
@@ -126,15 +207,22 @@ fn agent_read(runner: &dyn Runner, pane: &str, lines: u16) -> Result<Vec<String>
     Ok(out.lines().map(str::to_string).collect())
 }
 
-/// `herdr agent focus <pane>` — the only write `bdi` performs.
-fn agent_focus(runner: &dyn Runner, pane: &str) -> Result<(), RunFailure> {
-    runner.run("herdr", &["agent", "focus", pane], None, &Env::new())?;
+/// `herdr --session <session> agent focus <pane>` — the only write `bdi`
+/// performs.
+fn agent_focus(runner: &dyn Runner, pane: &PaneKey) -> Result<(), RunFailure> {
+    runner.run(
+        "herdr",
+        &["--session", &pane.session, "agent", "focus", &pane.id],
+        None,
+        &Env::new(),
+    )?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::types::testing::{key, A_SESSION};
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
@@ -151,14 +239,14 @@ mod tests {
 
     #[test]
     fn unwraps_the_envelope() {
-        let panes = parse_agent_list(FIXTURE).expect("parses");
+        let panes = parse_agent_list(A_SESSION, FIXTURE).expect("parses");
 
         assert_eq!(panes.len(), 10);
     }
 
     #[test]
     fn a_pane_that_has_not_identified_itself_is_kept() {
-        let panes = parse_agent_list(FIXTURE).unwrap();
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
         let p = pane(&panes, "wCW:p1");
 
         assert_eq!(p.display_agent, None);
@@ -169,7 +257,7 @@ mod tests {
 
     #[test]
     fn reads_every_field_of_an_identified_pane() {
-        let panes = parse_agent_list(FIXTURE).unwrap();
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
         let p = pane(&panes, "wCW:p6");
 
         assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/beady-eye"));
@@ -187,7 +275,7 @@ mod tests {
 
     #[test]
     fn caption_prefers_the_label_for_the_current_state() {
-        let panes = parse_agent_list(FIXTURE).unwrap();
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
         let p = pane(&panes, "wCW:p6");
 
         assert_eq!(p.agent_status, PaneStatus::Working);
@@ -196,7 +284,7 @@ mod tests {
 
     #[test]
     fn caption_falls_back_to_title_when_a_pane_has_no_labels() {
-        let panes = parse_agent_list(FIXTURE).unwrap();
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
         let p = pane(&panes, "wCW:p5");
 
         assert_eq!(p.state_labels, BTreeMap::new());
@@ -213,7 +301,7 @@ mod tests {
              "state_labels":{"idle":"the idle line","working":"the working line"}}
         ]}}"#;
 
-        let panes = parse_agent_list(list).unwrap();
+        let panes = parse_agent_list(A_SESSION, list).unwrap();
 
         assert_eq!(panes[0].caption(), Some("the idle line"));
         assert_eq!(panes[1].caption(), Some("the working line"));
@@ -228,7 +316,7 @@ mod tests {
              "state_labels":{"idle":"the idle line","working":"the working line"}}
         ]}}"#;
 
-        let panes = parse_agent_list(list).unwrap();
+        let panes = parse_agent_list(A_SESSION, list).unwrap();
 
         assert_eq!(panes[0].caption(), Some("the title"));
     }
@@ -244,7 +332,7 @@ mod tests {
             {"pane_id":"w:p4","cwd":"/tmp","agent_status":"done"}
         ]}}"#;
 
-        let got: Vec<PaneStatus> = parse_agent_list(list)
+        let got: Vec<PaneStatus> = parse_agent_list(A_SESSION, list)
             .expect("parses")
             .into_iter()
             .map(|p| p.agent_status)
@@ -268,7 +356,7 @@ mod tests {
             {"pane_id":"w:p1","cwd":"/tmp","agent_status":"hibernating","title":"a state we do not know"}
         ]}}"#;
 
-        let panes = parse_agent_list(list).expect("an unknown state still parses");
+        let panes = parse_agent_list(A_SESSION, list).expect("an unknown state still parses");
 
         assert_eq!(
             panes[0].agent_status,
@@ -292,13 +380,56 @@ mod tests {
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::FailureKind;
 
+    const SESSIONS: &str = include_str!("../../tests/fixtures/herdr_session_list.json");
+
+    /// The capture: three sessions running on this machine, and `bdi` in
+    /// none of them in particular.
     #[test]
-    fn agent_list_asks_herdr_once_for_the_whole_machine() {
-        let runner = FakeRunner::default().with("herdr agent list", FIXTURE);
+    fn session_list_names_every_running_session() {
+        let sessions = parse_session_list(SESSIONS).expect("parses");
 
-        assert_eq!(agent_list(&runner).unwrap().len(), 10);
+        assert_eq!(sessions, ["default", "beacon", "persistent-agents"]);
+    }
 
-        let call = runner.call("herdr agent list");
+    /// A session that is not running has no server to answer for it, so it
+    /// is not a session to ask.
+    #[test]
+    fn a_session_that_is_not_running_is_left_out() {
+        let list = r#"{"sessions":[
+            {"default":true,"name":"default","running":true,"session_dir":"/h","socket_path":"/h/herdr.sock"},
+            {"default":false,"name":"stopped","running":false,"session_dir":"/h/sessions/stopped","socket_path":"/h/sessions/stopped/herdr.sock"}
+        ]}"#;
+
+        let sessions = parse_session_list(list).expect("parses");
+
+        assert_eq!(sessions, ["default"]);
+    }
+
+    /// The one call that finds the sessions, and it names no session itself:
+    /// there is no session to name before this has answered.
+    #[test]
+    fn session_list_asks_herdr_once_with_no_session_named() {
+        let runner = FakeRunner::default().with("herdr session list --json", SESSIONS);
+
+        assert_eq!(session_list(&runner).unwrap().len(), 3);
+
+        let call = runner.call("herdr session list --json");
+        assert_eq!(call.cwd, None);
+        assert!(call.env.is_empty());
+    }
+
+    /// One session's panes, asked of that session by name on the command
+    /// line — never left to whatever session `bdi`'s own environment names —
+    /// and every pane that comes back is held as that session's.
+    #[test]
+    fn agent_list_asks_the_session_it_is_given_by_name() {
+        let runner = FakeRunner::default().with("herdr --session beacon agent list", FIXTURE);
+
+        let panes = agent_list(&runner, "beacon").unwrap();
+
+        assert_eq!(panes.len(), 10);
+        assert!(panes.iter().all(|pane| pane.session == "beacon"));
+        let call = runner.call("herdr --session beacon agent list");
         assert_eq!(call.cwd, None);
         assert!(call.env.is_empty());
     }
@@ -306,21 +437,30 @@ mod tests {
     #[test]
     fn a_missing_herdr_is_a_failure_the_caller_can_degrade_on() {
         let runner = FakeRunner::default().failing(
-            "herdr agent list",
+            "herdr session list --json",
             RunFailure::not_installed("herdr", "No such file or directory (os error 2)"),
         );
 
         assert_eq!(
-            agent_list(&runner).unwrap_err().kind,
+            session_list(&runner).unwrap_err().kind,
             FailureKind::NotInstalled
         );
     }
 
     #[test]
     fn output_herdr_could_not_have_written_is_a_parse_failure() {
-        let runner = FakeRunner::default().with("herdr agent list", "not json at all");
+        let sessions = FakeRunner::default().with("herdr session list --json", "not json at all");
+        let agents =
+            FakeRunner::default().with("herdr --session default agent list", "not json at all");
 
-        assert_eq!(agent_list(&runner).unwrap_err().kind, FailureKind::Parse);
+        assert_eq!(
+            session_list(&sessions).unwrap_err().kind,
+            FailureKind::Parse
+        );
+        assert_eq!(
+            agent_list(&agents, "default").unwrap_err().kind,
+            FailureKind::Parse
+        );
     }
 
     /// The read a tail makes: one pane, the visible screen — the caller is
@@ -328,10 +468,11 @@ mod tests {
     /// drew it in.
     #[test]
     fn agent_read_asks_for_one_panes_visible_screen_with_its_styling() {
-        const ARGV: &str = "herdr agent read wCW:p6 --source visible --lines 40 --format ansi";
+        const ARGV: &str =
+            "herdr --session default agent read wCW:p6 --source visible --lines 40 --format ansi";
         let runner = FakeRunner::default().with(ARGV, "");
 
-        agent_read(&runner, "wCW:p6", 40).expect("herdr answers");
+        agent_read(&runner, &key("wCW:p6"), 40).expect("herdr answers");
 
         let call = runner.call(ARGV);
         assert_eq!(call.cwd, None);
@@ -343,11 +484,11 @@ mod tests {
     #[test]
     fn the_newline_herdr_ends_on_is_not_a_line() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 2 --format ansi",
+            "herdr --session default agent read w:p1 --source visible --lines 2 --format ansi",
             "one\ntwo\n",
         );
 
-        let lines = agent_read(&runner, "w:p1", 2).unwrap();
+        let lines = agent_read(&runner, &key("w:p1"), 2).unwrap();
 
         assert_eq!(lines, ["one", "two"]);
     }
@@ -358,11 +499,11 @@ mod tests {
     #[test]
     fn a_carriage_return_before_the_newline_is_part_of_the_row_ending() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 2 --format ansi",
+            "herdr --session default agent read w:p1 --source visible --lines 2 --format ansi",
             "\x1b[1mone\x1b[0m\r\ntwo\r\n",
         );
 
-        let lines = agent_read(&runner, "w:p1", 2).unwrap();
+        let lines = agent_read(&runner, &key("w:p1"), 2).unwrap();
 
         assert_eq!(lines, ["\x1b[1mone\x1b[0m", "two"]);
     }
@@ -371,11 +512,11 @@ mod tests {
     #[test]
     fn a_blank_line_within_the_snapshot_is_kept() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 4 --format ansi",
+            "herdr --session default agent read w:p1 --source visible --lines 4 --format ansi",
             "\none\n\nthree\n",
         );
 
-        let lines = agent_read(&runner, "w:p1", 4).unwrap();
+        let lines = agent_read(&runner, &key("w:p1"), 4).unwrap();
 
         assert_eq!(lines, ["", "one", "", "three"]);
     }
@@ -383,11 +524,11 @@ mod tests {
     #[test]
     fn a_pane_that_has_drawn_nothing_reads_as_no_lines() {
         let runner = FakeRunner::default().with(
-            "herdr agent read w:p1 --source visible --lines 4 --format ansi",
+            "herdr --session default agent read w:p1 --source visible --lines 4 --format ansi",
             "",
         );
 
-        let lines = agent_read(&runner, "w:p1", 4).unwrap();
+        let lines = agent_read(&runner, &key("w:p1"), 4).unwrap();
 
         assert_eq!(lines, Vec::<String>::new());
     }
@@ -398,11 +539,13 @@ mod tests {
     /// one does. The call it left on the runner is what tells them apart.
     #[test]
     fn a_focus_through_the_seam_names_the_pane_and_nothing_else() {
-        let runner = FakeRunner::default().with("herdr agent focus wCW:p6", "");
+        let runner = FakeRunner::default().with("herdr --session default agent focus wCW:p6", "");
 
-        Herdr::new(&runner).focus("wCW:p6").expect("herdr answers");
+        Herdr::new(&runner)
+            .focus(&key("wCW:p6"))
+            .expect("herdr answers");
 
-        let call = runner.call("herdr agent focus wCW:p6");
+        let call = runner.call("herdr --session default agent focus wCW:p6");
         assert_eq!(call.cwd, None);
         assert!(call.env.is_empty());
     }
@@ -420,17 +563,18 @@ mod tests {
     #[test]
     fn a_closed_pane_reaches_the_caller_as_its_own_kind() {
         let read = FakeRunner::default().failing(
-            "herdr agent read w:gone --source visible --lines 4 --format ansi",
+            "herdr --session default agent read w:gone --source visible --lines 4 --format ansi",
             vanished(),
         );
-        let focus = FakeRunner::default().failing("herdr agent focus w:gone", vanished());
+        let focus =
+            FakeRunner::default().failing("herdr --session default agent focus w:gone", vanished());
 
         assert_eq!(
-            agent_read(&read, "w:gone", 4).unwrap_err().kind,
+            agent_read(&read, &key("w:gone"), 4).unwrap_err().kind,
             FailureKind::Gone
         );
         assert_eq!(
-            agent_focus(&focus, "w:gone").unwrap_err().kind,
+            agent_focus(&focus, &key("w:gone")).unwrap_err().kind,
             FailureKind::Gone
         );
     }

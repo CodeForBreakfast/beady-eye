@@ -115,7 +115,7 @@ fn a_run_whose_provider_stops_answering_is_warned_and_still_draws_every_tree() {
     let mut environment = tracker.environment();
     environment.push(shims_first_on_path());
     environment.push((
-        "BDI_SHIM_HERDR_AGENTS".to_string(),
+        "BDI_SHIM_HERDR_SESSIONS".to_string(),
         no_session_here(&home).display().to_string(),
     ));
     environment.push(a_socket_of_its_own(&home));
@@ -135,9 +135,10 @@ fn a_run_whose_provider_stops_answering_is_warned_and_still_draws_every_tree() {
     );
 }
 
-/// A path the shimmed herdr is told to answer from and that is not there, so
-/// it exits non-zero the way a herdr with no session to report does. That is
-/// a provider which ran, which is what tells this state from the one above.
+/// A path the shimmed herdr is told to list its sessions from and that is not
+/// there, so it exits non-zero the way a herdr with no session to report
+/// does. That is a provider which ran, which is what tells this state from
+/// the one above.
 fn no_session_here(home: &Path) -> PathBuf {
     home.join("herdr-has-no-session")
 }

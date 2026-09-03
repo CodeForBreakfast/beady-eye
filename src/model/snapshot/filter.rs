@@ -123,6 +123,7 @@ mod tests {
         a_provider, build, build_tree, Collected, Counts, FailedProject, ProviderState, Readiness,
         TrackerFailure,
     };
+    use crate::model::types::testing::key;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
 
@@ -538,8 +539,8 @@ mod tests {
                 project: "orbital".to_string(),
                 id: "orb-7".to_string(),
             },
-            named_by_bead: "w:p1".to_string(),
-            named_by_pane: "w:p2".to_string(),
+            named_by_bead: key("w:p1"),
+            named_by_pane: key("w:p2"),
         }];
         assert!(!before.unattributed.is_empty(), "there are panes to lose");
 

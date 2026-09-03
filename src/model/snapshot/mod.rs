@@ -24,27 +24,61 @@ use crate::model::badges::Badged;
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link};
-use crate::model::types::{Edge, PaneStatus, Status};
+use crate::model::types::{Edge, PaneKey, PaneStatus, Status};
 
 /// Which agent provider this run read, and how that went.
 ///
 /// Which tier `bdi` is reading follows from the state: with no panes there is
 /// no agent to join and no filter to apply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentProvider {
     /// What the provider calls itself, so a consumer knows which one was
     /// asked without being told separately.
     pub provider: &'static str,
     pub state: ProviderState,
+    /// Every session the provider said it was running, and whether each
+    /// answered for its panes. Empty where the provider never said: a
+    /// session is a fact to draw, and the panes of the ones that answered
+    /// are drawn whatever the others did.
+    pub sessions: Vec<Session>,
 }
 
 impl AgentProvider {
-    pub fn answering(provider: &'static str) -> Self {
+    pub fn answering(provider: &'static str, sessions: Vec<Session>) -> Self {
         Self {
             provider,
             state: ProviderState::Answering,
+            sessions,
         }
     }
+
+    /// The sessions the provider named and that did not answer for their
+    /// panes, each a finding said at the foot.
+    pub fn unanswered(&self) -> impl Iterator<Item = &str> {
+        self.sessions
+            .iter()
+            .filter(|session| session.state == SessionState::NotAnswering)
+            .map(|session| session.name.as_str())
+    }
+}
+
+/// One session the provider runs, and whether it answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Session {
+    pub name: String,
+    pub state: SessionState,
+}
+
+/// How one session's listing went. Two states rather than the provider's
+/// three: a session the provider named is there, so it is answering or it is
+/// a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionState {
+    /// It answered, so its panes are every pane it holds.
+    Answering,
+    /// It is running and did not answer. A finding, said at the foot.
+    NotAnswering,
 }
 
 /// What a provider is called where a test does not care which one answered.
@@ -61,6 +95,7 @@ pub fn a_provider(state: ProviderState) -> AgentProvider {
     AgentProvider {
         provider: A_PROVIDER,
         state,
+        sessions: Vec::new(),
     }
 }
 
@@ -348,7 +383,7 @@ pub struct HiddenTree {
 /// pane, so its own row has to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LoosePane {
-    pub pane: String,
+    pub pane: PaneKey,
     pub project: String,
     pub cwd: String,
     pub pane_status: PaneStatus,
@@ -362,7 +397,7 @@ pub struct LoosePane {
 /// absence of the field is how a consumer tells this from a `LoosePane`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UnconfiguredPane {
-    pub pane: String,
+    pub pane: PaneKey,
     pub cwd: String,
     pub pane_status: PaneStatus,
 }
@@ -446,7 +481,7 @@ impl Snapshot {
     ) -> Self {
         Snapshot {
             generated_at: now,
-            agents: AgentProvider::answering(provider),
+            agents: AgentProvider::answering(provider, Vec::new()),
             filter,
             trees: Vec::new(),
             hidden_trees: Vec::new(),
@@ -541,6 +576,7 @@ mod tests {
     use crate::model::edges;
     use crate::model::join::{self, Joined, ProjectRows};
     use crate::model::tree::{Assembled, Nesting};
+    use crate::model::types::testing::A_SESSION;
     use crate::model::types::{Bead, Pane};
     use pretty_assertions::assert_eq;
 
@@ -621,7 +657,7 @@ render = "⏸ waiting"
     }
 
     pub(super) fn panes(json: &str) -> Vec<Pane> {
-        parse_agent_list(json).expect("the panes parse")
+        parse_agent_list(A_SESSION, json).expect("the panes parse")
     }
 
     pub(super) fn joined(rows: &[Bead], panes: &[Pane]) -> Joined {

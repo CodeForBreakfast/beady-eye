@@ -97,12 +97,24 @@ pub enum PaneStatus {
     Other(String),
 }
 
+/// A pane, across every session on this machine. A session mints its own
+/// pane ids from `w1` up, so an id on its own does not name a pane: two
+/// sessions have held a `w1:p1` at the same instant.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct PaneKey {
+    pub session: String,
+    pub id: String,
+}
+
 /// One pane as `bdi` holds it: only the fields it uses. The names are
 /// herdr's, under the terminology rule, and another provider maps into them.
 /// How one spells them on the wire, and which it may leave out, is the
 /// adapter's business.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pane {
+    /// The session holding this pane, which the pane's own listing does not
+    /// carry: a session answers for its own panes and names itself nowhere.
+    pub session: String,
     pub pane_id: String,
     pub cwd: PathBuf,
     pub display_agent: Option<String>,
@@ -119,8 +131,14 @@ pub struct Pane {
 impl Pane {
     /// A pane as a provider answered with it. What it may also have said
     /// about the pane is public and set after.
-    pub fn answered(pane_id: String, cwd: PathBuf, agent_status: PaneStatus) -> Self {
+    pub fn answered(
+        session: String,
+        pane_id: String,
+        cwd: PathBuf,
+        agent_status: PaneStatus,
+    ) -> Self {
         Self {
+            session,
             pane_id,
             cwd,
             display_agent: None,
@@ -128,6 +146,14 @@ impl Pane {
             state_labels: BTreeMap::new(),
             agent_status,
             cwd_in_the_main_working_tree: None,
+        }
+    }
+
+    /// What this pane is known by wherever a pane is named.
+    pub fn key(&self) -> PaneKey {
+        PaneKey {
+            session: self.session.clone(),
+            id: self.pane_id.clone(),
         }
     }
 
@@ -157,5 +183,25 @@ impl Pane {
             .get(state)
             .map(String::as_str)
             .or(self.title.as_deref())
+    }
+}
+
+/// A pane's name as a test writes it, where the test does not care which
+/// session holds it. Shared by the tests inside the crate and the ones under
+/// `tests/`, which is why it sits behind the feature rather than `cfg(test)`.
+#[cfg(feature = "testing")]
+pub mod testing {
+    use super::PaneKey;
+
+    /// The session a test's panes are in unless it says otherwise: the one
+    /// herdr runs where nothing names another.
+    pub const A_SESSION: &str = "default";
+
+    /// A pane in that session, by id.
+    pub fn key(id: &str) -> PaneKey {
+        PaneKey {
+            session: A_SESSION.to_string(),
+            id: id.to_string(),
+        }
     }
 }

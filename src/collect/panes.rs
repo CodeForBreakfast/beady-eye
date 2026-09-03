@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::collect::agents::Agents;
 use crate::collect::run::{FailureKind, RunFailure};
+use crate::model::types::PaneKey;
 
 /// How long the tail waits on the provider before saying the pane could not
 /// be read.
@@ -29,10 +30,10 @@ const PATIENCE: Duration = Duration::from_secs(2);
 /// the loop can be driven over a provider that answers whatever a test needs
 /// it to, including nothing.
 pub trait Panes {
-    fn read(&self, pane: &str, lines: u16);
+    fn read(&self, pane: &PaneKey, lines: u16);
 
     /// Bring a pane to the front. The only write `bdi` performs.
-    fn focus(&self, pane: &str);
+    fn focus(&self, pane: &PaneKey);
 }
 
 /// What the provider said, and which pane it said it about.
@@ -43,19 +44,19 @@ pub trait Panes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Read {
-        pane: String,
+        pane: PaneKey,
         read: Result<Vec<String>, RunFailure>,
     },
     Focused {
-        pane: String,
+        pane: PaneKey,
         focused: Result<(), RunFailure>,
     },
 }
 
 /// What the tail asks the provider for.
 enum Job {
-    Read { pane: String, lines: u16 },
-    Focus { pane: String },
+    Read { pane: PaneKey, lines: u16 },
+    Focus { pane: PaneKey },
 }
 
 /// What came back. The two arms are kept apart so a reply that outstayed its
@@ -198,17 +199,15 @@ fn work(provider: &dyn Agents, asked: &Receiver<Job>, to: &Sender<Done>) {
 }
 
 impl Panes for Aside {
-    fn read(&self, pane: &str, lines: u16) {
+    fn read(&self, pane: &PaneKey, lines: u16) {
         let _ = self.wanted.send(Job::Read {
-            pane: pane.to_string(),
+            pane: pane.clone(),
             lines,
         });
     }
 
-    fn focus(&self, pane: &str) {
-        let _ = self.wanted.send(Job::Focus {
-            pane: pane.to_string(),
-        });
+    fn focus(&self, pane: &PaneKey) {
+        let _ = self.wanted.send(Job::Focus { pane: pane.clone() });
     }
 }
 
@@ -216,6 +215,7 @@ impl Panes for Aside {
 mod tests {
     use super::*;
     use crate::collect::agents::testing::Asked;
+    use crate::model::types::testing::key;
     use crate::model::types::Pane;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -299,22 +299,24 @@ mod tests {
             "an echoing provider"
         }
 
-        fn list(&self) -> Result<Vec<Pane>, RunFailure> {
+        fn sessions(&self) -> Result<Vec<String>, RunFailure> {
+            panic!("the tail asks a provider to read and to focus, never for its sessions")
+        }
+
+        fn list(&self, _session: &str) -> Result<Vec<Pane>, RunFailure> {
             panic!("the tail asks a provider to read and to focus, never to list")
         }
 
-        fn read(&self, pane: &str, lines: u16) -> Result<Vec<String>, RunFailure> {
+        fn read(&self, pane: &PaneKey, lines: u16) -> Result<Vec<String>, RunFailure> {
             self.note(Asked::Read {
-                pane: pane.to_string(),
+                pane: pane.clone(),
                 lines,
             });
             Ok(self.said.clone())
         }
 
-        fn focus(&self, pane: &str) -> Result<(), RunFailure> {
-            self.note(Asked::Focus {
-                pane: pane.to_string(),
-            });
+        fn focus(&self, pane: &PaneKey) -> Result<(), RunFailure> {
+            self.note(Asked::Focus { pane: pane.clone() });
             Ok(())
         }
     }
@@ -327,16 +329,20 @@ mod tests {
             WEDGED
         }
 
-        fn list(&self) -> Result<Vec<Pane>, RunFailure> {
+        fn sessions(&self) -> Result<Vec<String>, RunFailure> {
+            panic!("the tail asks a provider to read and to focus, never for its sessions")
+        }
+
+        fn list(&self, _session: &str) -> Result<Vec<Pane>, RunFailure> {
             panic!("the tail asks a provider to read and to focus, never to list")
         }
 
-        fn read(&self, _pane: &str, _lines: u16) -> Result<Vec<String>, RunFailure> {
+        fn read(&self, _pane: &PaneKey, _lines: u16) -> Result<Vec<String>, RunFailure> {
             thread::sleep(Duration::from_secs(60));
             Ok(Vec::new())
         }
 
-        fn focus(&self, _pane: &str) -> Result<(), RunFailure> {
+        fn focus(&self, _pane: &PaneKey) -> Result<(), RunFailure> {
             thread::sleep(Duration::from_secs(60));
             Ok(())
         }
@@ -349,7 +355,7 @@ mod tests {
 
     fn a_read_of(pane: &str, lines: u16) -> Asked {
         Asked::Read {
-            pane: pane.to_string(),
+            pane: key(pane),
             lines,
         }
     }
@@ -359,12 +365,12 @@ mod tests {
         let (echo, asked) = Echo::saying(&["one line", "and another"]);
         let (panes, answers) = asking(echo);
 
-        panes.read("w:p1", 6);
+        panes.read(&key("w:p1"), 6);
 
         assert_eq!(
             answer(&answers),
             Answer::Read {
-                pane: "w:p1".to_string(),
+                pane: key("w:p1"),
                 read: Ok(vec!["one line".to_string(), "and another".to_string()]),
             }
         );
@@ -376,21 +382,16 @@ mod tests {
         let (echo, asked) = Echo::saying(&[]);
         let (panes, answers) = asking(echo);
 
-        panes.focus("w:p1");
+        panes.focus(&key("w:p1"));
 
         assert_eq!(
             answer(&answers),
             Answer::Focused {
-                pane: "w:p1".to_string(),
+                pane: key("w:p1"),
                 focused: Ok(()),
             }
         );
-        assert_eq!(
-            questions(&asked),
-            [Asked::Focus {
-                pane: "w:p1".to_string()
-            }]
-        );
+        assert_eq!(questions(&asked), [Asked::Focus { pane: key("w:p1") }]);
     }
 
     /// A provider that never answers must not leave the tail waiting on it for
@@ -401,7 +402,7 @@ mod tests {
         let (panes, answers) = asking(Wedged);
         let started = std::time::Instant::now();
 
-        panes.read("w:p1", 6);
+        panes.read(&key("w:p1"), 6);
         assert_eq!(
             read(answer(&answers)).map_err(|f| f.kind),
             Err(FailureKind::Unavailable)
@@ -413,7 +414,7 @@ mod tests {
         );
 
         let again = std::time::Instant::now();
-        panes.read("w:p1", 6);
+        panes.read(&key("w:p1"), 6);
         assert!(read(answer(&answers)).is_err());
         assert!(
             again.elapsed() < PATIENCE,
@@ -428,7 +429,7 @@ mod tests {
     fn an_unanswered_question_is_answered_against_the_provider_that_owed_it() {
         let (panes, answers) = asking(Wedged);
 
-        panes.read("w:p1", 6);
+        panes.read(&key("w:p1"), 6);
 
         let failure = read(answer(&answers)).expect_err("a wedged provider answers nothing");
         assert_eq!(failure.program, WEDGED);
@@ -449,7 +450,7 @@ mod tests {
         let (echo, asked) = Echo::saying_late(&["back from the dead"]);
         let (panes, answers) = asking(echo);
 
-        panes.read("w:p1", 6);
+        panes.read(&key("w:p1"), 6);
         assert_eq!(
             read(answer(&answers)).map_err(|f| f.kind),
             Err(FailureKind::Unavailable),
@@ -461,7 +462,7 @@ mod tests {
         // been drained. A tail that never recovers never leaves this loop.
         let gave_up_at = std::time::Instant::now() + PATIENCE * 5;
         let read = loop {
-            panes.read("w:p1", 6);
+            panes.read(&key("w:p1"), 6);
             match read(answer(&answers)) {
                 Ok(read) => break read,
                 Err(failure) => assert!(
@@ -487,10 +488,10 @@ mod tests {
         let (echo, _) = Echo::saying(&[]);
         let (panes, answers) = asking(echo);
 
-        panes.read("w:p1", 6);
-        panes.focus("w:p2");
+        panes.read(&key("w:p1"), 6);
+        panes.focus(&key("w:p2"));
 
-        assert!(matches!(answer(&answers), Answer::Read { pane, .. } if pane == "w:p1"));
-        assert!(matches!(answer(&answers), Answer::Focused { pane, .. } if pane == "w:p2"));
+        assert!(matches!(answer(&answers), Answer::Read { pane, .. } if pane == key("w:p1")));
+        assert!(matches!(answer(&answers), Answer::Focused { pane, .. } if pane == key("w:p2")));
     }
 }

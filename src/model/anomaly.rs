@@ -67,6 +67,7 @@ mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::model::join::JoinSource;
+    use crate::model::types::testing::key;
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
@@ -89,7 +90,7 @@ mod tests {
 
     fn pane(pane_status: PaneStatus) -> AgentRef {
         AgentRef {
-            pane: "w:p1".into(),
+            pane: key("w:p1"),
             pane_status,
             title: None,
             source: JoinSource::AgentPane,

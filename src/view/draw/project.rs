@@ -166,7 +166,7 @@ fn recovered(found: &Recovery) -> Span<'static> {
     } else {
         panes
             .iter()
-            .map(|pane| pane_marker(&pane.pane, &pane.pane_status))
+            .map(|pane| pane_marker(&pane.pane.id, &pane.pane_status))
             .collect::<Vec<_>>()
             .join(" · ")
     });

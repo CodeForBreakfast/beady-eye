@@ -126,15 +126,6 @@ Anything workflow-specific is expressed as configuration, not code. See
   until the TUI has proved the data model.
 - **No cross-machine view.** One box. `herdr --remote` is a later consumer of
   the same collector.
-- **One herdr session.** A box runs several at once, each its own server with
-  its own socket, and `herdr agent list` answers for one: the session named
-  in the caller's environment, which is the one a pane inside herdr sits in,
-  or the default session where nothing names one — `bdi` need not be run from
-  a herdr pane at all. Measured 2026-09-03 with three running (`bdi-dd5`).
-  Pane ids are unique only within a session: two sessions each held a `w1:p1`
-  at the same instant. So the seats in every other session are drawn as
-  absent, and a bead they work as unstaffed. Reading every session from
-  `herdr session list`, keyed on `(session, pane)`, is `bdi-qgm`.
 
 ## Architecture
 
@@ -516,20 +507,39 @@ the drawing is not.
 
 ### herdr
 
+A box runs several herdr sessions at once, each its own server with its own
+socket, and `herdr agent list` answers for one of them: the session named on
+the command line, else the one the caller's environment names, else the
+default. `bdi` may be run outside herdr, so it takes the sessions from
+`herdr session list --json` — every session on the box, with `running` saying
+which have a server to answer — and asks each running one by name,
+`herdr --session <name> agent list`. Nothing treats the session `bdi` happens
+to sit in as special. A session that will not answer is a finding about that
+session, said at the foot and in `agents.sessions`; the panes of the sessions
+that did answer are drawn as they would be had it never existed.
+
 `herdr agent list` returns JSON over the session socket. The fields that matter:
 
 | field | use |
 |---|---|
-| `pane_id` | the join key, e.g. `wCM:p9` |
+| `pane_id` | the pane's id within its session, e.g. `wCM:p9` |
 | `cwd` | resolves the pane to a project root |
 | `display_agent` | the bead id an agent stamped |
 | `title` | the agent's one-line "what I am doing" |
 | `state_labels` | per-state text, shown for the state the pane is in |
 | `agent_status` | `idle` / `working` / `blocked` / `done` |
 
-`herdr agent read <pane>` gives terminal output for the tail pane.
-`herdr agent focus <pane>` is the only write `bdi` performs, and it writes to
-herdr, not to any system of record.
+A session mints its own pane ids from `w1` up, so two sessions have held a
+`w1:p1` at the same instant (measured 2026-09-03, `bdi-dd5`). A pane is
+therefore keyed on `(session, id)` wherever `bdi` names one — the join, the
+loose panes, the conflicts, the tail — and the listing does not carry the
+session, so the collector remembers which session it asked.
+
+`herdr --session <session> agent read <pane>` gives terminal output for the
+tail pane, and `herdr --session <session> agent focus <pane>` is the only
+write `bdi` performs, and it writes to herdr, not to any system of record.
+Both name the session, because a read that named none would read whichever
+session `bdi` sits in and draw that session's pane of the same id.
 
 **`agent_status: blocked` means a TTY prompt is waiting** — a permission gate, or
 a pane still at a startup confirmation. It is a property of the terminal, not of
@@ -553,12 +563,18 @@ work looks unstaffed.
 bd update <id> --set-metadata agent_pane=$HERDR_PANE_ID
 ```
 
-Its hole: a setup that does not write it.
+Its hole: a setup that does not write it. And it names the pane by id alone —
+`$HERDR_PANE_ID` is what a seat has, and the session's name is in a pane's
+environment only outside the default session — so `bdi` matches the id
+across every session it read. Held by one session, that is the pane. Held by
+several, the claim is refused and reported (the last row of the table below)
+rather than resolved by picking: nothing the bead wrote says which.
 
 Together they close both. A bead is **live** if either direction resolves to a
-pane present in `herdr agent list`. The pane id exists from the moment the pane
-does, so there is no race against an agent that has not identified itself yet —
-which is what makes drift detection exact rather than a guess.
+pane present in some session's `herdr agent list`. The pane id exists from the
+moment the pane does, so there is no race against an agent that has not
+identified itself yet — which is what makes drift detection exact rather than
+a guess.
 
 `agent_pane` is the default key name and is configurable. `bdi` never requires
 it: without it, liveness falls back to `display_agent` alone and the affected
@@ -647,6 +663,7 @@ happened to exist.
 | one pane is named by several beads | none wins; reported, with what the pane says it is working on |
 | a pane's project differs from the bead's | no join; reported |
 | a pane's directory is under no configured project | no join; reported once as `unconfigured`, and on each bead whose key named it |
+| the bead's key names a pane id that several sessions each hold | none wins; reported with the sessions, on the bead and in `conflicts`, and every one of those panes is still drawn under its own session |
 
 Silently picking one is the failure mode: each of these is drift of exactly the
 kind the tool exists to surface, and last-write-wins would hide it behind a
@@ -1247,7 +1264,14 @@ name to the socket after any command that wrote something.
 ```json
 {
   "generated_at": "2026-08-30T10:22:14Z",
-  "agents": { "provider": "herdr", "state": "answering" },
+  "agents": {
+    "provider": "herdr",
+    "state": "answering",
+    "sessions": [
+      { "name": "default", "state": "answering" },
+      { "name": "beacon", "state": "not-answering" }
+    ]
+  },
   "filter": "live-agents",
   "trees": [
     {
@@ -1271,7 +1295,7 @@ name to the socket after any command that wrote something.
           "closed_at": null,
           "badges": [{ "key": "blocked_on", "text": "⏸ waiting" }],
           "agent": {
-            "pane": "wCM:p9",
+            "pane": { "session": "default", "id": "wCM:p9" },
             "pane_status": "working",
             "title": "shell selector + stable path",
             "source": "agent_pane"
@@ -1301,8 +1325,8 @@ name to the socket after any command that wrote something.
   ],
   "hidden_trees": [ { "project": "summit-works", "root": "nix-bgej6", "title": "…", "reason": "no-live-agent" } ],
   "failed_projects": [ { "project": "homelab", "tracker": "auth" } ],
-  "unattributed": [ { "pane": "wCM:pD", "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification" } ],
-  "unconfigured": [ { "pane": "wCM:pF", "cwd": "/srv/spike", "pane_status": "idle" } ],
+  "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification" } ],
+  "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": []
 }
 ```
@@ -1321,7 +1345,13 @@ says which agent provider was asked and how that went, so a consumer knows
 which tier it is reading and which program answered for it: `state` is
 `answering`, `not-answering` where the provider is there and did not — which
 covers one that would not start at all — or `absent` where nothing was
-installed to. A tree's
+installed to. `sessions` is every session the provider said it was running,
+each `answering` or `not-answering` for its panes, and `[]` where the
+provider never got as far as saying. A pane, wherever the contract names
+one — `agent.pane`, `unattributed`, `unconfigured`, and every pane a conflict
+names — is `{ "session", "id" }`, the same shape as a bead's
+`{ "project", "id" }` and for the same reason: an id is minted per session
+and names nothing on its own. A tree's
 `tracker` is `ok`, `{ "unreachable": <reason> }` where its tracker could not
 be read, or `root-not-found` where the tracker answered and holds no bead of
 that id — which only a root named in config or on the command line can be,

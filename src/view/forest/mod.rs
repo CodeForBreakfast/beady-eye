@@ -599,6 +599,7 @@ mod tests {
         TrackerState, A_PROVIDER,
     };
     use crate::model::tree::{self, Assembled, Nesting};
+    use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::{Bead, Pane};
     use crate::view::lines::{
         counts_beneath, facts_of, links_below, marker, prefix, progress_of, run_size, split,
@@ -1033,7 +1034,7 @@ credential_command = "secret harbour"
     }
 
     fn panes() -> Vec<Pane> {
-        parse_agent_list(PANES).expect("the panes parse")
+        parse_agent_list(A_SESSION, PANES).expect("the panes parse")
     }
 
     /// One working pane and one idle one, both in Orbital's tree. Enough to
@@ -1045,7 +1046,7 @@ credential_command = "secret harbour"
     ]}}"#;
 
     fn two_panes() -> Vec<Pane> {
-        parse_agent_list(TWO_PANES).expect("the panes parse")
+        parse_agent_list(A_SESSION, TWO_PANES).expect("the panes parse")
     }
 
     fn joined(orbital: &Assembled, harbour: &Assembled, panes: &[Pane]) -> Joined {
@@ -1646,13 +1647,13 @@ credential_command = "secret harbour"
                 "  └── ⚠ fer-2 unread",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
-                "  └── - Unconfigured(UnconfiguredPane { pane: \"w:pF\", cwd: \"/srv/spike\", pane_status: Idle })",
+                "  └── - Unconfigured(UnconfiguredPane { pane: PaneKey { session: \"default\", id: \"w:pF\" }, cwd: \"/srv/spike\", pane_status: Idle })",
                 "▾ [Conflicts] 1",
-                "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"orbital\", id: \"orb-7.1\" }, panes: [\"w:p3\", \"w:p4\"] })",
+                "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"orbital\", id: \"orb-7.1\" }, panes: [PaneKey { session: \"default\", id: \"w:p3\" }, PaneKey { session: \"default\", id: \"w:p4\" }] })",
                 "▸ [HiddenTrees] 1",
                 "▾ [Unattributed] 2",
-                "  ├── - Loose(LoosePane { pane: \"w:p3\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None })",
-                "  └── - Loose(LoosePane { pane: \"w:p4\", project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None })",
+                "  ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None })",
+                "  └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None })",
             ]
         );
     }
@@ -1756,10 +1757,10 @@ credential_command = "secret harbour"
                 )
             })
             .collect();
-        parse_agent_list(&format!(
-            r#"{{"result":{{"agents":[{}]}}}}"#,
-            agents.join(",")
-        ))
+        parse_agent_list(
+            A_SESSION,
+            &format!(r#"{{"result":{{"agents":[{}]}}}}"#, agents.join(",")),
+        )
         .expect("the panes parse")
     }
 
@@ -3162,7 +3163,7 @@ credential_command = "secret harbour"
             found
                 .panes
                 .iter()
-                .map(|p| p.pane.as_str())
+                .map(|p| p.pane.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["w:p9"]
         );
@@ -3251,7 +3252,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             crate::view::tail::target(&forest).pane(),
-            Some("w:p1"),
+            Some(&pane_key("w:p1")),
             "{:#?}",
             sketch(&forest)
         );
@@ -3385,8 +3386,8 @@ credential_command = "secret harbour"
     /// The pane id on the line the selection sits on, where it sits on one.
     fn selected_item(forest: &Forest) -> Option<String> {
         match &forest.lines()[forest.selected_line()].content {
-            Content::Item(Item::Loose(pane)) => Some(pane.pane.clone()),
-            Content::Item(Item::Unconfigured(pane)) => Some(pane.pane.clone()),
+            Content::Item(Item::Loose(pane)) => Some(pane.pane.id.clone()),
+            Content::Item(Item::Unconfigured(pane)) => Some(pane.pane.id.clone()),
             _ => None,
         }
     }
@@ -3461,7 +3462,7 @@ credential_command = "secret harbour"
     /// gone, which empties the unattributed group of the one the tests hold.
     fn built_without_the_conflicting_panes() -> Snapshot {
         let mut snapshot = snapshot();
-        snapshot.unattributed.retain(|pane| pane.pane == "w:p3");
+        snapshot.unattributed.retain(|pane| pane.pane.id == "w:p3");
         snapshot
     }
 
@@ -4254,7 +4255,7 @@ credential_command = "secret harbour"
     ]}}"#;
 
     fn one_pane(json: &str) -> Vec<Pane> {
-        parse_agent_list(json).expect("the panes parse")
+        parse_agent_list(A_SESSION, json).expect("the panes parse")
     }
 
     /// A snapshot built out of exactly what it is handed, with no other

@@ -153,7 +153,7 @@ pub fn draw(
 
     frame.render_widget(
         status_bar(
-            &notices(forest.snapshot().agents.state, foot.standing),
+            &notices(&forest.snapshot().agents, foot.standing),
             foot.copied,
             foot.keys,
             bands.keys.width as usize,
@@ -256,6 +256,7 @@ pub(super) fn structure(prefix: &str) -> Span<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::types::testing::key;
     use pretty_assertions::assert_eq;
     use ratatui::style::Modifier;
     use std::collections::BTreeMap;
@@ -361,7 +362,7 @@ mod tests {
 
     pub(super) fn pane(pane: &str, status: PaneStatus) -> LoosePane {
         LoosePane {
-            pane: pane.into(),
+            pane: key(pane),
             project: "summit-works".into(),
             cwd: "/tmp/bdi-ground/summit-works".into(),
             pane_status: status,
@@ -389,7 +390,7 @@ mod tests {
     /// know about an agent.
     pub(super) fn a_pane() -> AgentRef {
         AgentRef {
-            pane: "wCM:p9".into(),
+            pane: key("wCM:p9"),
             pane_status: PaneStatus::Working,
             title: None,
             source: JoinSource::AgentPane,

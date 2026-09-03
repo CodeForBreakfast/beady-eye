@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::join::Conflict;
+use crate::model::types::PaneKey;
 use crate::view::lines::{Content, GroupKind, Item, Line, Place};
 
 /// What a line that folds is known by, so both the fold and the selection
@@ -37,7 +38,7 @@ pub(super) enum ItemKey {
     /// A pane, by its id, which is unique in a herdr session. It serves both
     /// groups that hold panes: `recovery` puts a pane in exactly one of them,
     /// and an unconfigured pane is one under no configured project at all.
-    Pane(String),
+    Pane(PaneKey),
     Project(String),
     /// A disagreement, by the whole of what it says. No one field identifies
     /// every arm — several panes naming one bead in another project make

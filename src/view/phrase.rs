@@ -19,7 +19,7 @@ use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
-use crate::model::types::{PaneStatus, Status};
+use crate::model::types::{PaneKey, PaneStatus, Status};
 use crate::view::{Freshness, Mark, Notice};
 
 /// The oldest bd whose command line `bdi` runs, as README states it. A
@@ -51,17 +51,20 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
 ///
 /// Each of these is written so a reader can tell what it costs them: what
 /// they can no longer see, or how stale what they are looking at may be.
-pub fn notice(notice: Notice) -> &'static str {
+pub fn notice(notice: &Notice) -> String {
     match notice {
-        Notice::AgentsUnknown => "no herdr session · which agents are alive is unknown",
+        Notice::AgentsUnknown => "no herdr session · which agents are alive is unknown".to_string(),
+        Notice::SessionUnanswered(session) => {
+            format!("herdr session {session} did not answer · which agents are in it is unknown")
+        }
         Notice::NoInboundChannel => {
-            "nothing can tell bdi a project changed · every project is polled instead"
+            "nothing can tell bdi a project changed · every project is polled instead".to_string()
         }
         Notice::AnotherBdiHadTheInboundChannel => {
-            "another bdi held the inbound channel · every project is polled instead"
+            "another bdi held the inbound channel · every project is polled instead".to_string()
         }
         Notice::ConfigWouldNotReload => {
-            "the config would not load · bdi is still on the one before the edit"
+            "the config would not load · bdi is still on the one before the edit".to_string()
         }
     }
 }
@@ -73,18 +76,21 @@ pub fn notice(notice: Notice) -> &'static str {
 /// fits in one on its own, so a foot without these has nothing to fall back
 /// to but a cut — and a cut takes the end, which is where both phrases keep
 /// what the fact costs the reader.
-pub fn brief_notice(notice: Notice) -> &'static str {
+pub fn brief_notice(notice: &Notice) -> String {
     match notice {
-        Notice::AgentsUnknown => "agents unknown",
-        Notice::NoInboundChannel => "polled, not reported",
+        Notice::AgentsUnknown => "agents unknown".to_string(),
+        // The session's name is what survives the cut: which session's
+        // agents are unknown is the whole of what the reader can act on.
+        Notice::SessionUnanswered(session) => format!("{session} unanswered"),
+        Notice::NoInboundChannel => "polled, not reported".to_string(),
         // The cause is what survives the cut, not the cost. A reader who
         // keeps only *polled* has what the notice this one replaced already
         // gave them, and still nothing to do about it.
-        Notice::AnotherBdiHadTheInboundChannel => "another bdi had it",
+        Notice::AnotherBdiHadTheInboundChannel => "another bdi had it".to_string(),
         // What survives the cut is that the edit did not take, because that
         // is the half the reader cannot see: their editor is still showing
         // them the text they wrote.
-        Notice::ConfigWouldNotReload => "config not reloaded",
+        Notice::ConfigWouldNotReload => "config not reloaded".to_string(),
     }
 }
 
@@ -284,6 +290,9 @@ fn orphan_claim(refused: Option<&Conflict>) -> String {
         Some(Conflict::SeveralBeadsNameOnePane { beads, .. }) => {
             format!("claimed · {} beads name its pane", beads.len())
         }
+        Some(Conflict::PaneIdInSeveralSessions { sessions, .. }) => {
+            format!("claimed · {} sessions hold its pane id", sessions.len())
+        }
         // Neither of these ever gets here. A refusal sends the reader to the
         // disagreement's row to find the pane the claim was for, and these two
         // name no one pane, so `join::resolve` refuses no claim with either.
@@ -299,21 +308,24 @@ pub fn conflict(conflict: &Conflict) -> String {
             named_by_bead,
             named_by_pane,
         } => format!(
-            "{}: the bead names pane {named_by_bead}, and pane {named_by_pane} names the bead",
-            bead_key(bead)
+            "{}: the bead names pane {}, and pane {} names the bead",
+            bead_key(bead),
+            pane_key(named_by_bead),
+            pane_key(named_by_pane)
         ),
         Conflict::SeveralPanesNameOneBead { bead, panes } => format!(
             "{}: {} panes name this bead — {} — so none holds it",
             bead_key(bead),
             panes.len(),
-            panes.join(", ")
+            panes.iter().map(pane_key).collect::<Vec<_>>().join(", ")
         ),
         Conflict::SeveralBeadsNameOnePane {
             pane,
             caption,
             beads,
         } => format!(
-            "pane {pane}{}: {} beads name it — {} — so none holds it",
+            "pane {}{}: {} beads name it — {} — so none holds it",
+            pane_key(pane),
             caption.as_deref().map(saying).unwrap_or_default(),
             beads.len(),
             beads.iter().map(bead_key).collect::<Vec<_>>().join(", ")
@@ -323,9 +335,20 @@ pub fn conflict(conflict: &Conflict) -> String {
             pane,
             pane_project,
         } => format!(
-            "{}: pane {pane} is working in {}, so it joins nothing here",
+            "{}: pane {} is working in {}, so it joins nothing here",
             bead_key(bead),
+            pane_key(pane),
             pane_project.as_deref().unwrap_or("no configured project")
+        ),
+        Conflict::PaneIdInSeveralSessions {
+            bead,
+            pane_id,
+            sessions,
+        } => format!(
+            "{}: the bead names pane {pane_id}, which {} sessions each hold — {} — so none is its",
+            bead_key(bead),
+            sessions.len(),
+            sessions.join(", ")
         ),
     }
 }
@@ -570,6 +593,13 @@ pub fn bead_key(key: &BeadKey) -> String {
     format!("{} · {}", key.project, key.id)
 }
 
+/// A pane by its id and the session holding it, in that order: the id is
+/// what the reader has seen on the bead's row and in a seat's own words, and
+/// the session is what tells two of that id apart.
+pub fn pane_key(key: &PaneKey) -> String {
+    format!("{} in {}", key.id, key.session)
+}
+
 /// herdr's word for what a pane is doing.
 ///
 /// Read verbatim except for `blocked`, which is a TTY prompt waiting and is
@@ -656,6 +686,7 @@ fn saying(caption: &str) -> String {
 mod tests {
     use super::*;
     use crate::collect::run::{Env, RealRunner, Runner};
+    use crate::model::types::testing::key as pane_key;
     use crate::view::fitted::columns;
     use crate::view::tests::{
         every_failure_kind, every_join_source, every_mark, every_notice, every_tracker_failure,
@@ -702,8 +733,8 @@ mod tests {
         }
 
         for fact in every_notice() {
-            said.push(notice(fact).to_string());
-            said.push(brief_notice(fact).to_string());
+            said.push(notice(&fact));
+            said.push(brief_notice(&fact));
         }
 
         for rule in every_anomaly() {
@@ -717,13 +748,13 @@ mod tests {
             Anomaly::OrphanClaim {
                 refused: Some(Conflict::PaneInAnotherProject {
                     bead: key("nix-9670s.20"),
-                    pane: "wCM:pD".into(),
+                    pane: pane_key("wCM:pD"),
                     pane_project: None,
                 }),
             },
             Anomaly::OrphanClaim {
                 refused: Some(Conflict::SeveralBeadsNameOnePane {
-                    pane: "wCM:p9".into(),
+                    pane: pane_key("wCM:p9"),
                     caption: None,
                     beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
                 }),
@@ -743,13 +774,13 @@ mod tests {
         // another.
         for clash in [
             Conflict::SeveralBeadsNameOnePane {
-                pane: "wCM:p9".into(),
+                pane: pane_key("wCM:p9"),
                 caption: Some("nix-9670s.1: rebuild the installer image".into()),
                 beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
             },
             Conflict::PaneInAnotherProject {
                 bead: key("nix-9670s.20"),
-                pane: "wCM:pD".into(),
+                pane: pane_key("wCM:pD"),
                 pane_project: None,
             },
         ] {
@@ -841,27 +872,32 @@ mod tests {
         std::iter::successors(
             Some(Conflict::BeadAndPaneDisagree {
                 bead: key("nix-9670s.20"),
-                named_by_bead: "wCM:p9".into(),
-                named_by_pane: "wCM:p6".into(),
+                named_by_bead: pane_key("wCM:p9"),
+                named_by_pane: pane_key("wCM:p6"),
             }),
             |clash| match clash {
                 Conflict::BeadAndPaneDisagree { .. } => Some(Conflict::SeveralPanesNameOneBead {
                     bead: key("nix-9670s.20"),
-                    panes: vec!["wCM:p9".into(), "wCM:p6".into()],
+                    panes: vec![pane_key("wCM:p9"), pane_key("wCM:p6")],
                 }),
                 Conflict::SeveralPanesNameOneBead { .. } => {
                     Some(Conflict::SeveralBeadsNameOnePane {
-                        pane: "wCM:p9".into(),
+                        pane: pane_key("wCM:p9"),
                         caption: None,
                         beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
                     })
                 }
                 Conflict::SeveralBeadsNameOnePane { .. } => Some(Conflict::PaneInAnotherProject {
                     bead: key("nix-9670s.20"),
-                    pane: "wCM:p9".into(),
+                    pane: pane_key("wCM:p9"),
                     pane_project: Some("homelab".into()),
                 }),
-                Conflict::PaneInAnotherProject { .. } => None,
+                Conflict::PaneInAnotherProject { .. } => Some(Conflict::PaneIdInSeveralSessions {
+                    bead: key("nix-9670s.20"),
+                    pane_id: "wCM:p9".into(),
+                    sessions: vec!["default".into(), "beacon".into()],
+                }),
+                Conflict::PaneIdInSeveralSessions { .. } => None,
             },
         )
     }
@@ -1413,8 +1449,12 @@ mod tests {
     #[test]
     fn every_notice_is_told_apart_from_the_rest() {
         for said in [
-            every_notice().map(notice).collect::<Vec<&str>>(),
-            every_notice().map(brief_notice).collect::<Vec<&str>>(),
+            every_notice()
+                .map(|fact| notice(&fact))
+                .collect::<Vec<String>>(),
+            every_notice()
+                .map(|fact| brief_notice(&fact))
+                .collect::<Vec<String>>(),
         ] {
             let mut distinct = said.clone();
             distinct.sort_unstable();
@@ -1428,7 +1468,7 @@ mod tests {
     /// written about what it costs them rather than about what failed.
     #[test]
     fn a_bdi_nothing_can_reach_says_the_view_is_polled_rather_than_reported() {
-        let said = notice(Notice::NoInboundChannel);
+        let said = notice(&Notice::NoInboundChannel);
 
         assert!(said.contains("polled"), "{said}");
     }
@@ -1438,7 +1478,7 @@ mod tests {
     /// only cause of this that closing something puts right.
     #[test]
     fn a_socket_another_bdi_holds_says_so_rather_than_only_what_it_cost() {
-        let said = notice(Notice::AnotherBdiHadTheInboundChannel);
+        let said = notice(&Notice::AnotherBdiHadTheInboundChannel);
 
         assert!(said.contains("another bdi"), "{said}");
         assert!(said.contains("polled"), "{said}");
@@ -1449,12 +1489,12 @@ mod tests {
     /// and still nothing to do about it.
     #[test]
     fn the_brief_words_keep_the_cause_and_give_up_the_cost() {
-        let said = brief_notice(Notice::AnotherBdiHadTheInboundChannel);
+        let said = brief_notice(&Notice::AnotherBdiHadTheInboundChannel);
 
         assert!(said.contains("another bdi"), "{said}");
         assert!(
-            columns(&[Span::raw(said)])
-                <= columns(&[Span::raw(brief_notice(Notice::NoInboundChannel))]),
+            columns(&[Span::raw(said.clone())])
+                <= columns(&[Span::raw(brief_notice(&Notice::NoInboundChannel))]),
             "the brief words are what fit a forty-column foot: {said}"
         );
     }
@@ -1464,12 +1504,12 @@ mod tests {
     #[test]
     fn losing_the_channel_to_another_bdi_reads_differently_from_never_having_one() {
         assert_ne!(
-            notice(Notice::NoInboundChannel),
-            notice(Notice::AnotherBdiHadTheInboundChannel)
+            notice(&Notice::NoInboundChannel),
+            notice(&Notice::AnotherBdiHadTheInboundChannel)
         );
         assert_ne!(
-            brief_notice(Notice::NoInboundChannel),
-            brief_notice(Notice::AnotherBdiHadTheInboundChannel)
+            brief_notice(&Notice::NoInboundChannel),
+            brief_notice(&Notice::AnotherBdiHadTheInboundChannel)
         );
     }
 
@@ -1502,7 +1542,7 @@ mod tests {
         let outside = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::PaneInAnotherProject {
                 bead: key("nix-9670s.20"),
-                pane: "wCM:pD".into(),
+                pane: pane_key("wCM:pD"),
                 pane_project: None,
             }),
         });
@@ -1512,7 +1552,7 @@ mod tests {
         let elsewhere = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::PaneInAnotherProject {
                 bead: key("nix-9670s.20"),
-                pane: "wCM:p9".into(),
+                pane: pane_key("wCM:p9"),
                 pane_project: Some("homelab".into()),
             }),
         });
@@ -1520,7 +1560,7 @@ mod tests {
 
         let shared = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::SeveralBeadsNameOnePane {
-                pane: "wCM:p9".into(),
+                pane: pane_key("wCM:p9"),
                 caption: None,
                 beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
             }),
@@ -1584,8 +1624,8 @@ mod tests {
     fn both_sides_of_a_disagreement_are_named() {
         let said = conflict(&Conflict::BeadAndPaneDisagree {
             bead: key("nix-9670s.20"),
-            named_by_bead: "wCM:p9".into(),
-            named_by_pane: "wCM:p6".into(),
+            named_by_bead: pane_key("wCM:p9"),
+            named_by_pane: pane_key("wCM:p6"),
         });
 
         assert!(said.contains("wCM:p9"), "{said}");
@@ -1600,7 +1640,7 @@ mod tests {
     #[test]
     fn a_contested_pane_says_what_it_is_working_on_in_its_own_words() {
         let said = conflict(&Conflict::SeveralBeadsNameOnePane {
-            pane: "wCM:p9".into(),
+            pane: pane_key("wCM:p9"),
             caption: Some("nix-9670s.1: rebuild the installer image".into()),
             beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
         });
@@ -1621,7 +1661,7 @@ mod tests {
     #[test]
     fn a_contested_panes_own_words_come_before_the_claims_on_it() {
         let said = conflict(&Conflict::SeveralBeadsNameOnePane {
-            pane: "wCM:p9".into(),
+            pane: pane_key("wCM:p9"),
             caption: Some("nix-9670s.1: rebuild the installer image".into()),
             beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
         });
@@ -1642,7 +1682,7 @@ mod tests {
     #[test]
     fn a_contested_pane_with_nothing_to_say_is_described_without_it() {
         let said = conflict(&Conflict::SeveralBeadsNameOnePane {
-            pane: "wCM:p9".into(),
+            pane: pane_key("wCM:p9"),
             caption: None,
             beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
         });
@@ -1658,7 +1698,7 @@ mod tests {
     fn a_pane_belonging_to_no_project_still_says_where_it_is() {
         let said = conflict(&Conflict::PaneInAnotherProject {
             bead: key("nix-9670s.20"),
-            pane: "wCM:pD".into(),
+            pane: pane_key("wCM:pD"),
             pane_project: None,
         });
 

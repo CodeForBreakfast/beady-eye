@@ -317,6 +317,7 @@ mod tests {
     use super::*;
     use crate::model::edges::Related;
     use crate::model::join::{AgentRef, JoinSource};
+    use crate::model::types::testing::key;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::draw::tone::{status_colour, DIM, LIVE, PAGE};
     use crate::view::painted::{Painted, Run};
@@ -346,7 +347,7 @@ mod tests {
             closed_at: None,
             badges: Vec::new(),
             agent: Some(AgentRef {
-                pane: "w:p1".to_string(),
+                pane: key("w:p1"),
                 pane_status: PaneStatus::Working,
                 title: Some("lifting the mast".to_string()),
                 source: JoinSource::AgentPane,
