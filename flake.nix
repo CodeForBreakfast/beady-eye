@@ -639,10 +639,123 @@
           touch $out
         '';
 
+
+        # The wrapper minted its run directory silently and named it only on
+        # the way out, so a seat that backgrounded the run went looking for it
+        # — and on a box running two seats, "the newest
+        # /tmp/mutation-test-this-change.XXXXXX" is the other seat's run. That
+        # happened on 2026-09-03: a seat read a 198-mutant tally belonging to
+        # another, and escaped only because the two diffs were flagrantly
+        # disjoint. Nothing in the reading disagreed with anything else in it,
+        # because the summary line and the file list are both correct about
+        # whichever run they come from.
+        #
+        # So the name carries what tells runs apart, and minting says it
+        # aloud. cargo-mutants already names its build tree after the working
+        # tree it copied, which under this fleet's worktrees is the seat — the
+        # seat was in hand at the moment the run directory was minted and went
+        # unused. The head sha is the other half, and it is the half a seat
+        # cannot recover by reading the run: your own successive runs share a
+        # tree, and after a merge that adds no new file two of them hold
+        # byte-identical change.diffs, so the diff separates you from a peer
+        # and cannot separate you from yourself.
+        #
+        # Minting and saying are one function because they were two moments,
+        # and the gap between them is the whole of the defect. The name is
+        # what survives a seat that backgrounds the run behind `| tail`: the
+        # line is the convenience, the directory's own name is the guarantee.
+        nameTheRunsDirectory = ''
+          name_the_runs_directory() {
+            git=${pkgs.git}/bin/git
+
+            # Named under /tmp rather than TMPDIR: a seat whose dev shell is
+            # too old for this command reaches a current one with `nix develop
+            # <ref> --command`, and that shell's TMPDIR is torn down when the
+            # command returns, taking the artefacts this points at with it.
+            tree="$(printf '%s' "$(basename "$($git rev-parse --show-toplevel)")" |
+                      tr -c 'A-Za-z0-9._-' '-')"
+            run="$(mktemp -d "/tmp/mutation-test-this-change-$tree-$($git rev-parse --short HEAD).XXXXXX")"
+
+            echo "This run's output directory is $run."
+          }
+        '';
+
+        # Two runs told apart by their timestamps is what put another seat's
+        # tally in front of a reader, so these are the two populations that
+        # reading confused — a peer's run and your own earlier one — with the
+        # control that says the comparison can come out equal.
+        nameTheRunsDirectoryTest = pkgs.runCommand "name-the-runs-directory-test"
+          { nativeBuildInputs = [ pkgs.git ]; } ''
+          set -u
+          ${nameTheRunsDirectory}
+
+          export HOME="$TMPDIR"
+          export GIT_CONFIG_GLOBAL="$TMPDIR/gitconfig"
+          export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+          export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+          git config --global init.defaultBranch main
+
+          fail() { echo "FAIL: $1"; shift; printf '%s\n' "$@"; exit 1; }
+
+          seat() {
+            git init --quiet "$TMPDIR/$1"
+            printf 'base\n' > "$TMPDIR/$1/a.txt"
+            git -C "$TMPDIR/$1" add a.txt
+            git -C "$TMPDIR/$1" commit --quiet -m base
+          }
+
+          # mktemp's suffix differs whatever else does, so every comparison
+          # below is on the name without it.
+          stem() { printf '%s' "''${1%.*}"; }
+
+          seat bdi-aid
+          seat bdi-yjsj
+
+          cd "$TMPDIR/bdi-aid"
+          name_the_runs_directory > "$TMPDIR/said"
+          mine="$run"
+          said="$(cat "$TMPDIR/said")"
+
+          [ -d "$mine" ] || fail "it named a directory it had not minted:" "$mine"
+
+          # The defect itself: the directory existed and the seat was not told.
+          case "$said" in
+            *"$mine"*) ;;
+            *) fail "minting the directory did not say where it is:" "$said" ;;
+          esac
+
+          # A peer's run, minted in the same second as yours.
+          cd "$TMPDIR/bdi-yjsj"
+          name_the_runs_directory > /dev/null
+          theirs="$run"
+          [ "$(stem "$(basename "$mine")")" != "$(stem "$(basename "$theirs")")" ] ||
+            fail "two seats' runs are named alike:" "$mine" "$theirs"
+
+          # Your own earlier run, on the tree you had before you merged.
+          cd "$TMPDIR/bdi-aid"
+          printf 'what I merged\n' >> a.txt
+          git commit --quiet -am merged
+          name_the_runs_directory > /dev/null
+          [ "$(stem "$(basename "$mine")")" != "$(stem "$(basename "$run")")" ] ||
+            fail "one seat's runs on two trees are named alike:" "$mine" "$run"
+
+          # The control. Nothing above separates a name that carries the seat
+          # and the head from one that is simply random per call, because
+          # mktemp makes every name unique whatever the stem holds. Two runs
+          # of one seat on one tree must therefore land on the same stem.
+          earlier="$run"
+          name_the_runs_directory > /dev/null
+          [ "$(stem "$(basename "$earlier")")" = "$(stem "$(basename "$run")")" ] ||
+            fail "the name describes the moment rather than the run:" "$earlier" "$run"
+
+          touch $out
+        '';
+
         # The count above only reaches a seat that runs it, so this is the
         # command to run in place of cargo-mutants: it scopes the run to the
-        # change, gives it an output directory of its own, and refuses one that
-        # scored nothing. Everything else passes through.
+        # change, gives it an output directory of its own and says which
+        # before the run starts, and refuses one that scored nothing.
+        # Everything else passes through.
         #
         # The fetch is the one read-ci-verdict needs, for the same reason.
         # Three dots take the merge base, so a stale origin/main takes an older
@@ -664,17 +777,14 @@
 
           ${refuseARunThatScoredNothing}
           ${scopeToTheChange}
+          ${nameTheRunsDirectory}
 
           cd "$($git rev-parse --show-toplevel)" || exit 1
 
           $git fetch --quiet origin ||
             echo "Could not fetch; origin/main is as you left it."
 
-          # Named under /tmp rather than TMPDIR: a seat whose dev shell is too
-          # old for this command reaches a current one with `nix develop
-          # <ref> --command`, and that shell's TMPDIR is torn down when the
-          # command returns, taking the artefacts this points at with it.
-          run="$(mktemp -d /tmp/mutation-test-this-change.XXXXXX)"
+          name_the_runs_directory
           scope_to_the_change origin/main "$run/change.diff"
 
           ${pkgs.cargo-mutants}/bin/cargo-mutants mutants \
@@ -1389,6 +1499,7 @@
           module-concerns-test = modulesStateTheirConcernTest;
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
           scope-to-the-change-test = scopeToTheChangeTest;
+          name-the-runs-directory-test = nameTheRunsDirectoryTest;
           screen-walks = checkOf "screen-walks" null [ screenWalksAreBounded ]
             "screen-walks-are-bounded";
           screen-walks-test = screenWalksAreBoundedTest;
