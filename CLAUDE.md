@@ -36,8 +36,10 @@ command at a profile its artifacts were not built at and cargo compiles the
 graph again without saying so — `checkOf` reads each build back and fails on
 that rather than pass slowly.
 
-A change is checked twice, once on its pull request and once on the squash, and
-the second run pays for it only when the tree is new. CI seeds each check's
+A change is checked at least twice, once on its pull request and once on the
+squash, and again for every edit of the title or the body — the trigger takes
+`edited` so the subject check cannot be outrun, and an edit moves no tree. Only
+a run on a new tree pays for itself. CI seeds each check's
 output into the shared cache, so a squash carrying a tree its pull request
 already checked substitutes every one of them: `nix flake check` prints
 `running 0 flake checks` and the job finishes in about thirty seconds instead
@@ -194,6 +196,52 @@ what tells you, and no count carries it.
 Changes reach `main` through a pull request, squash-merged — nothing is pushed
 to `main` directly. The pull request is what puts CI in front of a change
 before the branch everyone else works from carries it.
+
+### The subject
+
+The pull request's **title** becomes the commit subject, because the merge is a
+squash — so it is the only line of the branch `main` keeps, and the branch's own
+commit messages are squashed away and may say anything. Write the title as a
+conventional commit:
+
+    type(scope): description
+
+- **type** is one of `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
+  `refactor`, `revert`, `style`, `test`. A `!` before the colon marks a breaking
+  change.
+- **scope** is optional and closed: `collect`, `app`, `model`, `view`, `tui` —
+  the five layers under *Where things are* — plus `ci`, `flake`, `docs`,
+  `tests`, `deps`. Leave it out rather than coin one; a new scope is a change to
+  the check.
+- **description** is lower case, in the imperative, and has no full stop at the
+  end. It has to finish the sentence *"If applied, this commit will …"* — so
+  `draw a bead id in its status colour`, never `draws`, `drew` or `drawing`. An
+  acronym or a name keeps its capitals: `GitHub`, `CI`, `NO_COLOR`.
+- **72 characters**, which is the whole subject: the repository sets
+  `squash_merge_commit_title: PR_TITLE`, so GitHub takes the title verbatim and
+  appends nothing. The ` (#123)` on commits before 2026-09-04 is what the web
+  UI's default title looked like before that setting was set.
+
+The lower case is conventional commits' rule, and it is the one place this
+parts company with the widely-copied git guidelines, which say to capitalise.
+Follow this one.
+
+Say what changed in the subject and why in the body, in a sentence or two. A
+subject carrying the reason wraps in `git log --oneline`, in blame and in
+bisect — three places a reader meets it and none where they want the argument.
+
+The pull request's **body** becomes the commit body, so write it the same way:
+what and why, never how. Don't hard-wrap it — GitHub renders the newlines, so
+one line per paragraph or bullet and let it flow.
+
+The `conventional subject` job refuses a title that is none of this. It reads
+the shape, the two lists, the case and the length, and it refuses the commonest
+past-tense and gerund openings — it cannot judge mood, so the sentence test
+above stays yours. It is also the one CI check that does not come from the
+flake's `checks` output, because a title is not in the tree a check reads: the
+rule and its test are still in the flake, and the job holds only the trigger.
+Run `conventional-subject '<title>'` in the dev shell for the same verdict
+before you open the pull request.
 
 Read the **file list** before you merge, as a check of its own rather than as
 part of reading the diff: `git diff --stat origin/main HEAD` lists every file

@@ -1492,6 +1492,295 @@
           touch $out
         '';
 
+        # The subject main carries comes from the pull request's title, because
+        # this repository squash-merges — so the title is the one string worth
+        # refusing, and a branch's own commit messages are squashed away.
+        #
+        # It cannot be a `checks` entry the way the scans above are. Those read
+        # a tree, and neither a commit message nor a pull request title is in
+        # one; this is handed a string by the workflow instead. What stays here
+        # is the rule and its test, so the only thing ci.yml holds is the
+        # trigger.
+        conventionalSubject = pkgs.writeShellScriptBin "conventional-subject" ''
+          set -u
+
+          title="''${1-}"
+
+          if [ "$#" -ne 1 ]; then
+            echo "usage: conventional-subject <title>" >&2
+            exit 2
+          fi
+
+          types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+          scopes='collect|app|model|view|tui|ci|flake|docs|tests|deps'
+
+          # The title is the whole subject, with nothing added to it. That is
+          # what `squash_merge_commit_title: PR_TITLE` means on this
+          # repository: GitHub takes the title verbatim, and the ` (#123)` on
+          # commits older than 2026-09-04 is what the web UI's *default*
+          # title looked like before the setting was set. So the length
+          # measured here is the length a reader of `git log` meets. Should
+          # that setting ever move to COMMIT_OR_PR_TITLE, a reference is
+          # appended again and this has to subtract it.
+
+          refuse() {
+            echo "This is not a subject main can carry:"
+            echo
+            echo "  $title"
+            echo
+            printf '%s\n' "$1"
+            exit 1
+          }
+
+          # A newline in the title is a body that has been pasted into the
+          # subject. Only the line endings are refused: a high byte is not a
+          # control character here, and an em dash is ordinary in this repo.
+          newline='
+'
+          carriageReturn="$( printf '\r' )"
+          case "$title" in
+            *"$newline"* | *"$carriageReturn"*)
+              refuse "It has a newline in it, so it is a subject and a body."
+              ;;
+          esac
+
+          # Read in either case, so a wrong case is told apart from a wrong
+          # shape. The specification's rule 15 says the units of a conventional
+          # commit are not case-sensitive, and that binds a parser: `Fix:` is
+          # the type `fix` and has to be recognised as one. What to do with it
+          # afterwards is a linter's, and commitlint's config-conventional
+          # settles that with `type-case: lower-case`.
+          # The character after the space has to be one, rather than more
+          # space: a description that opens with a blank leaves `firstWord`
+          # empty, and an empty first word matches neither the case pattern
+          # nor the list of moods, so both of those checks pass by describing
+          # nothing.
+          if ! printf '%s' "$title" | grep -Eq '^[A-Za-z]+(\([A-Za-z0-9_-]+\))?!?: [^[:space:]]'; then
+            refuse "Write it as \`type(scope): description\`, or \`type: description\`.
+A \`!\` before the colon marks a breaking change.
+
+  types:  ''${types//|/ }
+  scopes: ''${scopes//|/ }"
+          fi
+
+          type="$( printf '%s' "$title" | sed -E 's/^([A-Za-z]+).*/\1/' )"
+          scope="$( printf '%s' "$title" | sed -nE 's/^[A-Za-z]+\(([^)]*)\).*/\1/p' )"
+          description="''${title#*: }"
+
+          if printf '%s' "$type$scope" | grep -q '[A-Z]'; then
+            refuse "A type and a scope are lower case: \`''${type,,}''${scope:+(''${scope,,})}\`."
+          fi
+
+          if ! printf '%s' "$type" | grep -Eq "^($types)$"; then
+            refuse "\`$type\` is not one of the types: ''${types//|/ }"
+          fi
+
+          if [ -n "$scope" ] && ! printf '%s' "$scope" | grep -Eq "^($scopes)$"; then
+            refuse "\`$scope\` is not one of the scopes: ''${scopes//|/ }
+
+The first five are the layers in src/. Leave the scope out rather than
+coin one; adding a scope means adding it here too."
+          fi
+
+          # subject-full-stop: never. The subject is a label rather than a
+          # sentence, and the body is where the sentences go.
+          case "$description" in
+            *.) refuse "A description does not end in a full stop." ;;
+          esac
+
+          # subject-case: never sentence-case. Only an ordinary capitalised
+          # first word is refused, so an acronym or a name keeps its capitals
+          # — GitHub, CI, README and NO_COLOR all read as written.
+          firstWord="''${description%% *}"
+          if printf '%s' "$firstWord" | grep -Eq '^[A-Z][a-z]*$'; then
+            refuse "A description starts lower case: \`''${firstWord,,}\`, not \`$firstWord\`.
+An acronym or a name keeps its capitals."
+          fi
+
+          # Imperative mood, which is the one rule here no pattern can read.
+          # A suffix cannot stand in for it — `-ing` would refuse `bring` and
+          # `-ed` would refuse `read`, `seed` and `feed`, all of them ordinary
+          # imperatives in this repository. So the forms that actually turn up
+          # are named instead: what is listed is refused and what is not is
+          # left to the writer, which makes this a floor rather than a judge of
+          # mood.
+          notImperative='adds|added|adding
+            addresses|addressed|addressing
+            adjusts|adjusted|adjusting
+            allows|allowed|allowing
+            bumps|bumped|bumping
+            changes|changed|changing
+            cleans|cleaned|cleaning
+            converts|converted|converting
+            corrects|corrected|correcting
+            creates|created|creating
+            deletes|deleted|deleting
+            drops|dropped|dropping
+            ensures|ensured|ensuring
+            extracts|extracted|extracting
+            fixes|fixed|fixing
+            handles|handled|handling
+            implements|implemented|implementing
+            improves|improved|improving
+            includes|included|including
+            introduces|introduced|introducing
+            makes|made|making
+            merges|merged|merging
+            moves|moved|moving
+            prevents|prevented|preventing
+            refactors|refactored|refactoring
+            removes|removed|removing
+            renames|renamed|renaming
+            replaces|replaced|replacing
+            reverts|reverted|reverting
+            simplifies|simplified|simplifying
+            supports|supported|supporting
+            updates|updated|updating
+            uses|used|using
+            writes|wrote|writing'
+          # The line break between two rows is a separator like the bars
+          # inside a row, so it becomes one rather than being dropped.
+          notImperative="$( printf '%s' "$notImperative" | tr -d ' ' | tr '\n' '|' )"
+          if printf '%s' "$firstWord" | grep -Eq "^($notImperative)$"; then
+            refuse "\`$firstWord\` is not the imperative. A description has to finish the
+sentence \"If applied, this commit will …\", so \`draw\` rather than
+\`draws\`, \`drew\` or \`drawing\`."
+          fi
+
+          limit=72
+          if [ "''${#title}" -gt "$limit" ]; then
+            refuse "It is ''${#title} characters. The limit is $limit.
+
+Say what changed here and put the reason in the body, in a sentence or
+two. A subject this long prints over two lines in \`git log --oneline\`,
+in blame and in bisect."
+          fi
+        '';
+
+        # Every subject this repository takes goes through the check above, so
+        # it passes whether or not it can still refuse one. This is what says
+        # it can, and that each thing it lets through is let through on
+        # purpose.
+        conventionalSubjectTest = pkgs.runCommand "conventional-subject-test"
+          { nativeBuildInputs = [ conventionalSubject ]; } ''
+          set -u
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          accepts() {
+            output="$( conventional-subject "$@" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 0 ] || fail "it refused \`$1\`:"
+          }
+
+          refuses() {
+            want="$1"
+            shift
+            output="$( conventional-subject "$@" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 1 ] || fail "expected a refusal (exit 1) of \`$1\`, got $status:"
+            case "$output" in
+              *"$want"*) ;;
+              *) fail "the refusal of \`$1\` did not say why ($want):" ;;
+            esac
+          }
+
+          # A scope, and no scope, which conventional commits leaves optional.
+          accepts "feat(view): draw a bead id in its status colour"
+          accepts "docs: say how a reader on a light background says so"
+
+          # The breaking-change marker, with a scope and without.
+          accepts "feat!: read every herdr session on the box"
+          accepts "fix(collect)!: drop the ambient bd path"
+
+          # Every type and every scope, so the two lists are asserted rather
+          # than described. A list that grows without its test growing is the
+          # drift this catches.
+          for type in build chore ci docs feat fix perf refactor revert style test; do
+            accepts "$type: a subject of no particular interest"
+          done
+          for scope in collect app model view tui ci flake docs tests deps; do
+            accepts "fix($scope): a subject of no particular interest"
+          done
+
+          # The boundary, from both sides. 72 is the limit rather than the
+          # first length refused.
+          at72="fix(view): 00000000000000000000000000000000000000000000000000000000000ab"
+          [ "''${#at72}" = 72 ] || fail "the fixture is ''${#at72} characters, not 72:"
+          accepts "$at72"
+          refuses "73 characters" "''${at72}c"
+
+          # The title is the whole subject on this repository, so nothing is
+          # added to it before the length is read. A second argument is not
+          # accepted at all, rather than quietly ignored, so that a caller
+          # still passing a pull request number is told instead of measuring
+          # something this does not measure.
+          output="$( conventional-subject "fix(view): draw the row" 133 2>&1 )" &&
+            status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 for a second argument, got $status:"
+
+          # The shape.
+          refuses "type(scope): description" "A read is a read of bdi's asking"
+          refuses "type(scope): description" "fix(view):no space after the colon"
+          refuses "type(scope): description" "fix(view): "
+
+          # A description opening with a blank. The first word is then the
+          # empty string, which matches neither the case pattern nor any mood
+          # in the list — so both of the checks below would pass on a title
+          # they are meant to refuse, and say nothing about it.
+          refuses "type(scope): description" "fix:  Fixed the row it drew"
+          refuses "type(scope): description" "fix(view):  fixes the row"
+
+          # Case. The specification says a parser reads `Fix:` as the type
+          # `fix`, so this reads it as one and then refuses it on
+          # config-conventional's `type-case: lower-case` — which is a
+          # different complaint from a subject that is not a conventional
+          # commit at all, and has to say so.
+          refuses "lower case" "Fix(view): draw the row"
+          refuses "lower case" "fix(View): draw the row"
+
+          # subject-full-stop, and subject-case. A capitalised ordinary word
+          # opens none of these; an acronym or a name opens three of them and
+          # must survive, or half this repository's vocabulary is unwritable.
+          refuses "full stop" "fix(view): draw the row."
+          refuses "starts lower case" "fix(view): The reader says what it is"
+          refuses "starts lower case" "fix(view): A read is a read of bdi's asking"
+          accepts "fix(view): GitHub appends the reference as it squashes"
+          accepts "fix(ci): CI seeds its own checks"
+          accepts "fix(view): NO_COLOR survives the tail's voice"
+          accepts "docs(flake): README says what bdi needs"
+
+          # The imperative. What it refuses are the forms named in the list,
+          # and what it must not refuse is an imperative that merely looks like
+          # one — `read`, `seed` and `feed` all end in the suffix a lazier
+          # check would have used, and `bring` in the other one.
+          refuses "not the imperative" "fix(view): fixes the row it drew"
+          refuses "not the imperative" "fix(view): fixed the row it drew"
+          refuses "not the imperative" "fix(view): fixing the row it drew"
+          refuses "not the imperative" "fix(view): updates the badge"
+          refuses "not the imperative" "fix(view): made the badge quieter"
+          accepts "fix(view): read the row back before drawing it"
+          accepts "ci(flake): seed the dependency builds into the cache"
+          accepts "fix(collect): feed bd the project it asked about"
+          accepts "fix(view): bring the selection back to the fold"
+
+          # A type and a scope outside their lists. Both are the drift the
+          # closed sets exist to stop, and each has to name itself.
+          refuses "\`improve\` is not one of the types" "improve(view): sharpen a row"
+          refuses "\`bead-window\` is not one of the scopes" "fix(bead-window): keep the page"
+
+          # A newline would put a body in the subject. An em dash must not be
+          # refused with it: this repository's prose is full of them.
+          refuses "newline" "fix(view): a subject
+and a second line"
+          accepts "fix(view): a subject — with an em dash in it"
+
+          # No argument at all is a misuse of the check rather than a bad
+          # subject, and the workflow should not read it as one.
+          output="$( conventional-subject 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no argument, got $status:"
+
+          touch $out
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -1507,6 +1796,7 @@
           rerunBdiOnChange
           checkBeforePush
           readCiVerdict
+          conventionalSubject
           mutationTestThisChange
         ];
 
@@ -1604,6 +1894,7 @@
 
         packages.default = beady-eye;
         packages.beady-eye = beady-eye;
+        packages.conventional-subject = conventionalSubject;
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
@@ -1611,6 +1902,7 @@
           build-and-test = beady-eye;
           check-before-push = checkBeforePushTest;
           clippy = checkOf "clippy" artifacts.dev [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
+          conventional-subject-test = conventionalSubjectTest;
 
           # A second invocation rather than a flag on the one above, because
           # `--all-targets` is what defeats it: building the test targets pulls

@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # `edited` is not one of the activity types a pull request triggers on by
+    # default — those are opened, synchronize and reopened, all of which move
+    # the head. A title is not the head: without this, a valid title passes
+    # the subject check, the title is then edited to anything at all, no run
+    # fires because nothing was pushed, and the old success stays attached to
+    # the same commit right through the squash. The check would read green on
+    # a subject nothing had ever checked.
+    #
+    # It costs a run per title or body edit. That run is the same tree as the
+    # one before it, so every check substitutes and it finishes in about the
+    # time it takes to start.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -18,6 +30,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  conventional-subject:
+    name: conventional subject
+    runs-on: homelab-runners
+    timeout-minutes: 10
+    # Only a pull request has a title. A push to main is the squash of one
+    # that passed this, carrying the subject this already read.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      # This repository squash-merges and GitHub takes the subject from the
+      # pull request's title, so the title is the string main keeps and a
+      # branch's own commit messages are squashed away. The rule and its test
+      # live in the flake beside the tree scans; what is here is the trigger,
+      # because a title is not in the tree a check reads and nothing inside
+      # `nix flake check` can be handed one.
+      #
+      # Through the environment rather than into the `run:` line: the title is
+      # written by whoever opened the pull request, and `${{ }}` would paste it
+      # into the script before bash ever saw it.
+      - name: the subject main will carry
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: nix run .#conventional-subject -- "$TITLE"
+
   flake-check:
     name: nix flake check
     runs-on: homelab-runners
@@ -31,6 +70,9 @@ jobs:
 
       # Every check comes from the flake's `checks` output, so a check added
       # there is a check this runs. Naming one here is the drift to avoid.
+      # The conventional-subject job above is the single thing that cannot
+      # come from there — it reads a pull request title rather than a tree —
+      # and it holds only the trigger, never the rule.
       - run: nix flake check -L
 
       # Two of the builds behind that check say nothing about this repository:
