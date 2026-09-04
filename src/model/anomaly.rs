@@ -35,11 +35,19 @@ pub enum Anomaly {
 /// `agents` is how the run went for panes, because only one of these rules
 /// reads bd alone. The rest need a pane, and where nothing answered for
 /// panes there is no pane fact to read either way.
+///
+/// `pane_out_of_reach` is the same ignorance one bead at a time: the run
+/// answered for panes, and the pane this bead named is in a session that did
+/// not. It is asked per bead rather than per run because the sessions that
+/// did answer are still worth reading — a run that fell silent about every
+/// claim because one session hiccuped would throw away what it does know to
+/// avoid saying what it does not.
 pub fn detect(
     bead: &Bead,
     agent: Option<&AgentRef>,
     refused: Option<&Conflict>,
     agents: ProviderState,
+    pane_out_of_reach: bool,
     cfg: &Anomalies,
     now: DateTime<Utc>,
 ) -> Vec<Anomaly> {
@@ -54,7 +62,7 @@ pub fn detect(
 
     let mut fired = Vec::new();
 
-    if agents.answered() && agent.is_none() {
+    if agents.answered() && agent.is_none() && !pane_out_of_reach {
         fired.push(Anomaly::OrphanClaim {
             refused: refused.cloned(),
         });
@@ -125,6 +133,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -138,6 +147,7 @@ mod tests {
             Some(&pane(PaneStatus::Done)),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -155,6 +165,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -168,6 +179,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -189,6 +201,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -202,6 +215,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -215,6 +229,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -225,6 +240,40 @@ mod tests {
         );
     }
 
+    /// A claim whose pane the run could not ask about is not a claim whose
+    /// pane is gone, and only the second is an orphan. The stale-claim rule
+    /// reads bd alone, so it still fires on the same bead — a run that knows
+    /// nothing about panes still knows how long the row has sat there.
+    #[test]
+    fn a_claim_whose_pane_is_out_of_reach_is_not_orphaned_and_is_still_aged() {
+        let got = detect(
+            &bead("in_progress", SIXTY_DAYS_AGO),
+            None,
+            None,
+            ProviderState::Answering,
+            true,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(got, vec![Anomaly::StaleClaim { days: 60 }]);
+    }
+
+    /// The other half, on the same inputs: the run answered for the session
+    /// this bead's pane was in, so the pane is gone rather than unasked.
+    #[test]
+    fn a_claim_whose_pane_the_run_could_ask_about_is_orphaned() {
+        let got = detect(
+            &bead("in_progress", SIXTY_DAYS_AGO),
+            None,
+            None,
+            ProviderState::Answering,
+            false,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(got, vec![orphan(), Anomaly::StaleClaim { days: 60 }]);
+    }
+
     #[test]
     fn a_recent_claim_with_a_pane_is_clean() {
         let got = detect(
@@ -232,6 +281,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -245,6 +295,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -255,6 +306,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -271,6 +323,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &wide,
             now(),
         );
@@ -284,6 +337,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &narrow,
             now(),
         );
@@ -300,6 +354,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -315,6 +370,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -328,6 +384,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -341,6 +398,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -354,6 +412,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             &Anomalies::default(),
             now(),
         );

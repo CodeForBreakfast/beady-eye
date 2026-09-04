@@ -19,7 +19,7 @@ use beady_eye::collect::bd::parse_beads;
 use beady_eye::collect::herdr::parse_agent_list;
 use beady_eye::config::Config;
 use beady_eye::model::anomaly::Anomaly;
-use beady_eye::model::join::{resolve, BeadKey, Conflict, ProjectRows};
+use beady_eye::model::join::{resolve, BeadKey, Conflict, Listed, ProjectRows};
 use beady_eye::model::snapshot::{
     self, a_provider, Collected, Filter, ProviderState, Readiness, Snapshot,
 };
@@ -119,7 +119,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
             rows: &a.beads,
         })
         .collect();
-    let joined = resolve(&trees, &panes, &cfg);
+    let joined = resolve(&trees, Listed::all(&panes), &cfg);
 
     let claimed = assembled
         .iter()

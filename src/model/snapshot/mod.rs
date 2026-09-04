@@ -587,7 +587,7 @@ mod tests {
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::edges;
-    use crate::model::join::{self, Joined, ProjectRows};
+    use crate::model::join::{self, Joined, Listed, ProjectRows};
     use crate::model::tree::{Assembled, Nesting};
     use crate::model::types::testing::A_SESSION;
     use crate::model::types::{Bead, Pane};
@@ -680,7 +680,7 @@ render = "⏸ waiting"
                 project: "orbital",
                 rows,
             }],
-            panes,
+            Listed::all(panes),
             &cfg,
         )
     }

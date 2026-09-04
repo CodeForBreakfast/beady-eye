@@ -85,6 +85,45 @@ pub struct ProjectRows<'a> {
     pub rows: &'a [Bead],
 }
 
+/// What one run holds about panes: every pane a session answered with, and
+/// the ids of the panes it knows it is missing.
+///
+/// The second is not the first's complement, and nothing could enumerate
+/// that: a pane id nothing answered for is usually a pane that has gone.
+/// It is what a session that has since gone quiet was holding when it last
+/// answered, which is the only thing that can place a pane id inside a
+/// session this run cannot ask — a seat writes the id alone, and an id
+/// names a pane only within its session.
+///
+/// So a rule that reads a pane's absence can be evaluated over the first and
+/// not over the second, and the two are handed over together because a run
+/// that has one without the other cannot tell which it is holding.
+pub struct Listed<'a> {
+    pub panes: &'a [Pane],
+    pub out_of_reach: &'a BTreeSet<String>,
+}
+
+/// A run every session of which answered, so there is no pane it is missing.
+#[cfg(feature = "testing")]
+static NOTHING_MISSED: BTreeSet<String> = BTreeSet::new();
+
+/// Behind the feature rather than `cfg(test)` because the tests under
+/// `tests/` resolve a join too, and they link the library.
+#[cfg(feature = "testing")]
+impl<'a> Listed<'a> {
+    /// Every pane there is, from a run that asked each session and was
+    /// answered by all of them.
+    ///
+    /// A test's shorthand and no run's: a collection always knows which of
+    /// its sessions went quiet, so nothing in production has this to say.
+    pub fn all(panes: &'a [Pane]) -> Self {
+        Self {
+            panes,
+            out_of_reach: &NOTHING_MISSED,
+        }
+    }
+}
+
 /// The agents the join could account for, and every disagreement it could not.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Joined {
@@ -95,6 +134,10 @@ pub struct Joined {
     /// id another tracker happens to reuse says nothing about that tracker's
     /// bead.
     pub refused: BTreeMap<BeadKey, Conflict>,
+    /// Beads whose own key named a pane that is out of this run's reach, so
+    /// nothing it holds says whether the seat behind the claim is alive. A
+    /// rule reading that pane's absence has no absence to read.
+    pub out_of_reach: BTreeSet<BeadKey>,
     pub conflicts: Vec<Conflict>,
 }
 
@@ -135,7 +178,11 @@ fn project_holding<'a>(path: &Path, projects: &'a [Project]) -> Option<&'a Proje
 /// across every session: held by one, that is the pane; held by several,
 /// the claim is refused and the disagreement reported, because nothing the
 /// bead wrote says which.
-pub fn resolve(trees: &[ProjectRows<'_>], panes: &[Pane], cfg: &Config) -> Joined {
+pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> Joined {
+    let Listed {
+        panes,
+        out_of_reach: panes_out_of_reach,
+    } = listed;
     let mut live_under: BTreeMap<&str, Vec<&Pane>> = BTreeMap::new();
     for pane in panes {
         live_under
@@ -174,6 +221,7 @@ pub fn resolve(trees: &[ProjectRows<'_>], panes: &[Pane], cfg: &Config) -> Joine
 
     let mut conflicts: Vec<Conflict> = Vec::new();
     let mut refused: BTreeMap<BeadKey, Conflict> = BTreeMap::new();
+    let mut out_of_reach: BTreeSet<BeadKey> = BTreeSet::new();
 
     // The exact direction: the bead names its pane.
     let mut claims: BTreeMap<PaneKey, BTreeSet<BeadKey>> = BTreeMap::new();
@@ -183,14 +231,26 @@ pub fn resolve(trees: &[ProjectRows<'_>], panes: &[Pane], cfg: &Config) -> Joine
             let Some(named) = row.metadata.get(&cfg.join.pane_key) else {
                 continue;
             };
+            let bead = BeadKey {
+                project: tree.project.to_string(),
+                id: row.id.clone(),
+            };
+            // An id this run is missing is asked about before the live panes
+            // are, because a live pane carrying it need not be the one the
+            // bead named: a session mints its ids from `w1` up, so the same
+            // id in two sessions is two panes. That is the ambiguity
+            // `PaneIdInSeveralSessions` awards to nobody where both panes
+            // answered, and here one of them cannot be asked at all — so it
+            // is not reported as a disagreement, and the claim resolves to
+            // nothing whether or not something live carries its id.
+            if panes_out_of_reach.contains(named.as_str()) {
+                out_of_reach.insert(bead);
+                continue;
+            }
             // A named pane that is not live resolves to nothing; that absence
             // is `orphan-claim`'s to report, not a disagreement.
             let Some(holding) = live_under.get(named.as_str()) else {
                 continue;
-            };
-            let bead = BeadKey {
-                project: tree.project.to_string(),
-                id: row.id.clone(),
             };
             let pane = match holding.as_slice() {
                 [pane] => *pane,
@@ -316,6 +376,7 @@ pub fn resolve(trees: &[ProjectRows<'_>], panes: &[Pane], cfg: &Config) -> Joine
     Joined {
         agents,
         refused,
+        out_of_reach,
         conflicts,
     }
 }
@@ -447,7 +508,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -489,7 +550,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -544,7 +605,7 @@ mod tests {
                 project: "beady-eye",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -576,7 +637,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -608,7 +669,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -641,7 +702,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config {
                 join,
                 ..Config::naming(cfg)
@@ -662,7 +723,7 @@ mod tests {
                 project: "beady-eye",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -691,11 +752,89 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
         assert_eq!(joined.agents, BTreeMap::new());
+        assert_eq!(joined.conflicts, vec![]);
+    }
+
+    /// The same absence, over a run that is missing the pane rather than
+    /// holding no such pane. It resolves to nothing either way — a pane this
+    /// run cannot see is not a pane it can award — and the difference is
+    /// carried out for the rule that would otherwise read the absence.
+    ///
+    /// Both beads are asked at once, because a set that took every claim
+    /// that resolved to nothing would say the same thing and mean nothing.
+    #[test]
+    fn a_bead_naming_a_pane_this_run_is_missing_is_told_from_one_naming_a_dead_pane() {
+        let beads = rows(
+            r#"[{"id":"p-1","title":"the seat that went quiet","status":"in_progress",
+                 "metadata":{"agent_pane":"w:pQUIET"}},
+                {"id":"p-2","title":"the seat that died","status":"in_progress",
+                 "metadata":{"agent_pane":"w:pGONE"}}]"#,
+        );
+        let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle"}"#);
+        let cfg = vec![project("proj", "/home/user/proj")];
+        let missing = BTreeSet::from(["w:pQUIET".to_string()]);
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            Listed {
+                panes: &live,
+                out_of_reach: &missing,
+            },
+            &Config::naming(cfg),
+        );
+
+        assert_eq!(joined.agents, BTreeMap::new(), "neither pane is live");
+        assert_eq!(
+            joined.out_of_reach,
+            BTreeSet::from([key("proj", "p-1")]),
+            "only the claim naming the pane this run is missing"
+        );
+        assert_eq!(joined.conflicts, vec![]);
+    }
+
+    /// A pane id names a pane only within its session, so a live pane
+    /// carrying the id a bead named is not necessarily that bead's — the
+    /// session that has gone quiet was holding one of the same name. The
+    /// join awards neither, exactly as it awards neither when two sessions
+    /// that both answered hold the id; it is not reported as a disagreement,
+    /// because this run cannot establish that there are two panes, only that
+    /// it cannot rule it out.
+    #[test]
+    fn a_live_pane_carrying_an_id_a_quiet_session_also_held_is_awarded_to_nobody() {
+        let beads = rows(
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
+                 "metadata":{"agent_pane":"w:p1"}}]"#,
+        );
+        let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working"}"#);
+        let cfg = vec![project("proj", "/home/user/proj")];
+        let missing = BTreeSet::from(["w:p1".to_string()]);
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            Listed {
+                panes: &live,
+                out_of_reach: &missing,
+            },
+            &Config::naming(cfg),
+        );
+
+        assert_eq!(
+            joined.agents,
+            BTreeMap::new(),
+            "the live pane of that id may be the other session's"
+        );
+        assert_eq!(joined.out_of_reach, BTreeSet::from([key("proj", "p-1")]));
         assert_eq!(joined.conflicts, vec![]);
     }
 
@@ -714,7 +853,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -853,7 +992,7 @@ mod tests {
                 project: "two",
                 rows: &two,
             }],
-            &[pane],
+            Listed::all(&[pane]),
             &Config::naming(cfg),
         );
 
@@ -889,7 +1028,7 @@ mod tests {
                 project: "beady-eye",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -931,7 +1070,7 @@ mod tests {
                     rows: &two,
                 },
             ],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -968,7 +1107,7 @@ mod tests {
                     rows: &two,
                 },
             ],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1024,7 +1163,7 @@ mod tests {
                     rows: &two,
                 },
             ],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1068,7 +1207,7 @@ mod tests {
                 project: "one",
                 rows: &one,
             }],
-            &live,
+            Listed::all(&live),
             &cfg,
         );
 
@@ -1099,7 +1238,7 @@ mod tests {
                 project: "one",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &cfg,
         );
 
@@ -1127,7 +1266,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1164,7 +1303,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1205,7 +1344,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1232,7 +1371,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1268,7 +1407,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1323,7 +1462,7 @@ mod tests {
                 project: "beady-eye",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1367,7 +1506,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 
@@ -1409,7 +1548,7 @@ mod tests {
                 project: "proj",
                 rows: &beads,
             }],
-            &live,
+            Listed::all(&live),
             &Config::naming(cfg),
         );
 

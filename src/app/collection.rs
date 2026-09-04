@@ -2,10 +2,14 @@
 //!
 //! A collection reads what it is asked for and draws everything standing, so
 //! refreshing one project and rebuilding from nothing produce the same
-//! snapshot. What a read of one project costs, and what its failures mean,
-//! belongs to `tracker`.
+//! snapshot — for as long as every session answers. A collection that has
+//! watched one answer knows which panes it was holding when it stops, and a
+//! collection built from nothing has never seen it: that is the one thing
+//! the two can disagree about, and `every_pane` is where it is decided.
+//! What a read of one project costs, and what its failures mean, belongs to
+//! `tracker`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -14,7 +18,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::Trackers;
 use crate::collect::worktree;
 use crate::config::{Config, Project};
-use crate::model::join::{self, ProjectRows};
+use crate::model::join::{self, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Session, SessionState,
     Snapshot, TrackerFailure, TrackerState, Tree,
@@ -140,6 +144,16 @@ fn placed(pane: Pane) -> Pane {
 #[derive(Default)]
 pub struct Collection {
     read: BTreeMap<String, Read>,
+    /// Which pane ids each session last answered with. A session that
+    /// answers replaces its own entry and no other's, and one the provider
+    /// has stopped running loses its.
+    ///
+    /// Kept for the collection where a session does *not* answer, which is
+    /// the only time it is read. A seat writes a bare pane id, and an id
+    /// names a pane only within its session, so nothing in the run's own
+    /// answer can place the id a silent session was holding. What it last
+    /// answered with can.
+    panes_last_answered: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Collection {
@@ -160,7 +174,7 @@ impl Collection {
         // calls, the join it feeds is across every project, and a project
         // with a producer is never polled — so a refresh naming it is the
         // only chance the agent join gets.
-        let (panes, provider) = every_pane(agents);
+        let (panes, provider, out_of_reach) = self.every_pane(agents);
 
         for (project, answer) in self.refresh_together(cfg, trackers, wanted, &panes, now) {
             match answer {
@@ -200,7 +214,7 @@ impl Collection {
             }
         }
 
-        self.draw(cfg, &panes, provider, filter, now)
+        self.draw(cfg, &panes, &out_of_reach, provider, filter, now)
     }
 
     /// One refresh of every project `wanted` names, made together rather
@@ -252,6 +266,7 @@ impl Collection {
         &self,
         cfg: &Config,
         panes: &[Pane],
+        out_of_reach: &BTreeSet<String>,
         agents: AgentProvider,
         filter: Filter,
         now: DateTime<Utc>,
@@ -270,7 +285,14 @@ impl Collection {
                 })
             })
             .collect();
-        let joined = &join::resolve(&rows, panes, cfg);
+        let joined = &join::resolve(
+            &rows,
+            Listed {
+                panes,
+                out_of_reach,
+            },
+            cfg,
+        );
 
         let trees = self
             .that_answered(cfg)
@@ -337,44 +359,82 @@ impl Collection {
         self.standing(cfg)
             .filter_map(|(project, read)| Some((project, read.work.as_ref().ok()?)))
     }
-}
 
-/// Every pane on the machine, and how asking for them went.
-///
-/// The provider is asked which sessions it runs, once, and then each session
-/// for its panes. A session that will not answer is a finding about that
-/// session and takes nothing from the others: its state is carried beside
-/// the panes of the sessions that did answer, which are drawn as they would
-/// be had it never existed. A provider that will not say which sessions it
-/// runs is the older, whole failure, and holds no session to report.
-fn every_pane(agents: &dyn Agents) -> (Vec<Pane>, AgentProvider) {
-    let sessions = match agents.sessions() {
-        Ok(sessions) => sessions,
-        Err(failure) => {
-            return (
-                Vec::new(),
-                AgentProvider {
-                    provider: agents.name(),
-                    state: unlistable(failure.kind),
-                    sessions: Vec::new(),
-                },
-            )
-        }
-    };
-
-    let mut panes = Vec::new();
-    let mut read = Vec::with_capacity(sessions.len());
-    for name in sessions {
-        let state = match agents.list(&name) {
-            Ok(listed) => {
-                panes.extend(listed.into_iter().map(placed));
-                SessionState::Answering
+    /// Every pane on the machine, how asking for them went, and the ids of the
+    /// panes this run is missing.
+    ///
+    /// The provider is asked which sessions it runs, once, and then each session
+    /// for its panes. A session that will not answer is a finding about that
+    /// session and takes nothing from the others: its state is carried beside
+    /// the panes of the sessions that did answer, which are drawn as they would
+    /// be had it never existed. A provider that will not say which sessions it
+    /// runs is the older, whole failure, and holds no session to report.
+    ///
+    /// It is still `Answering`, and that is the report rather than a gap in it.
+    /// A partial answer is not a fact about the provider — the provider said
+    /// which sessions it runs and then answered for most of them — it is a fact
+    /// about each session, which `AgentProvider::sessions` carries one by one
+    /// and the foot says one by one. Collapsing those into a fourth provider
+    /// state would reach every reader of `ProviderState::answered()`: the live-
+    /// agents filter would fall back to showing everything and the tail would
+    /// refuse to read any pane on the machine, both because one session of five
+    /// hiccuped. So what a partial answer costs is carried at the grain it
+    /// happened at, and the third value here is that grain: the panes the
+    /// missing sessions were holding when they last answered, which is what
+    /// tells a claim this run cannot speak for from a seat that has died.
+    ///
+    /// A session that has never answered contributes nothing, so a claim naming
+    /// a pane in one is reported as an orphan the way it was before this. That
+    /// is bounded — a session that wedges while `bdi` watches is placed within
+    /// one collection — but it never closes for `bdi --json`, which builds a
+    /// collection per invocation and so has watched nothing. That divergence
+    /// between the screen and the published snapshot is `bdi-0tp.15`.
+    fn every_pane(&mut self, agents: &dyn Agents) -> (Vec<Pane>, AgentProvider, BTreeSet<String>) {
+        let sessions = match agents.sessions() {
+            Ok(sessions) => sessions,
+            Err(failure) => {
+                return (
+                    Vec::new(),
+                    AgentProvider {
+                        provider: agents.name(),
+                        state: unlistable(failure.kind),
+                        sessions: Vec::new(),
+                    },
+                    BTreeSet::new(),
+                )
             }
-            Err(_) => SessionState::NotAnswering,
         };
-        read.push(Session { name, state });
+        self.panes_last_answered
+            .retain(|session, _| sessions.contains(session));
+
+        let mut panes = Vec::new();
+        let mut read = Vec::with_capacity(sessions.len());
+        let mut out_of_reach = BTreeSet::new();
+        for name in sessions {
+            let state = match agents.list(&name) {
+                Ok(listed) => {
+                    self.panes_last_answered.insert(
+                        name.clone(),
+                        listed.iter().map(|pane| pane.pane_id.clone()).collect(),
+                    );
+                    panes.extend(listed.into_iter().map(placed));
+                    SessionState::Answering
+                }
+                Err(_) => {
+                    if let Some(held) = self.panes_last_answered.get(&name) {
+                        out_of_reach.extend(held.iter().cloned());
+                    }
+                    SessionState::NotAnswering
+                }
+            };
+            read.push(Session { name, state });
+        }
+        (
+            panes,
+            AgentProvider::answering(agents.name(), read),
+            out_of_reach,
+        )
     }
-    (panes, AgentProvider::answering(agents.name(), read))
 }
 
 /// What a failed listing says about the provider that failed it.
@@ -1749,14 +1809,7 @@ path = "{}"
             in_session(pane("w:p1", ORBITAL, PaneStatus::Working), "beacon"),
             "x-1.1",
         )])
-        .not_answering_for(
-            "persistent-agents",
-            RunFailure {
-                kind: FailureKind::Unavailable,
-                program: THE_FAKE.to_string(),
-                detail: "no socket".to_string(),
-            },
-        );
+        .not_answering_for("persistent-agents", wedged());
 
         let snap = run(
             &two_projects(),
@@ -1793,6 +1846,169 @@ path = "{}"
             .as_ref()
             .expect("the seat in beacon is on its bead");
         assert_eq!(seat.pane.session, "beacon");
+    }
+
+    /// A session that is running and will not answer for its panes.
+    fn wedged() -> RunFailure {
+        RunFailure {
+            kind: FailureKind::Unavailable,
+            program: THE_FAKE.to_string(),
+            detail: "no socket".to_string(),
+        }
+    }
+
+    /// Three claims, each naming the pane its seat sits in, so a collection
+    /// over two sessions can be asked about each of them separately.
+    const SEATED_TREE: &str = r#"[
+      {"id":"orb-7","title":"lift the ground station","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p1"}},
+      {"id":"orb-7.2","title":"lay the feeder cable","status":"in_progress","parent":"orb-7",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p2"}},
+      {"id":"orb-7.3","title":"tune the receiver","status":"in_progress","parent":"orb-7",
+       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p3"}}
+    ]"#;
+
+    /// What a session that has gone quiet is allowed to take with it, and
+    /// what it is not.
+    ///
+    /// A run holding no pane of a session cannot say whether the seat in it
+    /// is alive, so the claim naming that seat keeps its silence. It can
+    /// still say so about every other claim, and a seat that died in a
+    /// session which answered is exactly what `orphan-claim` is for — so the
+    /// two are asked in one collection, because a change that suppresses
+    /// both is the whole rule going quiet on one session's hiccup.
+    #[test]
+    fn a_claim_whose_seat_is_in_a_session_that_went_quiet_is_not_orphaned_and_the_rest_still_are() {
+        let cfg = one_project();
+        let trackers = orbital_with(orbital_holding(SEATED_TREE));
+        let mut standing = Collection::default();
+
+        let seated = Provider::holding(vec![
+            pane("w:p1", ORBITAL, PaneStatus::Working),
+            in_session(pane("w:p2", ORBITAL, PaneStatus::Working), "beacon"),
+            pane("w:p3", ORBITAL, PaneStatus::Working),
+        ]);
+        let before = standing.collect(
+            &cfg,
+            &seated,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        assert_eq!(
+            orphaned(&before),
+            Vec::<&str>::new(),
+            "every seat is on its pane while both sessions answer"
+        );
+
+        // beacon stops answering, and `w:p3` leaves the session that still does.
+        let quiet = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)])
+            .not_answering_for("beacon", wedged());
+        let after = standing.collect(
+            &cfg,
+            &quiet,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            after.agents.unanswered().collect::<Vec<_>>(),
+            ["beacon"],
+            "the session that went quiet is still a finding of its own"
+        );
+        assert_eq!(
+            orphaned(&after),
+            ["orb-7.3"],
+            "the seat that died in the session that answered is reported, and \
+             the one in the session that did not is not"
+        );
+        assert!(
+            node(tree_of(&after, "orbital"), "orb-7.1").agent.is_some(),
+            "the seat that answered is still drawn on its bead"
+        );
+    }
+
+    /// The bound on that, said as a test rather than only in prose: a session
+    /// that has never answered has left nothing behind to place its panes, so
+    /// a claim naming one is reported as an orphan exactly as it was before.
+    ///
+    /// A session that wedges while `bdi` watches is placed within one
+    /// collection, so on the screen this is a frame. A run that has watched
+    /// nothing never places one at all, which is `bdi --json` every time it
+    /// is invoked — tracked as `bdi-0tp.15`.
+    #[test]
+    fn a_claim_in_a_session_that_has_never_answered_is_orphaned_as_before() {
+        let quiet = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)])
+            .not_answering_for("beacon", wedged());
+
+        let snap = run(
+            &one_project(),
+            &quiet,
+            &orbital_with(orbital_holding(SEATED_TREE)),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(orphaned(&snap), ["orb-7.2", "orb-7.3"]);
+    }
+
+    /// What a session that stops being run takes with it. A name the provider
+    /// no longer lists holds no pane, and a session running under that name
+    /// later is not the one that went: what the old one was holding says
+    /// nothing about the new one's seats, so it goes when the name does.
+    #[test]
+    fn a_session_the_provider_has_stopped_running_takes_what_it_was_holding() {
+        let cfg = one_project();
+        let trackers = orbital_with(orbital_holding(SEATED_TREE));
+        let mut standing = Collection::default();
+
+        let both = Provider::holding(vec![
+            pane("w:p1", ORBITAL, PaneStatus::Working),
+            in_session(pane("w:p2", ORBITAL, PaneStatus::Working), "beacon"),
+        ]);
+        standing.collect(
+            &cfg,
+            &both,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        // beacon stops being run at all, and starts again under the same name.
+        let alone = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)]);
+        standing.collect(
+            &cfg,
+            &alone,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let quiet = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)])
+            .not_answering_for("beacon", wedged());
+        let after = standing.collect(
+            &cfg,
+            &quiet,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            orphaned(&after),
+            ["orb-7.2", "orb-7.3"],
+            "the pane list of the session that went is not the new one's"
+        );
     }
 
     /// A pane id names a pane only within its session, and a seat writes the

@@ -55,6 +55,7 @@ pub fn build_tree(
             };
             let agent = joined.agents.get(&key).cloned();
             let refused = joined.refused.get(&key);
+            let out_of_reach = joined.out_of_reach.contains(&key);
             let tied = relations.get(&bead.id).cloned().unwrap_or_default();
             Node {
                 id: bead.id.clone(),
@@ -76,6 +77,7 @@ pub fn build_tree(
                     agent.as_ref(),
                     refused,
                     agents,
+                    out_of_reach,
                     &cfg.anomalies,
                     now,
                 ),
@@ -174,7 +176,7 @@ mod tests {
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::edges::relations;
-    use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource};
+    use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource, Listed};
     use crate::model::snapshot::tests::*;
     use crate::model::snapshot::{a_provider, ProviderState};
     use crate::model::snapshot::{FailedProject, TrackerFailure};
@@ -689,7 +691,7 @@ mod tests {
               {"pane_id":"w:p2","cwd":"/srv/work/ferry/src","agent_status":"idle"}
             ]}}"#,
         );
-        let joined = join::resolve(&[], &panes, &cfg);
+        let joined = join::resolve(&[], Listed::all(&panes), &cfg);
 
         let snap = build(
             Collected {
@@ -728,7 +730,7 @@ mod tests {
     }
 
     fn built_over(panes: &[Pane], cfg: &Config) -> Snapshot {
-        let joined = join::resolve(&[], panes, cfg);
+        let joined = join::resolve(&[], Listed::all(panes), cfg);
         build(
             Collected::default(),
             panes,
@@ -778,7 +780,7 @@ mod tests {
     #[test]
     fn the_scope_reaches_the_snapshot() {
         let cfg = cfg().scoped_to_the_project_holding(Path::new("/srv/work/ferry/src"));
-        let joined = join::resolve(&[], &[], &cfg);
+        let joined = join::resolve(&[], Listed::all(&[]), &cfg);
 
         let snap = build(
             Collected::default(),
@@ -885,7 +887,7 @@ path = "/tmp/bdi-ground/beady-eye"
         let p = panes(include_str!(
             "../../../tests/fixtures/herdr_agent_list.json"
         ));
-        let j = join::resolve(&[], &p, &cfg);
+        let j = join::resolve(&[], Listed::all(&p), &cfg);
 
         let snap = build(
             Collected::default(),

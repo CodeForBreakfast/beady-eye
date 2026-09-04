@@ -740,7 +740,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::config::{Config, Scope};
-    use crate::model::join::{self, Joined, ProjectRows};
+    use crate::model::join::{self, Joined, Listed, ProjectRows};
     use crate::model::snapshot;
     use crate::model::snapshot::{
         a_provider, build_tree, Collected, FailedProject, ProviderState, Readiness, TrackerFailure,
@@ -1210,7 +1210,7 @@ credential_command = "secret harbour"
                     rows: &harbour.beads,
                 },
             ],
-            panes,
+            Listed::all(panes),
             &cfg,
         )
     }
@@ -1720,7 +1720,7 @@ credential_command = "secret harbour"
                 project,
                 rows: &rows,
             }],
-            panes,
+            Listed::all(panes),
             &cfg,
         );
         let readiness = Readiness {
@@ -1950,7 +1950,7 @@ credential_command = "secret harbour"
                 project: "orbital",
                 rows: &rows,
             }],
-            panes,
+            Listed::all(panes),
             &cfg,
         );
         let tree = |rows: &Assembled| {
@@ -3885,6 +3885,7 @@ credential_command = "secret harbour"
             &Joined {
                 agents: joined.agents,
                 refused: BTreeMap::new(),
+                out_of_reach: BTreeSet::new(),
                 conflicts: Vec::new(),
             },
             &cfg(),
@@ -4740,7 +4741,7 @@ credential_command = "secret harbour"
     /// supplying a line.
     fn only(collected: Collected, panes: &[Pane]) -> Snapshot {
         let cfg = cfg();
-        let joined = join::resolve(&[], panes, &cfg);
+        let joined = join::resolve(&[], Listed::all(panes), &cfg);
         snapshot::build(
             Collected {
                 read_at: every_project_read(),

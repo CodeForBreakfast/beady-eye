@@ -118,7 +118,7 @@ mod tests {
     use super::*;
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
-    use crate::model::join;
+    use crate::model::join::{self, Listed};
     use crate::model::snapshot::{a_provider, build, Collected, LoosePane};
     use crate::model::types::testing::A_SESSION;
     use crate::model::types::PaneStatus;
@@ -294,7 +294,7 @@ path = "/tmp/bdi-ground/beady-eye"
             include_str!("../../../tests/fixtures/herdr_agent_list.json"),
         )
         .expect("the capture parses");
-        let joined = join::resolve(&[], &panes, &cfg);
+        let joined = join::resolve(&[], Listed::all(&panes), &cfg);
         let snapshot = build(
             Collected::default(),
             &panes,
