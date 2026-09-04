@@ -106,6 +106,43 @@ const NOT_KNOWN: [&str; 3] = [
 /// neither is answered by a newer bd.
 const BD: &str = "bd";
 
+/// What a search for the program found: something under that name, nothing
+/// under it, or a directory that refused the search, which settles neither.
+///
+/// The third answer is the whole of what keeps this the same on both libcs.
+/// A `PATH` entry nothing may search refuses the search and the `execve`
+/// alike, on the one missing permission, and the libc chooses which of them
+/// to report: glibc carries the `EACCES` across the whole search and answers
+/// with it, where Darwin's answers `ENOENT` — the error a name nothing holds
+/// gets — for the identical search. Both of its mechanisms do, measured
+/// 2026-09-04 on Darwin 25.6.0 against glibc 2.42 with one C program:
+/// `posix_spawnp` and `execvp` agree within each platform and disagree
+/// across them, so this is the libc's answer rather than the call shape's.
+/// What they agree on is the `EACCES` from the `lstat`, so the search says
+/// what the spawn's error cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnderThatName {
+    Something,
+    Nothing,
+    /// A directory the search had to look inside would not be searched, so
+    /// nothing about an installation was established.
+    Unestablished,
+}
+
+impl UnderThatName {
+    /// One `PATH` entry's answer against everything the entries before it
+    /// gave. Something found anywhere is the search's answer; short of that,
+    /// one directory that refused it leaves the whole search unestablished,
+    /// wherever on `PATH` that directory sits.
+    fn or(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::Something, _) | (_, Self::Something) => Self::Something,
+            (Self::Unestablished, _) | (_, Self::Unestablished) => Self::Unestablished,
+            (Self::Nothing, Self::Nothing) => Self::Nothing,
+        }
+    }
+}
+
 /// Whether anything is installed under that name for the child to have run,
 /// asked the way the kernel asked: a name holding no separator is looked for
 /// on `PATH`, and anything else is a path, resolved where the child would
@@ -121,7 +158,7 @@ const BD: &str = "bd";
 /// same reason, whether it is the program's or a `PATH` entry's. The child
 /// searched its `PATH` after entering that directory, so a relative entry
 /// there names somewhere `bdi`'s own directory says nothing about.
-fn installed(program: &str, cwd: Option<&Path>, env: &Env) -> bool {
+fn installed(program: &str, cwd: Option<&Path>, env: &Env) -> UnderThatName {
     let named = Path::new(program);
     let where_the_child_looked =
         |at: &Path| cwd.map_or_else(|| at.to_path_buf(), |directory| directory.join(at));
@@ -131,22 +168,93 @@ fn installed(program: &str, cwd: Option<&Path>, env: &Env) -> bool {
     env.get(PATH)
         .map(std::ffi::OsString::from)
         .or_else(|| std::env::var_os(PATH))
-        .is_some_and(|path| {
+        .map_or(UnderThatName::Nothing, |path| {
             std::env::split_paths(&path)
-                .any(|at| under_that_name(&where_the_child_looked(&at).join(named)))
+                .map(|at| under_that_name(&where_the_child_looked(&at).join(named)))
+                .fold(UnderThatName::Nothing, UnderThatName::or)
         })
 }
 
-/// Whether the filesystem holds an entry there, which is a different
-/// question from whether it resolves.
+/// What the filesystem holds there, which is a different question from
+/// whether it resolves, and a different one again from whether we were
+/// allowed to ask.
 ///
 /// A symlink whose target has gone — a profile collected out from under it,
 /// a build deleted — is something installed and broken, and it is the state
 /// this whole distinction is drawn for. `Path::exists` follows the link and
 /// so answers `false` for one, which is the answer reserved for a name
 /// nothing holds. `symlink_metadata` is the `lstat` that stops at the entry.
-fn under_that_name(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok()
+///
+/// That `lstat` wants the same search permission on the directory `execve`
+/// was refused, so a refusal is not an absence and is kept apart from one.
+/// Nor is any other error it can fail with: a name too long to exist, a link
+/// that loops, a process out of file descriptors. Only the two the kernel
+/// gives for *no entry here* answer the question — nothing under that name,
+/// and nothing under a `PATH` entry that is not a directory to hold it. The
+/// rest are the search failing rather than succeeding at nothing, and they
+/// are the same two the child kept searching past.
+fn under_that_name(path: &Path) -> UnderThatName {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => UnderThatName::Something,
+        Err(absent)
+            if absent.kind() == std::io::ErrorKind::NotFound
+                || absent.kind() == std::io::ErrorKind::NotADirectory =>
+        {
+            UnderThatName::Nothing
+        }
+        Err(_) => UnderThatName::Unestablished,
+    }
+}
+
+/// Whether the child could have entered the working directory it was given.
+///
+/// A directory that is not there, and one that will not be searched, each
+/// refused the child on its own account, and a `PATH` it never searched from
+/// there is no evidence about the machine. `lstat` through the directory
+/// wants the search permission `chdir` wanted, and fails where the directory
+/// is missing or is not one, so the single call settles all three. Where no
+/// directory was given the child stayed where `bdi` is, which it plainly
+/// entered.
+///
+/// An empty path is not that case and is asked separately, because joining
+/// `.` onto it gives `.` — bdi's own directory, which answers that the child
+/// entered somewhere it was never sent. `chdir` refuses an empty path
+/// outright: measured through `Command` on 2026-09-04, `current_dir("")`
+/// answers `ENOENT`. It is the opposite of the rule for a `PATH` entry,
+/// where POSIX makes the empty one mean the working directory.
+fn the_child_entered(cwd: Option<&Path>) -> bool {
+    cwd.is_none_or(|directory| {
+        !directory.as_os_str().is_empty()
+            && under_that_name(&directory.join(std::path::Component::CurDir))
+                == UnderThatName::Something
+    })
+}
+
+/// Whether bdi's own call carries a fault of its own to report, which is a
+/// different question from anything the machine answered.
+///
+/// Both members are about the call bdi built, which bdi controls. Neither is
+/// a list of the errors a `PATH` search can come back with: that list belongs
+/// to the platform, it is unspecified, and it was measured answering three
+/// different ways across two libcs.
+///
+/// `std` refuses a `Command` carrying a NUL byte — in the program, an
+/// argument, an environment key or value, or the working directory — before
+/// it reaches the kernel, so the refusal has no errno at all. That is
+/// structural rather than enumerated, and holds for members of the family
+/// nobody has thought of yet. Measured through `Command` on glibc 2.42 on
+/// 2026-09-04: every NUL case answers `raw_os_error() == None`, and every
+/// other refusal measured carries a number.
+///
+/// A working directory the child could not enter refused it after the fork
+/// and before the `execve`, and no errno separates that from a search. A
+/// directory that is gone answers `ENOENT`, as an absent program does; one
+/// that is a file answers `ENOTDIR`, as a file-shaped `PATH` entry does on
+/// glibc; one nothing may enter answers `EACCES`, as a program without its
+/// execute bit does. Measured in the same run. `lstat` tells those apart and
+/// the error cannot.
+fn ours_to_report(cause: &std::io::Error, cwd: Option<&Path>) -> bool {
+    cause.raw_os_error().is_none() || !the_child_entered(cwd)
 }
 
 /// Where a child looks for a program it was named without a path.
@@ -193,36 +301,57 @@ impl RunFailure {
     /// to, and what is left when neither is earned is `Unstartable`, which
     /// claims nothing beyond the refusal itself.
     ///
-    /// The error alone earns neither. `ENOENT` is what the kernel answers to
-    /// a working directory that is not there, and to a program whose own
-    /// interpreter or loader is missing, as readily as to a name nothing
-    /// holds — it reports the interpreter's absence as the program's. And
-    /// `EACCES` is what it answers for a whole family: an unsearchable
-    /// directory on `PATH`, which one entry produces on a machine that has
-    /// no such program anywhere, alongside a program that is plainly there
-    /// without its execute bit.
+    /// The spawn's error earns none of them, and which failure it was is not
+    /// read here at all.
+    /// `ENOENT` is what the kernel answers to a working directory that is
+    /// not there, and to a program whose own interpreter or loader is
+    /// missing, as readily as to a name nothing holds — it reports the
+    /// interpreter's absence as the program's. `EACCES` is what it answers
+    /// for a whole family: an unsearchable directory on `PATH`, which one
+    /// entry produces on a machine that has no such program anywhere,
+    /// alongside a program that is plainly there without its execute bit.
+    /// And which of those two a refused search comes back as is the libc's
+    /// to choose — glibc `EACCES`, Darwin `ENOENT` — so an answer read off
+    /// the error is an answer that inverts between platforms.
     ///
-    /// So the probe is asked on every refusal rather than on `ENOENT` alone.
-    /// It cannot see past an unsearchable directory — `lstat` and `execve`
-    /// fail on the same missing search permission — and that is the case
-    /// where nothing is established and nothing is claimed. It sees through
-    /// the rest.
+    /// The search is asked instead, on every refusal. It tells apart what
+    /// the error conflates, its own refusal included: `lstat` wants the
+    /// search permission `execve` wanted, so a directory nothing may search
+    /// stops the search where it stopped the spawn — and that is reported as
+    /// the third answer rather than as an absence, which is the case where
+    /// nothing is established and so nothing is claimed.
+    ///
+    /// The working directory is asked the same way and for the same reason.
+    /// One the child could not enter refused the spawn on its own account,
+    /// so nothing a search made from anywhere else is evidence about the
+    /// machine.
+    ///
+    /// The question the error is asked is not whether the child got far
+    /// enough to search — nothing in the answer can say, and every predicate
+    /// built to ask it is a list of that platform's errors under another
+    /// name. It is whether anything is wrong on bdi's own side that the
+    /// reader has to be told about. `NotInstalled` is the only verdict that
+    /// reports nothing, so it is the only one that has to be earned.
+    ///
+    /// What that leaves is a refusal carrying an errno that could have come
+    /// from the search or from a fork the system would not give, which
+    /// nothing here can separate. It is answered from the probe, so a
+    /// machine holding no `bd` is told so rather than told that a `bd` it
+    /// does not have would not start. The cost is named in
+    /// `a_refusal_nothing_can_place_is_answered_by_the_search_that_completed`.
     fn could_not_start(
         program: &str,
         cwd: Option<&Path>,
         env: &Env,
         cause: &std::io::Error,
     ) -> Self {
-        let under_that_name = installed(program, cwd, env);
-        let nothing_was_installed = cause.kind() == std::io::ErrorKind::NotFound
-            && !under_that_name
-            && cwd.is_none_or(Path::is_dir);
-        if nothing_was_installed {
-            Self::not_installed(program, cause)
-        } else if under_that_name {
-            Self::could_not_be_started(FailureKind::InstalledUnstartable, program, cause)
-        } else {
-            Self::unstartable(program, cause)
+        match installed(program, cwd, env) {
+            _ if ours_to_report(cause, cwd) => Self::unstartable(program, cause),
+            UnderThatName::Something => {
+                Self::could_not_be_started(FailureKind::InstalledUnstartable, program, cause)
+            }
+            UnderThatName::Nothing => Self::not_installed(program, cause),
+            UnderThatName::Unestablished => Self::unstartable(program, cause),
         }
     }
 
@@ -693,11 +822,22 @@ mod tests {
         }
     }
 
+    /// The `PATH` is the fixture's rather than this machine's, because the
+    /// assertion is an absence: something found anywhere settles the search
+    /// wherever it sits, so a test asserting a program is *there* may
+    /// inherit a `PATH` safely, and one asserting nothing is there may not.
+    /// An inherited entry nothing may search would leave the search
+    /// unestablished and turn this red for a reason nothing in it names.
     #[test]
     fn a_program_that_is_not_installed_says_nothing_is_installed() {
+        let empty = a_directory_holding_nothing("with-no-program-in-it");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), empty.to_string_lossy().to_string());
+
         let failure = RealRunner
-            .run("bdi-no-such-program", &[], None, &Env::new())
+            .run("bdi-no-such-program", &[], None, &env)
             .expect_err("nothing by that name is on PATH");
+        std::fs::remove_dir_all(&empty).expect("the directory is ours to remove");
 
         assert_eq!(failure.kind, FailureKind::NotInstalled);
         assert_eq!(failure.program, "bdi-no-such-program");
@@ -723,10 +863,35 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
     }
 
+    /// The empty working directory is the one a path join answers wrongly
+    /// for: `"".join(".")` is `"."`, which is bdi's own directory and
+    /// plainly there, so a probe that only joined would report the child
+    /// entering somewhere it was never sent. `chdir` refuses it — measured
+    /// `ENOENT` — and with the program absent as well, the reader would be
+    /// told the machine has no `bd` and never told the directory was
+    /// unusable.
+    #[test]
+    fn an_empty_working_directory_is_not_one_the_child_entered() {
+        let empty = a_directory_holding_nothing("nothing-to-find-from-nowhere");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), empty.display().to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], Some(Path::new("")), &env)
+            .expect_err("an empty working directory is refused");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
     /// A working directory that is not there raises the same `ENOENT` as a
     /// program that is not there, so the directory is asked after and it
     /// decides: a project whose path has gone is something the reader had
     /// and lost, and the silence `Absent` earns belongs to neither.
+    ///
+    /// It is not the program's failure either. `sh` is installed and fine,
+    /// and the directory it was told to run in is bdi's own call, so the
+    /// answer names the refusal and stops there rather than sending the
+    /// reader to repair an `sh` that would have run anywhere else.
     #[test]
     fn a_directory_that_is_not_there_is_not_a_program_that_was_never_installed() {
         let gone = nothing_holds("no-such-directory");
@@ -734,7 +899,7 @@ mod tests {
             .run("sh", &["-c", "true"], Some(&gone), &Env::new())
             .expect_err("the directory is not there");
 
-        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+        assert_eq!(failure.kind, FailureKind::Unstartable);
     }
 
     /// A program is installed and its interpreter is not. The kernel reports
@@ -820,15 +985,16 @@ mod tests {
     }
 
     /// One `PATH` entry nothing may search is enough to refuse the spawn,
-    /// on a machine holding no such program anywhere. glibc gathers the
-    /// `EACCES` across the whole search and answers with it at the end, so
-    /// the entry need not be the only one or the first.
+    /// on a machine holding no such program anywhere. The entry need not be
+    /// the only one or the first: the child tries every entry, and the
+    /// refusal it comes back with is whichever of `EACCES` and `ENOENT` the
+    /// libc chose to carry out of the search.
     ///
-    /// The probe cannot see past it either — `lstat` wants the same search
-    /// permission `execve` was refused — and that is the point rather than a
-    /// gap: nothing here establishes an installation, so nothing may be said
-    /// of one. The reader who is told bd is installed goes hunting a bd that
-    /// was never on the machine.
+    /// The probe cannot see past that entry either — `lstat` wants the same
+    /// search permission `execve` was refused — and that is the point rather
+    /// than a gap: nothing here establishes an installation, so nothing may
+    /// be said of one. The reader who is told bd is installed goes hunting a
+    /// bd that was never on the machine.
     #[test]
     fn a_spawn_no_search_could_reach_says_nothing_about_an_installation() {
         let locked = an_unsearchable_directory("nothing-inside-it");
@@ -843,6 +1009,94 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::Unstartable);
     }
 
+    /// A call the child was refused before it looked anywhere, on a machine
+    /// where the program is genuinely absent. The search answers, truthfully
+    /// and about something else, and answering with it would report a
+    /// malformed call as an absent installation — the one failure that is
+    /// not a finding, so the reader would lose the notice as well as the
+    /// reason. A NUL byte in an argument is the refusal bdi can be handed.
+    #[test]
+    fn a_call_refused_before_the_child_looked_is_not_an_absent_installation() {
+        let empty = a_directory_holding_nothing("nothing-to-find");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), empty.display().to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &["a\0b"], None, &env)
+            .expect_err("a NUL byte in an argument is refused before the search");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// The argument is not the only place a NUL byte reaches, and the cut is
+    /// not a list of the places: `std` builds the environment into the call
+    /// too, and refuses the whole call the same way and with the same
+    /// absent errno. A cut that named the argument would pass this.
+    #[test]
+    fn a_nul_byte_in_the_environment_is_refused_before_the_child_looked_too() {
+        let empty = a_directory_holding_nothing("nothing-to-find-either");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), empty.display().to_string());
+        env.insert("BDI_NUL".to_string(), "a\0b".to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], None, &env)
+            .expect_err("a NUL byte in the environment is refused before the search");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A call bdi could not build says nothing about the machine whatever
+    /// the search found, so the arm that finds the program answers it the
+    /// same way as the arm that does not. Told otherwise, a reader is sent
+    /// to repair a bd that is installed and fine.
+    #[test]
+    fn a_call_refused_before_the_child_looked_is_not_an_installation_that_refused() {
+        let dir = a_program_without_its_execute_bit("beside-a-call-we-broke");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), dir.to_string_lossy().to_string());
+
+        let failure = RealRunner
+            .run("bdi-without-its-execute-bit", &["a\0b"], None, &env)
+            .expect_err("a NUL byte in an argument is refused before the search");
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// The errors a search can end on are the platform's and unspecified, so
+    /// nothing here reads the number: a refusal carrying one nobody has
+    /// placed is answered by the search, which completed and found nothing.
+    /// An argument list too long for the kernel is such a refusal — it is
+    /// `E2BIG`, which no `PATH` search produces and no list here names.
+    ///
+    /// The limit this states is real. A fork the system will not give
+    /// carries an errno too, and is answered the same way, so a machine out
+    /// of processes and genuinely without `bd` is told `bd` is absent —
+    /// which is true, and silent about the exhaustion. Nothing in a spawn's
+    /// answer separates that from a search, and the alternative is to
+    /// default to `Unstartable`, which tells a machine holding no `bd` that
+    /// a `bd` it does not have would not start.
+    #[test]
+    fn a_refusal_nothing_can_place_is_answered_by_the_search_that_completed() {
+        let empty = a_directory_holding_nothing("nothing-to-find-at-all");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), empty.display().to_string());
+        let far_too_long = "x".repeat(128 * 1024);
+        let arguments: Vec<&str> = (0..256).map(|_| far_too_long.as_str()).collect();
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &arguments, None, &env)
+            .expect_err("nothing on PATH holds it and the arguments are too long anyway");
+
+        assert_eq!(
+            failure.kind,
+            FailureKind::NotInstalled,
+            "the spawn answered {:?}",
+            failure.detail
+        );
+    }
+
     /// The other half of the same errno, and the reason the probe is asked
     /// on every refusal rather than on `ENOENT` alone: a program that is
     /// plainly there without its execute bit fails `EACCES` too, and there
@@ -851,12 +1105,7 @@ mod tests {
     /// thing they can act on.
     #[test]
     fn a_program_found_on_path_without_its_execute_bit_is_installed_and_broken() {
-        let dir = std::env::temp_dir().join(format!("bdi-no-execute-bit-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("the directory is ours to make");
-        let program = dir.join("bdi-without-its-execute-bit");
-        std::fs::write(&program, "#!/bin/sh\nexit 0\n").expect("the file is ours to write");
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644))
-            .expect("the mode is ours to set");
+        let dir = a_program_without_its_execute_bit("on-its-own");
         let mut env = Env::new();
         env.insert(PATH.to_string(), dir.to_string_lossy().to_string());
 
@@ -866,6 +1115,198 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
 
         assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+    }
+
+    /// A `PATH` entry nothing may search sits beside one holding the program,
+    /// and the spawn is refused on the search rather than on the program. The
+    /// entry that answered is the one that decides: the child would have
+    /// tried every entry, so an installation found at any of them is found,
+    /// and one broken entry does not blind the reader to a bd they can see.
+    #[test]
+    fn an_unsearchable_entry_does_not_hide_a_program_another_entry_holds() {
+        let locked = an_unsearchable_directory("beside-one-that-answers");
+        let dir = a_program_without_its_execute_bit("beside-one-that-refuses");
+        let mut env = Env::new();
+        env.insert(
+            PATH.to_string(),
+            format!("{}:{}", locked.display(), dir.display()),
+        );
+
+        let failure = RealRunner
+            .run("bdi-without-its-execute-bit", &[], None, &env)
+            .expect_err("one entry cannot be searched and the other holds no executable");
+        make_searchable_again(&locked);
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+    }
+
+    /// The distinction the libcs do not report the same way, asked of the
+    /// search itself. A directory that will not be searched leaves the
+    /// question open where one that answers and holds nothing closes it, and
+    /// the `lstat` refuses alike on both platforms where the spawn's own
+    /// error is `EACCES` on one and `ENOENT` on the other.
+    #[test]
+    fn a_directory_that_refuses_the_search_is_not_one_that_holds_nothing() {
+        let locked = an_unsearchable_directory("which-will-not-say");
+        let open = a_directory_holding_nothing("which-says-so");
+
+        let refused = under_that_name(&locked.join("bdi-no-such-program"));
+        let answered = under_that_name(&open.join("bdi-no-such-program"));
+        make_searchable_again(&locked);
+        std::fs::remove_dir_all(&open).expect("the directory is ours to remove");
+
+        assert_eq!(refused, UnderThatName::Unestablished);
+        assert_eq!(answered, UnderThatName::Nothing);
+    }
+
+    /// A working directory that is there and will not be entered, against a
+    /// `PATH` of absolute entries the search can complete without it. The
+    /// child never ran from there, so the completeness is `bdi`'s and not
+    /// the child's and says nothing about the machine — and the directory
+    /// has to be asked after in its own right to keep that so, because
+    /// `is_dir` answers yes for a directory nothing may enter and the
+    /// `EACCES` that used to catch it is no longer read.
+    #[test]
+    fn a_working_directory_nothing_may_enter_is_not_a_search_that_found_nothing() {
+        let locked = an_unsearchable_directory("with-no-way-in");
+        let open = a_directory_holding_nothing("that-the-search-reaches");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), open.to_string_lossy().to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], Some(&locked), &env)
+            .expect_err("the working directory cannot be entered");
+        make_searchable_again(&locked);
+        std::fs::remove_dir_all(&open).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// An empty `PATH` entry names the working directory, which is POSIX and
+    /// what the child did. The search has to look there as well, or a bd
+    /// sitting in the project's own directory is a bd the reader is told
+    /// they never installed.
+    ///
+    /// The overlay sets `PATH` to nothing rather than leaving it out, and
+    /// the two are different questions: an overlay without the key falls
+    /// through to `bdi`'s own, which under `cargo test` is a dev shell with
+    /// a real bd on it, so such a test asks about this machine instead of
+    /// about its fixture and passes without reaching the empty entry.
+    #[test]
+    fn an_empty_path_entry_is_the_directory_the_child_entered() {
+        let dir = a_program_without_its_execute_bit("named-by-an-empty-entry");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), String::new());
+
+        let failure = RealRunner
+            .run("bdi-without-its-execute-bit", &[], Some(&dir), &env)
+            .expect_err("the file has no execute bit");
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+    }
+
+    /// The refusal reaching the search through the entry rather than through
+    /// the directory the child entered: this one it did enter, and a
+    /// relative entry under it is what nothing may search. The answer is the
+    /// same as for an absolute entry because it is the same refusal, and
+    /// scoring it as an absence instead would tell a reader whose bd sits in
+    /// that very directory that they never installed one.
+    #[test]
+    fn a_relative_path_entry_that_refuses_the_search_is_not_an_absence() {
+        let dir = std::env::temp_dir().join(format!("bdi-entered-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the directory is ours to make");
+        let locked = dir.join("bin");
+        std::fs::create_dir_all(&locked).expect("the directory is ours to make");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644))
+            .expect("the mode is ours to set");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), "bin".to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], Some(&dir), &env)
+            .expect_err("the one directory on PATH cannot be searched");
+        make_searchable_again(&locked);
+        std::fs::remove_dir_all(&dir).expect("the directory is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A `PATH` entry that is a file rather than a directory holds nothing,
+    /// and one machine with one absence gets one answer wherever that entry
+    /// sits. What the child answers with does turn on where it sat, and is
+    /// why this is asked from both sides: measured on glibc 2.42 on
+    /// 2026-09-04, the file ahead of a directory leaves the directory's
+    /// `ENOENT` to be carried out, and the file behind it carries its own
+    /// `ENOTDIR`. Darwin answers `ENOENT` to both. None of that reaches the
+    /// verdict, which is the point — the position of a junk entry is not a
+    /// fact about whether a program is installed, and neither is the libc.
+    #[test]
+    fn a_path_entry_that_is_not_a_directory_holds_nothing_wherever_it_sits() {
+        let file = std::env::temp_dir().join(format!("bdi-not-a-directory-{}", std::process::id()));
+        std::fs::write(&file, "").expect("the file is ours to write");
+        let empty = a_directory_holding_nothing("beside-a-file");
+
+        for path in [
+            format!("{}:{}", file.display(), empty.display()),
+            format!("{}:{}", empty.display(), file.display()),
+        ] {
+            let mut env = Env::new();
+            env.insert(PATH.to_string(), path.clone());
+
+            let failure = RealRunner
+                .run("bdi-no-such-program", &[], None, &env)
+                .expect_err("neither entry on PATH holds it");
+
+            assert_eq!(failure.kind, FailureKind::NotInstalled, "PATH was {path}");
+        }
+        std::fs::remove_file(&file).expect("the file is ours to remove");
+    }
+
+    /// Every other way the search can fail is the search failing, not the
+    /// search finding nothing — a link that loops here, and elsewhere a name
+    /// too long to exist or a process with no file descriptors left. The
+    /// kernel refuses the spawn on it rather than searching past it, and
+    /// nothing about the machine is established either way.
+    #[test]
+    fn a_path_entry_the_search_cannot_resolve_establishes_nothing() {
+        let looping = std::env::temp_dir().join(format!("bdi-loop-a-{}", std::process::id()));
+        let back = std::env::temp_dir().join(format!("bdi-loop-b-{}", std::process::id()));
+        let _ = std::fs::remove_file(&looping);
+        let _ = std::fs::remove_file(&back);
+        std::os::unix::fs::symlink(&back, &looping).expect("the link is ours to make");
+        std::os::unix::fs::symlink(&looping, &back).expect("the link is ours to make");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), looping.to_string_lossy().to_string());
+
+        let failure = RealRunner
+            .run("bdi-no-such-program", &[], None, &env)
+            .expect_err("the one entry on PATH points at itself");
+        std::fs::remove_file(&looping).expect("the link is ours to remove");
+        std::fs::remove_file(&back).expect("the link is ours to remove");
+
+        assert_eq!(failure.kind, FailureKind::Unstartable);
+    }
+
+    /// A directory holding one file named as a program, without the execute
+    /// bit that would let it run.
+    fn a_program_without_its_execute_bit(named: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("bdi-no-execute-bit-{named}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the directory is ours to make");
+        let program = dir.join("bdi-without-its-execute-bit");
+        std::fs::write(&program, "#!/bin/sh\nexit 0\n").expect("the file is ours to write");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o644))
+            .expect("the mode is ours to set");
+        dir
+    }
+
+    /// A directory that is there, may be searched, and holds nothing.
+    fn a_directory_holding_nothing(named: &str) -> PathBuf {
+        let empty = std::env::temp_dir().join(format!("bdi-empty-{named}-{}", std::process::id()));
+        std::fs::create_dir_all(&empty).expect("the directory is ours to make");
+        empty
     }
 
     /// A directory nothing may search.
@@ -909,9 +1350,14 @@ mod tests {
     #[test]
     fn a_missing_program_in_a_missing_directory_is_reported_as_the_directory() {
         let gone = nothing_holds("no-such-directory-either");
+        let empty = a_directory_holding_nothing("with-no-program-in-it-either");
+        let mut env = Env::new();
+        env.insert(PATH.to_string(), empty.to_string_lossy().to_string());
+
         let failure = RealRunner
-            .run("bdi-no-such-program", &[], Some(&gone), &Env::new())
+            .run("bdi-no-such-program", &[], Some(&gone), &env)
             .expect_err("neither the directory nor the program is there");
+        std::fs::remove_dir_all(&empty).expect("the directory is ours to remove");
 
         assert_eq!(failure.kind, FailureKind::Unstartable);
     }
