@@ -517,24 +517,37 @@ impl Shown {
         }
     }
 
-    /// Go to the bead an id names, and say at the foot whatever the reader
-    /// cannot see for themselves: that the id reached nothing, or that it
-    /// reached a project they did not name.
+    /// Go to a bead matching what the reader typed, and say at the foot what
+    /// they cannot see for themselves.
     ///
-    /// A search that landed in the one project holding the id says nothing.
-    /// The selection has moved onto the bead, which is the answer, and the
-    /// foot is the row a reader reads when their key changed nothing else.
-    fn seek(&mut self, id: &str) {
-        let drawing = self.forest.seek(id);
-        self.said = match drawing.split_first() {
-            None => Some(Said::NoBeadRead(id.to_string())),
-            Some((_, [])) => None,
-            Some((project, _)) => Some(Said::WentTo(BeadKey {
-                project: project.clone(),
-                id: id.to_string(),
-            })),
-        };
+    /// Which is both halves now, on every landing. A search takes part of an
+    /// id or part of a title, so the reader has typed a fragment rather than
+    /// a name: the row they land on cannot tell them which bead it is,
+    /// because the id it draws is the shortened one, and no row can tell them
+    /// that eleven others matched.
+    ///
+    /// Under the exact match this widened, the row *was* the whole answer and
+    /// the foot spoke up only when a second tracker held the same id. That is
+    /// two facts a count says at once, so it says them and the special case
+    /// goes.
+    fn seek(&mut self, query: &str) {
+        self.said = Some(said_of(self.forest.seek(query)));
         self.moved(true);
+    }
+
+    /// Step to the next bead matching what was last searched for, or to the
+    /// one before it, reporting whether the screen has changed.
+    ///
+    /// A press before anything has been searched for has nothing to step
+    /// through: nothing moves, nothing has gone wrong, and the foot has
+    /// nothing to say about it.
+    fn step_match(&mut self, forward: bool) -> bool {
+        let Some(landed) = self.forest.next_match(forward) else {
+            return false;
+        };
+        self.said = Some(said_of(landed));
+        self.moved(true);
+        true
     }
 
     fn collected(&mut self, snapshot: Snapshot) {
@@ -577,6 +590,9 @@ impl Shown {
         }
         if action == Action::CopyId {
             return self.copy_id();
+        }
+        if let Action::NextMatch | Action::PreviousMatch = action {
+            return self.step_match(action == Action::NextMatch);
         }
         // The prompt goes up empty. What it holds is this side of the seam;
         // that it is up is the loop's, which is what makes a keystroke mean a
@@ -787,6 +803,17 @@ impl Screen {
 /// `^U` are the part of that agreement nothing on screen would show was
 /// broken. A window goes on last because it sits over the forest rather
 /// than in place of it.
+/// What the foot says about where a search got to.
+///
+/// The forest reports what it did and this decides what to say about it, so
+/// the forest goes on knowing nothing about the foot.
+fn said_of(landed: forest::Landed) -> Said {
+    match landed {
+        forest::Landed::Nowhere(sought) => Said::NothingMatched(sought),
+        forest::Landed::On { key, at, of } => Said::Matched { key, at, of },
+    }
+}
+
 fn paint(
     frame: &mut Frame,
     forest: &mut Forest,
@@ -1062,7 +1089,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 17 more bindings · no room on a screen this short",
+                "  … 19 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1098,12 +1125,16 @@ mod tests {
     ///
     /// Asserted a row taller than the table, which is where the property is
     /// the window's rather than the table's. The table wants a row per
-    /// binding plus its two borders, and it fills a twenty-four-row screen
-    /// exactly — so on the terminal size everything else here is measured at,
-    /// the forest survives in the columns beside the window and not in any
-    /// row above or below it. That is the clamp doing what it does on every
-    /// screen too short for the table, and it is a row further up the table's
-    /// growth than it was.
+    /// binding plus its two borders, and it has outgrown a twenty-four-row
+    /// screen — so on the terminal size everything else here is measured at,
+    /// the forest survives in the columns beside the window and in no row
+    /// above or below it. That is the clamp doing what it does on every
+    /// screen too short for the table.
+    ///
+    /// The width is the half that binds now. A `does:` line long enough to
+    /// take the window to the full eighty columns takes the forest away in
+    /// the other direction, which is the same defect the height clamp exists
+    /// to avoid — so this is what a binding's wording is measured against.
     ///
     /// Nothing here fires when the table outgrows a given terminal, because
     /// that crossing is not an event: `bindings_window` says why the screen is
@@ -1150,17 +1181,24 @@ mod tests {
     /// `Clear` is what stops the trees showing between the bindings. Every
     /// row is asserted whole, so forest text surviving in the columns a
     /// shorter binding does not reach is a failure rather than a trim.
+    ///
+    /// On a screen tall enough for the whole table, taken from the table
+    /// rather than written down: a height too short for it would cut the
+    /// bottom rows off and this would stop asserting them, silently and
+    /// without failing.
     #[test]
     fn no_forest_shows_through_the_bindings_window() {
         assert_eq!(
-            window_inner(80, 24),
+            window_inner(80, bindings().len() as u16 + 3),
             vec![
                 "  Enter     show the selected bead, or focus its pane from the bead view",
                 "  f         focus the selected bead's pane",
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  /         search for a bead by id, wherever the forest draws it",
+                "  /         find part of a bead's id or title, wherever the forest draws it",
+                "  n         go to the next bead matching the search",
+                "  N         go to the one before it",
                 "  q, ^C     quit",
                 "  Esc       go back to the forest from the bead view",
                 "  Tab       move to the next bead the shown bead names; Enter follows it",
@@ -1184,22 +1222,28 @@ mod tests {
     /// A window two columns narrower than the screen it sits in, on the
     /// narrowest screen anyone uses. `q, ^C quit` is the line that must
     /// survive: a reader who cannot find it is stuck.
+    ///
+    /// Tall enough for the whole table, taken from the table rather than
+    /// written down, because this is about what forty columns cost and a
+    /// height that has to be revisited when a binding is added would answer
+    /// about the rows instead.
     #[test]
     fn a_forty_column_screen_keeps_the_keys_and_cuts_only_what_it_must() {
-        let window = bindings_window(Rect::new(0, 0, 40, 24), &bindings());
+        let tall = bindings().len() as u16 + 3;
+        let window = bindings_window(Rect::new(0, 0, 40, tall), &bindings());
         assert_eq!(
             window.width, 40,
             "a window wider than the screen has to clamp"
         );
 
-        let drawn = window_inner(40, 24);
+        let drawn = window_inner(40, tall);
 
-        assert_eq!(drawn[6], "  q, ^C     quit");
+        assert_eq!(drawn[8], "  q, ^C     quit");
         assert_eq!(
             drawn[0], "  Enter     show the selected bead, o…",
             "a line too long for forty columns, cut with the cut marked"
         );
-        assert_eq!(drawn[16], "  Right, l  expand, or move to the fi…");
+        assert_eq!(drawn[18], "  Right, l  expand, or move to the fi…");
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
 
@@ -3489,30 +3533,78 @@ mod tests {
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/");
     }
 
-    /// The selection moves onto the bead, the prompt comes down, and the foot
-    /// says nothing: the answer is where the selection now is, and a line
-    /// repeating it would be the one thing on the screen the reader can
-    /// already see.
+    /// The selection moves onto the bead and the foot names it whole, even
+    /// where it was the only match.
+    ///
+    /// The row cannot say it: the id drawn there is the *shortened* one, and
+    /// the reader typed a fragment rather than a name, so what they landed on
+    /// is exactly what they cannot read off the screen.
     #[test]
-    fn an_id_the_forest_draws_moves_the_selection_onto_it_and_says_nothing() {
+    fn a_search_moves_the_selection_onto_the_bead_and_names_it_whole() {
         let mut shown = shown(a_grove(6));
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
 
         search_for(&mut shown, "grv-1.3");
 
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
-        assert_eq!(
-            foot_of(&mut shown, 80, 24).trim_end(),
-            key_row(),
-            "the foot said something about a search the reader can see landed"
+        assert!(
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.3 — the only match"),
+            "{:?}",
+            foot_of(&mut shown, 80, 24)
         );
     }
 
-    /// An id no tracker read holds says so, and says it as what `bdi` has
-    /// read rather than as what exists — a tracker that refused holds beads
-    /// no read has seen. The selection is left exactly where it was.
+    /// A search matching more than one bead says which of them the reader is
+    /// on and how many there are. No row can say the second half, and the
+    /// count is the whole reason a search that lands still speaks up.
     #[test]
-    fn an_id_no_tracker_read_holds_is_said_at_the_foot_and_moves_nothing() {
+    fn a_search_matching_several_beads_says_which_one_of_how_many() {
+        let mut shown = shown(a_grove(6));
+
+        search_for(&mut shown, "grv-1.");
+
+        assert!(
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.1 — 1 of 6 matching"),
+            "{:?}",
+            foot_of(&mut shown, 80, 24)
+        );
+    }
+
+    /// `n` walks on to the next one, and the count walks with it.
+    #[test]
+    fn n_steps_to_the_next_match_and_the_foot_counts_along() {
+        let mut shown = shown(a_grove(6));
+        search_for(&mut shown, "grv-1.");
+
+        press(&mut shown, KeyCode::Char('n'));
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2")));
+        assert!(
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.2 — 2 of 6 matching"),
+            "{:?}",
+            foot_of(&mut shown, 80, 24)
+        );
+    }
+
+    /// `n` before anything has been searched for has nothing to step through.
+    /// Nothing has gone wrong, so nothing is said and nothing moves — the
+    /// same answer `f` gives a row with no pane behind it.
+    #[test]
+    fn n_before_a_search_says_nothing_and_moves_nothing() {
+        let mut shown = shown(a_grove(6));
+        let was = cursor(&shown).cloned();
+
+        press(&mut shown, KeyCode::Char('n'));
+
+        assert_eq!(cursor(&shown).cloned(), was);
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
+    }
+
+    /// Text no tracker read holds says so, and says it as what `bdi` has read
+    /// rather than as what exists — a tracker that refused holds beads no
+    /// read has seen. The selection is left exactly where it was.
+    #[test]
+    fn text_no_tracker_read_holds_is_said_at_the_foot_and_moves_nothing() {
         let mut shown = shown(a_grove(6));
         press(&mut shown, KeyCode::Char('j'));
         let was = cursor(&shown).cloned();
@@ -3521,7 +3613,8 @@ mod tests {
 
         assert_eq!(cursor(&shown).cloned(), was);
         assert!(
-            foot_of(&mut shown, 80, 24).contains("no bead grv-404 in any tracker read"),
+            foot_of(&mut shown, 80, 24)
+                .contains("nothing matching \"grv-404\" in any tracker read"),
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
@@ -3570,7 +3663,7 @@ mod tests {
     fn the_readers_next_press_takes_a_searchs_answer_off_the_foot() {
         let mut shown = shown(a_grove(6));
         search_for(&mut shown, "grv-404");
-        assert!(foot_of(&mut shown, 80, 24).contains("no bead grv-404"));
+        assert!(foot_of(&mut shown, 80, 24).contains("nothing matching \"grv-404\""));
 
         assert!(shown.pressed());
 

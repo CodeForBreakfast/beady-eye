@@ -82,8 +82,13 @@ pub enum Action {
     CopyId,
     /// Show every binding the view answers to.
     ShowBindings,
-    /// Open the prompt that takes a bead's id and goes to it.
+    /// Open the prompt that takes part of a bead's id or title and goes to a
+    /// bead holding it.
     Search,
+    /// Go to the next bead matching what was last searched for.
+    NextMatch,
+    /// Go to the one before it.
+    PreviousMatch,
     Refresh,
     Quit,
 }
@@ -116,17 +121,25 @@ pub enum Typing {
 pub enum Said {
     /// The bead id just put on the terminal's clipboard.
     Copied(String),
-    /// The id searched for, which no tree any tracker gave up holds.
+    /// The text searched for, which no bead any tree read holds in its id or
+    /// its title.
     ///
     /// Said as what `bdi` has read rather than as what exists: a tracker that
     /// refused and a project no collection has reached yet both hold beads no
-    /// read has seen, and a flat *no such bead* would speak for them.
-    NoBeadRead(String),
-    /// The bead a search went to, where the id named one in more than one
-    /// project. The reader typed half a key — bead prefixes are per-tracker
-    /// and uncoordinated — and the half they did not type is what they are
-    /// owed once it turns out not to have been theirs to assume.
-    WentTo(BeadKey),
+    /// read has seen, and a flat *nothing matches* would speak for them.
+    NothingMatched(String),
+    /// The bead a search went to, and its place among the beads matching.
+    ///
+    /// Said on every landing, not only on an odd one. A search matches part
+    /// of an id or part of a title, so the reader has typed a fragment rather
+    /// than a name, and neither half of what they are owed is on the row they
+    /// land on: the row draws the *shortened* id, and one row cannot say that
+    /// eleven others matched.
+    ///
+    /// That is a change from the exact match this widened, where the row was
+    /// the whole answer and the foot only spoke up when a second tracker held
+    /// the same id.
+    Matched { key: BeadKey, at: usize, of: usize },
 }
 
 /// Something true of the view as a whole rather than of any row in it, said
@@ -416,12 +429,16 @@ mod tests {
     /// [`every_failure_kind`].
     pub(super) fn every_said() -> impl Iterator<Item = Said> {
         std::iter::successors(Some(Said::Copied("grv-1".to_string())), |said| match said {
-            Said::Copied(_) => Some(Said::NoBeadRead("grv-404".to_string())),
-            Said::NoBeadRead(_) => Some(Said::WentTo(BeadKey {
-                project: "orbital".to_string(),
-                id: "grv-1".to_string(),
-            })),
-            Said::WentTo(_) => None,
+            Said::Copied(_) => Some(Said::NothingMatched("grv-404".to_string())),
+            Said::NothingMatched(_) => Some(Said::Matched {
+                key: BeadKey {
+                    project: "orbital".to_string(),
+                    id: "grv-1".to_string(),
+                },
+                at: 1,
+                of: 2,
+            }),
+            Said::Matched { .. } => None,
         })
     }
 

@@ -16,11 +16,89 @@ use crate::model::snapshot::{Filter, Snapshot, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::{Action, Motion};
 
-use facts::Facts;
+use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
 
 /// How far a half-screen motion moves until the renderer says otherwise.
 const HALF_SCREEN: usize = 10;
+
+/// Where a search came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Landed {
+    /// Nothing any tree read holds matches the text searched for, so there
+    /// was nowhere to go and the forest is left exactly as it was.
+    ///
+    /// Carries the text because the answer is about it — the foot says what
+    /// found nothing — and because the forest is the only thing that still
+    /// knows it once a walk rather than a fresh search has come to nothing.
+    Nowhere(String),
+    /// The selection is on `key`, the `at`th of `of` beads matching, counted
+    /// from one and counted in the order the forest draws them.
+    ///
+    /// Screen order and not a ranking, so the ordinal is a fact about the
+    /// forest rather than about the search: the reader can count it off the
+    /// screen, and the same bead is the same number however they reached it.
+    On { key: BeadKey, at: usize, of: usize },
+}
+
+/// Which of the beads drawn hold `query` in their id or their title, by where
+/// they come in the drawing.
+///
+/// Letter case is neither side's: a title is prose, and a reader retyping a
+/// word off a row is not reproducing the capitals it happened to carry.
+fn matching(drawn: &[(BeadKey, String)], query: &str) -> Vec<usize> {
+    let query = query.to_lowercase();
+    drawn
+        .iter()
+        .enumerate()
+        .filter(|(_, (key, title))| {
+            key.id.to_lowercase().contains(&query) || title.to_lowercase().contains(&query)
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// Walk one tree from `at` in the order it is drawn, listing every bead not
+/// listed already.
+///
+/// `above` is the beads stepped through to reach `at`, which is what cuts a
+/// way down that comes back on itself. A bead already listed is stepped over
+/// rather than descended into: its children were reached under the first copy
+/// of it, which is the copy this list stands for.
+///
+/// The children come from `Facts::split` and not from `links_below`, because
+/// a parent with enough finished children to make a run draws the unfinished
+/// ones first and the run after them — so the tracker's own order is not the
+/// screen's, and `children_entries` is the only thing that says which is.
+/// Both halves are walked: a bead inside a run is drawn nowhere until the run
+/// is opened, and a search opens it, so leaving the run out would put beads
+/// beyond reach of the key that exists to reach them.
+fn step_down(
+    tree: &Tree,
+    facts: &TreeFacts,
+    at: usize,
+    above: &[usize],
+    listed: &mut BTreeSet<BeadKey>,
+    drawn: &mut Vec<(BeadKey, String)>,
+) {
+    let Some(node) = tree.beads.get(at) else {
+        return;
+    };
+    let key = BeadKey {
+        project: tree.project.clone(),
+        id: node.id.clone(),
+    };
+    if !listed.insert(key.clone()) {
+        return;
+    }
+    drawn.push((key, node.title.clone()));
+    let mut way = above.to_vec();
+    way.push(at);
+    let (shown, elided) = facts.split(tree, at, above);
+    for link in shown.into_iter().chain(elided) {
+        step_down(tree, facts, link.bead, &way, listed, drawn);
+    }
+}
 
 /// One snapshot's lines in render order, with the fold state and the selection
 /// that decide which of them are visible and which one is current.
@@ -33,6 +111,14 @@ pub struct Forest {
     half_screen: usize,
     lines: Vec<Line>,
     selected: usize,
+    /// What was last searched for, which `n` and `N` step through.
+    ///
+    /// The text and not the matches it found. A match set held between
+    /// presses would be stale the moment a collection landed, and a place in
+    /// one would be wrong the moment the reader moved by hand; the text is
+    /// still true after both, and the matches are worked out again from where
+    /// the selection has actually got to.
+    searched: Option<String>,
 }
 
 /// Flatten a snapshot into its lines.
@@ -45,6 +131,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         half_screen: HALF_SCREEN,
         lines: Vec::new(),
         selected: 0,
+        searched: None,
     };
     forest.lay_out();
     forest.select_first_root();
@@ -215,6 +302,14 @@ impl Forest {
     /// bead reachable more than once is drawn more than once and only the way
     /// down to a copy tells it from its twins — and the way down is what
     /// every question about the copy is asked with.
+    ///
+    /// `links_below` here rather than `Facts::split`, and deliberately. The
+    /// walks that decide *which* copy — `children_entries` drawing it,
+    /// `step_down` enumerating it, `stepped_to` resolving into it — all read
+    /// `split`, because for them first means first drawn. This one is handed
+    /// the copy already, as the ids in `place.steps`, and finds each by name:
+    /// same links, same bead, whatever order they arrive in. Putting it on
+    /// `split` would couple a resolver to `Facts` and buy no property.
     fn locate(&self, place: &Place) -> Option<(&Tree, Vec<usize>)> {
         let tree = self.tree_of(place)?;
         let mut way = vec![(!tree.beads.is_empty()).then_some(0)?];
@@ -256,6 +351,8 @@ impl Forest {
             | Action::CopyId
             | Action::ShowBindings
             | Action::Search
+            | Action::NextMatch
+            | Action::PreviousMatch
             | Action::Refresh
             | Action::Quit => return false,
         }
@@ -474,50 +571,190 @@ impl Forest {
         self.cursor.as_ref() == Some(&Handle::Bead(place.clone()))
     }
 
-    /// Put the selection on the bead an id names, wherever the forest draws
-    /// it, and report every project whose trees draw one — the selection has
-    /// gone to the first of them. Empty where no tree read holds it, and the
-    /// forest is left as it was.
+    /// Put the selection on a bead matching what the reader typed, wherever
+    /// the forest draws it, and report which of the matches it is. Nowhere
+    /// where nothing matches, and the forest is left as it was.
     ///
-    /// An id and not a key, because an id is what a reader has: `y` copies
-    /// one, and every id said outside `bdi` is said without the project
-    /// beside it. The key is still `(project, id)`, so this is where the
-    /// half the reader did not type is supplied.
-    pub fn seek(&mut self, id: &str) -> Vec<String> {
-        let drawing = self.drawing(id);
-        if let Some(project) = drawing.first() {
-            self.go_to(&BeadKey {
-                project: project.clone(),
-                id: id.to_string(),
-            });
-        }
-        drawing
+    /// A match is a bead holding the text in its id or in its title, letter
+    /// case aside. Part of either and not the whole of one, because a
+    /// fragment is what the reader has: the forest row draws a *shortened*
+    /// id and `row::abbreviate` is the only thing in `bdi` that draws one, so
+    /// on a long screen it is the only spelling of a bead they have been
+    /// shown — and a title is prose they are quoting a word out of.
+    ///
+    /// So a search no longer supplies the half of a key the reader did not
+    /// type. It answers with beads, each already a whole `(project, id)`,
+    /// and the reader steps through them.
+    ///
+    /// **Where it lands** is the one thing the whole id decides: on the bead
+    /// whose id is exactly what was typed if one matched, and on the first
+    /// match otherwise. An id is the one thing a reader can have meant
+    /// exactly, and a row merely *titled* after a bead must not shadow it —
+    /// that promise is older than this widening. The numbering below is not
+    /// touched by it.
+    pub fn seek(&mut self, query: &str) -> Landed {
+        self.searched = Some(query.to_string());
+        let drawn = self.beads_drawn();
+        let matched = matching(&drawn, query);
+        let lowered = query.to_lowercase();
+        let at = matched
+            .iter()
+            .position(|at| drawn[*at].0.id.to_lowercase() == lowered)
+            .unwrap_or(0);
+        self.land_on(&drawn, &matched, at, query)
     }
 
-    /// Every project whose trees draw a bead with this id, in the order the
-    /// forest looks for one: the trees the filter shows before the ones it
-    /// hid, which is the order `place_of` walks them in.
+    /// Step to the next bead matching what was last searched for, or to the
+    /// one before it, coming round at either end.
     ///
-    /// Bead prefixes are per-tracker and uncoordinated, so one id can name a
-    /// bead in more than one project and a reader who typed one cannot say
-    /// which they meant. Answering with all of them is what lets a search go
-    /// to one and still say the others are there; `bdi-7ao.38` owns what to
-    /// do about the collision in general.
-    fn drawing(&self, id: &str) -> Vec<String> {
-        let mut projects: Vec<String> = Vec::new();
-        for tree in self.snapshot.trees.iter().chain(&self.snapshot.collected) {
-            if projects.contains(&tree.project) {
-                continue;
-            }
-            let key = BeadKey {
-                project: tree.project.clone(),
-                id: id.to_string(),
-            };
-            if self.place_of(&key).is_some() {
-                projects.push(tree.project.clone());
-            }
+    /// `None` before anything has been searched for: there is nothing to step
+    /// through and nothing has gone wrong, which is the same answer `Focus`
+    /// gives a row with no pane.
+    pub fn next_match(&mut self, forward: bool) -> Option<Landed> {
+        let query = self.searched.clone()?;
+        let drawn = self.beads_drawn();
+        let matched = matching(&drawn, &query);
+        if matched.is_empty() {
+            return Some(Landed::Nowhere(query));
         }
-        projects
+        let at = self.past_selection(&drawn, &matched, forward);
+        Some(self.land_on(&drawn, &matched, at, &query))
+    }
+
+    /// Which match to step to: the first one drawn after the selection, or
+    /// the last one drawn before it, coming round at either end.
+    ///
+    /// Asked of where the selection is *now* rather than of where the last
+    /// step left it. So a reader who has moved by hand between presses
+    /// carries on from where they are standing, and a collection that has
+    /// moved every bead under them costs the walk nothing — there is no
+    /// place in a list to have gone stale, only a question asked again.
+    ///
+    /// A selection on a row that is not a bead carries on from there too, and
+    /// the bead it stands above is *included* going forwards: the reader is
+    /// above it, not on it, so it is a match after them rather than the one
+    /// they are already looking at. Going back needs no such care — a match
+    /// drawn at that bead is below the selection either way.
+    ///
+    /// *After* is a bead's place in the order and not the row the reader is
+    /// on, and for a bead the tree reaches twice those part company: the
+    /// order holds it once, at the copy drawn first, because a match is a
+    /// bead and `of` counts beads. So a reader who has walked to the second
+    /// copy by hand steps on from where the first one sits, which can be
+    /// above them. Not a slip in the anchor — the anchor has one place to
+    /// find, and giving it two would make `k of n` count rows in a search
+    /// that answers with beads. `bdi-7ao.136` holds what it would take.
+    fn past_selection(
+        &self,
+        drawn: &[(BeadKey, String)],
+        matched: &[usize],
+        forward: bool,
+    ) -> usize {
+        let Some((here, past_it)) = self.standing_at(drawn) else {
+            return if forward { 0 } else { matched.len() - 1 };
+        };
+        if forward {
+            matched
+                .iter()
+                .position(|at| if past_it { *at >= here } else { *at > here })
+                .unwrap_or(0)
+        } else {
+            matched
+                .iter()
+                .rposition(|at| *at < here)
+                .unwrap_or(matched.len() - 1)
+        }
+    }
+
+    /// Where the selection stands among the beads drawn, and whether it is
+    /// standing *above* that bead rather than on it.
+    ///
+    /// A project's own line, a group, and a pane in one are not beads, and a
+    /// reader can rest on any of them. Each still has a place in the order —
+    /// the first bead drawn below it — so stepping from one carries on from
+    /// where the reader is instead of starting the walk again.
+    ///
+    /// Read off the rendered lines rather than worked out from the snapshot.
+    /// Every ordering defect this search has had came from deriving the
+    /// screen's shape somewhere other than where it is drawn, and the lines
+    /// are that shape rather than a second account of it.
+    ///
+    /// `None` where no line below the selection carries a bead, and the walk
+    /// comes round rather than carrying on. That is a reader resting under
+    /// the last bead on the screen — and also one resting on a group they
+    /// have shut, whose matches are in the order but on no line, so there is
+    /// nothing here to read the anchor off. `bdi-7ao.135` holds the second,
+    /// which wants the group's own contents rather than the lines below it.
+    fn standing_at(&self, drawn: &[(BeadKey, String)]) -> Option<(usize, bool)> {
+        let on_a_bead = self.lines.get(self.selected).and_then(Line::bead);
+        let (key, past_it) = match on_a_bead {
+            Some(key) => (key, false),
+            None => (
+                self.lines[self.selected..].iter().find_map(Line::bead)?,
+                true,
+            ),
+        };
+        let at = drawn.iter().position(|(drawn, _)| drawn == key)?;
+        Some((at, past_it))
+    }
+
+    /// Put the selection on the `at`th match, counting from zero, and say
+    /// where it went and how many there were. Nowhere where there is no such
+    /// match, or where the forest cannot take the reader to it.
+    fn land_on(
+        &mut self,
+        drawn: &[(BeadKey, String)],
+        matched: &[usize],
+        at: usize,
+        query: &str,
+    ) -> Landed {
+        let Some((key, _)) = matched.get(at).map(|at| &drawn[*at]) else {
+            return Landed::Nowhere(query.to_string());
+        };
+        let key = key.clone();
+        if !self.go_to(&key) {
+            return Landed::Nowhere(query.to_string());
+        }
+        Landed::On {
+            key,
+            at: at + 1,
+            of: matched.len(),
+        }
+    }
+
+    /// Every bead the forest holds, with its title, in the order the screen
+    /// draws them.
+    ///
+    /// The order of the *trees* is asked of `layout`, which is what draws
+    /// them, rather than worked out here.
+    ///
+    /// `place_of`'s rule — the trees the filter shows before the ones it hid
+    /// — is not the whole of the screen's order, and reading it as if it were
+    /// is what this used to get wrong. It is an ordering *within* a project:
+    /// `place_of` takes a key, which carries its project, so it never has to
+    /// sequence one project against another. This has to, and the screen goes
+    /// project by project, putting each project's hidden trees under that
+    /// project rather than after every visible one. The rule is true where it
+    /// is written and silent about the question asked here.
+    ///
+    /// A bead reachable more than once is drawn more than once and listed
+    /// once, at the first way down that reaches it: the copy a reader
+    /// scanning down the screen would have found, which is the copy
+    /// `place_of` takes them to.
+    fn beads_drawn(&self) -> Vec<(BeadKey, String)> {
+        let mut drawn = Vec::new();
+        let mut listed = BTreeSet::new();
+        for tree in layout::trees_drawn(&self.snapshot) {
+            step_down(
+                tree,
+                self.facts.tree(&root_key(tree)),
+                0,
+                &[],
+                &mut listed,
+                &mut drawn,
+            );
+        }
+        drawn
     }
 
     /// Whether the forest can take the reader to a bead: whether any tree it
@@ -535,14 +772,18 @@ impl Forest {
     /// hid, and within a tree the first way down that reaches it.
     ///
     /// The first copy rather than the shallowest, because that is the one a
-    /// reader scanning down the screen would have found themselves.
+    /// reader scanning down the screen would have found themselves — which
+    /// means first *drawn*, and a parent with enough finished branches draws
+    /// its children in an order their sort does not give. `way_to` is handed
+    /// the tree's facts for that reason, and it is the same order the search
+    /// enumerates in, so the copy a count named is the copy landed on.
     fn place_of(&self, key: &BeadKey) -> Option<Place> {
         self.snapshot
             .trees
             .iter()
             .chain(&self.snapshot.collected)
             .filter(|tree| tree.project == key.project)
-            .find_map(|tree| way_to(tree, &key.id))
+            .find_map(|tree| way_to(tree, self.facts.tree(&root_key(tree)), &key.id))
     }
 
     /// Open everything shut over a line: everything the line hangs under, and
@@ -731,20 +972,35 @@ impl Forest {
 /// The walk carries the beads it came through, which is what cuts a loop: a
 /// way down that comes back to a bead it came through stops there, so a
 /// cyclic tree is walked once rather than for ever.
-fn way_to(tree: &Tree, id: &str) -> Option<Place> {
+fn way_to(tree: &Tree, facts: &TreeFacts, id: &str) -> Option<Place> {
     let root = Place::root(root_key(tree));
     if tree.beads.first()?.id == id {
         return Some(root);
     }
-    stepped_to(tree, id, 0, &[], &root)
+    stepped_to(tree, facts, id, 0, &[], &root)
 }
 
 /// The first way down from `at` that reaches a bead, given the beads stepped
 /// through to reach `at` and the place it stands on.
-fn stepped_to(tree: &Tree, id: &str, at: usize, above: &[usize], place: &Place) -> Option<Place> {
+///
+/// The children come from `Facts::split` and not from `links_below`, for the
+/// same reason `step_down` takes them from there: a parent with enough
+/// finished branches draws the rest of its children first and the run after,
+/// so *first* means first drawn rather than first sorted. Without it the copy
+/// this lands on and the copy a search counted at could be two different
+/// lines of the same bead.
+fn stepped_to(
+    tree: &Tree,
+    facts: &TreeFacts,
+    id: &str,
+    at: usize,
+    above: &[usize],
+    place: &Place,
+) -> Option<Place> {
     let mut way = above.to_vec();
     way.push(at);
-    links_below(tree, at, above).into_iter().find_map(|link| {
+    let (shown, elided) = facts.split(tree, at, above);
+    shown.into_iter().chain(elided).find_map(|link| {
         let stepped = place.step_to(BeadKey {
             project: tree.project.clone(),
             id: tree.beads[link.bead].id.clone(),
@@ -752,7 +1008,7 @@ fn stepped_to(tree: &Tree, id: &str, at: usize, above: &[usize], place: &Place) 
         if tree.beads[link.bead].id == id {
             return Some(stepped);
         }
-        stepped_to(tree, id, link.bead, &way, &stepped)
+        stepped_to(tree, facts, id, link.bead, &way, &stepped)
     })
 }
 
@@ -5741,14 +5997,14 @@ credential_command = "secret harbour"
         assert_ne!(forest.place(), Some(&twice[0]), "the other copy of it");
     }
 
-    /// The reader has an id and not a key: `y` copies an id, and every id
-    /// said outside `bdi` is said with no project beside it. So a search
-    /// supplies the half of the key they did not type, and lands on the bead.
+    /// The reader types what they have, and what they have is a fragment:
+    /// part of an id, a word out of a title, or a whole id copied with `y`.
+    /// A bead holding it in either field is a match.
     #[test]
-    fn searching_for_an_id_lands_on_the_bead_it_names() {
+    fn a_search_matches_part_of_an_id() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("orb-7.1.1"), ["orbital"]);
+        assert_eq!(forest.seek("7.1.1"), went_to("orbital", "orb-7.1.1", 1, 1));
 
         assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
         assert!(
@@ -5758,45 +6014,375 @@ credential_command = "secret harbour"
         );
     }
 
+    /// The forest row is the one place `bdi` ever prints a shortened id —
+    /// `row::abbreviate` has no other caller — so on a long screen the short
+    /// id is the only spelling the reader has been shown. A substring is what
+    /// reaches it: `.1.1` is a prefix of nothing.
+    #[test]
+    fn a_search_matches_the_shortened_id_the_row_draws() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek(".1.1"), went_to("orbital", "orb-7.1.1", 1, 1));
+    }
+
+    #[test]
+    fn a_search_matches_part_of_a_title() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek("mount"), went_to("orbital", "orb-7.1.1", 1, 1));
+    }
+
+    /// A title is prose and the reader is retyping a word they read off a
+    /// row, so the capitals the row happened to carry are not theirs to
+    /// reproduce.
+    #[test]
+    fn a_search_ignores_letter_case() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek("MoUnT"), went_to("orbital", "orb-7.1.1", 1, 1));
+    }
+
+    /// Matches are numbered in the order the forest draws them, which is the
+    /// order a reader scrolling would have met them — `place_of` names the
+    /// same doctrine for a single jump. So the ordinal is a fact about the
+    /// forest, and a reader who doubts it can count it off the screen.
+    #[test]
+    fn matches_are_numbered_in_the_order_the_forest_draws_them() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek("7.1"), went_to("orbital", "orb-7.1", 1, 3));
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "orb-7.1.1", 2, 3))
+        );
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "orb-7.1.2", 3, 3))
+        );
+    }
+
+    /// Stepping past the last comes round to the first, so a reader walking
+    /// the set is never stopped at an end they cannot see.
+    #[test]
+    fn stepping_past_the_last_match_comes_round_to_the_first() {
+        let mut forest = flatten(snapshot());
+        forest.seek("7.1");
+        forest.next_match(true);
+        forest.next_match(true);
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "orb-7.1", 1, 3))
+        );
+    }
+
+    #[test]
+    fn stepping_back_walks_the_matches_the_other_way() {
+        let mut forest = flatten(snapshot());
+        forest.seek("7.1");
+
+        assert_eq!(
+            forest.next_match(false),
+            Some(went_to("orbital", "orb-7.1.2", 3, 3))
+        );
+    }
+
+    /// Stepping asks where the selection is now rather than where the last
+    /// step left it, so a reader who has moved by hand between presses
+    /// carries on from where they are standing.
+    #[test]
+    fn stepping_carries_on_from_where_the_reader_has_moved_to() {
+        let mut forest = flatten(snapshot());
+        forest.seek("7.1");
+        assert!(forest.go_to(&key("orbital", "orb-7.1.1")));
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "orb-7.1.2", 3, 3))
+        );
+    }
+
+    /// A whole id lands on its own bead however many rows above it match. An
+    /// id is the one thing the reader can have meant exactly, and that is
+    /// what `bdi-2bb.37` shipped — a substring match that let a row merely
+    /// titled after a bead shadow the bead would take it back.
+    ///
+    /// The numbering is untouched by it: `orb-6.1` is drawn first and holds
+    /// the id in its title, so the bead landed on is the second of two. The
+    /// landing is the only thing the whole id decides.
+    #[test]
+    fn a_whole_id_lands_on_its_own_bead_however_many_rows_above_it_match() {
+        let mut forest = flatten(alone("orbital", NAMED_IN_A_TITLE, &[]));
+
+        assert_eq!(forest.seek("orb-6.2"), went_to("orbital", "orb-6.2", 2, 2));
+
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-6.2")));
+    }
+
+    /// A bead reachable more than once is drawn more than once and matched
+    /// once, at the first way down to it: the copy a reader scanning the
+    /// screen would have found, which is the rule `place_of` already keeps
+    /// for a single jump.
+    #[test]
+    fn a_bead_drawn_twice_is_one_match() {
+        let mut forest = flatten(drawn_twice_in_one_tree());
+
+        // `orb-9` is drawn under `orb-8.1` and again under `orb-8.2`, and
+        // `orb-9.1` holds the same characters. Three lines, two matches.
+        assert_eq!(forest.seek("orb-9"), went_to("orbital", "orb-9", 1, 2));
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "orb-9.1", 2, 2))
+        );
+    }
+
     /// A tree the filter hid is drawn in its project's hidden-trees group
     /// rather than taken off the screen, so a bead the filter hid is one a
-    /// search still reaches — and there is no third answer to write for a
-    /// bead the filter put out of reach, because it no longer puts one there.
+    /// search still reaches — after the shown ones, which is the order
+    /// `place_of` already documents.
     #[test]
     fn a_bead_the_filter_hid_is_one_a_search_still_reaches() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("hbr-3.1"), ["harbour"]);
+        assert_eq!(forest.seek("hbr-3.1"), went_to("harbour", "hbr-3.1", 1, 1));
 
         assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3.1")));
     }
 
-    /// An id no tree read holds is nowhere to go, and the forest is left
-    /// exactly as it was rather than half-opened on the way to nothing.
+    /// Nothing matching is nowhere to go, and the forest is left exactly as
+    /// it was rather than half-opened on the way to nothing.
     #[test]
-    fn searching_for_an_id_no_tree_read_holds_reaches_no_project() {
+    fn a_search_matching_nothing_leaves_the_forest_as_it_was() {
         let mut forest = flatten(snapshot());
         let was = sketch(&forest);
         let selected = forest.selected_line();
 
-        assert!(forest.seek("orb-404").is_empty());
+        assert_eq!(forest.seek("orb-404"), Landed::Nowhere("orb-404".into()));
 
         assert_eq!(sketch(&forest), was);
         assert_eq!(forest.selected_line(), selected);
     }
 
     /// Bead prefixes are per-tracker and uncoordinated, so one id can name a
-    /// bead in more than one project and a reader who typed one cannot say
-    /// which they meant. The search goes to the first and answers with all of
-    /// them, which is what lets the foot name the project it landed in
-    /// without a screen anybody has to answer.
+    /// bead in more than one project. That is two matches now rather than one
+    /// landing and a sentence about the other: the reader steps to the second
+    /// and looks at it, instead of being told about a bead they cannot see.
     #[test]
-    fn an_id_two_trackers_hold_reaches_the_first_and_answers_with_both() {
+    fn one_id_two_trackers_hold_is_two_matches() {
         let mut forest = flatten(two_trackers_holding_one_id());
 
-        assert_eq!(forest.seek("orb-7.1"), ["orbital", "ferry"]);
+        assert_eq!(
+            forest.seek("orb-7.1.1"),
+            went_to("orbital", "orb-7.1.1", 1, 2)
+        );
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("ferry", "orb-7.1.1", 2, 2))
+        );
+    }
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+    /// A reader can rest on a row that is not a bead — a project's own line,
+    /// a group, a pane in one — and stepping from there carries on from where
+    /// they are, rather than starting the walk again at the top.
+    ///
+    /// The row has to have matches *above* it or the question cannot be
+    /// asked: from the top of the forest, carrying on and starting again are
+    /// the same answer, and a test taken there passes whichever the code
+    /// does. So the walk stops on the second project's own line, which is
+    /// drawn below every bead of the first.
+    ///
+    /// Both projects read a tracker using the same prefix, so every bead
+    /// matches once in each. From `ferry`'s line, carrying on reaches
+    /// `ferry`'s first bead — and starting again would reach `orbital`'s,
+    /// which is what this used to do.
+    ///
+    /// **The match asked for is the anchor itself, which is the one position
+    /// that says where the boundary sits.** The bead below the row counts as
+    /// *after* it, because the reader is above that bead rather than on it —
+    /// so `ferry`'s root is a match the walk should reach, not one it should
+    /// step over. Ask for a match further down and the two readings return
+    /// the same bead and this proves only that the anchor was consulted:
+    /// `orb-7.1.1` was the first thing tried here and it could not tell them
+    /// apart, because the root is drawn above it.
+    ///
+    /// **The anchor is the first bead drawn below the selection, so a row
+    /// with none below it has nothing to carry on from and the walk comes
+    /// round.** A group the reader has shut is the case that reaches: its
+    /// matches are in the order but not on the screen, so there is no line to
+    /// read the anchor off. `bdi-7ao.135` holds that.
+    #[test]
+    fn stepping_from_a_row_that_is_not_a_bead_carries_on_from_there() {
+        let mut forest = flatten(two_trackers_holding_one_id());
+        forest.seek("orb-7");
+        walk::until(
+            &mut forest,
+            |forest| {
+                matches!(
+                    &forest.lines()[forest.selected_line()].content,
+                    Content::Project(line) if line.project == "ferry"
+                )
+            },
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+            },
+            |forest| format!("no second project line to rest on: {:#?}", sketch(forest)),
+        );
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("ferry", "orb-7", 10, 18)),
+            "stepping from the project line either started the walk again \
+             or stepped over the bead the reader is standing above"
+        );
+    }
+
+    /// Stepping before anything has been searched for has nothing to step
+    /// through, which is not a failure: nothing has gone wrong, nothing
+    /// moves, and there is nothing to say about it.
+    #[test]
+    fn stepping_before_a_search_has_nothing_to_step_through() {
+        let mut forest = flatten(snapshot());
+        let was = sketch(&forest);
+
+        assert_eq!(forest.next_match(true), None);
+
+        assert_eq!(sketch(&forest), was);
+    }
+
+    /// Going to a bead a tree reaches twice lands on the copy the screen
+    /// draws first, which is not the copy its siblings sort first.
+    ///
+    /// `twn-9` hangs under `twn-1.1` and again under `twn-1.4`. All four of
+    /// `twn-1`'s children are closed, so the sort puts `.1` above `.4`; but
+    /// `.4` has a pane working it, so it is not a *finished* branch, and the
+    /// screen draws it above the run that `.1`, `.2` and `.3` collapse into.
+    /// The copy under `.4` is on screen; the copy under `.1` is inside a shut
+    /// run.
+    ///
+    /// This is `Forest::go_to`, which is every jump: the search's landing and
+    /// Enter on a reference in the bead window both come through here. Taking
+    /// the reader into a run when a drawn copy of the same bead was above it
+    /// is the wrong one either way — and until this, nothing said so.
+    ///
+    /// **The three quiet children are the run, not three of them.** `MANY` is
+    /// the fewest finished siblings that make one, and below it `split_by`
+    /// hands back the links untouched — so a fixture one child smaller puts
+    /// the two orders back into agreement, and this passes whichever one it
+    /// is walking. The run is asserted before the jump rather than left to
+    /// the fixture, so trimming it fails here instead of quietly proving
+    /// nothing.
+    #[test]
+    fn going_to_a_bead_drawn_twice_lands_on_the_copy_drawn_above_a_run() {
+        let mut forest = flatten(alone("orbital", TWIN_BESIDE_A_RUN, &panes_on(&["twn-1.4"])));
+
+        // Four, not three: a run counts the work it stands over, and `twn-9`
+        // hangs under one of the three.
+        assert!(
+            drawn_here(&forest, "… 4 more"),
+            "no run formed, so the two orders agree and this test cannot \
+             tell them apart: {:#?}",
+            sketch(&forest)
+        );
+
+        assert!(forest.go_to(&key("orbital", "twn-9")));
+
+        assert_eq!(
+            forest.place().map(|place| place.steps.clone()),
+            Some(vec![key("orbital", "twn-1.4"), key("orbital", "twn-9")]),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A tree whose root has four closed children, one of them staffed. The
+    /// three quiet ones make a run; the staffed one is drawn above it. A
+    /// fifth bead hangs under one of each, so the two orders reach it by
+    /// different ways down.
+    const TWIN_BESIDE_A_RUN: &str = r#"[
+      {"id":"twn-1","title":"re-roof the shed","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"twn-1.1","title":"strip the felt","status":"closed",
+       "dependencies":[{"depends_on_id":"twn-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
+      {"id":"twn-1.2","title":"clear the gutters","status":"closed",
+       "dependencies":[{"depends_on_id":"twn-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
+      {"id":"twn-1.3","title":"sweep the yard","status":"closed",
+       "dependencies":[{"depends_on_id":"twn-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z"},
+      {"id":"twn-1.4","title":"lay the new felt","status":"closed",
+       "dependencies":[{"depends_on_id":"twn-1","type":"parent-child"},
+                       {"depends_on_id":"twn-9","type":"blocks"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
+      {"id":"twn-9","title":"borrow the ladder","status":"closed",
+       "dependencies":[{"depends_on_id":"twn-1.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task","closed_at":"2026-08-24T09:00:00Z"}
+    ]"#;
+
+    /// A parent with enough finished children draws the rest of them first
+    /// and the run after, so the order siblings are *sorted* into is not the
+    /// order they are drawn in — and a walk taking `links_below` alone gets
+    /// the difference wrong.
+    ///
+    /// The difference is not open against closed, which the sibling sort
+    /// already handles. It is that a run is of *finished branches*, and
+    /// `lines::finished` is every bead in the branch closed **and no agent on
+    /// it** — a stricter thing than the status the sort reads. `orb-7.4` is
+    /// closed with a pane working it, so it is not finished, and it stays
+    /// drawn among its siblings while `.2`, `.3` and `.5` elide beneath them.
+    /// Sorted it is fifth of its siblings; drawn it is third.
+    ///
+    /// A bead inside a run is drawn nowhere until the run is opened, and a
+    /// search opens it, so the run's members are matches like any others —
+    /// after the siblings drawn above them.
+    #[test]
+    fn a_run_of_finished_children_is_walked_where_the_screen_draws_it() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek("orb-7."), went_to("orbital", "orb-7.1", 1, 8));
+        // `.1`'s own children, drawn under it and above its siblings, then
+        // `.7`, which the sibling sort already puts above the closed ones.
+        forest.next_match(true);
+        forest.next_match(true);
+        forest.next_match(true);
+
+        // The staffed closed bead, drawn above the run rather than in it.
+        // Walked from `links_below` alone this is `orb-7.2`.
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "orb-7.4", 5, 8))
+        );
+    }
+
+    /// The screen draws projects in the order the config names them, and
+    /// `snapshot.trees` is in the order they were *read* — which is why
+    /// `snapshot.projects` exists. So a search cannot take its order from the
+    /// trees: a project read second and drawn first would be walked in the
+    /// wrong place, and the ordinal at the foot would count rows the reader
+    /// cannot count to.
+    #[test]
+    fn matches_are_numbered_by_the_order_projects_are_drawn_not_read() {
+        let mut forest = flatten(read_in_reverse());
+
+        // `orbital` is named first by the config and read second here.
+        assert_eq!(
+            forest.seek("orb-7.1.1"),
+            went_to("orbital", "orb-7.1.1", 1, 2)
+        );
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("harbour", "orb-7.1.1", 2, 2))
+        );
+    }
+
+    /// Two projects whose trees were read in the opposite order to the one
+    /// the config names them in.
+    fn read_in_reverse() -> Snapshot {
+        gather(
+            vec![tree_of("harbour", ORBITAL), tree_of("orbital", ORBITAL)],
+            Vec::new(),
+            Filter::All,
+        )
     }
 
     /// Two projects reading trackers that use the same prefix, which nothing
@@ -5807,6 +6393,27 @@ credential_command = "secret harbour"
             Vec::new(),
             Filter::All,
         )
+    }
+
+    /// A tree where one bead's title names another bead's whole id, and is
+    /// drawn above it. A search for that id matches both of them.
+    const NAMED_IN_A_TITLE: &str = r#"[
+      {"id":"orb-6","title":"re-site the mast","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-6.1","title":"wait on orb-6.2 before pouring","status":"open",
+       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-6.2","title":"cure the base","status":"open",
+       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    fn went_to(project: &str, id: &str, at: usize, of: usize) -> Landed {
+        Landed::On {
+            key: key(project, id),
+            at,
+            of,
+        }
     }
 
     fn drawn_here(forest: &Forest, said: &str) -> bool {

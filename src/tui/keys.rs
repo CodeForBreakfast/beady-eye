@@ -93,8 +93,23 @@ pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: &[alone(KeyCode::Char('/'), "/")],
         action: Action::Search,
-        does: "search for a bead by id, wherever the forest draws it",
+        does: "find part of a bead's id or title, wherever the forest draws it",
         hint: Some("find"),
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('n'), "n")],
+        action: Action::NextMatch,
+        does: "go to the next bead matching the search",
+        // No permanent word under the tail. It would cost a column on every
+        // screen for a key that means nothing until a search has been made,
+        // and `/ find` is already there saying searching exists.
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('N'), "N")],
+        action: Action::PreviousMatch,
+        does: "go to the one before it",
+        hint: None,
     },
     Binding {
         keys: &[alone(KeyCode::Char('q'), "q"), ctrl('c', "^C")],
@@ -329,6 +344,8 @@ pub(super) mod tests {
             Action::CopyId,
             Action::ShowBindings,
             Action::Search,
+            Action::NextMatch,
+            Action::PreviousMatch,
             Action::Refresh,
             Action::Quit,
         ];
@@ -357,6 +374,8 @@ pub(super) mod tests {
                 | Action::CopyId
                 | Action::ShowBindings
                 | Action::Search
+                | Action::NextMatch
+                | Action::PreviousMatch
                 | Action::Refresh
                 | Action::Quit => (),
             }
@@ -479,6 +498,15 @@ pub(super) mod tests {
             (key(KeyCode::Char('a')), Action::ToggleFilter),
             (control('r'), Action::Refresh),
             (key(KeyCode::Char('/')), Action::Search),
+            (key(KeyCode::Char('n')), Action::NextMatch),
+            // `N` is here because nothing presses it. `n` is pressed by a
+            // screen test that reads the bead and the count it lands on, so
+            // its wiring is asserted by what it does; `N` is reached from no
+            // test at all, and `every_action_has_a_key_that_asks_for_it` is
+            // reachability rather than direction — satisfied by any bijection
+            // over the actions. So this line is where `N`'s wiring is pinned
+            // or it is pinned nowhere.
+            (key(KeyCode::Char('N')), Action::PreviousMatch),
             (key(KeyCode::Char('?')), Action::ShowBindings),
             (key(KeyCode::Char('q')), Action::Quit),
             (control('c'), Action::Quit),

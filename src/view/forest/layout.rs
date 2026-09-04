@@ -98,6 +98,56 @@ pub(super) fn project_drawn(snapshot: &Snapshot, project: &str) -> bool {
 /// dangling and looping counts and its anomalies off the screen with it,
 /// and a group that said only how many trees it hides would read as
 /// "nothing to see" when some of them are broken.
+/// The trees a project is holding back, in the order its group lists them.
+fn hidden_trees<'a>(snapshot: &'a Snapshot, project: Option<&str>) -> Vec<&'a Tree> {
+    snapshot
+        .hidden_trees
+        .iter()
+        .filter(|hidden| Some(hidden.project.as_str()) == project)
+        .filter_map(|hidden| {
+            snapshot.tree(&BeadKey {
+                project: hidden.project.clone(),
+                id: hidden.root.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Every tree the forest draws, in the order it draws them: project by
+/// project as the config names them, and within a project the trees the
+/// filter shows before the ones it hid, which is where `draw_project` puts
+/// the hidden-trees group.
+///
+/// `snapshot.trees` cannot answer this. It is in the order the projects were
+/// read, which is why `snapshot.projects` exists at all — a project drawn
+/// before its collection returns has no tree to be implied by.
+///
+/// Folds are not consulted, so the set is wider than what is on screen at the
+/// moment of asking: this is the order the rows *would* be drawn in with
+/// everything open. `draw_project` stops at a project the reader has shut and
+/// this does not, which is the same asymmetry `place_of` has always had — a
+/// bead's `ancestry_of` ends at its project, and `open_over` sets every handle
+/// in that chain, so going to a bead opens the project over it exactly as it
+/// opens the folds. An order that left those trees out would be an order a
+/// search could not use.
+pub(super) fn trees_drawn(snapshot: &Snapshot) -> Vec<&Tree> {
+    let mut drawn = Vec::new();
+    for project in &snapshot.projects {
+        if !project_drawn(snapshot, project) {
+            continue;
+        }
+        drawn.extend(
+            snapshot
+                .trees
+                .iter()
+                .filter(|tree| tree.project == *project)
+                .map(Arc::as_ref),
+        );
+        drawn.extend(hidden_trees(snapshot, Some(project)));
+    }
+    drawn
+}
+
 fn group_of(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Option<Group> {
     let (count, with_findings) = match kind {
         GroupKind::HiddenTrees => {
@@ -311,17 +361,7 @@ impl Layout<'_> {
     /// The trees the filter hid from one project, which the snapshot still
     /// holds.
     fn hidden_trees(&self, project: Option<&str>) -> Vec<&Tree> {
-        self.snapshot
-            .hidden_trees
-            .iter()
-            .filter(|hidden| Some(hidden.project.as_str()) == project)
-            .filter_map(|hidden| {
-                self.snapshot.tree(&BeadKey {
-                    project: hidden.project.clone(),
-                    id: hidden.root.clone(),
-                })
-            })
-            .collect()
+        hidden_trees(self.snapshot, project)
     }
 
     fn draw_items(&self, items: Vec<Item>, trunk: &[bool], lines: &mut Vec<Line>) {

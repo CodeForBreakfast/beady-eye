@@ -2129,10 +2129,10 @@ there is no filter to apply and every tree renders.
 ### Keys
 
 The row under the tail names the handful of bindings worth a permanent line,
-each by a key a reader can press — `Enter show   a all   ? keys   q quit`,
-thirty-six columns, which is what fits a forty-column terminal without
-losing its last words, and the last words are `q quit`. `f focus` beside
-`Enter show` would overrun that, so `f` lives in `?` and not on the row. `?`
+each by a key a reader can press — `a all   ? keys   / find   q quit`,
+forty columns, which is what a forty-column terminal holds without
+losing its last words, and the last words are `q quit`. `f focus` would
+overrun that, so `f` lives in `?` and not on the row. `?`
 opens the full table in a window over the forest; any key closes it. The
 window is the table's own size, so a terminal with rows to spare gets a window
 and one without gets the screen: the table grows by a row per key, and a
@@ -2140,9 +2140,14 @@ ceiling short of the terminal would free rows off the top of the forest —
 which is not the row the reader opened `?` from — and pay for them by hiding a
 binding from the one view that says which keys exist. `^R`
 came off the row to
-make room for `?`: refresh is the most skippable of the five, since `bdi`
+make room for `?`: refresh is the most skippable, since `bdi`
 collects on a timer and on change reports anyway, so `^R` only ever means
 *now*, and `?` is one key from the full list.
+
+The row is full, so a key earns a place on it by being worth a column on
+*every* screen. `n` is not: it means nothing until a search has been made,
+and `/ find` beside it already says searching is there. So `n` and `N` live
+in `?`.
 
 The bindings are vim-like, with the arrows as aliases:
 
@@ -2153,8 +2158,12 @@ The bindings are vim-like, with the arrows as aliases:
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
+| `/` | find part of a bead's id or title, wherever the forest draws it |
+| `n` | go to the next bead matching the search |
+| `N` | go to the one before it |
 | `q`, `^C` | quit |
 | `Esc` | go back to the forest from the bead view |
+| `Tab` | move to the next bead the shown bead names; Enter follows it |
 | `^R` | collect from the trackers again now |
 | `E` | expand the selected node and everything under it |
 | `C` | collapse the selected node and everything under it |
@@ -2193,6 +2202,58 @@ which has no spare column. `C` is the one place a reader may knowingly fold
 over a live agent, and `D` brings it back: restoring the default recomputes
 the spine to live work from the snapshot in hand rather than replaying a
 stored fold set, so it stays right after a refresh has changed who is working.
+
+### Searching
+
+`/` opens a prompt at the foot and Enter asks for what is in it. A bead
+matches when its **id or its title holds that text**, letter case aside — part
+of either, not the whole of one. That is what the reader has: the forest row
+draws a *shortened* id and `view::row::abbreviate` is the only thing in `bdi`
+that draws one, so on a long screen it is the only spelling of a bead they
+have ever been shown, and a title is prose they are quoting a word out of.
+
+So the answer is a set, and the forest is the set. Every match is already a
+row, so there is no result list to build — and building one would throw away
+the thing a row carries that a list cannot, which is the bead's place in the
+tree. `n` steps to the next match and `N` to the one before, coming round at
+either end.
+
+**Matches are numbered in the order the forest draws them.** Not by relevance:
+screen order is the order a reader scrolling would have met them, it is the
+order `place_of` already takes a single jump in, and it puts the trees the
+filter shows before the ones it hid. So the ordinal at the foot is a fact
+about the forest rather than about the search — the same bead is the same
+number however the reader reached it, and they can count it off the screen.
+
+**Where a search lands is the one thing a whole id decides.** Type an id and
+the selection goes to that bead even where rows above it match too — a row
+merely *titled* after a bead must not shadow it, and that promise is older
+than the widening from an exact match. It changes the landing and not the
+numbering, so a deliberate id search can truthfully say *5 of 12*.
+
+The foot names the bead and the count on every landing: `orbital · orb-7.1 —
+5 of 12 matching`. It used to say nothing when a search landed cleanly,
+because the selection was the whole answer. It is not any more — the reader
+typed a fragment rather than a name, the id on the row they land on is the
+shortened one, and no row can say that eleven others matched. One id in two
+trackers is now two matches rather than one landing and a sentence about the
+other, so the reader steps to the second and looks at it.
+
+What is held between presses is **the text, not the matches**. A snapshot
+refreshes on a timer, so a stored match set would be stale within the interval
+and a stored place in one would be wrong the moment the reader moved by hand.
+`n` asks *which match is drawn after the selection* — a question that is still
+right after both.
+
+A search opens what is folded over the bead it goes to and leaves it open.
+That is `open_over`'s standing rule — a fold shut by hand stays shut until
+something asks otherwise, and asking to be taken to a bead underneath it is
+asking — and there is no way back to want: putting the folds back would leave
+the selection on a bead no longer drawn, and `refresh`'s ancestry fallback
+would walk it up to the fold, landing the reader neither where they started
+nor where they searched. `D` is the key that tidies. Esc's rule is untouched:
+it abandons a *prompt*, with the selection where it was, because nothing was
+ever asked for.
 
 Control held down still moves a row: a key that does not ask for control
 answers whatever modifiers are held, which is what the arrows and the letters

@@ -595,19 +595,21 @@ pub fn join_caveat(source: JoinSource) -> Option<&'static str> {
 /// What the reader's last keystroke came to. Said at the foot, where a reader
 /// whose key changed nothing else on the screen looks to learn that it fired.
 ///
-/// A search that landed on a bead says nothing here: the selection has moved
-/// to it, which is the answer, and a line repeating it would be the one thing
-/// on the screen the reader did not need. What a search has to say is what
-/// they cannot see — that the id reached nothing, or that it reached a
-/// project they did not name.
+/// A search says where it went and how many matched, on every landing.
+///
+/// It used to say nothing when it landed cleanly, because the selection had
+/// moved to the bead and that was the whole answer. A search takes part of an
+/// id or part of a title now, so the reader has typed a fragment rather than
+/// a name and the row cannot answer them: the id on it is the *shortened*
+/// one, and no row can say that eleven others matched.
 pub fn said(said: &Said) -> String {
     match said {
         Said::Copied(id) => format!("copied {id}"),
-        Said::NoBeadRead(id) => format!("no bead {id} in any tracker read"),
-        Said::WentTo(key) => format!(
-            "went to {}, and another tracker has that id too",
-            bead_key(key)
-        ),
+        Said::NothingMatched(sought) => {
+            format!("nothing matching \"{sought}\" in any tracker read")
+        }
+        Said::Matched { key, of: 1, .. } => format!("{} — the only match", bead_key(key)),
+        Said::Matched { key, at, of } => format!("{} — {at} of {of} matching", bead_key(key)),
     }
 }
 
@@ -754,10 +756,16 @@ mod tests {
     /// it takes.
     ///
     /// The enums are walked rather than listed, so a variant added to one of
-    /// them stops this compiling until it has been given a place. That is
-    /// what makes this the whole of what can ever appear on screen from
-    /// here: the sentence used to rest on seven array literals staying in
-    /// step by hand, and one of them had already fallen behind.
+    /// them stops this compiling until it has been given a place. What that
+    /// buys is that no variant can be *ignored* — the sentence used to rest
+    /// on seven array literals staying in step by hand, and one of them had
+    /// already fallen behind.
+    ///
+    /// It is not that every variant is *reached*. The compiler makes you
+    /// answer for a new one; it cannot make you answer `Some`. A chain given
+    /// a terminating arm compiles, runs, and yields what it always did, and
+    /// the error you cleared to get there reads as the check having worked.
+    /// `view`'s own note on these walks says the same thing of all of them.
     ///
     /// Where a variant carries fields it has shapes as well, and no walk can
     /// enumerate those. The walk takes one shape of each variant and the
@@ -782,6 +790,14 @@ mod tests {
         for answer in every_said() {
             said.push(super::said(&answer));
         }
+
+        // A search that found one bead reads as its own sentence rather than
+        // as `1 of 1`, so the shape is here beside the walk's.
+        said.push(super::said(&Said::Matched {
+            key: key("nix-9670s.20"),
+            at: 1,
+            of: 1,
+        }));
 
         // The prompt with something typed into it and with nothing, because
         // an empty one is what a reader sees the instant they press the key.
