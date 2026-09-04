@@ -224,6 +224,12 @@ pub fn followable(forest: &Forest, related: &Related) -> bool {
 /// is drawn on.
 pub struct Page {
     pub rows: Vec<Vec<Span<'static>>>,
+    /// How many rows the bead's name takes: one where its title fits the
+    /// window, more where the title wrapped. The name is one thing however
+    /// many rows it costs, and the tone that says so has to reach all of
+    /// them, so the page states its extent rather than leaving two places to
+    /// assume it.
+    pub head: usize,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
 }
@@ -257,7 +263,12 @@ struct Laid {
 
 fn lay_out(area: Rect, node: &Node) -> Laid {
     let width = offered(area.width, FLOOR_WIDTH);
-    let page = said(node, width.saturating_sub(BORDERS) as usize);
+    let height = offered(area.height, FLOOR_HEIGHT);
+    let page = said(
+        node,
+        width.saturating_sub(BORDERS) as usize,
+        height.saturating_sub(BORDERS) as usize,
+    );
     let window = show_window(area, width, page.rows.len());
     Laid {
         inner: Block::bordered().inner(window),
@@ -315,19 +326,39 @@ fn show_window(area: Rect, width: u16, rows: usize) -> Rect {
     )
 }
 
-/// The bead, one screen row at a time, in `bd show`'s order: the row's own
-/// facts, the agent the join put on it, then each section the bead has
-/// something in, under the name `bd show` gives it. Prose is wrapped to
-/// `width`; every other row is cut to it when drawn, as a row of the forest
-/// is.
-pub fn said(node: &Node, width: usize) -> Page {
-    let mut rows = vec![vec![
+/// The bead, one screen row at a time, in `bd show`'s order: the bead's own
+/// name, the facts under it, the agent the join put on it, then each section
+/// the bead has something in, under the name `bd show` gives it.
+///
+/// The name and the prose are both wrapped to `width`; every other row is cut
+/// to it when drawn. A row of the forest is cut because a forest is a column
+/// of rows that has to line up and the selection's geometry is worked out
+/// from one row per bead, and neither holds here: the window draws one bead,
+/// at whatever height that bead needs, with nothing lining up against it. The
+/// title is also the line the reader opened the window for, so it is the last
+/// line in it that should lose its end.
+///
+/// `window` is what the window has room for down the screen, which the name
+/// alone is not allowed to fill — see `title_of`.
+pub fn said(node: &Node, width: usize, window: usize) -> Page {
+    let name = vec![
         glyph(&node.status),
         Span::raw(" "),
         Span::styled(node.id.clone(), palette::IDENTITY),
         Span::raw(indent()),
-        Span::raw(node.title.clone()),
-    ]];
+    ];
+    let where_the_title_starts = name.iter().map(Span::width).sum::<usize>();
+    let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
+    for line in title_of(node, width.saturating_sub(where_the_title_starts), window) {
+        let mut row = if rows.is_empty() {
+            name.clone()
+        } else {
+            vec![Span::raw(" ".repeat(where_the_title_starts))]
+        };
+        row.extend(line);
+        rows.push(row);
+    }
+    let head = rows.len();
 
     let mut facts = vec![format!("P{}", node.priority), node.issue_type.clone()];
     facts.extend(node.owner.clone());
@@ -382,7 +413,49 @@ pub fn said(node: &Node, width: usize) -> Page {
         rows.extend(body);
     }
 
-    Page { rows, related }
+    Page {
+        rows,
+        head,
+        related,
+    }
+}
+
+/// The bead's title in the `room` its own glyph and id leave beside it: as
+/// its author wrote it where it need not be broken across rows, and broken
+/// where it must be and every row of the break can be seen.
+///
+/// Breaking a line is what closes up the run of spaces someone typed between
+/// two words, because a break is decided between words and a wrap that kept
+/// them would carry a run of spaces down to the head of the next row. So a
+/// title that fits is left alone: `bd show` prints the title as written and
+/// the forest row beside the window draws it as written, and a window that
+/// closed up a run of spaces it did not have to would be the one place on
+/// the screen saying something else.
+///
+/// Being seen takes a column to be drawn in and a row to be drawn on, and a
+/// narrow window can leave the title without either.
+///
+/// Without a column, `wrap` keeps itself terminating by taking the one it
+/// was not offered, and the title comes back a glyph to a row — each of them
+/// drawn past the edge of a window the glyph and the id already fill, so
+/// every row of the name says nothing at all.
+///
+/// Without a row, the name fills the window on its own and the reader is
+/// left with the one thing they already knew, a hundred presses above the
+/// status, the priority and the prose they opened it for. Cutting is the
+/// worse answer to a title in a window that has room for it and the better
+/// answer to one that has not: a cut row says less than a wrapped name and
+/// it says it where the reader is looking.
+fn title_of(node: &Node, room: usize, window: usize) -> Vec<Vec<Span<'static>>> {
+    let as_written = vec![vec![Span::raw(node.title.clone())]];
+    if room == 0 {
+        return as_written;
+    }
+    let broken = markdown::wrapped(&node.title, room);
+    if broken.len() == 1 || broken.len() >= window {
+        return as_written;
+    }
+    broken
 }
 
 /// What a row of the window is drawn in under the spans that name no colour
@@ -390,8 +463,12 @@ pub fn said(node: &Node, width: usize) -> Page {
 /// terminal's own, as the row the reader came for is in the forest; the page
 /// beneath it sits one rung below, so what the page holds at the default
 /// reads as emphasis rather than as the page.
-fn tone_of(row: usize) -> Style {
-    if row == 0 {
+///
+/// `head` is how many rows the name took rather than the one row it usually
+/// takes: a title that wrapped is still the head, and its second line painted
+/// as the page's first reads as the opening of the description.
+fn tone_of(row: usize, head: usize) -> Style {
+    if row < head {
         palette::HEAD
     } else {
         palette::PAGE
@@ -475,6 +552,7 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
     }
 
     let block = Block::bordered();
+    let head = page.head;
     view.fit(page.rows.len(), inner.height as usize);
     let on = view
         .on()
@@ -498,7 +576,7 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
         .enumerate()
     {
         let at = view.from + n;
-        let drawn = Fitted::new(row, Vec::new(), Vec::new()).toned(tone_of(at));
+        let drawn = Fitted::new(row, Vec::new(), Vec::new()).toned(tone_of(at, head));
         let drawn = if on == Some(at) {
             drawn.selected()
         } else {
@@ -697,14 +775,184 @@ mod tests {
         );
     }
 
-    /// A row of the view that is not prose — the bead's own line, a related
-    /// bead's — is one row whatever its length, cut the way a row of the
-    /// forest is.
-    #[test]
-    fn a_line_that_is_not_prose_is_cut_rather_than_wrapped() {
-        let rows = drawn(&a_bead(), &mut Show::default(), 24, 4);
+    /// A title from this project's own tracker, long enough to wrap at the
+    /// width the window floors at. A short one that wrapped only in a
+    /// narrowed window would be a test of the floor.
+    const A_LONG_TITLE: &str = "Thirty-three of thirty-four forest rows are the terminal's default, so the three an agent is on are found by reading rather than by looking";
 
-        assert_eq!(rows[1], "│◐ orb-7.1  re-point t…│");
+    fn a_bead_with_a_long_title() -> Node {
+        Node {
+            title: A_LONG_TITLE.to_string(),
+            ..a_bead()
+        }
+    }
+
+    /// The rows of the window the bead's name is drawn on: from the row its
+    /// glyph and id are on down to the facts under it. Found rather than
+    /// counted, because the window is centred on the screen and a name that
+    /// wraps is one of the things that moves it.
+    fn the_name_drawn(rows: &[String]) -> Vec<&str> {
+        rows.iter()
+            .skip_while(|row| !row.contains("◐ orb-7.1"))
+            .take_while(|row| !row.contains("in_progress"))
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// The line naming the bead wraps for the reason its description does:
+    /// the window is the one place a reader has asked for the bead in full.
+    /// The rule that cuts a title is the forest's, and it stays there — a
+    /// forest is a column of rows that has to line up, and this is one bead
+    /// at its own height with nothing lining up against it.
+    #[test]
+    fn a_title_too_long_for_the_window_wraps_rather_than_being_cut() {
+        let rows = drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 30);
+
+        let name = the_name_drawn(&rows)
+            .iter()
+            .map(|row| row.trim_matches(['│', ' ']))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            name.strip_prefix("◐ orb-7.1  "),
+            Some(A_LONG_TITLE),
+            "{rows:#?}"
+        );
+    }
+
+    /// The rows a wrapped title takes hang under where the title starts, so
+    /// the name is a block the reader sees the extent of rather than a first
+    /// line and a paragraph of strays under the glyph.
+    #[test]
+    fn the_rows_a_wrapped_title_takes_hang_where_the_title_starts() {
+        let rows = drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 30);
+        let name = the_name_drawn(&rows);
+        let (first, wrapped) = name.split_first().expect("the bead is named");
+        let under = first
+            .find("Thirty-three")
+            .map(|at| first[..at].chars().count())
+            .expect("the title starts on the row the bead is named on");
+
+        assert!(!wrapped.is_empty(), "the title did not wrap: {rows:#?}");
+        for row in wrapped {
+            assert_eq!(
+                row.find(|glyph: char| !matches!(glyph, '│' | ' '))
+                    .map(|at| row[..at].chars().count()),
+                Some(under),
+                "a row of the title does not hang under it: {rows:#?}"
+            );
+        }
+    }
+
+    /// A name that takes two rows is still one name. `tone_of` read the head
+    /// off `row == 0`, so a title's second line was painted as the page's
+    /// first — a reader sees a title, then what looks like the opening of
+    /// the description, and the two are one sentence.
+    #[test]
+    fn every_row_a_wrapped_title_takes_is_toned_as_the_head() {
+        const HEIGHT: u16 = 30;
+        let painted = painted(&a_bead_with_a_long_title(), 44, HEIGHT);
+        let tail = A_LONG_TITLE.rsplit(' ').next().expect("a title has words");
+
+        let last = (0..usize::from(HEIGHT))
+            .map(|y| painted.row(y))
+            .find(|row| row.iter().any(|run| run.said.contains(tail)))
+            .unwrap_or_else(|| panic!("the end of the title is drawn: {painted:#?}"));
+
+        assert_eq!(
+            run_saying(&last, tail).style.fg,
+            palette::HEAD.fg,
+            "{last:?}"
+        );
+    }
+
+    /// A title the window has room for is drawn as its author wrote it, the
+    /// spaces between its words included. The forest row beside the window
+    /// draws it that way and `bd show` prints it that way, and the wrap is
+    /// what would close a run of them up.
+    #[test]
+    fn a_title_the_window_has_room_for_is_drawn_as_it_was_written() {
+        let spaced = Node {
+            title: "re-point   the dish".to_string(),
+            ..a_bead()
+        };
+
+        assert_eq!(
+            drawn(&spaced, &mut Show::default(), 44, 22)[1],
+            "│◐ orb-7.1  re-point   the dish            │"
+        );
+    }
+
+    /// A window with rows enough for the name and nothing else cuts the
+    /// title too. The reader would otherwise be left with the one thing they
+    /// already knew, filling the window, with the status, the priority and
+    /// the prose they opened it for below its foot.
+    #[test]
+    fn a_window_a_wrapped_name_would_fill_cuts_the_title() {
+        assert_eq!(
+            drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 6),
+            vec![
+                "┌orb-7.1 · Esc to go back · j, k to scroll─┐",
+                "│◐ orb-7.1  Thirty-three of thirty-four fo…│",
+                "│  in_progress · P2 · task · kim           │",
+                "│  ◍ lifting the mast · working            │",
+                "│                                          │",
+                "└──────────────────────────────────────────┘",
+            ]
+        );
+    }
+
+    /// A window whose width the bead's glyph and id already fill cuts the
+    /// title on that row rather than wrapping it into nothing. The wrap comes
+    /// back a glyph to a row, and every one of those rows is drawn past the
+    /// window's edge — so what a title of seventeen glyphs buys the reader is
+    /// seventeen rows that say nothing, with the bead's facts under the last
+    /// of them.
+    ///
+    /// A short title in a tall window is the case that reaches this: a long
+    /// one is cut for the other reason, and a short one in a short window is
+    /// too.
+    #[test]
+    fn a_window_with_no_room_beside_the_name_cuts_the_title() {
+        let rows = drawn(&a_bead(), &mut Show::default(), 13, 30);
+        let named = rows
+            .iter()
+            .position(|row| row.contains("◐ orb-7.1"))
+            .expect("the bead is named");
+
+        assert_eq!(rows[named], "│◐ orb-7.1 …│", "{rows:#?}");
+        assert_eq!(rows[named + 1], "│  in_progr…│", "{rows:#?}");
+    }
+
+    /// A row of the view that is neither prose nor the bead's own name — the
+    /// facts under the name, a bead this one points at — is one row whatever
+    /// its length, cut the way a row of the forest is. The reader asked for
+    /// this bead in full, and a bead it names is somewhere to go rather than
+    /// something to read here.
+    #[test]
+    fn a_line_that_names_another_bead_is_cut_rather_than_wrapped() {
+        let named = Node {
+            agent: None,
+            description: String::new(),
+            notes: String::new(),
+            depends_on: Vec::new(),
+            blocks: Vec::new(),
+            ..a_bead()
+        };
+
+        assert_eq!(
+            drawn(&named, &mut Show::default(), 24, 8),
+            vec![
+                "┌orb-7.1 · Esc to go ba┐",
+                "│◐ orb-7.1  re-point   │",
+                "│           the dish   │",
+                "│  in_progress · P2 · …│",
+                "│                      │",
+                "│PARENT                │",
+                "│  ↑ ◐ orb-7  lift the…│",
+                "└──────────────────────┘",
+            ]
+        );
     }
 
     /// A window too short for the whole bead shows the top of it and says
@@ -1423,7 +1671,7 @@ mod tests {
     #[test]
     fn the_rows_the_page_reports_are_the_beads_it_names_in_that_order() {
         let bead = a_bead();
-        let page = said(&bead, 60);
+        let page = said(&bead, 60, 60);
 
         assert_eq!(
             page.related.len(),
@@ -1551,7 +1799,7 @@ mod tests {
     fn stepping_on_to_a_bead_below_the_window_brings_it_into_view() {
         let bead = a_bead();
         let mut view = Show::default();
-        let page = said(&bead, 58);
+        let page = said(&bead, 58, 60);
         let last = *page.related.last().expect("a bead names beads");
 
         view.go_to("orb-7.4");

@@ -1878,8 +1878,24 @@ emphasis italic and strong emphasis bold, a quote barred down its side, and a
 link followed by where it goes. A line break in the source stays a row break,
 so text that is not markdown draws as it always did, and text that is broken
 markdown is drawn as written: a renderer that drops text is worse than none.
-Prose wraps to the window; every other row — the bead's own line, a related
-bead's — is cut to it the way a row of the forest is. Where the bead is taller than the window,
+Prose wraps to the window, and so does the line naming the bead: this is the
+one place a reader has asked for that bead in full, and the reason a forest
+row is cut — a forest is a column of rows that has to line up, and its
+selection's geometry is one row per bead — holds nowhere here, over one bead
+drawn at its own height with nothing lining up against it. A name that takes
+more than one row hangs under where its title starts and is toned as the head
+the whole way down, so it reads as one block rather than as a title and a
+stray. Every other row — a related bead's — is cut to the window the way a row
+of the forest is, and the forest's own rows stay cut. A window the bead's
+glyph and id already fill across, or one with no rows for a wrapped name to
+take without filling it, cuts the title on its own row instead: a name that
+says nothing on any of its rows, or that fills the window on its own with the
+status and the prose below the foot of it, has taken the page from the reader
+to say what the reader already knew. A title the window has room for is drawn
+as its author wrote it, runs of spaces and all: breaking a line across rows is
+what closes those up, and a window that closed one up without having to would
+be the one place on the screen saying something the forest row beside it and
+`bd show` both say differently. Where the bead is taller than the window,
 the title says how to see the rest, and the motion keys move the bead rather
 than the selection: `j`, `k` and the arrows a row, `^D` and `^U` half the
 window, `g` and `G` to either end, and the wheel a row a notch.

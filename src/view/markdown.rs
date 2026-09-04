@@ -16,6 +16,18 @@ pub(crate) fn rows(text: &str, width: usize) -> Vec<Vec<Span<'static>>> {
         .collect()
 }
 
+/// One line of plain text wrapped into `width` columns, with no markdown
+/// read in it: the `*` in a bead's title is an asterisk its author typed,
+/// and a title that came back bold with its asterisks eaten would be a name
+/// `bdi` had rewritten.
+pub(crate) fn wrapped(text: &str, width: usize) -> Vec<Vec<Span<'static>>> {
+    Line {
+        spans: vec![Span::raw(text.to_string())],
+        ..Line::default()
+    }
+    .wrap(width)
+}
+
 /// One line of the rendered text before it is wrapped: what it says, in
 /// runs of one style, and what goes in front of its rows.
 #[derive(Debug, Default)]
@@ -433,6 +445,17 @@ mod tests {
         assert_eq!(
             words(&rows("one two three\nfour\n\nfive", 9)),
             ["one two", "three", "four", "", "five"]
+        );
+    }
+
+    /// A bead's title is not prose, and what looks like markdown in one is
+    /// what its author typed: a name that came back bold with its asterisks
+    /// eaten is a name `bdi` rewrote. It wraps at the spaces all the same.
+    #[test]
+    fn a_wrapped_line_keeps_the_marks_markdown_would_have_read() {
+        assert_eq!(
+            words(&wrapped("the *sole* `Changes` adapter", 12)),
+            ["the *sole*", "`Changes`", "adapter"]
         );
     }
 
