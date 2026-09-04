@@ -121,11 +121,12 @@ pub(super) enum Refresh {
     /// the probe could not answer, which has every later refresh read in full
     /// rather than compare against a state nobody established.
     ///
-    /// The work is behind a box because `Unchanged` is the usual answer and
-    /// carries nothing: a project that has not moved would otherwise be
-    /// handed back on the stack as the size of one that had.
+    /// Both fields are behind a box because `Unchanged` is the usual answer
+    /// and carries nothing: a project that has not moved would otherwise be
+    /// handed back on the stack as the size of one that had. `ReadAt` holds a
+    /// whole `Project`, so it grows whenever a project entry gains a field.
     Read {
-        at: Option<ReadAt>,
+        at: Option<Box<ReadAt>>,
         work: Box<ProjectWork>,
     },
 }
@@ -165,12 +166,14 @@ pub(super) fn refresh_project(
     }
 
     let (work, beads) = read_project(tracker.as_ref(), project, cfg, panes)?;
-    let at = probed.map(|working_root| ReadAt {
-        project: project.clone(),
-        working_root,
-        named,
-        roots,
-        speaks_until: speaks_until(&beads, now),
+    let at = probed.map(|working_root| {
+        Box::new(ReadAt {
+            project: project.clone(),
+            working_root,
+            named,
+            roots,
+            speaks_until: speaks_until(&beads, now),
+        })
     });
     Ok(Refresh::Read {
         at,
@@ -901,7 +904,7 @@ orbital = ["orb-4"]
             &after.projects[0],
             &after,
             &[],
-            at.as_ref(),
+            at.as_deref(),
             now(),
         )
         .expect("the tracker answers every call");

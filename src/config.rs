@@ -79,17 +79,29 @@ impl Scope {
     }
 }
 
+/// An unknown key is refused rather than dropped, which is serde's default.
+/// A project entry is the one place a reader hand-writes the name of a
+/// mechanism, and a key `bdi` silently ignores is read as the default — so a
+/// misspelling, or a config written against a key that has since gone, would
+/// have its tracker read in an environment it asked not to be read in.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Project {
     pub name: String,
     pub path: PathBuf,
-    /// The environment this project's tracker is read in.
+    /// A command that runs another command in the environment this project's
+    /// tracker is read in — `direnv exec .`, `nix develop -c`, `mise exec --`.
+    /// `bdi` appends the probe that reads the environment back, so the config
+    /// names the wrapper and nothing else.
+    ///
+    /// A project naming none is read in the environment `bdi` itself runs in,
+    /// and nothing is run to find that out.
     #[serde(default)]
-    pub environment: Environment,
+    pub environment_command: Option<Command>,
     /// A command whose stdout is this tracker's password, never the password
-    /// itself. The escape hatch for a tracker outside direnv's reach: it
-    /// answers in the ambient environment, and a project asking for direnv
-    /// as well is refused, because it is entered one way.
+    /// itself. The rung for a setup whose only exotic need is the credential:
+    /// its stdout is captured where an environment command's argv is visible
+    /// to `ps`, so it stays rather than folding into one.
     #[serde(default)]
     pub credential_command: Option<String>,
     /// Whether this project asks for itself every interval, or leaves saying
@@ -119,23 +131,54 @@ fn polls() -> bool {
     true
 }
 
-/// How a project's tracker is reached: with the environment `bdi` itself
-/// runs in, or with what entering the project's directory under direnv
-/// produces.
+/// A program and its arguments, written either way round.
 ///
-/// Ambient is the default because it is what a machine with bd and nothing
-/// else can run, and `-C` naming the tracker outright is what makes it safe:
-/// a credential belonging to another tracker can only fail to authenticate
-/// against the right database, never open the wrong one. direnv is for a
-/// setup that keeps one credential per project in each project's own
-/// directory, and it is asked for by name rather than inferred from an
-/// `.envrc`, so the config says which mechanism a project is read by.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Environment {
-    #[default]
-    Ambient,
-    Direnv,
+/// A line is what almost every wrapper wants — `direnv exec .` is three words
+/// and no argument holds a space — so that is what the common case writes.
+/// It is split on whitespace and nothing else: no quotes are honoured, and a
+/// config relying on them would have `bdi` run an argv the reader did not
+/// write, which is the class of silent wrong answer this key exists to close.
+///
+/// So an argument that holds a space is written as a list, where each entry
+/// is one argument whatever is inside it:
+///
+/// ```toml
+/// environment_command = ["nix", "develop", ".#dev shell", "-c"]
+/// ```
+///
+/// The exotic case pays a more precise config and the common one pays
+/// nothing, rather than every reader learning a quoting rule for a space
+/// almost none of them has.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Command {
+    Line(String),
+    Words(Vec<String>),
+}
+
+impl Command {
+    /// The program and its arguments, in order.
+    pub fn words(&self) -> Vec<&str> {
+        match self {
+            Command::Line(line) => line.split_whitespace().collect(),
+            Command::Words(words) => words.iter().map(String::as_str).collect(),
+        }
+    }
+
+    /// Whether it names no program at all, which the config refuses. `bdi`
+    /// appends its own probe, so an empty command would run that probe alone
+    /// — reading the project in `bdi`'s environment while its config says it
+    /// was read in its own.
+    ///
+    /// A list is the way to write an empty *word*, not only an empty command:
+    /// `[""]` has an entry and still names nothing, where a line cannot,
+    /// because splitting on whitespace never yields one. So it is the first
+    /// word that has to be there rather than any word.
+    pub fn names_no_program(&self) -> bool {
+        self.words()
+            .first()
+            .is_none_or(|program| program.is_empty())
+    }
 }
 
 impl Project {
@@ -389,14 +432,15 @@ impl Config {
                 repeated.join(", ")
             );
         }
-        if let Some(project) = cfg
-            .projects
-            .iter()
-            .find(|p| p.environment == Environment::Direnv && p.credential_command.is_some())
-        {
+        if let Some(project) = cfg.projects.iter().find(|p| {
+            p.environment_command
+                .as_ref()
+                .is_some_and(Command::names_no_program)
+        }) {
             anyhow::bail!(
-                "{} names both environment = \"direnv\" and a credential_command; a project \
-                 is entered one way, so say which",
+                "{} names an environment_command with no program in it; bdi appends its own \
+                 probe to what you write, so an empty one would read the project in bdi's \
+                 environment while saying it was read in its own",
                 project.name
             );
         }
@@ -676,7 +720,7 @@ path = "/home/user/dev/cinder"
                 Project {
                     name: "atlas".to_string(),
                     path: PathBuf::from("/home/user/atlas"),
-                    environment: Environment::Ambient,
+                    environment_command: None,
                     credential_command: Some("secret-tool lookup tracker atlas".to_string()),
                     poll: true,
                     worktrees: Vec::new(),
@@ -684,7 +728,7 @@ path = "/home/user/dev/cinder"
                 Project {
                     name: "beacon".to_string(),
                     path: PathBuf::from("/home/user/dev/beacon"),
-                    environment: Environment::Ambient,
+                    environment_command: None,
                     credential_command: Some(
                         "cat /home/user/dev/beacon/.beads-password".to_string()
                     ),
@@ -879,82 +923,134 @@ path = "/home/user/dev/cinder"
         );
     }
 
-    /// The default is the one a machine with bd and nothing else can run:
-    /// `bdi`'s own environment, with no program run to reproduce a shell's.
+    /// A project that names no command is read in the environment `bdi`
+    /// itself runs in, and nothing is run to reproduce a shell's.
     #[test]
     fn a_project_saying_nothing_about_its_environment_is_read_in_bdis_own() {
         let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
 
-        assert_eq!(cfg.projects[0].environment, Environment::Ambient);
+        assert_eq!(cfg.projects[0].environment_command, None);
     }
 
     const ONE_ENTERED_WITH_DIRENV: &str = r#"
 [[projects]]
 name = "beacon"
 path = "/home/user/dev/beacon"
-environment = "direnv"
+environment_command = "direnv exec ."
 "#;
 
+    /// The wrapper is what the config names. What `bdi` runs inside it is
+    /// `bdi`'s own business, so the reader writes no probe.
     #[test]
-    fn a_project_may_ask_to_be_entered_with_direnv() {
+    fn a_project_may_name_the_command_that_gives_its_environment() {
         let cfg = Config::from_toml(ONE_ENTERED_WITH_DIRENV).expect("parses");
 
-        assert_eq!(cfg.projects[0].environment, Environment::Direnv);
+        assert_eq!(
+            cfg.projects[0].environment_command,
+            Some(Command::Line("direnv exec .".to_string()))
+        );
     }
 
-    const ONE_READ_IN_BDIS_OWN: &str = r#"
+    const ENTERED_WITH_A_SPACE_IN_AN_ARGUMENT: &str = r#"
 [[projects]]
 name = "beacon"
 path = "/home/user/dev/beacon"
-environment = "ambient"
+environment_command = ["nix", "develop", ".#dev shell", "-c"]
 "#;
 
-    /// The other spelling the enum accepts, which only its derive makes a
-    /// word at all. A setup that types it and is refused finds out by having
-    /// its project read the way it asked not to be, and that is silent.
+    /// A line is split on whitespace and no quoting is honoured, so an
+    /// argument holding a space is written as a list instead. Without this
+    /// the config would name one argv and `bdi` would run another.
     #[test]
-    fn a_project_may_name_bdis_own_environment_outright() {
-        let cfg = Config::from_toml(ONE_READ_IN_BDIS_OWN).expect("parses");
+    fn an_argument_holding_a_space_is_written_as_a_list() {
+        let cfg = Config::from_toml(ENTERED_WITH_A_SPACE_IN_AN_ARGUMENT).expect("parses");
 
-        assert_eq!(cfg.projects[0].environment, Environment::Ambient);
+        assert_eq!(
+            cfg.projects[0]
+                .environment_command
+                .as_ref()
+                .expect("the project named one")
+                .words(),
+            vec!["nix", "develop", ".#dev shell", "-c"],
+        );
     }
 
-    const ENTERED_TWO_WAYS: &str = r#"
-[[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-environment = "direnv"
-credential_command = "secret-tool lookup tracker beacon"
-"#;
-
-    /// One project, one way in. A credential command answering instead of
-    /// direnv, or after it, would be a precedence nothing on the screen
-    /// says, so a config asking for both is refused rather than resolved.
+    /// The common case is a line, and it is the same command either way
+    /// round.
     #[test]
-    fn a_project_entered_two_ways_is_refused() {
-        let err = Config::from_toml(ENTERED_TWO_WAYS).unwrap_err().to_string();
-
-        assert!(err.contains("beacon"), "got: {err}");
-        assert!(err.contains("environment"), "got: {err}");
-        assert!(err.contains("credential_command"), "got: {err}");
+    fn a_line_and_a_list_of_its_words_name_the_same_command() {
+        assert_eq!(
+            Command::Line("direnv exec .".to_string()).words(),
+            Command::Words(vec!["direnv".into(), "exec".into(), ".".into()]).words(),
+        );
     }
 
     const ENTERED_SOME_OTHER_WAY: &str = r#"
 [[projects]]
 name = "beacon"
 path = "/home/user/dev/beacon"
-environment = "nix-shell"
+environment_command = "nix develop -c"
 "#;
 
+    /// Any wrapper that runs a command, not a list `bdi` holds. nix and mise
+    /// are reached by a config that names them and by no change here, which
+    /// is the whole of why the enum went.
     #[test]
-    fn a_way_in_bdi_does_not_have_is_refused_by_name() {
-        let err = Config::from_toml(ENTERED_SOME_OTHER_WAY)
+    fn a_mechanism_bdi_has_never_heard_of_is_named_the_same_way() {
+        let cfg = Config::from_toml(ENTERED_SOME_OTHER_WAY).expect("parses");
+
+        assert_eq!(
+            cfg.projects[0].environment_command,
+            Some(Command::Line("nix develop -c".to_string()))
+        );
+    }
+
+    /// An empty command is refused, both ways it can be written. `bdi`
+    /// appends its own probe, so an empty one would run `env -0` alone and
+    /// hand back the ambient environment — the project read in `bdi`'s
+    /// environment while its config says otherwise, which is the silent
+    /// wrong read the whole setting exists to close.
+    #[test]
+    fn an_environment_command_with_no_program_in_it_is_refused() {
+        for empty in [r#""""#, r#"" ""#, "[]", r#"[""]"#, r#"["", "exec"]"#] {
+            let err = Config::from_toml(&format!(
+                r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+environment_command = {empty}
+"#
+            ))
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("nix-shell"), "got: {err}");
-        assert!(err.contains("ambient"), "got: {err}");
-        assert!(err.contains("direnv"), "got: {err}");
+            assert!(err.contains("beacon"), "for {empty}, got: {err}");
+            assert!(
+                err.contains("environment_command"),
+                "for {empty}, got: {err}"
+            );
+        }
+    }
+
+    const ENTERED_THE_OLD_WAY: &str = r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+environment = "direnv"
+"#;
+
+    /// A config written against the `environment` key is refused rather than
+    /// ignored. serde drops an unknown field by default, so without this the
+    /// setup that most needs the new key — one already naming direnv — would
+    /// be read in `bdi`'s own environment instead, silently, which is the
+    /// failure the key exists to stop.
+    #[test]
+    fn a_config_still_naming_the_key_this_replaced_is_refused() {
+        let err = Config::from_toml(ENTERED_THE_OLD_WAY)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("environment"), "got: {err}");
     }
 
     const TWO_PROJECTS: &str = r#"
@@ -1404,10 +1500,13 @@ metadata_keys = ["working_topic"]
     }
 
     /// The working trees a project occupies are git's answer about a
-    /// repository, so a config file saying otherwise says nothing.
+    /// repository, so a config file cannot write them. It is now told so:
+    /// the line was dropped in silence while unknown fields were, and a
+    /// reader whose hand-written directory never arrives has no way to find
+    /// out that the key was never theirs to set.
     #[test]
     fn a_config_cannot_write_the_worktrees_a_project_occupies() {
-        let cfg = Config::from_toml(
+        let err = Config::from_toml(
             r#"
 [[projects]]
 name = "beacon"
@@ -1415,13 +1514,9 @@ path = "/home/user/dev/beacon"
 worktrees = ["/home/user/anywhere-at-all"]
 "#,
         )
-        .expect("parses");
+        .unwrap_err()
+        .to_string();
 
-        assert!(cfg.projects[0].worktrees.is_empty());
-        assert_eq!(
-            cfg.projects[0].holds(Path::new("/home/user/anywhere-at-all")),
-            None,
-            "a hand-written directory reached the project anyway"
-        );
+        assert!(err.contains("worktrees"), "got: {err}");
     }
 }

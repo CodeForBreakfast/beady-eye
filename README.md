@@ -184,7 +184,7 @@ path = "/home/you/atlas"
 [[projects]]
 name = "orbital"
 path = "/srv/work/orbital"
-environment = "direnv"
+environment_command = "direnv exec ."
 
 [[projects]]
 name = "beacon"
@@ -223,16 +223,47 @@ and the `path` its repository is at; the name is how `bdi` tells one tracker's
 beads from another's, so two projects cannot answer to one.
 
 Each project's tracker is read in the environment `bdi` itself was started in,
-so a tracker your shell can already reach needs nothing configured; a config
-that would rather name what it is doing writes `environment = "ambient"` and is
-read the same way. A setup that keeps one credential per project in each
-project's own directory, loaded by direnv when you enter it, says
-`environment = "direnv"`, and that project is then read with what entering its
-directory produces, at the cost of one `direnv exec` per refresh. direnv is
-worth naming when the password bd needs is in a project's `.envrc` and nowhere
-in the shell running `bdi`; a single tracker, or a SQLite one, wants the
-default. `credential_command` is the third way in, for a tracker outside both:
-a command whose stdout is the password. A project names one of the three.
+so a tracker your shell can already reach needs nothing configured. That is the
+first of three rungs, and the more exotic the project the further up it goes.
+
+**`credential_command`** is the second: a command whose stdout is the password,
+for a tracker whose only exotic need is the credential. Its output is captured
+rather than passed on a command line, so the password is not visible to `ps`.
+
+**`environment_command`** is the third, and it is the whole environment rather
+than one variable in it. Name the wrapper you would type yourself, and `bdi`
+runs its own probe inside it:
+
+| your project is entered with | write |
+|---|---|
+| direnv | `environment_command = "direnv exec ."` |
+| nix | `environment_command = "nix develop -c"` |
+| mise | `environment_command = "mise exec --"` |
+
+The line is split on spaces and no quoting is honoured, so an argument that
+holds one is written as a list instead — each entry is one argument, whatever
+is inside it:
+
+```toml
+environment_command = ["nix", "develop", ".#dev shell", "-c"]
+```
+
+The command runs in the project's own directory, which is why `.` is enough.
+Anything that runs a command in an environment works here, including a
+directory pinned to an older `bd` — that project's tracker is then read with
+the `bd` its own directory yields rather than the one your shell happens to
+hold. That is the point of the rung: `bdi` uses the `bd` you would get by
+standing in that directory yourself.
+
+It costs one capture per project per refresh — 136 to 177ms against a warm
+direnv — and the environment is captured once and reused for every `bd` call
+that project needs, not re-entered per call.
+
+The two can be named together: the environment command says how to reach the
+environment, and the credential command runs inside it and replaces the
+password. So a credential helper that only your project's flake installs is
+on the path when it runs — but the tracker's own password and `BEADS_DIR`
+never reach it, whatever produced them.
 
 **`[roots.explicit]`** names trees to draw beyond the ones `bdi` finds for
 itself, listed under the project whose tracker holds each. Bead prefixes are

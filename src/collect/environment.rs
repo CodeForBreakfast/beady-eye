@@ -1,13 +1,22 @@
 //! The environment each project's tracker is read in.
 //!
-//! One capture per project: `bdi`'s own environment, what entering the
-//! project's directory produces, or what its escape hatch answers — whichever
-//! the project's config chose. Every question asked with it is in `bd`.
+//! One capture per project: `bdi`'s own environment, or what the command the
+//! project's config names produces, with its credential command replacing the
+//! password in either. Every question asked with it is in `bd`.
 
 use std::path::Path;
 
 use crate::collect::run::{Env, RunFailure, Runner};
-use crate::config::{Environment, Project};
+use crate::config::{Command, Project};
+
+/// What `bdi` runs inside a project's environment command to read the
+/// environment back. NUL-separated, because a value may hold a newline.
+///
+/// It is appended rather than written by the reader, so a config names the
+/// wrapper — `direnv exec .`, `nix develop -c`, `mise exec --` — and every
+/// one of those composes with it the same way: each is a program that runs
+/// the rest of its own argv, so appending two more words is all it takes.
+const PROBE: &str = "env -0";
 
 /// The variable bd authenticates its Dolt server with.
 ///
@@ -42,14 +51,17 @@ pub fn ambient_credential() -> Option<String> {
 /// another tracker can only fail to authenticate against the right database,
 /// never open the wrong one.
 ///
-/// A project configured `environment = "direnv"` is read with what entering
-/// its directory produces instead. A shell that has entered it is already
-/// configured for its tracker — direnv loads the flake, the bd version, and
-/// whatever holds the password — so `bdi` reproduces entering the directory
-/// rather than reconstructing what entering it would have produced, and the
-/// project entry says nothing about what the secret is called or where it
-/// lives. That is what a setup keeping one credential per project in each
-/// project's own directory wants.
+/// A project naming an `environment_command` is read with what that command
+/// produces instead. A shell that has entered the project's directory is
+/// already configured for its tracker — the mechanism loads the flake, the bd
+/// version, and whatever holds the password — so `bdi` reproduces entering the
+/// directory rather than reconstructing what entering it would have produced,
+/// and the project entry says nothing about what the secret is called or where
+/// it lives.
+///
+/// Which mechanism does that is the config's to name and not `bdi`'s to know.
+/// direnv, nix and mise all run a command in an environment, so all three are
+/// reached by naming them and by no code here.
 ///
 /// Captured once per project rather than by wrapping every call, because
 /// `direnv exec` reloads the directory each time it runs. Measured against a
@@ -59,8 +71,13 @@ pub fn ambient_credential() -> Option<String> {
 /// `.envrc` writes to stdout to this one call, whose parser tolerates it,
 /// rather than to every answer bd gives.
 ///
-/// A `credential_command` is the escape hatch for a tracker outside direnv's
-/// reach, and answers instead of entering the directory.
+/// A `credential_command` answers after the environment command rather than
+/// instead of it, so the two compose: one says how to reach the environment,
+/// the other replaces one variable in it. Naming both was refused while the
+/// environment was a mechanism, because a credential answering instead of
+/// direnv or after it was a precedence nothing on the screen said. A command
+/// has no such question — the password is whatever the credential command
+/// last wrote.
 ///
 /// The ambient credential underneath all three is what lets a single-tracker
 /// setup configure nothing at all.
@@ -72,47 +89,72 @@ pub fn tracker_env(
     let mut env = ambient.map_or_else(Env::new, |password| {
         Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
     });
-    match (&project.credential_command, project.environment) {
-        (Some(command), _) => {
-            let password = runner.run("sh", &["-c", command], Some(&project.path), &Env::new())?;
-            env.insert(
-                CREDENTIAL_VAR.to_string(),
-                password.trim_end_matches(['\r', '\n']).to_string(),
-            );
-        }
-        (None, Environment::Direnv) => env.extend(entering(&project.path, runner)?),
-        (None, Environment::Ambient) => {}
+    if let Some(command) = &project.environment_command {
+        env.extend(entering(&project.path, runner, command)?);
+    }
+    if let Some(command) = &project.credential_command {
+        let password = runner.run("sh", &["-c", command], Some(&project.path), &lending(&env))?;
+        env.insert(
+            CREDENTIAL_VAR.to_string(),
+            password.trim_end_matches(['\r', '\n']).to_string(),
+        );
     }
     Ok(env)
 }
 
-/// The variables entering a directory produces.
+/// What a project's own credential command is run in: the environment its
+/// environment command produced, less the two variables nothing inherits.
 ///
-/// direnv is given neither tracker nor credential of `bdi`'s own, so what
-/// comes back is what entering that directory produces rather than what the
-/// shell `bdi` was launched from was already carrying.
+/// The tools a credential command needs are the ones its project's directory
+/// supplies — `op`, `secret-tool`, a helper the flake installs — so running it
+/// outside the captured environment would leave the two settings composing
+/// only on paper, with the password landing in an environment the command
+/// that produced it could not have reached.
 ///
-/// A directory direnv cannot enter fails this project rather than falling
-/// back to the ambient environment, because a mechanism that silently does
-/// nothing is indistinguishable from one that worked.
+/// It is `NEVER_INHERITED` that must not travel, and the runner cannot strip
+/// it here: it removes those variables from what a child *inherits* and then
+/// applies what it is handed, so a value passed in this way would arrive.
+/// A credential command is an arbitrary program named by a config, and this
+/// is the one call where the environment it might be handed holds the very
+/// password it is being asked to produce.
+fn lending(captured: &Env) -> Env {
+    let mut lent = captured.clone();
+    for withheld in NEVER_INHERITED {
+        lent.remove(withheld);
+    }
+    lent
+}
+
+/// The variables a project's environment command produces.
 ///
-/// Which of the two ways a directory resists entering decides whether there
-/// is anything to catch. An unallowed `.envrc` exits 1 with an empty stdout,
-/// so it arrives here as a failure and the project degrades; a flake that
-/// will not evaluate exits 0 and runs with the ambient environment, and that
-/// is the case `-C` naming the tracker stands behind. Measured on direnv
-/// 2.37.1, 2026-09-04. A directory with no `.envrc` at all is neither: it is
-/// a pass-through, and it unloads whatever direnv environment `bdi` was
-/// carrying. What such a fallback cannot do, because `-C` names the tracker,
-/// is read another project's database.
-fn entering(path: &Path, runner: &dyn Runner) -> Result<Env, RunFailure> {
-    let named = path.to_string_lossy();
-    let out = runner.run(
-        "direnv",
-        &["exec", named.as_ref(), "env", "-0"],
-        Some(path),
-        &Env::new(),
-    )?;
+/// The command runs in the project's own directory, which is what lets it be
+/// written relative — `direnv exec .` is the directory `bdi` is asking about
+/// rather than one the config repeats.
+///
+/// It is given neither tracker nor credential of `bdi`'s own, so what comes
+/// back is what entering that directory produces rather than what the shell
+/// `bdi` was launched from was already carrying.
+///
+/// The wrapper is run directly rather than through `sh -c`, which is what
+/// `credential_command` does, and the difference is the diagnosis a reader
+/// gets. Under a shell an absent wrapper is the *shell* exiting 127, whose
+/// stderr matches none of the phrase lists in `run.rs` and so arrives as
+/// `Unavailable` for `sh` — *"sh exited 127 for a reason bdi cannot place"*
+/// on a machine whose only problem is that direnv is not installed. Run
+/// directly, the spawn fails and the reader is told which program is missing.
+/// A wrapper is a program and its arguments, so it loses nothing.
+///
+/// A command that cannot be run fails this project rather than falling back
+/// to the ambient environment, because a mechanism that silently does nothing
+/// is indistinguishable from one that worked. Where direnv falls back for
+/// itself — a flake that will not evaluate — it exits 0 and this is not the
+/// path taken; an unallowed `.envrc` exits 1 with an empty stdout and this
+/// is. Measured on direnv 2.37.1, 2026-09-04.
+fn entering(path: &Path, runner: &dyn Runner, command: &Command) -> Result<Env, RunFailure> {
+    let mut words = command.words().into_iter().chain(PROBE.split_whitespace());
+    let program = words.next().unwrap_or_default();
+    let argv: Vec<&str> = words.collect();
+    let out = runner.run(program, &argv, Some(path), &Env::new())?;
     Ok(variables(&out))
 }
 
@@ -152,18 +194,22 @@ mod tests {
         Project {
             name: "atlas".to_string(),
             path: project_dir(),
-            environment: Environment::Ambient,
+            environment_command: None,
             credential_command: None,
             poll: true,
             worktrees: Vec::new(),
         }
     }
 
+    /// The wrapper a direnv setup names. Written relative, because the
+    /// command runs in the project's own directory.
+    const DIRENV: &str = "direnv exec .";
+
     /// A project that asked to be read with what entering its directory
     /// produces.
     fn entered_with_direnv() -> Project {
         Project {
-            environment: Environment::Direnv,
+            environment_command: Some(Command::Line(DIRENV.to_string())),
             ..ambient_project()
         }
     }
@@ -172,10 +218,11 @@ mod tests {
         Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())])
     }
 
-    /// The direnv call that reproduces entering a project's directory,
-    /// spelled as the runner makes it.
+    /// The call that reproduces entering a project's directory, spelled as
+    /// the runner makes it: the configured wrapper with `bdi`'s own probe
+    /// appended, through `sh`.
     fn entering_the_directory() -> String {
-        format!("direnv exec {} env -0", project_dir().display())
+        format!("{DIRENV} {PROBE}")
     }
 
     /// An `env -0` answer: NUL between variables, and no separator after the
@@ -281,6 +328,54 @@ mod tests {
         assert_eq!(failure.program, "direnv");
     }
 
+    /// Naming both settings composes in both directions: the credential
+    /// command runs in the environment the environment command produced, so a
+    /// helper that only the project's directory supplies is on its `PATH`.
+    ///
+    /// Not the password, though, and that is the half worth pinning. The
+    /// runner strips `NEVER_INHERITED` from what a child inherits and then
+    /// applies what it is handed, so a captured environment passed on whole
+    /// would put the tracker's own password into an arbitrary program named
+    /// by a config — at the one call whose whole purpose is to produce that
+    /// password.
+    #[test]
+    fn a_credential_command_gets_the_captured_tools_but_never_the_captured_password() {
+        let runner = FakeRunner::default()
+            .with(
+                &entering_the_directory(),
+                &exported(&[
+                    ("PATH", "/nix/bin"),
+                    ("BEADS_DOLT_PASSWORD", "the-projects-own-password"),
+                    ("BEADS_DIR", "/tmp/proj/.beads"),
+                ]),
+            )
+            .with("sh -c op read the/password", "hunter2\n");
+        let project = Project {
+            credential_command: Some("op read the/password".to_string()),
+            ..entered_with_direnv()
+        };
+
+        let env = tracker_env(&runner, &project, None).unwrap();
+
+        let call = runner.call("sh -c op read the/password");
+        assert_eq!(
+            call.env.get("PATH").map(String::as_str),
+            Some("/nix/bin"),
+            "the credential command could not reach the tools its own directory installs"
+        );
+        for withheld in NEVER_INHERITED {
+            assert!(
+                !call.env.contains_key(withheld),
+                "{withheld} reached the credential command"
+            );
+        }
+        assert_eq!(
+            env.get(CREDENTIAL_VAR).map(String::as_str),
+            Some("hunter2"),
+            "the credential command's answer did not win over the captured one"
+        );
+    }
+
     /// The escape hatch answers instead of entering the directory, for a
     /// tracker outside direnv's reach.
     #[test]
@@ -289,7 +384,7 @@ mod tests {
         let project = Project {
             name: "atlas".to_string(),
             path: project_dir(),
-            environment: Environment::Ambient,
+            environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
             worktrees: Vec::new(),
@@ -325,6 +420,33 @@ mod tests {
         );
     }
 
+    /// A wrapper the machine has not got names *itself* as the missing
+    /// program, which is what a reader can act on.
+    ///
+    /// It has to be a real spawn: what is under test is which of
+    /// `RealRunner`'s two failure paths the call takes, and a fake answers
+    /// whichever it was told to. Run through `sh -c` this comes back
+    /// `Unavailable` for `sh`, because the shell starts, fails to find the
+    /// wrapper, and exits 127 with stderr matching none of `run.rs`'s phrase
+    /// lists — a machine whose only problem is a missing direnv would be told
+    /// `sh` failed for a reason `bdi` could not place.
+    #[test]
+    fn a_wrapper_that_is_not_installed_is_named_rather_than_the_shell() {
+        let project = Project {
+            environment_command: Some(Command::Line("no-such-wrapper-anywhere exec .".to_string())),
+            path: PathBuf::from("."),
+            ..ambient_project()
+        };
+
+        let failure = tracker_env(&RealRunner, &project, None).unwrap_err();
+
+        assert_eq!(failure.kind, FailureKind::NotInstalled);
+        assert_eq!(
+            failure.program, "no-such-wrapper-anywhere",
+            "the reader was pointed at the wrong program to install"
+        );
+    }
+
     /// The parser reads back what `env` actually writes, rather than what we
     /// believe it writes: a real process, and every variable it exported.
     #[test]
@@ -354,7 +476,7 @@ mod tests {
         let project = Project {
             name: "atlas".to_string(),
             path: project_dir(),
-            environment: Environment::Ambient,
+            environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
             worktrees: Vec::new(),
@@ -416,7 +538,7 @@ mod tests {
         let project = Project {
             name: "atlas".to_string(),
             path: project_dir(),
-            environment: Environment::Ambient,
+            environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
             worktrees: Vec::new(),

@@ -193,7 +193,7 @@ impl Collection {
                         Read {
                             at: now,
                             work: Ok(*work),
-                            taken_at: at,
+                            taken_at: at.map(|at| *at),
                         },
                     );
                 }

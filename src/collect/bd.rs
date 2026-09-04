@@ -598,7 +598,7 @@ mod tests {
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::FailureKind;
     use crate::collect::tracker::Trackers;
-    use crate::config::{Environment, Project};
+    use crate::config::{Command, Project};
     use std::path::PathBuf;
 
     fn project_dir() -> PathBuf {
@@ -633,7 +633,7 @@ mod tests {
         Project {
             name: "atlas".to_string(),
             path: project_dir(),
-            environment: Environment::Ambient,
+            environment_command: None,
             credential_command: None,
             poll: true,
             worktrees: Vec::new(),
@@ -650,9 +650,14 @@ mod tests {
         }
     }
 
-    /// The direnv call that reproduces entering `project_dir()`.
+    /// The wrapper a direnv setup names, written relative because the command
+    /// runs in the project's own directory.
+    const DIRENV: &str = "direnv exec .";
+
+    /// The call that reproduces entering `project_dir()`: the configured
+    /// wrapper with `bdi`'s own probe appended, through `sh`.
     fn entering_the_directory() -> String {
-        format!("direnv exec {} env -0", project_dir().display())
+        format!("{DIRENV} env -0")
     }
 
     /// The seam's promise: a tracker opened for a project is read in the
@@ -668,7 +673,7 @@ mod tests {
             .with(&spelled(TRACKER_CALL), FIXTURE)
             .with(&spelled(WISP_CALL), "[]");
         let project = Project {
-            environment: Environment::Direnv,
+            environment_command: Some(Command::Line(DIRENV.to_string())),
             ..ambient_project()
         };
 
@@ -716,7 +721,7 @@ mod tests {
             RunFailure::unstartable("direnv", "No such file or directory"),
         );
         let project = Project {
-            environment: Environment::Direnv,
+            environment_command: Some(Command::Line(DIRENV.to_string())),
             ..ambient_project()
         };
 

@@ -87,7 +87,7 @@ coin one — and say so.**
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
 | **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
 | **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
-| **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in unless the project's `environment` says otherwise. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
+| **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in unless the project names an `environment_command` that produces another. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 | **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
 | **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
@@ -1000,26 +1000,46 @@ biggest constraint on the multi-project view.
 Confirmed with the operator of this deployment: no cross-project reader exists
 today; the one read-only user on the server is scoped to a single database.
 
-A project is read in one of three environments, and its config entry names at
-most one:
+A project's config entry says how much of its environment `bdi` has to
+reproduce, and the rungs compose rather than excluding one another:
 
 | `[[projects]]` says | the tracker is read in |
 |---|---|
 | nothing | the ambient environment, with the credential the launching shell holds |
-| `environment = "direnv"` | what entering the project's directory produces |
 | `credential_command = "…"` | the ambient environment, with the command's stdout as the credential |
+| `environment_command = "…"` | what that command produces, `bdi` appending its own `env -0` to read it back |
+| both commands | what the environment command produces, with the credential command run inside it and its stdout replacing the password |
+
+The environment command is a wrapper the reader would type themselves —
+`direnv exec .`, `nix develop -c`, `mise exec --` — and it runs in the
+project's own directory, which is what lets it be written relative. `bdi`
+knows none of those mechanisms by name: each is reached by a config naming it
+and by no code here, which is why an old project pinned to an older `bd` is
+expressible at all.
+
+It is run directly rather than through a shell, so an absent wrapper is a
+spawn that failed and the reader is told which program to install. Through
+`sh -c` the same machine is told the *shell* exited 127 for a reason `bdi`
+cannot place, because "command not found" matches none of the stderr phrases
+`collect/run.rs` classifies by. That is what decides the shape of the setting:
+a wrapper is a program and its arguments rather than a shell line, so it is a
+line split on whitespace with no quoting honoured, and an argument holding a
+space is written as a list — `["nix", "develop", ".#dev shell", "-c"]`. The
+alternative was a quoting rule every reader learns for a space almost none of
+them has, and a config that names one argv while `bdi` runs another.
 
 **Ambient is the default**, because it is the run a new user makes first: a
 machine with bd and nothing else reads the tracker its shell can already
 reach, and direnv is a dependency `bdi` does not otherwise have. `-C` naming
 the tracker outright is what makes that safe, and the rest of this section
 says why. direnv was the default before `-C`, when entering the directory was
-the only safe way to reach the right tracker; it is now how a setup with one
-credential per project supplies them, and that is a setup rather than the
-tool, so it is asked for by name. Inferring it from an `.envrc` and a direnv
-on PATH was declined: explicit costs one line, and the config then says which
-mechanism reads a project where an inference would have to be re-derived to
-be reported.
+the only safe way to reach the right tracker; it is now one of several ways a
+setup with one credential per project supplies them, and that is a setup
+rather than the tool, so the mechanism is named by the command that runs it
+rather than by a word `bdi` holds a list of. Inferring it from an `.envrc` and
+a direnv on PATH was declined: explicit costs one line, and the config then
+says which mechanism reads a project where an inference would have to be
+re-derived to be reported.
 
 **Neither a credential nor a tracker path is carried by a working directory.**
 An earlier draft said `bd` finds a project's credential by being run in that
@@ -1047,7 +1067,7 @@ nothing about what the secret is called or where it lives:
 [[projects]]
 name = "summit-works"
 path = "/tmp/bdi-ground/summit-works"
-environment = "direnv"
+environment_command = "direnv exec ."
 ```
 
 - **The tracker is named outright, with bd's own `-C`.** Every call `bdi` makes
@@ -1122,12 +1142,21 @@ environment = "direnv"
   silently does nothing is indistinguishable from one that worked. Where
   direnv has already fallen back for itself, on the flake case above, that is
   what `-C` is behind.
-- **`credential_command` survives as the escape hatch**, for a tracker outside
-  direnv's reach. The config stores a command, never a secret; its stdout is
-  the password. What went is its promotion to the default, and the rule that
-  demanded one from every project once a second was named. A project naming
-  it beside `environment = "direnv"` is refused: it is entered one way, and a
-  precedence between the two would be a mechanism nothing on the screen says.
+- **`credential_command` is the rung below the environment command**, for a
+  setup whose only exotic need is the password. The config stores a command,
+  never a secret; its stdout is the password, captured rather than passed in an
+  argv where `ps` would show it, which is why it is not folded into the
+  environment command. What went is its promotion to the default, and the rule
+  that demanded one from every project once a second was named. Naming both was
+  refused while the environment was a mechanism, because a credential answering
+  instead of direnv or after it was a precedence nothing on the screen said; a
+  command raises no such question, so the two now compose and the password is
+  whatever the credential command last wrote. It runs *inside* the captured
+  environment, so a helper only the project's own directory installs is on its
+  path — less `NEVER_INHERITED`, because the runner strips those from what a
+  child inherits and then applies what it is handed, and this is the one call
+  whose environment would otherwise carry the very password it is being asked
+  to produce.
 - **An authentication failure is distinguished from the others.**
   `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`,
   `not-installed`, `unstartable`, `installed-unstartable`, `parse`, or
@@ -1235,7 +1264,8 @@ oversight.** The gate is a plain file, so `bdi` could read
 tracker that bd would migrate, without opening anything. That guard was
 weighed on 2026-09-04 and declined, on a narrow ground: a tracker may be read
 by any version of *its own project's* bd. Which bd reads a project's tracker is
-what that project's `environment` selects, and the default selects `bdi`'s own.
+what that project's `environment_command` selects, and a project naming none is
+read with whatever the shell `bdi` was launched from resolves.
 So the table is a known hazard rather than an unnoticed one, and reopening it
 means changing that decision rather than measuring it again.
 

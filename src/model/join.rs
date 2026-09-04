@@ -429,7 +429,7 @@ mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
-    use crate::config::{Environment, Join};
+    use crate::config::Join;
     use crate::model::tree::Nesting;
     use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::Bead;
@@ -452,7 +452,7 @@ mod tests {
         Project {
             name: name.to_string(),
             path: path.into(),
-            environment: Environment::Ambient,
+            environment_command: None,
             credential_command: None,
             poll: true,
             worktrees: Vec::new(),
