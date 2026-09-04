@@ -674,28 +674,48 @@ impl Forest {
     /// the first bead drawn below it — so stepping from one carries on from
     /// where the reader is instead of starting the walk again.
     ///
-    /// Read off the rendered lines rather than worked out from the snapshot.
-    /// Every ordering defect this search has had came from deriving the
-    /// screen's shape somewhere other than where it is drawn, and the lines
-    /// are that shape rather than a second account of it.
-    ///
-    /// `None` where no line below the selection carries a bead, and the walk
-    /// comes round rather than carrying on. That is a reader resting under
-    /// the last bead on the screen — and also one resting on a group they
-    /// have shut, whose matches are in the order but on no line, so there is
-    /// nothing here to read the anchor off. `bdi-7ao.135` holds the second,
-    /// which wants the group's own contents rather than the lines below it.
+    /// `None` where there is no such bead, and the walk comes round rather
+    /// than carrying on. That is a reader resting under the last bead on the
+    /// screen.
     fn standing_at(&self, drawn: &[(BeadKey, String)]) -> Option<(usize, bool)> {
         let on_a_bead = self.lines.get(self.selected).and_then(Line::bead);
         let (key, past_it) = match on_a_bead {
-            Some(key) => (key, false),
-            None => (
-                self.lines[self.selected..].iter().find_map(Line::bead)?,
-                true,
-            ),
+            Some(key) => (key.clone(), false),
+            None => (self.first_bead_under()?, true),
         };
-        let at = drawn.iter().position(|(drawn, _)| drawn == key)?;
+        let at = drawn.iter().position(|(drawn, _)| *drawn == key)?;
         Some((at, past_it))
+    }
+
+    /// The first bead a selection resting on a row that is not one stands
+    /// above.
+    ///
+    /// Read off the rendered lines wherever there are lines to read. Every
+    /// ordering defect this search has had came from deriving the screen's
+    /// shape somewhere other than where it is drawn, and the lines are that
+    /// shape rather than a second account of it.
+    ///
+    /// A group resting shut is where there are none: its trees' beads are in
+    /// the order, because `beads_drawn` goes by the trees the screen would
+    /// draw rather than by the folds set over them, but the fold has taken
+    /// every one of them off the screen. The lines below the group are the
+    /// rows *after* it, so reading them would step over everything it hides
+    /// — so a shut group is asked what it holds instead. One that holds no
+    /// beads has nothing to say and the lines answer as they always did.
+    fn first_bead_under(&self) -> Option<BeadKey> {
+        let resting_on = self.lines.get(self.selected)?;
+        let shut_over = match &resting_on.content {
+            Content::Group(group) if resting_on.folded == Some(false) => {
+                layout::first_bead_of(&self.snapshot, group.kind, group.project.as_deref())
+            }
+            _ => None,
+        };
+        shut_over.or_else(|| {
+            self.lines[self.selected..]
+                .iter()
+                .find_map(Line::bead)
+                .cloned()
+        })
     }
 
     /// Put the selection on the `at`th match, counting from zero, and say
@@ -6207,9 +6227,7 @@ credential_command = "secret harbour"
     ///
     /// **The anchor is the first bead drawn below the selection, so a row
     /// with none below it has nothing to carry on from and the walk comes
-    /// round.** A group the reader has shut is the case that reaches: its
-    /// matches are in the order but not on the screen, so there is no line to
-    /// read the anchor off. `bdi-7ao.135` holds that.
+    /// round.**
     #[test]
     fn stepping_from_a_row_that_is_not_a_bead_carries_on_from_there() {
         let mut forest = flatten(two_trackers_holding_one_id());
@@ -6233,6 +6251,92 @@ credential_command = "secret harbour"
             Some(went_to("ferry", "orb-7", 10, 18)),
             "stepping from the project line either started the walk again \
              or stepped over the bead the reader is standing above"
+        );
+    }
+
+    /// One project holding a tree the filter draws and a tree it hides, with
+    /// six matches for `"the"` in the first and two in the second.
+    ///
+    /// The two blocks are separated by exactly one row — the group's own
+    /// line — so a walk anchored anywhere but inside the group answers with a
+    /// bead from the other block, whichever way it steps.
+    fn a_group_shut_over_matches() -> Snapshot {
+        let mut staffed = together("orbital", &[TOWER, HARBOUR], &panes_on(&["tow-1.1"]));
+        staffed.refilter(Filter::LiveAgents);
+        staffed
+    }
+
+    /// Rest the selection on the hidden-trees group with the group shut, and
+    /// say which line that is.
+    ///
+    /// The fold is asserted rather than assumed. A group drawn open draws its
+    /// beads on lines below it, and the walk reads its anchor off those — so
+    /// a fixture that drifted open would take the path these tests are not
+    /// about and pass without exercising anything.
+    fn rest_on_the_shut_group(forest: &mut Forest) {
+        let at = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the hidden-trees group is drawn");
+        assert_eq!(
+            forest.lines()[at].folded,
+            Some(false),
+            "the group is drawn open, so its beads are on lines of their own: {:#?}",
+            sketch(forest)
+        );
+        forest.select_line(at);
+        assert!(on_the_hidden_trees_group(forest), "{:#?}", sketch(forest));
+    }
+
+    /// A group resting shut hides beads that are still in the search's order,
+    /// so a reader standing on its line is standing above them and stepping
+    /// on reaches them rather than the block beyond.
+    ///
+    /// `hbr-3` is the first of them and the one match that tells the two
+    /// readings apart: the beads above the group are the six the drawn lines
+    /// would anchor on, and the come-round would answer with the first of
+    /// those. Ask for a match further inside the group and both wrong answers
+    /// still land outside it, but so would an anchor one bead off.
+    ///
+    /// **Anchoring on the lines below has two answers and this pair sees only
+    /// one of them.** Nothing bead-bearing is drawn below the group here, so
+    /// there is no anchor to find and the walk comes round. A screen with
+    /// another project under the group gives the other answer — an anchor on
+    /// a bead drawn *after* everything the group hides, which steps over all
+    /// of it — and these two tests would be red for that as well without
+    /// telling it from the come-round. Adding a project below this fixture
+    /// would not separate them.
+    #[test]
+    fn stepping_from_a_shut_group_goes_into_the_matches_it_hides() {
+        let mut forest = flatten(a_group_shut_over_matches());
+        forest.seek("the");
+        rest_on_the_shut_group(&mut forest);
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("orbital", "hbr-3", 7, 8)),
+            "stepping on from the shut group left the beads it hides behind: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// And stepping back from it reaches the match above the group rather
+    /// than coming round to the last one inside it, which is the bead the
+    /// reader would have to walk the whole screen to get back from.
+    #[test]
+    fn stepping_back_from_a_shut_group_reaches_the_match_above_it() {
+        let mut forest = flatten(a_group_shut_over_matches());
+        forest.seek("the");
+        rest_on_the_shut_group(&mut forest);
+
+        assert_eq!(
+            forest.next_match(false),
+            Some(went_to("orbital", "tow-1.2.1", 6, 8)),
+            "stepping back from the shut group came round instead: {:#?}",
+            sketch(&forest)
         );
     }
 

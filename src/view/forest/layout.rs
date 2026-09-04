@@ -113,6 +113,33 @@ fn hidden_trees<'a>(snapshot: &'a Snapshot, project: Option<&str>) -> Vec<&'a Tr
         .collect()
 }
 
+/// The first bead a group's own contents hold, where it holds any.
+///
+/// A group resting shut draws none of its contents, so a reader standing on
+/// its line has nothing below it saying where they are among the beads. This
+/// is read from `hidden_trees`, which is the source `trees_drawn` reads, so
+/// the anchor and the order it points into cannot disagree.
+///
+/// Only the hidden trees hold beads. The panes, failed projects and conflicts
+/// the other groups hold are in no ordering of beads and have nothing here to
+/// answer with.
+pub(super) fn first_bead_of(
+    snapshot: &Snapshot,
+    kind: GroupKind,
+    project: Option<&str>,
+) -> Option<BeadKey> {
+    match kind {
+        GroupKind::HiddenTrees => {
+            let tree = hidden_trees(snapshot, project).into_iter().next()?;
+            Some(BeadKey {
+                project: tree.project.clone(),
+                id: tree.beads.first()?.id.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Every tree the forest draws, in the order it draws them: project by
 /// project as the config names them, and within a project the trees the
 /// filter shows before the ones it hid, which is where `draw_project` puts
