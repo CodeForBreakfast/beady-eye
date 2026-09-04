@@ -431,6 +431,18 @@ pub struct Snapshot {
     /// `unattributed` because the fix is a config entry, not a bead.
     pub unconfigured: Vec<UnconfiguredPane>,
     pub conflicts: Vec<Conflict>,
+    /// The projects here whose names git did not give, because git could not
+    /// be run — named after the directory their tracker sits at the top of
+    /// instead. Empty where nothing was guessed, which is every run on a
+    /// machine that has git and every run a config file or `BDI_PROJECT`
+    /// named the project for.
+    ///
+    /// Published as the projects rather than as the sentence the foot draws
+    /// from it, because a name is half of every key here and a consumer
+    /// holding one wants to know about *that* project. It is the same fact
+    /// the status bar says, read by both from here — which is what keeps a
+    /// screen and a `--json` of the same moment from qualifying differently.
+    pub projects_named_without_git: Vec<String>,
     /// Every tree that was read, in the order it was read, shown or hidden.
     /// `trees` and `hidden_trees` are how the current filter divides this, and
     /// keeping it is what lets `refilter` change the filter without asking the
@@ -485,8 +497,13 @@ impl Snapshot {
     /// The provider reads as answering because nothing has asked it. Either
     /// other state is something to say on the screen, and saying it here
     /// would say it before `bdi` had spoken to the provider at all.
+    /// How the projects were named is carried from the first frame, because
+    /// their names are on that frame: the forest is drawn from `projects`
+    /// before anything has been read, and a name the reader is looking at is
+    /// a name they should already know was guessed.
     pub fn awaiting(
         projects: Vec<String>,
+        projects_named_without_git: Vec<String>,
         provider: &'static str,
         scope: Scope,
         filter: Filter,
@@ -502,6 +519,7 @@ impl Snapshot {
             unattributed: Vec::new(),
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            projects_named_without_git,
             collected: Vec::new(),
             read_at: BTreeMap::new(),
             projects,

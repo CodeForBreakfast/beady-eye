@@ -77,10 +77,11 @@ use wire::wire;
 /// back rests on `Screen`'s `Drop` — which rests in turn on the build
 /// unwinding, the condition `Drop for Screen` states.
 ///
-/// `settled` is what resolving the config already found this run cannot do.
-/// It is handed in rather than worked out here because it is settled before
-/// there is a loop at all — and it joins what the wiring finds, so the foot
-/// draws both without knowing which is which.
+/// What resolving the config found this run cannot do is not handed in: it
+/// rides on `cfg` and reaches the foot through the snapshot, which is also
+/// what `--json` prints. What the wiring finds has no snapshot to ride on and
+/// is handed to the screen directly, so the foot draws both without knowing
+/// which is which.
 pub fn run(
     cfg: &Config,
     filter: Filter,
@@ -88,7 +89,6 @@ pub fn run(
     agents: Arc<dyn Agents>,
     collect: Collecting,
     reload: Option<Reload>,
-    settled: Vec<Notice>,
 ) -> anyhow::Result<()> {
     // Taken here rather than on the thread that waits on them, so that they
     // are ours before the screen is opened below. A registration racing the
@@ -103,6 +103,7 @@ pub fn run(
         .collect();
     let awaiting = Snapshot::awaiting(
         projects.clone(),
+        cfg.projects_named_without_git(),
         agents.name(),
         cfg.scope.clone(),
         filter,
@@ -112,10 +113,9 @@ pub fn run(
     // returns, so the run that made it is the run that clears it away.
     let (events, ask, panes, _socket, from_the_wiring) =
         wire(Reported::watching(projects), agents, collect, asked_to_stop);
-    // What settling the config could not do comes first, because it costs the
-    // reader more: a name that was guessed is half of every key on the screen,
-    // where a channel that would not open costs freshness alone.
-    let at_startup: Vec<Notice> = settled.into_iter().chain(from_the_wiring).collect();
+    // Only this process's own, and only the wiring's: what settling the config
+    // could not do is on the snapshot, where both mouths read it.
+    let at_startup: Vec<Notice> = from_the_wiring.into_iter().collect();
     // Asked for before the screen is opened, so the collection is under way
     // while ratatui is still taking the terminal, and the first frame drawn
     // already carries the mark saying every project is being read. A forest

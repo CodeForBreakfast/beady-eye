@@ -4772,6 +4772,7 @@ credential_command = "secret harbour"
     fn a_run_that_has_read_nothing_yet_draws_a_line_for_every_configured_project() {
         let awaiting = Snapshot::awaiting(
             vec!["orbital".to_string(), "ferry".to_string()],
+            Vec::new(),
             A_PROVIDER,
             Scope::Everything,
             Filter::LiveAgents,
@@ -4814,6 +4815,7 @@ credential_command = "secret harbour"
     fn the_first_frame_already_says_the_directory_chose() {
         let chosen = Snapshot::awaiting(
             vec!["orbital".to_string()],
+            Vec::new(),
             A_PROVIDER,
             Scope::Directory {
                 project: "orbital".to_string(),
@@ -4836,6 +4838,7 @@ credential_command = "secret harbour"
         for scope in [Scope::Everything, Scope::Asked(vec!["orbital".to_string()])] {
             let awaiting = Snapshot::awaiting(
                 vec!["orbital".to_string()],
+                Vec::new(),
                 A_PROVIDER,
                 scope,
                 Filter::LiveAgents,
@@ -4859,6 +4862,7 @@ credential_command = "secret harbour"
             read_at: std::collections::BTreeMap::from([("orbital".to_string(), now())]),
             ..Snapshot::awaiting(
                 vec!["orbital".to_string()],
+                Vec::new(),
                 A_PROVIDER,
                 Scope::Everything,
                 Filter::LiveAgents,

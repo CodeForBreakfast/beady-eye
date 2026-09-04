@@ -30,6 +30,20 @@ pub struct Config {
     /// project holds its directory, whether or not that project is read.
     #[serde(skip)]
     pub scope: Scope,
+    /// git could not be run, so the projects here are named after the
+    /// directories their trackers sit at the top of rather than after
+    /// remotes.
+    ///
+    /// Discovery sets it and nothing else does, so it is only ever true of
+    /// the one project a run with no config file draws: a file names its own
+    /// projects, and `BDI_PROJECT` names the discovered one outright. That is
+    /// also why a config the reader writes mid-run cannot carry it stale —
+    /// where this is true there is no file to re-read.
+    ///
+    /// Like `scope`, a fact about how this run's config came to be rather
+    /// than anything a config file could carry.
+    #[serde(skip)]
+    pub named_without_git: bool,
 }
 
 /// The projects a run reads, out of every one the config names, and what
@@ -335,6 +349,19 @@ impl Config {
             tui: Tui::default(),
             theme: Theme::default(),
             scope: Scope::default(),
+            named_without_git: false,
+        }
+    }
+
+    /// The projects this run reads whose names git did not give.
+    ///
+    /// One call for both mouths: the snapshot the screen draws and the
+    /// snapshot `--json` prints are built from this, so neither can qualify
+    /// a name the other does not.
+    pub fn projects_named_without_git(&self) -> Vec<String> {
+        match self.named_without_git {
+            true => self.read().map(|project| project.name.clone()).collect(),
+            false => Vec::new(),
         }
     }
 

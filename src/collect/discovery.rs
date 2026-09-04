@@ -10,33 +10,23 @@ use serde::Deserialize;
 use crate::collect::run::{Env, FailureKind, Runner};
 use crate::config::{Config, Environment, Project, Scope};
 
-/// The one project a run with no config file draws, and whether naming it
-/// took a guess nothing else would admit to.
-#[derive(Debug)]
-pub struct Discovered {
-    pub config: Config,
-    /// git could not be run at all, so the project is named after the
-    /// directory its tracker sits at the top of, and nothing else was going
-    /// to name it: `BDI_PROJECT` is unset, and a config file would have kept
-    /// discovery from running at all.
-    ///
-    /// Clear for the three git outcomes a reader can see for themselves, and
-    /// clear where the environment named the project, because neither is a
-    /// guess.
-    pub named_without_git: bool,
-}
-
 /// The single project `bdi` reads when no config file names one: the
 /// repository the current directory sits in, on the ambient credential.
 ///
 /// bd and git are asked where their own things are rather than walked for
 /// here, so `BEADS_DIR`, a redirect or a worktree resolves the way it does
 /// for any other command run in the same place.
+///
+/// Whether naming the project took a guess nothing else would admit to comes
+/// back on the config's own `named_without_git`, because the guess is a fact
+/// about the name and the config is what holds the name. It is clear for the
+/// three git outcomes a reader can see for themselves, and clear where the
+/// environment named the project, because neither is a guess.
 pub fn from_the_current_directory(
     runner: &dyn Runner,
     cwd: &Path,
     name_from_the_environment: Option<&str>,
-) -> anyhow::Result<Discovered> {
+) -> anyhow::Result<Config> {
     let tracker = match runner.run("bd", &["where", "--json"], Some(cwd), &Env::new()) {
         Ok(said) => said,
         Err(failure) => {
@@ -78,16 +68,16 @@ pub fn from_the_current_directory(
         })
         .unwrap_or_else(|| directory_name(&root));
 
-    Ok(Discovered {
-        config: Config::naming(vec![Project {
+    Ok(Config {
+        named_without_git: git_never_ran && named_in_the_environment.is_none(),
+        ..Config::naming(vec![Project {
             name,
             path: root,
             environment: Environment::Ambient,
             credential_command: None,
             poll: true,
             worktrees,
-        }]),
-        named_without_git: git_never_ran && named_in_the_environment.is_none(),
+        }])
     })
 }
 
@@ -341,8 +331,7 @@ detached
             Path::new("/srv/work/orbital/src"),
             None,
         )
-        .expect("the repository is a project")
-        .config;
+        .expect("the repository is a project");
 
         assert_eq!(
             cfg.projects,
@@ -366,8 +355,7 @@ detached
             a_tracked_repository().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
 
         let cfg = from_the_current_directory(&runner, Path::new("/tmp/seat-a/wt"), None)
-            .expect("the repository is a project")
-            .config;
+            .expect("the repository is a project");
 
         assert_eq!(
             cfg.projects[0].worktrees,
@@ -393,8 +381,7 @@ detached
             .failing("git worktree list --porcelain", no_such_repository());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
-            .expect("the repository is a project")
-            .config;
+            .expect("the repository is a project");
 
         assert!(cfg.projects[0].worktrees.is_empty());
         assert!(
@@ -413,8 +400,7 @@ detached
             a_tracked_repository().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
 
         let cfg = from_the_current_directory(&runner, Path::new("/tmp/seat-a/wt"), None)
-            .expect("the repository is a project")
-            .config;
+            .expect("the repository is a project");
 
         assert!(
             cfg.projects[0]
@@ -849,8 +835,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital"),
             None,
         )
-        .expect("the repository is a project")
-        .config;
+        .expect("the repository is a project");
 
         assert_eq!(cfg.roots, Roots::default());
         assert!(cfg.badges.is_empty());
@@ -866,8 +851,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital"),
             Some("atlas"),
         )
-        .expect("the repository is a project")
-        .config;
+        .expect("the repository is a project");
 
         assert_eq!(cfg.projects[0].name, "atlas");
     }
@@ -879,8 +863,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital"),
             Some(""),
         )
-        .expect("the repository is a project")
-        .config;
+        .expect("the repository is a project");
 
         assert_eq!(cfg.projects[0].name, "ground-station");
     }
@@ -894,8 +877,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_such_repository());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
-            .expect("the repository is a project")
-            .config;
+            .expect("the repository is a project");
 
         assert_eq!(cfg.projects[0].name, "orbital");
     }
@@ -916,8 +898,7 @@ path = "/tmp/seat-b/wt/crates/dish"
                 .with("git remote get-url origin", &format!("{url}\n"));
 
             let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
-                .expect("the repository is a project")
-                .config;
+                .expect("the repository is a project");
 
             assert_eq!(cfg.projects[0].name, "ground-station", "from {url}");
         }
@@ -956,8 +937,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital/src"),
             None,
         )
-        .expect("the tree bd tracks is a project")
-        .config;
+        .expect("the tree bd tracks is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
     }
@@ -973,8 +953,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital/src"),
             None,
         )
-        .expect("the tree bd tracks is a project")
-        .config;
+        .expect("the tree bd tracks is a project");
 
         assert!(
             cfg.projects[0]
@@ -999,8 +978,7 @@ path = "/tmp/seat-b/wt/crates/dish"
                 Path::new(standing_in),
                 None,
             )
-            .expect("the tree bd tracks is a project")
-            .config;
+            .expect("the tree bd tracks is a project");
 
             assert_eq!(cfg.projects[0].name, "orbital", "standing in {standing_in}");
         }
@@ -1036,7 +1014,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         let discovered = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
             .expect("the repository is a project");
 
-        assert_eq!(discovered.config.projects[0].name, "orbital");
+        assert_eq!(discovered.projects[0].name, "orbital");
         assert!(!discovered.named_without_git);
     }
 
@@ -1053,7 +1031,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         let discovered = from_the_current_directory(&runner, Path::new("/srv/loose"), None)
             .expect("the directory is a project");
 
-        assert_eq!(discovered.config.projects[0].name, "loose");
+        assert_eq!(discovered.projects[0].name, "loose");
         assert!(!discovered.named_without_git);
     }
 
@@ -1068,7 +1046,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         )
         .expect("the tree bd tracks is a project");
 
-        assert_eq!(discovered.config.projects[0].name, "atlas");
+        assert_eq!(discovered.projects[0].name, "atlas");
         assert!(!discovered.named_without_git);
     }
 
@@ -1085,7 +1063,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         )
         .expect("the tree bd tracks is a project");
 
-        assert_eq!(discovered.config.projects[0].name, "orbital");
+        assert_eq!(discovered.projects[0].name, "orbital");
         assert!(discovered.named_without_git);
     }
 
@@ -1106,8 +1084,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_git());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/project/sub"), None)
-            .expect("the tree bd tracks is a project")
-            .config;
+            .expect("the tree bd tracks is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/project"));
         assert_eq!(cfg.projects[0].name, "project");
@@ -1132,8 +1109,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_git());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/project"), None)
-            .expect("the directory is a project")
-            .config;
+            .expect("the directory is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/project"));
         assert_eq!(cfg.projects[0].name, "project");
@@ -1152,8 +1128,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_git());
 
         let cfg = from_the_current_directory(&runner, Path::new("/home/pilot/work/orbital"), None)
-            .expect("the tree bd tracks is a project")
-            .config;
+            .expect("the tree bd tracks is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/home/pilot"));
     }
@@ -1169,8 +1144,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         );
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
-            .expect("the repository is a project")
-            .config;
+            .expect("the repository is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
         assert_eq!(cfg.projects[0].name, "ground-station");
@@ -1186,8 +1160,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_such_repository());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/loose"), None)
-            .expect("the directory is a project")
-            .config;
+            .expect("the directory is a project");
 
         assert_eq!(
             cfg.projects,

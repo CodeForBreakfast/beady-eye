@@ -314,6 +314,7 @@ mod tests {
             unattributed: Vec::new(),
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            projects_named_without_git: Vec::new(),
             read_at: BTreeMap::new(),
             collected: vec![tree],
             projects: vec!["orbital".to_string()],

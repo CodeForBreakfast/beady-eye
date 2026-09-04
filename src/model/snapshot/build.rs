@@ -161,6 +161,7 @@ pub fn build(
         unattributed,
         unconfigured,
         conflicts: joined.conflicts.clone(),
+        projects_named_without_git: cfg.projects_named_without_git(),
         collected: trees,
         read_at,
         projects: cfg.read().map(|p| p.name.clone()).collect(),

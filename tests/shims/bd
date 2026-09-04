@@ -18,7 +18,9 @@
 #                            to, so a reader can tell a capture that was not
 #                            served from one that was served wrongly.
 #   BDI_SHIM_BD_HANGS_WHILE  path to the flag. Touch it and every bd call from
-#                            then on waits until it goes away.
+#                            then on waits until it goes away; write a call's
+#                            opening words into it and only the calls starting
+#                            that way wait.
 #   BDI_SHIM_BD_HOLDING      path this writes while it is holding a call, so a
 #                            reader can wait for the hang to have started
 #                            rather than sleeping and hoping.
@@ -34,16 +36,6 @@
 set -u
 
 GIVING_UP=1200 # 60s at 50ms, so a leaked shim dies on its own.
-
-if [ -n "${BDI_SHIM_BD_HANGS_WHILE:-}" ] && [ -e "$BDI_SHIM_BD_HANGS_WHILE" ]; then
-  if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then : >"$BDI_SHIM_BD_HOLDING"; fi
-  waited=0
-  while [ -e "$BDI_SHIM_BD_HANGS_WHILE" ] && [ "$waited" -lt "$GIVING_UP" ]; do
-    sleep 0.05
-    waited=$((waited + 1))
-  done
-  if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then rm -f "$BDI_SHIM_BD_HOLDING"; fi
-fi
 
 # The subcommand and everything after it. Most calls from bdi open with flags
 # naming the tracker (src/collect/bd.rs), so the subcommand is not $1 and a
@@ -61,6 +53,27 @@ asked() {
   printf '%s' "$*"
 }
 asked=$(asked "$@")
+
+# Held after the call has been read rather than before, so the flag can name
+# which call to hold: its first line is a prefix of the call, and an empty
+# flag holds every one. A run with no config file asks `bd where` before it
+# has a screen at all, so a hang that cannot tell one call from another can
+# only hold that one — and the frames drawn while a *collection* is
+# outstanding are then unreachable for a project discovery found.
+if [ -n "${BDI_SHIM_BD_HANGS_WHILE:-}" ] && [ -e "$BDI_SHIM_BD_HANGS_WHILE" ]; then
+  held=$(head -n 1 "$BDI_SHIM_BD_HANGS_WHILE" 2>/dev/null)
+  case "$asked" in
+    "$held"*)
+      if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then : >"$BDI_SHIM_BD_HOLDING"; fi
+      waited=0
+      while [ -e "$BDI_SHIM_BD_HANGS_WHILE" ] && [ "$waited" -lt "$GIVING_UP" ]; do
+        sleep 0.05
+        waited=$((waited + 1))
+      done
+      if [ -n "${BDI_SHIM_BD_HOLDING:-}" ]; then rm -f "$BDI_SHIM_BD_HOLDING"; fi
+      ;;
+  esac
+fi
 
 # `sql` is never answered from a file, whatever is there. bdi asks it for the
 # tracker's working root and skips the whole read when the answer has not

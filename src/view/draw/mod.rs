@@ -153,7 +153,7 @@ pub fn draw(
 
     frame.render_widget(
         status_bar(
-            &notices(&forest.snapshot().agents, foot.standing),
+            &notices(forest.snapshot(), foot.standing),
             foot.copied,
             foot.keys,
             bands.keys.width as usize,
@@ -460,6 +460,7 @@ mod tests {
             unattributed,
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            projects_named_without_git: Vec::new(),
             read_at: BTreeMap::from([("summit-works".to_string(), read_at())]),
         }
     }

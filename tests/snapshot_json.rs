@@ -212,6 +212,7 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(emitted["filter"], "live-agents");
     assert_eq!(emitted["hidden_trees"], json!([]));
     assert_eq!(emitted["failed_projects"], json!([]));
+    assert_eq!(emitted["projects_named_without_git"], json!([]));
 
     // `w:p3` sits on a closed bead the one tree already draws, so a second
     // tree here is that pane rooting the bead beside its own tree.
@@ -849,6 +850,87 @@ fn a_session_that_will_not_answer_is_named_and_the_others_seats_are_still_drawn(
         json!({"session": "beacon", "id": "w:p1"}),
         "the bead's key names the pane by id, and the one session holding it is its"
     );
+}
+
+/// One project's tracker holding a single claim, whose seat sits in a
+/// session that will not answer. Nothing live carries `w:p7`, so the claim
+/// resolves to no agent — which is what makes it an orphan claim rather than
+/// a seat.
+const A_CLAIM_IN_A_SILENT_SESSION: &str = r#"[
+  {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+   "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
+   "started_at":"2026-08-29T09:00:00Z","metadata":{"agent_pane":"w:p7"}}
+]"#;
+
+/// A one-shot builds one collection, so it has no previous one to remember a
+/// wedged session's panes by, and it reports an orphan claim a screen on its
+/// second collection would suppress. What makes that answerable rather than
+/// merely wrong is that the same document says the pane listing was
+/// incomplete: `agents.sessions` names the session that did not answer, so a
+/// consumer can discount every orphan claim in the snapshot without going
+/// back to the provider.
+///
+/// The two halves are asserted together, because either alone is what the
+/// contract already had and the pair is what the consumer needs.
+#[test]
+fn an_orphan_claim_arrives_beside_the_session_that_could_not_be_read() {
+    let emitted = emit(
+        &three_sessions(),
+        &orbital_with(orbital_holding(A_CLAIM_IN_A_SILENT_SESSION)),
+        Filter::All,
+    );
+
+    assert_eq!(
+        node(&emitted["trees"][0], "orb-7")["anomalies"],
+        json!([{"rule": "orphan-claim"}]),
+        "the claim was not reported as an orphan: {emitted:#}"
+    );
+    let unanswered: Vec<&Value> = emitted["agents"]["sessions"]
+        .as_array()
+        .expect("sessions is an array")
+        .iter()
+        .filter(|session| session["state"] == "not-answering")
+        .map(|session| &session["name"])
+        .collect();
+    assert_eq!(
+        unanswered,
+        [&json!("persistent-agents")],
+        "nothing in the snapshot says the pane listing was short of a session: {emitted:#}"
+    );
+}
+
+/// The other side of the same discrimination: every session answered, so the
+/// pane listing is whole and an orphan claim in this snapshot rests on it. A
+/// consumer that could not tell this run from the one above would have to
+/// treat every orphan claim as unsound.
+#[test]
+fn an_orphan_claim_from_a_whole_pane_listing_says_every_session_answered() {
+    let emitted = emit(
+        &every_session_answering(),
+        &orbital_with(orbital_holding(A_CLAIM_IN_A_SILENT_SESSION)),
+        Filter::All,
+    );
+
+    assert_eq!(
+        node(&emitted["trees"][0], "orb-7")["anomalies"],
+        json!([{"rule": "orphan-claim"}])
+    );
+    assert_eq!(
+        emitted["agents"],
+        json!({"provider": "herdr", "state": "answering",
+               "sessions": [{"name": "default", "state": "answering"},
+                            {"name": "beacon", "state": "answering"}]}),
+        "a run every session answered for was not published as whole: {emitted:#}"
+    );
+}
+
+/// The same box as `three_sessions`, with the session that would not answer
+/// gone: every session the provider names answers, so the panes are every
+/// pane there is.
+fn every_session_answering() -> Canned {
+    Canned::default()
+        .answering("herdr --session default agent list", NO_PANES)
+        .herdr_running(&[("beacon", Some(PANES_IN_BEACON))])
 }
 
 /// A bead's key names a pane id alone, and two sessions each hold one. The

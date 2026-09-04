@@ -194,6 +194,108 @@ fn a_machine_with_no_git_reads_the_tracked_tree_rather_than_the_directory() {
     std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
 }
 
+/// A machine that cannot run git names the project after the tree beads
+/// tracks, and the screen says so at the foot. A consumer of `--json` was
+/// told nothing at all — and the name is half of every key in the document
+/// they are reading.
+///
+/// The qualification is published as the projects it is about rather than as
+/// the sentence the foot draws from it, so a consumer tests the project they
+/// hold against the list instead of parsing prose.
+#[test]
+fn a_machine_with_no_git_publishes_the_project_whose_name_was_guessed() {
+    let home = nowhere("no-git-json-guessed");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.tracks(&home);
+    tracker.holds(THE_TRACKER);
+
+    let mut environment = tracker.environment();
+    environment.push(shims_first_with_nothing_called("git", &home));
+
+    let out = bdi_in(&home, &["--json"], &environment);
+    let snapshot = emitted(&out);
+
+    let tree = home
+        .file_name()
+        .expect("the tree has a name")
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(
+        snapshot["projects_named_without_git"],
+        serde_json::json!([tree]),
+        "the guessed name was not qualified for a consumer: {snapshot:#}"
+    );
+    assert_eq!(
+        snapshot["trees"][0]["project"], tree,
+        "the qualification names a project the trees were not read from: {snapshot:#}"
+    );
+
+    std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
+}
+
+/// The state this must not fire on, through the same mouth. git ran, so the
+/// name is git's answer and nothing was guessed — and a consumer that saw
+/// every run qualified would learn to ignore the key.
+#[test]
+fn a_run_whose_git_answered_publishes_no_guess() {
+    let cwd = nowhere("git-answered-json");
+    let tracker = ShimmedTracker::beside(&cwd);
+    tracker.tracks(&cwd);
+    tracker.holds(THE_TRACKER);
+
+    let out = bdi_in(&cwd, &["--json"], &tracker.environment());
+    let snapshot = emitted(&out);
+
+    assert_eq!(
+        snapshot["projects_named_without_git"],
+        serde_json::json!([]),
+        "a run whose git answered was published as a guess: {snapshot:#}"
+    );
+
+    std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
+}
+
+/// The other state that is not a guess: the reader named the project
+/// outright. `BDI_PROJECT` outranks whatever git would have said, so a
+/// machine without git has still guessed nothing.
+#[test]
+fn a_project_the_environment_names_publishes_no_guess_without_git_either() {
+    let home = nowhere("no-git-json-named");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.tracks(&home);
+    tracker.holds(THE_TRACKER);
+
+    let mut environment = tracker.environment();
+    environment.push(shims_first_with_nothing_called("git", &home));
+    environment.push(("BDI_PROJECT".to_string(), "orbital".to_string()));
+
+    let out = bdi_in(&home, &["--json"], &environment);
+    let snapshot = emitted(&out);
+
+    assert_eq!(
+        snapshot["trees"][0]["project"], "orbital",
+        "the project is not called what BDI_PROJECT says: {snapshot:#}"
+    );
+    assert_eq!(
+        snapshot["projects_named_without_git"],
+        serde_json::json!([]),
+        "a project the reader named outright was published as a guess: {snapshot:#}"
+    );
+
+    std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
+}
+
+/// What a run wrote to stdout, read as the document a consumer parses.
+///
+/// Parsed rather than searched for a substring: the key under test is absent
+/// from a `bdi` that does not publish it and empty from one that does, and
+/// only a parse tells those two apart.
+fn emitted(out: &Output) -> serde_json::Value {
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(out.status.success(), "bdi exited {}: {said}", out.status);
+    serde_json::from_slice(&out.stdout).expect("bdi emitted a JSON document")
+}
+
 #[test]
 fn a_directory_with_no_tracker_and_no_config_says_so() {
     let cwd = nowhere("untracked");

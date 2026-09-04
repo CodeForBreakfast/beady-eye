@@ -173,7 +173,19 @@ impl ShimmedTracker {
 
     /// Stop answering. Every `bd` call from here waits until this is dropped.
     pub fn hang(&self) {
-        std::fs::write(&self.hangs_while, "").expect("the flag is ours to raise");
+        self.hang_on("");
+    }
+
+    /// Stop answering the calls that open with these words, and go on
+    /// answering the rest.
+    ///
+    /// What this reaches that `hang` cannot is a run with no config file. Such
+    /// a run asks `bd where` before it has a screen at all, so holding every
+    /// call holds that one and `bdi` never starts — and the frames drawn while
+    /// a *collection* is outstanding are unreachable for the project discovery
+    /// found.
+    pub fn hang_on(&self, call: &str) {
+        std::fs::write(&self.hangs_while, call).expect("the flag is ours to raise");
     }
 
     /// Wait until a call is actually being held.

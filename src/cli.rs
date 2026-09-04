@@ -20,7 +20,6 @@ use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
 use crate::model::snapshot::Filter;
 use crate::tui::{Armed, Arming, Reload, CHECKED_EVERY};
-use crate::view::Notice;
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
@@ -147,19 +146,18 @@ struct Launch<'a> {
     roots: &'a [String],
 }
 
-/// The config this run works to, and what settling it left `bdi` unable to
-/// do.
+/// The config this run works to, and the file it came out of.
 ///
-/// The notices are minted here rather than where the fact was found:
-/// `collect/` is the bottom layer and knows nothing of a foot to say things
-/// at, so what it hands back is the fact and what happens to it is decided
-/// where every other word `bdi` says is.
+/// What settling the config left `bdi` unable to do travels on the config
+/// itself rather than beside it, as a fact for the model to publish and the
+/// view to make words of. That is what keeps the two mouths saying the same
+/// thing: a fact carried beside the config reaches whichever of them the
+/// caller hands it to, and only the screen is ever handed anything.
 #[derive(Debug)]
 struct Settled {
     config: Config,
     /// The config file to watch for edits, or nothing where none was read.
     read_from: Option<PathBuf>,
-    notices: Vec<Notice>,
 }
 
 pub fn run() -> anyhow::Result<ExitCode> {
@@ -175,7 +173,6 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let Settled {
         config: mut cfg,
         read_from,
-        notices,
     } = match &cli.config {
         Some(named) => read_config(&RealRunner, &expand_tilde(named, home), &launch),
         None => config_for_wherever_bdi_was_run(
@@ -280,7 +277,6 @@ pub fn run() -> anyhow::Result<ExitCode> {
             }
         }),
         reload,
-        notices,
     )?;
 
     Ok(ExitCode::SUCCESS)
@@ -297,8 +293,6 @@ fn read_config(runner: &dyn Runner, path: &Path, launch: &Launch<'_>) -> anyhow:
     Ok(Settled {
         config: config_for_this_run(&text, runner, launch)?,
         read_from: Some(path.to_path_buf()),
-        // A config file names its own projects, so nothing here was guessed.
-        notices: Vec::new(),
     })
 }
 
@@ -356,7 +350,6 @@ fn config_for_wherever_bdi_was_run(
         Ok(text) => Ok(Settled {
             config: config_for_this_run(&text, runner, launch)?,
             read_from: Some(path.to_path_buf()),
-            notices: Vec::new(),
         }),
         Err(absent) if absent.kind() == ErrorKind::NotFound => {
             let named = std::env::var(PROJECT_IN_THE_ENVIRONMENT).ok();
@@ -369,8 +362,8 @@ fn config_for_wherever_bdi_was_run(
                         )
                     })?;
             let cfg = match &launch.reading {
-                Reading::Named(names) => discovered.config.scoped_to(names)?,
-                Reading::EveryProject | Reading::WhereBdiWasStarted => discovered.config,
+                Reading::Named(names) => discovered.scoped_to(names)?,
+                Reading::EveryProject | Reading::WhereBdiWasStarted => discovered,
             };
             // No file, so nothing to look at again. A config file written
             // while this run is going is a config file this run never read,
@@ -379,14 +372,6 @@ fn config_for_wherever_bdi_was_run(
             Ok(Settled {
                 config: cfg.with_roots_named_on_the_command_line(launch.roots)?,
                 read_from: None,
-                // This arm is the whole of the *and no config file* the
-                // notice is gated on: it is reached only where the file was
-                // not there to read.
-                notices: discovered
-                    .named_without_git
-                    .then_some(Notice::ProjectNamedWithoutGit)
-                    .into_iter()
-                    .collect(),
             })
         }
         Err(unreadable) => {

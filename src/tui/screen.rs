@@ -1219,6 +1219,7 @@ mod tests {
             unattributed: Vec::new(),
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
+            projects_named_without_git: Vec::new(),
             read_at: BTreeMap::new(),
             collected: trees,
             projects: vec!["grove".to_string()],

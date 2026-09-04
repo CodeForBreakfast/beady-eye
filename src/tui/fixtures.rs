@@ -65,6 +65,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         unattributed: Vec::new(),
         unconfigured: Vec::new(),
         conflicts: Vec::new(),
+        projects_named_without_git: Vec::new(),
         read_at: BTreeMap::new(),
         collected: vec![tree],
         projects: vec!["atlas".to_string()],

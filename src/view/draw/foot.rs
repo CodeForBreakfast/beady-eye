@@ -3,7 +3,7 @@
 
 use ratatui::text::Span;
 
-use crate::model::snapshot::{AgentProvider, ProviderState};
+use crate::model::snapshot::{ProviderState, Snapshot};
 use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::palette;
 use crate::view::phrase;
@@ -12,28 +12,43 @@ use crate::view::Notice;
 
 /// Everything the status bar has to say, in the order it should give it up.
 ///
-/// The provider's are read off the snapshot behind this frame; the rest are
-/// what the view is standing on, most of them settled before the first
-/// collection. Consequence decides the order, not provenance: a
-/// provider nobody can reach empties the agent column, which is what the
-/// reader came for, so it is the last thing a narrow screen takes away, and
-/// a session nobody can reach empties that session's part of it.
+/// All but the last are read off the snapshot behind this frame, and that is
+/// the point rather than a convenience: the snapshot is also what `--json`
+/// publishes, so a fact the foot draws from it is a fact a consumer of the
+/// contract has too, and neither mouth can qualify a run the other does not.
+/// What is left standing is this process's own — a channel that would not
+/// open, a config that would not reload — which a run that prints one
+/// snapshot and exits has neither of.
+///
+/// Consequence decides the order, not provenance: a provider nobody can
+/// reach empties the agent column, which is what the reader came for, so it
+/// is the last thing a narrow screen takes away, and a session nobody can
+/// reach empties that session's part of it. A guessed project name outranks
+/// the standing ones because it is half of every key on the screen, where a
+/// channel that would not open costs freshness alone.
 ///
 /// A provider nobody installed says nothing here. The reader has lost
 /// nothing — they never had an agent column — and a warning about a program
 /// they have never heard of is a warning they cannot act on.
-pub(super) fn notices(agents: &AgentProvider, standing: &[Notice]) -> Vec<Notice> {
-    let collected = match agents.state {
+pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
+    let collected = match snapshot.agents.state {
         ProviderState::Answering | ProviderState::Absent => None,
         ProviderState::NotAnswering => Some(Notice::AgentsUnknown),
     };
-    let unanswered = agents
+    let unanswered = snapshot
+        .agents
         .unanswered()
         .map(|session| Notice::SessionUnanswered(session.to_string()));
+    // One line however many projects were guessed, because the remedy is one
+    // line in a shell profile and saying it per project would say it once and
+    // repeat it.
+    let guessed =
+        (!snapshot.projects_named_without_git.is_empty()).then_some(Notice::ProjectNamedWithoutGit);
 
     collected
         .into_iter()
         .chain(unanswered)
+        .chain(guessed)
         .chain(standing.iter().cloned())
         .collect()
 }
@@ -129,8 +144,85 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    use crate::model::snapshot::a_provider;
+    use crate::config::Scope;
+    use crate::model::snapshot::{a_provider, Filter, ProviderState as State, A_PROVIDER};
     use crate::view::draw::tests::*;
+
+    /// A frame's snapshot with the provider a test is about and nothing else
+    /// to say.
+    fn behind_a_frame(agents: crate::model::snapshot::AgentProvider) -> Snapshot {
+        Snapshot {
+            agents,
+            ..nothing_to_qualify()
+        }
+    }
+
+    /// A snapshot from a run in which everything answered and no name was
+    /// guessed — the state every notice here is measured against.
+    fn nothing_to_qualify() -> Snapshot {
+        Snapshot::awaiting(
+            Vec::new(),
+            Vec::new(),
+            A_PROVIDER,
+            Scope::Everything,
+            Filter::LiveAgents,
+            "2026-08-30T12:00:00Z".parse().expect("the instant parses"),
+        )
+    }
+
+    /// A guessed project name is the snapshot's to report, and the same field
+    /// `--json` publishes is what the foot reads: one fact, so a screen and a
+    /// printed snapshot of the same moment cannot disagree about it.
+    #[test]
+    fn a_project_named_without_git_is_said_at_the_foot_from_the_snapshot() {
+        let guessed = Snapshot {
+            projects_named_without_git: vec!["orbital".to_string()],
+            ..nothing_to_qualify()
+        };
+
+        assert_eq!(
+            notices(&guessed, &[]),
+            vec![Notice::ProjectNamedWithoutGit],
+            "the foot did not read the guess off the snapshot"
+        );
+        assert_eq!(
+            notices(&nothing_to_qualify(), &[]),
+            Vec::new(),
+            "a run that guessed no name was warned about one"
+        );
+    }
+
+    /// Two projects guessed is still one remedy — a line in a shell profile —
+    /// so the foot says it once rather than once per project.
+    #[test]
+    fn several_guessed_names_are_one_notice() {
+        let guessed = Snapshot {
+            projects_named_without_git: vec!["orbital".to_string(), "ferry".to_string()],
+            ..nothing_to_qualify()
+        };
+
+        assert_eq!(notices(&guessed, &[]), vec![Notice::ProjectNamedWithoutGit]);
+    }
+
+    /// A guessed name costs the reader more than a channel that would not
+    /// open — it is half of every key on the screen — so a narrowing foot
+    /// gives up the channel first.
+    #[test]
+    fn a_guessed_name_outranks_what_this_process_settled() {
+        let guessed = Snapshot {
+            projects_named_without_git: vec!["orbital".to_string()],
+            ..behind_a_frame(a_provider(State::NotAnswering))
+        };
+
+        assert_eq!(
+            notices(&guessed, &[Notice::NoInboundChannel]),
+            vec![
+                Notice::AgentsUnknown,
+                Notice::ProjectNamedWithoutGit,
+                Notice::NoInboundChannel
+            ]
+        );
+    }
 
     // ---- the key bar -----------------------------------------------------
 
@@ -433,7 +525,7 @@ mod tests {
     fn the_snapshots_notice_outranks_the_sessions() {
         assert_eq!(
             notices(
-                &a_provider(ProviderState::NotAnswering),
+                &behind_a_frame(a_provider(ProviderState::NotAnswering)),
                 &[Notice::NoInboundChannel]
             ),
             vec![Notice::AgentsUnknown, Notice::NoInboundChannel]
@@ -448,12 +540,15 @@ mod tests {
     fn a_provider_that_was_never_installed_is_not_warned_about() {
         assert_eq!(
             notices(
-                &a_provider(ProviderState::Absent),
+                &behind_a_frame(a_provider(ProviderState::Absent)),
                 &[Notice::NoInboundChannel]
             ),
             vec![Notice::NoInboundChannel]
         );
-        assert_eq!(notices(&a_provider(ProviderState::Absent), &[]), Vec::new());
+        assert_eq!(
+            notices(&behind_a_frame(a_provider(ProviderState::Absent)), &[]),
+            Vec::new()
+        );
     }
 
     /// A session fact reaches the foot whether or not the collection behind
@@ -463,7 +558,7 @@ mod tests {
     fn a_session_notice_stands_alone_where_the_snapshot_is_well() {
         assert_eq!(
             notices(
-                &a_provider(ProviderState::Answering),
+                &behind_a_frame(a_provider(ProviderState::Answering)),
                 &[Notice::NoInboundChannel]
             ),
             vec![Notice::NoInboundChannel]
@@ -473,7 +568,7 @@ mod tests {
     #[test]
     fn a_session_with_nothing_wrong_leaves_the_foot_to_the_keys() {
         assert_eq!(
-            notices(&a_provider(ProviderState::Answering), &[]),
+            notices(&behind_a_frame(a_provider(ProviderState::Answering)), &[]),
             Vec::new()
         );
     }

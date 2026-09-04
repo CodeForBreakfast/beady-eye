@@ -1357,7 +1357,8 @@ name to the socket after any command that wrote something.
   "failed_projects": [ { "project": "homelab", "tracker": "auth" } ],
   "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification" } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
-  "conflicts": []
+  "conflicts": [],
+  "projects_named_without_git": []
 }
 ```
 
@@ -1389,6 +1390,13 @@ since every other root came out of the tracker's own answers. `dangling` and
 `cycles` name ids that are still in `nodes`. `hidden_trees` is never
 empty-by-omission — a filtered tree is reported, not dropped. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
+`projects_named_without_git` names each project here whose name git did not
+give, because git could not be run — the directory its tracker sits at the top
+of was used instead. It is `[]` on every machine that has git, and `[]` where a
+config file or `BDI_PROJECT` named the project outright, because neither of
+those is a guess. A name is half of every key in this document, so a consumer
+holding one tests it against this list rather than being told once about the
+run.
 
 `unattributed` and `unconfigured` are the two ways a live pane resolves to no
 bead, and a consumer tells them apart by the `project` key: an `unattributed`
@@ -1397,6 +1405,49 @@ contract, so test for the key rather than reading a null. An `unattributed`
 entry also carries what the pane reported about itself, under the names a
 node's `agent` gives the same things — `display_agent`, and its caption as
 `title` — each null where the pane reported nothing.
+
+### Facts, not the words the screen makes of them
+
+There is no `notices` array here. A notice is the sentence the status bar makes
+of a fact, and every fact it makes one of is already a field: the provider that
+would not answer is `agents.state`, the session that would not is
+`agents.sessions`, and a project name git did not give is
+`projects_named_without_git`. Both mouths read those fields — the foot draws its
+notices from the same snapshot `--json` prints — so a screen and a document of
+the same moment cannot qualify a run differently. Publishing the sentences
+beside the fields would put a derived value next to its input and give a
+consumer two answers that can drift apart. So the document carries the facts
+rather than the words, and an array would have to beat that rather than fill a
+gap.
+
+What that leaves out is what a one-shot cannot have. A `bdi` that prints one
+collection and exits never opens the inbound channel and never re-reads its
+config, so *the view is only as fresh as the refresh interval* and *the config
+would not reload* are facts about a session that is still running, not about
+this document. A field for them would be a field that is always absent. Where
+a fact belongs to the run rather than to the process, it is published, and
+*degrade, never disappear* is what says so.
+
+### What an orphan claim rests on
+
+`orphan-claim` fires on a claimed bead with no pane behind it, so it is only as
+sound as the pane listing it was evaluated against — and `agents` is where a
+consumer reads how complete that listing was. Every session `answering` means
+the panes are every pane there is and each orphan claim stands on all of them.
+A session `not-answering` means its panes are missing from this run, so a
+claim naming a seat in it reads as unstaffed here whether or not the seat is
+alive, and a consumer discounts the orphan claims accordingly.
+
+A running screen can do better than that and `--json` cannot, and the
+difference is memory rather than effort. `Collection` keeps which pane ids
+each session last answered with, so a screen on its second collection knows
+which ids the silent session was holding and suppresses exactly those claims.
+`--json` builds one collection and exits, so it has nothing to remember by and
+suppresses none of them: on the same tracker at the same moment, a one-shot
+reports orphan claims the screen does not. That is not repaired by buying a
+second collection — it would pay a round trip on every run for an exactness
+`agents.sessions` already lets the consumer approximate — so the divergence is
+published rather than hidden, and this paragraph is where a consumer meets it.
 
 ## TUI
 

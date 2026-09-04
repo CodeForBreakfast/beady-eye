@@ -115,6 +115,50 @@ fn a_run_that_cannot_run_git_is_told_the_name_is_a_guess() {
     std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
 }
 
+/// The name is on the first frame, so the qualification is too.
+///
+/// `bdi` draws its forest from the configured project names before any
+/// tracker has answered, so a reader is looking at a guessed name for as long
+/// as the first collection takes. A screen that waited for that collection to
+/// say the name was guessed would show them the wrong thing first and correct
+/// it, which is the one order a warning must not arrive in.
+///
+/// The collection is held rather than raced: `bd list` cannot return, so
+/// every frame drawn here is a frame drawn before it. `bd where` is left
+/// answering because discovery asks it before there is a screen at all, and a
+/// run with no config file is the only kind this notice fires on.
+///
+/// Read rather than settled for: the mark beside a project being collected
+/// turns, so a terminal with a collection outstanding never falls silent.
+#[test]
+fn the_guess_is_on_the_screen_before_the_first_collection_comes_back() {
+    let home = a_home_with_no_config("first-frame");
+    let (mut environment, tracker, _herdr) = a_run_in(&home);
+    with_no_git(&mut environment, &home);
+    tracker.hang_on(COLLECTING_THE_ROWS);
+
+    let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &environment);
+    tracker.wait_until_holding(GIVING_UP);
+
+    // The project's own line is drawn from the discovered name rather than
+    // from anything a tracker said, so it is on the screen with the
+    // collection still outstanding — and that name is the guess itself.
+    let named = home
+        .file_name()
+        .expect("the directory has a name")
+        .to_string_lossy()
+        .to_string();
+    bdi.read_until(named.as_bytes(), GIVING_UP);
+    bdi.read_until(THE_REMEDY, GIVING_UP);
+
+    std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
+}
+
+/// The call a collection opens each project's read with, as `collect::bd`
+/// asks it. Written out rather than reached for, so a change to that call
+/// shows up here as a hang that never starts.
+const COLLECTING_THE_ROWS: &str = "list --all";
+
 /// The state this must not fire on. A repository with no `origin` is the
 /// documented answer and the reader can see it for themselves; a notice here
 /// is the warning they learn to ignore, and it would take the one above with
