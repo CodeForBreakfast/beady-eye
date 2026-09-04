@@ -116,7 +116,10 @@ nixpkgs.overlays = [ beady-eye.overlays.default ];
 ## Configuring it
 
 `bdi` reads `~/.config/beady-eye/config.toml`, or whatever file `--config`
-names.
+names, and goes on reading it: a config you edit while `bdi` is running takes
+effect a couple of seconds later, on every setting. One that will not parse
+leaves the config in force exactly as it was and says so at the foot until you
+fix it.
 
 With no config file at all, `bdi` reads the one project the directory it was
 started in belongs to. Where git can be asked, that is the repository the
@@ -238,10 +241,9 @@ because it is the one interval under a second.
 sees nor asks about, so a reader on a light background says it here. Absent,
 it assumes `dark`. That is a guess, and where it shows is the tail band: a
 light-background reader who leaves the key unset stops being able to tell
-`bdi`'s own words there from the pane's output around them. It is read when
-the screen opens, so an edit to it takes at the next run rather than in the
-one in front of you. `dark` and `light` are the only values, and anything else
-is refused rather than read as the default:
+`bdi`'s own words there from the pane's output around them. `dark` and `light`
+are the only values, and anything else is refused rather than read as the
+default:
 
 ```console
 $ bdi

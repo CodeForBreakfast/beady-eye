@@ -63,6 +63,11 @@ impl From<RootUnread> for TrackerState {
 /// stand for as long as the tracker stood still, which on an idle project is
 /// for ever.
 ///
+/// The roots the config names for it are the same argument one step further
+/// out: they change nothing about what the tracker is asked and everything
+/// about which trees its answer is assembled into. Same rows, drawn
+/// differently — which is precisely what a fingerprint cannot see.
+///
 /// The clock is the last of them. `bd ready` does not name a bead before its
 /// `defer_until` and does after, and nothing is written when that instant
 /// passes — measured 2026-09-01 against this project's own tracker, a bead
@@ -74,6 +79,7 @@ pub(super) struct ReadAt {
     project: Project,
     working_root: String,
     named: BTreeSet<String>,
+    roots: BTreeSet<String>,
     speaks_until: Option<DateTime<Utc>>,
 }
 
@@ -85,11 +91,13 @@ impl ReadAt {
         project: &Project,
         working_root: &str,
         named: &BTreeSet<String>,
+        roots: &BTreeSet<String>,
         now: DateTime<Utc>,
     ) -> bool {
         self.project == *project
             && self.working_root == working_root
             && self.named == *named
+            && self.roots == *roots
             && self.speaks_until.is_none_or(|until| now < until)
     }
 }
@@ -148,9 +156,10 @@ pub(super) fn refresh_project(
     let named: BTreeSet<String> = panes_naming_a_bead_here(panes, project, cfg)
         .map(str::to_string)
         .collect();
+    let roots = roots_named(cfg, project);
 
     if let (Some(working_root), Some(standing)) = (probed.as_deref(), standing) {
-        if standing.still_speaks_for(project, working_root, &named, now) {
+        if standing.still_speaks_for(project, working_root, &named, &roots, now) {
             return Ok(Refresh::Unchanged);
         }
     }
@@ -160,6 +169,7 @@ pub(super) fn refresh_project(
         project: project.clone(),
         working_root,
         named,
+        roots,
         speaks_until: speaks_until(&beads, now),
     });
     Ok(Refresh::Read {
@@ -213,14 +223,7 @@ fn read_project(
         climbed.extend(root_of(named, &parents, &mut ancestors));
     }
 
-    let mut roots: BTreeSet<String> = cfg
-        .roots
-        .explicit
-        .get(&project.name)
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
+    let mut roots = roots_named(cfg, project);
     roots.extend(
         climbed
             .into_iter()
@@ -313,6 +316,23 @@ fn unfinished(beads: &[Bead]) -> impl Iterator<Item = &str> {
 /// What the live panes in this project's directory name. A pane placed in no
 /// configured project has no tracker to ask, and one placed in another
 /// project names an id in that tracker's namespace, not this one's.
+/// The trees the config names for this project, drawn beside the ones
+/// discovery finds.
+///
+/// One place, because a refresh compares what it would read against what the
+/// standing read was taken under: two readings of the same table would agree
+/// until somebody changed one of them, and what that costs is a project that
+/// never reads again or one that never skips.
+fn roots_named(cfg: &Config, project: &Project) -> BTreeSet<String> {
+    cfg.roots
+        .explicit
+        .get(&project.name)
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect()
+}
+
 fn panes_naming_a_bead_here<'a>(
     panes: &'a [Pane],
     project: &'a Project,
@@ -851,6 +871,49 @@ orbital = ["orb-4"]
             rooted_at(&snap, "orb-7.9").dangling,
             vec!["orb-7.9".to_string()],
             "and the parent the answer lost is still reported"
+        );
+    }
+
+    /// A tree the reader has just named is drawn, however still the tracker
+    /// has stood.
+    ///
+    /// The fingerprint answers for the tracker, and what a `[roots.explicit]`
+    /// edit changes is which trees the rows are assembled into — the same
+    /// rows, drawn differently. So a skip against the read taken before the
+    /// edit keeps a forest the config no longer describes, and keeps it for
+    /// as long as the tracker stands still, which on an idle project is for
+    /// ever. `bdi` would accept the edit, tell the collector about it, and
+    /// draw nothing for it.
+    #[test]
+    fn a_root_the_reader_has_just_named_is_drawn_though_the_tracker_has_not_moved() {
+        let trackers = orbital();
+        let before = one_project();
+        let after = one_project_with_a_root_named();
+
+        let first = refresh_project(&trackers, &before.projects[0], &before, &[], None, now())
+            .expect("the tracker answers every call");
+        let Refresh::Read { at, .. } = first else {
+            panic!("a project nothing has read is read in full")
+        };
+
+        let refreshed = refresh_project(
+            &trackers,
+            &after.projects[0],
+            &after,
+            &[],
+            at.as_ref(),
+            now(),
+        )
+        .expect("the tracker answers every call");
+
+        let Refresh::Read { work, .. } = refreshed else {
+            panic!("the cascade was skipped against a read taken before the reader named the root")
+        };
+        let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
+        assert_eq!(
+            roots,
+            vec!["orb-7", "orb-7.1"],
+            "and the tree the reader asked for is one of them"
         );
     }
 

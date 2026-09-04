@@ -49,8 +49,14 @@ pub(crate) const CHECKED_EVERY: Duration = Duration::from_secs(2);
 /// worked and brought nothing new — and it is what a reader gets for undoing
 /// a broken edit. Anything that answered only the first question would leave
 /// that reader looking at a screen still saying their config is broken.
+/// The config rides on `Fresh` rather than beside it, so that *the reader has
+/// written something new* and *here is what they wrote* cannot come apart.
+/// Everything the run works to is read out of the one value, and a key added
+/// to the config file is read under the file in force because there is no
+/// second place for it to be missed from. A borrow, so a verdict the foot
+/// draws stays cheap to copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Reloaded {
+pub(super) enum Reloaded<'a> {
     /// Nothing came of it: the check is not due, or the file says exactly
     /// what it said when the last check read it.
     Untouched,
@@ -58,7 +64,7 @@ pub(super) enum Reloaded {
     Unchanged,
     /// The reader has written a config this run had not read. It is the
     /// config in force from here on.
-    Fresh,
+    Fresh(&'a Config),
     /// The file would not open, or would not parse. The config in force
     /// stands untouched and the reader is told.
     Broken,
@@ -121,16 +127,6 @@ impl Reload {
         }
     }
 
-    /// The config the run is working to, as the last check left it.
-    ///
-    /// Read after a check that answered `Fresh`, which is the only answer
-    /// that moves it: the rest of the run is handed this rather than the
-    /// `Reloaded` carrying it, so a verdict the foot draws stays a verdict
-    /// and stays cheap to copy.
-    pub(super) fn in_force(&self) -> &Config {
-        &self.in_force
-    }
-
     /// How long until the config is next compared against the file, or
     /// nothing where it never will be.
     pub(super) fn checks_in(&self, now: DateTime<Utc>) -> Option<Duration> {
@@ -143,7 +139,7 @@ impl Reload {
     /// Called on every wake, whichever deadline woke the loop, the way the
     /// band's pane read is: a check that is not due answers `Untouched` and
     /// touches nothing.
-    pub(super) fn checks(&mut self, now: DateTime<Utc>) -> Reloaded {
+    pub(super) fn checks(&mut self, now: DateTime<Utc>) -> Reloaded<'_> {
         if !self.at.is_some_and(|at| at <= now) {
             return Reloaded::Untouched;
         }
@@ -161,7 +157,7 @@ impl Reload {
     /// is accepted rather than unnoticed: a config that has genuinely gone
     /// away is the case worth telling the reader about, and nothing here can
     /// tell the two apart at the instant it looks.
-    fn reads(&mut self) -> Reloaded {
+    fn reads(&mut self) -> Reloaded<'_> {
         let Ok(text) = std::fs::read_to_string(&self.path) else {
             self.said = None;
             return Reloaded::Broken;
@@ -178,7 +174,7 @@ impl Reload {
             return Reloaded::Unchanged;
         }
         self.in_force = written;
-        Reloaded::Fresh
+        Reloaded::Fresh(&self.in_force)
     }
 }
 
@@ -195,6 +191,26 @@ mod tests {
     const NOT_TOML: &str = "[[projects]\nthis is not toml\n";
 
     const EVERY_TWO_SECONDS: Duration = Duration::from_secs(2);
+
+    /// The config the check found, or a failure naming what it found instead.
+    ///
+    /// Asserting on the config rather than on the verdict is what the verdict
+    /// carrying it is for: a check that answers `Fresh` about the wrong
+    /// config is the failure the rest of the run cannot see, since it is
+    /// handed nothing else to read the file's meaning off.
+    #[track_caller]
+    fn came_into_force(reloaded: Reloaded<'_>) -> &Config {
+        match reloaded {
+            Reloaded::Fresh(written) => written,
+            found => panic!("the check answered {found:?} rather than with a config"),
+        }
+    }
+
+    /// The config `ORBITAL_AND_FERRY` says, which is what every check here
+    /// that finds something new finds.
+    fn both() -> Config {
+        Config::from_toml(ORBITAL_AND_FERRY).expect("the fixture parses")
+    }
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(seconds, 0).expect("an instant inside the epoch")
@@ -290,7 +306,7 @@ mod tests {
 
         written(&path, ORBITAL_AND_FERRY, 200);
 
-        assert_eq!(reload.checks(at(4)), Reloaded::Fresh);
+        assert_eq!(came_into_force(reload.checks(at(4))), &both());
     }
 
     /// A config whose text changed and whose meaning did not — a comment
@@ -328,7 +344,7 @@ mod tests {
 
         written(&path, ORBITAL_AND_FERRY, 100);
 
-        assert_eq!(reload.checks(at(4)), Reloaded::Fresh);
+        assert_eq!(came_into_force(reload.checks(at(4))), &both());
     }
 
     /// The same file put back under a stamp *earlier* than the one it had,
@@ -342,7 +358,7 @@ mod tests {
 
         written(&path, ORBITAL_AND_FERRY, 50);
 
-        assert_eq!(reload.checks(at(4)), Reloaded::Fresh);
+        assert_eq!(came_into_force(reload.checks(at(4))), &both());
     }
 
     /// The rule with teeth: the running config stands. Said by putting the
@@ -394,7 +410,7 @@ mod tests {
         assert_eq!(reload.checks(at(4)), Reloaded::Broken);
 
         written(&path, ORBITAL_AND_FERRY, 200);
-        assert_eq!(reload.checks(at(6)), Reloaded::Fresh);
+        assert_eq!(came_into_force(reload.checks(at(6))), &both());
         assert_eq!(parsed.get(), 3);
     }
 

@@ -104,6 +104,27 @@ credential_command = "pass show orbital"
         .expect("the config parses")
     }
 
+    /// The one project, as the reader has just written a tree of their own
+    /// into `[roots.explicit]`: the same tracker, reached the same way, with
+    /// one more root asked of it.
+    ///
+    /// The root is a bead an edge already places, so what naming it changes
+    /// is the forest and nothing about what the tracker is asked — which is
+    /// the case a fingerprint cannot see.
+    pub(super) fn one_project_with_a_root_named() -> Config {
+        Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "orbital"
+path = "{ORBITAL}"
+
+[roots.explicit]
+orbital = ["orb-7.1"]
+"#
+        ))
+        .expect("the config parses")
+    }
+
     pub(super) fn two_projects() -> Config {
         Config::from_toml(&format!(
             r#"

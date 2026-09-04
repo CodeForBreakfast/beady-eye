@@ -1674,14 +1674,19 @@ gets the inverted band — which is the price of not detecting, and is why the
 default is documented as a guess rather than presented as a reading of the
 terminal.
 
-**The key is read once, when the screen opens.** A config edit that changes it
-is accepted and reaches the collector, so the projects drawn follow it, but the
-band goes on drawing against the background the run started with until `bdi` is
-restarted. What a re-read reaches is the collector; what it does not reach is
-the screen. `[tui]` shows both sides of that split: `refresh_seconds` is read
-again whenever the projects are armed, so a new interval takes at once, while
-`unanswered_after_seconds` and `tail_refresh_millis` are handed over once at
-startup and hold their first value for the run.
+**The key is read again whenever the reader writes it.** The check that carries
+a reload hands the whole config over rather than a verdict about it, and the
+screen reads what it draws with out of that in one place — so the band is on
+the background the file names as soon as the next frame is drawn, and a key
+added beside it inherits the same wiring rather than the omission.
+
+That the screen reads it *in one place* is the point, and it is worth saying
+because the alternative is what was here before. A reload that reached the
+collector and not the view left every view-side setting stranded by
+construction rather than by an omission at any one key: the count grew as keys
+were added, and nobody decided it should. `[theme] background` was the instance
+that named the shape, and `[tui] tail_refresh_millis` was the other one
+standing at the time.
 
 **Why the reader says rather than `bdi` asking.** A terminal query degrades to a
 wait or to a confident wrong answer, and a wrong query answer is intermittent —

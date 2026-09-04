@@ -40,7 +40,7 @@ pub(crate) use reload::{Reload, CHECKED_EVERY};
 pub type Collecting = Box<dyn FnMut(Asked) -> Option<Snapshot> + Send>;
 
 use drive::{drive, Outstanding, View};
-use screen::Screen;
+use screen::{Drawing, Screen};
 use wire::wire;
 
 /// Draw the snapshot until the user quits, re-collecting on a refresh.
@@ -128,13 +128,7 @@ pub fn run(
     let mut outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
     outstanding.ask(Wanted::Everything, Utc::now());
 
-    let mut screen = Screen::showing(
-        awaiting,
-        panes,
-        at_startup,
-        cfg.tui.tail_refresh(),
-        cfg.theme.background,
-    )?;
+    let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg))?;
     screen.collecting(outstanding.awaited());
 
     drive(

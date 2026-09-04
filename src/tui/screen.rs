@@ -17,7 +17,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
-use crate::config::Background;
+use crate::config::{Background, Config};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
@@ -34,6 +34,34 @@ use super::drive::{Landed, Showing, View};
 use super::due::due_after;
 use super::keys::{bindings, key_row};
 use super::reload::Reloaded;
+
+/// What the config settles about the drawing, as one value read from it in
+/// one place.
+///
+/// One value rather than a field each, because the reason a setting the
+/// screen owns went on saying what the run started with was that there was
+/// nowhere a fresh config was read for the screen at all. A key added to
+/// `[tui]` or `[theme]` is read here or it is not read: the seam that carries
+/// a reload hands over a `Config`, this is what the screen makes of one, and
+/// the same call makes it at startup and after every edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Drawing {
+    /// How long after the provider answers the pane on the band is asked for
+    /// again.
+    tail_every: Duration,
+    /// The background the reader's terminal draws on, which decides the one
+    /// treatment `bdi` composes itself.
+    background: Background,
+}
+
+impl Drawing {
+    pub(super) fn to(cfg: &Config) -> Self {
+        Self {
+            tail_every: cfg.tui.tail_refresh(),
+            background: cfg.theme.background,
+        }
+    }
+}
 
 /// The forest on the alternate screen and the tail beneath it.
 ///
@@ -52,9 +80,8 @@ struct Shown {
     tailing: Option<PaneKey>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
-    /// How long after the provider answers the pane on the band is asked for
-    /// again.
-    every: Duration,
+    /// What the config in force settles about the drawing.
+    drawing: Drawing,
     /// When the pane on the band is next asked for, or nothing while a read
     /// of it is out, the band names no pane, or the interval is too long to
     /// reach. Armed by the answer that filled the band and disarmed by the
@@ -133,7 +160,7 @@ impl Shown {
         snapshot: Snapshot,
         panes: Box<dyn Panes>,
         clipboard: Box<dyn io::Write>,
-        every: Duration,
+        drawing: Drawing,
         at_startup: Vec<Notice>,
     ) -> Self {
         let forest = forest::flatten(snapshot);
@@ -144,7 +171,7 @@ impl Shown {
             panes,
             clipboard,
             reading: Reading::Nothing,
-            every,
+            drawing,
             due: None,
             copied: None,
             // Nothing in flight until the loop says otherwise. A collection
@@ -289,21 +316,47 @@ impl Shown {
     /// who undid a broken edit looking at a foot that still said their
     /// config was broken, with no edit left that would clear it but one
     /// changing the config to something they did not want.
-    fn reloaded(&mut self, reloaded: Reloaded) -> bool {
-        let broken = match reloaded {
+    fn reloaded(&mut self, reloaded: Reloaded<'_>, now: DateTime<Utc>) -> bool {
+        let (broken, redrawn) = match reloaded {
             Reloaded::Untouched => return false,
-            Reloaded::Unchanged | Reloaded::Fresh => false,
-            Reloaded::Broken => true,
+            Reloaded::Unchanged => (false, false),
+            Reloaded::Fresh(written) => (false, self.draws_to(Drawing::to(written), now)),
+            Reloaded::Broken => (true, false),
         };
         let said = self.standing.contains(&Notice::ConfigWouldNotReload);
         if said == broken {
-            return false;
+            return redrawn;
         }
         if broken {
             self.standing.push(Notice::ConfigWouldNotReload);
         } else {
             self.standing
                 .retain(|notice| *notice != Notice::ConfigWouldNotReload);
+        }
+        true
+    }
+
+    /// Draw to what the config the reader has just written settles, reporting
+    /// whether the screen is any different for it.
+    ///
+    /// The whole value is compared rather than the one field a frame shows.
+    /// What is drawn was drawn to the settings that stood before, so a screen
+    /// under different ones is a screen that may say something else — and a
+    /// rule naming the settings a redraw is worth is a rule that has to be
+    /// added to for every key, which is the shape this bead exists to stop.
+    ///
+    /// The interval starts again from the check that found it, where the band
+    /// is waiting on one. A due date left where the interval it was worked
+    /// out from used to be is a reader who shortens the interval and waits
+    /// out the one they replaced — which is the edit doing nothing, for as
+    /// long as the old interval says.
+    fn draws_to(&mut self, drawing: Drawing, now: DateTime<Utc>) -> bool {
+        if self.drawing == drawing {
+            return false;
+        }
+        self.drawing = drawing;
+        if self.due.is_some() {
+            self.due = due_after(now, self.drawing.tail_every);
         }
         true
     }
@@ -322,7 +375,7 @@ impl Shown {
                 let read = tail::read(pane, read);
                 let changed = read != self.tail;
                 self.tail = read;
-                self.due = due_after(now, self.every);
+                self.due = due_after(now, self.drawing.tail_every);
                 changed
             }
             // A focus that would not come says so where the tail is, and only
@@ -619,10 +672,6 @@ impl Shown {
 pub(super) struct Screen {
     terminal: DefaultTerminal,
     shown: Shown,
-    /// The background this terminal draws on, as the reader declared it.
-    /// Held beside the terminal rather than with what the run has read,
-    /// because that is what it is a fact about.
-    background: Background,
 }
 
 impl Screen {
@@ -630,22 +679,14 @@ impl Screen {
         snapshot: Snapshot,
         panes: Box<dyn Panes>,
         at_startup: Vec<Notice>,
-        tail_every: Duration,
-        background: Background,
+        drawing: Drawing,
     ) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
             terminal,
-            background,
-            shown: Shown::of(
-                snapshot,
-                panes,
-                Box::new(io::stdout()),
-                tail_every,
-                at_startup,
-            ),
+            shown: Shown::of(snapshot, panes, Box::new(io::stdout()), drawing, at_startup),
         };
 
         // Capture costs the reader the terminal's own mouse: while `bdi` is
@@ -761,8 +802,8 @@ impl View for Screen {
         self.shown.reread(now);
     }
 
-    fn reloaded(&mut self, reloaded: Reloaded) -> bool {
-        self.shown.reloaded(reloaded)
+    fn reloaded(&mut self, reloaded: Reloaded<'_>, now: DateTime<Utc>) -> bool {
+        self.shown.reloaded(reloaded, now)
     }
 
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
@@ -811,6 +852,7 @@ impl View for Screen {
             collecting,
             copied,
             standing,
+            drawing,
             ..
         } = &mut self.shown;
         let over = match showing {
@@ -825,7 +867,7 @@ impl View for Screen {
         };
         let band = draw::Band {
             tail,
-            background: self.background,
+            background: drawing.background,
         };
         self.terminal
             .draw(|frame| paint(frame, forest, band, over, foot, collecting, now))?;
@@ -1509,12 +1551,27 @@ mod tests {
     /// it hand the screen instants a chosen distance apart.
     const EVERY: Duration = Duration::from_millis(250);
 
+    /// A config settling exactly what every screen here already draws to, so
+    /// a test whose subject is the foot is a test about the foot alone.
+    fn the_config_in_force() -> Config {
+        Config::naming(Vec::new())
+    }
+
+    /// What every screen here draws to, unless its own subject is one of the
+    /// settings.
+    fn drawing() -> Drawing {
+        Drawing {
+            tail_every: EVERY,
+            background: Background::Dark,
+        }
+    }
+
     fn shown(snapshot: Snapshot) -> Shown {
         Shown::of(
             snapshot,
             Box::new(Asking::default()),
             Box::new(io::sink()),
-            EVERY,
+            drawing(),
             nothing_said(),
         )
     }
@@ -1533,7 +1590,10 @@ mod tests {
                 snapshot,
                 Box::new(panes.clone()),
                 Box::new(io::sink()),
-                every,
+                Drawing {
+                    tail_every: every,
+                    ..drawing()
+                },
                 nothing_said(),
             ),
             panes,
@@ -2945,7 +3005,10 @@ mod tests {
     fn a_config_that_would_not_load_is_said_at_the_foot() {
         let mut shown = shown(a_staffed_grove(6));
 
-        assert!(shown.reloaded(Reloaded::Broken), "the foot has changed");
+        assert!(
+            shown.reloaded(Reloaded::Broken, an_instant()),
+            "the foot has changed"
+        );
         assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
     }
 
@@ -2958,18 +3021,24 @@ mod tests {
     #[test]
     fn undoing_a_broken_edit_takes_the_notice_off_though_nothing_reloaded() {
         let mut shown = shown(a_staffed_grove(6));
-        shown.reloaded(Reloaded::Broken);
+        shown.reloaded(Reloaded::Broken, an_instant());
 
-        assert!(shown.reloaded(Reloaded::Unchanged), "the foot has changed");
+        assert!(
+            shown.reloaded(Reloaded::Unchanged, an_instant()),
+            "the foot has changed"
+        );
         assert_eq!(shown.standing, []);
     }
 
     #[test]
     fn a_config_that_loads_again_takes_the_notice_off() {
         let mut shown = shown(a_staffed_grove(6));
-        shown.reloaded(Reloaded::Broken);
+        shown.reloaded(Reloaded::Broken, an_instant());
 
-        assert!(shown.reloaded(Reloaded::Fresh), "the foot has changed");
+        assert!(
+            shown.reloaded(Reloaded::Fresh(&the_config_in_force()), an_instant()),
+            "the foot has changed"
+        );
         assert_eq!(shown.standing, []);
     }
 
@@ -2979,9 +3048,12 @@ mod tests {
     #[test]
     fn a_check_that_read_nothing_leaves_the_foot_as_it_was() {
         let mut shown = shown(a_staffed_grove(6));
-        shown.reloaded(Reloaded::Broken);
+        shown.reloaded(Reloaded::Broken, an_instant());
 
-        assert!(!shown.reloaded(Reloaded::Untouched), "nothing has changed");
+        assert!(
+            !shown.reloaded(Reloaded::Untouched, an_instant()),
+            "nothing has changed"
+        );
         assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
     }
 
@@ -2992,9 +3064,15 @@ mod tests {
     fn a_foot_told_again_what_it_already_says_has_not_changed() {
         let mut shown = shown(a_staffed_grove(6));
 
-        assert!(!shown.reloaded(Reloaded::Unchanged), "nothing to take off");
-        shown.reloaded(Reloaded::Broken);
-        assert!(!shown.reloaded(Reloaded::Broken), "already said");
+        assert!(
+            !shown.reloaded(Reloaded::Unchanged, an_instant()),
+            "nothing to take off"
+        );
+        shown.reloaded(Reloaded::Broken, an_instant());
+        assert!(
+            !shown.reloaded(Reloaded::Broken, an_instant()),
+            "already said"
+        );
         assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
     }
 
@@ -3006,17 +3084,17 @@ mod tests {
             a_staffed_grove(6),
             Box::new(Asking::default()),
             Box::new(io::sink()),
-            EVERY,
+            drawing(),
             vec![Notice::NoInboundChannel],
         );
 
-        shown.reloaded(Reloaded::Broken);
+        shown.reloaded(Reloaded::Broken, an_instant());
         assert_eq!(
             shown.standing,
             [Notice::NoInboundChannel, Notice::ConfigWouldNotReload]
         );
 
-        shown.reloaded(Reloaded::Fresh);
+        shown.reloaded(Reloaded::Fresh(&the_config_in_force()), an_instant());
         assert_eq!(shown.standing, [Notice::NoInboundChannel]);
     }
 
@@ -3197,7 +3275,7 @@ mod tests {
                 snapshot,
                 Box::new(Asking::default()),
                 Box::new(clipboard.clone()),
-                EVERY,
+                drawing(),
                 nothing_said(),
             ),
             clipboard,
@@ -3337,7 +3415,7 @@ mod tests {
             a_grove(6),
             Box::new(Asking::default()),
             Box::new(Refusing),
-            EVERY,
+            drawing(),
             nothing_said(),
         );
 

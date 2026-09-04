@@ -154,13 +154,20 @@ pub(super) trait View {
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration>;
 
     /// Take what a check of the config file found, reporting whether the
-    /// screen has changed.
+    /// screen has changed. `now` is when the file was looked at, which is
+    /// what an interval the reader has just written is measured from.
     ///
     /// Handed the outcome rather than a verdict, for the reason `tailed` is
     /// handed the provider's answer: what the foot says about a config that
     /// will not load is the view's to decide, and the loop's part is knowing
     /// when the file was looked at.
-    fn reloaded(&mut self, reloaded: Reloaded) -> bool;
+    ///
+    /// And the outcome carries the config, so what the view draws with is a
+    /// read of the file in force rather than of the file the run opened on.
+    /// Every setting the view owns is settled in one place from it — a
+    /// setting the view learns some other way is one a reload cannot reach,
+    /// which is what this hands it rather than the verdict alone.
+    fn reloaded(&mut self, reloaded: Reloaded<'_>, now: DateTime<Utc>) -> bool;
 
     /// Take note that the reader has pressed something — a key, a button, a
     /// wheel notch — before the loop works out what it means, reporting
@@ -352,14 +359,20 @@ pub(super) fn drive(
 /// reader's answer can be drawn on the next frame, and the collection it
 /// causes goes where every other collection already goes.
 ///
-/// Three things follow a config the reader has written: the projects that
-/// poll become the ones it names, the collector is told to work to it, and
-/// every project is read under it. The last two are in that order because a
-/// collection carries no config with it — the collector reads under whatever
-/// it is working to when the read arrives — so a read that overtook the
-/// config would draw a whole screen read under the file the reader has just
-/// replaced. Nothing here arranges that: the channel is in order, and the
-/// read waits out its window behind the config already on it.
+/// Four things follow a config the reader has written: the projects that
+/// poll become the ones it names, how long a read may go unanswered becomes
+/// what it says, the collector is told to work to it, and every project is
+/// read under it. The last two are in that order because a collection carries
+/// no config with it — the collector reads under whatever it is working to
+/// when the read arrives — so a read that overtook the config would draw a
+/// whole screen read under the file the reader has just replaced. Nothing
+/// here arranges that: the channel is in order, and the read waits out its
+/// window behind the config already on it.
+///
+/// The patience is the loop's own share of what the view's is: every setting
+/// `[tui]` names is a gap somebody waits out, and the two the *screen* waits
+/// out go to the view through `reloaded` above. This one is here because a
+/// read that has stopped getting anywhere is the loop's to notice.
 fn looked_at(
     view: &mut dyn View,
     reload: Option<&mut Reload>,
@@ -370,15 +383,15 @@ fn looked_at(
     now: DateTime<Utc>,
 ) -> bool {
     let Some(reload) = reload else {
-        return view.reloaded(Reloaded::Untouched);
+        return view.reloaded(Reloaded::Untouched, now);
     };
     let reloaded = reload.checks(now);
-    let noticed = view.reloaded(reloaded);
-    if reloaded != Reloaded::Fresh {
+    let noticed = view.reloaded(reloaded, now);
+    let Reloaded::Fresh(written) = reloaded else {
         return noticed;
-    }
-    let written = reload.in_force();
+    };
     *armed = still_armed(std::mem::take(armed), arms(written));
+    outstanding.waits_out(written.tui.unanswered_after());
     if ask
         .send(Asked::Reloaded(Box::new(written.clone())))
         .is_err()
@@ -750,6 +763,17 @@ impl Outstanding {
         Self::waiting(patience, WINDOW)
     }
 
+    /// Wait this long on a read from here on, as the config the reader has
+    /// just written says.
+    ///
+    /// The reads already asked for keep the patience they were stamped with,
+    /// because that is what the screen has been drawing them against: a read
+    /// the reader has been watching for a minute would otherwise be reported
+    /// as having stopped answering by an edit that said nothing about it.
+    pub(super) fn waits_out(&mut self, patience: TimeDelta) {
+        self.patience = patience;
+    }
+
     pub(super) fn waiting(patience: TimeDelta, window: TimeDelta) -> Self {
         Self {
             awaited: Vec::new(),
@@ -1058,7 +1082,7 @@ mod tests {
         /// Nothing on this view says anything about a config, and no test
         /// here hands the loop a file to look at. What a check does to the
         /// foot is `Shown`'s, where a test can read the row it lands on.
-        fn reloaded(&mut self, _reloaded: Reloaded) -> bool {
+        fn reloaded(&mut self, _reloaded: Reloaded<'_>, _now: DateTime<Utc>) -> bool {
             false
         }
 
