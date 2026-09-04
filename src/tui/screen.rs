@@ -27,7 +27,7 @@ use crate::view::lines::Place;
 use crate::view::phrase;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Motion, Notice};
+use crate::view::{draw, Action, Freshness, Motion, Notice, Said, Typing};
 
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
@@ -87,11 +87,17 @@ struct Shown {
     /// reach. Armed by the answer that filled the band and disarmed by the
     /// ask it makes, as a project is.
     due: Option<DateTime<Utc>>,
-    /// The id the reader has just put on the clipboard, said at the foot
-    /// until their next key or click. Theirs and not the collector's: a
-    /// collection landing a moment after the key would otherwise take the
-    /// one line that says it fired off before anyone had read it.
-    copied: Option<String>,
+    /// What the reader's last keystroke came to, said at the foot until their
+    /// next key or click. Theirs and not the collector's: a collection landing
+    /// a moment after the key would otherwise take the one line that says it
+    /// fired off before anyone had read it.
+    said: Option<Said>,
+    /// What the reader has typed into the search prompt, while one is up.
+    ///
+    /// Held here and not on the forest for the reason the bead view's `Show`
+    /// is: it is about a prompt over the rows, not about the rows. The loop
+    /// holds that a prompt is up; this is what is in it.
+    sought: Option<String>,
     /// What the collection in flight is reading and when it was asked for,
     /// where one is running. Every project line it names says its own rows
     /// are about to be replaced, and the rest of the screen carries on saying
@@ -173,7 +179,8 @@ impl Shown {
             reading: Reading::Nothing,
             drawing,
             due: None,
-            copied: None,
+            said: None,
+            sought: None,
             // Nothing in flight until the loop says otherwise. A collection
             // is already running by the time this exists — the run asks for
             // one before it opens the screen — and it reaches this the way
@@ -470,12 +477,64 @@ impl Shown {
         }
     }
 
-    /// Take a copied id off the foot, reporting whether one was on it. The
-    /// reader's next press is what takes it off, whatever the press turns
-    /// out to mean — it was feedback on a keystroke, not a fact about the
-    /// screen.
+    /// Take what the foot said back off it, reporting whether it said
+    /// anything. The reader's next press is what takes it off, whatever the
+    /// press turns out to mean — it was feedback on a keystroke, not a fact
+    /// about the screen.
     fn pressed(&mut self) -> bool {
-        self.copied.take().is_some()
+        self.said.take().is_some()
+    }
+
+    /// Take one keystroke into the search prompt, reporting whether the screen
+    /// has changed.
+    ///
+    /// Enter on an empty prompt asks for nothing, so it says nothing: a reader
+    /// who opened the prompt and changed their mind has pressed the other way
+    /// out of it, and an answer about the empty id would be an answer to a
+    /// question nobody put.
+    fn typing(&mut self, typing: Typing) -> bool {
+        let Some(sought) = self.sought.as_mut() else {
+            return false;
+        };
+        match typing {
+            Typing::Character(glyph) => {
+                sought.push(glyph);
+                true
+            }
+            Typing::RubbedOut => sought.pop().is_some(),
+            Typing::Abandoned => {
+                self.sought = None;
+                true
+            }
+            Typing::Sought => {
+                let id = std::mem::take(sought);
+                self.sought = None;
+                if !id.is_empty() {
+                    self.seek(&id);
+                }
+                true
+            }
+        }
+    }
+
+    /// Go to the bead an id names, and say at the foot whatever the reader
+    /// cannot see for themselves: that the id reached nothing, or that it
+    /// reached a project they did not name.
+    ///
+    /// A search that landed in the one project holding the id says nothing.
+    /// The selection has moved onto the bead, which is the answer, and the
+    /// foot is the row a reader reads when their key changed nothing else.
+    fn seek(&mut self, id: &str) {
+        let drawing = self.forest.seek(id);
+        self.said = match drawing.split_first() {
+            None => Some(Said::NoBeadRead(id.to_string())),
+            Some((_, [])) => None,
+            Some((project, _)) => Some(Said::WentTo(BeadKey {
+                project: project.clone(),
+                id: id.to_string(),
+            })),
+        };
+        self.moved(true);
     }
 
     fn collected(&mut self, snapshot: Snapshot) {
@@ -519,6 +578,13 @@ impl Shown {
         if action == Action::CopyId {
             return self.copy_id();
         }
+        // The prompt goes up empty. What it holds is this side of the seam;
+        // that it is up is the loop's, which is what makes a keystroke mean a
+        // character of an id rather than the binding the same key carries.
+        if action == Action::Search {
+            self.sought = Some(String::new());
+            return true;
+        }
 
         let changed = self.forest.apply(action);
         self.moved(changed)
@@ -547,7 +613,7 @@ impl Shown {
         if clipboard::copy(self.clipboard.as_mut(), &id).is_err() {
             return false;
         }
-        self.copied = Some(id);
+        self.said = Some(Said::Copied(id));
         true
     }
 
@@ -818,6 +884,10 @@ impl View for Screen {
         self.shown.apply(action)
     }
 
+    fn typing(&mut self, typing: Typing) -> bool {
+        self.shown.typing(typing)
+    }
+
     fn scroll(&mut self, motion: Motion) -> bool {
         self.shown.scroll(motion)
     }
@@ -850,19 +920,21 @@ impl View for Screen {
             tail,
             show,
             collecting,
-            copied,
+            said,
+            sought,
             standing,
             drawing,
             ..
         } = &mut self.shown;
         let over = match showing {
-            Showing::Forest => Over::Nothing,
+            Showing::Forest | Showing::Searching => Over::Nothing,
             Showing::Bindings => Over::Bindings,
             Showing::Bead => Over::Bead(show),
         };
         let foot = draw::Foot {
             standing,
-            copied: copied.as_deref(),
+            said: said.as_ref(),
+            prompt: sought.as_deref(),
             keys: &key_row(),
         };
         let band = draw::Band {
@@ -990,7 +1062,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 16 more bindings · no room on a screen this short",
+                "  … 17 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1023,16 +1095,26 @@ mod tests {
     /// The bead: a reader opens `?` to look up the key for the row they are
     /// on, so that row has to still be on the screen. The full-screen view
     /// this replaced took the whole forest away.
+    ///
+    /// Asserted a row taller than the table, which is where the property is
+    /// the window's rather than the table's. The table wants a row per
+    /// binding plus its two borders, and it fills a twenty-four-row screen
+    /// exactly — so on the terminal size everything else here is measured at,
+    /// the forest survives in the columns beside the window and not in any
+    /// row above or below it. That is the clamp doing what it does on every
+    /// screen too short for the table, and it is a row further up the table's
+    /// growth than it was.
     #[test]
     fn the_forest_is_still_drawn_around_the_bindings_window() {
+        let tall = bindings().len() as u16 + 3;
         let mut forest = forest::flatten(a_grove(30));
         let tail = Tail::Silent("nothing to tail");
-        let alone = screen_of(&mut forest, &tail, 80, 24, Over::Nothing).rows();
-        let over = screen_of(&mut forest, &tail, 80, 24, Over::Bindings).rows();
-        let window = bindings_window(Rect::new(0, 0, 80, 24), &bindings());
+        let alone = screen_of(&mut forest, &tail, 80, tall, Over::Nothing).rows();
+        let over = screen_of(&mut forest, &tail, 80, tall, Over::Bindings).rows();
+        let window = bindings_window(Rect::new(0, 0, 80, tall), &bindings());
 
         assert!(
-            window.height < 24 && window.width < 80,
+            window.height < tall && window.width < 80,
             "a window the size of the screen is the view this replaced: {window:?}"
         );
 
@@ -1072,6 +1154,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
+                "  /         search for a bead by id, wherever the forest draws it",
                 "  q, ^C     quit",
                 "  Esc       go back to the forest from the bead view",
                 "  Tab       move to the next bead the shown bead names; Enter follows it",
@@ -1105,12 +1188,12 @@ mod tests {
 
         let drawn = window_inner(40, 24);
 
-        assert_eq!(drawn[5], "  q, ^C     quit");
+        assert_eq!(drawn[6], "  q, ^C     quit");
         assert_eq!(
             drawn[0], "  Enter     show the selected bead, o…",
             "a line too long for forty columns, cut with the cut marked"
         );
-        assert_eq!(drawn[15], "  Right, l  expand, or move to the fi…");
+        assert_eq!(drawn[16], "  Right, l  expand, or move to the fi…");
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
 
@@ -1229,11 +1312,21 @@ mod tests {
 
     /// One frame, drawn as `paint` draws it, on a session with nothing to
     /// say at its foot but the keys and whatever the reader just copied.
+    /// What the reader's last keystroke left on the foot: what it came to,
+    /// and what they have typed into the prompt while one is up. One argument
+    /// because they are one row's worth of the same thing — the press the
+    /// reader has just made — and because the frame takes enough already.
+    #[derive(Default)]
+    struct Pressed<'a> {
+        said: Option<&'a Said>,
+        prompt: Option<&'a str>,
+    }
+
     fn painted(
         forest: &mut Forest,
         tail: &Tail,
         over: Over<'_>,
-        copied: Option<&str>,
+        pressed: Pressed<'_>,
         collecting: &[Awaited],
         width: u16,
         height: u16,
@@ -1241,7 +1334,8 @@ mod tests {
         let keys = key_row();
         let foot = draw::Foot {
             standing: &[],
-            copied,
+            said: pressed.said,
+            prompt: pressed.prompt,
             keys: &keys,
         };
         Painted::drawn_by(width, height, |frame| {
@@ -1267,7 +1361,7 @@ mod tests {
         height: u16,
         over: Over<'_>,
     ) -> Painted {
-        painted(forest, tail, over, None, &[], width, height)
+        painted(forest, tail, over, Pressed::default(), &[], width, height)
     }
 
     /// The screen with the bead view up, drawn from the view the screen is
@@ -1287,7 +1381,15 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        painted(forest, tail, Over::Nothing, None, collecting, width, height)
+        painted(
+            forest,
+            tail,
+            Over::Nothing,
+            Pressed::default(),
+            collecting,
+            width,
+            height,
+        )
     }
 
     /// `bdi-7ao.51`, on the screen a reader is looking at rather than in any
@@ -3330,13 +3432,155 @@ mod tests {
         assert_eq!(on_the_clipboard(&clipboard.written()), "grv-1");
     }
 
+    // ---- searching for a bead by id ---------------------------------------
+
+    /// Type an id into the prompt and ask for it.
+    fn search_for(shown: &mut Shown, id: &str) {
+        press(shown, KeyCode::Char('/'));
+        for glyph in id.chars() {
+            shown.typing(Typing::Character(glyph));
+        }
+        shown.typing(Typing::Sought);
+    }
+
+    /// The prompt takes the foot for as long as it is up, and what the reader
+    /// types appears in it behind the key they opened it with — which is how
+    /// every terminal they have searched in draws one.
+    #[test]
+    fn the_prompt_draws_what_the_reader_has_typed_into_it() {
+        let mut shown = shown(a_grove(6));
+
+        press(&mut shown, KeyCode::Char('/'));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/");
+
+        for glyph in "grv-1.3".chars() {
+            shown.typing(Typing::Character(glyph));
+        }
+
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.3");
+    }
+
+    /// Backspace takes the last character back, and on an empty prompt it
+    /// takes nothing and changes nothing — a reader holding it down has
+    /// already arrived where they were going.
+    #[test]
+    fn backspace_takes_the_last_character_of_the_id_back() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+        for glyph in "grv".chars() {
+            shown.typing(Typing::Character(glyph));
+        }
+
+        assert!(shown.typing(Typing::RubbedOut));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/gr");
+
+        assert!(shown.typing(Typing::RubbedOut));
+        assert!(shown.typing(Typing::RubbedOut));
+        assert!(
+            !shown.typing(Typing::RubbedOut),
+            "an empty prompt gave a character back"
+        );
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/");
+    }
+
+    /// The selection moves onto the bead, the prompt comes down, and the foot
+    /// says nothing: the answer is where the selection now is, and a line
+    /// repeating it would be the one thing on the screen the reader can
+    /// already see.
+    #[test]
+    fn an_id_the_forest_draws_moves_the_selection_onto_it_and_says_nothing() {
+        let mut shown = shown(a_grove(6));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+
+        search_for(&mut shown, "grv-1.3");
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
+        assert_eq!(
+            foot_of(&mut shown, 80, 24).trim_end(),
+            key_row(),
+            "the foot said something about a search the reader can see landed"
+        );
+    }
+
+    /// An id no tracker read holds says so, and says it as what `bdi` has
+    /// read rather than as what exists — a tracker that refused holds beads
+    /// no read has seen. The selection is left exactly where it was.
+    #[test]
+    fn an_id_no_tracker_read_holds_is_said_at_the_foot_and_moves_nothing() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('j'));
+        let was = cursor(&shown).cloned();
+
+        search_for(&mut shown, "grv-404");
+
+        assert_eq!(cursor(&shown).cloned(), was);
+        assert!(
+            foot_of(&mut shown, 80, 24).contains("no bead grv-404 in any tracker read"),
+            "{:?}",
+            foot_of(&mut shown, 80, 24)
+        );
+    }
+
+    /// The bead's own rule: Esc leaves the prompt with the selection where it
+    /// was, whatever was typed into it.
+    #[test]
+    fn esc_leaves_the_prompt_with_the_selection_where_it_was() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('j'));
+        let was = cursor(&shown).cloned();
+
+        press(&mut shown, KeyCode::Char('/'));
+        for glyph in "grv-1.3".chars() {
+            shown.typing(Typing::Character(glyph));
+        }
+        assert!(shown.typing(Typing::Abandoned));
+
+        assert_eq!(cursor(&shown).cloned(), was);
+        assert_eq!(
+            foot_of(&mut shown, 80, 24).trim_end(),
+            key_row(),
+            "a prompt nobody asked anything of answered anyway"
+        );
+    }
+
+    /// Enter on an empty prompt asks nothing and answers nothing. The reader
+    /// opened the prompt and changed their mind, and an answer about the
+    /// empty id would be an answer to a question nobody put.
+    #[test]
+    fn enter_on_an_empty_prompt_says_nothing_and_moves_nothing() {
+        let mut shown = shown(a_grove(6));
+        let was = cursor(&shown).cloned();
+
+        search_for(&mut shown, "");
+
+        assert_eq!(cursor(&shown).cloned(), was);
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
+    }
+
+    /// What the foot says back to a keystroke goes on the reader's next press
+    /// whatever that press means — the same rule a copied id has always kept,
+    /// and the reason both are one field rather than two cleared alike.
+    #[test]
+    fn the_readers_next_press_takes_a_searchs_answer_off_the_foot() {
+        let mut shown = shown(a_grove(6));
+        search_for(&mut shown, "grv-404");
+        assert!(foot_of(&mut shown, 80, 24).contains("no bead grv-404"));
+
+        assert!(shown.pressed());
+
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
+    }
+
     /// The row at the foot of a frame of this screen, as drawn.
     fn foot_of(shown: &mut Shown, width: u16, height: u16) -> String {
         painted(
             &mut shown.forest,
             &shown.tail,
             Over::Nothing,
-            shown.copied.as_deref(),
+            Pressed {
+                said: shown.said.as_ref(),
+                prompt: shown.sought.as_deref(),
+            },
             &[],
             width,
             height,

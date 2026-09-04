@@ -7,7 +7,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::view::{Action, Motion};
+use crate::view::{Action, Motion, Typing};
 
 /// One key a reader can press, and the word for it they can read.
 ///
@@ -64,7 +64,7 @@ pub(super) const BINDINGS: &[Binding] = &[
         keys: &[alone(KeyCode::Enter, "Enter")],
         action: Action::ShowBead,
         does: "show the selected bead, or focus its pane from the bead view",
-        hint: Some("show"),
+        hint: None,
     },
     Binding {
         keys: &[alone(KeyCode::Char('f'), "f")],
@@ -89,6 +89,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         action: Action::ShowBindings,
         does: "show these key bindings",
         hint: Some("keys"),
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('/'), "/")],
+        action: Action::Search,
+        does: "search for a bead by id, wherever the forest draws it",
+        hint: Some("find"),
     },
     Binding {
         keys: &[alone(KeyCode::Char('q'), "q"), ctrl('c', "^C")],
@@ -206,6 +212,31 @@ pub(super) fn action(key: KeyEvent) -> Option<Action> {
         .map(|binding| binding.action)
 }
 
+/// What a keystroke does to the search prompt, or nothing where the prompt
+/// has no use for it.
+///
+/// A mapping of its own beside the table rather than more rows in it. The
+/// table is the keys that do something, and while the prompt is up almost
+/// every key is a character of an id instead — so a row per letter would be a
+/// key bindings screen nobody could read, listing keys that mean this only
+/// here.
+///
+/// Nothing for a key held with control, which is what leaves `^C` to the
+/// table: raw mode swallows it, and the key everyone reaches for to get out
+/// of a program must not be inert because a prompt is up.
+pub(super) fn typing(key: KeyEvent) -> Option<Typing> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(glyph) => Some(Typing::Character(glyph)),
+        KeyCode::Backspace => Some(Typing::RubbedOut),
+        KeyCode::Enter => Some(Typing::Sought),
+        KeyCode::Esc => Some(Typing::Abandoned),
+        _ => None,
+    }
+}
+
 /// Every binding named for a reader: the keys to press, and what pressing
 /// them does.
 pub(super) fn bindings() -> Vec<(String, &'static str)> {
@@ -232,6 +263,13 @@ pub(super) fn bindings() -> Vec<(String, &'static str)> {
 /// forty-column terminal would lose its last words — which is `q quit`. So the
 /// row keeps the keys a reader reaches for and leaves the rest to `?`, which
 /// is the one it gains.
+///
+/// Four is what forty columns holds, so a key joining the row puts one out.
+/// `Enter` went for `/`: pressing Enter on the thing under the cursor is what
+/// a reader of any list does anyway, and pressing it here shows them what it
+/// does. Nothing tells them `bdi` can be searched at all, so `/` is a key
+/// they would otherwise never reach for — which is the same argument that
+/// keeps `a` here.
 pub(super) fn key_row() -> String {
     BINDINGS
         .iter()
@@ -290,6 +328,7 @@ pub(super) mod tests {
             Action::Back,
             Action::CopyId,
             Action::ShowBindings,
+            Action::Search,
             Action::Refresh,
             Action::Quit,
         ];
@@ -317,6 +356,7 @@ pub(super) mod tests {
                 | Action::Back
                 | Action::CopyId
                 | Action::ShowBindings
+                | Action::Search
                 | Action::Refresh
                 | Action::Quit => (),
             }
@@ -438,6 +478,7 @@ pub(super) mod tests {
             (key(KeyCode::Char('y')), Action::CopyId),
             (key(KeyCode::Char('a')), Action::ToggleFilter),
             (control('r'), Action::Refresh),
+            (key(KeyCode::Char('/')), Action::Search),
             (key(KeyCode::Char('?')), Action::ShowBindings),
             (key(KeyCode::Char('q')), Action::Quit),
             (control('c'), Action::Quit),
@@ -446,6 +487,34 @@ pub(super) mod tests {
         for (pressed, expected) in bound {
             assert_eq!(action(pressed), Some(expected), "for {pressed:?}");
         }
+    }
+
+    /// The prompt takes the keys, because a reader typing an id into it is
+    /// pressing letters that mean something else everywhere on this screen.
+    #[test]
+    fn every_key_of_an_id_is_a_character_of_it_while_the_prompt_is_up() {
+        for glyph in ('!'..='~').chain([' ']) {
+            assert_eq!(
+                typing(key(KeyCode::Char(glyph))),
+                Some(Typing::Character(glyph)),
+                "{glyph:?} is not a character of an id"
+            );
+        }
+    }
+
+    /// The four keys that are not a character of an id, and the one that is
+    /// not the prompt's at all: `^C` leaves `bdi` from the prompt as it does
+    /// from everywhere else, because raw mode swallows it and the table's
+    /// alias is the whole of what answers it.
+    #[test]
+    fn the_prompt_answers_the_keys_that_work_a_prompt_and_leaves_control_alone() {
+        assert_eq!(typing(key(KeyCode::Backspace)), Some(Typing::RubbedOut));
+        assert_eq!(typing(key(KeyCode::Enter)), Some(Typing::Sought));
+        assert_eq!(typing(key(KeyCode::Esc)), Some(Typing::Abandoned));
+        assert_eq!(typing(key(KeyCode::Up)), None, "a motion is not typing");
+
+        assert_eq!(typing(control('c')), None, "^C is not a character of an id");
+        assert_eq!(action(control('c')), Some(Action::Quit));
     }
 
     /// The letters that carry a binding only under control carry none on

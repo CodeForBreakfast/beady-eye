@@ -20,7 +20,7 @@ use crate::model::anomaly::Anomaly;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::types::{PaneKey, PaneStatus, Status};
-use crate::view::{Freshness, Mark, Notice};
+use crate::view::{Freshness, Mark, Notice, Said};
 
 /// The oldest bd whose command line `bdi` runs, as README states it. A
 /// literal rather than a `const` so the phrase naming it stays a
@@ -592,11 +592,31 @@ pub fn join_caveat(source: JoinSource) -> Option<&'static str> {
     }
 }
 
-/// That a bead's id has just gone on the clipboard, and which. Said at the
-/// foot, where a reader whose key changed nothing else looks to learn that
-/// it fired.
-pub fn copied(id: &str) -> String {
-    format!("copied {id}")
+/// What the reader's last keystroke came to. Said at the foot, where a reader
+/// whose key changed nothing else on the screen looks to learn that it fired.
+///
+/// A search that landed on a bead says nothing here: the selection has moved
+/// to it, which is the answer, and a line repeating it would be the one thing
+/// on the screen the reader did not need. What a search has to say is what
+/// they cannot see — that the id reached nothing, or that it reached a
+/// project they did not name.
+pub fn said(said: &Said) -> String {
+    match said {
+        Said::Copied(id) => format!("copied {id}"),
+        Said::NoBeadRead(id) => format!("no bead {id} in any tracker read"),
+        Said::WentTo(key) => format!(
+            "went to {}, and another tracker has that id too",
+            bead_key(key)
+        ),
+    }
+}
+
+/// The search prompt, with what the reader has typed into it so far.
+///
+/// The key is drawn beside what it took, the way every terminal a reader has
+/// searched in draws it — which is the whole argument for `/` being the key.
+pub fn prompt(typed: &str) -> String {
+    format!("/{typed}")
 }
 
 /// A bead, named the only way a bead can be named across trackers.
@@ -711,8 +731,8 @@ mod tests {
     use crate::model::types::testing::key as pane_key;
     use crate::view::fitted::columns;
     use crate::view::tests::{
-        every_failure_kind, every_join_source, every_mark, every_notice, every_tracker_failure,
-        says,
+        every_failure_kind, every_join_source, every_mark, every_notice, every_said,
+        every_tracker_failure, says,
     };
     use pretty_assertions::assert_eq;
     use ratatui::text::Span;
@@ -758,6 +778,15 @@ mod tests {
             said.push(notice(&fact));
             said.push(brief_notice(&fact));
         }
+
+        for answer in every_said() {
+            said.push(super::said(&answer));
+        }
+
+        // The prompt with something typed into it and with nothing, because
+        // an empty one is what a reader sees the instant they press the key.
+        said.push(prompt("bdi-2bb.37"));
+        said.push(prompt(""));
 
         for rule in every_anomaly() {
             said.push(anomaly(&rule));

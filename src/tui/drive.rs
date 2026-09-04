@@ -17,10 +17,10 @@ use ratatui::crossterm::event::KeyEvent;
 use crate::app::{Asked, Awaited, Wanted};
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
-use crate::view::{Action, Motion};
+use crate::view::{Action, Motion, Typing};
 
 use super::armed::{Armed, Arming};
-use super::keys::action;
+use super::keys::{action, typing};
 use super::reload::{Reload, Reloaded};
 
 /// Everything that reaches the loop.
@@ -72,6 +72,13 @@ pub(super) enum Showing {
     Bindings,
     /// The selected bead, whole, in a window over the forest.
     Bead,
+    /// The prompt taking a bead's id, at the foot over the keys.
+    ///
+    /// A state of the screen rather than a flag beside one, because it is
+    /// what a keystroke means that changes: while it is up almost every key
+    /// is a character of an id, and the bindings the same keys carry are not
+    /// reachable at all.
+    Searching,
 }
 
 /// What a click over the bead window came to.
@@ -182,6 +189,15 @@ pub(super) trait View {
 
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
+
+    /// Take one keystroke into the search prompt, reporting whether the
+    /// screen has changed.
+    ///
+    /// The loop knows a prompt is up and the view holds what has been typed
+    /// into it, which is the split `Showing::Bead` and the bead view already
+    /// have: what a keystroke means is the loop's, and what is on the screen
+    /// for it is the view's.
+    fn typing(&mut self, typing: Typing) -> bool;
 
     /// Move the bead view by one motion, reporting whether the screen has
     /// changed. The selection under it does not move: the view is what the
@@ -558,9 +574,29 @@ fn answered(
                 | Action::ExpandSubtree
                 | Action::CollapseSubtree
                 | Action::RestoreDefault
-                | Action::ToggleFilter,
+                | Action::ToggleFilter
+                | Action::Search,
             )
             | None => false,
+        },
+        // The prompt takes the keys, and it has to: the bindings screen is
+        // dismissed by any key at all so that a reader who opened it by
+        // accident is not trapped, and a prompt working that way could not be
+        // typed into. Esc is the way out that leaves the selection alone, and
+        // `^C` is the way out of `bdi` altogether — the one key the mapping
+        // still answers here, because raw mode swallows it and nothing else
+        // would.
+        Event::Key(key) if *showing == Showing::Searching => match typing(key) {
+            Some(step @ (Typing::Sought | Typing::Abandoned)) => {
+                *showing = Showing::Forest;
+                view.typing(step);
+                true
+            }
+            Some(step) => view.typing(step),
+            None => match action(key) {
+                Some(Action::Quit) => return None,
+                _ => false,
+            },
         },
         Event::Key(key) => match action(key) {
             Some(Action::Quit) => return None,
@@ -584,6 +620,13 @@ fn answered(
             // own. What it does not share is which projects it names, because
             // a key nobody aimed at a project asks about all of them.
             Some(Action::Refresh) => asked_for(view, outstanding, Wanted::Everything),
+            // Up over the foot, taking the keys with it until the reader
+            // leaves it. What the prompt holds is the view's, so the view is
+            // told the prompt has opened and the loop keeps only that it is.
+            Some(Action::Search) => {
+                *showing = Showing::Searching;
+                view.apply(Action::Search)
+            }
             // The ring is over a window that is not up, so there is nothing
             // here for these to step. Answered where the key is read rather
             // than passed down for the forest to decline, so what a key means
@@ -598,6 +641,14 @@ fn answered(
         // so the rows under the pointer are rows nobody can see.
         Event::Clicked(_) | Event::Scrolled(_) if *showing == Showing::Bindings => {
             *showing = Showing::Forest;
+            true
+        }
+        // And it leaves the prompt, which is a reader looking away from what
+        // they were typing. The selection stays where it was, as Esc leaves
+        // it: what they typed was never asked for.
+        Event::Clicked(_) | Event::Scrolled(_) if *showing == Showing::Searching => {
+            *showing = Showing::Forest;
+            view.typing(Typing::Abandoned);
             true
         }
         // Over the bead view a click is answered by whatever it landed on,
@@ -964,6 +1015,10 @@ mod tests {
         /// because the whole question is which of the two a key reached.
         scrolled: Vec<Motion>,
         clicked: Vec<u16>,
+        /// The keystrokes the search prompt was handed, apart from the
+        /// actions, because the whole question is which of the two a key
+        /// reached.
+        typed: Vec<Typing>,
         /// The rows a click over the bead window asked about, apart from the
         /// forest's, because the whole question is which of the two the loop
         /// sent one to.
@@ -1110,6 +1165,13 @@ mod tests {
             self.rereads_in
         }
 
+        /// What the prompt holds is `Shown`'s, so a loop test asks the loop
+        /// only which keystrokes reached it and in what order.
+        fn typing(&mut self, typing: Typing) -> bool {
+            self.typed.push(typing);
+            true
+        }
+
         fn pressed(&mut self) -> bool {
             self.pressed_after.push(self.applied.len());
             self.pressing_changes
@@ -1229,7 +1291,8 @@ mod tests {
         from
     }
 
-    fn typing(keys: [KeyEvent; 4]) -> Receiver<Event> {
+    /// A run of keystrokes, in the order the reader pressed them.
+    fn pressing<const N: usize>(keys: [KeyEvent; N]) -> Receiver<Event> {
         waiting(keys.into_iter().map(Event::Key).collect())
     }
 
@@ -1272,7 +1335,7 @@ mod tests {
     fn a_keypress_reaches_the_view_as_the_action_it_is_bound_to() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Char('j')),
             key(KeyCode::Char(' ')),
             key(KeyCode::Char('q')),
@@ -1304,7 +1367,7 @@ mod tests {
     fn a_question_mark_shows_the_bindings_and_the_next_key_takes_them_away() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Char('?')),
             key(KeyCode::Char('z')),
             key(KeyCode::Char('?')),
@@ -1339,13 +1402,172 @@ mod tests {
         );
     }
 
+    /// The prompt is the opposite of the bindings window, and deliberately:
+    /// there any key at all takes it away, here every key is a character of
+    /// an id. `a` would toggle the filter and `j` would move the selection on
+    /// the forest, and inside the prompt neither reaches the forest at all.
+    #[test]
+    fn while_the_prompt_is_up_a_key_is_a_character_of_an_id_and_not_its_binding() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = pressing([
+            key(KeyCode::Char('/')),
+            key(KeyCode::Char('a')),
+            key(KeyCode::Char('j')),
+            key(KeyCode::Enter),
+            key(KeyCode::Char('q')),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.typed,
+            [
+                Typing::Character('a'),
+                Typing::Character('j'),
+                Typing::Sought
+            ]
+        );
+        assert_eq!(
+            view.applied,
+            [Action::Search],
+            "a key typed into the prompt reached the forest"
+        );
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Searching,
+                Showing::Searching,
+                Showing::Searching,
+                Showing::Forest,
+            ]
+        );
+    }
+
+    /// Esc leaves the prompt, and it is the way out that asks for nothing:
+    /// the loop hands the view `Abandoned` rather than `Sought`, so what was
+    /// typed is dropped and the selection stays where the reader left it.
+    #[test]
+    fn esc_leaves_the_prompt_without_asking_for_what_was_typed() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = pressing([
+            key(KeyCode::Char('/')),
+            key(KeyCode::Char('x')),
+            key(KeyCode::Esc),
+            key(KeyCode::Char('q')),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.typed,
+            [Typing::Character('x'), Typing::Abandoned],
+            "Esc asked for the id it was leaving behind"
+        );
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Searching,
+                Showing::Searching,
+                Showing::Forest,
+            ]
+        );
+    }
+
+    /// `q` is a character of an id, so the key that leaves `bdi` from every
+    /// other view types a letter here. `^C` is what still leaves, because raw
+    /// mode swallows it and the mapping's alias is the whole of what answers
+    /// it — a reader who cannot get out of a prompt is stuck in a program.
+    #[test]
+    fn control_c_leaves_bdi_from_the_prompt_where_q_is_a_letter_of_the_id() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = pressing([
+            key(KeyCode::Char('/')),
+            key(KeyCode::Char('q')),
+            control('c'),
+            key(KeyCode::Char('j')),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.typed, [Typing::Character('q')]);
+        assert_eq!(
+            view.showing,
+            [Showing::Forest, Showing::Searching, Showing::Searching],
+            "^C ended the run, so nothing after it was drawn"
+        );
+    }
+
+    /// A click or a notch leaves the prompt, as it leaves the bindings: the
+    /// reader has looked away from what they were typing. It leaves it the
+    /// way Esc does, so the selection is theirs and not the pointer's.
+    #[test]
+    fn a_click_leaves_the_prompt_and_asks_for_nothing() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Char('/'))),
+            Event::Clicked(3),
+            Event::Key(key(KeyCode::Char('q'))),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            nothing_armed(),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.typed, [Typing::Abandoned]);
+        assert!(
+            view.clicked.is_empty(),
+            "the click selected a row under the prompt: {:?}",
+            view.clicked
+        );
+    }
+
     /// While the bindings are up, `q` is a key like any other: it puts them
     /// away. The forest a reader was looking at is still there to quit from.
     #[test]
     fn quitting_from_the_bindings_takes_two_presses_and_the_first_is_not_lost() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Char('?')),
             key(KeyCode::Char('q')),
             key(KeyCode::Char('q')),
@@ -1407,7 +1629,7 @@ mod tests {
     fn enter_shows_the_bead_and_esc_goes_back_to_the_forest() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Enter),
             key(KeyCode::Esc),
             key(KeyCode::Char('j')),
@@ -1450,7 +1672,7 @@ mod tests {
             ..Recorder::default()
         };
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Enter),
             key(KeyCode::Char('j')),
             key(KeyCode::Char('q')),
@@ -1486,7 +1708,7 @@ mod tests {
     fn a_motion_in_the_bead_view_scrolls_the_bead_and_not_the_forest() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Enter),
             key(KeyCode::Char('j')),
             control('d'),
@@ -1726,7 +1948,7 @@ mod tests {
     fn tab_steps_the_ring_in_the_bead_view_and_does_nothing_in_the_forest() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Tab),
             key(KeyCode::Enter),
             key(KeyCode::Tab),
@@ -1755,7 +1977,7 @@ mod tests {
     fn quitting_from_the_bead_view_takes_two_presses_and_the_first_goes_back() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = typing([
+        let events = pressing([
             key(KeyCode::Enter),
             key(KeyCode::Char('q')),
             key(KeyCode::Char('q')),

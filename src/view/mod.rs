@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::app::Awaited;
+use crate::model::join::BeadKey;
 
 pub mod bindings;
 pub mod draw;
@@ -81,8 +82,51 @@ pub enum Action {
     CopyId,
     /// Show every binding the view answers to.
     ShowBindings,
+    /// Open the prompt that takes a bead's id and goes to it.
+    Search,
     Refresh,
     Quit,
+}
+
+/// One keystroke into the search prompt.
+///
+/// A vocabulary of its own rather than more `Action`s, because while the
+/// prompt is up almost every key is a character of an id rather than a key
+/// that does something — and `Action` is the list of keys that do something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Typing {
+    /// One character of the id.
+    Character(char),
+    /// Take the last character back.
+    RubbedOut,
+    /// Go to the bead the typed id names.
+    Sought,
+    /// Leave the prompt, with the selection where it was.
+    Abandoned,
+}
+
+/// What the reader's last keystroke came to, said at the foot until their
+/// next press.
+///
+/// Feedback on a keystroke rather than a fact about the screen, which is what
+/// makes their next press take it off whatever that press turns out to mean.
+/// That is the whole of what separates these from a `Notice`, which stands
+/// until the thing it is about has changed and no keystroke can dismiss.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Said {
+    /// The bead id just put on the terminal's clipboard.
+    Copied(String),
+    /// The id searched for, which no tree any tracker gave up holds.
+    ///
+    /// Said as what `bdi` has read rather than as what exists: a tracker that
+    /// refused and a project no collection has reached yet both hold beads no
+    /// read has seen, and a flat *no such bead* would speak for them.
+    NoBeadRead(String),
+    /// The bead a search went to, where the id named one in more than one
+    /// project. The reader typed half a key — bead prefixes are per-tracker
+    /// and uncoordinated — and the half they did not type is what they are
+    /// owed once it turns out not to have been theirs to assume.
+    WentTo(BeadKey),
 }
 
 /// Something true of the view as a whole rather than of any row in it, said
@@ -365,6 +409,19 @@ mod tests {
             Notice::AnotherBdiHadTheInboundChannel => Some(Notice::ConfigWouldNotReload),
             Notice::ConfigWouldNotReload => Some(Notice::ProjectNamedWithoutGit),
             Notice::ProjectNamedWithoutGit => None,
+        })
+    }
+
+    /// Everything the foot can say back to a reader's keystroke. See
+    /// [`every_failure_kind`].
+    pub(super) fn every_said() -> impl Iterator<Item = Said> {
+        std::iter::successors(Some(Said::Copied("grv-1".to_string())), |said| match said {
+            Said::Copied(_) => Some(Said::NoBeadRead("grv-404".to_string())),
+            Said::NoBeadRead(_) => Some(Said::WentTo(BeadKey {
+                project: "orbital".to_string(),
+                id: "grv-1".to_string(),
+            })),
+            Said::WentTo(_) => None,
         })
     }
 

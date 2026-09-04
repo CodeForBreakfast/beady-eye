@@ -40,17 +40,18 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// What `bd list --all --json` said about this project's own tracker.
 const THE_TRACKER: &str = include_str!("fixtures/bd_list.json");
 
-/// The first hint of the key row, *Enter show   a all   ? keys   q quit*, and
-/// a word nothing else on this screen says. One word rather than the row,
-/// because the key row is drawn in the terminal's own colour, so its spaces
-/// are cells nothing has to write and it reaches the wire a word at a time.
+/// The first hint of the key row, *a all   / find   ? keys   q quit*, and a
+/// word nothing else on this screen says — the fixture's titles hold no
+/// `all`. One word rather than the row, because the key row is drawn in the
+/// terminal's own colour, so its spaces are cells nothing has to write and it
+/// reaches the wire a word at a time.
 ///
 /// The first rather than any of them, because a band line is drawn from the
 /// left and takes the row from the left: measured with the `Reading` guard
 /// disarmed, the line reached column 19 of 35 and `? keys   q quit` was still
 /// on the row beyond it. A test naming `quit` would have watched the key bar
 /// lose half its hints and called it intact.
-const A_WORD_OF_THE_KEY_ROW: &[u8] = "show".as_bytes();
+const A_WORD_OF_THE_KEY_ROW: &[u8] = "all".as_bytes();
 
 /// The line the band would draw beneath its rule on a machine with no agent
 /// provider — one word of *no agent provider · bdi is reading beads alone*,

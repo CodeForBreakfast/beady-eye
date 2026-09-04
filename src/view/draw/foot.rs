@@ -8,7 +8,7 @@ use crate::view::fitted::{columns, Fitted, GAP};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::WARNING;
-use crate::view::Notice;
+use crate::view::{Notice, Said};
 
 /// Everything the status bar has to say, in the order it should give it up.
 ///
@@ -66,10 +66,16 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// the whole screen; it is now a project's own fact, said beside the
 /// project's name where it is exact.
 ///
-/// `copied` is the id the reader has just put on the clipboard, where they
-/// have. It is the first thing the row gives up and it goes whole or not at
-/// all: half an id names nothing, and the keys were there before the reader
-/// pressed anything, so they are never the thing that moves to make room.
+/// `said` is what the reader's last keystroke came to, where it came to
+/// anything they cannot already see. It is the first thing the row gives up
+/// and it goes whole or not at all: half an id names nothing, and the keys
+/// were there before the reader pressed anything, so they are never the thing
+/// that moves to make room.
+///
+/// `prompt` is what they have typed into the search prompt, while one is up,
+/// and it takes the row for as long as it is there. Nothing else is said
+/// beside it: a reader typing is owed their own characters and the column
+/// they end at, and one keystroke — Esc, Enter, a click — puts the row back.
 ///
 /// `width` is what this row will be drawn into. Choosing which words to say
 /// is a different job from cutting the words chosen, and only the first of
@@ -80,23 +86,32 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// thing that has something to say joins them by being one.
 pub(super) fn status_bar(
     notices: &[Notice],
-    copied: Option<&str>,
+    said: Option<&Said>,
+    prompt: Option<&str>,
     keys: &str,
     width: usize,
 ) -> Fitted {
+    if let Some(typed) = prompt {
+        return Fitted::new(
+            vec![Span::raw(phrase::prompt(typed))],
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
     let keys = Span::raw(keys.to_string());
-    let copied: Vec<Span<'static>> = copied
-        .map(|id| Span::raw(phrase::copied(id)))
+    let answer: Vec<Span<'static>> = said
+        .map(|said| Span::raw(phrase::said(said)))
         .into_iter()
         .collect();
 
     if notices.is_empty() {
-        return Fitted::new(vec![keys], Vec::new(), copied).state_or_nothing();
+        return Fitted::new(vec![keys], Vec::new(), answer).state_or_nothing();
     }
 
     Fitted::new(
-        vec![Span::styled(said(notices, width), palette::ATTENTION)],
-        copied,
+        vec![Span::styled(warnings(notices, width), palette::ATTENTION)],
+        answer,
         vec![keys],
     )
     .title_or_nothing()
@@ -116,7 +131,7 @@ pub(super) fn status_bar(
 /// the mark any long line gets, so a severed warning reads as a sentence that
 /// ran out of room rather than as a fact the reader has lost — and a foot with
 /// two notices on it can be cut before the second one has begun.
-fn said(notices: &[Notice], width: usize) -> String {
+fn warnings(notices: &[Notice], width: usize) -> String {
     let mut words = notices.iter().map(phrase::notice).collect::<Vec<_>>();
 
     for (at, notice) in notices.iter().enumerate().rev() {
@@ -230,7 +245,7 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = Painted::of(status_bar(&[], None, A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(status_bar(&[], None, None, A_KEY_ROW, 60), 60, 1).rows();
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -242,7 +257,7 @@ mod tests {
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 90),
+            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 90),
             90,
             1,
         )
@@ -261,7 +276,7 @@ mod tests {
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 90),
+            status_bar(&[Notice::NoInboundChannel], None, None, A_KEY_ROW, 90),
             90,
             1,
         )
@@ -281,6 +296,7 @@ mod tests {
         let drawn = Painted::of(
             status_bar(
                 &[Notice::AgentsUnknown, Notice::NoInboundChannel],
+                None,
                 None,
                 A_KEY_ROW,
                 200,
@@ -307,6 +323,7 @@ mod tests {
             status_bar(
                 &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
+                None,
                 A_KEY_ROW,
                 80,
             ),
@@ -329,7 +346,18 @@ mod tests {
     /// ago.
     #[test]
     fn a_copied_id_is_said_after_the_keys_where_nothing_is_wrong() {
-        let drawn = Painted::of(status_bar(&[], Some("grv-1"), A_KEY_ROW, 80), 80, 1).rows();
+        let drawn = Painted::of(
+            status_bar(
+                &[],
+                Some(&Said::Copied("grv-1".to_string())),
+                None,
+                A_KEY_ROW,
+                80,
+            ),
+            80,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
         assert!(drawn[0].trim_end().ends_with("copied grv-1"), "{drawn:?}");
@@ -340,7 +368,13 @@ mod tests {
     #[test]
     fn a_copied_id_is_said_between_a_notice_and_the_keys() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], Some("grv-1"), A_KEY_ROW, 120),
+            status_bar(
+                &[Notice::AgentsUnknown],
+                Some(&Said::Copied("grv-1".to_string())),
+                None,
+                A_KEY_ROW,
+                120,
+            ),
             120,
             1,
         )
@@ -360,7 +394,18 @@ mod tests {
     /// there before the reader pressed anything.
     #[test]
     fn a_copied_id_the_row_has_no_room_for_is_dropped_whole_and_the_keys_stay() {
-        let drawn = Painted::of(status_bar(&[], Some("grv-1"), A_KEY_ROW, 50), 50, 1).rows();
+        let drawn = Painted::of(
+            status_bar(
+                &[],
+                Some(&Said::Copied("grv-1".to_string())),
+                None,
+                A_KEY_ROW,
+                50,
+            ),
+            50,
+            1,
+        )
+        .rows();
 
         assert_eq!(drawn[0].trim_end(), A_KEY_ROW);
     }
@@ -395,6 +440,7 @@ mod tests {
             status_bar(
                 &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
+                None,
                 A_KEY_ROW,
                 40,
             ),
@@ -413,7 +459,7 @@ mod tests {
     #[test]
     fn a_lone_notice_too_wide_for_the_row_is_said_briefly() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
+            status_bar(&[Notice::NoInboundChannel], None, None, A_KEY_ROW, 60),
             60,
             1,
         )
@@ -427,7 +473,7 @@ mod tests {
     #[test]
     fn a_notice_said_briefly_is_still_painted_as_a_warning() {
         let painted = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], None, A_KEY_ROW, 60),
+            status_bar(&[Notice::NoInboundChannel], None, None, A_KEY_ROW, 60),
             60,
             1,
         )
@@ -453,6 +499,7 @@ mod tests {
         let drawn = Painted::of(
             status_bar(
                 &[Notice::AnotherBdiHadTheInboundChannel],
+                None,
                 None,
                 A_KEY_ROW,
                 100,
@@ -480,6 +527,7 @@ mod tests {
                     Notice::AnotherBdiHadTheInboundChannel,
                 ],
                 None,
+                None,
                 A_KEY_ROW,
                 40,
             ),
@@ -501,6 +549,7 @@ mod tests {
         let painted = Painted::of(
             status_bar(
                 &[Notice::AnotherBdiHadTheInboundChannel],
+                None,
                 None,
                 A_KEY_ROW,
                 100,
@@ -578,7 +627,7 @@ mod tests {
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 60),
+            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 60),
             60,
             1,
         )
@@ -595,7 +644,7 @@ mod tests {
     #[test]
     fn a_foot_too_narrow_for_the_whole_key_row_draws_none_of_it() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 60),
+            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 60),
             60,
             1,
         )
@@ -613,7 +662,7 @@ mod tests {
     #[test]
     fn the_narrowest_screen_draws_no_part_of_the_key_row_beside_a_notice() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, 40),
+            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 40),
             40,
             1,
         )
@@ -629,7 +678,7 @@ mod tests {
         let fits = notice.chars().count() + GAP + A_KEY_ROW.chars().count();
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[Notice::AgentsUnknown], None, A_KEY_ROW, width),
+                status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, width),
                 width as u16,
                 1,
             )

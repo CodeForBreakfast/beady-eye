@@ -30,7 +30,7 @@ use crate::view::lines::{self, Content, Note, ProjectLine};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{AGENT, WARNING};
-use crate::view::{Freshness, Notice};
+use crate::view::{Freshness, Notice, Said};
 
 pub use bands::{half_screen, line_at, regions};
 pub use tail::{draw_tail, Band};
@@ -105,9 +105,11 @@ impl<'a> Reads<'a> {
 /// mapping that answers it, and this file has never known one.
 pub struct Foot<'a> {
     pub standing: &'a [Notice],
-    /// The id the reader has just put on the clipboard, until their next
-    /// key or click.
-    pub copied: Option<&'a str>,
+    /// What the reader's last keystroke came to, until their next key or
+    /// click.
+    pub said: Option<&'a Said>,
+    /// What the reader has typed into the search prompt, while one is up.
+    pub prompt: Option<&'a str>,
     pub keys: &'a str,
 }
 
@@ -154,7 +156,8 @@ pub fn draw(
     frame.render_widget(
         status_bar(
             &notices(forest.snapshot(), foot.standing),
-            foot.copied,
+            foot.said,
+            foot.prompt,
             foot.keys,
             bands.keys.width as usize,
         ),
@@ -587,7 +590,8 @@ mod tests {
                 drawn_at(),
                 Foot {
                     standing,
-                    copied: None,
+                    said: None,
+                    prompt: None,
                     keys: A_KEY_ROW,
                 },
             );

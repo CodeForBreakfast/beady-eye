@@ -255,6 +255,7 @@ impl Forest {
             | Action::Back
             | Action::CopyId
             | Action::ShowBindings
+            | Action::Search
             | Action::Refresh
             | Action::Quit => return false,
         }
@@ -471,6 +472,52 @@ impl Forest {
         self.cursor = Some(Handle::Bead(place.clone()));
         self.lay_out();
         self.cursor.as_ref() == Some(&Handle::Bead(place.clone()))
+    }
+
+    /// Put the selection on the bead an id names, wherever the forest draws
+    /// it, and report every project whose trees draw one — the selection has
+    /// gone to the first of them. Empty where no tree read holds it, and the
+    /// forest is left as it was.
+    ///
+    /// An id and not a key, because an id is what a reader has: `y` copies
+    /// one, and every id said outside `bdi` is said without the project
+    /// beside it. The key is still `(project, id)`, so this is where the
+    /// half the reader did not type is supplied.
+    pub fn seek(&mut self, id: &str) -> Vec<String> {
+        let drawing = self.drawing(id);
+        if let Some(project) = drawing.first() {
+            self.go_to(&BeadKey {
+                project: project.clone(),
+                id: id.to_string(),
+            });
+        }
+        drawing
+    }
+
+    /// Every project whose trees draw a bead with this id, in the order the
+    /// forest looks for one: the trees the filter shows before the ones it
+    /// hid, which is the order `place_of` walks them in.
+    ///
+    /// Bead prefixes are per-tracker and uncoordinated, so one id can name a
+    /// bead in more than one project and a reader who typed one cannot say
+    /// which they meant. Answering with all of them is what lets a search go
+    /// to one and still say the others are there; `bdi-7ao.38` owns what to
+    /// do about the collision in general.
+    fn drawing(&self, id: &str) -> Vec<String> {
+        let mut projects: Vec<String> = Vec::new();
+        for tree in self.snapshot.trees.iter().chain(&self.snapshot.collected) {
+            if projects.contains(&tree.project) {
+                continue;
+            }
+            let key = BeadKey {
+                project: tree.project.clone(),
+                id: id.to_string(),
+            };
+            if self.place_of(&key).is_some() {
+                projects.push(tree.project.clone());
+            }
+        }
+        projects
     }
 
     /// Whether the forest can take the reader to a bead: whether any tree it
@@ -5692,6 +5739,74 @@ credential_command = "secret harbour"
 
         assert_eq!(forest.place(), Some(&twice[1]));
         assert_ne!(forest.place(), Some(&twice[0]), "the other copy of it");
+    }
+
+    /// The reader has an id and not a key: `y` copies an id, and every id
+    /// said outside `bdi` is said with no project beside it. So a search
+    /// supplies the half of the key they did not type, and lands on the bead.
+    #[test]
+    fn searching_for_an_id_lands_on_the_bead_it_names() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek("orb-7.1.1"), ["orbital"]);
+
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+        assert!(
+            drawn_here(&forest, "true the mount"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A tree the filter hid is drawn in its project's hidden-trees group
+    /// rather than taken off the screen, so a bead the filter hid is one a
+    /// search still reaches — and there is no third answer to write for a
+    /// bead the filter put out of reach, because it no longer puts one there.
+    #[test]
+    fn a_bead_the_filter_hid_is_one_a_search_still_reaches() {
+        let mut forest = flatten(snapshot());
+
+        assert_eq!(forest.seek("hbr-3.1"), ["harbour"]);
+
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3.1")));
+    }
+
+    /// An id no tree read holds is nowhere to go, and the forest is left
+    /// exactly as it was rather than half-opened on the way to nothing.
+    #[test]
+    fn searching_for_an_id_no_tree_read_holds_reaches_no_project() {
+        let mut forest = flatten(snapshot());
+        let was = sketch(&forest);
+        let selected = forest.selected_line();
+
+        assert!(forest.seek("orb-404").is_empty());
+
+        assert_eq!(sketch(&forest), was);
+        assert_eq!(forest.selected_line(), selected);
+    }
+
+    /// Bead prefixes are per-tracker and uncoordinated, so one id can name a
+    /// bead in more than one project and a reader who typed one cannot say
+    /// which they meant. The search goes to the first and answers with all of
+    /// them, which is what lets the foot name the project it landed in
+    /// without a screen anybody has to answer.
+    #[test]
+    fn an_id_two_trackers_hold_reaches_the_first_and_answers_with_both() {
+        let mut forest = flatten(two_trackers_holding_one_id());
+
+        assert_eq!(forest.seek("orb-7.1"), ["orbital", "ferry"]);
+
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+    }
+
+    /// Two projects reading trackers that use the same prefix, which nothing
+    /// coordinates and nothing forbids.
+    fn two_trackers_holding_one_id() -> Snapshot {
+        gather(
+            vec![tree_of("orbital", ORBITAL), tree_of("ferry", ORBITAL)],
+            Vec::new(),
+            Filter::All,
+        )
     }
 
     fn drawn_here(forest: &Forest, said: &str) -> bool {
