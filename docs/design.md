@@ -1544,7 +1544,10 @@ glyph.
 **An id is shown as what it adds to its root's**, `.20` for `nix-9670s.20`,
 and kept whole where it does not carry that prefix followed by a dot — the
 dangling and re-parented nodes, and the root itself — because a bare suffix
-would place it under a root it does not belong to.
+would place it under a root it does not belong to. **It is drawn in the colour
+of the glyph beside it**, so a status arrives as a block a reader finds rather
+than as the one column a glyph occupies; an open bead's id goes without a
+colour for the same reason its glyph does.
 
 **A ground and two tiers say how live a row is**, which is the one thing
 about a bead `bd list` has no way to know and so the one thing this scale is

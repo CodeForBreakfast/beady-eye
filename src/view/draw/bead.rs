@@ -43,7 +43,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     let identity = vec![
         structure(prefix),
         Span::styled(row.glyph.to_string(), status_style(&row.status)),
-        Span::raw(format!(" {:id_width$}", row.id)),
+        Span::styled(format!(" {:id_width$}", row.id), status_style(&row.status)),
     ];
 
     let mut title = vec![Span::raw(row.title.clone())];
@@ -453,5 +453,46 @@ mod tests {
         assert_eq!(painted[0].said, BRANCH);
         assert_eq!(painted[0].style.fg, Some(Color::Reset));
         assert_eq!(painted[2].style.fg, palette::TIER_FINISHED.fg);
+    }
+
+    /// A bead's status is the one thing about it `bd` draws in colour, and it
+    /// reaches the screen on a glyph one column wide. The id takes the same
+    /// colour so that column is as wide as an id, and it says nothing the
+    /// glyph beside it does not already say.
+    #[test]
+    fn a_beads_id_is_drawn_in_the_colour_of_its_own_status_glyph() {
+        for status in [Status::Blocked, Status::InProgress, Status::Closed] {
+            let drawn = bead_line(
+                &row(&node("nix-9670s.2", "a bead", status.clone())),
+                BRANCH,
+                3,
+            );
+            let painted = Painted::of(drawn, 60, 1).row(0);
+
+            let id = painted
+                .iter()
+                .find(|run| run.said.contains(".2"))
+                .expect("the id is drawn");
+            assert_eq!(id.style.fg, status_style(&status).fg, "{painted:?}");
+            assert!(
+                id.said.starts_with(row::status_glyph(&status)),
+                "the glyph is in the same run, so it is in the same colour: {painted:?}"
+            );
+        }
+    }
+
+    /// Open is the one status `bd` gives no colour of its own, so the id has
+    /// none either and the row's own tone reaches it as it does the rest.
+    #[test]
+    fn an_open_beads_id_is_left_in_the_colour_the_rest_of_its_row_is_in() {
+        let node = node("nix-9670s.2", "a bead", Status::Open);
+
+        let painted = Painted::of(bead_line(&row(&node), BRANCH, 3), 60, 1).row(0);
+
+        let id = painted
+            .iter()
+            .find(|run| run.said.contains(".2"))
+            .expect("the id is drawn");
+        assert_eq!(id.style.fg, Some(Color::Reset), "{painted:?}");
     }
 }

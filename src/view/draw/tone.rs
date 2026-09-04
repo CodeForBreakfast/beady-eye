@@ -142,9 +142,8 @@ mod tests {
             let bead = node("nix-9670s.1", "a bead", status.clone());
             let painted = Painted::of(bead_line(&row(&bead), BRANCH, 3), 60, 1).row(0);
 
-            assert_eq!(
-                painted[1].said,
-                row::status_glyph(&status).to_string(),
+            assert!(
+                painted[1].said.starts_with(row::status_glyph(&status)),
                 "{status:?}: {painted:?}"
             );
             assert_eq!(painted[1].style.fg, Some(colour), "{status:?}: {painted:?}");
@@ -272,8 +271,12 @@ mod tests {
 
         let painted = Painted::of(bead_line(&row(&alive), BRANCH, 3), 110, 1).row(0);
 
-        assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
-        assert_eq!(painted[2].style.add_modifier, Modifier::BOLD, "{painted:?}");
+        let words = painted
+            .iter()
+            .find(|run| run.said.contains("a bead"))
+            .expect("the row says its title");
+        assert_eq!(words.style.fg, Some(Color::Reset), "{painted:?}");
+        assert_eq!(words.style.add_modifier, Modifier::BOLD, "{painted:?}");
     }
 
     /// Finished means what it means in `lines::split` — closed, no agent, no
@@ -521,7 +524,7 @@ mod tests {
 
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 120, 1).row(0);
 
-        assert_eq!(painted[1].said, "?", "{painted:?}");
+        assert!(painted[1].said.starts_with('?'), "{painted:?}");
         assert_eq!(painted[1].style.fg, palette::ATTENTION.fg, "{painted:?}");
     }
 }
