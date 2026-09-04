@@ -2,7 +2,10 @@
 //! project the current directory sits in, where no config names one, and the
 //! working trees git lists for each project a config does name.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
 
 use crate::collect::run::{Env, FailureKind, Runner};
 use crate::config::{Config, Environment, Project, Scope};
@@ -18,18 +21,21 @@ pub fn from_the_current_directory(
     cwd: &Path,
     name_from_the_environment: Option<&str>,
 ) -> anyhow::Result<Config> {
-    if let Err(failure) = runner.run("bd", &["where", "--json"], Some(cwd), &Env::new()) {
-        // bd that never ran has said nothing about this directory.
-        if matches!(
-            failure.kind,
-            FailureKind::NotInstalled
-                | FailureKind::Unstartable
-                | FailureKind::InstalledUnstartable
-        ) {
-            return Err(failure.into());
+    let tracker = match runner.run("bd", &["where", "--json"], Some(cwd), &Env::new()) {
+        Ok(said) => said,
+        Err(failure) => {
+            // bd that never ran has said nothing about this directory.
+            if matches!(
+                failure.kind,
+                FailureKind::NotInstalled
+                    | FailureKind::Unstartable
+                    | FailureKind::InstalledUnstartable
+            ) {
+                return Err(failure.into());
+            }
+            anyhow::bail!("{} is not in anything beads tracks", cwd.display());
         }
-        anyhow::bail!("{} is not in anything beads tracks", cwd.display());
-    }
+    };
 
     let repository = git(runner, cwd, &["rev-parse", "--show-toplevel"]).map(PathBuf::from);
     // A directory in no repository has no worktrees to list, and asking
@@ -38,7 +44,9 @@ pub fn from_the_current_directory(
         Some(_) => worktrees_of(runner, cwd),
         None => Vec::new(),
     };
-    let root = repository.unwrap_or_else(|| cwd.to_path_buf());
+    let root = repository
+        .or_else(|| the_tracked_tree_around(&tracker, cwd))
+        .unwrap_or_else(|| cwd.to_path_buf());
     let name = name_from_the_environment
         .filter(|name| !name.is_empty())
         .map(str::to_string)
@@ -132,6 +140,53 @@ fn worktrees_of(runner: &dyn Runner, cwd: &Path) -> Vec<PathBuf> {
         .filter_map(|line| line.strip_prefix("worktree "))
         .map(PathBuf::from)
         .collect()
+}
+
+/// Where bd keeps the beads it answered about, as `bd where` reports it.
+#[derive(Deserialize)]
+struct Workspace {
+    path: PathBuf,
+}
+
+/// What beads calls its workspace when it makes one inside the work it
+/// tracks. A workspace under any other name was named outright rather than
+/// found, so the tree it belongs to is not above it.
+const WORKSPACE: &str = ".beads";
+
+/// The tree the workspace bd found sits at the top of, where the reader is
+/// working somewhere inside it.
+///
+/// This is what a project is rooted at when git cannot say where the
+/// repository starts. The directory `bdi` was started in is not the project
+/// — it is wherever the reader happened to stand — and a project rooted
+/// there is named after that directory and holds no seat working outside it.
+///
+/// The tracker is what a run with no config draws, so the project is the
+/// tree that tracker belongs to — including where a redirect put it above
+/// the reader, since those are still the beads being drawn and the panes
+/// working on them are still working on them. Rooting narrower than the
+/// tracker is the defect this fixes: beads on the screen and no seat against
+/// any of them.
+///
+/// Two things have to hold, because `BEADS_DIR` and bd's redirects reach a
+/// tracker from anywhere and bd's answer says where the beads are rather
+/// than where the work is. The workspace has to be one beads made inside a
+/// tree, which is what its name says: a tracker named outright is not inside
+/// the work it tracks, so the directory above it is one the two happen to
+/// share — `/srv/shared-beads` read from `/srv/project` would otherwise make
+/// the project `/srv`, and every sibling of the reader's own would be in it.
+/// And the tree has to be above the reader, since a project rooted off to
+/// one side would hold nothing they are working in at all.
+///
+/// Neither holding leaves the directory they were started in, which is what
+/// they had before any of this.
+fn the_tracked_tree_around(said: &str, cwd: &Path) -> Option<PathBuf> {
+    let workspace: Workspace = serde_json::from_str(said).ok()?;
+    if workspace.path.file_name() != Some(OsStr::new(WORKSPACE)) {
+        return None;
+    }
+    let tree = workspace.path.parent()?;
+    cwd.starts_with(tree).then(|| tree.to_path_buf())
 }
 
 /// One line of git's answer, or nothing where git has none to give: no
@@ -788,6 +843,169 @@ path = "/tmp/seat-b/wt/crates/dish"
 
             assert_eq!(cfg.projects[0].name, "ground-station", "from {url}");
         }
+    }
+
+    /// git that is not installed, which is how a machine that has never had
+    /// one answers every question about a repository.
+    fn no_git() -> RunFailure {
+        RunFailure::not_installed("git", "No such file or directory (os error 2)")
+    }
+
+    /// What `bd where --json` says, as bd writes it: the workspace, the
+    /// database inside it, and the schema that database is at.
+    const THE_TRACKER_AT_ORBITAL: &str = r#"{
+  "database_path": "/srv/work/orbital/.beads/dolt",
+  "path": "/srv/work/orbital/.beads",
+  "schema_version": 1
+}"#;
+
+    /// A tree beads tracks on a machine with no git, so nothing can say
+    /// where the repository starts.
+    fn a_tracked_tree_with_no_git() -> FakeRunner {
+        FakeRunner::default()
+            .with("bd where --json", THE_TRACKER_AT_ORBITAL)
+            .failing("git rev-parse --show-toplevel", no_git())
+            .failing("git remote get-url origin", no_git())
+    }
+
+    /// The directory the reader was standing in is not the project. bd was
+    /// asked where the tracker is before anything else was asked at all, and
+    /// a tracker sits at the root of the work it tracks.
+    #[test]
+    fn a_project_no_git_can_root_is_rooted_at_the_tracker_above_the_reader() {
+        let cfg = from_the_current_directory(
+            &a_tracked_tree_with_no_git(),
+            Path::new("/srv/work/orbital/src"),
+            None,
+        )
+        .expect("the tree bd tracks is a project");
+
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
+    }
+
+    /// What a root taken from the reader costs: `Project::holds` is what
+    /// places a pane, so a project rooted where one reader happened to stand
+    /// holds no seat working anywhere else in the same tree, and every one of
+    /// them reads as unstaffed.
+    #[test]
+    fn a_project_rooted_at_its_tracker_holds_the_seats_working_elsewhere_in_it() {
+        let cfg = from_the_current_directory(
+            &a_tracked_tree_with_no_git(),
+            Path::new("/srv/work/orbital/src"),
+            None,
+        )
+        .expect("the tree bd tracks is a project");
+
+        assert!(
+            cfg.projects[0]
+                .holds(Path::new("/srv/work/orbital/docs"))
+                .is_some(),
+            "a seat working elsewhere in the tracked tree is in no project"
+        );
+    }
+
+    /// The name is read off the root, so the root is what settles it: two
+    /// readers of one tracker standing in different directories are looking
+    /// at one project under one name, rather than at `orbital` and `src`.
+    #[test]
+    fn a_project_no_git_can_name_is_named_after_the_tracker_not_the_reader() {
+        for standing_in in [
+            "/srv/work/orbital",
+            "/srv/work/orbital/src",
+            "/srv/work/orbital/crates/dish",
+        ] {
+            let cfg = from_the_current_directory(
+                &a_tracked_tree_with_no_git(),
+                Path::new(standing_in),
+                None,
+            )
+            .expect("the tree bd tracks is a project");
+
+            assert_eq!(cfg.projects[0].name, "orbital", "standing in {standing_in}");
+        }
+    }
+
+    /// A redirect is the reader saying which beads are theirs, and `bd where`
+    /// reports the workspace in use rather than the one they redirected from.
+    /// So a directory whose tracker redirects upwards is drawn as the tree
+    /// that tracker belongs to — under that tree's name, holding the panes
+    /// working anywhere in it.
+    ///
+    /// Rooting narrower than the tracker is the defect this fixes, in
+    /// miniature: `bdi` would draw a tracker's beads and then attribute none
+    /// of the panes working on them.
+    #[test]
+    fn a_tracker_the_reader_redirected_upwards_roots_them_at_the_tree_it_belongs_to() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/srv/project/.beads"}"#)
+            .failing("git rev-parse --show-toplevel", no_git())
+            .failing("git remote get-url origin", no_git());
+
+        let cfg = from_the_current_directory(&runner, Path::new("/srv/project/sub"), None)
+            .expect("the tree bd tracks is a project");
+
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/project"));
+        assert_eq!(cfg.projects[0].name, "project");
+        assert!(
+            cfg.projects[0]
+                .holds(Path::new("/srv/project/other"))
+                .is_some(),
+            "a seat working on the same tracker elsewhere in the tree is in no project"
+        );
+    }
+
+    /// A tracker named outright is not inside the work it tracks, so the
+    /// directory above it is one the two happen to share rather than a root.
+    /// `BEADS_DIR` pointing at `/srv/shared-beads` from `/srv/project` would
+    /// otherwise make the project `/srv`, taking in every sibling of the
+    /// reader's own and every pane working in one.
+    #[test]
+    fn a_tracker_beside_the_reader_rather_than_above_them_is_no_root() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/srv/shared-beads"}"#)
+            .failing("git rev-parse --show-toplevel", no_git())
+            .failing("git remote get-url origin", no_git());
+
+        let cfg = from_the_current_directory(&runner, Path::new("/srv/project"), None)
+            .expect("the directory is a project");
+
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/project"));
+        assert_eq!(cfg.projects[0].name, "project");
+    }
+
+    /// A reader who put a tracker in their home directory said their home
+    /// directory is the project, and it is read as one. That is the answer
+    /// git already gives for a repository opened there, and a rule refusing
+    /// it on this half of the function alone is one the reader could not
+    /// predict from the other half.
+    #[test]
+    fn a_tracker_far_above_the_reader_is_still_the_root() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/home/pilot/.beads"}"#)
+            .failing("git rev-parse --show-toplevel", no_git())
+            .failing("git remote get-url origin", no_git());
+
+        let cfg = from_the_current_directory(&runner, Path::new("/home/pilot/work/orbital"), None)
+            .expect("the tree bd tracks is a project");
+
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/home/pilot"));
+    }
+
+    /// git answering is the whole answer: where it says where the repository
+    /// starts, that is the root, whatever the tracker bd found sits beside.
+    /// Nothing about a machine with git changes.
+    #[test]
+    fn a_repository_git_names_is_the_root_whatever_the_tracker_sits_beside() {
+        let runner = a_tracked_repository().with(
+            "bd where --json",
+            r#"{"path":"/srv/work/orbital/crates/dish/.beads"}"#,
+        );
+
+        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
+            .expect("the repository is a project");
+
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
+        assert_eq!(cfg.projects[0].name, "ground-station");
     }
 
     /// `BEADS_DIR` reaches a tracker from anywhere, so a directory in no

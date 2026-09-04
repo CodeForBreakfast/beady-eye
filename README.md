@@ -53,9 +53,10 @@ the one that last wrote a tracker is a separate hazard, on the tracker itself.
 **git, where you have it.** `bdi` asks git for three things, and does without
 each: the repository the current directory sits in, the name of its `origin`
 remote, and the working trees a project has. With no git at all a run still
-reads its tracker — a project just takes its directory's name rather than the
-remote's, and, having no working trees to place a pane by, holds only the
-directory the config named.
+reads its tracker. A project a config names keeps the path it was configured
+with and, having no working trees to place a pane by, holds only that; a
+project found without a config is the tree the beads workspace sits at the top
+of, and takes that directory's name rather than the remote's.
 
 **herdr is optional.** Without it you still get the trees, the counts and the
 claims, and with no agents to filter on every tree is drawn whatever the filter
@@ -118,10 +119,20 @@ nixpkgs.overlays = [ beady-eye.overlays.default ];
 names.
 
 With no config file at all, `bdi` reads the one project the directory it was
-started in belongs to: the repository bd tracks there, named after its `origin`
-remote, or after the directory where there is no remote. `BDI_PROJECT` in the
-environment names it instead. That is the only variable `bdi` reads for a
-name, so a shell that keeps the project's name in another tool's variable
+started in belongs to. Where git can be asked, that is the repository the
+directory is in, named after its `origin` remote — or after the repository's
+own directory, where the repository has no `origin`.
+
+Where git cannot be run at all, the project is the tree the beads workspace bd
+found sits at the top of, named after that directory — and the directory `bdi`
+was started in, where that workspace is not one beads made above it. So the
+project is the same one wherever inside it you started, but it is named after
+a directory rather than after a remote — and two machines that cloned one
+repository into differently-named directories call it different things.
+
+`BDI_PROJECT` in the environment names the project instead of any of that, and
+is how one name holds on every machine. That is the only variable `bdi` reads
+for a name, so a shell that keeps the project's name in another tool's variable
 exports it under this one too.
 
 So a first run inside a repository beads tracks needs no config at all. A

@@ -6,7 +6,7 @@ mod terminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use terminal::shims::ShimmedTracker;
+use terminal::shims::{shims_first_with_nothing_called, ShimmedTracker};
 
 /// A directory in no repository, with no beads workspace and no config under
 /// the `HOME` the child is given — so a fallback there has nothing to find.
@@ -147,6 +147,51 @@ fn another_tools_project_variable_is_not_read() {
     );
 
     std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
+}
+
+/// A machine with no git, with the reader standing somewhere inside the tree
+/// beads tracks rather than at the top of it. The project is the tree, so it
+/// is called the same thing wherever `bdi` was typed — and the seats working
+/// elsewhere in that tree are in it.
+///
+/// Run through the binary rather than against the naming: what the name is
+/// half of is the key on the snapshot, and a machine without git is a
+/// machine, not a function.
+#[test]
+fn a_machine_with_no_git_reads_the_tracked_tree_rather_than_the_directory() {
+    let home = nowhere("no-git");
+    let standing_in = home.join("crates").join("dish");
+    std::fs::create_dir_all(&standing_in).expect("the directory is ours to make");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.tracks(&home);
+    tracker.holds(THE_TRACKER);
+
+    let mut environment = tracker.environment();
+    environment.push(shims_first_with_nothing_called("git", &home));
+
+    let out = bdi_in(&standing_in, &["--json"], &environment);
+    let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(out.status.success(), "bdi exited {}: {said}", out.status);
+    let tree = home
+        .file_name()
+        .expect("the tree has a name")
+        .to_string_lossy();
+    assert!(
+        snapshot.contains(&format!("\"project\": \"{tree}\"")),
+        "the project is not called after the tree beads tracks: {snapshot}"
+    );
+    assert!(
+        !snapshot.contains("\"project\": \"dish\""),
+        "the project was named after the directory the reader stood in: {snapshot}"
+    );
+    assert!(
+        snapshot.contains(&format!("\"{THE_ROOT}\"")),
+        "the tracker's root was not read: {snapshot}"
+    );
+
+    std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
 }
 
 #[test]
