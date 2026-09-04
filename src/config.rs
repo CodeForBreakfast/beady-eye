@@ -902,6 +902,23 @@ environment = "direnv"
         assert_eq!(cfg.projects[0].environment, Environment::Direnv);
     }
 
+    const ONE_READ_IN_BDIS_OWN: &str = r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+environment = "ambient"
+"#;
+
+    /// The other spelling the enum accepts, which only its derive makes a
+    /// word at all. A setup that types it and is refused finds out by having
+    /// its project read the way it asked not to be, and that is silent.
+    #[test]
+    fn a_project_may_name_bdis_own_environment_outright() {
+        let cfg = Config::from_toml(ONE_READ_IN_BDIS_OWN).expect("parses");
+
+        assert_eq!(cfg.projects[0].environment, Environment::Ambient);
+    }
+
     const ENTERED_TWO_WAYS: &str = r#"
 [[projects]]
 name = "beacon"

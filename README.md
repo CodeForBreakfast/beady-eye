@@ -223,15 +223,16 @@ and the `path` its repository is at; the name is how `bdi` tells one tracker's
 beads from another's, so two projects cannot answer to one.
 
 Each project's tracker is read in the environment `bdi` itself was started in,
-so a tracker your shell can already reach needs nothing configured. A setup
-that keeps one credential per project in each project's own directory, loaded
-by direnv when you enter it, says `environment = "direnv"`, and that project is
-then read with what entering its directory produces, at the cost of one
-`direnv exec` per refresh. direnv is worth naming when the password bd needs is
-in a project's `.envrc` and nowhere in the shell running `bdi`; a single
-tracker, or a SQLite one, wants the default. `credential_command` is the third
-way in, for a tracker outside both: a command whose stdout is the password. A
-project names one of the three.
+so a tracker your shell can already reach needs nothing configured; a config
+that would rather name what it is doing writes `environment = "ambient"` and is
+read the same way. A setup that keeps one credential per project in each
+project's own directory, loaded by direnv when you enter it, says
+`environment = "direnv"`, and that project is then read with what entering its
+directory produces, at the cost of one `direnv exec` per refresh. direnv is
+worth naming when the password bd needs is in a project's `.envrc` and nowhere
+in the shell running `bdi`; a single tracker, or a SQLite one, wants the
+default. `credential_command` is the third way in, for a tracker outside both:
+a command whose stdout is the password. A project names one of the three.
 
 **`[roots.explicit]`** names trees to draw beyond the ones `bdi` finds for
 itself, listed under the project whose tracker holds each. Bead prefixes are
