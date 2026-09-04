@@ -17,6 +17,20 @@ const CLOSE_BINDINGS: &str = "Key bindings · press any key to close";
 /// `Rect::centered` is `Flex::Center` underneath, so a window wider or taller
 /// than the terminal comes back the size of the terminal rather than
 /// overflowing it.
+///
+/// The screen is the only ceiling, so on a terminal no taller than the table
+/// the window fills it and the forest survives only in the columns beside. A
+/// lower ceiling can only be paid for out of the table, and what it buys is
+/// the forest's first lines: `Flex::Center` splits the leftover rows around
+/// the window, and the selection is drawn mid-band, so the rows a cap frees
+/// are the top of a tree rather than the row the reader opened `?` from. The
+/// forest is one keypress away and the selection is where they left it; a
+/// binding a cap hides is reachable from nowhere else, this being the view
+/// that says which keys exist.
+///
+/// Which is also why the table growing by a row per key needs no ceiling of
+/// its own. Past the height of the screen `key_bindings` counts the bindings
+/// it left off, and that reads the same over fifty of them as over twenty.
 pub fn bindings_window(area: Rect, bindings: &[(String, &str)]) -> Rect {
     area.centered(
         Constraint::Length(wanted_width(bindings)),
@@ -253,6 +267,94 @@ mod tests {
                 "   └────────────────────────────────────────────────────┘   ",
             ]
         );
+    }
+
+    /// A table of any height, shaped like the real one. Each line is distinct
+    /// so that a binding which reached the screen can be told from one that
+    /// did not, and no line is a substring of another.
+    fn a_table_of(count: usize) -> Vec<String> {
+        (0..count).map(|n| format!("does the {n} thing")).collect()
+    }
+
+    fn bindings_over(lines: &[String]) -> Vec<(String, &str)> {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(n, does)| (format!("k{n}"), does.as_str()))
+            .collect()
+    }
+
+    /// The number the count row is carrying, or none where nothing is being
+    /// counted.
+    fn counted(drawn: &[String]) -> usize {
+        drawn
+            .iter()
+            .find_map(|row| {
+                row.split_once(CUT)?
+                    .1
+                    .split_whitespace()
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Every binding is either on the screen or in the count of the ones that
+    /// are not — at every screen height, over tables of every size.
+    ///
+    /// The table grows by a row per key and its only ceiling is the screen, so
+    /// this relationship is what has to hold rather than any particular
+    /// height. Swept from three rows, the shortest window with a row inside
+    /// it: two rows are both of the borders and no inside at all, which is
+    /// `a_window_with_no_room_inside_it_draws_nothing_inside_it` above.
+    #[test]
+    fn every_binding_is_drawn_or_counted_at_every_height() {
+        for count in [1usize, 2, 3, 12, 30] {
+            let lines = a_table_of(count);
+            let bindings = bindings_over(&lines);
+
+            for height in 3..=(count as u16 + 4) {
+                let drawn = bindings_frame(&bindings, 80, height);
+                let on_screen = lines
+                    .iter()
+                    .filter(|does| drawn.iter().any(|row| row.contains(*does)))
+                    .count();
+
+                assert_eq!(
+                    on_screen + counted(&drawn),
+                    count,
+                    "at {height} rows over {count} bindings: {drawn:#?}"
+                );
+            }
+        }
+    }
+
+    /// The screen is the window's only ceiling, and the table is what it
+    /// wants: no table is too tall to ask for, and none is cut short of what
+    /// the screen would hold.
+    ///
+    /// The relationship rather than a height, so that the table growing by a
+    /// row per key can never make it false. A cap of any kind fails this, and
+    /// is meant to — the ceiling is a decision, and `bindings_window` above
+    /// says which one and why.
+    #[test]
+    fn the_screen_is_the_windows_only_ceiling() {
+        for count in [1usize, 3, 12, 30] {
+            let lines = a_table_of(count);
+            let bindings = bindings_over(&lines);
+            let wanted = count as u16 + BORDERS;
+
+            for height in 1..=40u16 {
+                let window = bindings_window(Rect::new(0, 0, 80, height), &bindings);
+
+                assert_eq!(
+                    window.height,
+                    wanted.min(height),
+                    "a window over {count} bindings on a screen {height} rows tall"
+                );
+            }
+        }
     }
 
     /// The band can be nothing at all, and asking for a row inside it would

@@ -1104,6 +1104,12 @@ mod tests {
     /// row above or below it. That is the clamp doing what it does on every
     /// screen too short for the table, and it is a row further up the table's
     /// growth than it was.
+    ///
+    /// Nothing here fires when the table outgrows a given terminal, because
+    /// that crossing is not an event: `bindings_window` says why the screen is
+    /// the only ceiling, and `every_binding_is_drawn_or_counted_at_every_height`
+    /// beside it is what watches the growth instead, over every size of table
+    /// rather than at one height.
     #[test]
     fn the_forest_is_still_drawn_around_the_bindings_window() {
         let tall = bindings().len() as u16 + 3;

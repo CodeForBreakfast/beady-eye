@@ -2048,7 +2048,12 @@ each by a key a reader can press — `Enter show   a all   ? keys   q quit`,
 thirty-six columns, which is what fits a forty-column terminal without
 losing its last words, and the last words are `q quit`. `f focus` beside
 `Enter show` would overrun that, so `f` lives in `?` and not on the row. `?`
-opens the full table in a window over the forest; any key closes it. `^R`
+opens the full table in a window over the forest; any key closes it. The
+window is the table's own size, so a terminal with rows to spare gets a window
+and one without gets the screen: the table grows by a row per key, and a
+ceiling short of the terminal would free rows off the top of the forest —
+which is not the row the reader opened `?` from — and pay for them by hiding a
+binding from the one view that says which keys exist. `^R`
 came off the row to
 make room for `?`: refresh is the most skippable of the five, since `bdi`
 collects on a timer and on change reports anyway, so `^R` only ever means
