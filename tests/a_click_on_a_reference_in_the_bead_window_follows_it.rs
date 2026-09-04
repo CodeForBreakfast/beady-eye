@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use terminal::driver::{clicked_on, Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{contains, over_the_described_subtree, row_of};
+use terminal::{contains, over_the_described_subtree, row_of, rows_of};
 use terminal::{THE_FIRST_BEAD, THE_TREES_HEADER};
 
 const ROWS: u16 = 40;
@@ -120,9 +120,10 @@ fn words_drawn_twice_are_read_off_no_row() {
     let (bdi, _tracker, page) = at_the_end_of_the_first_beads_page("ambiguous");
     let in_the_forest_and_in_the_window = "bdi-0tp  Every outside program".as_bytes();
 
-    assert!(
-        contains(&page, in_the_forest_and_in_the_window),
-        "the words are on no row at all, so this says nothing. The screen it \
+    assert_eq!(
+        rows_of(&page, in_the_forest_and_in_the_window).len(),
+        2,
+        "the words are not on two rows, so this says nothing. The screen it \
          drew: {:?}\n{}",
         String::from_utf8_lossy(&page),
         bdi.timeline()

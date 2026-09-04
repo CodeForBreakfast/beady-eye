@@ -224,12 +224,6 @@ pub fn followable(forest: &Forest, related: &Related) -> bool {
 /// is drawn on.
 pub struct Page {
     pub rows: Vec<Vec<Span<'static>>>,
-    /// How many rows the bead's name takes: one where its title fits the
-    /// window, more where the title wrapped. The name is one thing however
-    /// many rows it costs, and the tone that says so has to reach all of
-    /// them, so the page states its extent rather than leaving two places to
-    /// assume it.
-    pub head: usize,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
 }
@@ -358,8 +352,6 @@ pub fn said(node: &Node, width: usize, window: usize) -> Page {
         row.extend(line);
         rows.push(row);
     }
-    let head = rows.len();
-
     let mut facts = vec![format!("P{}", node.priority), node.issue_type.clone()];
     facts.extend(node.owner.clone());
     rows.push(indented(vec![
@@ -413,11 +405,7 @@ pub fn said(node: &Node, width: usize, window: usize) -> Page {
         rows.extend(body);
     }
 
-    Page {
-        rows,
-        head,
-        related,
-    }
+    Page { rows, related }
 }
 
 /// The bead's title in the `room` its own glyph and id leave beside it: as
@@ -456,23 +444,6 @@ fn title_of(node: &Node, room: usize, window: usize) -> Vec<Vec<Span<'static>>> 
         return as_written;
     }
     broken
-}
-
-/// What a row of the window is drawn in under the spans that name no colour
-/// of their own. The head — the bead's glyph, id and title — is the
-/// terminal's own, as the row the reader came for is in the forest; the page
-/// beneath it sits one rung below, so what the page holds at the default
-/// reads as emphasis rather than as the page.
-///
-/// `head` is how many rows the name took rather than the one row it usually
-/// takes: a title that wrapped is still the head, and its second line painted
-/// as the page's first reads as the opening of the description.
-fn tone_of(row: usize, head: usize) -> Style {
-    if row < head {
-        palette::HEAD
-    } else {
-        palette::PAGE
-    }
 }
 
 /// One row indented under a heading.
@@ -552,7 +523,6 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
     }
 
     let block = Block::bordered();
-    let head = page.head;
     view.fit(page.rows.len(), inner.height as usize);
     let on = view
         .on()
@@ -576,7 +546,7 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
         .enumerate()
     {
         let at = view.from + n;
-        let drawn = Fitted::new(row, Vec::new(), Vec::new()).toned(tone_of(at, head));
+        let drawn = Fitted::new(row, Vec::new(), Vec::new()).toned(palette::PAGE);
         let drawn = if on == Some(at) {
             drawn.selected()
         } else {
@@ -842,28 +812,6 @@ mod tests {
                 "a row of the title does not hang under it: {rows:#?}"
             );
         }
-    }
-
-    /// A name that takes two rows is still one name. `tone_of` read the head
-    /// off `row == 0`, so a title's second line was painted as the page's
-    /// first — a reader sees a title, then what looks like the opening of
-    /// the description, and the two are one sentence.
-    #[test]
-    fn every_row_a_wrapped_title_takes_is_toned_as_the_head() {
-        const HEIGHT: u16 = 30;
-        let painted = painted(&a_bead_with_a_long_title(), 44, HEIGHT);
-        let tail = A_LONG_TITLE.rsplit(' ').next().expect("a title has words");
-
-        let last = (0..usize::from(HEIGHT))
-            .map(|y| painted.row(y))
-            .find(|row| row.iter().any(|run| run.said.contains(tail)))
-            .unwrap_or_else(|| panic!("the end of the title is drawn: {painted:#?}"));
-
-        assert_eq!(
-            run_saying(&last, tail).style.fg,
-            palette::HEAD.fg,
-            "{last:?}"
-        );
     }
 
     /// A title the window has room for is drawn as its author wrote it, the
@@ -1361,6 +1309,23 @@ mod tests {
         })
     }
 
+    /// What every run of the window that answers `chosen` says, in the order
+    /// the window draws them, with the border they are written inside taken
+    /// off and the blanks dropped.
+    fn said_where(painted: &Painted, chosen: impl Fn(&Run) -> bool) -> Vec<String> {
+        (0..painted.rows().len())
+            .flat_map(|y| painted.row(y))
+            .filter(|run| chosen(run))
+            .map(|run| {
+                run.said
+                    .replace(['│', '─', '┌', '┐', '└', '┘'], "")
+                    .trim()
+                    .to_string()
+            })
+            .filter(|said| !said.is_empty())
+            .collect()
+    }
+
     /// One of each status the forest gives a colour, so a loop over them
     /// covers the palette.
     fn every_coloured_status() -> [Status; 5] {
@@ -1445,7 +1410,7 @@ mod tests {
     }
 
     /// `bd show` says the status word in the status colour; the priority,
-    /// the type and the owner are the page's, one rung below the head.
+    /// the type and the owner take no colour of their own and are the page's.
     #[test]
     fn the_facts_row_says_the_status_in_its_colour_and_the_rest_on_the_page() {
         for status in every_coloured_status() {
@@ -1565,51 +1530,68 @@ mod tests {
         }
     }
 
-    /// White is the exception. Every non-blank run the window draws on the
-    /// terminal's own foreground — or on `White` — is one of the few things
-    /// meant to stand out from a page of text: the way back, the bead's own
-    /// title, a heading, an arrow. A span dropped back to `Span::raw` lands
-    /// on this list and turns it red.
+    /// Weight is the whole of the window's emphasis, so what carries one is
+    /// the list of things the reader is meant to navigate by: the way out,
+    /// and the name of each section. Nothing else in the window takes it —
+    /// the bead's own title stands out by being the row the window opens on
+    /// rather than by a treatment.
     #[test]
-    fn what_stands_out_from_the_page_is_the_way_back_the_title_the_headings_and_the_arrows() {
+    fn what_the_window_draws_at_a_weight_is_the_way_back_and_its_section_names() {
         let bead = a_bead();
         let painted = painted(&bead, 44, 22);
 
-        let own: Vec<String> = (0..22)
-            .flat_map(|y| painted.row(y))
-            .filter(|run| matches!(run.style.fg, Some(Color::Reset | Color::White)))
-            .map(|run| {
-                run.said
-                    .replace(['│', '─', '┌', '┐', '└', '┘'], "")
-                    .trim()
-                    .to_string()
-            })
-            .filter(|said| !said.is_empty())
-            .collect();
+        let own: Vec<String> = said_where(&painted, |run| {
+            run.style.add_modifier.contains(Modifier::BOLD)
+        });
 
         assert_eq!(
             own,
             vec![
                 phrase::way_back_from_bead(&bead.id, false, false),
-                bead.title.clone(),
                 DESCRIPTION.to_string(),
                 NOTES.to_string(),
                 PARENT.to_string(),
-                UP.to_string(),
                 DEPENDS_ON.to_string(),
-                OUT.to_string(),
                 BLOCKS.to_string(),
-                BACK.to_string(),
             ],
             "{painted:?}"
         );
     }
 
-    /// The page under the head sits one rung below the terminal's own, at
-    /// the tone the forest draws a row nobody is on: the prose, and a related
-    /// bead's id and title.
+    /// And what the window colours is what it quotes: `bd`'s own hue for a
+    /// status, its blue for an id, its grey for a bead that is finished, and
+    /// the one fact `bd` cannot say, which is that an agent is here. Its own
+    /// words — the title, the prose, the name of a bead that is still going —
+    /// are the terminal's foreground and no tone at all, so the day the page
+    /// takes a tone of its own again this list is where it turns up.
     #[test]
-    fn the_page_is_drawn_at_the_tone_the_forest_draws_a_row_nobody_is_on() {
+    fn the_only_tones_the_window_draws_are_the_ones_it_quotes() {
+        let painted = painted(&a_bead(), 44, 22);
+
+        let toned: Vec<String> = said_where(&painted, |run| run.style.fg != Some(Color::Reset));
+
+        assert_eq!(
+            toned,
+            vec![
+                "◐".to_string(),
+                "orb-7.1".to_string(),
+                phrase::status_word(&Status::InProgress),
+                "◍ lifting the mast · working".to_string(),
+                "◐".to_string(),
+                "✓".to_string(),
+                "orb-7.3  lay the feeder cable".to_string(),
+            ],
+            "{painted:?}"
+        );
+    }
+
+    /// The page is the terminal's own foreground, as the head above it is:
+    /// the prose, and a related bead's id and title. The window spends no
+    /// brightness at all, so a reader who learned in the forest that a dim
+    /// row is one nobody is on does not then meet a page that is entirely
+    /// dim.
+    #[test]
+    fn the_page_is_drawn_at_the_terminals_own_foreground_as_the_head_is() {
         let painted = painted(&a_bead(), 44, 22);
 
         for (y, said) in [
@@ -1618,7 +1600,7 @@ mod tests {
             (14, "orb-7  lift the ground station"),
         ] {
             let run = run_saying(&painted.row(y), said);
-            assert_eq!(run.style.fg, Some(Color::DarkGray), "{said}: {run:?}");
+            assert_eq!(run.style.fg, Some(Color::Reset), "{said}: {run:?}");
         }
     }
 

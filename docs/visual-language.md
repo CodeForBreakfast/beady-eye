@@ -11,8 +11,9 @@ its own bead from its own argument. This is the first reading that puts them
 side by side.
 
 It is a review and a recommendation, and the beads it spawns are where the
-work happens. Answer 2's list has landed as `src/view/palette.rs`; everything
-else here is still a recommendation.
+work happens. Several of them have landed — answer 2's list is
+`src/view/palette.rs` — and the tracker rather than this file is what says
+which.
 
 Everything below was read at `22acc0d`, over `src/` excluding
 `src/view/sgr.rs`, which replays the colours a pane wrote and chooses none of
@@ -97,7 +98,8 @@ draw that meaning at all.
 
 ## What the table shows
 
-Six findings, then two things that look like findings and are not. Each is
+Five findings and the rule the sixth left behind once it was answered, then
+two things that look like findings and are not. Each is
 confirmed against the sites rather than argued from the shape of the code.
 
 ### One grey says five unrelated things
@@ -173,23 +175,22 @@ status set and asserts no two share a value. It is scoped to one channel, so a
 value shared *across* channels — a status hue that is also a brightness rung —
 passes it silently.
 
-### Brightness carries two different facts
+### Brightness carries liveness and nothing else
 
 In the forest, brightness is liveness: default, then slot 8, then the fixed
-grey. In the bead window, brightness is hierarchy: the head at the default,
-the page one rung below it. `show.rs` argues this on its own terms — *"the
-page beneath it sits one rung below, so what the page holds at the default
-reads as emphasis rather than as the page"* — and the window covers the
-forest, so the two are never on screen together.
+grey. The bead window spends none of it — its head and its page are both the
+terminal's own foreground — so the reader who learns *dim means nobody is on
+it* meets nothing on the next surface that says otherwise. What stands out on
+a page of text takes a weight, which the body of a page leaves unspent.
 
-But the reader is: they learn *dim means nobody is on it* in the forest and
-then meet a page that is entirely dim. And the window pays for its emphasis by
-dropping the whole body a rung, when weight is unspent in the window body and
-buys the same emphasis for nothing.
+The window covering the forest is not what makes that safe, and the argument
+that it is turns up whenever a second meaning is proposed for a channel. The
+two surfaces are never on screen together; the reader is on both of them, and
+carries what a treatment meant on the first to the second.
 
-Set against that, the channels with exactly one client each — `REVERSED` for
-the selection, `ITALIC` for emphasis, `UNDERLINED` for a link — have never
-produced a defect.
+The channels with exactly one client each — `REVERSED` for the selection,
+`ITALIC` for emphasis, `UNDERLINED` for a link — have never produced a defect,
+and this is what that buys.
 
 ### One meaning is drawn at both ends of the emphasis range
 
@@ -555,7 +556,7 @@ says which one.
 |---|---|---|
 | **hue** | *what kind of thing this is* — a bead's status, and the two facts `bd` cannot say: a live agent, and something wrong | quoted from `bd` where `bd` has an opinion; `bdi`'s own two are the only additions |
 | **brightness** | *how live this row is* — and nothing else, on any surface | the one axis `bdi` adds to `bd list`; every other use of brightness gives it up |
-| **weight** | *this is a landmark you navigate by* — a heading, a window's title | structural only, never a degree of anything |
+| **weight** | *this is the thing to go to* — a row with an agent on it, a section name, a heading, the way out on a window's border | one reading per surface, and on the forest the top of the liveness scale as well |
 | **reverse** | *the cursor is here* | exactly one client, and it stays that way |
 | **italic** | emphasis, inside rendered prose | never outside `markdown.rs` |
 | **underline** | a link, inside rendered prose | never outside `markdown.rs` |
@@ -566,13 +567,28 @@ status, matching `bd`, and the row's own text carries how live it is"*, and
 declines to draw priority because a third would have to share one of them.
 This extends that reasoning from the bead row to the whole screen.
 
-Three consequences, and they are the changes:
+**Weight is the one channel spent on both surfaces**, and what makes that
+sound is that it is one meaning rather than two: a row with an agent on it is
+where the reader is heading, and so is the name of the section they are
+looking for on a page of text. That is the test a second meaning has to pass,
+and *the two surfaces are never on screen together* is not it.
 
-**Brightness stops carrying hierarchy in the bead window.** The head keeps the
-default; the page comes back up to the default with it; headings are carried
-by weight, which they already have. The window then spends no brightness at
-all, and *dim* means one thing on every surface. This contradicts `show.rs`'s
-stated reasoning and I say so plainly below.
+It costs something and the cost is worth writing down. A staffed forest row
+and an unworked one are both at the terminal's own foreground, so the weight
+on the staffed one is the whole of what separates them: on that surface
+weight is the top rung of the liveness scale as well as a landmark, spent
+there because the scale has run out of brightness at the ground. Inside the
+window it makes no further distinction — a `bd show` section name, a heading
+in the prose and a bold word in a sentence are one treatment, and what tells
+them apart is position, the first two owning their row and the third sitting
+inside one.
+
+Three consequences:
+
+**Brightness carries no hierarchy in the bead window.** Its head and its page
+are both the terminal's default, and what stands out on the page takes a
+weight. The window spends no brightness at all, and *dim* means one thing on
+every surface.
 
 **`Color::Reset` stops being a rung.** See answer 3 — it is the ground the
 scale is measured against, not a value on it.
@@ -759,14 +775,14 @@ background can change — the brightening that would confound it cannot apply to
 a colour with no palette index, and what is left is a font-weight step. Nothing
 else `bdi` can reach has that property.
 
-**Three things stand against it, and the first is this document's own answer
-1.** Weight there carries *this is a landmark you navigate by* — a heading, a
-window's title — and the rule beside it reads *"structural only, never a degree
-of anything"*. A liveness rung is a degree. So (c) is ruled out by the channel
-assignment before any measurement is taken, and defending it on the grounds
-that a bead row is never a heading is the *"clear from context"* argument that
-put six inline greys in the codebase. That is the finding: **two independent
-reasons reject bold, and they were arrived at from opposite ends.**
+**Three things stood against it when this was written, and the first no longer
+does.** Answer 1's weight rule read *"structural only, never a degree of
+anything"*, and a liveness rung is a degree, so (c) was ruled out by the
+channel assignment before any measurement was taken. The assignment above no
+longer says that: the forest does spend a weight on a staffed row, and the
+rule beside the channel names the cost rather than forbidding the spend. What
+stands against (c) is the two measurements below, which are about how big a
+step it is rather than about which channel may carry what.
 
 **The second is a measurement.** `bdi-sw4`
 drove kitty's own glyph renderer at Graeme's 7×16px cell and put bold at
@@ -1149,10 +1165,9 @@ terminal chose separately.
 Two smaller things are **not** in the spec at all and so are not
 contradictions, only new:
 
-- The bead window's page sitting one rung below its head is argued in
-  `src/view/show.rs:29` and `tone_of`, and nowhere in `design.md`. Answer 1
-  recommends dropping it, and it is a code comment being overturned rather
-  than the spec.
+- The bead window drawing its head and its page at one tone, and carrying what
+  stands out on a weight, is argued in `src/view/palette.rs` and nowhere in
+  `design.md`.
 - `Color::Reset` doubling as the mechanism for escaping a row's tone is a
   property of `Fitted`, undocumented in both.
 

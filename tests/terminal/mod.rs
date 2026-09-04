@@ -291,17 +291,24 @@ pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 /// only the cells that moved and the rest of this screen is the frame before,
 /// which is not here to be put back.
 pub fn row_of(screen: &[u8], needle: &[u8]) -> Option<u16> {
-    let needle = std::str::from_utf8(needle).ok()?;
-    let mut found = None;
-    for (row, said) in drawn_rows(screen) {
-        for _ in said.match_indices(needle) {
-            if found.is_some() {
-                return None;
-            }
-            found = Some(row);
-        }
+    match rows_of(screen, needle).as_slice() {
+        [only] => Some(*only),
+        _ => None,
     }
-    found
+}
+
+/// Every row of the screen the text was drawn on, once for each time it was
+/// drawn there, which is how a test says *twice*. A search over the stream
+/// says it for neither, and for the reason above: the words of a row arrive
+/// with a cursor move between them, so the needle is on the wire in pieces.
+pub fn rows_of(screen: &[u8], needle: &[u8]) -> Vec<u16> {
+    let Ok(needle) = std::str::from_utf8(needle) else {
+        return Vec::new();
+    };
+    drawn_rows(screen)
+        .into_iter()
+        .flat_map(|(row, said)| said.matches(needle).map(|_| row).collect::<Vec<_>>())
+        .collect()
 }
 
 /// The escape that opens a control sequence.

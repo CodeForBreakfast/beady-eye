@@ -122,13 +122,14 @@ pub(crate) fn voice(background: Background) -> Style {
     }
 }
 
-/// The page under the bead window's head: its facts, its prose and its
-/// related rows. The rung directly under the terminal's default, so the few
-/// things the window holds at the default read as emphasis rather than as the
-/// page. It holds `QUIET`'s value and is a claim about a page of text rather
-/// than about a row, so the forest's scale can move without the window
-/// following it.
-pub(crate) const PAGE: Style = Style::new().fg(Color::DarkGray);
+/// Every row of the bead window: the head the reader came for, and under it
+/// the facts, the prose and the related rows. The terminal's own foreground,
+/// which is to say the window spends no brightness on its own structure —
+/// what stands out on the page takes a weight, and *dim* is left to mean one
+/// thing on every surface. It is a claim about a page of text rather than
+/// about a row, so the forest's scale can move without the window following
+/// it.
+pub(crate) const PAGE: Style = Style::new().fg(Color::Reset);
 
 /// `bdi`'s own sentence about the forest where nothing went wrong in it: the
 /// hidden trees the filter is holding back, and a forest that was read and
@@ -136,15 +137,28 @@ pub(crate) const PAGE: Style = Style::new().fg(Color::DarkGray);
 /// contrasts with is `ATTENTION`.
 pub(crate) const PLAIN: Style = Style::new().fg(Color::Reset);
 
-/// The bead window's head — the glyph, id and title of the bead the reader
-/// came for — at the terminal's own foreground, as that row is in the forest.
-/// It holds `STRUCTURE`'s value and is a claim about the window's head.
-pub(crate) const HEAD: Style = Style::new().fg(Color::Reset);
-
 /// A code span or a code block: prose's own namespace.
 pub(crate) const CODE: Style = Style::new().fg(Color::Cyan);
 
 // ---- weights -----------------------------------------------------------
+
+// A weight says *this is the thing to go to*, and on both surfaces that is
+// one meaning rather than two: a row with an agent on it is where the reader
+// is heading, and so is the name of the section they are looking for on a
+// page of text. What a reader learns on one surface holds on the next, which
+// is the whole of why a channel may be spent twice.
+//
+// On the forest it is also the whole of the top rung of the liveness scale.
+// A staffed row and an unworked one are both at the terminal's own
+// foreground, so nothing else separates them: the scale spends the channel
+// because it has run out of brightness at the ground.
+//
+// Inside the window it makes no further distinction, and the slots below say
+// so by holding one value. What tells a section name from a heading from a
+// strong word is position — the first two own their row and the third sits
+// inside a sentence — rather than the treatment. They stay apart because
+// they quote different sources: prose's markup can take a tone without
+// `bd show`'s section names following it.
 
 /// The row under the cursor, drawn so the eye finds it without reading it.
 pub(crate) const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED);
@@ -152,9 +166,9 @@ pub(crate) const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED)
 /// A window's own name, on its border.
 pub(crate) const TITLE: Style = Style::new().add_modifier(Modifier::BOLD);
 
-/// `bd show`'s section names, which stand out from a page of text: the
-/// terminal's own foreground held under the page's tone, and a weight.
-pub(crate) const SECTION: Style = Style::new().fg(Color::Reset).add_modifier(Modifier::BOLD);
+/// `bd show`'s section names, which stand out from a page of text: a weight
+/// and no tone, so the page reaches them as it reaches everything else on it.
+pub(crate) const SECTION: Style = Style::new().add_modifier(Modifier::BOLD);
 
 /// A heading in prose. A weight and no colour, so it composes onto the tone
 /// of the page it is drawn on.
