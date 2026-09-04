@@ -76,10 +76,16 @@ pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
             &pane.pane_status,
             phrase::pane_report(pane.display_agent.as_deref(), pane.title.as_deref()),
             &pane.cwd,
+            pane.claim_refused,
         ),
-        Item::Unconfigured(pane) => {
-            loose_line(prefix, &pane.pane.id, &pane.pane_status, None, &pane.cwd)
-        }
+        Item::Unconfigured(pane) => loose_line(
+            prefix,
+            &pane.pane.id,
+            &pane.pane_status,
+            None,
+            &pane.cwd,
+            false,
+        ),
     }
 }
 
@@ -89,12 +95,18 @@ pub(super) fn item_line(prefix: &str, item: &Item) -> Fitted {
 /// other to configure the project — and the report is what places the agent
 /// without leaving the row, so it comes first and the directory is what a
 /// narrow row gives up before it.
+///
+/// A refused claim is the state rather than the title, so it outlives both on
+/// a narrow row. Placing a seat is what the directory is for, and a reader
+/// who has taken this pane for one nobody claimed is not placing a seat — the
+/// sentence that says so has to reach them first.
 fn loose_line(
     prefix: &str,
     pane: &str,
     status: &PaneStatus,
     report: Option<String>,
     cwd: &str,
+    claim_refused: bool,
 ) -> Fitted {
     let mut title = Vec::new();
     if let Some(report) = report {
@@ -103,13 +115,19 @@ fn loose_line(
     }
     title.push(Span::raw(cwd.to_string()));
 
+    let state = if claim_refused {
+        vec![Span::styled(phrase::claim_refused(), palette::ATTENTION)]
+    } else {
+        Vec::new()
+    };
+
     Fitted::new(
         vec![Span::styled(
             format!("{prefix}{}", pane_marker(pane, status)),
             palette::AGENT,
         )],
         title,
-        Vec::new(),
+        state,
     )
 }
 
@@ -119,8 +137,8 @@ mod tests {
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::join::{self, Listed};
-    use crate::model::snapshot::{a_provider, build, Collected, LoosePane};
-    use crate::model::types::testing::A_SESSION;
+    use crate::model::snapshot::{a_provider, build, Collected, LoosePane, UnconfiguredPane};
+    use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::PaneStatus;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
@@ -367,6 +385,75 @@ path = "/tmp/bdi-ground/beady-eye"
         assert_eq!(
             Painted::of(item_line(LAST, &captioned), 96, 1).rows()[0].trim_end(),
             "  └── ◍ w:p3 working  parse bd dep-tree JSON into typed rows  /tmp/bdi-ground/summit-works"
+        );
+    }
+
+    /// One row at the width the whole of a refused pane's takes, so the two
+    /// rows that carry nothing extra are asserted whole rather than searched
+    /// for the absence of something.
+    fn said(loose: LoosePane) -> String {
+        Painted::of(item_line(LAST, &Item::Loose(loose)), 81, 1).rows()[0]
+            .trim_end()
+            .to_string()
+    }
+
+    /// The three ways a pane comes to be unattributed, drawn side by side.
+    ///
+    /// Two of them `bdi` cannot tell apart and does not try to: a seat that
+    /// finished and cleared its key, and one that has not registered yet,
+    /// both leave a pane nothing claims. The third is their opposite — a
+    /// claim `bdi` read and would not honour — and it is the one that says
+    /// so.
+    #[test]
+    fn only_the_pane_whose_claim_was_refused_says_a_claim_was_refused() {
+        assert_eq!(
+            said(LoosePane {
+                claim_refused: true,
+                ..pane("w:p5", PaneStatus::Working)
+            }),
+            "  └── ◍ w:p5 working  /tmp/bdi-ground/summit-works  a claim on this pane was refused"
+        );
+        assert_eq!(
+            said(pane("w:p4", PaneStatus::Idle)),
+            "  └── ◍ w:p4 idle  /tmp/bdi-ground/summit-works"
+        );
+        assert_eq!(
+            said(pane("w:p6", PaneStatus::Working)),
+            "  └── ◍ w:p6 working  /tmp/bdi-ground/summit-works"
+        );
+    }
+
+    /// A pane in a directory no configured project covers never says a claim
+    /// on it was refused. `bdi` was never told the project exists, so there
+    /// was no tracker to look in and nothing to refuse — and the group's own
+    /// line already gives that reader the honest cause and an action.
+    #[test]
+    fn a_pane_in_no_configured_project_says_nothing_about_a_refused_claim() {
+        let loose = UnconfiguredPane {
+            pane: pane_key("w:pF"),
+            cwd: "/srv/spike".to_string(),
+            pane_status: PaneStatus::Idle,
+        };
+
+        assert_eq!(
+            Painted::of(item_line(LAST, &Item::Unconfigured(loose)), 81, 1).rows()[0].trim_end(),
+            "  └── ◍ w:pF idle  /srv/spike"
+        );
+    }
+
+    /// The refusal is what a narrow row keeps, because it is the sentence
+    /// that says the reader's reading of the row is wrong. The directory
+    /// places a seat, which a reader who has misread the row does not want.
+    #[test]
+    fn a_narrow_row_gives_up_the_directory_before_the_refusal() {
+        let refused = LoosePane {
+            claim_refused: true,
+            ..pane("w:p5", PaneStatus::Working)
+        };
+
+        assert_eq!(
+            Painted::of(item_line(LAST, &Item::Loose(refused)), 54, 1).rows(),
+            vec!["  └── ◍ w:p5 working  a claim on this pane was refused"]
         );
     }
 

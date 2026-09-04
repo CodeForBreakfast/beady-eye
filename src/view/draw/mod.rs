@@ -365,6 +365,7 @@ mod tests {
             pane_status: status,
             display_agent: None,
             title: None,
+            claim_refused: false,
         }
     }
 

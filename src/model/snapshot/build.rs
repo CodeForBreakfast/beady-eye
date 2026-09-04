@@ -1,7 +1,7 @@
 //! One project's rows drawn as a tree, and every project's trees gathered
 //! into the snapshot, with the live panes that belong to none of them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -10,9 +10,9 @@ use crate::config::Config;
 use crate::model::anomaly;
 use crate::model::badges;
 use crate::model::edges::Relations;
-use crate::model::join::{self, BeadKey, Joined};
+use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
-use crate::model::types::Pane;
+use crate::model::types::{Pane, PaneKey};
 
 use super::filter::{in_flight_first, partition};
 use super::{
@@ -128,6 +128,18 @@ pub fn build(
     let trees: Vec<Arc<Tree>> = trees.into_iter().map(Arc::new).collect();
     let (shown, hidden) = partition(&trees, agents.state, filter);
 
+    // Taken against the panes that came away with nothing rather than read
+    // off the disagreements alone: several panes naming one bead leaves each
+    // of them free to hold some other bead by the exact direction, and the
+    // pane a bead's own key named wins outright over one that named it back.
+    // Either would otherwise have a working pane's row saying its claim was
+    // refused.
+    let refused: HashSet<PaneKey> = joined
+        .conflicts
+        .iter()
+        .flat_map(Conflict::refused_panes)
+        .collect();
+
     let (mut unattributed, mut unconfigured) = (Vec::new(), Vec::new());
     for pane in join::unattributed(panes, joined) {
         let cwd = pane.cwd.display().to_string();
@@ -136,6 +148,7 @@ pub fn build(
             // work: neither drawn nor reported.
             Some(project) if !cfg.reads(&project.name) => {}
             Some(project) => unattributed.push(LoosePane {
+                claim_refused: refused.contains(&pane.key()),
                 pane: pane.key(),
                 project: project.name.clone(),
                 cwd,
@@ -654,8 +667,50 @@ mod tests {
                 pane_status: PaneStatus::Blocked,
                 display_agent: None,
                 title: None,
+                claim_refused: false,
             }],
             "a pane in a known project that no bead claims is unattributed"
+        );
+    }
+
+    /// Two beads naming one pane, and beside it a pane nothing names at all.
+    /// The join refuses the contested claim both ways, so both panes come
+    /// away unattributed — and only one of them was refused anything.
+    #[test]
+    fn a_pane_whose_claim_the_join_refused_is_apart_from_one_nothing_claims() {
+        let contested = r#"[
+          {"id":"orb-1","title":"root","status":"open"},
+          {"id":"orb-1.1","title":"one","status":"in_progress",
+           "metadata":{"agent_pane":"w:p5"},
+           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}]},
+          {"id":"orb-1.2","title":"two","status":"in_progress",
+           "metadata":{"agent_pane":"w:p5"},
+           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}]}
+        ]"#;
+        let panes = panes(
+            r#"{"result":{"agents":[
+              {"pane_id":"w:p5","cwd":"/srv/work/orbital","agent_status":"working"},
+              {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"idle"}
+            ]}}"#,
+        );
+        let assembled = assembled(contested);
+        let joined = joined(&assembled.beads, &panes);
+        let snap = build(
+            Collected::default(),
+            &panes,
+            &joined,
+            &cfg(),
+            a_provider(ProviderState::Answering),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.unattributed
+                .iter()
+                .map(|loose| (loose.pane.id.as_str(), loose.claim_refused))
+                .collect::<Vec<_>>(),
+            vec![("w:p5", true), ("w:p9", false)]
         );
     }
 
@@ -770,6 +825,7 @@ mod tests {
                 pane_status: PaneStatus::Idle,
                 display_agent: None,
                 title: None,
+                claim_refused: false,
             }],
             "reported where it is, placed where its main working tree is"
         );

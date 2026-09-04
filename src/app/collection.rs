@@ -1641,6 +1641,7 @@ path = "{}"
                 pane_status: PaneStatus::Idle,
                 display_agent: None,
                 title: None,
+                claim_refused: false,
             }],
             "reported where it sits, placed by where its main working tree is"
         );

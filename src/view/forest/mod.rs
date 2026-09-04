@@ -1803,12 +1803,12 @@ credential_command = "secret harbour"
                 "  │   ├── ✓ .4 clear the access road",
                 "  │   └─▸ … 3 more",
                 "  └── [Unattributed orbital] 2",
-                "      ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None })",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None })",
+                "      ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None, claim_refused: true })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None, claim_refused: true })",
                 "▾ ferry",
                 "  ├── ⚠ fer-2 unread",
                 "  └── [Unattributed ferry] 1",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None, claim_refused: false })",
                 "▾ harbour",
                 "  └─▸ [HiddenTrees harbour] 1",
                 "▸ [FailedProjects] 1",
@@ -3684,7 +3684,7 @@ credential_command = "secret harbour"
                 "▾ orbital",
                 "  ├─▸ [HiddenTrees orbital] 1",
                 "  └── [Unattributed orbital] 1",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None, claim_refused: false })",
             ]
         );
 
@@ -3697,7 +3697,7 @@ credential_command = "secret harbour"
                 "  ├── [HiddenTrees orbital] 1",
                 "  │   └─▸ ○ tow-1 raise the tower",
                 "  └── [Unattributed orbital] 1",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None, claim_refused: false })",
             ]
         );
     }
@@ -3742,7 +3742,7 @@ credential_command = "secret harbour"
             [
                 "▾ ferry",
                 "  └── [Unattributed ferry] 1",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None, claim_refused: false })",
                 "▸ [FailedProjects] 1",
             ]
         );

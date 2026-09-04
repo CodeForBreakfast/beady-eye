@@ -79,6 +79,34 @@ pub enum Conflict {
     },
 }
 
+impl Conflict {
+    /// The panes this disagreement left holding nothing.
+    ///
+    /// A candidate rather than a verdict: `BeadAndPaneDisagree` is settled in
+    /// the bead's favour, and the panes of `SeveralPanesNameOneBead` may each
+    /// hold some other bead by the exact direction. So a caller wanting the
+    /// panes that came away empty takes this against the ones the join
+    /// awarded — which is what lets the set be generous without a row saying
+    /// of a working pane that its claim was refused.
+    pub fn refused_panes(&self) -> Vec<PaneKey> {
+        match self {
+            Conflict::BeadAndPaneDisagree { named_by_pane, .. } => vec![named_by_pane.clone()],
+            Conflict::SeveralPanesNameOneBead { panes, .. } => panes.clone(),
+            Conflict::SeveralBeadsNameOnePane { pane, .. } => vec![pane.clone()],
+            Conflict::PaneInAnotherProject { pane, .. } => vec![pane.clone()],
+            Conflict::PaneIdInSeveralSessions {
+                pane_id, sessions, ..
+            } => sessions
+                .iter()
+                .map(|session| PaneKey {
+                    session: session.clone(),
+                    id: pane_id.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// One project's assembled rows, as the join reads them.
 pub struct ProjectRows<'a> {
     pub project: &'a str,
@@ -482,6 +510,74 @@ mod tests {
             project: project.to_string(),
             id: id.to_string(),
         }
+    }
+
+    /// The three disagreements whose panes are the ones they already carry.
+    #[test]
+    fn a_disagreement_names_the_panes_it_left_holding_nothing() {
+        assert_eq!(
+            Conflict::SeveralBeadsNameOnePane {
+                pane: pane_key("w:p1"),
+                caption: None,
+                beads: vec![key("proj", "p-1"), key("proj", "p-2")],
+            }
+            .refused_panes(),
+            vec![pane_key("w:p1")]
+        );
+        assert_eq!(
+            Conflict::PaneInAnotherProject {
+                bead: key("proj", "p-1"),
+                pane: pane_key("w:p2"),
+                pane_project: Some("ferry".to_string()),
+            }
+            .refused_panes(),
+            vec![pane_key("w:p2")]
+        );
+        assert_eq!(
+            Conflict::SeveralPanesNameOneBead {
+                bead: key("proj", "p-1"),
+                panes: vec![pane_key("w:p3"), pane_key("w:p4")],
+            }
+            .refused_panes(),
+            vec![pane_key("w:p3"), pane_key("w:p4")]
+        );
+    }
+
+    /// The one disagreement the join settles rather than leaves open: the
+    /// bead's own key wins, so the pane it named holds the bead and only the
+    /// pane that named the bead back comes away empty.
+    #[test]
+    fn the_pane_a_bead_named_keeps_its_bead_when_another_pane_names_it_too() {
+        assert_eq!(
+            Conflict::BeadAndPaneDisagree {
+                bead: key("proj", "p-1"),
+                named_by_bead: pane_key("w:p1"),
+                named_by_pane: pane_key("w:p2"),
+            }
+            .refused_panes(),
+            vec![pane_key("w:p2")]
+        );
+    }
+
+    /// A pane id alone names a pane in every session that holds one, and the
+    /// claim was refused at each of them.
+    #[test]
+    fn an_id_several_sessions_hold_names_a_refused_pane_in_each_of_them() {
+        assert_eq!(
+            Conflict::PaneIdInSeveralSessions {
+                bead: key("proj", "p-1"),
+                pane_id: "w:p1".to_string(),
+                sessions: vec![A_SESSION.to_string(), "beacon".to_string()],
+            }
+            .refused_panes(),
+            vec![
+                pane_key("w:p1"),
+                PaneKey {
+                    session: "beacon".to_string(),
+                    id: "w:p1".to_string(),
+                },
+            ]
+        );
     }
 
     /// One bead naming `w:p1`, in a tracker at `/srv/proj`.

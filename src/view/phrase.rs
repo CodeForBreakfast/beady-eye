@@ -471,6 +471,22 @@ pub fn pane_report(display_agent: Option<&str>, caption: Option<&str>) -> Option
     Some(said.join(" · "))
 }
 
+/// An unattributed pane a claim named and the join would not honour, said on
+/// the pane's own row.
+///
+/// Where a reader decides whether a seat registered is at the pane, and a
+/// pane nothing claims and a pane whose claim was refused are opposites that
+/// read alike there. Which disagreement it was is said in full among the
+/// conflicts; this says only that there was one, because a row that re-told
+/// it would spend the width the directory is drawn in.
+///
+/// One sentence covers both directions of the join deliberately. A bead
+/// naming this pane and this pane naming a bead are the same fact to a
+/// reader here: something claimed it and `bdi` said no.
+pub fn claim_refused() -> &'static str {
+    "a claim on this pane was refused"
+}
+
 /// Live panes that resolved to no bead.
 pub fn unattributed(count: usize) -> String {
     let pane = if count == 1 { "pane" } else { "panes" };
@@ -815,6 +831,7 @@ mod tests {
             said.push(unattributed(count));
             said.push(unconfigured(count));
         }
+        said.push(claim_refused().to_string());
         said.push(dangling(1));
         said.push(dangling(3));
         said.push(cycle(1));

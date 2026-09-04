@@ -1355,7 +1355,7 @@ name to the socket after any command that wrote something.
   ],
   "hidden_trees": [ { "project": "summit-works", "root": "nix-bgej6", "title": "…", "reason": "no-live-agent" } ],
   "failed_projects": [ { "project": "homelab", "tracker": "auth" } ],
-  "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification" } ],
+  "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": [],
   "projects_named_without_git": []
@@ -1405,6 +1405,16 @@ contract, so test for the key rather than reading a null. An `unattributed`
 entry also carries what the pane reported about itself, under the names a
 node's `agent` gives the same things — `display_agent`, and its caption as
 `title` — each null where the pane reported nothing.
+
+`claim_refused` tells the two kinds of unattributed pane apart. A pane nothing
+claims and a pane whose claim `bdi` read and would not honour are opposites
+that arrive through the same array: the first is a seat that has not registered
+or has finished and cleared, the second is a registration `bdi` understood and
+refused. Which disagreement refused it is in `conflicts`, in full; this says
+only that one did. It is published as the fact rather than left to be
+re-derived, because a consumer working it out of `conflicts` for itself could
+come to disagree with the screen about a pane the screen has already spoken
+for.
 
 ### Facts, not the words the screen makes of them
 
@@ -1833,6 +1843,21 @@ did not report it. No bead's row will say these for a loose pane, so its own
 row does; a pane that reported nothing keeps the row it had. The title block
 is cut from the right, so a narrow row gives up the directory first and the
 pane's id and state last.
+
+An unattributed pane whose claim was refused says so on its own row, in the
+state block at the right: *a claim on this pane was refused*. A pane nothing
+claims and a pane whose claim `bdi` read and would not honour are opposites,
+and the group's own line says the same thing about both — so a reader who is
+at the pane, which is long before they are at the conflicts, reaches for the
+one explanation the tracker rules out. The sentence says only that a claim was
+refused; which disagreement refused it is spelled out in full among the
+conflicts, and a row that re-told it would spend the width the directory is
+drawn in. It sits in the state block rather than the title so that it outlives
+the directory on a narrow row: the directory is for placing a seat, and a
+reader who has taken this pane for one nobody claimed is not placing a seat.
+`bdi` does not distinguish a seat that has not registered yet from one that
+finished and cleared its key — neither is claimed by anything, and nothing it
+reads says which.
 
 The groups rest by the same rule as the trees. A count is not a view of what it
 holds, so a group over live panes — unconfigured, conflicts, unattributed —

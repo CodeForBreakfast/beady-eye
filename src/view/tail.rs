@@ -546,6 +546,7 @@ mod tests {
             pane_status: PaneStatus::Working,
             display_agent: None,
             title: None,
+            claim_refused: false,
         }
     }
 
@@ -559,6 +560,7 @@ mod tests {
             pane_status: PaneStatus::Idle,
             display_agent: None,
             title: None,
+            claim_refused: false,
         }
     }
 

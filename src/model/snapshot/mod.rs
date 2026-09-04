@@ -402,6 +402,16 @@ pub struct LoosePane {
     pub pane_status: PaneStatus,
     pub display_agent: Option<String>,
     pub title: Option<String>,
+    /// Whether a claim naming this pane was read and refused, as against a
+    /// pane nothing claims. The two are opposites and read alike everywhere
+    /// else here: a seat that never registered and a seat whose registration
+    /// `bdi` understood and would not honour both come away with no bead.
+    ///
+    /// Published as the fact rather than the disagreement behind it. Which
+    /// disagreement it was is in `conflicts`, in full, and a consumer that
+    /// had to re-derive this from there could disagree with the screen about
+    /// a pane the screen has already spoken for.
+    pub claim_refused: bool,
 }
 
 /// A live pane whose directory sits under no `[[projects]]` entry. `bdi` has

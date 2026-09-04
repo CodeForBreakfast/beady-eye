@@ -353,10 +353,35 @@ fn a_pane_on_no_bead_is_reported_with_its_project() {
         emitted["unattributed"],
         json!([
             {"pane": {"session": "default", "id": "w:p2"}, "project": "orbital", "cwd": "/srv/work/orbital",
-             "pane_status": "idle", "display_agent": "orb-7", "title": null},
+             "pane_status": "idle", "display_agent": "orb-7", "title": null, "claim_refused": true},
             {"pane": {"session": "default", "id": "w:p9"}, "project": "orbital", "cwd": "/srv/work/orbital",
-             "pane_status": "blocked", "display_agent": null, "title": null},
+             "pane_status": "blocked", "display_agent": null, "title": null, "claim_refused": false},
         ])
+    );
+}
+
+/// A pane nothing claims and a pane whose claim `bdi` read and would not
+/// honour are opposites that reach a consumer through this one array, so
+/// each entry says which of the two it is. `w:p2` named a bead the bead's
+/// own key had already given to another pane; `w:p9` named nothing and was
+/// named by nothing.
+///
+/// The fact rather than the disagreement behind it: which disagreement it
+/// was is in `conflicts`, in full, and a consumer re-deriving this from
+/// there could come to disagree with the screen about a pane the screen has
+/// already spoken for.
+#[test]
+fn an_unattributed_pane_says_whether_a_claim_on_it_was_refused() {
+    let emitted = emit(&panes(), &orbital(), Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["unattributed"]
+            .as_array()
+            .expect("unattributed is an array")
+            .iter()
+            .map(|pane| (pane["pane"]["id"].clone(), pane["claim_refused"].clone()))
+            .collect::<Vec<_>>(),
+        vec![(json!("w:p2"), json!(true)), (json!("w:p9"), json!(false))]
     );
 }
 
@@ -420,6 +445,22 @@ fn a_contested_pane_is_reported_with_its_own_account_of_itself() {
             })),
         "{}",
         emitted["conflicts"]
+    );
+    assert!(
+        emitted["unattributed"]
+            .as_array()
+            .expect("unattributed is an array")
+            .contains(&json!({
+                "pane": {"session": "default", "id": "w:p1"},
+                "project": "orbital",
+                "cwd": "/srv/work/orbital",
+                "pane_status": "working",
+                "display_agent": null,
+                "title": "the dish",
+                "claim_refused": true,
+            })),
+        "the contested pane says its claim was refused, not that it had none: {}",
+        emitted["unattributed"]
     );
 }
 
@@ -774,7 +815,7 @@ fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
         emitted["unattributed"],
         json!([{"pane": {"session": "default", "id": "w:p5"}, "project": "harbour", "cwd": "/srv/work/harbour",
                 "pane_status": "working", "display_agent": null,
-                "title": "the channel"}]),
+                "title": "the channel", "claim_refused": false}]),
         "the pane in the failed project is still reported"
     );
 }
