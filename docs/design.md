@@ -87,7 +87,7 @@ coin one — and say so.**
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
 | **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
 | **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
-| **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in unless the project names an `environment_command` that produces another. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
+| **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in where neither the project's config nor its directory says how to enter it. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 | **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
 | **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
@@ -329,7 +329,8 @@ project whose tracker has moved is read in full: four `bd` invocations
 whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
 ephemeral=true --all` — all of them after the environment its tracker is
 read in is settled, which is a process of its own only where the project
-named direnv or a credential command. Counted off `collect::bd`
+named a credential command, or is entered by one its config named or its
+directory implied. Counted off `collect::bd`
 once discovery read the listing rather than three subsets of it (`bdi-9jj.8`);
 before that it was six, plus one `show` per closed parent the climb stepped
 onto. A project whose
@@ -1005,8 +1006,9 @@ reproduce, and the rungs compose rather than excluding one another:
 
 | `[[projects]]` says | the tracker is read in |
 |---|---|
-| nothing | the ambient environment, with the credential the launching shell holds |
-| `credential_command = "…"` | the ambient environment, with the command's stdout as the credential |
+| nothing, in a directory with an `.envrc`, on a machine with direnv | what `direnv exec .` produces, detected rather than asked for |
+| nothing, otherwise | the ambient environment, with the credential the launching shell holds |
+| `credential_command = "…"` | the environment above, with the command's stdout as the credential |
 | `environment_command = "…"` | what that command produces, `bdi` appending its own `env -0` to read it back |
 | both commands | what the environment command produces, with the credential command run inside it and its stdout replacing the password |
 
@@ -1028,18 +1030,39 @@ space is written as a list — `["nix", "develop", ".#dev shell", "-c"]`. The
 alternative was a quoting rule every reader learns for a space almost none of
 them has, and a config that names one argv while `bdi` runs another.
 
-**Ambient is the default**, because it is the run a new user makes first: a
-machine with bd and nothing else reads the tracker its shell can already
-reach, and direnv is a dependency `bdi` does not otherwise have. `-C` naming
-the tracker outright is what makes that safe, and the rest of this section
-says why. direnv was the default before `-C`, when entering the directory was
-the only safe way to reach the right tracker; it is now one of several ways a
-setup with one credential per project supplies them, and that is a setup
-rather than the tool, so the mechanism is named by the command that runs it
-rather than by a word `bdi` holds a list of. Inferring it from an `.envrc` and
-a direnv on PATH was declined: explicit costs one line, and the config then
-says which mechanism reads a project where an inference would have to be
-re-derived to be reported.
+**A directory that says how it is entered is entered**, and the config says
+nothing. Where a project's directory holds an `.envrc` and the machine holds a
+direnv, the tracker is read with what `direnv exec .` produces. That is the
+rung that costs a reader nothing, and it is what makes the common case
+configure nothing at all.
+
+Both halves are checked and they answer different questions. The `.envrc` is
+the project saying how it is entered; the direnv is the machine saying it can.
+This is not the assumption that direnv is there — a machine without one reads
+every project ambient, which is also what a person's own shell gives them in
+that directory, so nothing has been given up. It is also what keeps a
+detection that could not have worked from failing a project: `bdi` acts on the
+inference only where the inference is known to be available, and a detection
+that fires and then cannot produce an environment is a project that could not
+be read rather than a quiet return to ambient. The `.envrc` is asked first,
+because it is the selective question — a machine with direnv has it for every
+project alike.
+
+direnv is the one mechanism detected, because an `.envrc` is a file `bdi` can
+see and the others are not. nix and mise are entered by a command a person
+types, and a `flake.nix` says a directory *has* a shell rather than that
+entering it is how this project's tracker is reached. Those stay named in
+config, which is the rung above, and a config that names one wins over what
+the directory implies.
+
+**Ambient is what a machine with bd and nothing else gets**, and nothing is
+run to find that out. `-C` naming the tracker outright is what makes it safe,
+and the rest of this section says why. direnv was the *unconditional* default
+before `-C`, when entering the directory was the only safe way to reach the
+right tracker, and a machine without direnv then read no tracker at all; it is
+now one of several ways a setup with one credential per project supplies them,
+and that is a setup rather than the tool, so a mechanism `bdi` cannot see is
+named by the command that runs it rather than by a word `bdi` holds a list of.
 
 **Neither a credential nor a tracker path is carried by a working directory.**
 An earlier draft said `bd` finds a project's credential by being run in that
@@ -1058,16 +1081,26 @@ authenticates to it are one identity: a child is told both or neither.
 
 **A shell that has entered a project's directory is correctly configured for
 its tracker.** direnv is what makes that true — it loads the flake, the bd
-version, `BEADS_DIR`, and whatever holds the password. So a project that asks
-for direnv is read by reproducing entering the directory rather than by
+version, `BEADS_DIR`, and whatever holds the password. So a project entered
+with direnv is read by reproducing entering the directory rather than by
 reconstructing what entering it would have produced, and the entry says
-nothing about what the secret is called or where it lives:
+nothing about what the secret is called or where it lives — nor, where the
+directory holds an `.envrc`, about direnv:
 
 ```toml
 [[projects]]
 name = "summit-works"
 path = "/tmp/bdi-ground/summit-works"
-environment_command = "direnv exec ."
+```
+
+A project entered another way names the command, and that is the whole of the
+difference between the two rungs:
+
+```toml
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+environment_command = "nix develop -c"
 ```
 
 - **The tracker is named outright, with bd's own `-C`.** Every call `bdi` makes
@@ -1102,10 +1135,19 @@ environment_command = "direnv exec ."
   `nix-direnv: Evaluating current devShell failed. Falling back to previous
   environment!`
 
-  The first row is why the mechanism costs nothing where there is nothing to
-  do: a directory with no `.envrc` is a pass-through, not a failure, and it
-  unloads whatever direnv environment the caller was carrying — which is what
-  a person's `cd` into that directory does.
+  The unallowed row is the one detection meets, because detection fires on
+  exactly the directories that have an `.envrc` — so the project a reader has
+  configured nothing for is the project that reports the failure, and *this
+  project has an `.envrc` I could not use* is the sentence it wants. Every
+  fresh clone and every new worktree starts unallowed.
+
+  The first row is why a *configured* `direnv exec .` costs nothing where
+  there is nothing to do: a directory with no `.envrc` is a pass-through, not
+  a failure, and it unloads whatever direnv environment the caller was
+  carrying — which is what a person's `cd` into that directory does. Detection
+  does not rest on it, and reaches the same answer for less: it looks for the
+  `.envrc` and runs nothing where there is none, so the pass-through is a
+  property `bdi` no longer needs rather than one it relies on.
 - **Every command line `bdi` spells is a read, and that is a property of the
   subcommands `collect/` composes and of nothing beside them.** It is not a
   no-writes rule. bd writes on its own account on the way to answering, so no
@@ -1123,7 +1165,9 @@ environment_command = "direnv exec ."
   figures, not any `bdi` commit): **136 to 177 milliseconds** over thirteen
   consecutive runs, each reporting `nix-direnv: Using cached dev shell`, and
   1557ms on the first load after the `.envrc` was allowed. A project with no
-  `.envrc` costs 3 to 5ms, because there is nothing to load.
+  `.envrc` costs 3 to 5ms where a config names direnv anyway, because there is
+  nothing to load; detection does not spend even that, because it looks for
+  the `.envrc` first and finds none.
 
   An earlier reading of **1.3 to 2.4 seconds** stood here, and this repository
   was the reason rather than direnv: its `.envrc` nested a second `use flake`,
@@ -1142,6 +1186,13 @@ environment_command = "direnv exec ."
   silently does nothing is indistinguishable from one that worked. Where
   direnv has already fallen back for itself, on the flake case above, that is
   what `-C` is behind.
+
+  A machine with no direnv is not that case and is not a fallback either. It
+  is a directory `bdi` never tried to enter, because the check that decides
+  whether to try is what the absent direnv answered — so nothing was attempted
+  and nothing silently did nothing. The rule the two share is that `bdi` acts
+  on an inference only where the inference is known to be available, and
+  reports every attempt that was made and failed.
 - **`credential_command` is the rung below the environment command**, for a
   setup whose only exotic need is the password. The config stores a command,
   never a secret; its stdout is the password, captured rather than passed in an
@@ -1191,7 +1242,9 @@ to be a direnv-managed checkout. The first is answered by capturing once; on
 the second, a directory with no `.envrc` runs anyway. Rejecting it as the
 *default* was right for a third reason neither guess named: a machine without
 direnv got `exec` on its first run and drew nothing, when README had said bd
-was all it needed.
+was all it needed. That reason is what detection answers rather than
+overrules — the machine is asked whether it has a direnv before one is run, so
+the case that drew nothing now reads the tracker ambient.
 
 A single read-only user across every tracker would retire `credential_command`
 entirely, and the shape it would take has been measured — see *Open, for
@@ -1264,8 +1317,10 @@ oversight.** The gate is a plain file, so `bdi` could read
 tracker that bd would migrate, without opening anything. That guard was
 weighed on 2026-09-04 and declined, on a narrow ground: a tracker may be read
 by any version of *its own project's* bd. Which bd reads a project's tracker is
-what that project's `environment_command` selects, and a project naming none is
-read with whatever the shell `bdi` was launched from resolves.
+what entering that project's directory yields — by the command its config
+names, or by the `direnv exec .` its own `.envrc` implies — and a project
+neither names one for nor implies one is read with whatever the shell `bdi`
+was launched from resolves.
 So the table is a known hazard rather than an unnoticed one, and reopening it
 means changing that decision rather than measuring it again.
 

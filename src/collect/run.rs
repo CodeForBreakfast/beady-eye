@@ -175,6 +175,29 @@ fn installed(program: &str, cwd: Option<&Path>, env: &Env) -> UnderThatName {
         })
 }
 
+/// Whether the machine holds a program of that name, asked before anything is
+/// run, from where the child that would run it is going to look.
+///
+/// The two callers of the search ask it for opposite reasons and want
+/// opposite answers to its third one. `RunFailure` asks after a spawn already
+/// failed, so it wants the weakest claim that stays true — a directory that
+/// refused the search leaves the machine unestablished and the failure says
+/// so. This asks *before*, to decide whether to run anything at all, and a
+/// search that established nothing is no ground to act on: only something
+/// actually found is a yes.
+///
+/// `cwd` is the working directory that spawn would be given, and passing it
+/// is what keeps the two agreeing: POSIX makes an empty `PATH` entry the
+/// working directory, so a search made from somewhere else answers about a
+/// program the child would not have found, or misses one it would. A decision
+/// to run something has to be taken about the run that would actually happen.
+///
+/// The `PATH` is `bdi`'s own, because the question is asked to decide what a
+/// child would be and a project's environment is the thing not captured yet.
+pub fn found_on_path(program: &str, cwd: Option<&Path>) -> bool {
+    installed(program, cwd, &Env::new()) == UnderThatName::Something
+}
+
 /// What the filesystem holds there, which is a different question from
 /// whether it resolves, and a different one again from whether we were
 /// allowed to ask.

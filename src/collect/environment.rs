@@ -1,12 +1,13 @@
 //! The environment each project's tracker is read in.
 //!
-//! One capture per project: `bdi`'s own environment, or what the command the
-//! project's config names produces, with its credential command replacing the
-//! password in either. Every question asked with it is in `bd`.
+//! One capture per project: `bdi`'s own environment, or what entering the
+//! project's directory produces — by a command its config names, or by the
+//! one its directory implies — with its credential command replacing the
+//! password in any of them. Every question asked with it is in `bd`.
 
 use std::path::Path;
 
-use crate::collect::run::{Env, RunFailure, Runner};
+use crate::collect::run::{found_on_path, Env, RunFailure, Runner};
 use crate::config::{Command, Project};
 
 /// What `bdi` runs inside a project's environment command to read the
@@ -45,23 +46,28 @@ pub fn ambient_credential() -> Option<String> {
 
 /// The environment one project's tracker is read with.
 ///
-/// By default it is `bdi`'s own, and nothing is run to find it: a machine
-/// with bd and nothing else reads its tracker, and `-C` naming the tracker
-/// outright is what makes that safe, because a credential belonging to
-/// another tracker can only fail to authenticate against the right database,
-/// never open the wrong one.
+/// A shell that has entered the project's directory is already configured for
+/// its tracker — the mechanism loads the flake, the bd version, and whatever
+/// holds the password — so `bdi` reproduces entering the directory rather
+/// than reconstructing what entering it would have produced, and the project
+/// entry says nothing about what the secret is called or where it lives.
 ///
-/// A project naming an `environment_command` is read with what that command
-/// produces instead. A shell that has entered the project's directory is
-/// already configured for its tracker — the mechanism loads the flake, the bd
-/// version, and whatever holds the password — so `bdi` reproduces entering the
-/// directory rather than reconstructing what entering it would have produced,
-/// and the project entry says nothing about what the secret is called or where
-/// it lives.
+/// How the directory is entered comes from the config where a project names
+/// an `environment_command`, and from the directory itself where it does not
+/// and [`detected`] can see how. Both arrive here as a [`Command`] and are
+/// captured, parsed and failed identically; the config wins, because a reader
+/// who has said how a project is entered has said it.
 ///
-/// Which mechanism does that is the config's to name and not `bdi`'s to know.
+/// Which mechanism it is stays the config's to name and not `bdi`'s to know.
 /// direnv, nix and mise all run a command in an environment, so all three are
 /// reached by naming them and by no code here.
+///
+/// A project neither names a command for nor implies one is read with `bdi`'s
+/// own environment, and nothing is run to find that out: a machine with bd
+/// and nothing else reads its tracker. `-C` naming the tracker outright is
+/// what makes that safe, because a credential belonging to another tracker
+/// can only fail to authenticate against the right database, never open the
+/// wrong one.
 ///
 /// Captured once per project rather than by wrapping every call, because
 /// `direnv exec` reloads the directory each time it runs. Measured against a
@@ -89,8 +95,12 @@ pub fn tracker_env(
     let mut env = ambient.map_or_else(Env::new, |password| {
         Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
     });
-    if let Some(command) = &project.environment_command {
-        env.extend(entering(&project.path, runner, command)?);
+    if let Some(command) = project
+        .environment_command
+        .clone()
+        .or_else(|| detected(&project.path))
+    {
+        env.extend(entering(&project.path, runner, &command)?);
     }
     if let Some(command) = &project.credential_command {
         let password = runner.run("sh", &["-c", command], Some(&project.path), &lending(&env))?;
@@ -101,6 +111,56 @@ pub fn tracker_env(
     }
     Ok(env)
 }
+
+/// The wrapper a project's own directory asks for without its config saying
+/// so: `direnv exec .`, where the directory holds an `.envrc` and the machine
+/// holds a direnv.
+///
+/// Both halves are needed and they answer different questions. The `.envrc`
+/// is the project saying how it is entered; the direnv is the machine saying
+/// it can. A machine without one reads every project ambient, which is also
+/// what a person's own shell gives them in that directory, so nothing has
+/// been given up — and it is what keeps a detection that could not have
+/// worked from failing a project the way a config naming a wrapper does.
+/// That difference is the whole of what makes this safe to do unasked:
+/// `bdi` acts on a guess only where the guess is known to be available.
+///
+/// The `.envrc` is asked first, and not only because it is the cheaper
+/// question. It is the selective one: a machine with direnv has it for every
+/// project alike, so the `PATH` search would run for each of them and settle
+/// nothing about any.
+///
+/// direnv is the one mechanism detected, because an `.envrc` is a file and
+/// the others are not. nix and mise are entered by a command a person types,
+/// and a `flake.nix` says a directory *has* a shell rather than that entering
+/// it is how this project's tracker is reached — the config's rung above is
+/// where a reader says that.
+///
+/// What comes back is an ordinary [`Command`], so a detected environment is
+/// captured, parsed and failed exactly as a configured one is. A detection
+/// that fires and then cannot produce an environment is a project that could
+/// not be read, not a quiet return to ambient: the directory said how it is
+/// entered and the machine said it could, so something is wrong that a reader
+/// can fix — an `.envrc` wanting `direnv allow` is the usual one.
+fn detected(path: &Path) -> Option<Command> {
+    (path.join(ENTERED_DIRECTORY).exists() && found_on_path(DIRENV, Some(path)))
+        .then(|| Command::Line(format!("{DIRENV} exec {THE_DIRECTORY_ITSELF}")))
+}
+
+/// The file whose presence says a directory is one direnv would enter.
+///
+/// Nothing reads it. What is in an `.envrc` is direnv's to evaluate, and a
+/// `bdi` that read it would be reconstructing the environment rather than
+/// reproducing entering the directory.
+const ENTERED_DIRECTORY: &str = ".envrc";
+
+/// The program that enters it.
+const DIRENV: &str = "direnv";
+
+/// What direnv is asked to enter, written relative for the reason a config
+/// writes it that way: the command runs in the project's own directory, so
+/// this is the directory being asked about rather than one spelled twice.
+const THE_DIRECTORY_ITSELF: &str = ".";
 
 /// What a project's own credential command is run in: the environment its
 /// environment command produced, less the two variables nothing inherits.
@@ -184,8 +244,15 @@ mod tests {
     use crate::collect::run::{FailureKind, RealRunner};
     use std::path::PathBuf;
 
+    /// A project's directory, named so that nothing is ever there.
+    ///
+    /// It has to be absent rather than merely unused, because detection reads
+    /// the filesystem: a directory holding an `.envrc`, on a machine holding
+    /// a direnv, is entered without being asked, and one of the readings here
+    /// is that nothing was run at all. Under a real path these would answer
+    /// one way on a maintainer's machine and another in a build sandbox.
     fn project_dir() -> PathBuf {
-        PathBuf::from("/tmp/proj")
+        PathBuf::from("/nowhere/a-project")
     }
 
     /// A project entry as the config takes it by default: a path, and
@@ -220,7 +287,7 @@ mod tests {
 
     /// The call that reproduces entering a project's directory, spelled as
     /// the runner makes it: the configured wrapper with `bdi`'s own probe
-    /// appended, through `sh`.
+    /// appended.
     fn entering_the_directory() -> String {
         format!("{DIRENV} {PROBE}")
     }
@@ -243,7 +310,7 @@ mod tests {
         let runner = FakeRunner::default().with(
             &entering_the_directory(),
             &exported(&[
-                ("BEADS_DIR", "/tmp/proj/.beads"),
+                ("BEADS_DIR", "/nowhere/a-project/.beads"),
                 ("BEADS_DOLT_PASSWORD", "the-projects-own-password"),
             ]),
         );
@@ -257,7 +324,7 @@ mod tests {
         );
         assert_eq!(
             env.get("BEADS_DIR").map(String::as_str),
-            Some("/tmp/proj/.beads"),
+            Some("/nowhere/a-project/.beads"),
             "the tracker entering the directory names did not reach bd"
         );
     }
@@ -346,7 +413,7 @@ mod tests {
                 &exported(&[
                     ("PATH", "/nix/bin"),
                     ("BEADS_DOLT_PASSWORD", "the-projects-own-password"),
-                    ("BEADS_DIR", "/tmp/proj/.beads"),
+                    ("BEADS_DIR", "/nowhere/a-project/.beads"),
                 ]),
             )
             .with("sh -c op read the/password", "hunter2\n");
@@ -406,6 +473,12 @@ mod tests {
     /// to find out what entering its directory would have produced. A fake
     /// with no answer staged panics on any call, so a direnv reached for here
     /// fails this test in the runner before the assertion is read.
+    ///
+    /// Saying nothing is not the whole of the default any more — a directory
+    /// holding an `.envrc` is entered on a machine holding a direnv, without
+    /// the config saying so. What this row still says is that a directory
+    /// implying nothing runs nothing, which is why `project_dir` names one
+    /// that is never there.
     #[test]
     fn a_project_that_says_nothing_about_its_environment_is_read_without_running_anything() {
         let runner = FakeRunner::default();

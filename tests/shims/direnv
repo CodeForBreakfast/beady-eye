@@ -7,12 +7,23 @@
 #   BDI_SHIM_DIRENV_RAN   file this appends each call it was asked to, so a
 #                         reader can say direnv was never run — or, when it
 #                         was, with what.
+#   BDI_SHIM_DIRENV_ENV   file holding what `env -0` writes in the directory
+#                         this was asked to enter. Where it names one that is
+#                         there, the shim answers with it; where it does not,
+#                         the refusal below stands. That is what lets one
+#                         suite be both a machine that has direnv and a
+#                         machine that has not.
 #
 # Plain `sh`, and POSIX, for the reason the bd shim beside this one gives.
 set -u
 
 if [ -n "${BDI_SHIM_DIRENV_RAN:-}" ]; then
   printf '%s\n' "$*" >>"$BDI_SHIM_DIRENV_RAN"
+fi
+
+if [ -n "${BDI_SHIM_DIRENV_ENV:-}" ] && [ -f "${BDI_SHIM_DIRENV_ENV}" ]; then
+  cat "${BDI_SHIM_DIRENV_ENV}"
+  exit 0
 fi
 
 echo "direnv: not installed; the test suite runs as a machine without one" >&2

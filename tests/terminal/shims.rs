@@ -40,6 +40,7 @@ pub struct ShimmedTracker {
     hangs_while: PathBuf,
     holding: PathBuf,
     direnv_ran: PathBuf,
+    direnv_answers: PathBuf,
 }
 
 /// The statuses bd stores for work that is not finished, spelled as
@@ -56,6 +57,7 @@ impl ShimmedTracker {
             hangs_while: beside.join("bd-hangs"),
             holding: beside.join("bd-holding"),
             direnv_ran: beside.join("direnv-ran"),
+            direnv_answers: beside.join("direnv-answers"),
         }
     }
 
@@ -82,6 +84,10 @@ impl ShimmedTracker {
         environment.push((
             "BDI_SHIM_DIRENV_RAN".to_string(),
             self.direnv_ran.display().to_string(),
+        ));
+        environment.push((
+            "BDI_SHIM_DIRENV_ENV".to_string(),
+            self.direnv_answers.display().to_string(),
         ));
         environment
     }
@@ -145,10 +151,30 @@ impl ShimmedTracker {
         std::fs::write(self.answers.join(asked), text).expect("the answer is ours to write");
     }
 
-    /// Every call `direnv` was asked, spelled as it was asked. The `direnv`
-    /// on PATH beside `bd` is one nobody installed, so a call here is a
-    /// project `bdi` tried to enter on a machine that cannot, and an empty
-    /// list is the reading that says the project was read without it.
+    /// Answer as a direnv that has entered the directory would: these
+    /// variables, spelled as `env -0` spells them.
+    ///
+    /// A test that does not call this leaves the file absent, and the shim
+    /// then refuses as a machine with no direnv does — so the suite is that
+    /// machine everywhere except where a test says otherwise.
+    pub fn enters_with(&self, variables: &[(&str, &str)]) {
+        let exported: Vec<String> = variables
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        std::fs::write(&self.direnv_answers, exported.join("\0"))
+            .expect("the answer is ours to write");
+    }
+
+    /// Every call `direnv` was asked, spelled as it was asked, and an empty
+    /// list is the reading that says a project was read without entering its
+    /// directory.
+    ///
+    /// It is written by the shim itself rather than inferred from the screen,
+    /// which is what an absence assertion here needs: a project read in the
+    /// ambient environment and one read by entering a directory that produced
+    /// the same answer draw identically, so nothing on the screen separates
+    /// them.
     pub fn direnv_runs(&self) -> Vec<String> {
         std::fs::read_to_string(&self.direnv_ran)
             .unwrap_or_default()

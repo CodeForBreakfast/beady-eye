@@ -601,8 +601,12 @@ mod tests {
     use crate::config::{Command, Project};
     use std::path::PathBuf;
 
+    /// A project's directory, named so that nothing is ever there, for the
+    /// reason `collect::environment`'s own says: an environment is detected
+    /// from what the directory holds, so a path that exists would make these
+    /// answer differently on a machine with direnv.
     fn project_dir() -> PathBuf {
-        PathBuf::from("/tmp/proj")
+        PathBuf::from("/nowhere/a-project")
     }
 
     /// A bd call as the runner spells it: the tracker named outright, and

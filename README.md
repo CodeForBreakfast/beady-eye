@@ -184,7 +184,7 @@ path = "/home/you/atlas"
 [[projects]]
 name = "orbital"
 path = "/srv/work/orbital"
-environment_command = "direnv exec ."
+environment_command = "nix develop -c"
 
 [[projects]]
 name = "beacon"
@@ -222,9 +222,14 @@ background = "light"
 and the `path` its repository is at; the name is how `bdi` tells one tracker's
 beads from another's, so two projects cannot answer to one.
 
-Each project's tracker is read in the environment `bdi` itself was started in,
-so a tracker your shell can already reach needs nothing configured. That is the
-first of three rungs, and the more exotic the project the further up it goes.
+Each project's tracker is read in the environment entering its directory
+produces, and the first of three rungs is that `bdi` works out how to enter it.
+A directory holding an `.envrc`, on a machine holding a direnv, is entered with
+`direnv exec .` — so the common case configures nothing. A directory that
+implies nothing is read in the environment `bdi` itself was started in, which
+is what your own shell gives you there too.
+
+The more exotic the project, the further up the ladder it goes.
 
 **`credential_command`** is the second: a command whose stdout is the password,
 for a tracker whose only exotic need is the credential. Its output is captured
@@ -232,13 +237,18 @@ rather than passed on a command line, so the password is not visible to `ps`.
 
 **`environment_command`** is the third, and it is the whole environment rather
 than one variable in it. Name the wrapper you would type yourself, and `bdi`
-runs its own probe inside it:
+runs its own probe inside it. It is what a project entered some other way
+needs, and it overrides the `.envrc` detection above:
 
 | your project is entered with | write |
 |---|---|
-| direnv | `environment_command = "direnv exec ."` |
 | nix | `environment_command = "nix develop -c"` |
 | mise | `environment_command = "mise exec --"` |
+| direnv, from an `.envrc` elsewhere | `environment_command = "direnv exec ."` |
+
+Writing direnv out is only for a project whose `.envrc` is not in the directory
+you gave as its `path` — one in a parent, or a checkout entered from somewhere
+else. Where the `.envrc` is there, the first rung has already found it.
 
 The line is split on spaces and no quoting is honoured, so an argument that
 holds one is written as a list instead — each entry is one argument, whatever
@@ -252,8 +262,9 @@ The command runs in the project's own directory, which is why `.` is enough.
 Anything that runs a command in an environment works here, including a
 directory pinned to an older `bd` — that project's tracker is then read with
 the `bd` its own directory yields rather than the one your shell happens to
-hold. That is the point of the rung: `bdi` uses the `bd` you would get by
-standing in that directory yourself.
+hold. That is the point of the whole ladder: `bdi` uses the `bd` you would get
+by standing in that directory yourself, and the rungs differ only in how much
+you have to say for it to.
 
 It costs one capture per project per refresh — 136 to 177ms against a warm
 direnv — and the environment is captured once and reused for every `bd` call
