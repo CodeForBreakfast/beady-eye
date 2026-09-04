@@ -38,6 +38,10 @@ pub struct Row {
     /// glyph.
     pub progress: Option<Progress>,
     pub agent: Option<String>,
+    /// The same agent named by its pane alone, for a row too narrow to say
+    /// both this cell and the bead's own title. Present exactly when `agent`
+    /// is: they are two forms of one cell rather than two cells.
+    pub agent_briefly: Option<String>,
     pub anomalies: Option<String>,
     /// The work this line is shut over, where it is shut over any: the beads
     /// its fold hides, counted once each.
@@ -88,6 +92,7 @@ pub fn cells(
         badges: node.badges.iter().map(|b| b.text.clone()).collect(),
         progress,
         agent: node.agent.as_ref().map(agent_marker),
+        agent_briefly: node.agent.as_ref().map(agent_briefly),
         anomalies: anomaly_marker(&node.anomalies),
         shut_over,
         notes,
@@ -144,7 +149,20 @@ pub fn abbreviate<'a>(id: &'a str, root: &str) -> &'a str {
 /// this is and not about the work, and beside the caption would read as doubt
 /// about what the agent is doing.
 pub fn agent_marker(agent: &AgentRef) -> String {
-    let doing = agent.title.as_deref().unwrap_or(&agent.pane.id);
+    named(agent, agent.title.as_deref().unwrap_or(&agent.pane.id))
+}
+
+/// The same cell with the agent named by its pane rather than by its caption.
+///
+/// A caption is the pane's own words and can be any length; a pane id is
+/// `bdi`'s and is short. A row that cannot hold both this cell and the bead's
+/// own title says the shorter of the two forms, so the caption is what a
+/// narrow row spends rather than the title of the bead it is a row for.
+pub fn agent_briefly(agent: &AgentRef) -> String {
+    named(agent, &agent.pane.id)
+}
+
+fn named(agent: &AgentRef, doing: &str) -> String {
     let mut said = vec![
         format!("{AGENT} {doing}"),
         phrase::pane_state(&agent.pane_status),

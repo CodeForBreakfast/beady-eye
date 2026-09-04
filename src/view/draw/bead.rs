@@ -52,6 +52,17 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
         title.push(Span::raw(badge.clone()));
     }
 
+    let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref()));
+    if let Some(briefly) = &row.agent_briefly {
+        fitted = fitted.briefly(state(row, Some(briefly)));
+    }
+    fitted.toned(tone(row))
+}
+
+/// The row's right-hand block, with the agent said in whichever of its two
+/// forms it was given. Everything else on the block is a cell this program
+/// wrote and knows the length of.
+fn state(row: &Row, agent: Option<&String>) -> Vec<Span<'static>> {
     let mut state: Vec<Span<'static>> = Vec::new();
     let mut say = |text: &str, style: Style| {
         beside(&mut state, Span::styled(text.to_string(), style));
@@ -59,7 +70,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     if let Some(progress) = row.progress {
         say(&done(progress.closed, progress.total), Style::new());
     }
-    if let Some(agent) = &row.agent {
+    if let Some(agent) = agent {
         say(agent, palette::AGENT);
     }
     if let Some(anomalies) = &row.anomalies {
@@ -88,8 +99,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     for note in &row.notes {
         say(note, palette::ATTENTION);
     }
-
-    Fitted::new(identity, title, state).toned(tone(row))
+    state
 }
 
 #[cfg(test)]
@@ -357,30 +367,82 @@ mod tests {
         staffed
     }
 
-    /// A caption is the first unbounded string to reach this cell — a pane id
-    /// was short and fixed — so the cut it takes is the one every other cell
-    /// takes, and the row is still exactly as wide as it was given.
+    /// A caption is the one unbounded string to reach this row, and the row
+    /// is still exactly as wide as it was given whatever the pane called
+    /// itself. It goes whole rather than in part: a caption cut mid-phrase
+    /// says less than the pane id it makes way for, which at least names the
+    /// seat a reader can go and look at.
     #[test]
-    fn a_caption_too_long_for_the_row_is_cut_like_every_other_cell() {
+    fn a_caption_too_long_for_the_row_costs_the_row_none_of_its_width() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
         let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 50, 1).rows();
 
         assert_eq!(drawn[0].chars().count(), 50, "{drawn:?}");
-        assert!(drawn[0].ends_with('…'), "{drawn:?}");
         assert!(!drawn[0].contains("keypress"), "{drawn:?}");
+        assert!(!drawn[0].contains("teach"), "{drawn:?}");
     }
 
-    /// The cell is fitted before the title is, so a caption long enough takes
-    /// the room the title would have had. The bead is still named by its id,
-    /// which is fitted before either of them and cannot be crowded out.
+    /// A caption is the pane's own words and can be any length; the pane's id
+    /// is `bdi`'s and is short. So the caption is the cell that gives way: a
+    /// row too narrow for both names its seat by the pane and spends the
+    /// columns on the bead it is a row for.
+    ///
+    /// This is the row the reader is hunting for. A caption that crowds out
+    /// its title makes the one row that matters the one row you cannot read.
     #[test]
-    fn a_caption_long_enough_takes_the_room_the_title_would_have_had() {
+    fn a_caption_gives_its_columns_back_to_the_beads_own_title() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
         let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 80, 1).rows();
 
-        assert!(!drawn[0].contains("wallpaper"), "{drawn:?}");
+        assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
+        assert!(drawn[0].contains("wCM:p9 · working"), "{drawn:?}");
+        assert!(!drawn[0].contains("elided run"), "{drawn:?}");
+    }
+
+    /// And it gives way only where it costs the title something. A row wide
+    /// enough for both says what the pane says it is doing, which is the
+    /// whole reason the caption is read off herdr at all.
+    #[test]
+    fn a_caption_the_title_does_not_need_the_room_for_is_said_in_full() {
+        let staffed = captioned("teach the elided run to fold back open");
+
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 120, 1).rows();
+
+        assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
+        assert!(
+            drawn[0].contains("teach the elided run to fold back open"),
+            "{drawn:?}"
+        );
+    }
+
+    /// A caption shorter than the pane it names costs the title nothing. The
+    /// two forms are a long one and a short one only by convention — a terse
+    /// pane makes the caption the shorter of them — so the room kept back is
+    /// whichever is smaller rather than whichever is named `briefly`.
+    ///
+    /// 57 columns is the width where the two answers differ: room for the
+    /// caption form and the whole title, and not for the pane form and the
+    /// whole title.
+    #[test]
+    fn a_caption_shorter_than_the_pane_it_names_keeps_back_none_of_its_room() {
+        let staffed = captioned("dish");
+
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 57, 1).rows();
+
+        assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
+        assert!(drawn[0].contains("◍ dish · working"), "{drawn:?}");
+    }
+
+    /// The bead is still named by its id, which is fitted before either of
+    /// them and cannot be crowded out by anything.
+    #[test]
+    fn nothing_on_the_row_can_crowd_out_the_beads_own_id() {
+        let staffed = captioned("teach the elided run to fold back open on a keypress");
+
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 30, 1).rows();
+
         assert!(drawn[0].contains(".20"), "{drawn:?}");
     }
 

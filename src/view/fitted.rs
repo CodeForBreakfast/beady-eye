@@ -35,6 +35,7 @@ pub struct Fitted {
     identity: Vec<Span<'static>>,
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
+    briefly: Option<Vec<Span<'static>>>,
     whole: Style,
     title_or_nothing: bool,
     state_or_nothing: bool,
@@ -50,10 +51,26 @@ impl Fitted {
             identity,
             title,
             state,
+            briefly: None,
             whole: Style::new(),
             title_or_nothing: false,
             state_or_nothing: false,
         }
+    }
+
+    /// A shorter form of the state, for a state holding something whose
+    /// length is not this program's to choose.
+    ///
+    /// It changes which block gives way. Without one the state is fitted
+    /// first and the title takes what is left, because a state is normally a
+    /// handful of short cells this program wrote. With one, the row keeps
+    /// room for the short form, gives the title the rest, and says the long
+    /// form only where it costs the title nothing — so a caption that could
+    /// be any length cannot eat the row it is drawn on.
+    #[must_use]
+    pub(crate) fn briefly(mut self, state: Vec<Span<'static>>) -> Self {
+        self.briefly = Some(state);
+        self
     }
 
     /// Give the title up whole rather than cut it.
@@ -107,10 +124,37 @@ impl Widget for Fitted {
         let spans = if identity >= width {
             cut_to(self.identity, width)
         } else {
-            let mut room = width - identity;
-            let state = fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
-            room -= columns(&state) + if state.is_empty() { 0 } else { GAP };
-            let title = fit(self.title, room.saturating_sub(GAP), self.title_or_nothing);
+            let room = width - identity;
+            let (title, state) = match self.briefly {
+                None => {
+                    let state = fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
+                    let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
+                    (
+                        fit(self.title, left.saturating_sub(GAP), self.title_or_nothing),
+                        state,
+                    )
+                }
+                Some(briefly) => {
+                    // Whichever form is smaller, rather than the one named
+                    // `briefly`: a pane terse enough makes the long form the
+                    // short one, and room kept for a form the row will not
+                    // use is room taken off the title for nothing.
+                    let kept = columns(&briefly).min(columns(&self.state)) + GAP;
+                    let title = fit(
+                        self.title,
+                        room.saturating_sub(GAP + kept),
+                        self.title_or_nothing,
+                    );
+                    let left = room - columns(&title) - if title.is_empty() { 0 } else { GAP };
+                    let limit = left.saturating_sub(GAP);
+                    let state = if columns(&self.state) <= limit {
+                        self.state
+                    } else {
+                        fit(briefly, limit, self.state_or_nothing)
+                    };
+                    (title, state)
+                }
+            };
 
             let mut spans = self.identity;
             if !title.is_empty() {
