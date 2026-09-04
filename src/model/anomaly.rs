@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::config::Anomalies;
 use crate::model::join::{AgentRef, Conflict};
+use crate::model::snapshot::ProviderState;
 use crate::model::types::{Bead, Status};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,10 +31,15 @@ pub enum Anomaly {
 /// A node carries all of them, not the first: an old claim whose agent has
 /// died is both an orphan claim and a stale one, and the age is the part that
 /// says whether to care. `now` is a parameter so the age rule is testable.
+///
+/// `agents` is how the run went for panes, because only one of these rules
+/// reads bd alone. The rest need a pane, and where nothing answered for
+/// panes there is no pane fact to read either way.
 pub fn detect(
     bead: &Bead,
     agent: Option<&AgentRef>,
     refused: Option<&Conflict>,
+    agents: ProviderState,
     cfg: &Anomalies,
     now: DateTime<Utc>,
 ) -> Vec<Anomaly> {
@@ -48,7 +54,7 @@ pub fn detect(
 
     let mut fired = Vec::new();
 
-    if agent.is_none() {
+    if agents.answered() && agent.is_none() {
         fired.push(Anomaly::OrphanClaim {
             refused: refused.cloned(),
         });
@@ -118,6 +124,7 @@ mod tests {
             &bead("closed", YESTERDAY),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -130,6 +137,7 @@ mod tests {
             &bead("closed", YESTERDAY),
             Some(&pane(PaneStatus::Done)),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -146,6 +154,7 @@ mod tests {
             &bead("closed", YESTERDAY),
             None,
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -158,6 +167,7 @@ mod tests {
             &bead("closed", SIXTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -170,12 +180,15 @@ mod tests {
 
     // ---- claims: orphan-claim and stale-claim ---------------------------
 
+    /// The other side of the gate: a provider that answered and awarded the
+    /// bead no pane has said something, and the rule reads it.
     #[test]
     fn a_fresh_claim_with_no_pane_is_an_orphan_claim() {
         let got = detect(
             &bead("in_progress", YESTERDAY),
             None,
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -188,6 +201,7 @@ mod tests {
             &bead("in_progress", SIXTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -200,6 +214,7 @@ mod tests {
             &bead("in_progress", SIXTY_DAYS_AGO),
             None,
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -216,6 +231,7 @@ mod tests {
             &bead("in_progress", YESTERDAY),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -228,6 +244,7 @@ mod tests {
             &bead("in_progress", TWENTY_NINE_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -237,6 +254,7 @@ mod tests {
             &bead("in_progress", THIRTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -252,6 +270,7 @@ mod tests {
             &bead("in_progress", SIXTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &wide,
             now(),
         );
@@ -264,6 +283,7 @@ mod tests {
             &bead("in_progress", SIXTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &narrow,
             now(),
         );
@@ -275,7 +295,14 @@ mod tests {
         let mut b = bead("in_progress", SIXTY_DAYS_AGO);
         b.updated_at = None;
 
-        let got = detect(&b, Some(&live()), None, &Anomalies::default(), now());
+        let got = detect(
+            &b,
+            Some(&live()),
+            None,
+            ProviderState::Answering,
+            &Anomalies::default(),
+            now(),
+        );
         assert_eq!(got, Vec::new());
     }
 
@@ -287,6 +314,7 @@ mod tests {
             &bead("blocked", SIXTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -299,6 +327,7 @@ mod tests {
             &bead("blocked", SIXTY_DAYS_AGO),
             None,
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -311,6 +340,7 @@ mod tests {
             &bead("open", SIXTY_DAYS_AGO),
             None,
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );
@@ -323,6 +353,7 @@ mod tests {
             &bead("deferred", SIXTY_DAYS_AGO),
             Some(&live()),
             None,
+            ProviderState::Answering,
             &Anomalies::default(),
             now(),
         );

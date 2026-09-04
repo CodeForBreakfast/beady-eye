@@ -282,6 +282,7 @@ impl Collection {
                         joined,
                         &work.readiness,
                         &work.relations,
+                        agents.state,
                         cfg,
                         now,
                     ),
@@ -601,6 +602,52 @@ mod tests {
         let snap = run(&one_project(), &no_panes(), &orbital(), Filter::All, now());
 
         assert_eq!(snap.agents.state, ProviderState::Answering);
+    }
+
+    /// Every bead a run reported as a claim that has lost its agent.
+    fn orphaned(snap: &Snapshot) -> Vec<&str> {
+        snap.trees
+            .iter()
+            .flat_map(|tree| tree.beads.iter())
+            .filter(|node| {
+                node.anomalies
+                    .iter()
+                    .any(|fired| matches!(fired, Anomaly::OrphanClaim { .. }))
+            })
+            .map(|node| node.id.as_str())
+            .collect()
+    }
+
+    /// Reading a claim's missing pane as an agent that died is only sound
+    /// where something answered for panes, and the collection is what carries
+    /// that from the provider it read to the rules. Both of orbital's claims
+    /// are orphaned where a provider answered and holds no pane, and neither
+    /// is where nothing answered — a run that cannot tell reports the
+    /// provider rather than the beads.
+    #[test]
+    fn a_claim_is_only_orphaned_against_a_provider_that_answered() {
+        let answered = run(&one_project(), &no_panes(), &orbital(), Filter::All, now());
+        assert_eq!(orphaned(&answered), ["orb-7", "orb-7.1"]);
+
+        for silent in [
+            Provider::unlistable(RunFailure::not_installed(
+                THE_FAKE,
+                "No such file or directory",
+            )),
+            Provider::unlistable(RunFailure::unstartable(
+                THE_FAKE,
+                "Permission denied (os error 13)",
+            )),
+        ] {
+            let snap = run(&one_project(), &silent, &orbital(), Filter::All, now());
+
+            assert_eq!(
+                orphaned(&snap),
+                Vec::<&str>::new(),
+                "{:?} knows no more about panes than the other",
+                snap.agents.state
+            );
+        }
     }
 
     #[test]

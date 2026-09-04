@@ -70,7 +70,7 @@ pub(super) fn partition(
     agents: ProviderState,
     filter: Filter,
 ) -> (Vec<Arc<Tree>>, Vec<HiddenTree>) {
-    let filter = if agents == ProviderState::Answering {
+    let filter = if agents.answered() {
         filter
     } else {
         Filter::All
@@ -157,6 +157,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         );
@@ -185,6 +186,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         )
@@ -208,6 +210,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         )

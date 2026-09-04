@@ -117,6 +117,19 @@ pub enum ProviderState {
     Absent,
 }
 
+impl ProviderState {
+    /// Whether this run holds pane facts at all.
+    ///
+    /// A rule that reads a pane's *absence* can only be evaluated where
+    /// something answered for panes; where nothing did, the absence is the
+    /// reader's ignorance rather than anything about the bead. Both states
+    /// that are not `Answering` are told to the reader in the tail band and
+    /// the foot, so a rule falling silent here hides nothing.
+    pub fn answered(self) -> bool {
+        self == ProviderState::Answering
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Filter {
@@ -696,6 +709,7 @@ render = "⏸ waiting"
             &joined,
             &readiness(),
             &relations,
+            ProviderState::Answering,
             &cfg(),
             now(),
         )
@@ -854,6 +868,7 @@ render = "⏸ waiting"
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         )

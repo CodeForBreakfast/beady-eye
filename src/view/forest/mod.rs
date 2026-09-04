@@ -1226,6 +1226,7 @@ credential_command = "secret harbour"
             &joined,
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         )
@@ -1735,6 +1736,7 @@ credential_command = "secret harbour"
                     &joined,
                     &readiness,
                     &BTreeMap::new(),
+                    ProviderState::Answering,
                     &cfg,
                     now(),
                 )
@@ -1958,6 +1960,7 @@ credential_command = "secret harbour"
                 &joined,
                 &Readiness::default(),
                 &BTreeMap::new(),
+                ProviderState::Answering,
                 &cfg,
                 now(),
             )

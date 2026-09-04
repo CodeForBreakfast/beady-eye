@@ -16,8 +16,8 @@ use crate::model::types::Pane;
 
 use super::filter::{in_flight_first, partition};
 use super::{
-    AgentProvider, Collected, Counts, Filter, LoosePane, Node, Readiness, Snapshot, TrackerState,
-    Tree, UnconfiguredPane,
+    AgentProvider, Collected, Counts, Filter, LoosePane, Node, ProviderState, Readiness, Snapshot,
+    TrackerState, Tree, UnconfiguredPane,
 };
 
 /// Draw one project's assembled rows as a tree, with the agents already
@@ -25,13 +25,23 @@ use super::{
 ///
 /// `relations` is read for the whole answer rather than for this tree: what
 /// a bead blocks is found on the beads that wait on it, and those can sit in
-/// another tree.
+/// another tree. `agents` is how the run went for panes, which the anomaly
+/// rules need: a pane the join did not award and a pane nothing was asked
+/// about are different facts, and `joined` alone reads the same for both.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct thing one tree is drawn from. Two \
+              that start travelling together — always passed as a pair, or \
+              each derived from the other — are a concept, and naming it \
+              drops the count below the threshold again."
+)]
 pub fn build_tree(
     project: &str,
     assembled: &Assembled,
     joined: &Joined,
     readiness: &Readiness,
     relations: &BTreeMap<String, Relations>,
+    agents: ProviderState,
     cfg: &Config,
     now: DateTime<Utc>,
 ) -> Tree {
@@ -61,7 +71,14 @@ pub fn build_tree(
                 started_at: bead.started_at,
                 closed_at: bead.closed_at,
                 badges: badges::badges_for(bead, &cfg.badges),
-                anomalies: anomaly::detect(bead, agent.as_ref(), refused, &cfg.anomalies, now),
+                anomalies: anomaly::detect(
+                    bead,
+                    agent.as_ref(),
+                    refused,
+                    agents,
+                    &cfg.anomalies,
+                    now,
+                ),
                 agent,
                 description: bead.description.clone().unwrap_or_default(),
                 notes: bead.notes.clone().unwrap_or_default(),
@@ -252,6 +269,81 @@ mod tests {
         );
     }
 
+    /// The same forest read on a machine with no agent provider: nothing
+    /// answers for panes, so the join is handed none.
+    fn read_without_a_provider(state: ProviderState) -> Snapshot {
+        let assembled = assembled(BEADS);
+        let joined = joined(&assembled.beads, &[]);
+        let relations = relations(&assembled.beads);
+        let tree = build_tree(
+            "orbital",
+            &assembled,
+            &joined,
+            &readiness(),
+            &relations,
+            state,
+            &cfg(),
+            now(),
+        );
+        build(
+            Collected {
+                trees: vec![tree],
+                ..Collected::default()
+            },
+            &[],
+            &joined,
+            &cfg(),
+            a_provider(state),
+            Filter::All,
+            now(),
+        )
+    }
+
+    /// Every anomaly a run reported, against the bead it fired on.
+    fn anomalies(snap: &Snapshot) -> Vec<(&str, &[Anomaly])> {
+        snap.trees
+            .iter()
+            .flat_map(|t| t.beads.iter())
+            .map(|n| (n.id.as_str(), n.anomalies.as_slice()))
+            .filter(|(_, fired)| !fired.is_empty())
+            .collect()
+    }
+
+    /// `orphan-claim` is the one rule that keys on a pane being *absent*, so
+    /// it is the one a run with nothing to answer for panes turns into a lie:
+    /// every claim in flight reads as an agent that died. `orb-7` is such a
+    /// claim, and `bd` alone holds no fact against it — it is fresh, so even
+    /// its age says nothing. The four rules that key on a pane being *there*
+    /// fall silent on their own, and asserting the whole set is what keeps
+    /// that true of the rule somebody adds next.
+    #[test]
+    fn with_no_provider_only_the_rule_bd_answers_alone_still_fires() {
+        let snap = read_without_a_provider(ProviderState::Absent);
+
+        assert_eq!(
+            anomalies(&snap),
+            vec![("orb-7.3", [Anomaly::StaleClaim { days: 60 }].as_slice())],
+            "how long a claim has sat there is bd's own answer"
+        );
+        assert_eq!(snap.trees[0].counts.anomalies, 1);
+        assert!(snap.unattributed.is_empty());
+        assert!(snap.unconfigured.is_empty());
+    }
+
+    /// A provider that is installed and would not answer holds no more about
+    /// panes than one that was never installed. Which of the two the reader
+    /// is looking at is said in the foot and the tail band; the rules stay
+    /// out of it.
+    #[test]
+    fn a_provider_that_would_not_answer_silences_the_rule_the_same_way() {
+        let snap = read_without_a_provider(ProviderState::NotAnswering);
+
+        assert_eq!(
+            anomalies(&snap),
+            vec![("orb-7.3", [Anomaly::StaleClaim { days: 60 }].as_slice())]
+        );
+    }
+
     #[test]
     fn ready_comes_from_bd_rather_than_the_bead_s_status() {
         let t = tree();
@@ -315,6 +407,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &relations,
+            ProviderState::Answering,
             &cfg(),
             now(),
         );
@@ -411,6 +504,7 @@ mod tests {
             &j,
             &readiness(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         );
@@ -437,6 +531,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         );
@@ -466,6 +561,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         );
@@ -503,6 +599,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         );
@@ -532,6 +629,7 @@ mod tests {
             &Joined::default(),
             &Readiness::default(),
             &BTreeMap::new(),
+            ProviderState::Answering,
             &cfg(),
             now(),
         );

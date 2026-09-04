@@ -146,6 +146,7 @@ fn read(orbital_rows: &str, agents: &str) -> Reading {
                     &joined,
                     &Readiness::default(),
                     &BTreeMap::new(),
+                    ProviderState::Answering,
                     &cfg,
                     now(),
                 )
