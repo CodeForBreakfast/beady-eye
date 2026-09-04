@@ -17,7 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::{fmt, fs, thread};
 
 /// The variable naming the directory this login session owns. A socket under
@@ -74,21 +74,39 @@ impl fmt::Display for Answer {
 /// reporting for never comes due, and one whose producer stops comes due an
 /// interval after its last read. See `tui::armed`.
 ///
-/// Settled when the run starts and never written again, so the connection
-/// threads share it without a lock. A writer that panics mid-message can
-/// therefore take nothing down with it: there is no state for it to leave
-/// half-written, which is what a channel anything may write to has to be able
-/// to say.
+/// **The answer is a claim about the config in force, so this is written
+/// whenever that config is.** A set settled at startup goes stale in both
+/// directions and only one of them can be seen: a project the reader adds is
+/// refused, and a project they remove is still accepted and still asks for a
+/// read of a project no longer collected. The writer is the only party who
+/// could put a wrong name right, and both halves of that mislead them.
+///
+/// **The critical section is a pointer copy and cannot panic.** The set is
+/// replaced whole rather than edited in place, and a connection thread takes
+/// the current one out from under the lock before it looks anything up — so
+/// the lookup holds nothing, a reload never waits on a connection, and a
+/// writer that panics mid-message can take nothing down with it. There is
+/// still no state for it to leave half-written, which is what a channel
+/// anything may write to has to be able to say.
 #[derive(Clone, Default)]
 pub struct Reported {
-    projects: Arc<BTreeSet<String>>,
+    projects: Arc<Mutex<Arc<BTreeSet<String>>>>,
 }
 
 impl Reported {
     pub fn watching<I: IntoIterator<Item = String>>(projects: I) -> Self {
         Self {
-            projects: Arc::new(projects.into_iter().collect()),
+            projects: Arc::new(Mutex::new(Arc::new(projects.into_iter().collect()))),
         }
+    }
+
+    /// The projects `bdi` reads from here on, as a config the reader has
+    /// written names them.
+    ///
+    /// Called with the same list that decides which projects poll, so what
+    /// the channel accepts and what the loop asks for cannot come apart.
+    pub fn now_watching<I: IntoIterator<Item = String>>(&self, projects: I) {
+        *self.held() = Arc::new(projects.into_iter().collect());
     }
 
     /// Take one message, and say what `bdi` made of it.
@@ -98,11 +116,29 @@ impl Reported {
             return Answer::Malformed;
         }
 
-        if self.projects.contains(named) {
+        // Taken out from under the lock, so the lookup below holds nothing:
+        // a set arriving between here and there is one this message was
+        // sent too early to be answered against, and waiting for it would
+        // mean holding the lock across a search on a writer's behalf.
+        let watching = Arc::clone(&self.held());
+        if watching.contains(named) {
             Answer::Watched(named.to_string())
         } else {
             Answer::Unwatched(named.to_string())
         }
+    }
+
+    /// The set, for the moment it takes to copy a pointer or replace one.
+    ///
+    /// A poisoned lock is recovered from rather than propagated. Nothing
+    /// inside the critical section can panic, so nothing here can poison it
+    /// — and if something one day did, the value under it is a whole set
+    /// swapped for another and not a half-written one, so there is nothing
+    /// for a refusal to protect. Answering `unknown` to every writer for the
+    /// rest of the run because an unrelated thread died is the disappearance
+    /// this project is built not to do.
+    fn held(&self) -> MutexGuard<'_, Arc<BTreeSet<String>>> {
+        self.projects.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -439,6 +475,43 @@ mod tests {
         assert_eq!(
             reported.take("ghost"),
             Answer::Unwatched("ghost".to_string())
+        );
+    }
+
+    /// Both directions of the one write, because they fail apart: a set that
+    /// only gained the new names would answer for every project the reader
+    /// ever configured, which is the accepting half of the same staleness.
+    #[test]
+    fn the_projects_written_are_the_ones_taken_from_then_on() {
+        let reported = watching(["atlas"]);
+
+        reported.now_watching(["ferry".to_string()]);
+
+        assert_eq!(reported.take("ferry"), Answer::Watched("ferry".to_string()));
+        assert_eq!(
+            reported.take("atlas"),
+            Answer::Unwatched("atlas".to_string())
+        );
+    }
+
+    /// The point of the write, and what a set copied into each connection
+    /// would not do: a thread holding its own `Reported` since before the
+    /// write answers against what was written, not against what it was
+    /// handed. Every connection thread is exactly this clone.
+    #[test]
+    fn a_clone_taken_before_the_write_takes_against_what_was_written() {
+        let reported = watching(["atlas"]);
+        let held_by_a_connection = reported.clone();
+
+        reported.now_watching(["ferry".to_string()]);
+
+        assert_eq!(
+            held_by_a_connection.take("ferry"),
+            Answer::Watched("ferry".to_string())
+        );
+        assert_eq!(
+            held_by_a_connection.take("atlas"),
+            Answer::Unwatched("atlas".to_string())
         );
     }
 

@@ -39,7 +39,7 @@ pub(crate) use reload::{Reload, CHECKED_EVERY};
 /// is what every read after it reads.
 pub type Collecting = Box<dyn FnMut(Asked) -> Option<Snapshot> + Send>;
 
-use drive::{drive, Outstanding, View};
+use drive::{drive, Outstanding, Reading, View};
 use screen::{Drawing, Screen};
 use wire::wire;
 
@@ -109,10 +109,15 @@ pub fn run(
         filter,
         Utc::now(),
     );
+    // Kept as well as handed over, because the names the channel accepts are
+    // the config's and the config is read again as the run goes on. The loop
+    // is where a config the reader has written is taken, so the loop is what
+    // writes them.
+    let reported = Reported::watching(projects);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
     let (events, ask, panes, _socket, from_the_wiring) =
-        wire(Reported::watching(projects), agents, collect, asked_to_stop);
+        wire(reported.clone(), agents, collect, asked_to_stop);
     // Only this process's own, and only the wiring's: what settling the config
     // could not do is on the snapshot, where both mouths read it.
     let at_startup: Vec<Notice> = from_the_wiring.into_iter().collect();
@@ -136,7 +141,7 @@ pub fn run(
         &events,
         &ask,
         outstanding,
-        armed,
+        Reading::of(armed, reported),
         &arms,
         reload,
     )

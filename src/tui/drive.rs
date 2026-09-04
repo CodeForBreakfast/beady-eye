@@ -15,6 +15,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::{Asked, Awaited, Wanted};
+use crate::collect::changes::Reported;
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Typing};
@@ -290,7 +291,7 @@ pub(super) fn drive(
     events: &Receiver<Event>,
     ask: &Sender<Asked>,
     mut outstanding: Outstanding,
-    mut armed: Vec<Armed>,
+    mut reading: Reading,
     arms: &Arming,
     mut reload: Option<Reload>,
 ) -> anyhow::Result<()> {
@@ -303,7 +304,7 @@ pub(super) fn drive(
         sleeps_for(
             view,
             &outstanding,
-            &armed,
+            &reading.polling,
             reload.as_ref(),
             drawn_at,
             Utc::now(),
@@ -320,9 +321,13 @@ pub(super) fn drive(
             // each of them does about the screen it says below.
             Waited::Aged => ran_out(view, drawn_at, Utc::now()),
             Waited::Event(event) => {
-                let Some(changed) =
-                    answered(view, &mut outstanding, &mut armed, &mut showing, event)
-                else {
+                let Some(changed) = answered(
+                    view,
+                    &mut outstanding,
+                    &mut reading.polling,
+                    &mut showing,
+                    event,
+                ) else {
                     return Ok(());
                 };
                 changed
@@ -335,7 +340,7 @@ pub(super) fn drive(
         // each arm, so that the loop cannot answer an event and forget to
         // look.
         let now = Utc::now();
-        let told = asks_for_what_is_due(view, &mut outstanding, &mut armed, now);
+        let told = asks_for_what_is_due(view, &mut outstanding, &mut reading.polling, now);
         outstanding.sends(ask, now);
         view.reread(now);
         // A run reading a config file looks at it here; a run that found no
@@ -344,7 +349,7 @@ pub(super) fn drive(
         let noticed = looked_at(
             view,
             reload.as_mut(),
-            &mut armed,
+            &mut reading,
             arms,
             ask,
             &mut outstanding,
@@ -375,15 +380,20 @@ pub(super) fn drive(
 /// reader's answer can be drawn on the next frame, and the collection it
 /// causes goes where every other collection already goes.
 ///
-/// Four things follow a config the reader has written: the projects that
-/// poll become the ones it names, how long a read may go unanswered becomes
-/// what it says, the collector is told to work to it, and every project is
-/// read under it. The last two are in that order because a collection carries
-/// no config with it — the collector reads under whatever it is working to
-/// when the read arrives — so a read that overtook the config would draw a
-/// whole screen read under the file the reader has just replaced. Nothing
-/// here arranges that: the channel is in order, and the read waits out its
-/// window behind the config already on it.
+/// Five things follow a config the reader has written: the projects that
+/// poll become the ones it names, the names the inbound channel accepts
+/// become those same ones, how long a read may go unanswered becomes what it
+/// says, the collector is told to work to it, and every project is read under
+/// it. The last two are in that order because a collection carries no config
+/// with it — the collector reads under whatever it is working to when the
+/// read arrives — so a read that overtook the config would draw a whole
+/// screen read under the file the reader has just replaced. Nothing here
+/// arranges that: the channel is in order, and the read waits out its window
+/// behind the config already on it.
+///
+/// The first two are one write, which is what `Reading` is for. Both are
+/// settled before the read is asked for, which is what lets a frame carrying
+/// the new project stand as proof the new names are in force.
 ///
 /// The patience is the loop's own share of what the view's is: every setting
 /// `[tui]` names is a gap somebody waits out, and the two the *screen* waits
@@ -392,7 +402,7 @@ pub(super) fn drive(
 fn looked_at(
     view: &mut dyn View,
     reload: Option<&mut Reload>,
-    armed: &mut Vec<Armed>,
+    reading: &mut Reading,
     arms: &Arming,
     ask: &Sender<Asked>,
     outstanding: &mut Outstanding,
@@ -406,7 +416,7 @@ fn looked_at(
     let Reloaded::Fresh(written) = reloaded else {
         return noticed;
     };
-    *armed = still_armed(std::mem::take(armed), arms(written));
+    reading.now_reading(arms(written));
     outstanding.waits_out(written.tui.unanswered_after());
     if ask
         .send(Asked::Reloaded(Box::new(written.clone())))
@@ -439,6 +449,39 @@ fn still_armed(standing: Vec<Armed>, named: Vec<Armed>) -> Vec<Armed> {
             None => named,
         })
         .collect()
+}
+
+/// The projects this run reads, in the two places a config decides them:
+/// which of them ask for themselves, and which of them the inbound channel
+/// accepts a report for.
+///
+/// One value rather than two, because one list settles both. A project the
+/// loop polls and a project the channel answers `ok` to are the same project
+/// by construction here; held apart they would be two lists agreeing by
+/// argument, and the argument is what a reader of a bug report is left
+/// checking. Only [`Self::now_reading`] writes either, and it writes both.
+pub(super) struct Reading {
+    polling: Vec<Armed>,
+    accepted: Reported,
+}
+
+impl Reading {
+    pub(super) fn of(polling: Vec<Armed>, accepted: Reported) -> Self {
+        Self { polling, accepted }
+    }
+
+    /// The projects a config the reader has written names, as what the run
+    /// reads from here on.
+    ///
+    /// `still_due` is where what the file settles and what its last read
+    /// settled are told apart, so the channel is told what came out of that
+    /// rather than what went into it.
+    fn now_reading(&mut self, named: Vec<Armed>) {
+        let polling = still_armed(std::mem::take(&mut self.polling), named);
+        self.accepted
+            .now_watching(polling.iter().map(|project| project.project().to_string()));
+        self.polling = polling;
+    }
 }
 
 /// Ask for whatever the projects that arm themselves are now due to ask for.
@@ -1245,6 +1288,19 @@ mod tests {
         None
     }
 
+    /// The names the inbound channel accepts, where the test is not about
+    /// them. A test that is about them keeps a clone of its own and reads
+    /// that back after the reload — every clone is the one set, which is
+    /// what the connection threads rest on.
+    fn nothing_reported() -> Reported {
+        Reported::default()
+    }
+
+    /// What the run reads, where only the polling half is the test's subject.
+    fn a_run_reading(polling: Vec<Armed>) -> Reading {
+        Reading::of(polling, nothing_reported())
+    }
+
     /// The reads that reached the collector, in order.
     ///
     /// Every test but the ones about a config the reader has written is
@@ -1347,7 +1403,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1379,7 +1435,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1423,7 +1479,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1473,7 +1529,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1515,7 +1571,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1547,7 +1603,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1579,7 +1635,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1609,7 +1665,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1641,7 +1697,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1684,7 +1740,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1720,7 +1776,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1754,7 +1810,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1801,7 +1857,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1828,7 +1884,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1867,7 +1923,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1895,7 +1951,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1928,7 +1984,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1960,7 +2016,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -1989,7 +2045,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2020,7 +2076,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2056,7 +2112,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2096,7 +2152,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2199,7 +2255,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2221,7 +2277,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2250,7 +2306,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2296,7 +2352,7 @@ mod tests {
             &events,
             &ask,
             gathering(A_LONG_WINDOW),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2327,7 +2383,7 @@ mod tests {
             &events,
             &ask,
             gathering(A_LONG_WINDOW),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2506,7 +2562,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             Some(a_config_file_saying("gained", ATLAS_AND_FERRY, ATLAS_ALONE)),
         )
@@ -2520,6 +2576,43 @@ mod tests {
             ],
             "the collector was handed the config the reader wrote, and then \
              asked to read every project under it"
+        );
+    }
+
+    /// The other thing a config the reader has written settles, and the one
+    /// with no read behind it to make it visible.
+    ///
+    /// Asserted here rather than left to the pty test alone because this is
+    /// where the write happens and this is where a `still_armed` that stopped
+    /// feeding it would go unnoticed: the loop would poll the right projects
+    /// and the channel would answer for the wrong ones, and every screen in
+    /// the suite would be identical either way.
+    #[test]
+    fn the_inbound_channel_is_told_the_config_the_reader_has_written() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
+        let reported = Reported::watching(["atlas".to_string()]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            Reading::of(nothing_armed(), reported.clone()),
+            &polling_every_interval(),
+            Some(a_config_file_saying("accepts", FERRY_ALONE, ATLAS_ALONE)),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            (reported.take("ferry"), reported.take("atlas")),
+            (
+                crate::collect::changes::Answer::Watched("ferry".to_string()),
+                crate::collect::changes::Answer::Unwatched("atlas".to_string())
+            ),
+            "the channel accepts the project the reader added and refuses \
+             the one they took out, without the run being started again"
         );
     }
 
@@ -2566,7 +2659,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            armed,
+            a_run_reading(armed),
             &polling_every_interval(),
             Some(a_config_file_saying(named, written, in_force)),
         )
@@ -2650,7 +2743,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2685,7 +2778,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2745,7 +2838,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            vec![overdue],
+            a_run_reading(vec![overdue]),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2786,7 +2879,7 @@ mod tests {
             &events,
             &ask,
             started(),
-            vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            a_run_reading(vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))]),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2887,7 +2980,7 @@ mod tests {
             &events,
             &ask,
             started(),
-            vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
+            a_run_reading(vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))]),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2946,7 +3039,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3015,7 +3108,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3049,7 +3142,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3079,7 +3172,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3115,7 +3208,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3157,7 +3250,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3187,7 +3280,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3216,7 +3309,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3248,7 +3341,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3274,7 +3367,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3304,7 +3397,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3339,7 +3432,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3367,7 +3460,7 @@ mod tests {
             &events,
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3419,7 +3512,7 @@ mod tests {
                 &events,
                 &ask,
                 at_once(),
-                nothing_armed(),
+                a_run_reading(nothing_armed()),
                 &polling_every_interval(),
                 nothing_watched(),
             );
@@ -3449,7 +3542,7 @@ mod tests {
             &waiting(Vec::new()),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3476,7 +3569,7 @@ mod tests {
             &waiting(vec![Event::Signalled, Event::Resize]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3507,7 +3600,7 @@ mod tests {
             ]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3531,7 +3624,7 @@ mod tests {
             &waiting(vec![Event::Resize]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3554,7 +3647,7 @@ mod tests {
             &waiting(vec![Event::Key(key(KeyCode::Char('z')))]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3579,7 +3672,7 @@ mod tests {
             &waiting(vec![Event::Key(key(KeyCode::Char('z')))]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3606,7 +3699,7 @@ mod tests {
             ]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3645,7 +3738,7 @@ mod tests {
             &waiting(vec![Event::Resize, Event::Key(key(KeyCode::Char('z')))]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3676,7 +3769,7 @@ mod tests {
             &waiting(vec![Event::Clicked(9)]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3702,7 +3795,7 @@ mod tests {
             &waiting(vec![Event::Clicked(21)]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3728,7 +3821,7 @@ mod tests {
             ]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3761,7 +3854,7 @@ mod tests {
             ]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3796,7 +3889,7 @@ mod tests {
             ]),
             &ask,
             at_once(),
-            nothing_armed(),
+            a_run_reading(nothing_armed()),
             &polling_every_interval(),
             nothing_watched(),
         )
