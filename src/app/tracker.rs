@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 
 use crate::collect::run::{FailureKind, RunFailure};
-use crate::collect::tracker::{Tracker, Trackers};
+use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::{Config, Project};
 use crate::model::edges::{self, Relations};
 use crate::model::join;
@@ -150,7 +150,7 @@ pub(super) fn refresh_project(
     panes: &[Pane],
     standing: Option<&ReadAt>,
     now: DateTime<Utc>,
-) -> Result<Refresh, RunFailure> {
+) -> Result<Refresh, OpenFailure> {
     let tracker = trackers.of(project)?;
 
     let probed = tracker.fingerprint().and_then(Result::ok);
@@ -445,6 +445,18 @@ fn root_of<'a>(
 ///
 /// `Gone` and `Busy` are herdr's, and a tracker cannot answer with either.
 /// `TrackerFailure` stays as it is rather than learning a word for a pane.
+/// Why a project's tracker could not be opened, as the screen says it.
+///
+/// An environment `bdi` could not produce is the project's own failure and
+/// says so; every other way of failing to open one is a program that would
+/// not run, and reads like every other program that would not run.
+pub(super) fn open_failure(failure: &OpenFailure) -> TrackerFailure {
+    match failure {
+        OpenFailure::NoEnvironment => TrackerFailure::NoEnvironment,
+        OpenFailure::Refused(refusal) => tracker_failure(refusal.kind),
+    }
+}
+
 pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
     match kind {
         FailureKind::Auth => TrackerFailure::Auth,
@@ -1669,6 +1681,28 @@ orbital = ["bdi-404"]
 
             assert_eq!(snap.failed_projects[0].tracker, expected, "on {kind:?}");
         }
+    }
+
+    /// A project that asked to be read in a captured environment and did not
+    /// get one is reported as that, and not as anything about bd.
+    ///
+    /// Every other row above is a program that ran and would not answer. Here
+    /// nothing ran: `bdi` would have had to reach for the bd on its own
+    /// `PATH`, which is not the bd this project asked to be read with, and
+    /// opening a tracker with the wrong bd migrates its schema. So the
+    /// project keeps its place on the screen with the one fact its reader can
+    /// act on, and none of the seven sentences that would send them to bd.
+    #[test]
+    fn a_project_with_no_environment_is_its_own_failure_rather_than_bds() {
+        let trackers = orbital().without_the_environment_it_asked_for("orbital");
+
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
+
+        assert_eq!(
+            snap.failed_projects[0].tracker,
+            TrackerFailure::NoEnvironment
+        );
+        assert_eq!(snap.failed_projects[0].project, "orbital");
     }
 
     /// A root config names that the answer does not hold keeps its id, which

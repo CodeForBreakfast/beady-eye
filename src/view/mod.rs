@@ -402,15 +402,19 @@ mod tests {
 
     /// Every way a tracker can refuse to be read. See [`every_failure_kind`].
     pub(super) fn every_tracker_failure() -> impl Iterator<Item = TrackerFailure> {
-        std::iter::successors(Some(TrackerFailure::Auth), |failure| match failure {
-            TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
-            TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
-            TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
-            TrackerFailure::Unstartable => Some(TrackerFailure::InstalledUnstartable),
-            TrackerFailure::InstalledUnstartable => Some(TrackerFailure::Parse),
-            TrackerFailure::Parse => Some(TrackerFailure::UnknownFlag),
-            TrackerFailure::UnknownFlag => None,
-        })
+        std::iter::successors(
+            Some(TrackerFailure::NoEnvironment),
+            |failure| match failure {
+                TrackerFailure::NoEnvironment => Some(TrackerFailure::Auth),
+                TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
+                TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
+                TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
+                TrackerFailure::Unstartable => Some(TrackerFailure::InstalledUnstartable),
+                TrackerFailure::InstalledUnstartable => Some(TrackerFailure::Parse),
+                TrackerFailure::Parse => Some(TrackerFailure::UnknownFlag),
+                TrackerFailure::UnknownFlag => None,
+            },
+        )
     }
 
     /// Every fact said at the foot of the screen. See [`every_failure_kind`].

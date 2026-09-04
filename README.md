@@ -270,6 +270,17 @@ It costs one capture per project per refresh — 136 to 177ms against a warm
 direnv — and the environment is captured once and reused for every `bd` call
 that project needs, not re-entered per call.
 
+A project that asked for an environment and did not get one is not read at
+all, and says so: *asked for an environment bdi could not produce · nothing
+was read, because the bd here is not the one this project asked for*. On a
+fresh clone that is an `.envrc` still wanting `direnv allow`, and allowing it
+is the fix.
+
+`bdi` does not fall back to its own environment there, and the reason is the
+one under [What it needs](#what-it-needs): reading a project's tracker with a
+bd that is not that project's is what migrates the tracker's schema. A
+sentence on the screen can be read; a tracker cannot be put back.
+
 The two can be named together: the environment command says how to reach the
 environment, and the credential command runs inside it and replaces the
 password. So a credential helper that only your project's flake installs is

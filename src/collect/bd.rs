@@ -17,7 +17,7 @@ use serde::Deserializer;
 
 use crate::collect::environment;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
-use crate::collect::tracker::{Tracker, Trackers};
+use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
 use crate::model::types::{Bead, Dependency, Edge, Status};
 
@@ -181,7 +181,7 @@ impl<'r> Cli<'r> {
 }
 
 impl Trackers for Cli<'_> {
-    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, RunFailure> {
+    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
         let env = environment::tracker_env(self.runner, project, self.ambient.as_deref())?;
         Ok(Box::new(Reader {
             runner: self.runner,
@@ -734,8 +734,7 @@ mod tests {
             .err()
             .expect("the project cannot be opened");
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
-        assert_eq!(failure.program, "direnv");
+        assert_eq!(failure, OpenFailure::NoEnvironment);
         assert!(
             runner
                 .calls()

@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use crate::collect::run::{found_on_path, Env, RunFailure, Runner};
+use crate::collect::tracker::OpenFailure;
 use crate::config::{Command, Project};
 
 /// What `bdi` runs inside a project's environment command to read the
@@ -87,11 +88,26 @@ pub fn ambient_credential() -> Option<String> {
 ///
 /// The ambient credential underneath all three is what lets a single-tracker
 /// setup configure nothing at all.
+///
+/// A project that asked to be entered and could not be gets no environment at
+/// all, and no bd is run for it. Falling back to `bdi`'s own would read that
+/// project's tracker with a bd it did not ask for, and reading is not free:
+/// bd rewrites `.beads/.local_version` and runs its schema auto-migration on
+/// finding itself newer than the bd that last opened a tracker, before the
+/// subcommand and whatever the subcommand is. What the reader gets instead is
+/// the project reported as having asked for an environment `bdi` could not
+/// produce, which is a sentence they can act on rather than a tracker they
+/// cannot put back.
+///
+/// The credential command does not run either, and the order is what says so:
+/// a project with no environment has nothing to be read, so running an
+/// arbitrary command a config named would be a side effect spent on a read
+/// that is not going to happen.
 pub fn tracker_env(
     runner: &dyn Runner,
     project: &Project,
     ambient: Option<&str>,
-) -> Result<Env, RunFailure> {
+) -> Result<Env, OpenFailure> {
     let mut env = ambient.map_or_else(Env::new, |password| {
         Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
     });
@@ -100,7 +116,9 @@ pub fn tracker_env(
         .clone()
         .or_else(|| detected(&project.path))
     {
-        env.extend(entering(&project.path, runner, &command)?);
+        let captured =
+            entering(&project.path, runner, &command).map_err(|_| OpenFailure::NoEnvironment)?;
+        env.extend(captured);
     }
     if let Some(command) = &project.credential_command {
         let password = runner.run("sh", &["-c", command], Some(&project.path), &lending(&env))?;
@@ -382,6 +400,11 @@ mod tests {
     /// failure, not a quiet fallback that reads as having worked. Where
     /// direnv does fall back for itself — a flake that will not evaluate — it
     /// exits 0 and this is not the path taken.
+    ///
+    /// It is its own failure rather than one of bd's, and that is the whole
+    /// of what the reader gets from it: no bd ran, so nothing about bd is
+    /// true of this project, and a sentence about bd would send them after a
+    /// program that was never asked anything.
     #[test]
     fn a_directory_that_cannot_be_entered_fails_the_project_rather_than_falling_back() {
         let runner = FakeRunner::default().failing(
@@ -391,8 +414,68 @@ mod tests {
 
         let failure = tracker_env(&runner, &entered_with_direnv(), Some("hunter2")).unwrap_err();
 
-        assert_eq!(failure.kind, FailureKind::Unstartable);
-        assert_eq!(failure.program, "direnv");
+        assert_eq!(failure, OpenFailure::NoEnvironment);
+    }
+
+    /// Whichever way the capture fails, and there are two that land on
+    /// different names: an absent direnv is `NotInstalled` and one that exists
+    /// and refuses is `Unavailable`. The project's failure is the same either
+    /// way, because what the reader does about it is the same either way.
+    #[test]
+    fn every_way_the_capture_can_fail_is_the_same_failure_to_the_project() {
+        for kind in every_failure_kind() {
+            let runner = FakeRunner::default().failing(
+                &entering_the_directory(),
+                RunFailure {
+                    kind,
+                    program: "direnv".to_string(),
+                    detail: "direnv did not produce an environment".to_string(),
+                },
+            );
+
+            let failure = tracker_env(&runner, &entered_with_direnv(), None).unwrap_err();
+
+            assert_eq!(failure, OpenFailure::NoEnvironment, "{kind:?}");
+        }
+    }
+
+    /// Every kind a run can fail with. The match is what makes it every one:
+    /// a kind added to `run.rs` and not to this chain does not compile.
+    fn every_failure_kind() -> impl Iterator<Item = FailureKind> {
+        std::iter::successors(Some(FailureKind::Auth), |kind| match kind {
+            FailureKind::Auth => Some(FailureKind::Unavailable),
+            FailureKind::Unavailable => Some(FailureKind::Gone),
+            FailureKind::Gone => Some(FailureKind::Busy),
+            FailureKind::Busy => Some(FailureKind::NotInstalled),
+            FailureKind::NotInstalled => Some(FailureKind::Unstartable),
+            FailureKind::Unstartable => Some(FailureKind::InstalledUnstartable),
+            FailureKind::InstalledUnstartable => Some(FailureKind::Parse),
+            FailureKind::Parse => Some(FailureKind::Unsupported),
+            FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
+            FailureKind::UnknownFlag => None,
+        })
+    }
+
+    /// A project with no environment has nothing to be read, so its
+    /// credential command is not run: an arbitrary command a config named is
+    /// a side effect, and spending one on a read that is not going to happen
+    /// buys nothing. The fake panics on a call nobody staged, so a credential
+    /// command reached here fails in the runner before the assertion.
+    #[test]
+    fn a_project_with_no_environment_does_not_run_its_credential_command() {
+        let runner = FakeRunner::default().failing(
+            &entering_the_directory(),
+            RunFailure::unstartable("direnv", "No such file or directory"),
+        );
+        let project = Project {
+            credential_command: Some("op read the/password".to_string()),
+            ..entered_with_direnv()
+        };
+
+        assert_eq!(
+            tracker_env(&runner, &project, None).unwrap_err(),
+            OpenFailure::NoEnvironment
+        );
     }
 
     /// Naming both settings composes in both directions: the credential
@@ -503,20 +586,22 @@ mod tests {
     /// wrapper, and exits 127 with stderr matching none of `run.rs`'s phrase
     /// lists — a machine whose only problem is a missing direnv would be told
     /// `sh` failed for a reason `bdi` could not place.
+    ///
+    /// Asked of `entering` rather than through `tracker_env`, because the
+    /// project's failure is one sentence about the project and names no
+    /// program, so the classification is made here and shown nowhere. It is
+    /// still what running the wrapper directly buys, and it is what a screen
+    /// naming the program would have to read.
     #[test]
     fn a_wrapper_that_is_not_installed_is_named_rather_than_the_shell() {
-        let project = Project {
-            environment_command: Some(Command::Line("no-such-wrapper-anywhere exec .".to_string())),
-            path: PathBuf::from("."),
-            ..ambient_project()
-        };
+        let wrapper = Command::Line("no-such-wrapper-anywhere exec .".to_string());
 
-        let failure = tracker_env(&RealRunner, &project, None).unwrap_err();
+        let failure = entering(Path::new("."), &RealRunner, &wrapper).unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::NotInstalled);
         assert_eq!(
             failure.program, "no-such-wrapper-anywhere",
-            "the reader was pointed at the wrong program to install"
+            "the wrapper's own absence went on record as the shell's"
         );
     }
 
@@ -618,8 +703,8 @@ mod tests {
         };
 
         assert_eq!(
-            tracker_env(&runner, &project, None).unwrap_err().kind,
-            FailureKind::NotInstalled
+            tracker_env(&runner, &project, None).unwrap_err(),
+            OpenFailure::Refused(RunFailure::not_installed("sh", "op: command not found"))
         );
     }
 }

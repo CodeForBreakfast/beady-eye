@@ -143,6 +143,16 @@ pub enum Filter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrackerFailure {
+    /// The project asked to be read in a captured environment — by the command
+    /// its config names, or by the `.envrc` in its own directory — and `bdi`
+    /// could not produce one, so it read nothing.
+    ///
+    /// The only one of these that is not about bd, and the only one nothing
+    /// was asked: no bd ran for this project at all. That is deliberate rather
+    /// than incidental — the bd on `bdi`'s own `PATH` is not the bd the
+    /// project asked to be read with, and opening a tracker with the wrong one
+    /// migrates its schema.
+    NoEnvironment,
     /// The tracker refused the credential it was given.
     Auth,
     /// The tracker did not answer.

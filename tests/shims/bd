@@ -17,6 +17,13 @@
 #   BDI_SHIM_BD_UNANSWERED   file this appends each call it had no answer for
 #                            to, so a reader can tell a capture that was not
 #                            served from one that was served wrongly.
+#   BDI_SHIM_BD_CALLED       file this appends every call to, answered or not,
+#                            so a reader can say bd was never asked about a
+#                            project at all. That is a different question from
+#                            the one above: a project bdi declined to open
+#                            refuses nothing and answers nothing, so an empty
+#                            unanswered file is what both a served capture and
+#                            a tracker nobody touched leave behind.
 #   BDI_SHIM_BD_HANGS_WHILE  path to the flag. Touch it and every bd call from
 #                            then on waits until it goes away; write a call's
 #                            opening words into it and only the calls starting
@@ -53,6 +60,12 @@ asked() {
   printf '%s' "$*"
 }
 asked=$(asked "$@")
+
+# Written down before anything below can hold, refuse or answer the call, so
+# the record is of what bd was asked rather than of how asking it went.
+if [ -n "${BDI_SHIM_BD_CALLED:-}" ]; then
+  printf '%s\n' "$asked" >>"$BDI_SHIM_BD_CALLED"
+fi
 
 # Held after the call has been read rather than before, so the flag can name
 # which call to hold: its first line is a prefix of the call, and an empty

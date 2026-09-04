@@ -33,6 +33,10 @@ macro_rules! bd_floor {
 
 pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
     match failure {
+        TrackerFailure::NoEnvironment => concat!(
+            "asked for an environment bdi could not produce · nothing was read, ",
+            "because the bd here is not the one this project asked for"
+        ),
         TrackerFailure::Auth => "the tracker refused the credential it was given",
         TrackerFailure::Unavailable => "the tracker did not answer",
         TrackerFailure::NotInstalled => "bd is not installed",
@@ -1488,6 +1492,39 @@ mod tests {
         says(said, "bd");
         says(said, "flag");
         says(said, &format!("bd {} or newer", bd_floor!()));
+    }
+
+    /// The one failure that is not about bd says so, because no bd ran. Every
+    /// other phrase here sends the reader to bd — to install it, repair it,
+    /// replace it, or go and find out which — and this one has to send them
+    /// to their own configuration instead.
+    #[test]
+    fn a_project_with_no_environment_is_not_reported_as_a_fault_in_bd() {
+        let said = tracker_failure(TrackerFailure::NoEnvironment);
+
+        says(said, "asked for an environment");
+        says(said, "nothing was read");
+        assert!(
+            !said.contains("bd is") && !said.contains("bd could"),
+            "a project no bd was asked anything about was reported as bd's \
+             failure: {said}"
+        );
+    }
+
+    /// And it names no program. A project asks two ways — a command in
+    /// config, an `.envrc` in its own directory — and only one of those has a
+    /// program the reader wrote down; naming direnv for the other would be
+    /// `bdi` reporting its own inference to somebody who never mentioned it.
+    #[test]
+    fn the_environment_failure_names_no_program() {
+        let said = tracker_failure(TrackerFailure::NoEnvironment);
+
+        for program in ["direnv", "nix", "mise", "sh "] {
+            assert!(
+                !said.contains(program),
+                "the failure named {program}: {said}"
+            );
+        }
     }
 
     /// A tracker that answered and holds no such bead did nothing wrong, and

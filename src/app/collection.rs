@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::collect::agents::Agents;
-use crate::collect::run::{FailureKind, RunFailure};
-use crate::collect::tracker::Trackers;
+use crate::collect::run::FailureKind;
+use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project};
 use crate::model::join::{self, Listed, ProjectRows};
@@ -25,7 +25,7 @@ use crate::model::snapshot::{
 };
 use crate::model::types::Pane;
 
-use super::tracker::{refresh_project, tracker_failure, ProjectWork, ReadAt, Refresh};
+use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh};
 
 /// What one project's tracker last said, and when it said it.
 ///
@@ -206,7 +206,7 @@ impl Collection {
                         project.name.clone(),
                         Read {
                             at: now,
-                            work: Err(tracker_failure(failure.kind)),
+                            work: Err(open_failure(&failure)),
                             taken_at: None,
                         },
                     );
@@ -233,7 +233,7 @@ impl Collection {
         wanted: &Wanted,
         panes: &[Pane],
         now: DateTime<Utc>,
-    ) -> Vec<(&'a Project, Result<Refresh, RunFailure>)> {
+    ) -> Vec<(&'a Project, Result<Refresh, OpenFailure>)> {
         std::thread::scope(|reads| {
             let reading: Vec<_> = cfg
                 .read()
@@ -862,7 +862,7 @@ mod tests {
     }
 
     impl Trackers for Meeting {
-        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, RunFailure> {
+        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
             Ok(Box::new(Held {
                 meeting: self,
                 project: project.name.clone(),

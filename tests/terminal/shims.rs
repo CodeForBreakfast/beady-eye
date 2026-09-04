@@ -36,6 +36,7 @@ pub fn shim(named: &str) -> PathBuf {
 /// needs a row gets the same one whatever the machine is running.
 pub struct ShimmedTracker {
     answers: PathBuf,
+    called: PathBuf,
     unanswered: PathBuf,
     hangs_while: PathBuf,
     holding: PathBuf,
@@ -53,6 +54,7 @@ impl ShimmedTracker {
     pub fn beside(beside: &Path) -> Self {
         Self {
             answers: beside.join("bd-answers"),
+            called: beside.join("bd-called"),
             unanswered: beside.join("bd-unanswered"),
             hangs_while: beside.join("bd-hangs"),
             holding: beside.join("bd-holding"),
@@ -68,6 +70,10 @@ impl ShimmedTracker {
         environment.push((
             "BDI_SHIM_BD_ANSWERS".to_string(),
             self.answers.display().to_string(),
+        ));
+        environment.push((
+            "BDI_SHIM_BD_CALLED".to_string(),
+            self.called.display().to_string(),
         ));
         environment.push((
             "BDI_SHIM_BD_UNANSWERED".to_string(),
@@ -181,6 +187,32 @@ impl ShimmedTracker {
             .lines()
             .map(str::to_string)
             .collect()
+    }
+
+    /// Every call `bd` was asked, answered or not, spelled as it was asked.
+    ///
+    /// What this reaches that [`unanswered`](Self::unanswered) cannot is a
+    /// project `bdi` declined to open: nothing was refused and nothing was
+    /// served, so the unanswered file is empty exactly as it is for a capture
+    /// that went perfectly. An absence assertion about a tracker nobody
+    /// touched has to name the calls, and these are them.
+    pub fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.called)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Whether anything was asked of this project's *tracker*, as against of
+    /// bd itself.
+    ///
+    /// `bd where` is the one call that names no tracker — discovery asks it
+    /// to find out whether a directory is one beads tracks — so it is made
+    /// for a project whose tracker is never opened as readily as for one that
+    /// is, and counting it would have every project read as touched.
+    pub fn read_the_tracker(&self) -> bool {
+        self.calls().iter().any(|call| !call.starts_with("where"))
     }
 
     /// Every call `bd` was asked that the shim had no answer for, spelled as

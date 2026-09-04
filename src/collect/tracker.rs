@@ -32,16 +32,49 @@ pub trait Tracker {
     fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure>;
 }
 
+/// Why a project's tracker could not be opened, before anything was asked of
+/// it.
+///
+/// Two ways rather than one, because a reader does something different about
+/// each and the screen has to be able to say which. They are also the two
+/// halves of what opening does: settle the environment, then produce the
+/// credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenFailure {
+    /// The project asked to be read in a captured environment — by the command
+    /// its config names, or by the `.envrc` in its own directory — and the
+    /// capture did not happen.
+    ///
+    /// Nothing is opened and no bd is run for that project, which is the whole
+    /// of why this is a failure rather than a fallback. The bd on `bdi`'s own
+    /// `PATH` is not the bd the project asked to be read with, and bd rewrites
+    /// `.beads/.local_version` and runs its schema auto-migration on finding
+    /// itself newer than the bd that last opened a tracker — before the
+    /// subcommand, whatever the subcommand is, and `--readonly` stops neither.
+    /// `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
+    /// measurement and the decision this rests on.
+    NoEnvironment,
+    /// A command opening the tracker had to run would not run: a project's own
+    /// `credential_command`.
+    Refused(RunFailure),
+}
+
+impl From<RunFailure> for OpenFailure {
+    fn from(failure: RunFailure) -> Self {
+        OpenFailure::Refused(failure)
+    }
+}
+
 /// How each configured project's tracker is reached.
 ///
 /// `Sync` because a collection reads its projects together, each on a thread
 /// of its own, through the one instance it was given.
 pub trait Trackers: Sync {
     /// The tracker `project` is read from, opened in the environment its
-    /// config asks for. Opening can fail — a directory that cannot be
-    /// entered, a credential command that does not run — and that failure is
+    /// config asks for. Opening can fail — an environment `bdi` could not
+    /// produce, a credential command that does not run — and that failure is
     /// the project's, before anything was asked of the tracker.
-    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, RunFailure>;
+    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure>;
 }
 
 impl<T: Tracker + ?Sized> Tracker for &T {
@@ -199,7 +232,7 @@ pub mod testing {
     #[derive(Default)]
     pub struct Fakes {
         by_project: BTreeMap<String, Fake>,
-        unopenable: BTreeMap<String, RunFailure>,
+        unopenable: BTreeMap<String, OpenFailure>,
     }
 
     impl Fakes {
@@ -208,17 +241,25 @@ pub mod testing {
             self
         }
 
-        /// `project`'s tracker cannot be opened at all — a directory that
-        /// cannot be entered, a credential command that does not run.
+        /// `project`'s tracker cannot be opened at all, because a command
+        /// opening it needed would not run: its credential command.
         pub fn unopenable(mut self, project: &str, kind: FailureKind) -> Self {
             self.unopenable.insert(
                 project.to_string(),
-                RunFailure {
+                OpenFailure::Refused(RunFailure {
                     kind,
-                    program: "direnv".to_string(),
+                    program: "sh".to_string(),
                     detail: "the project could not be opened".to_string(),
-                },
+                }),
             );
+            self
+        }
+
+        /// `project` asked to be read in a captured environment and `bdi`
+        /// could not produce one, so nothing was opened and no bd ran for it.
+        pub fn without_the_environment_it_asked_for(mut self, project: &str) -> Self {
+            self.unopenable
+                .insert(project.to_string(), OpenFailure::NoEnvironment);
             self
         }
 
@@ -231,7 +272,7 @@ pub mod testing {
     }
 
     impl Trackers for Fakes {
-        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, RunFailure> {
+        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
             if let Some(failure) = self.unopenable.get(&project.name) {
                 return Err(failure.clone());
             }

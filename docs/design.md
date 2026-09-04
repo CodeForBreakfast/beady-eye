@@ -1137,9 +1137,10 @@ environment_command = "nix develop -c"
 
   The unallowed row is the one detection meets, because detection fires on
   exactly the directories that have an `.envrc` — so the project a reader has
-  configured nothing for is the project that reports the failure, and *this
-  project has an `.envrc` I could not use* is the sentence it wants. Every
-  fresh clone and every new worktree starts unallowed.
+  configured nothing for is the project that reports the failure, and *asked
+  for an environment bdi could not produce* is the sentence it gets. Every
+  fresh clone and every new worktree starts unallowed, so this is a sentence
+  readers will meet often and one they can act on: `direnv allow`.
 
   The first row is why a *configured* `direnv exec .` costs nothing where
   there is nothing to do: a directory with no `.envrc` is a pass-through, not
@@ -1181,16 +1182,44 @@ environment_command = "nix develop -c"
   `.envrc` printing to stdout and only this repository's has been fixed not to.
   Capturing once confines that text to the one call whose parser tolerates it,
   rather than to every JSON answer bd gives.
-- **A directory that cannot be entered fails that project, visibly.** `bdi`
-  adds no fallback to the ambient environment of its own: a mechanism that
-  silently does nothing is indistinguishable from one that worked. Where
-  direnv has already fallen back for itself, on the flake case above, that is
-  what `-C` is behind.
+- **A directory that cannot be entered fails that project, visibly, and in the
+  project's own words.** `bdi` adds no fallback to the ambient environment of
+  its own, for two reasons that arrive from opposite directions.
 
-  A machine with no direnv is not that case and is not a fallback either. It
+  The first is that a mechanism that silently does nothing is
+  indistinguishable from one that worked. Where direnv has already fallen back
+  for itself, on the flake case above, that is what `-C` is behind.
+
+  The second is *Reading a tracker is not leaving it alone* below, and it is
+  the one that settles it. Falling back would read that project's tracker with
+  the bd on `bdi`'s own `PATH` — which is not the bd the project asked to be
+  read with — and bd rewrites `.beads/.local_version` and runs its schema
+  auto-migration on finding itself newer than the bd that last opened a
+  tracker. The decision not to gate on a bd version is taken there **on the
+  narrow ground that a tracker may be read by any version of its own project's
+  bd**, and a fallback is precisely the case that ground excludes: it reads a
+  project that named `nix develop -c`, or implied `direnv exec .`, with a bd
+  that is not its own. A tracker cannot be put back and the migration
+  announces itself nowhere; a sentence on the screen can be read and acted on.
+
+  So the project is reported as `no-environment` — *asked for an environment
+  bdi could not produce · nothing was read, because the bd here is not the one
+  this project asked for*. It is the one failure here that is not about bd,
+  because it is the one where no bd ran, and every other sentence would send
+  the reader to a program that was never asked anything. It names no program:
+  a project asks two ways, and only one of them has a program the reader wrote
+  down.
+
+  **Its credential command does not run either.** A project with no
+  environment has nothing to be read, so running an arbitrary command a config
+  named would be a side effect spent on a read that is not going to happen —
+  and the tools such a command needs are the ones its own directory supplies,
+  which is the thing that just could not be reached.
+
+  A machine with no direnv is not this case and is not a fallback either. It
   is a directory `bdi` never tried to enter, because the check that decides
   whether to try is what the absent direnv answered — so nothing was attempted
-  and nothing silently did nothing. The rule the two share is that `bdi` acts
+  and nothing silently did nothing. The rule the three share is that `bdi` acts
   on an inference only where the inference is known to be available, and
   reports every attempt that was made and failed.
 - **`credential_command` is the rung below the environment command**, for a
@@ -1323,6 +1352,23 @@ neither names one for nor implies one is read with whatever the shell `bdi`
 was launched from resolves.
 So the table is a known hazard rather than an unnoticed one, and reopening it
 means changing that decision rather than measuring it again.
+
+**That ground is also why a project `bdi` could not enter is refused rather
+than read ambient.** The ground holds only while every tracker is read by its
+own project's bd, and a fallback to `bdi`'s own environment is the one thing
+that breaks it: a project that named a wrapper and could not get it would then
+be read by a bd it did not ask for, unattended, on every refresh, on exactly
+the projects a reader configured to avoid that. So refusing such a project is
+what keeps the ground under the decision above, and it is why
+`TrackerFailure::NoEnvironment` is a failure rather than a notice over rows
+read anyway.
+
+Reopening the fallback and reopening the gate are therefore one question. The
+gate is the shape that gives up least — `bdi` could fall back wherever reading
+`.beads/.local_version` said no migration would fire — and what is unmeasured
+there is whether that file exists for a server-backed tracker at all. The
+measurements above were taken against a throwaway embedded store, and this one
+cannot be taken against a live tracker.
 
 So `bdi` claims what it can hold: every command line it spells is a read. It
 does not claim a tracker comes back unchanged, because that is bd's to decide
@@ -1552,7 +1598,7 @@ name to the socket after any command that wrote something.
     }
   ],
   "hidden_trees": [ { "project": "summit-works", "root": "nix-bgej6", "title": "…", "reason": "no-live-agent" } ],
-  "failed_projects": [ { "project": "homelab", "tracker": "auth" } ],
+  "failed_projects": [ { "project": "homelab", "tracker": "auth" }, { "project": "orbital", "tracker": "no-environment" } ],
   "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": [],
@@ -1588,6 +1634,12 @@ since every other root came out of the tracker's own answers. `dangling` and
 `cycles` name ids that are still in `nodes`. `hidden_trees` is never
 empty-by-omission — a filtered tree is reported, not dropped. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
+One of those reasons is not about bd: `no-environment` is a project that asked
+to be read in a captured environment — by the command its config names, or by
+the `.envrc` in its own directory — and did not get one, so **no bd was run for
+it**. Every other reason is a program that ran and would not answer, and a
+consumer that treats them alike will report a bd fault on a machine whose bd is
+fine.
 `projects_named_without_git` names each project here whose name git did not
 give, because git could not be run — the directory its tracker sits at the top
 of was used instead. It is `[]` on every machine that has git, and `[]` where a
