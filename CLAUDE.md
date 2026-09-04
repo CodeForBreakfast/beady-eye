@@ -217,14 +217,10 @@ conventional commit:
   end. It has to finish the sentence *"If applied, this commit will …"* — so
   `draw a bead id in its status colour`, never `draws`, `drew` or `drawing`. An
   acronym or a name keeps its capitals: `GitHub`, `CI`, `NO_COLOR`.
-- **72 characters**, which is the whole subject: the repository sets
-  `squash_merge_commit_title: PR_TITLE`, so GitHub takes the title verbatim and
-  appends nothing. The ` (#123)` on commits before 2026-09-04 is what the web
-  UI's default title looked like before that setting was set.
+- **72 characters**.
 
-The lower case is conventional commits' rule, and it is the one place this
-parts company with the widely-copied git guidelines, which say to capitalise.
-Follow this one.
+The lower case is conventional commits' rule, and it is the one place this parts
+company with the widely-copied git guidelines, which say to capitalise.
 
 Say what changed in the subject and why in the body, in a sentence or two. A
 subject carrying the reason wraps in `git log --oneline`, in blame and in

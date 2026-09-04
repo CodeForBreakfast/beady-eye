@@ -1514,15 +1514,6 @@
           types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
           scopes='collect|app|model|view|tui|ci|flake|docs|tests|deps'
 
-          # The title is the whole subject, with nothing added to it. That is
-          # what `squash_merge_commit_title: PR_TITLE` means on this
-          # repository: GitHub takes the title verbatim, and the ` (#123)` on
-          # commits older than 2026-09-04 is what the web UI's *default*
-          # title looked like before the setting was set. So the length
-          # measured here is the length a reader of `git log` meets. Should
-          # that setting ever move to COMMIT_OR_PR_TITLE, a reference is
-          # appended again and this has to subtract it.
-
           refuse() {
             echo "This is not a subject main can carry:"
             echo
@@ -1545,15 +1536,14 @@
           esac
 
           # Read in either case, so a wrong case is told apart from a wrong
-          # shape. The specification's rule 15 says the units of a conventional
-          # commit are not case-sensitive, and that binds a parser: `Fix:` is
-          # the type `fix` and has to be recognised as one. What to do with it
-          # afterwards is a linter's, and commitlint's config-conventional
-          # settles that with `type-case: lower-case`.
-          # The character after the space has to be one, rather than more
-          # space: a description that opens with a blank leaves `firstWord`
-          # empty, and an empty first word matches neither the case pattern
-          # nor the list of moods, so both of those checks pass by describing
+          # shape: rule 15 of the specification binds a parser to recognise
+          # `Fix:` as the type `fix`, and config-conventional's
+          # `type-case: lower-case` is what refuses it afterwards.
+          #
+          # The character after the colon and space has to be one. A
+          # description opening with a blank leaves `firstWord` empty, and an
+          # empty first word matches neither the case pattern nor the list of
+          # moods, so both of the checks below would pass by describing
           # nothing.
           if ! printf '%s' "$title" | grep -Eq '^[A-Za-z]+(\([A-Za-z0-9_-]+\))?!?: [^[:space:]]'; then
             refuse "Write it as \`type(scope): description\`, or \`type: description\`.
@@ -1597,13 +1587,10 @@ coin one; adding a scope means adding it here too."
 An acronym or a name keeps its capitals."
           fi
 
-          # Imperative mood, which is the one rule here no pattern can read.
-          # A suffix cannot stand in for it — `-ing` would refuse `bring` and
-          # `-ed` would refuse `read`, `seed` and `feed`, all of them ordinary
-          # imperatives in this repository. So the forms that actually turn up
-          # are named instead: what is listed is refused and what is not is
-          # left to the writer, which makes this a floor rather than a judge of
-          # mood.
+          # Imperative mood, which no pattern can read. A suffix cannot stand
+          # in for it — `-ing` would refuse `bring`, and `-ed` would refuse
+          # `read`, `seed` and `feed`. So the forms that turn up are named
+          # instead, which makes this a floor rather than a judge of mood.
           notImperative='adds|added|adding
             addresses|addressed|addressing
             adjusts|adjusted|adjusting
@@ -1638,8 +1625,6 @@ An acronym or a name keeps its capitals."
             updates|updated|updating
             uses|used|using
             writes|wrote|writing'
-          # The line break between two rows is a separator like the bars
-          # inside a row, so it becomes one rather than being dropped.
           notImperative="$( printf '%s' "$notImperative" | tr -d ' ' | tr '\n' '|' )"
           if printf '%s' "$firstWord" | grep -Eq "^($notImperative)$"; then
             refuse "\`$firstWord\` is not the imperative. A description has to finish the
