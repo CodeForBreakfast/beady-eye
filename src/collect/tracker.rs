@@ -32,13 +32,15 @@ pub trait Tracker {
     fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure>;
 }
 
-/// Why a project's tracker could not be opened, before anything was asked of
-/// it.
+/// Why a project drew nothing: its tracker could not be opened, or bd would
+/// not answer once it was.
 ///
-/// Two ways rather than one, because a reader does something different about
-/// each and the screen has to be able to say which. They are also the two
-/// halves of what opening does: settle the environment, then produce the
-/// credential.
+/// The first two are the halves of what opening does — settle the
+/// environment, then produce the credential — and neither reaches bd, so
+/// neither carries a kind. A reader does something different about each and
+/// the screen has to be able to say which, but in both cases what they do is
+/// about the config they wrote rather than about a program bd's failures
+/// classify.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenFailure {
     /// The project asked to be read in a captured environment — by the command
@@ -54,11 +56,22 @@ pub enum OpenFailure {
     /// `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
     /// measurement and the decision this rests on.
     NoEnvironment,
-    /// A command opening the tracker had to run would not run: a project's own
-    /// `credential_command`.
+    /// The project's own `credential_command` would not run, so nothing was
+    /// opened and no bd ran for it either.
+    ///
+    /// Whichever way it failed is dropped here rather than at the screen. The
+    /// kinds classify the machine's `sh` and a tracker the command never spoke
+    /// to; what the reader does about any of them is look at the command their
+    /// config names.
+    NoCredential,
+    /// A program bd's own read ran would not answer, which is every failure
+    /// that happens after the tracker is open.
     Refused(RunFailure),
 }
 
+/// The read's own failures, which reach the caller by `?` from `read_project`
+/// once the tracker is open. Opening's two failures are named outright, so
+/// this conversion is only ever the read's.
 impl From<RunFailure> for OpenFailure {
     fn from(failure: RunFailure) -> Self {
         OpenFailure::Refused(failure)
@@ -104,7 +117,6 @@ pub mod testing {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::collect::run::FailureKind;
 
     /// One of the four questions, as a fake records being asked it.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,17 +253,17 @@ pub mod testing {
             self
         }
 
-        /// `project`'s tracker cannot be opened at all, because a command
-        /// opening it needed would not run: its credential command.
-        pub fn unopenable(mut self, project: &str, kind: FailureKind) -> Self {
-            self.unopenable.insert(
-                project.to_string(),
-                OpenFailure::Refused(RunFailure {
-                    kind,
-                    program: "sh".to_string(),
-                    detail: "the project could not be opened".to_string(),
-                }),
-            );
+        /// `project`'s tracker cannot be opened at all, because the credential
+        /// command its config names would not run — so nothing was opened and
+        /// no bd ran for it.
+        ///
+        /// It takes no kind, because there is none left to take: the way the
+        /// command failed is dropped where it happens, in `tracker_env`, and
+        /// `every_way_a_credential_command_can_fail_is_the_same_failure_to_the_project`
+        /// is where that is held.
+        pub fn without_the_credential_it_asked_for(mut self, project: &str) -> Self {
+            self.unopenable
+                .insert(project.to_string(), OpenFailure::NoCredential);
             self
         }
 

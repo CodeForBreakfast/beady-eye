@@ -103,6 +103,11 @@ pub fn ambient_credential() -> Option<String> {
 /// a project with no environment has nothing to be read, so running an
 /// arbitrary command a config named would be a side effect spent on a read
 /// that is not going to happen.
+///
+/// A credential command that will not run fails the project the same way, and
+/// loses its kind at the same point and for the same reason: bd is reached
+/// after both steps, so a kind read from either would classify a program the
+/// reader was never asking about.
 pub fn tracker_env(
     runner: &dyn Runner,
     project: &Project,
@@ -121,7 +126,9 @@ pub fn tracker_env(
         env.extend(captured);
     }
     if let Some(command) = &project.credential_command {
-        let password = runner.run("sh", &["-c", command], Some(&project.path), &lending(&env))?;
+        let password = runner
+            .run("sh", &["-c", command], Some(&project.path), &lending(&env))
+            .map_err(|_| OpenFailure::NoCredential)?;
         env.insert(
             CREDENTIAL_VAR.to_string(),
             password.trim_end_matches(['\r', '\n']).to_string(),
@@ -258,7 +265,7 @@ fn variables(out: &str) -> Env {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::run::testing::FakeRunner;
+    use crate::collect::run::testing::{every_failure_kind, FakeRunner};
     use crate::collect::run::{FailureKind, RealRunner};
     use std::path::PathBuf;
 
@@ -437,23 +444,6 @@ mod tests {
 
             assert_eq!(failure, OpenFailure::NoEnvironment, "{kind:?}");
         }
-    }
-
-    /// Every kind a run can fail with. The match is what makes it every one:
-    /// a kind added to `run.rs` and not to this chain does not compile.
-    fn every_failure_kind() -> impl Iterator<Item = FailureKind> {
-        std::iter::successors(Some(FailureKind::Auth), |kind| match kind {
-            FailureKind::Auth => Some(FailureKind::Unavailable),
-            FailureKind::Unavailable => Some(FailureKind::Gone),
-            FailureKind::Gone => Some(FailureKind::Busy),
-            FailureKind::Busy => Some(FailureKind::NotInstalled),
-            FailureKind::NotInstalled => Some(FailureKind::Unstartable),
-            FailureKind::Unstartable => Some(FailureKind::InstalledUnstartable),
-            FailureKind::InstalledUnstartable => Some(FailureKind::Parse),
-            FailureKind::Parse => Some(FailureKind::Unsupported),
-            FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
-            FailureKind::UnknownFlag => None,
-        })
     }
 
     /// A project with no environment has nothing to be read, so its
@@ -687,24 +677,68 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_credential_command_that_fails_reaches_the_caller() {
-        let runner = FakeRunner::default().failing(
-            "sh -c op read the/password",
-            RunFailure::not_installed("sh", "op: command not found"),
-        );
-        let project = Project {
+    /// A project whose credential command would not run.
+    fn credentialled_by(command: &str) -> Project {
+        Project {
             name: "atlas".to_string(),
             path: project_dir(),
             environment_command: None,
-            credential_command: Some("op read the/password".to_string()),
+            credential_command: Some(command.to_string()),
             poll: true,
             worktrees: Vec::new(),
-        };
+        }
+    }
 
-        assert_eq!(
-            tracker_env(&runner, &project, None).unwrap_err(),
-            OpenFailure::Refused(RunFailure::not_installed("sh", "op: command not found"))
-        );
+    /// Whichever way the credential command fails, the project's failure is
+    /// the same — and it is its own, rather than anything about a bd that has
+    /// not run yet.
+    ///
+    /// The kinds here are all about `sh` and about a tracker the command never
+    /// spoke to, and what the reader does about every one of them is look at
+    /// the command they wrote. Two would mislead outright if they got out:
+    /// the common failure is a helper `sh` cannot find, whose stderr matches
+    /// no phrase list and so arrives as `Unavailable`, and one whose own words
+    /// match `REFUSAL` arrives as `Auth`.
+    #[test]
+    fn every_way_a_credential_command_can_fail_is_the_same_failure_to_the_project() {
+        for kind in every_failure_kind() {
+            let runner = FakeRunner::default().failing(
+                "sh -c op read the/password",
+                RunFailure {
+                    kind,
+                    program: "sh".to_string(),
+                    detail: "op: command not found".to_string(),
+                },
+            );
+
+            let failure =
+                tracker_env(&runner, &credentialled_by("op read the/password"), None).unwrap_err();
+
+            assert_eq!(failure, OpenFailure::NoCredential, "{kind:?}");
+        }
+    }
+
+    /// The kind a real machine actually arrives at, measured rather than
+    /// assumed: a helper nothing holds, run through a real `sh`.
+    ///
+    /// It is the fallthrough bucket — `sh` starts, cannot find the helper, and
+    /// exits 127 with stderr matching none of `run.rs`'s phrase lists — so a
+    /// screen reading the kind would say *the tracker did not answer* about a
+    /// tracker nothing had spoken to. That is why the row above drops it, and
+    /// this is the reading that says which kind the dropping is protecting a
+    /// reader from.
+    #[test]
+    fn a_credential_helper_this_machine_does_not_hold_arrives_as_the_fallthrough() {
+        let failure = RealRunner
+            .run(
+                "sh",
+                &["-c", "no-such-credential-helper-anywhere"],
+                Some(Path::new(".")),
+                &Env::new(),
+            )
+            .unwrap_err();
+
+        assert_eq!(failure.kind, FailureKind::Unavailable);
+        assert_eq!(failure.program, "sh");
     }
 }

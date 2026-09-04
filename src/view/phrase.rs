@@ -37,6 +37,10 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
             "asked for an environment bdi could not produce · nothing was read, ",
             "because the bd here is not the one this project asked for"
         ),
+        TrackerFailure::NoCredential => concat!(
+            "the credential command this project names would not run · nothing ",
+            "was read, and no bd was asked for this project"
+        ),
         TrackerFailure::Auth => "the tracker refused the credential it was given",
         TrackerFailure::Unavailable => "the tracker did not answer",
         TrackerFailure::NotInstalled => "bd is not installed",
@@ -1509,6 +1513,46 @@ mod tests {
             "a project no bd was asked anything about was reported as bd's \
              failure: {said}"
         );
+    }
+
+    /// The other failure where no bd ran says so too. A credential command
+    /// that would not run leaves the tracker unopened, so every sentence about
+    /// bd or about the tracker would name a program that was never spoken to —
+    /// and the two that a kind would pick here are the misleading ones: the
+    /// usual failure falls through to `Unavailable`, *the tracker did not
+    /// answer*, and one whose words match `REFUSAL` arrives as `Auth`, *the
+    /// tracker refused the credential it was given*.
+    #[test]
+    fn a_project_whose_credential_command_will_not_run_is_not_reported_as_a_fault_in_bd() {
+        let said = tracker_failure(TrackerFailure::NoCredential);
+
+        says(said, "credential command");
+        says(said, "nothing was read");
+        assert!(
+            !said.contains("bd is") && !said.contains("bd could"),
+            "a project no bd was asked anything about was reported as bd's \
+             failure: {said}"
+        );
+        assert!(
+            !said.contains("the tracker"),
+            "a tracker that was never opened was reported as having answered \
+             or refused: {said}"
+        );
+    }
+
+    /// And it names the setting the reader wrote rather than the program `bdi`
+    /// picked to run it with. `sh -c` is `bdi`'s choice; `credential_command`
+    /// is theirs, and it is the only one of the two they can go and edit.
+    #[test]
+    fn the_credential_failure_names_the_setting_rather_than_the_shell() {
+        let said = tracker_failure(TrackerFailure::NoCredential);
+
+        for program in ["sh ", "bash", "op", "pass"] {
+            assert!(
+                !said.contains(program),
+                "the failure named {program}: {said}"
+            );
+        }
     }
 
     /// And it names no program. A project asks two ways — a command in

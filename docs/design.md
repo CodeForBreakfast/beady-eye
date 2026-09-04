@@ -1216,6 +1216,20 @@ environment_command = "nix develop -c"
   and the tools such a command needs are the ones its own directory supplies,
   which is the thing that just could not be reached.
 
+  **A credential command that will not run is the same shape of failure**, and
+  is reported as `no-credential` — *the credential command this project names
+  would not run · nothing was read, and no bd was asked for this project*.
+  Opening is those two steps and bd is reached after both, so neither can be
+  reported as bd's. It carries no kind either, and here that is what keeps the
+  screen honest rather than merely uncluttered: the commonest failure is a
+  helper `sh` cannot find, which exits 127 with stderr matching no phrase list
+  and so arrives as `unavailable` — *the tracker did not answer*, about a
+  tracker nothing had spoken to. A command whose own words happen to match
+  `REFUSAL` arrives as `auth` and claims a credential was refused that was
+  never offered. It names the setting rather than the program: `sh -c` is
+  `bdi`'s choice and `credential_command` is the reader's, and theirs is the
+  one they can edit.
+
   A machine with no direnv is not this case and is not a fallback either. It
   is a directory `bdi` never tried to enter, because the check that decides
   whether to try is what the absent direnv answered — so nothing was attempted
@@ -1238,10 +1252,12 @@ environment_command = "nix develop -c"
   whose environment would otherwise carry the very password it is being asked
   to produce.
 - **An authentication failure is distinguished from the others.**
-  `TrackerState::Unreachable` carries a reason: `auth`, `unavailable`,
-  `not-installed`, `unstartable`, `installed-unstartable`, `parse`, or
-  `unknown-flag`. They want different responses and reporting them as one
-  string does not help anyone. The middle three are the ways bd never ran, and
+  `TrackerState::Unreachable` carries a reason: `no-environment`,
+  `no-credential`, `auth`, `unavailable`, `not-installed`, `unstartable`,
+  `installed-unstartable`, `parse`, or `unknown-flag`. The first two are the
+  two ways opening fails, and neither has reached bd; the rest are bd. They
+  want different responses and reporting them as one string does not help
+  anyone. The middle three are the ways bd never ran, and
   they are three different things to do about it: install bd, repair the bd or
   the project directory that is already there, or go and find out which of
   those it is. The third answer exists because the other two each make a claim
@@ -1634,12 +1650,13 @@ since every other root came out of the tracker's own answers. `dangling` and
 `cycles` name ids that are still in `nodes`. `hidden_trees` is never
 empty-by-omission — a filtered tree is reported, not dropped. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
-One of those reasons is not about bd: `no-environment` is a project that asked
-to be read in a captured environment — by the command its config names, or by
-the `.envrc` in its own directory — and did not get one, so **no bd was run for
-it**. Every other reason is a program that ran and would not answer, and a
-consumer that treats them alike will report a bd fault on a machine whose bd is
-fine.
+Two of those reasons are not about bd, and they are the two ways opening a
+tracker fails. `no-environment` is a project that asked to be read in a captured
+environment — by the command its config names, or by the `.envrc` in its own
+directory — and did not get one. `no-credential` is a project whose
+`credential_command` would not run. **No bd was run for either.** Every other
+reason is a program that ran and would not answer, and a consumer that treats
+them alike will report a bd fault on a machine whose bd is fine.
 `projects_named_without_git` names each project here whose name git did not
 give, because git could not be run — the directory its tracker sits at the top
 of was used instead. It is `[]` on every machine that has git, and `[]` where a

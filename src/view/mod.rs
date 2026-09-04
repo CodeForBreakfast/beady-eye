@@ -405,7 +405,8 @@ mod tests {
         std::iter::successors(
             Some(TrackerFailure::NoEnvironment),
             |failure| match failure {
-                TrackerFailure::NoEnvironment => Some(TrackerFailure::Auth),
+                TrackerFailure::NoEnvironment => Some(TrackerFailure::NoCredential),
+                TrackerFailure::NoCredential => Some(TrackerFailure::Auth),
                 TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
                 TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
                 TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),

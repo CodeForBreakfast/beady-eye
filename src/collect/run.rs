@@ -589,6 +589,23 @@ pub mod testing {
             }
         }
     }
+
+    /// Every kind a run can fail with. The match is what makes it every one:
+    /// a kind added above and not to this chain does not compile.
+    pub fn every_failure_kind() -> impl Iterator<Item = FailureKind> {
+        std::iter::successors(Some(FailureKind::Auth), |kind| match kind {
+            FailureKind::Auth => Some(FailureKind::Unavailable),
+            FailureKind::Unavailable => Some(FailureKind::Gone),
+            FailureKind::Gone => Some(FailureKind::Busy),
+            FailureKind::Busy => Some(FailureKind::NotInstalled),
+            FailureKind::NotInstalled => Some(FailureKind::Unstartable),
+            FailureKind::Unstartable => Some(FailureKind::InstalledUnstartable),
+            FailureKind::InstalledUnstartable => Some(FailureKind::Parse),
+            FailureKind::Parse => Some(FailureKind::Unsupported),
+            FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
+            FailureKind::UnknownFlag => None,
+        })
+    }
 }
 
 #[cfg(test)]

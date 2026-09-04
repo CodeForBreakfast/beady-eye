@@ -147,12 +147,28 @@ pub enum TrackerFailure {
     /// its config names, or by the `.envrc` in its own directory — and `bdi`
     /// could not produce one, so it read nothing.
     ///
-    /// The only one of these that is not about bd, and the only one nothing
-    /// was asked: no bd ran for this project at all. That is deliberate rather
-    /// than incidental — the bd on `bdi`'s own `PATH` is not the bd the
-    /// project asked to be read with, and opening a tracker with the wrong one
-    /// migrates its schema.
+    /// One of the two that are not about bd, and no bd ran for this project at
+    /// all. That is deliberate rather than incidental — the bd on `bdi`'s own
+    /// `PATH` is not the bd the project asked to be read with, and opening a
+    /// tracker with the wrong one migrates its schema.
     NoEnvironment,
+    /// The project's own `credential_command` would not run, so the tracker
+    /// was never opened.
+    ///
+    /// The other of the two that is not about bd, and for the same reason: no
+    /// bd ran for this project either. Opening a tracker settles the
+    /// environment and then produces the credential, and a failure at either
+    /// step returns before there is anything to ask bd.
+    ///
+    /// It carries no kind, where a bd that ran and would not answer carries
+    /// seven. The kinds are about the machine's `sh` and the tracker it never
+    /// reached, and none of them is what the reader does next — which is to go
+    /// and look at the command they wrote in config. Two would actively
+    /// mislead: the usual failure is a helper `sh` cannot find, whose stderr
+    /// matches no phrase list and so arrives as `Unavailable`, and a command
+    /// whose own words happen to match one arrives as `Auth` claiming a
+    /// tracker refused a credential it was never offered.
+    NoCredential,
     /// The tracker refused the credential it was given.
     Auth,
     /// The tracker did not answer.

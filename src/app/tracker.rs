@@ -445,14 +445,17 @@ fn root_of<'a>(
 ///
 /// `Gone` and `Busy` are herdr's, and a tracker cannot answer with either.
 /// `TrackerFailure` stays as it is rather than learning a word for a pane.
-/// Why a project's tracker could not be opened, as the screen says it.
+/// Why a project drew nothing, as the screen says it.
 ///
-/// An environment `bdi` could not produce is the project's own failure and
-/// says so; every other way of failing to open one is a program that would
-/// not run, and reads like every other program that would not run.
+/// The two ways opening fails are the project's own failure and say so: they
+/// are the halves of `tracker_env`, and no bd has run at either, so a sentence
+/// about bd would send the reader to a program that was never asked anything.
+/// Only the third is a program that ran and would not answer, and it is the
+/// only one whose kind the screen reads.
 pub(super) fn open_failure(failure: &OpenFailure) -> TrackerFailure {
     match failure {
         OpenFailure::NoEnvironment => TrackerFailure::NoEnvironment,
+        OpenFailure::NoCredential => TrackerFailure::NoCredential,
         OpenFailure::Refused(refusal) => tracker_failure(refusal.kind),
     }
 }
@@ -1855,14 +1858,14 @@ orbital = ["orb-404"]
         assert_eq!(roots, vec![("orbital", "orb-7"), ("ferry", "x-1")]);
     }
 
-    /// Opening a tracker is where entering a project's directory happens,
-    /// and a directory that cannot be entered fails that project before its
-    /// tracker is asked anything — by name, with the failure's own kind, and
-    /// with every other project still drawn.
+    /// Opening a tracker is where a project's credential command runs, and one
+    /// that would not run fails that project before its tracker is asked
+    /// anything — by name, as its own failure, and with every other project
+    /// still drawn.
     #[test]
     fn a_project_whose_tracker_cannot_be_opened_is_named_with_that_failure() {
         let trackers = Fakes::default()
-            .unopenable("orbital", FailureKind::Unstartable)
+            .without_the_credential_it_asked_for("orbital")
             .with("ferry", colliding_tracker());
 
         let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
@@ -1871,7 +1874,7 @@ orbital = ["orb-404"]
             snap.failed_projects,
             vec![FailedProject {
                 project: "orbital".to_string(),
-                tracker: TrackerFailure::Unstartable,
+                tracker: TrackerFailure::NoCredential,
             }]
         );
         let roots: Vec<(&str, &str)> = snap
