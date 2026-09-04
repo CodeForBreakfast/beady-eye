@@ -1057,12 +1057,35 @@ environment = "direnv"
   found*. Stating the tracker does not depend on `bdi` having thought of every
   variable bd reads.
 - **`-C` is what makes the ambient environment safe, and entering the
-  directory with it.** direnv fails open: it exits 0 and runs with the ambient
-  environment where an `.envrc` is unallowed or a flake will not evaluate.
-  With the tracker named outright, neither the ambient environment nor such a
-  fallback can point bd at the wrong database — only fail to authenticate
-  against the right one, which `bdi` reports per project as `auth` while every
-  other tree still draws.
+  directory with it.** Where direnv fails open — it exits 0 and runs with the
+  ambient environment when a flake will not evaluate — the tracker is named
+  outright, so neither the ambient environment nor such a fallback can point
+  bd at the wrong database. It can only fail to authenticate against the right
+  one, which `bdi` reports per project as `auth` while every other tree still
+  draws.
+- **direnv fails open on one of the two ways a directory resists entering, and
+  closed on the commoner one.** Measured 2026-09-04 with direnv 2.37.1 (it is
+  direnv's behaviour that decides this table, not any `bdi` commit):
+
+  | the directory | exit | stdout |
+  |---|---|---|
+  | no `.envrc` at all | 0 | the full environment, unloading the caller's own |
+  | `.envrc` allowed, flake will not evaluate | 0 | the ambient environment |
+  | `.envrc` unallowed | 1 | empty |
+
+  An unallowed `.envrc` is `direnv: error <path>/.envrc is blocked` on stderr
+  and nothing on stdout, so `bdi` gets a failure and the project degrades
+  visibly with no fallback to catch. That is the commoner of the two — every
+  fresh clone and every new worktree starts unallowed — and it is why the
+  bullet above is about the flake case rather than about both. Only that case
+  needs `-C` behind it, and it announces itself on stderr as
+  `nix-direnv: Evaluating current devShell failed. Falling back to previous
+  environment!`
+
+  The first row is why the mechanism costs nothing where there is nothing to
+  do: a directory with no `.envrc` is a pass-through, not a failure, and it
+  unloads whatever direnv environment the caller was carrying — which is what
+  a person's `cd` into that directory does.
 - **Every command line `bdi` spells is a read, and that is a property of the
   subcommands `collect/` composes and of nothing beside them.** It is not a
   no-writes rule. bd writes on its own account on the way to answering, so no
@@ -1073,24 +1096,32 @@ environment = "direnv"
   `collect/` later is refused rather than run — a guard on the next edit, and
   a veto over subcommands rather than a property of the tracker's files.
 - **The environment is captured once per project, not per call.** `direnv exec`
-  reloads the directory every time it runs. Measured 2026-08-31 with direnv
-  2.37.1 (the version this machine ran then and still does at the time of
-  writing; it is direnv's behaviour and this repository's `.envrc` that decide
-  this figure, not any `bdi` commit): 20ms of overhead on `summit-works` but
-  **1.3 to 2.4 seconds** on this repository, whose `.envrc` watches the
-  profile file its own nested `.envrc.local` rewrites, so the cache is
-  invalidated by the previous load every time. A whole collection of both
-  trackers cost 2.5 to 2.7 seconds that day, and `bdi` makes seven or more bd
-  calls per project when a tracker has moved, so per-call was never
-  affordable.
+  reloads the directory every time it runs, and `bdi` makes seven or more bd
+  calls per project when a tracker has moved, so per-call was never affordable.
+  Measured 2026-09-04 with direnv 2.37.1 against a worktree of this repository
+  (it is direnv's behaviour and a project's own `.envrc` that decide these
+  figures, not any `bdi` commit): **136 to 177 milliseconds** over thirteen
+  consecutive runs, each reporting `nix-direnv: Using cached dev shell`, and
+  1557ms on the first load after the `.envrc` was allowed. A project with no
+  `.envrc` costs 3 to 5ms, because there is nothing to load.
+
+  An earlier reading of **1.3 to 2.4 seconds** stood here, and this repository
+  was the reason rather than direnv: its `.envrc` nested a second `use flake`,
+  so each load evicted the profile the previous one had written and the cache
+  never held. Fixing that took the same call to 137ms on a worktree, and the
+  figure above is what it costs now. A project whose `.envrc` does expensive
+  work per load still costs what that work costs, and the cold figure is what
+  any project pays once after nix-direnv invalidates on an mtime.
 - **A project whose `.envrc` writes to stdout cannot corrupt an answer.**
   direnv's own log lines reach stderr, measured, but nothing stops a project's
   `.envrc` printing to stdout and only this repository's has been fixed not to.
   Capturing once confines that text to the one call whose parser tolerates it,
   rather than to every JSON answer bd gives.
-- **A directory that cannot be entered fails that project, visibly.** There is
-  no fallback to the ambient environment: a mechanism that silently does
-  nothing is indistinguishable from one that worked.
+- **A directory that cannot be entered fails that project, visibly.** `bdi`
+  adds no fallback to the ambient environment of its own: a mechanism that
+  silently does nothing is indistinguishable from one that worked. Where
+  direnv has already fallen back for itself, on the flake case above, that is
+  what `-C` is behind.
 - **`credential_command` survives as the escape hatch**, for a tracker outside
   direnv's reach. The config stores a command, never a secret; its stdout is
   the password. What went is its promotion to the default, and the rule that

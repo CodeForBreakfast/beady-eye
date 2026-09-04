@@ -52,11 +52,12 @@ pub fn ambient_credential() -> Option<String> {
 /// project's own directory wants.
 ///
 /// Captured once per project rather than by wrapping every call, because
-/// `direnv exec` reloads the directory each time it runs. Measured against
-/// this repository on 2026-08-31: 1.3 to 2.4 seconds per invocation, where a
-/// whole collection of both trackers costs 2.5 to 2.7. It also confines a
-/// project whose `.envrc` writes to stdout to this one call, whose parser
-/// tolerates it, rather than to every answer bd gives.
+/// `direnv exec` reloads the directory each time it runs. Measured against a
+/// worktree of this repository on 2026-09-04: 136 to 177 milliseconds warm,
+/// 1557ms on the first load after the `.envrc` was allowed, and 3 to 5ms for
+/// a project with no `.envrc` at all. It also confines a project whose
+/// `.envrc` writes to stdout to this one call, whose parser tolerates it,
+/// rather than to every answer bd gives.
 ///
 /// A `credential_command` is the escape hatch for a tracker outside direnv's
 /// reach, and answers instead of entering the directory.
@@ -92,11 +93,18 @@ pub fn tracker_env(
 /// shell `bdi` was launched from was already carrying.
 ///
 /// A directory direnv cannot enter fails this project rather than falling
-/// back to the ambient environment. direnv itself fails open — it exits 0
-/// and runs with the ambient environment where an `.envrc` is unallowed or a
-/// flake will not evaluate — and a mechanism that silently does nothing is
-/// indistinguishable from one that worked. What such a fallback cannot do,
-/// because `-C` names the tracker, is read another project's database.
+/// back to the ambient environment, because a mechanism that silently does
+/// nothing is indistinguishable from one that worked.
+///
+/// Which of the two ways a directory resists entering decides whether there
+/// is anything to catch. An unallowed `.envrc` exits 1 with an empty stdout,
+/// so it arrives here as a failure and the project degrades; a flake that
+/// will not evaluate exits 0 and runs with the ambient environment, and that
+/// is the case `-C` naming the tracker stands behind. Measured on direnv
+/// 2.37.1, 2026-09-04. A directory with no `.envrc` at all is neither: it is
+/// a pass-through, and it unloads whatever direnv environment `bdi` was
+/// carrying. What such a fallback cannot do, because `-C` names the tracker,
+/// is read another project's database.
 fn entering(path: &Path, runner: &dyn Runner) -> Result<Env, RunFailure> {
     let named = path.to_string_lossy();
     let out = runner.run(
@@ -256,10 +264,10 @@ mod tests {
         );
     }
 
-    /// direnv fails open: it exits 0 and runs with the ambient environment
-    /// where an `.envrc` is unallowed or a flake will not evaluate. So a
-    /// project whose directory cannot be entered at all is that project's
-    /// failure, not a quiet fallback that reads as having worked.
+    /// A project whose directory cannot be entered at all is that project's
+    /// failure, not a quiet fallback that reads as having worked. Where
+    /// direnv does fall back for itself — a flake that will not evaluate — it
+    /// exits 0 and this is not the path taken.
     #[test]
     fn a_directory_that_cannot_be_entered_fails_the_project_rather_than_falling_back() {
         let runner = FakeRunner::default().failing(
