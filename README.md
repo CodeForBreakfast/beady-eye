@@ -2,7 +2,9 @@
 
 A view of work in flight: a tree of beads, each node annotated with the live
 agent working on it. Every question `bdi` asks a tracker is a read — it shows
-you the work, and changing it stays bd's job.
+you the work, and changing it stays bd's job. That is a promise about the
+questions rather than about your tracker: bd writes on its own account on the
+way to answering one, and [What it needs](#what-it-needs) says when.
 
 [beads](https://github.com/gastownhall/beads) knows the work — the tree, the
 dependency edges, each bead's status and who claimed it.
@@ -49,6 +51,29 @@ it. `atlas-5` is the drift: a claim with nothing behind it.
 bd below it is told apart from a tracker that cannot answer: the project's line
 says bd does not know a flag `bdi` uses, and which bd would. A bd older than
 the one that last wrote a tracker is a separate hazard, on the tracker itself.
+
+**One bd per tracker, which is yours to arrange and not `bdi`'s.** `bdi` never
+spells a subcommand that writes, and `--readonly` is on every line it spells
+that names a tracker — but neither settles what bd does on its way to
+answering. bd rewrites `.beads/.local_version` and runs its schema
+auto-migration on finding itself newer than the bd that last opened that
+tracker, before the subcommand runs and whatever the subcommand is;
+`--readonly` does not stop it, because the flag vetoes bd's own mutating
+subcommands and never reaches the storage layer.
+
+Note what that trigger compares: the bd running now against the bd that ran
+last, not one installed bd against another. Upgrading your only bd arms it too,
+on the first read after the upgrade — so one bd per tracker does not avoid the
+event, and nothing short of never upgrading would. What it buys is that a
+tracker moves forward once, at an upgrade you chose, rather than being carried
+somewhere by a bd that is not that project's. `bdi` links no bd — it runs
+whatever each project's environment resolves, which is why the arrangement is
+yours.
+
+Nothing marks the moment. bd suppresses its upgrade notice under `--json`, on
+both streams, so the read comes back clean and `bdi` has nothing to draw; and
+because the migration leaves the tracker at the new version, every read after
+it is quiet too. `docs/design.md` carries the measurements.
 
 **git, where you have it.** `bdi` asks git for three things, and does without
 each: the repository the current directory sits in, the name of its `origin`

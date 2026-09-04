@@ -2,7 +2,11 @@
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
 root, annotated with the live agent on each node. Every bd command line it
-spells is a read, and `collect/` spells all of them.
+spells is a read, and `collect/` spells all of them — which is a property of
+those command lines rather than a promise about the tracker, because bd writes
+on its own account when it opens one. `docs/design.md`'s *Reading a tracker is
+not leaving it alone* has the measurements and says what the rule does and does
+not buy.
 
 `README.md` is the outside view — what `bdi` is for, how to install it, and the
 socket it listens on. This file is for working on it.

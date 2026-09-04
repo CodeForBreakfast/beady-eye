@@ -1063,9 +1063,12 @@ environment = "direnv"
   fallback can point bd at the wrong database — only fail to authenticate
   against the right one, which `bdi` reports per project as `auth` while every
   other tree still draws.
-- **Every command line `bdi` spells is a read, and that is the whole of the
-  no-writes rule.** It is a property of the subcommands `collect/` composes
-  and of nothing beside them. `--readonly` still earns its place on the line:
+- **Every command line `bdi` spells is a read, and that is a property of the
+  subcommands `collect/` composes and of nothing beside them.** It is not a
+  no-writes rule. bd writes on its own account on the way to answering, so no
+  property of the command line can exclude it, and *Reading a tracker is not
+  leaving it alone* below says what it does. `--readonly` still earns its place
+  on the line:
   it vetoes bd's mutating subcommands, so a mutating call arriving in
   `collect/` later is refused rather than run — a guard on the next edit, and
   a veto over subcommands rather than a property of the tracker's files.
@@ -1134,6 +1137,85 @@ A single read-only user across every tracker would retire `credential_command`
 entirely, and the shape it would take has been measured — see *Open, for
 Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does not
 depend on it.
+
+### Reading a tracker is not leaving it alone
+
+bd writes to a tracker on its own account, and which subcommand asked is no
+part of it. The write happens in bd's `PersistentPreRun`, before the subcommand
+runs at all: a `bd sql` that failed with *not yet supported in embedded mode*,
+exit 1, had already done it.
+
+What arms it is a version change. bd records the version that last opened a
+tracker in `.beads/.local_version`, a plain gitignored file, and on finding
+itself newer it rewrites that file and runs its schema auto-migration.
+`--readonly` stops neither, because the flag is a veto list over bd's mutating
+subcommands and never reaches the storage layer.
+
+Measured 2026-09-04 on bd 1.2.2, against a throwaway embedded store in a
+temporary directory and never against a live tracker, with `BEADS_DIR` unset so
+that only `-C` resolved it. It is bd's behaviour that decides every figure
+below, not any `bdi` commit, so the event that dates this table is a bd
+upgrade and nothing in this repository — and a bd that stopped doing it would
+retire the section rather than correct it:
+
+| what was asked | `.beads/.local_version` | bd's auto-migration |
+|---|---|---|
+| `--readonly list --json`, recorded version `1.1.2` | `1.1.2` → `1.2.2` | entered |
+| `--readonly list --json`, recorded version `1.2.2` | untouched | not entered |
+| `--readonly list --json`, recorded version `1.9.9` | `1.9.9` → `1.2.2` | not entered |
+| `--readonly ready --json`, `--readonly sql`, plain `list --json` | all rewrote it | — |
+| `bd --version`, `bd version`, either under `-C` | all untouched | not entered |
+| `bd where --json`, the one call naming no tracker | untouched | not entered |
+
+The third row is bd migrating on an upgrade and not on a downgrade, and it
+still rewrites the file either way. With the two versions equal the read cost
+the tracker nothing at all: every file under `.beads/`, sha256 each,
+byte-identical over two consecutive reads. How many files that is belongs to
+the store rather than to the reading — two stores built the same way an hour
+apart held 23 and 19 — so the count is not the measurement and is left out of
+it.
+
+That measurement watched the gate open rather than a migration finish — the
+throwaway kept its database where bd's auto-migration did not look. The other
+half is homelab's, measured 2026-09-01 on their own throwaway stores: a tracker
+at schema 52 with a genuine pending migration, opened by bd 1.2.2 with
+`--readonly`, came back at 53, exit 0, no error and no warning.
+
+Three things follow, and what `bdi` claims is built on all three.
+
+**The exposure is one-shot per version change, not per read.** The read that
+spends it leaves the tracker at the new version, so every read after it — and
+every bd command a person runs afterwards — is quiet. Damage a migration did is
+invisible from the moment after it happened, which is how the incident behind
+this stood four weeks unnoticed.
+
+**Nothing announces it.** Under `--json` bd suppresses its own upgrade notice
+on stdout and stderr both: stdout is the answer and parses, stderr carries only
+unrelated warnings. There is no signal in bd's output for `bdi` to read.
+
+**`bdi` is the client most exposed to it**, because it links no bd and reads
+every tracker its config names. Which bd answers is whatever each project's
+environment resolves — a per-machine fact this project does not constrain — and
+one run reaches every tracker at once.
+
+**`bdi` does not gate on a bd version, and that is a decision rather than an
+oversight.** The gate is a plain file, so `bdi` could read
+`.beads/.local_version` against the bd its environment resolves and refuse a
+tracker that bd would migrate, without opening anything. That guard was
+weighed on 2026-09-04 and declined, on a narrow ground: a tracker may be read
+by any version of *its own project's* bd. Which bd reads a project's tracker is
+what that project's `environment` selects, and the default selects `bdi`'s own.
+So the table is a known hazard rather than an unnoticed one, and reopening it
+means changing that decision rather than measuring it again.
+
+So `bdi` claims what it can hold: every command line it spells is a read. It
+does not claim a tracker comes back unchanged, because that is bd's to decide
+and no property of a command line reaches it. Nothing holds a tracker still,
+either: the trigger compares the bd running against the bd that ran last, so an
+in-place upgrade of a single bd arms it as surely as a second version would.
+What one bd per tracker buys is that the tracker moves forward once, at an
+upgrade somebody chose — the operator's arrangement rather than `bdi`'s
+guarantee.
 
 ### Degradation is the rule either way
 

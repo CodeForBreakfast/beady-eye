@@ -215,9 +215,14 @@ impl Reader<'_> {
     /// do nothing. Clearing the inherited variables stays as well; together
     /// they mean a misconfiguration fails loudly.
     ///
-    /// Every subcommand composed here is a read, and that is the whole of why
-    /// `bdi` never writes to a tracker: the rule rests on the command lines
-    /// below rather than on bd. `--readonly` vetoes bd's mutating subcommands,
+    /// Every subcommand composed here is a read, and that rests on the command
+    /// lines below rather than on bd. It is not why `bdi` never writes to a
+    /// tracker, because bd writes to one on its own account: it rewrites
+    /// `.beads/.local_version` and runs its schema auto-migration on finding
+    /// itself newer than the bd that last opened that tracker, before the
+    /// subcommand runs and whatever the subcommand is. `docs/design.md`'s
+    /// *Reading a tracker is not leaving it alone* carries the measurement.
+    /// `--readonly` vetoes bd's mutating subcommands,
     /// so a mutating call arriving here later is refused rather than run — a
     /// guard on the next edit, and a veto over subcommands rather than a
     /// property of the tracker's files. `sql` is outside even that: it is a
