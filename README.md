@@ -174,6 +174,9 @@ stale_claim_days = 30
 refresh_seconds = 30
 unanswered_after_seconds = 30
 tail_refresh_millis = 250
+
+[theme]
+background = "light"
 ```
 
 **`[[projects]]`** is the one section with no default. A project is a `name`
@@ -219,6 +222,21 @@ long a read may be outstanding before the screen says the tracker has stopped
 answering rather than drawing it as merely being read; `tail_refresh_millis` is
 how often the tail asks herdr for the selected pane again, in milliseconds
 because it is the one interval under a second.
+
+**`[theme] background`** is the one thing about your terminal `bdi` neither
+sees nor asks about, so a reader on a light background says it here. Absent,
+it assumes `dark`. That is a guess, and where it shows is the tail band: a
+light-background reader who leaves the key unset stops being able to tell
+`bdi`'s own words there from the pane's output around them. It is read when
+the screen opens, so an edit to it takes at the next run rather than in the
+one in front of you. `dark` and `light` are the only values, and anything else
+is refused rather than read as the default:
+
+```console
+$ bdi
+Error: unknown variant `Light`, expected `dark` or `light`
+in `theme.background`
+```
 
 ## Running it
 
