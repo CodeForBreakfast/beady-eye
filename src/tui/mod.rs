@@ -15,6 +15,7 @@ use crate::collect::agents::Agents;
 use crate::collect::changes::Reported;
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
+use crate::view::Notice;
 
 #[cfg(test)]
 mod fixtures;
@@ -75,6 +76,11 @@ use wire::wire;
 /// screen rather than by there being none to close, and putting the terminal
 /// back rests on `Screen`'s `Drop` — which rests in turn on the build
 /// unwinding, the condition `Drop for Screen` states.
+///
+/// `settled` is what resolving the config already found this run cannot do.
+/// It is handed in rather than worked out here because it is settled before
+/// there is a loop at all — and it joins what the wiring finds, so the foot
+/// draws both without knowing which is which.
 pub fn run(
     cfg: &Config,
     filter: Filter,
@@ -82,6 +88,7 @@ pub fn run(
     agents: Arc<dyn Agents>,
     collect: Collecting,
     reload: Option<Reload>,
+    settled: Vec<Notice>,
 ) -> anyhow::Result<()> {
     // Taken here rather than on the thread that waits on them, so that they
     // are ours before the screen is opened below. A registration racing the
@@ -103,8 +110,12 @@ pub fn run(
     );
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, at_startup) =
+    let (events, ask, panes, _socket, from_the_wiring) =
         wire(Reported::watching(projects), agents, collect, asked_to_stop);
+    // What settling the config could not do comes first, because it costs the
+    // reader more: a name that was guessed is half of every key on the screen,
+    // where a channel that would not open costs freshness alone.
+    let at_startup: Vec<Notice> = settled.into_iter().chain(from_the_wiring).collect();
     // Asked for before the screen is opened, so the collection is under way
     // while ratatui is still taking the terminal, and the first frame drawn
     // already carries the mark saying every project is being read. A forest

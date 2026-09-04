@@ -135,6 +135,18 @@ pub enum Notice {
     /// has to tell them is the part they cannot see, which is that `bdi` did
     /// not take it.
     ConfigWouldNotReload,
+    /// git could not be run, so the project drawn is named after the
+    /// directory its tracker sits at the top of rather than after a remote.
+    /// The name is half of every key `bdi` holds, so two readers of one
+    /// tracker are looking at differently-named views and neither would
+    /// otherwise be told.
+    ///
+    /// Said only where nothing else named the project — no `BDI_PROJECT` and
+    /// no config file — because a name given outright is not a guess. It is
+    /// the one notice here whose remedy is a line in a shell profile rather
+    /// than a program to install, which is what keeps it from being a warning
+    /// readers learn to ignore.
+    ProjectNamedWithoutGit,
 }
 
 /// How fresh one project's rows are, said beside its name.
@@ -351,7 +363,8 @@ mod tests {
             Notice::SessionUnanswered(_) => Some(Notice::NoInboundChannel),
             Notice::NoInboundChannel => Some(Notice::AnotherBdiHadTheInboundChannel),
             Notice::AnotherBdiHadTheInboundChannel => Some(Notice::ConfigWouldNotReload),
-            Notice::ConfigWouldNotReload => None,
+            Notice::ConfigWouldNotReload => Some(Notice::ProjectNamedWithoutGit),
+            Notice::ProjectNamedWithoutGit => None,
         })
     }
 

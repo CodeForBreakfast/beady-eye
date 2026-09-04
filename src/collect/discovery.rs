@@ -10,6 +10,22 @@ use serde::Deserialize;
 use crate::collect::run::{Env, FailureKind, Runner};
 use crate::config::{Config, Environment, Project, Scope};
 
+/// The one project a run with no config file draws, and whether naming it
+/// took a guess nothing else would admit to.
+#[derive(Debug)]
+pub struct Discovered {
+    pub config: Config,
+    /// git could not be run at all, so the project is named after the
+    /// directory its tracker sits at the top of, and nothing else was going
+    /// to name it: `BDI_PROJECT` is unset, and a config file would have kept
+    /// discovery from running at all.
+    ///
+    /// Clear for the three git outcomes a reader can see for themselves, and
+    /// clear where the environment named the project, because neither is a
+    /// guess.
+    pub named_without_git: bool,
+}
+
 /// The single project `bdi` reads when no config file names one: the
 /// repository the current directory sits in, on the ambient credential.
 ///
@@ -20,7 +36,7 @@ pub fn from_the_current_directory(
     runner: &dyn Runner,
     cwd: &Path,
     name_from_the_environment: Option<&str>,
-) -> anyhow::Result<Config> {
+) -> anyhow::Result<Discovered> {
     let tracker = match runner.run("bd", &["where", "--json"], Some(cwd), &Env::new()) {
         Ok(said) => said,
         Err(failure) => {
@@ -37,7 +53,12 @@ pub fn from_the_current_directory(
         }
     };
 
-    let repository = git(runner, cwd, &["rev-parse", "--show-toplevel"]).map(PathBuf::from);
+    // Read off the question git is always asked, because it is the one every
+    // run reaches: a name in the environment means the remote is never asked
+    // for, and a git that never ran would then go unnoticed.
+    let toplevel = git(runner, cwd, &["rev-parse", "--show-toplevel"]);
+    let git_never_ran = matches!(toplevel, Git::NeverRan);
+    let repository = toplevel.line().map(PathBuf::from);
     // A directory in no repository has no worktrees to list, and asking
     // git for them is only a second way to hear that.
     let worktrees = match &repository {
@@ -47,22 +68,27 @@ pub fn from_the_current_directory(
     let root = repository
         .or_else(|| the_tracked_tree_around(&tracker, cwd))
         .unwrap_or_else(|| cwd.to_path_buf());
-    let name = name_from_the_environment
-        .filter(|name| !name.is_empty())
+    let named_in_the_environment = name_from_the_environment.filter(|name| !name.is_empty());
+    let name = named_in_the_environment
         .map(str::to_string)
         .or_else(|| {
-            git(runner, cwd, &["remote", "get-url", "origin"]).map(|url| repository_name(&url))
+            git(runner, cwd, &["remote", "get-url", "origin"])
+                .line()
+                .map(|url| repository_name(&url))
         })
         .unwrap_or_else(|| directory_name(&root));
 
-    Ok(Config::naming(vec![Project {
-        name,
-        path: root,
-        environment: Environment::Ambient,
-        credential_command: None,
-        poll: true,
-        worktrees,
-    }]))
+    Ok(Discovered {
+        config: Config::naming(vec![Project {
+            name,
+            path: root,
+            environment: Environment::Ambient,
+            credential_command: None,
+            poll: true,
+            worktrees,
+        }]),
+        named_without_git: git_never_ran && named_in_the_environment.is_none(),
+    })
 }
 
 /// The config scoped to the project holding `cwd` — the directory `bdi` was
@@ -132,7 +158,7 @@ fn the_same_place_in_each(working_trees: &[PathBuf], path: &Path) -> Vec<PathBuf
 /// run from. Each porcelain record opens with the directory and continues
 /// with the commit and the branch, which name no directory at all.
 fn worktrees_of(runner: &dyn Runner, cwd: &Path) -> Vec<PathBuf> {
-    let Some(listed) = git(runner, cwd, &["worktree", "list", "--porcelain"]) else {
+    let Some(listed) = git(runner, cwd, &["worktree", "list", "--porcelain"]).line() else {
         return Vec::new();
     };
     listed
@@ -189,12 +215,55 @@ fn the_tracked_tree_around(said: &str, cwd: &Path) -> Option<PathBuf> {
     cwd.starts_with(tree).then(|| tree.to_path_buf())
 }
 
-/// One line of git's answer, or nothing where git has none to give: no
-/// repository, no remote, or no git at all.
-fn git(runner: &dyn Runner, cwd: &Path, args: &[&str]) -> Option<String> {
-    let said = runner.run("git", args, Some(cwd), &Env::new()).ok()?;
-    let line = said.trim();
-    (!line.is_empty()).then(|| line.to_string())
+/// One line of git's answer, or which kind of nothing git had to give.
+///
+/// Three of the four outcomes are one state here, because they are one state
+/// to a reader: a directory in no repository, a repository with no `origin`,
+/// and a git that ran and failed are each something they can see for
+/// themselves. The fourth is not, so it is the one kept apart — the same
+/// split `from_the_current_directory` makes for bd above, on the same three
+/// kinds of failure.
+enum Git {
+    /// git ran and answered with one line.
+    Said(String),
+    /// git ran and had nothing to say.
+    SaidNothing,
+    /// git could not be run at all: nothing is installed under that name, or
+    /// what is could not be started.
+    NeverRan,
+}
+
+impl Git {
+    /// The line, where there is one — for a caller with nothing different to
+    /// do about a git that never ran.
+    fn line(self) -> Option<String> {
+        match self {
+            Git::Said(line) => Some(line),
+            Git::SaidNothing | Git::NeverRan => None,
+        }
+    }
+}
+
+/// What git said to one question, asked where bdi was run.
+fn git(runner: &dyn Runner, cwd: &Path, args: &[&str]) -> Git {
+    let said = match runner.run("git", args, Some(cwd), &Env::new()) {
+        Ok(said) => said,
+        Err(failure)
+            if matches!(
+                failure.kind,
+                FailureKind::NotInstalled
+                    | FailureKind::Unstartable
+                    | FailureKind::InstalledUnstartable
+            ) =>
+        {
+            return Git::NeverRan
+        }
+        Err(_) => return Git::SaidNothing,
+    };
+    match said.trim() {
+        "" => Git::SaidNothing,
+        line => Git::Said(line.to_string()),
+    }
 }
 
 /// The repository a remote URL names, in any of the spellings git accepts:
@@ -272,7 +341,8 @@ detached
             Path::new("/srv/work/orbital/src"),
             None,
         )
-        .expect("the repository is a project");
+        .expect("the repository is a project")
+        .config;
 
         assert_eq!(
             cfg.projects,
@@ -296,7 +366,8 @@ detached
             a_tracked_repository().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
 
         let cfg = from_the_current_directory(&runner, Path::new("/tmp/seat-a/wt"), None)
-            .expect("the repository is a project");
+            .expect("the repository is a project")
+            .config;
 
         assert_eq!(
             cfg.projects[0].worktrees,
@@ -322,7 +393,8 @@ detached
             .failing("git worktree list --porcelain", no_such_repository());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
-            .expect("the repository is a project");
+            .expect("the repository is a project")
+            .config;
 
         assert!(cfg.projects[0].worktrees.is_empty());
         assert!(
@@ -341,7 +413,8 @@ detached
             a_tracked_repository().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
 
         let cfg = from_the_current_directory(&runner, Path::new("/tmp/seat-a/wt"), None)
-            .expect("the repository is a project");
+            .expect("the repository is a project")
+            .config;
 
         assert!(
             cfg.projects[0]
@@ -776,7 +849,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital"),
             None,
         )
-        .expect("the repository is a project");
+        .expect("the repository is a project")
+        .config;
 
         assert_eq!(cfg.roots, Roots::default());
         assert!(cfg.badges.is_empty());
@@ -792,7 +866,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital"),
             Some("atlas"),
         )
-        .expect("the repository is a project");
+        .expect("the repository is a project")
+        .config;
 
         assert_eq!(cfg.projects[0].name, "atlas");
     }
@@ -804,7 +879,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital"),
             Some(""),
         )
-        .expect("the repository is a project");
+        .expect("the repository is a project")
+        .config;
 
         assert_eq!(cfg.projects[0].name, "ground-station");
     }
@@ -818,7 +894,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_such_repository());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
-            .expect("the repository is a project");
+            .expect("the repository is a project")
+            .config;
 
         assert_eq!(cfg.projects[0].name, "orbital");
     }
@@ -839,7 +916,8 @@ path = "/tmp/seat-b/wt/crates/dish"
                 .with("git remote get-url origin", &format!("{url}\n"));
 
             let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
-                .expect("the repository is a project");
+                .expect("the repository is a project")
+                .config;
 
             assert_eq!(cfg.projects[0].name, "ground-station", "from {url}");
         }
@@ -878,7 +956,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital/src"),
             None,
         )
-        .expect("the tree bd tracks is a project");
+        .expect("the tree bd tracks is a project")
+        .config;
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
     }
@@ -894,7 +973,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             Path::new("/srv/work/orbital/src"),
             None,
         )
-        .expect("the tree bd tracks is a project");
+        .expect("the tree bd tracks is a project")
+        .config;
 
         assert!(
             cfg.projects[0]
@@ -919,10 +999,94 @@ path = "/tmp/seat-b/wt/crates/dish"
                 Path::new(standing_in),
                 None,
             )
-            .expect("the tree bd tracks is a project");
+            .expect("the tree bd tracks is a project")
+            .config;
 
             assert_eq!(cfg.projects[0].name, "orbital", "standing in {standing_in}");
         }
+    }
+
+    /// The half of that name a reader cannot see for themselves. It is the
+    /// tree's rather than the repository's, and the only thing that knows so
+    /// is the call that came back saying git never ran.
+    #[test]
+    fn a_machine_with_no_git_says_the_name_it_gave_the_project_is_a_guess() {
+        let discovered = from_the_current_directory(
+            &a_tracked_tree_with_no_git(),
+            Path::new("/srv/work/orbital/src"),
+            None,
+        )
+        .expect("the tree bd tracks is a project");
+
+        assert!(discovered.named_without_git);
+    }
+
+    /// A repository with no `origin` is the documented answer and says
+    /// nothing. git ran, and a reader can see for themselves that their
+    /// repository has no remote — a warning here is the one they learn to
+    /// ignore, and every warning beside it goes with it.
+    #[test]
+    fn a_repository_with_no_origin_is_named_after_its_directory_and_says_nothing() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", THE_TRACKER_AT_ORBITAL)
+            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .with("git worktree list --porcelain", ONE_CHECKOUT)
+            .failing("git remote get-url origin", no_such_repository());
+
+        let discovered = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+            .expect("the repository is a project");
+
+        assert_eq!(discovered.config.projects[0].name, "orbital");
+        assert!(!discovered.named_without_git);
+    }
+
+    /// The other outcome git that ran can have: a directory in no repository
+    /// at all. The reader knows where they are standing, so this is silent
+    /// too, and the name is the directory's for a reason they can see.
+    #[test]
+    fn a_directory_in_no_repository_is_named_after_itself_and_says_nothing() {
+        let runner = FakeRunner::default()
+            .with("bd where --json", r#"{"path":"/srv/beads/.beads"}"#)
+            .failing("git rev-parse --show-toplevel", no_such_repository())
+            .failing("git remote get-url origin", no_such_repository());
+
+        let discovered = from_the_current_directory(&runner, Path::new("/srv/loose"), None)
+            .expect("the directory is a project");
+
+        assert_eq!(discovered.config.projects[0].name, "loose");
+        assert!(!discovered.named_without_git);
+    }
+
+    /// `BDI_PROJECT` is a name rather than a guess, so a machine with no git
+    /// and a name in its environment has nothing to be told about.
+    #[test]
+    fn a_project_the_environment_names_is_no_guess_on_a_machine_with_no_git() {
+        let discovered = from_the_current_directory(
+            &a_tracked_tree_with_no_git(),
+            Path::new("/srv/work/orbital/src"),
+            Some("atlas"),
+        )
+        .expect("the tree bd tracks is a project");
+
+        assert_eq!(discovered.config.projects[0].name, "atlas");
+        assert!(!discovered.named_without_git);
+    }
+
+    /// An empty `BDI_PROJECT` is no name at all — here as everywhere else —
+    /// so it leaves the name a guess rather than settling it. The name and
+    /// what is said about it are read off the same test, because a
+    /// fall-through reordered so they disagree is the whole failure.
+    #[test]
+    fn an_empty_name_in_the_environment_leaves_the_name_a_guess() {
+        let discovered = from_the_current_directory(
+            &a_tracked_tree_with_no_git(),
+            Path::new("/srv/work/orbital/src"),
+            Some(""),
+        )
+        .expect("the tree bd tracks is a project");
+
+        assert_eq!(discovered.config.projects[0].name, "orbital");
+        assert!(discovered.named_without_git);
     }
 
     /// A redirect is the reader saying which beads are theirs, and `bd where`
@@ -942,7 +1106,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_git());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/project/sub"), None)
-            .expect("the tree bd tracks is a project");
+            .expect("the tree bd tracks is a project")
+            .config;
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/project"));
         assert_eq!(cfg.projects[0].name, "project");
@@ -967,7 +1132,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_git());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/project"), None)
-            .expect("the directory is a project");
+            .expect("the directory is a project")
+            .config;
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/project"));
         assert_eq!(cfg.projects[0].name, "project");
@@ -986,7 +1152,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_git());
 
         let cfg = from_the_current_directory(&runner, Path::new("/home/pilot/work/orbital"), None)
-            .expect("the tree bd tracks is a project");
+            .expect("the tree bd tracks is a project")
+            .config;
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/home/pilot"));
     }
@@ -1002,7 +1169,8 @@ path = "/tmp/seat-b/wt/crates/dish"
         );
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
-            .expect("the repository is a project");
+            .expect("the repository is a project")
+            .config;
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
         assert_eq!(cfg.projects[0].name, "ground-station");
@@ -1018,7 +1186,8 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git remote get-url origin", no_such_repository());
 
         let cfg = from_the_current_directory(&runner, Path::new("/srv/loose"), None)
-            .expect("the directory is a project");
+            .expect("the directory is a project")
+            .config;
 
         assert_eq!(
             cfg.projects,

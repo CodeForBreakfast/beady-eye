@@ -1992,11 +1992,14 @@ projects come from the config, so the first frame has real content to draw.
 ### The foot of the screen
 
 The foot is one row: the keys, and every notice the view carries. **A notice
-is a fact that has no row to sit on.** Two qualify: an agent provider that
-could not be reached empties the agent column on every row, and a `bdi` whose
-inbound socket would not open is told nothing when a project changes, so the
-whole view is only as fresh as the refresh interval. Neither has a row that is
-wrong, which is why neither can be said anywhere else. A provider nobody
+is a fact that has no row to sit on.** An agent provider that could not be
+reached empties the agent column on every row; a `bdi` whose inbound socket
+would not open is told nothing when a project changes, so the whole view is
+only as fresh as the refresh interval; and a `bdi` that could not run git at
+all named its one project after a directory rather than after a remote, which
+is half of every key on the screen and wrong on no row in particular. None of
+them has a row that is wrong, which is why none can be said anywhere else. A
+provider nobody
 installed is not a third: nothing was lost, so there is nothing to say, and
 the tail band carries what little there is to carry. The rule's other edge
 is that a per-project fact never belongs there: it has a project line, and the
@@ -2012,7 +2015,8 @@ reader never learns. Among the notices, a herdr nobody can reach comes first,
 because the agent column is what the reader came for. Where the screen is too
 narrow even for the notices in full, words are given up before facts, and from
 the end: each phrase has a brief form — *agents unknown*, *polled, not
-reported*, *another bdi had it* — and the notice the foot puts first keeps its
+reported*, *another bdi had it*, *name guessed · set BDI_PROJECT* — and the
+notice the foot puts first keeps its
 full phrase longest. Being cut is the one thing a notice must not be: the mark
 a cut leaves is the mark any long line gets, so a severed warning reads as a
 sentence that ran out of room rather than as a fact the reader has lost.

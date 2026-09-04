@@ -66,6 +66,10 @@ pub fn notice(notice: &Notice) -> String {
         Notice::ConfigWouldNotReload => {
             "the config would not load · bdi is still on the one before the edit".to_string()
         }
+        Notice::ProjectNamedWithoutGit => {
+            "git could not be run · this project is named after its directory · set BDI_PROJECT"
+                .to_string()
+        }
     }
 }
 
@@ -91,6 +95,10 @@ pub fn brief_notice(notice: &Notice) -> String {
         // is the half the reader cannot see: their editor is still showing
         // them the text they wrote.
         Notice::ConfigWouldNotReload => "config not reloaded".to_string(),
+        // The remedy survives the cut, with only enough of the fact to say
+        // what it is for. What the reader loses — a name that is a guess —
+        // is not something they can act on; the variable that settles it is.
+        Notice::ProjectNamedWithoutGit => "name guessed · set BDI_PROJECT".to_string(),
     }
 }
 
