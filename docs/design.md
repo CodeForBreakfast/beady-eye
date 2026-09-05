@@ -40,9 +40,9 @@ surfaces and hold the join in your head.
 
 | bead | bd says | herdr says |
 |---|---|---|
-| `nix-9670s.6` | closed | pane `wCM:p4` working |
-| `nix-9670s.11` | closed | pane `wCM:pB` working |
-| `nix-9670s.16` | in_progress | no pane carries this bead |
+| `smt-4kd3p.6` | closed | pane `wCM:p4` working |
+| `smt-4kd3p.11` | closed | pane `wCM:pB` working |
+| `smt-4kd3p.16` | in_progress | no pane carries this bead |
 
 The first two are agents that finished and never exited. The third is a claim
 with no visible agent — or an agent that has not identified itself yet, and
@@ -389,8 +389,8 @@ a root under a project no collection reaches is dropped with nothing said
 about it. Refusing is the degrade-never-disappear answer here rather than the
 price of it. Against a scope the directory chose there is no contradiction,
 because the reader asked for nothing the root contradicts: the root widens
-the read set to take its project in, so `bdi homelab:hl-123` from the Beacon
-desktop reads Beacon and homelab. The widening happens before git is asked
+the read set to take its project in, so `bdi meadow:mdw-123` from the orbital
+desktop reads orbital and meadow. The widening happens before git is asked
 where each project is worked, so the project a root brought in learns its
 working trees like any other.
 
@@ -1335,7 +1335,7 @@ it.
 
 That measurement watched the gate open rather than a migration finish — the
 throwaway kept its database where bd's auto-migration did not look. The other
-half is homelab's, measured 2026-09-01 on their own throwaway stores: a tracker
+half is meadow's, measured 2026-09-01 on their own throwaway stores: a tracker
 at schema 52 with a genuine pending migration, opened by bd 1.2.2 with
 `--readonly`, came back at 53, exit 0, no error and no warning.
 
@@ -1566,13 +1566,13 @@ name to the socket after any command that wrote something.
   "trees": [
     {
       "project": "summit-works",
-      "root": "nix-9670s",
-      "title": "Switch the thinkpad's session shell from DMS to noctalia v5",
+      "root": "smt-4kd3p",
+      "title": "Switch larkspur's session shell from DMS to noctalia v5",
       "counts": { "total": 21, "closed": 8, "live_agents": 3, "anomalies": 3 },
       "tracker": "ok",
       "nodes": [
         {
-          "id": "nix-9670s.20",
+          "id": "smt-4kd3p.20",
           "title": "the daily wallpaper timer calls dms",
           "status": "blocked",
           "issue_type": "task",
@@ -1580,7 +1580,7 @@ name to the socket after any command that wrote something.
           "depth": 1,
           "edge": "parent-child",
           "ready": false,
-          "blocked_by": ["nix-9670s.13"],
+          "blocked_by": ["smt-4kd3p.13"],
           "started_at": "2026-08-29T10:00:00Z",
           "closed_at": null,
           "badges": [{ "key": "blocked_on", "text": "⏸ waiting" }],
@@ -1593,7 +1593,7 @@ name to the socket after any command that wrote something.
           "anomalies": []
         },
         {
-          "id": "nix-9670s.16",
+          "id": "smt-4kd3p.16",
           "title": "guard a key in both layers",
           "status": "in_progress",
           "issue_type": "task",
@@ -1613,9 +1613,9 @@ name to the socket after any command that wrote something.
       "cycles": []
     }
   ],
-  "hidden_trees": [ { "project": "summit-works", "root": "nix-bgej6", "title": "…", "reason": "no-live-agent" } ],
-  "failed_projects": [ { "project": "homelab", "tracker": "auth" }, { "project": "orbital", "tracker": "no-environment" } ],
-  "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "nix-9670s.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
+  "hidden_trees": [ { "project": "summit-works", "root": "smt-3pd9k", "title": "…", "reason": "no-live-agent" } ],
+  "failed_projects": [ { "project": "meadow", "tracker": "auth" }, { "project": "orbital", "tracker": "no-environment" } ],
+  "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "smt-4kd3p.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": [],
   "projects_named_without_git": []
@@ -1754,7 +1754,7 @@ all of it at once.
 
 ```
 ▾ summit-works  ✓ 9s ago                             8/21  3 agents  ⚠ 3
-  ├── ◐ nix-9670s  DMS → noctalia v5                 8/21  ◍ shell selector · working
+  ├── ◐ smt-4kd3p  DMS → noctalia v5                 8/21  ◍ shell selector · working
   │   ├── ● .20  wallpaper timer calls dms                 ◍ rebuilt generation 541 · working
   │   ├── ◐ .1   wire the niri theme include               ◍ wCM:p6 · idle · inferred, not confirmed
   │   │   ├── ○ .4   restore app theming                   1/4
@@ -1767,17 +1767,17 @@ all of it at once.
   │   └─▸ ✓ 13 more beads · closed, and nobody on them
   ├─▸ 4 trees with no live agent                     a to show all
   └── ⚠ 2 unattributed panes
-      ├── ◍ wCM:pD waiting at a prompt  nix-9670s.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
+      ├── ◍ wCM:pD waiting at a prompt  smt-4kd3p.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
       └── ◍ wCM:pE idle                              /tmp/bdi-ground/summit-works
 
-▾ homelab  ⠋ 1m ago                                  2/7   1 agent
-  ├─▸ ◐ hl-sgqyv  heartbeat cadence                  2/7   ◍ pinning the cadence · idle
-  └── ⚠ hl-9d2c   the tracker refused the credential it was given
+▾ meadow  ⠋ 1m ago                                   2/7   1 agent
+  ├─▸ ◐ mdw-6qzt4  heartbeat cadence                 2/7   ◍ pinning the cadence · idle
+  └── ⚠ mdw-2f8c   the tracker refused the credential it was given
 
 ▾ ⚠ 1 pane in a directory no configured project covers
   └── ◍ wCM:pF idle                                  /srv/spike
 ────────────────────────────────── wCM:p9 ──────────────────────────────────
-  · rebuilt .#thinkpad, generation 541
+  · rebuilt .#larkspur, generation 541
 ⚠ no herdr session · which agents are alive is unknown   Enter show   a all   ? keys   q quit
 ```
 
@@ -1808,7 +1808,7 @@ glyph, literal because `bd`'s are and do not move with the terminal's theme
 escape for it and inheriting is what lets a row's own brightness reach its
 glyph.
 
-**An id is shown as what it adds to its root's**, `.20` for `nix-9670s.20`,
+**An id is shown as what it adds to its root's**, `.20` for `smt-4kd3p.20`,
 and kept whole where it does not carry that prefix followed by a dot — the
 dangling and re-parented nodes, and the root itself — because a bare suffix
 would place it under a root it does not belong to. **It is drawn in the colour

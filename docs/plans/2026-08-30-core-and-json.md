@@ -377,12 +377,12 @@ Create `tests/fixtures/bd_dep_tree.json` — this is the real shape, trimmed to 
 
 ```json
 [
-  {"id":"nix-1","title":"Root epic","status":"open","priority":1,"issue_type":"epic","owner":"g@example.com","created_at":"2026-08-29T10:00:00Z","updated_at":"2026-08-30T08:00:00Z","metadata":{},"depth":0,"truncated":false},
-  {"id":"nix-1.20","title":"wallpaper timer calls dms","status":"closed","priority":2,"issue_type":"bug","owner":"g@example.com","created_at":"2026-08-30T07:57:06Z","updated_at":"2026-08-30T08:33:47Z","closed_at":"2026-08-30T08:33:47Z","metadata":{"working_topic":"proj/topic-20"},"depth":1,"parent_id":"nix-1","edge_from_parent":"parent-child","truncated":false},
-  {"id":"nix-1.14","title":"weather widget has no location","status":"open","priority":3,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T11:00:00Z","updated_at":"2026-08-29T11:00:00Z","metadata":{},"depth":2,"parent_id":"nix-1.20","edge_from_parent":"blocks","truncated":false},
-  {"id":"nix-1.1","title":"wire the niri theme include","status":"blocked","priority":2,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T10:30:00Z","updated_at":"2026-08-30T09:00:00Z","started_at":"2026-08-29T12:00:00Z","metadata":{"blocked_on":"human","agent_pane":"wCM:p6"},"depth":1,"parent_id":"nix-1","edge_from_parent":"parent-child","truncated":false},
-  {"id":"nix-1.4","title":"restore app theming","status":"open","priority":2,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T10:31:00Z","updated_at":"2026-08-29T10:31:00Z","metadata":{},"depth":2,"parent_id":"nix-1.1","edge_from_parent":"blocks","truncated":false},
-  {"id":"nix-1.16","title":"guard a key in both layers","status":"in_progress","priority":3,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T10:32:00Z","updated_at":"2026-07-01T10:32:00Z","started_at":"2026-07-01T10:32:00Z","metadata":{},"depth":1,"parent_id":"nix-1","edge_from_parent":"parent-child","truncated":false}
+  {"id":"smt-1","title":"Root epic","status":"open","priority":1,"issue_type":"epic","owner":"g@example.com","created_at":"2026-08-29T10:00:00Z","updated_at":"2026-08-30T08:00:00Z","metadata":{},"depth":0,"truncated":false},
+  {"id":"smt-1.20","title":"wallpaper timer calls dms","status":"closed","priority":2,"issue_type":"bug","owner":"g@example.com","created_at":"2026-08-30T07:57:06Z","updated_at":"2026-08-30T08:33:47Z","closed_at":"2026-08-30T08:33:47Z","metadata":{"working_topic":"proj/topic-20"},"depth":1,"parent_id":"smt-1","edge_from_parent":"parent-child","truncated":false},
+  {"id":"smt-1.14","title":"weather widget has no location","status":"open","priority":3,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T11:00:00Z","updated_at":"2026-08-29T11:00:00Z","metadata":{},"depth":2,"parent_id":"smt-1.20","edge_from_parent":"blocks","truncated":false},
+  {"id":"smt-1.1","title":"wire the niri theme include","status":"blocked","priority":2,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T10:30:00Z","updated_at":"2026-08-30T09:00:00Z","started_at":"2026-08-29T12:00:00Z","metadata":{"blocked_on":"human","agent_pane":"wCM:p6"},"depth":1,"parent_id":"smt-1","edge_from_parent":"parent-child","truncated":false},
+  {"id":"smt-1.4","title":"restore app theming","status":"open","priority":2,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T10:31:00Z","updated_at":"2026-08-29T10:31:00Z","metadata":{},"depth":2,"parent_id":"smt-1.1","edge_from_parent":"blocks","truncated":false},
+  {"id":"smt-1.16","title":"guard a key in both layers","status":"in_progress","priority":3,"issue_type":"task","owner":"g@example.com","created_at":"2026-08-29T10:32:00Z","updated_at":"2026-07-01T10:32:00Z","started_at":"2026-07-01T10:32:00Z","metadata":{},"depth":1,"parent_id":"smt-1","edge_from_parent":"parent-child","truncated":false}
 ]
 ```
 
@@ -494,12 +494,12 @@ mod tests {
         let beads = parse_dep_tree(FIXTURE).unwrap();
 
         let root = &beads[0];
-        assert_eq!(root.id, "nix-1");
+        assert_eq!(root.id, "smt-1");
         assert_eq!(root.parent_id, None);
         assert_eq!(root.edge_from_parent, None);
 
-        let child = beads.iter().find(|b| b.id == "nix-1.14").unwrap();
-        assert_eq!(child.parent_id.as_deref(), Some("nix-1.20"));
+        let child = beads.iter().find(|b| b.id == "smt-1.14").unwrap();
+        assert_eq!(child.parent_id.as_deref(), Some("smt-1.20"));
         assert_eq!(child.edge_from_parent, Some(Edge::Blocks));
     }
 
@@ -508,16 +508,16 @@ mod tests {
         let beads = parse_dep_tree(FIXTURE).unwrap();
         let by = |id: &str| beads.iter().find(|b| b.id == id).unwrap().status.clone();
 
-        assert_eq!(by("nix-1.20"), Status::Closed);
-        assert_eq!(by("nix-1.1"), Status::Blocked);
-        assert_eq!(by("nix-1.16"), Status::InProgress);
-        assert_eq!(by("nix-1.4"), Status::Open);
+        assert_eq!(by("smt-1.20"), Status::Closed);
+        assert_eq!(by("smt-1.1"), Status::Blocked);
+        assert_eq!(by("smt-1.16"), Status::InProgress);
+        assert_eq!(by("smt-1.4"), Status::Open);
     }
 
     #[test]
     fn metadata_is_carried_inline() {
         let beads = parse_dep_tree(FIXTURE).unwrap();
-        let b = beads.iter().find(|b| b.id == "nix-1.1").unwrap();
+        let b = beads.iter().find(|b| b.id == "smt-1.1").unwrap();
 
         assert_eq!(b.metadata.get("blocked_on").map(String::as_str), Some("human"));
         assert_eq!(b.metadata.get("agent_pane").map(String::as_str), Some("wCM:p6"));
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn root_is_first_and_at_depth_zero() {
         let a = assemble(parse_dep_tree(FIXTURE).unwrap());
-        assert_eq!(a.rows[0].bead.id, "nix-1");
+        assert_eq!(a.rows[0].bead.id, "smt-1");
         assert_eq!(a.rows[0].depth, 0);
     }
 
@@ -709,9 +709,9 @@ mod tests {
         let a = assemble(parse_dep_tree(FIXTURE).unwrap());
         let depth = |id: &str| a.rows.iter().find(|p| p.bead.id == id).unwrap().depth;
 
-        assert_eq!(depth("nix-1.1"), 1);
-        assert_eq!(depth("nix-1.4"), 2);
-        assert_eq!(depth("nix-1.14"), 2);
+        assert_eq!(depth("smt-1.1"), 1);
+        assert_eq!(depth("smt-1.4"), 2);
+        assert_eq!(depth("smt-1.14"), 2);
     }
 
     #[test]
@@ -722,8 +722,8 @@ mod tests {
         let pos = |id: &str| order.iter().position(|x| *x == id).unwrap();
 
         // .16 is in_progress, .1 is blocked, .20 is closed — all children of the root.
-        assert!(pos("nix-1.16") < pos("nix-1.1"), "in_progress sorts before blocked");
-        assert!(pos("nix-1.1") < pos("nix-1.20"), "blocked sorts before closed");
+        assert!(pos("smt-1.16") < pos("smt-1.1"), "in_progress sorts before blocked");
+        assert!(pos("smt-1.1") < pos("smt-1.20"), "blocked sorts before closed");
     }
 
     #[test]
@@ -733,19 +733,19 @@ mod tests {
         let pos = |id: &str| order.iter().position(|x| *x == id).unwrap();
 
         // .4 hangs off .1, so it must sit between .1 and whatever follows it.
-        assert_eq!(pos("nix-1.4"), pos("nix-1.1") + 1);
-        assert_eq!(pos("nix-1.14"), pos("nix-1.20") + 1);
+        assert_eq!(pos("smt-1.4"), pos("smt-1.1") + 1);
+        assert_eq!(pos("smt-1.14"), pos("smt-1.20") + 1);
     }
 
     #[test]
     fn a_bead_whose_parent_is_absent_is_reported_and_kept() {
         let json = r#"[
-          {"id":"nix-1","title":"root","status":"open","priority":1,"metadata":{},"truncated":false},
-          {"id":"nix-1.9","title":"orphan","status":"open","priority":2,"parent_id":"nix-1.404","edge_from_parent":"blocks","metadata":{},"truncated":false}
+          {"id":"smt-1","title":"root","status":"open","priority":1,"metadata":{},"truncated":false},
+          {"id":"smt-1.9","title":"orphan","status":"open","priority":2,"parent_id":"smt-1.404","edge_from_parent":"blocks","metadata":{},"truncated":false}
         ]"#;
         let a = assemble(parse_dep_tree(json).unwrap());
 
-        assert_eq!(a.dangling, vec!["nix-1.9".to_string()]);
+        assert_eq!(a.dangling, vec!["smt-1.9".to_string()]);
         assert_eq!(a.rows.len(), 2, "the orphan is kept, not dropped");
         assert_eq!(a.rows[1].depth, 1, "the orphan is placed under the root");
     }
@@ -815,9 +815,9 @@ Create `tests/fixtures/herdr_agent_list.json`:
 
 ```json
 {"id":"cli:agent:list","result":{"type":"agent_list","agents":[
-  {"agent":"claude","agent_status":"working","cwd":"/tmp/bdi-ground/summit-works","display_agent":"nix-1.16","title":"guard a key in both layers","pane_id":"wCM:pB","tab_id":"wCM:t1","workspace_id":"wCM"},
-  {"agent":"claude","agent_status":"idle","cwd":"/tmp/bdi-ground/summit-works","display_agent":"nix-1.1","title":"theme wiring","pane_id":"wCM:p6","tab_id":"wCM:t1","workspace_id":"wCM","state_labels":{"idle":"asleep: needs eyes on the focus ring","working":"verifying theme wiring"}},
-  {"agent":"claude","agent_status":"working","cwd":"/tmp/bdi-ground/summit-works","display_agent":"nix-1.20","title":"wallpaper timer","pane_id":"wCM:p9","tab_id":"wCM:t1","workspace_id":"wCM"},
+  {"agent":"claude","agent_status":"working","cwd":"/tmp/bdi-ground/summit-works","display_agent":"smt-1.16","title":"guard a key in both layers","pane_id":"wCM:pB","tab_id":"wCM:t1","workspace_id":"wCM"},
+  {"agent":"claude","agent_status":"idle","cwd":"/tmp/bdi-ground/summit-works","display_agent":"smt-1.1","title":"theme wiring","pane_id":"wCM:p6","tab_id":"wCM:t1","workspace_id":"wCM","state_labels":{"idle":"asleep: needs eyes on the focus ring","working":"verifying theme wiring"}},
+  {"agent":"claude","agent_status":"working","cwd":"/tmp/bdi-ground/summit-works","display_agent":"smt-1.20","title":"wallpaper timer","pane_id":"wCM:p9","tab_id":"wCM:t1","workspace_id":"wCM"},
   {"agent":"claude","agent_status":"blocked","cwd":"/tmp/bdi-ground/summit-works","pane_id":"wCM:pD","tab_id":"wCM:t1","workspace_id":"wCM"}
 ]}}
 ```
@@ -1095,8 +1095,8 @@ mod tests {
         let (rows, panes) = fixture();
         let joined = resolve(&rows, &panes, &Join::default());
 
-        // nix-1.1 carries agent_pane=wCM:p6.
-        let a = joined.get("nix-1.1").expect("resolved");
+        // smt-1.1 carries agent_pane=wCM:p6.
+        let a = joined.get("smt-1.1").expect("resolved");
         assert_eq!(a.pane, "wCM:p6");
         assert_eq!(a.source, JoinSource::AgentPane);
     }
@@ -1106,8 +1106,8 @@ mod tests {
         let (rows, panes) = fixture();
         let joined = resolve(&rows, &panes, &Join::default());
 
-        // nix-1.16 has no agent_pane; the pane's display_agent supplies it.
-        let a = joined.get("nix-1.16").expect("resolved");
+        // smt-1.16 has no agent_pane; the pane's display_agent supplies it.
+        let a = joined.get("smt-1.16").expect("resolved");
         assert_eq!(a.pane, "wCM:pB");
         assert_eq!(a.source, JoinSource::DisplayAgent);
     }
@@ -1137,7 +1137,7 @@ mod tests {
     #[test]
     fn badges_render_only_where_the_key_and_match_agree() {
         let (rows, _) = fixture();
-        let bead = &rows.iter().find(|r| r.bead.id == "nix-1.1").unwrap().bead;
+        let bead = &rows.iter().find(|r| r.bead.id == "smt-1.1").unwrap().bead;
 
         let cfg = vec![
             Badge { key: "blocked_on".into(), match_value: Some("human".into()), render: "waiting".into() },
@@ -1270,32 +1270,32 @@ mod tests {
 
     #[test]
     fn closed_bead_with_a_live_pane_is_a_stale_pane() {
-        let got = detect(&bead("nix-1.20"), Some(&live()), &Anomalies::default(), now());
+        let got = detect(&bead("smt-1.20"), Some(&live()), &Anomalies::default(), now());
         assert_eq!(got, Some(Anomaly::StalePane));
     }
 
     #[test]
     fn closed_bead_with_no_pane_is_fine() {
-        let got = detect(&bead("nix-1.20"), None, &Anomalies::default(), now());
+        let got = detect(&bead("smt-1.20"), None, &Anomalies::default(), now());
         assert_eq!(got, None);
     }
 
     #[test]
     fn in_progress_with_no_pane_is_an_orphan_claim() {
-        let got = detect(&bead("nix-1.16"), None, &Anomalies::default(), now());
+        let got = detect(&bead("smt-1.16"), None, &Anomalies::default(), now());
         assert_eq!(got, Some(Anomaly::OrphanClaim));
     }
 
     #[test]
     fn in_progress_and_long_untouched_is_a_stale_claim() {
-        // nix-1.16 was last updated 2026-07-01; that is 60 days before now().
-        let got = detect(&bead("nix-1.16"), Some(&live()), &Anomalies::default(), now());
+        // smt-1.16 was last updated 2026-07-01; that is 60 days before now().
+        let got = detect(&bead("smt-1.16"), Some(&live()), &Anomalies::default(), now());
         assert_eq!(got, Some(Anomaly::StaleClaim { days: 60 }));
     }
 
     #[test]
     fn a_recent_in_progress_claim_with_a_pane_is_fine() {
-        let mut b = bead("nix-1.16");
+        let mut b = bead("smt-1.16");
         b.updated_at = Some("2026-08-29T12:00:00Z".parse().unwrap());
 
         let got = detect(&b, Some(&live()), &Anomalies::default(), now());
@@ -1305,14 +1305,14 @@ mod tests {
     #[test]
     fn a_blocked_bead_with_a_live_pane_is_never_flagged() {
         // This is a sleeping agent, which is a normal state.
-        let got = detect(&bead("nix-1.1"), Some(&live()), &Anomalies::default(), now());
+        let got = detect(&bead("smt-1.1"), Some(&live()), &Anomalies::default(), now());
         assert_eq!(got, None);
     }
 
     #[test]
     fn the_age_window_is_configurable() {
         let cfg = Anomalies { stale_claim_days: 90 };
-        let got = detect(&bead("nix-1.16"), Some(&live()), &cfg, now());
+        let got = detect(&bead("smt-1.16"), Some(&live()), &cfg, now());
         assert_eq!(got, None, "60 days is inside a 90-day window");
     }
 }
@@ -1610,14 +1610,14 @@ render = "waiting"
     #[test]
     fn the_root_is_the_first_node() {
         let t = tree();
-        assert_eq!(t.root, "nix-1");
+        assert_eq!(t.root, "smt-1");
         assert_eq!(t.nodes[0].depth, 0);
     }
 
     #[test]
     fn badges_reach_the_node() {
         let t = tree();
-        let n = t.nodes.iter().find(|n| n.id == "nix-1.1").unwrap();
+        let n = t.nodes.iter().find(|n| n.id == "smt-1.1").unwrap();
         assert_eq!(n.badges.len(), 1);
         assert_eq!(n.badges[0].text, "waiting");
     }
@@ -1625,7 +1625,7 @@ render = "waiting"
     #[test]
     fn anomalies_reach_the_node() {
         let t = tree();
-        let stale = t.nodes.iter().find(|n| n.id == "nix-1.20").unwrap();
+        let stale = t.nodes.iter().find(|n| n.id == "smt-1.20").unwrap();
         assert_eq!(stale.anomaly, Some(Anomaly::StalePane));
     }
 
@@ -1876,18 +1876,18 @@ Append to `src/collect/bd.rs`'s test module:
     #[test]
     fn dep_tree_asks_bd_in_the_projects_directory() {
         let runner = FakeRunner::default()
-            .with("bd dep tree nix-1 --direction=up --json", FIXTURE);
+            .with("bd dep tree smt-1 --direction=up --json", FIXTURE);
 
-        let beads = dep_tree(&runner, &PathBuf::from("/tmp/proj"), "nix-1").unwrap();
+        let beads = dep_tree(&runner, &PathBuf::from("/tmp/proj"), "smt-1").unwrap();
         assert_eq!(beads.len(), 6);
     }
 
     #[test]
     fn discovery_unions_statuses_and_metadata_keys_without_duplicates() {
-        let one = r#"[{"id":"nix-1.16","title":"a","status":"in_progress","priority":3,"metadata":{},"truncated":false}]"#;
-        let two = r#"[{"id":"nix-1.1","title":"b","status":"blocked","priority":2,"metadata":{},"truncated":false}]"#;
+        let one = r#"[{"id":"smt-1.16","title":"a","status":"in_progress","priority":3,"metadata":{},"truncated":false}]"#;
+        let two = r#"[{"id":"smt-1.1","title":"b","status":"blocked","priority":2,"metadata":{},"truncated":false}]"#;
         // The same bead comes back from the metadata query as from the status query.
-        let three = r#"[{"id":"nix-1.16","title":"a","status":"in_progress","priority":3,"metadata":{},"truncated":false}]"#;
+        let three = r#"[{"id":"smt-1.16","title":"a","status":"in_progress","priority":3,"metadata":{},"truncated":false}]"#;
 
         let runner = FakeRunner::default()
             .with("bd list --status in_progress --limit 0 --json", one)
@@ -1902,27 +1902,27 @@ Append to `src/collect/bd.rs`'s test module:
         .unwrap();
 
         let ids: Vec<&str> = got.iter().map(|b| b.id.as_str()).collect();
-        assert_eq!(ids, vec!["nix-1.1", "nix-1.16"]);
+        assert_eq!(ids, vec!["smt-1.1", "smt-1.16"]);
     }
 
     #[test]
     fn ready_ids_returns_the_set_bd_considers_startable() {
-        let out = r#"[{"id":"nix-1.1","title":"a","status":"open","priority":2,"metadata":{},"truncated":false},
-                      {"id":"nix-1.3","title":"b","status":"open","priority":1,"metadata":{},"truncated":false}]"#;
+        let out = r#"[{"id":"smt-1.1","title":"a","status":"open","priority":2,"metadata":{},"truncated":false},
+                      {"id":"smt-1.3","title":"b","status":"open","priority":1,"metadata":{},"truncated":false}]"#;
         let runner = FakeRunner::default().with("bd ready --limit 0 --json", out);
 
         let got = ready_ids(&runner, &PathBuf::from("/tmp/proj")).unwrap();
-        assert!(got.contains("nix-1.1"));
-        assert!(got.contains("nix-1.3"));
-        assert!(!got.contains("nix-1.4"), "a blocked bead is not ready");
+        assert!(got.contains("smt-1.1"));
+        assert!(got.contains("smt-1.3"));
+        assert!(!got.contains("smt-1.4"), "a blocked bead is not ready");
     }
 
     #[test]
     fn a_failing_bd_surfaces_its_stderr() {
         let runner = FakeRunner::default()
-            .failing("bd dep tree nix-1 --direction=up --json", "Access denied for user 'other'");
+            .failing("bd dep tree smt-1 --direction=up --json", "Access denied for user 'other'");
 
-        let err = dep_tree(&runner, &PathBuf::from("/tmp/proj"), "nix-1").unwrap_err();
+        let err = dep_tree(&runner, &PathBuf::from("/tmp/proj"), "smt-1").unwrap_err();
         assert!(err.to_string().contains("Access denied"), "got: {err}");
     }
 ```
@@ -2125,14 +2125,14 @@ fn now() -> DateTime<Utc> {
 
 fn canned() -> Canned {
     let empty = "[]";
-    let in_progress = r#"[{"id":"nix-1.16","title":"a","status":"in_progress","priority":3,"metadata":{},"truncated":false}]"#;
+    let in_progress = r#"[{"id":"smt-1.16","title":"a","status":"in_progress","priority":3,"metadata":{},"truncated":false}]"#;
 
     let mut m = HashMap::new();
     m.insert("herdr agent list".into(), PANES.to_string());
     m.insert("bd list --status in_progress --limit 0 --json".into(), in_progress.to_string());
     m.insert("bd list --status blocked --limit 0 --json".into(), empty.to_string());
-    m.insert("bd dep tree nix-1.16 --direction=up --json".into(), BEADS.to_string());
-    m.insert("bd dep tree nix-1 --direction=up --json".into(), BEADS.to_string());
+    m.insert("bd dep tree smt-1.16 --direction=up --json".into(), BEADS.to_string());
+    m.insert("bd dep tree smt-1 --direction=up --json".into(), BEADS.to_string());
     Canned(m)
 }
 
@@ -2152,7 +2152,7 @@ fn emits_one_tree_rooted_at_the_discovered_epic() {
     let snap = beady_eye::app::run(&cfg(), &canned(), Filter::LiveAgents, now());
 
     assert_eq!(snap.trees.len(), 1);
-    assert_eq!(snap.trees[0].root, "nix-1");
+    assert_eq!(snap.trees[0].root, "smt-1");
     assert_eq!(snap.trees[0].nodes.len(), 6);
 }
 
