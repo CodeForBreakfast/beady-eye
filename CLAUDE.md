@@ -179,9 +179,9 @@ before the branch everyone else works from carries it.
 ### The subject
 
 The pull request's **title** becomes the commit subject, because the merge is a
-squash — so it is the only line of the branch `main` keeps, and the branch's own
-commit messages are squashed away and may say anything. Write the title as a
-conventional commit:
+squash — so it is the only line of the branch `main` keeps. The branch's own
+commit messages are squashed away, but they stay reachable on GitHub after the
+merge, so they are read as well. Write the title as a conventional commit:
 
     type(scope): description
 
