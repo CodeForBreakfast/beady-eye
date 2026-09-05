@@ -856,17 +856,17 @@ fn a_claim_whose_pane_is_under_no_configured_path_says_that_on_the_bead() {
 }
 
 /// A pane in `beacon`, the same session's name on a box running the default
-/// beside it, and `persistent-agents` running and not answering.
+/// beside it, and `standing-agents` running and not answering.
 const PANES_IN_BEACON: &str = r#"{"id":"cli:agent:list","result":{"agents":[
   {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"}
 ]}}"#;
 
 /// A box running three sessions: the default holds nothing, `beacon` holds
-/// the seat the bead names, and `persistent-agents` will not answer.
+/// the seat the bead names, and `standing-agents` will not answer.
 fn three_sessions() -> Canned {
     Canned::default()
         .answering("herdr --session default agent list", NO_PANES)
-        .herdr_running(&[("beacon", Some(PANES_IN_BEACON)), ("persistent-agents", None)])
+        .herdr_running(&[("beacon", Some(PANES_IN_BEACON)), ("standing-agents", None)])
 }
 
 const NO_PANES: &str = r#"{"result":{"agents":[]}}"#;
@@ -884,7 +884,7 @@ fn a_session_that_will_not_answer_is_named_and_the_others_seats_are_still_drawn(
         json!({"provider": "herdr", "state": "answering",
                "sessions": [{"name": "default", "state": "answering"},
                             {"name": "beacon", "state": "answering"},
-                            {"name": "persistent-agents", "state": "not-answering"}]})
+                            {"name": "standing-agents", "state": "not-answering"}]})
     );
     assert_eq!(
         node(&emitted["trees"][0], "orb-7")["agent"]["pane"],
@@ -935,7 +935,7 @@ fn an_orphan_claim_arrives_beside_the_session_that_could_not_be_read() {
         .collect();
     assert_eq!(
         unanswered,
-        [&json!("persistent-agents")],
+        [&json!("standing-agents")],
         "nothing in the snapshot says the pane listing was short of a session: {emitted:#}"
     );
 }

@@ -190,7 +190,7 @@ mod tests {
     use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
-    const ROOT: &str = "nix-9670s";
+    const ROOT: &str = "smt-4kd3p";
 
     fn node(id: &str, status: Status) -> Node {
         Node {
@@ -267,27 +267,27 @@ mod tests {
     /// without a pane, which under the other reading would have no glyph left.
     #[test]
     fn the_glyph_does_not_move_when_an_agent_arrives() {
-        let mut staffed = node("nix-9670s.20", Status::InProgress);
+        let mut staffed = node("smt-4kd3p.20", Status::InProgress);
         staffed.agent = Some(agent(JoinSource::AgentPane));
 
         assert_eq!(
             cells(&staffed, ROOT, None, None).glyph,
-            cells(&node("nix-9670s.20", Status::InProgress), ROOT, None, None).glyph
+            cells(&node("smt-4kd3p.20", Status::InProgress), ROOT, None, None).glyph
         );
     }
 
     #[test]
     fn a_node_under_the_root_shows_only_what_it_adds_to_it() {
-        assert_eq!(abbreviate("nix-9670s.20", ROOT), ".20");
-        assert_eq!(abbreviate("nix-9670s.1.4", ROOT), ".1.4");
+        assert_eq!(abbreviate("smt-4kd3p.20", ROOT), ".20");
+        assert_eq!(abbreviate("smt-4kd3p.1.4", ROOT), ".1.4");
     }
 
     /// A dangling or re-parented node is drawn under a root it does not
     /// descend from, and a bare suffix there would say it does.
     #[test]
     fn a_node_that_does_not_descend_from_the_root_keeps_its_whole_id() {
-        assert_eq!(abbreviate("hl-sgqyv.3", ROOT), "hl-sgqyv.3");
-        assert_eq!(abbreviate("nix-9670sX.3", ROOT), "nix-9670sX.3");
+        assert_eq!(abbreviate("mdw-6qzt4.3", ROOT), "mdw-6qzt4.3");
+        assert_eq!(abbreviate("smt-4kd3pX.3", ROOT), "smt-4kd3pX.3");
     }
 
     #[test]
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn a_bead_with_nothing_wrong_carries_no_marker_at_all() {
-        let row = cells(&node("nix-9670s.20", Status::Open), ROOT, None, None);
+        let row = cells(&node("smt-4kd3p.20", Status::Open), ROOT, None, None);
 
         assert_eq!(row.anomalies, None);
         assert_eq!(row.agent, None);
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn a_status_outside_bds_own_set_leaves_the_word_bd_used_on_the_row() {
-        let odd = node("nix-9670s.20", Status::Other("triage".into()));
+        let odd = node("smt-4kd3p.20", Status::Other("triage".into()));
         let row = cells(&odd, ROOT, None, None);
 
         assert_eq!(row.glyph, '?');
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn badges_are_drawn_in_the_order_they_were_configured() {
-        let mut badged = node("nix-9670s.20", Status::Blocked);
+        let mut badged = node("smt-4kd3p.20", Status::Blocked);
         badged.badges = vec![
             Badged {
                 key: "delivery_pr".into(),
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn a_row_says_what_the_bead_says() {
-        let row = cells(&node("nix-9670s.20", Status::Blocked), ROOT, None, None);
+        let row = cells(&node("smt-4kd3p.20", Status::Blocked), ROOT, None, None);
 
         assert_eq!(row.status, Status::Blocked);
         assert_eq!(row.glyph, '●');

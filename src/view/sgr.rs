@@ -413,8 +413,8 @@ mod tests {
     #[test]
     fn a_plain_row_is_one_plain_span() {
         assert_eq!(
-            lines(&rows(&["rebuilt .#thinkpad, generation 541"])),
-            line(vec![Span::raw("rebuilt .#thinkpad, generation 541")])
+            lines(&rows(&["rebuilt .#larkspur, generation 541"])),
+            line(vec![Span::raw("rebuilt .#larkspur, generation 541")])
         );
     }
 }

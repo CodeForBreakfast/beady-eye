@@ -362,11 +362,11 @@ mod tests {
         assert_eq!(
             read(
                 pane_key("w:p1"),
-                Ok(vec!["rebuilt .#thinkpad, generation 541".to_string()])
+                Ok(vec!["rebuilt .#larkspur, generation 541".to_string()])
             ),
             Tail::Pane {
                 pane: pane_key("w:p1"),
-                lines: vec!["rebuilt .#thinkpad, generation 541".to_string()],
+                lines: vec!["rebuilt .#larkspur, generation 541".to_string()],
             }
         );
     }

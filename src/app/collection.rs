@@ -1810,7 +1810,7 @@ path = "{}"
             in_session(pane("w:p1", ORBITAL, PaneStatus::Working), "beacon"),
             "x-1.1",
         )])
-        .not_answering_for("persistent-agents", wedged());
+        .not_answering_for("standing-agents", wedged());
 
         let snap = run(
             &two_projects(),
@@ -1833,14 +1833,14 @@ path = "{}"
                     state: SessionState::Answering,
                 },
                 Session {
-                    name: "persistent-agents".to_string(),
+                    name: "standing-agents".to_string(),
                     state: SessionState::NotAnswering,
                 },
             ]
         );
         assert_eq!(
             snap.agents.unanswered().collect::<Vec<_>>(),
-            ["persistent-agents"]
+            ["standing-agents"]
         );
         let seat = node(tree_of(&snap, "orbital"), "x-1.1")
             .agent

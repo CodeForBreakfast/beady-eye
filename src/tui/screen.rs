@@ -2940,13 +2940,13 @@ mod tests {
     fn what_was_read_for_the_pane_selected_is_what_the_band_shows() {
         let (mut shown, _) = shown_asking(a_staffed_grove(6));
 
-        assert!(shown.tailed(read(A_SELECTED_PANE, &["rebuilt .#thinkpad"]), an_instant()));
+        assert!(shown.tailed(read(A_SELECTED_PANE, &["rebuilt .#larkspur"]), an_instant()));
 
         assert_eq!(
             shown.tail,
             Tail::Pane {
                 pane: pane_key(A_SELECTED_PANE),
-                lines: vec!["rebuilt .#thinkpad".to_string()],
+                lines: vec!["rebuilt .#larkspur".to_string()],
             }
         );
     }
@@ -3773,7 +3773,7 @@ mod tests {
         let mut forest = an_open_grove(30);
         let tail = Tail::Pane {
             pane: pane_key("w:p1"),
-            lines: vec!["rebuilt .#thinkpad".to_string()],
+            lines: vec!["rebuilt .#larkspur".to_string()],
         };
 
         let rows = screen_of(&mut forest, &tail, 40, 12, Over::Nothing).rows();
@@ -3783,7 +3783,7 @@ mod tests {
             rows[bands.tail.y as usize].contains("w:p1"),
             "the rule naming the pane opens the tail's band: {rows:?}"
         );
-        assert!(rows[bands.tail.y as usize + 1].starts_with("  rebuilt .#thinkpad"));
+        assert!(rows[bands.tail.y as usize + 1].starts_with("  rebuilt .#larkspur"));
         assert!(
             rows[bands.tail.y as usize - 1].contains("a bead in the grove"),
             "the row above the tail is still the forest's"

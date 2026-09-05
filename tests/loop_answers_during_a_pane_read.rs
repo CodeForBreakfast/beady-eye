@@ -54,7 +54,7 @@ const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
 /// that differ from blank, and a pane's own text is drawn in the terminal's
 /// own colour — so its spaces are cells nothing has to write, and the line
 /// reaches the wire a word at a time with a cursor move between each.
-const WHAT_THE_PANE_SAID: &[u8] = ".#thinkpad,".as_bytes();
+const WHAT_THE_PANE_SAID: &[u8] = ".#larkspur,".as_bytes();
 
 /// The band under the forest says what it is waiting for while it waits.
 ///

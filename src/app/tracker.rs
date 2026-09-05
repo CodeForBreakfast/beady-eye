@@ -393,7 +393,7 @@ fn drawn_from(climbed: Climbed, nesting: &Nesting) -> Vec<String> {
 /// share is climbed past once.
 ///
 /// The climb stops below a parent `parents` does not hold. A row can name one
-/// the answer lacks — three were measured against summit-works on 2026-08-31
+/// the answer lacks — three were measured against a real tracker on 2026-08-31
 /// — and climbing to it names a root there is no tree to draw from, which
 /// reported a tracker that had answered every call as one whose answer could
 /// not be read. Nothing goes missing by stopping: the bead below still names
@@ -671,7 +671,7 @@ orbital = ["orb-4"]
         );
     }
 
-    /// The digest case measured against summit-works on 2026-08-31: a bead
+    /// The digest case measured against a real tracker on 2026-08-31: a bead
     /// names a parent that `bd list --all` does not hold. The chain stops at
     /// the last bead this read holds, which is a missing ancestor and not a
     /// tracker outage — every call was answered, so no tree calls the tracker

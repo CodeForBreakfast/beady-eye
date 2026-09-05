@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn a_bead_line_says_its_glyph_its_id_and_its_title_in_that_order() {
-        let node = node("nix-9670s.20", "wallpaper timer calls dms", Status::Blocked);
+        let node = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Blocked);
 
         assert_eq!(
             Painted::of(bead_line(&row(&node), BRANCH, 4), 46, 1).rows(),
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn a_bead_standing_for_a_subtree_says_how_much_of_it_is_done_before_who_is_on_it() {
         let mut epic = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn a_bead_lines_state_cells_are_held_apart_rather_than_run_together() {
         let mut epic = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn a_row_shut_over_working_agents_says_how_many_after_naming_its_own() {
         let mut shut = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn a_row_shut_over_beads_wanting_looking_at_says_how_many() {
         let mut shut = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn a_row_shut_over_nothing_live_says_nothing_about_it() {
         let mut shut = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn what_a_shut_row_hides_is_painted_live_and_look_at_this() {
         let mut shut = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn a_row_too_narrow_for_both_keeps_the_seats_whole_and_cuts_the_note() {
         let mut shut = row(&node(
-            "nix-9670s.2",
+            "smt-4kd3p.2",
             "the noctalia widget",
             Status::InProgress,
         ));
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn a_bead_standing_only_for_itself_draws_no_count() {
         let leaf = row(&node(
-            "nix-9670s.20",
+            "smt-4kd3p.20",
             "wallpaper timer calls dms",
             Status::Open,
         ));
@@ -326,8 +326,8 @@ mod tests {
     /// a column that did not line up would be read as a tree shape it is not.
     #[test]
     fn ids_are_padded_so_the_titles_below_one_another_start_together() {
-        let short = node("nix-9670s.1", "wire the niri theme include", Status::Open);
-        let long = node("nix-9670s.20", "wallpaper timer calls dms", Status::Open);
+        let short = node("smt-4kd3p.1", "wire the niri theme include", Status::Open);
+        let long = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Open);
 
         let short = Painted::of(bead_line(&row(&short), BRANCH, 4), 60, 1).rows();
         let long = Painted::of(bead_line(&row(&long), BRANCH, 4), 60, 1).rows();
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn a_bead_line_carries_its_agent_and_its_anomalies() {
         let mut staffed = node(
-            "nix-9670s.20",
+            "smt-4kd3p.20",
             "wallpaper timer calls dms",
             Status::InProgress,
         );
@@ -356,7 +356,7 @@ mod tests {
 
     fn captioned(caption: &str) -> Node {
         let mut staffed = node(
-            "nix-9670s.20",
+            "smt-4kd3p.20",
             "wallpaper timer calls dms",
             Status::InProgress,
         );
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn a_bead_lines_badges_are_drawn_in_the_order_they_were_configured() {
-        let mut badged = node("nix-9670s.20", "a bead", Status::Blocked);
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![
             Badged {
                 key: "delivery_pr".into(),
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn a_bead_line_too_long_for_the_width_is_cut_rather_than_wrapped() {
-        let long = node("nix-9670s.20", &"wallpaper ".repeat(20), Status::Open);
+        let long = node("smt-4kd3p.20", &"wallpaper ".repeat(20), Status::Open);
         let drawn = Painted::of(bead_line(&row(&long), BRANCH, 4), 40, 3).rows();
 
         assert_eq!(drawn[0], "  ├── ○ .20   wallpaper wallpaper wallp…");
@@ -525,7 +525,7 @@ mod tests {
     fn a_beads_id_is_drawn_in_the_colour_of_its_own_status_glyph() {
         for status in [Status::Blocked, Status::InProgress, Status::Closed] {
             let drawn = bead_line(
-                &row(&node("nix-9670s.2", "a bead", status.clone())),
+                &row(&node("smt-4kd3p.2", "a bead", status.clone())),
                 BRANCH,
                 3,
             );
@@ -547,7 +547,7 @@ mod tests {
     /// none either and the row's own tone reaches it as it does the rest.
     #[test]
     fn an_open_beads_id_is_left_in_the_colour_the_rest_of_its_row_is_in() {
-        let node = node("nix-9670s.2", "a bead", Status::Open);
+        let node = node("smt-4kd3p.2", "a bead", Status::Open);
 
         let painted = Painted::of(bead_line(&row(&node), BRANCH, 3), 60, 1).row(0);
 

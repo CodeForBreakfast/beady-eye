@@ -395,7 +395,7 @@ impl ShimmedHerdr {
                 r#"{{"result":{{"agents":[{{"pane_id":"{A_PANE}","cwd":"/","agent_status":"working"}}]}}}}"#
             ),
         );
-        std::fs::write(&herdr.visible, "rebuilt .#thinkpad, generation 541\n")
+        std::fs::write(&herdr.visible, "rebuilt .#larkspur, generation 541\n")
             .expect("the pane is ours to write");
         herdr
     }

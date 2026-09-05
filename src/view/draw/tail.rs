@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn the_tail_fills_the_band_it_is_given_and_no_row_above_it() {
-        let tail = tailing("wCM:p9", &["rebuilt .#thinkpad, generation 541"]);
+        let tail = tailing("wCM:p9", &["rebuilt .#larkspur, generation 541"]);
 
         assert_eq!(
             tail_frame(&tail, 44, 5, 2).rows(),
@@ -170,7 +170,7 @@ mod tests {
                 "                                            ",
                 "                                            ",
                 "────────────────── wCM:p9 ──────────────────",
-                "  rebuilt .#thinkpad, generation 541        ",
+                "  rebuilt .#larkspur, generation 541        ",
                 "                                            ",
             ]
         );
@@ -291,10 +291,10 @@ mod tests {
             "the row saying the pane is being read: {waiting:?}"
         );
 
-        let said = tail_frame(&tailing("w:p1", &["rebuilt .#thinkpad"]), 40, 2, 0).row(1);
+        let said = tail_frame(&tailing("w:p1", &["rebuilt .#larkspur"]), 40, 2, 0).row(1);
         assert!(
             said.iter().any(|run| {
-                run.said.contains("rebuilt .#thinkpad") && run.style.fg == Some(Color::Reset)
+                run.said.contains("rebuilt .#larkspur") && run.style.fg == Some(Color::Reset)
             }),
             "the pane's own line: {said:?}"
         );
@@ -319,7 +319,7 @@ mod tests {
     /// case that covers most of them.
     #[test]
     fn what_tells_bdi_from_the_pane_on_a_dark_background_is_not_colour() {
-        let pane = a_plain_pane_line(Background::Dark, "rebuilt .#thinkpad");
+        let pane = a_plain_pane_line(Background::Dark, "rebuilt .#larkspur");
 
         for (voice, said) in every_row_bdi_says_itself() {
             let spoken = drawn_style(&tail_frame(&voice, BAND, 2, 0).row(1), said);
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn what_bdi_says_is_told_from_the_pane_on_either_background() {
         for background in [Background::Dark, Background::Light] {
-            let pane = a_plain_pane_line(background, "rebuilt .#thinkpad");
+            let pane = a_plain_pane_line(background, "rebuilt .#larkspur");
 
             for (voice, said) in every_row_bdi_says_itself() {
                 let spoken =

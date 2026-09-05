@@ -240,15 +240,15 @@ mod tests {
         let counts = counts(2, 7, 0, 0);
 
         assert_eq!(
-            Painted::of(line(&project("homelab", counts), SHUT), 30, 1).rows(),
-            vec!["▸ homelab                  2/7"]
+            Painted::of(line(&project("meadow", counts), SHUT), 30, 1).rows(),
+            vec!["▸ meadow                   2/7"]
         );
     }
 
     #[test]
     fn one_agent_is_not_described_in_the_plural() {
         let counts = counts(2, 7, 1, 0);
-        let drawn = Painted::of(line(&project("homelab", counts), SHUT), 40, 1).rows();
+        let drawn = Painted::of(line(&project("meadow", counts), SHUT), 40, 1).rows();
 
         assert!(drawn[0].ends_with("2/7  1 agent"), "{drawn:?}");
     }
@@ -281,7 +281,7 @@ mod tests {
 
         assert_eq!(
             Painted::of(line(&project("summit-works", counts), OPEN), 10, 1).rows(),
-            vec!["▾ nixos-c…"]
+            vec!["▾ summit-…"]
         );
     }
 
@@ -731,7 +731,7 @@ mod tests {
 
         assert!(
             drawn[0].contains(&format!(
-                "{} nix-9670s",
+                "{} smt-4kd3p",
                 row::status_glyph(&Status::InProgress)
             )),
             "{drawn:?}"
@@ -753,12 +753,12 @@ mod tests {
     #[test]
     fn an_unread_root_is_named_where_its_row_would_have_been_with_the_reason() {
         let unread = unread(
-            "nix-9670s",
+            "smt-4kd3p",
             TrackerState::Unreachable(TrackerFailure::Unavailable),
         );
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 60, 1).rows();
 
-        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "smt-4kd3p");
         says(&drawn[0], "the tracker did not answer");
     }
 
@@ -766,10 +766,10 @@ mod tests {
     /// reason beside it is about what named the root, not about the tracker.
     #[test]
     fn a_root_the_tracker_does_not_hold_says_so_beside_its_id() {
-        let unread = unread("nix-9670s", TrackerState::RootNotFound);
+        let unread = unread("smt-4kd3p", TrackerState::RootNotFound);
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 90, 1).rows();
 
-        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "smt-4kd3p");
         says(&drawn[0], "no such bead in this tracker");
         does_not_say(&drawn[0], "bdi cannot read");
     }
@@ -778,7 +778,7 @@ mod tests {
     /// opposite of what is true — that it was read and holds nothing.
     #[test]
     fn an_unread_root_never_shows_a_count_it_could_not_read() {
-        let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
+        let unread = unread("smt-4kd3p", TrackerState::Unreachable(TrackerFailure::Auth));
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 120, 1).rows();
 
         does_not_say(&drawn[0], "0/0");
@@ -790,13 +790,13 @@ mod tests {
     #[test]
     fn a_root_with_no_row_and_no_reason_still_says_it_is_there() {
         let drawn = Painted::of(
-            unread_line(&unread("nix-9670s", TrackerState::Ok), LAST, 9),
+            unread_line(&unread("smt-4kd3p", TrackerState::Ok), LAST, 9),
             90,
             1,
         )
         .rows();
 
-        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "smt-4kd3p");
         says(&drawn[0], "this root drew no rows, and nothing said why");
     }
 
@@ -804,10 +804,10 @@ mod tests {
     /// who cannot tell which root failed learns nothing from knowing one did.
     #[test]
     fn a_narrow_unread_root_keeps_the_root_over_the_reason() {
-        let unread = unread("nix-9670s", TrackerState::Unreachable(TrackerFailure::Auth));
+        let unread = unread("smt-4kd3p", TrackerState::Unreachable(TrackerFailure::Auth));
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 24, 1).rows();
 
-        says(&drawn[0], "nix-9670s");
+        says(&drawn[0], "smt-4kd3p");
         assert_eq!(drawn[0].chars().count(), 24);
     }
 }

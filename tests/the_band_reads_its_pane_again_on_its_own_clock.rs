@@ -45,8 +45,8 @@ const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
 /// the band next looks. One word of each is what the test waits for, because
 /// the band draws a pane in the pane's own colours and so reaches the wire a
 /// word at a time.
-const A_BUILD_RUNNING: &str = "rebuilding .#thinkpad\n";
-const A_BUILD_FINISHED: &str = "rebuilt .#thinkpad, generation 541\n";
+const A_BUILD_RUNNING: &str = "rebuilding .#larkspur\n";
+const A_BUILD_FINISHED: &str = "rebuilt .#larkspur, generation 541\n";
 const WHILE_IT_RUNS: &[u8] = "rebuilding".as_bytes();
 const ONCE_IT_IS_DONE: &[u8] = "generation".as_bytes();
 

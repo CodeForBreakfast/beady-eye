@@ -28,7 +28,7 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// The session the seat is in, and the one that will not answer. Neither is
 /// the session herdr runs where nothing names one.
 const ANOTHER_SESSION: &str = "beacon";
-const A_SILENT_SESSION: &str = "persistent-agents";
+const A_SILENT_SESSION: &str = "standing-agents";
 
 /// The pane the bead names, by id alone — what a seat writes to `agent_pane`.
 const THE_SEAT: &str = "w1:p1";

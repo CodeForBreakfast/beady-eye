@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     /// The answer is the whole tracker, so "hang it off the root" hangs it off
-    /// every root there is. Measured against summit-works on 2026-08-31: two
+    /// every root there is. Measured against a real tracker on 2026-08-31: two
     /// closed beads with a deleted parent reached all 562 trees, and each drew
     /// a warning saying two beads were waiting on work outside that tree.
     #[test]

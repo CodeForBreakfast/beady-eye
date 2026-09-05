@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn no_status_is_told_apart_by_colour_alone() {
         for status in every_status() {
-            let node = node("nix-9670s.1", "a bead", status.clone());
+            let node = node("smt-4kd3p.1", "a bead", status.clone());
             let drawn = Painted::of(bead_line(&row(&node), BRANCH, 3), 40, 1).rows();
 
             assert!(
@@ -139,7 +139,7 @@ mod tests {
         ];
 
         for (status, colour) in bds {
-            let bead = node("nix-9670s.1", "a bead", status.clone());
+            let bead = node("smt-4kd3p.1", "a bead", status.clone());
             let painted = Painted::of(bead_line(&row(&bead), BRANCH, 3), 60, 1).row(0);
 
             assert!(
@@ -160,7 +160,7 @@ mod tests {
     /// whichever it was.
     #[test]
     fn an_open_glyph_takes_the_treatment_of_the_row_it_sits_on() {
-        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        let mut staffed = node("smt-4kd3p.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
 
         let painted = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 90, 1).row(0);
@@ -188,13 +188,13 @@ mod tests {
     /// steps off the colour axis altogether and cannot land on it.
     #[test]
     fn a_row_with_an_agent_on_it_is_the_ground_and_a_weight_and_one_without_is_the_ground() {
-        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        let mut staffed = node("smt-4kd3p.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
 
         let bright = Painted::of(bead_line(&row(&staffed), BRANCH, 3), 90, 1).row(0);
         let plain = Painted::of(
             bead_line(
-                &row(&node("nix-9670s.1", "a bead", Status::Open)),
+                &row(&node("smt-4kd3p.1", "a bead", Status::Open)),
                 BRANCH,
                 3,
             ),
@@ -244,7 +244,7 @@ mod tests {
     fn a_finished_row_nobody_is_on_drops_to_the_one_rung_under_the_ground() {
         let painted = Painted::of(
             bead_line(
-                &row(&node("nix-9670s.1", "a bead", Status::Closed)),
+                &row(&node("smt-4kd3p.1", "a bead", Status::Closed)),
                 BRANCH,
                 3,
             ),
@@ -265,7 +265,7 @@ mod tests {
     /// missed. `lines::split` leaves it out of a run for the same reason.
     #[test]
     fn a_closed_bead_whose_pane_is_still_alive_is_not_dimmed() {
-        let mut alive = node("nix-9670s.1", "a bead", Status::Closed);
+        let mut alive = node("smt-4kd3p.1", "a bead", Status::Closed);
         alive.agent = Some(a_pane());
         alive.anomalies = vec![Anomaly::StalePane];
 
@@ -284,7 +284,7 @@ mod tests {
     /// Nobody is on it, so it sits on the ground rather than above it.
     #[test]
     fn a_closed_bead_with_an_anomaly_against_it_is_not_dimmed() {
-        let mut odd = node("nix-9670s.1", "a bead", Status::Closed);
+        let mut odd = node("smt-4kd3p.1", "a bead", Status::Closed);
         odd.anomalies = vec![Anomaly::StalePane];
 
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 110, 1).row(0);
@@ -371,7 +371,7 @@ mod tests {
         for status in every_status() {
             for staffed in [false, true] {
                 for odd in [false, true] {
-                    let mut bead = node("nix-9670s.1", "a bead", status.clone());
+                    let mut bead = node("smt-4kd3p.1", "a bead", status.clone());
                     bead.agent = staffed.then(a_pane);
                     if odd {
                         bead.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
@@ -432,10 +432,10 @@ mod tests {
     /// closed row too.
     #[test]
     fn the_box_drawing_a_row_hangs_under_never_takes_the_rows_tier() {
-        let mut staffed = node("nix-9670s.1", "a bead", Status::Open);
+        let mut staffed = node("smt-4kd3p.1", "a bead", Status::Open);
         staffed.agent = Some(a_pane());
-        let unworked = node("nix-9670s.1", "a bead", Status::Open);
-        let finished = node("nix-9670s.1", "a bead", Status::Closed);
+        let unworked = node("smt-4kd3p.1", "a bead", Status::Open);
+        let finished = node("smt-4kd3p.1", "a bead", Status::Closed);
 
         for bead in [staffed, unworked, finished] {
             let painted = Painted::of(bead_line(&row(&bead), BRANCH, 3), 90, 1).row(0);
@@ -457,7 +457,7 @@ mod tests {
         let run = Painted::of(elided_run(BRANCH, 4), 60, 1).row(0);
         let finished = Painted::of(
             bead_line(
-                &row(&node("nix-9670s.1", "a bead", Status::Closed)),
+                &row(&node("smt-4kd3p.1", "a bead", Status::Closed)),
                 BRANCH,
                 3,
             ),
@@ -481,7 +481,7 @@ mod tests {
     /// not: it is a bead row, and the rule is asked of it like any other.
     #[test]
     fn a_project_line_is_left_off_the_scale_a_bead_row_is_on() {
-        let quiet = project("homelab", counts(7, 7, 0, 0));
+        let quiet = project("meadow", counts(7, 7, 0, 0));
 
         let painted = Painted::of(project_line(&quiet, OPEN, None, drawn_at()), 60, 1).row(0);
 
@@ -496,7 +496,7 @@ mod tests {
     /// keep a different colour system whatever the row around them does.
     #[test]
     fn the_cells_bd_cannot_draw_keep_their_own_colours_however_bright_the_row() {
-        let mut staffed = node("nix-9670s.1", "a bead", Status::InProgress);
+        let mut staffed = node("smt-4kd3p.1", "a bead", Status::InProgress);
         staffed.agent = Some(a_pane());
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
 
@@ -520,7 +520,7 @@ mod tests {
     /// It takes the colour of the note already beside it on the row.
     #[test]
     fn a_status_bd_never_had_is_painted_the_colour_of_the_note_beside_it() {
-        let odd = node("nix-9670s.1", "a bead", Status::Other("triage".into()));
+        let odd = node("smt-4kd3p.1", "a bead", Status::Other("triage".into()));
 
         let painted = Painted::of(bead_line(&row(&odd), BRANCH, 3), 120, 1).row(0);
 

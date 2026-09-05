@@ -47,7 +47,7 @@ const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
 /// What is on the pane, and the word of it the band draws that this waits
 /// for. The band draws a pane in the pane's own colours, so its rows reach
 /// the wire a word at a time.
-const A_BUILD_RUNNING: &str = "rebuilding .#thinkpad\n";
+const A_BUILD_RUNNING: &str = "rebuilding .#larkspur\n";
 const WHILE_IT_RUNS: &[u8] = "rebuilding".as_bytes();
 
 /// An interval no run of this test outlives, so the only asks counted under

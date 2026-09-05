@@ -1,7 +1,7 @@
 //! A tracker that files loose beads in bulk gives a forest of hundreds of
-//! roots, most of them one bead. Measured against summit-works on 2026-08-31:
-//! 562 roots, 530 of them holding exactly one unfinished bead. Nothing may be
-//! dropped, so the only thing left is the order they come in.
+//! roots, most of them one bead. Measured against a real tracker on
+//! 2026-08-31: 562 roots, 530 of them holding exactly one unfinished bead.
+//! Nothing may be dropped, so the only thing left is the order they come in.
 //!
 //! `tests/fixtures/bulk_loose_roots.json` is that shape in miniature — six
 //! loose beads whose ids sort ahead of both efforts that hold work.

@@ -557,7 +557,7 @@ impl Config {
     ///
     /// A root under a project the scope left out is a contradiction only
     /// when the reader typed the scope. A scope the directory chose is
-    /// widened to take the project in: `bdi homelab:hl-1` from another
+    /// widened to take the project in: `bdi meadow:mdw-1` from another
     /// project's desktop reads both.
     fn placed(&mut self, named: &str) -> anyhow::Result<(String, String)> {
         let Some((project, id)) = named.split_once(':') else {
@@ -1337,7 +1337,7 @@ path = "/home/user/dev/inner"
     }
 
     /// A positional under a project the directory left out widens the read
-    /// set to that project: `bdi homelab:hl-1` from another project's desktop
+    /// set to that project: `bdi meadow:mdw-1` from another project's desktop
     /// reads both. Only an explicit `--project` makes that a contradiction.
     #[test]
     fn a_root_under_a_project_the_directory_left_out_widens_the_read_set() {

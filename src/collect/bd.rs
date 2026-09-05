@@ -509,7 +509,7 @@ mod tests {
     /// value that is not a string is read as the text it prints as, because
     /// a tracker is read whole and refusing one value loses every bead in it.
     ///
-    /// Measured on summit-works, 2026-08-31: two beads of 1886 carried
+    /// Measured on a real tracker, 2026-08-31: two beads of 1886 carried
     /// `blocks_backstop_removal: true`, and the whole project failed to read.
     #[test]
     fn a_metadata_value_that_is_not_a_string_is_read_as_its_text() {

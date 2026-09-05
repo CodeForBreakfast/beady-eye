@@ -802,7 +802,7 @@ mod tests {
         // A search that found one bead reads as its own sentence rather than
         // as `1 of 1`, so the shape is here beside the walk's.
         said.push(super::said(&Said::Matched {
-            key: key("nix-9670s.20"),
+            key: key("smt-4kd3p.20"),
             at: 1,
             of: 1,
         }));
@@ -822,7 +822,7 @@ mod tests {
         for rule in [
             Anomaly::OrphanClaim {
                 refused: Some(Conflict::PaneInAnotherProject {
-                    bead: key("nix-9670s.20"),
+                    bead: key("smt-4kd3p.20"),
                     pane: pane_key("wCM:pD"),
                     pane_project: None,
                 }),
@@ -831,7 +831,7 @@ mod tests {
                 refused: Some(Conflict::SeveralBeadsNameOnePane {
                     pane: pane_key("wCM:p9"),
                     caption: None,
-                    beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+                    beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
                 }),
             },
             Anomaly::StaleClaim { days: 58 },
@@ -850,11 +850,11 @@ mod tests {
         for clash in [
             Conflict::SeveralBeadsNameOnePane {
                 pane: pane_key("wCM:p9"),
-                caption: Some("nix-9670s.1: rebuild the installer image".into()),
-                beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+                caption: Some("smt-4kd3p.1: rebuild the installer image".into()),
+                beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
             },
             Conflict::PaneInAnotherProject {
-                bead: key("nix-9670s.20"),
+                bead: key("smt-4kd3p.20"),
                 pane: pane_key("wCM:pD"),
                 pane_project: None,
             },
@@ -945,29 +945,29 @@ mod tests {
     fn every_conflict() -> impl Iterator<Item = Conflict> {
         std::iter::successors(
             Some(Conflict::BeadAndPaneDisagree {
-                bead: key("nix-9670s.20"),
+                bead: key("smt-4kd3p.20"),
                 named_by_bead: pane_key("wCM:p9"),
                 named_by_pane: pane_key("wCM:p6"),
             }),
             |clash| match clash {
                 Conflict::BeadAndPaneDisagree { .. } => Some(Conflict::SeveralPanesNameOneBead {
-                    bead: key("nix-9670s.20"),
+                    bead: key("smt-4kd3p.20"),
                     panes: vec![pane_key("wCM:p9"), pane_key("wCM:p6")],
                 }),
                 Conflict::SeveralPanesNameOneBead { .. } => {
                     Some(Conflict::SeveralBeadsNameOnePane {
                         pane: pane_key("wCM:p9"),
                         caption: None,
-                        beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+                        beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
                     })
                 }
                 Conflict::SeveralBeadsNameOnePane { .. } => Some(Conflict::PaneInAnotherProject {
-                    bead: key("nix-9670s.20"),
+                    bead: key("smt-4kd3p.20"),
                     pane: pane_key("wCM:p9"),
-                    pane_project: Some("homelab".into()),
+                    pane_project: Some("meadow".into()),
                 }),
                 Conflict::PaneInAnotherProject { .. } => Some(Conflict::PaneIdInSeveralSessions {
-                    bead: key("nix-9670s.20"),
+                    bead: key("smt-4kd3p.20"),
                     pane_id: "wCM:p9".into(),
                     sessions: vec!["default".into(), "beacon".into()],
                 }),
@@ -1686,7 +1686,7 @@ mod tests {
 
         let outside = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::PaneInAnotherProject {
-                bead: key("nix-9670s.20"),
+                bead: key("smt-4kd3p.20"),
                 pane: pane_key("wCM:pD"),
                 pane_project: None,
             }),
@@ -1696,18 +1696,18 @@ mod tests {
 
         let elsewhere = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::PaneInAnotherProject {
-                bead: key("nix-9670s.20"),
+                bead: key("smt-4kd3p.20"),
                 pane: pane_key("wCM:p9"),
-                pane_project: Some("homelab".into()),
+                pane_project: Some("meadow".into()),
             }),
         });
-        assert!(elsewhere.contains("homelab"), "{elsewhere}");
+        assert!(elsewhere.contains("meadow"), "{elsewhere}");
 
         let shared = anomaly(&Anomaly::OrphanClaim {
             refused: Some(Conflict::SeveralBeadsNameOnePane {
                 pane: pane_key("wCM:p9"),
                 caption: None,
-                beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+                beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
             }),
         });
         assert!(shared.contains('2'), "{shared}");
@@ -1768,14 +1768,14 @@ mod tests {
     #[test]
     fn both_sides_of_a_disagreement_are_named() {
         let said = conflict(&Conflict::BeadAndPaneDisagree {
-            bead: key("nix-9670s.20"),
+            bead: key("smt-4kd3p.20"),
             named_by_bead: pane_key("wCM:p9"),
             named_by_pane: pane_key("wCM:p6"),
         });
 
         assert!(said.contains("wCM:p9"), "{said}");
         assert!(said.contains("wCM:p6"), "{said}");
-        assert!(said.contains("nix-9670s.20"), "{said}");
+        assert!(said.contains("smt-4kd3p.20"), "{said}");
     }
 
     /// A contested pane is awarded to nobody, so nothing else on the screen
@@ -1786,12 +1786,12 @@ mod tests {
     fn a_contested_pane_says_what_it_is_working_on_in_its_own_words() {
         let said = conflict(&Conflict::SeveralBeadsNameOnePane {
             pane: pane_key("wCM:p9"),
-            caption: Some("nix-9670s.1: rebuild the installer image".into()),
-            beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+            caption: Some("smt-4kd3p.1: rebuild the installer image".into()),
+            beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
         });
 
         assert!(
-            said.contains("nix-9670s.1: rebuild the installer image"),
+            said.contains("smt-4kd3p.1: rebuild the installer image"),
             "{said}"
         );
         assert!(
@@ -1807,8 +1807,8 @@ mod tests {
     fn a_contested_panes_own_words_come_before_the_claims_on_it() {
         let said = conflict(&Conflict::SeveralBeadsNameOnePane {
             pane: pane_key("wCM:p9"),
-            caption: Some("nix-9670s.1: rebuild the installer image".into()),
-            beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+            caption: Some("smt-4kd3p.1: rebuild the installer image".into()),
+            beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
         });
 
         let words = said
@@ -1829,7 +1829,7 @@ mod tests {
         let said = conflict(&Conflict::SeveralBeadsNameOnePane {
             pane: pane_key("wCM:p9"),
             caption: None,
-            beads: vec![key("nix-9670s.20"), key("nix-9670s.1")],
+            beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
         });
 
         assert!(!said.contains('\u{201c}'), "{said}");
@@ -1842,7 +1842,7 @@ mod tests {
     #[test]
     fn a_pane_belonging_to_no_project_still_says_where_it_is() {
         let said = conflict(&Conflict::PaneInAnotherProject {
-            bead: key("nix-9670s.20"),
+            bead: key("smt-4kd3p.20"),
             pane: pane_key("wCM:pD"),
             pane_project: None,
         });
@@ -1855,10 +1855,10 @@ mod tests {
     /// uncoordinated, so the project travels with it.
     #[test]
     fn a_bead_is_named_by_its_project_and_its_id() {
-        let said = bead_key(&key("nix-9670s.20"));
+        let said = bead_key(&key("smt-4kd3p.20"));
 
         assert!(said.contains("summit-works"), "{said}");
-        assert!(said.contains("nix-9670s.20"), "{said}");
+        assert!(said.contains("smt-4kd3p.20"), "{said}");
     }
 
     #[test]

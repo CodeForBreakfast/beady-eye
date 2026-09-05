@@ -192,12 +192,12 @@ mod tests {
     /// under test is the one that counts, not the one that chooses.
     #[test]
     fn a_hidden_tree_whose_only_finding_is_an_anomaly_is_said_to_have_one() {
-        let mut claimed = node("nix-9670s.1", "seat the guy wires", Status::InProgress);
+        let mut claimed = node("smt-4kd3p.1", "seat the guy wires", Status::InProgress);
         claimed.anomalies = vec![Anomaly::OrphanClaim { refused: None }];
-        let beads = vec![node("nix-9670s", "raise the mast", Status::Open), claimed];
+        let beads = vec![node("smt-4kd3p", "raise the mast", Status::Open), claimed];
         let mut hidden = tree(
             "summit-works",
-            "nix-9670s",
+            "smt-4kd3p",
             "raise the mast",
             Counts::over(&beads),
         );
@@ -392,7 +392,7 @@ path = "/tmp/bdi-ground/orbital"
     /// rows that carry nothing extra are asserted whole rather than searched
     /// for the absence of something.
     fn said(loose: LoosePane) -> String {
-        Painted::of(item_line(LAST, &Item::Loose(loose)), 81, 1).rows()[0]
+        Painted::of(item_line(LAST, &Item::Loose(loose)), 84, 1).rows()[0]
             .trim_end()
             .to_string()
     }

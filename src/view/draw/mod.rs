@@ -373,7 +373,7 @@ mod tests {
     }
 
     pub(super) fn row(node: &Node) -> Row {
-        row::cells(node, "nix-9670s", None, None)
+        row::cells(node, "smt-4kd3p", None, None)
     }
 
     /// A project whose roots all read, so its line is its name and its counts.
@@ -494,13 +494,13 @@ mod tests {
     /// One tree of `children` open beads under an in-flight root.
     pub(super) fn grove(children: usize) -> Tree {
         let mut beads = vec![node(
-            "nix-9670s",
+            "smt-4kd3p",
             "lift the ground station",
             Status::InProgress,
         )];
         for child in 1..=children {
             beads.push(node(
-                &format!("nix-9670s.{child}"),
+                &format!("smt-4kd3p.{child}"),
                 &format!("bead number {child}"),
                 Status::Open,
             ));
@@ -512,7 +512,7 @@ mod tests {
             beads,
             ..tree(
                 "summit-works",
-                "nix-9670s",
+                "smt-4kd3p",
                 "lift the ground station",
                 counts(0, 0, 0, 0),
             )
@@ -612,7 +612,7 @@ mod tests {
             frame_of(&forest, 60, 10).rows(),
             vec![
                 "▾ summit-works  ✓ 30s ago                                0/3",
-                "  └── ◐ nix-9670s  lift the ground station               0/3",
+                "  └── ◐ smt-4kd3p  lift the ground station               0/3",
                 "      ├── ○ .1         bead number 1                        ",
                 "      └── ○ .2         bead number 2                        ",
                 "                                                            ",
@@ -632,10 +632,10 @@ mod tests {
     /// than agreeing with the fraction by coincidence.
     #[test]
     fn a_projects_fraction_counts_the_tree_the_filter_holds_back() {
-        let beads = vec![node("nix-4410b", "raise the mast", Status::Open)];
+        let beads = vec![node("smt-7bv1n", "raise the mast", Status::Open)];
         let mut held_back = tree(
             "summit-works",
-            "nix-4410b",
+            "smt-7bv1n",
             "raise the mast",
             Counts::over(&beads),
         );
@@ -682,7 +682,7 @@ mod tests {
             frame_with(&forest, &[Notice::NoInboundChannel], &[], 80, 10).rows(),
             vec![
                 "▾ summit-works  ✓ 30s ago                                                    0/3",
-                "  └── ◐ nix-9670s  lift the ground station                                   0/3",
+                "  └── ◐ smt-4kd3p  lift the ground station                                   0/3",
                 "      ├── ○ .1         bead number 1                                            ",
                 "      └── ○ .2         bead number 2                                            ",
                 "                                                                                ",
@@ -711,7 +711,7 @@ mod tests {
             frame[..4].to_vec(),
             vec![
                 "▾ summit-works       0/3",
-                "  └── ◐ nix-9670s    0/3",
+                "  └── ◐ smt-4kd3p    0/3",
                 "      ├── ○ .1         …",
                 "      └── ○ .2         …",
             ]
@@ -790,7 +790,7 @@ mod tests {
     #[test]
     fn a_root_that_would_not_read_draws_its_reason_and_its_projects_panes() {
         let failed =
-            Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
+            Tree::tracker_unreachable("summit-works", "smt-4kd3p", TrackerFailure::Unavailable);
         let forest = flatten(snapshot(
             vec![failed],
             vec![pane("wCM:p9", PaneStatus::Working)],
@@ -802,9 +802,9 @@ mod tests {
             frame[..4],
             [
                 "▾ summit-works  ⚠ 30s ago                                                    ",
-                "  ├── ⚠ nix-9670s  the tracker did not answer                                ",
+                "  ├── ⚠ smt-4kd3p  the tracker did not answer                                ",
                 "  └── ⚠ 1 unattributed pane                                                  ",
-                "      └── ◍ wCM:p9 working  /tmp/bdi-ground/summit-works                        ",
+                "      └── ◍ wCM:p9 working  /tmp/bdi-ground/summit-works                     ",
             ]
         );
     }
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn a_root_with_nothing_under_it_draws_no_marker_and_still_lines_up() {
         let unreadable =
-            Tree::tracker_unreachable("summit-works", "nix-9670s", TrackerFailure::Unavailable);
+            Tree::tracker_unreachable("summit-works", "smt-4kd3p", TrackerFailure::Unavailable);
         let forest = flatten(snapshot(
             vec![grove(2), unreadable],
             Vec::new(),
@@ -828,10 +828,10 @@ mod tests {
         // found by the warning and its own id together.
         let unread = frame
             .iter()
-            .position(|row| row.contains(WARNING) && row.contains("nix-9670s"))
+            .position(|row| row.contains(WARNING) && row.contains("smt-4kd3p"))
             .expect("the root that would not read");
         let column = |row: &str| {
-            let byte = row.find("nix-9670s").expect("the root on the row");
+            let byte = row.find("smt-4kd3p").expect("the root on the row");
             row[..byte].chars().count()
         };
 
