@@ -26,32 +26,11 @@ output — the build and tests, `clippy -D warnings`, `cargo fmt --check`, and a
 `cargo package` verify — so a check added there is a check CI runs, and nothing
 runs that is not there.
 
-The dependency graph is compiled in a derivation of its own, keyed on
-`Cargo.lock` rather than on the source, and every check that compiles unpacks it
-before it starts. So an edit under `src/` costs you this crate and nothing else,
-and a change to the lock costs you the graph. There are two of those
-derivations, because a check reuses one only at the cargo profile it was built
-at: release for the build and tests, dev for everything else. Give a check a
-command at a profile its artifacts were not built at and cargo compiles the
-graph again without saying so — `checkOf` reads each build back and fails on
-that rather than pass slowly.
-
-A change is checked at least twice, once on its pull request and once on the
-squash, and again for every edit of the title or the body — the trigger takes
-`edited` so the subject check cannot be outrun, and an edit moves no tree. Only
-a run on a new tree pays for itself. CI seeds each check's
-output into the shared cache, so a squash carrying a tree its pull request
-already checked substitutes every one of them: `nix flake check` prints
-`running 0 flake checks` and the job finishes in about thirty seconds instead
-of five minutes. That is nix saying the inputs are identical rather than a
-check being skipped — a tree no pull request saw, main having moved under a
-branch between its verdict and its squash, hashes differently and still gets a
-real build. What it costs you is that re-running a green job cannot force a
-real check of that tree: nothing about the tree has changed, so it substitutes
-again.
-
 Once it is pushed, `read-ci-verdict [<commit>]` says whether CI passed for it,
 and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
+Re-running a green job cannot force a real check of that tree: the re-run
+restores the cache the run it repeats seeded on the same branch, so nix finds
+every check output already built and substitutes it.
 
 The check needs `bd`, and not as a tracker client: `tests/no_config.rs` runs
 `bdi` the way a fresh machine would, and `bdi` asks `bd` where the tracker is.
