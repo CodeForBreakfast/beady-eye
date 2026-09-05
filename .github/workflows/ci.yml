@@ -14,8 +14,10 @@ on:
     # a subject nothing had ever checked.
     #
     # It costs a run per title or body edit. That run is the same tree as the
-    # one before it, so every check substitutes and it finishes in about the
-    # time it takes to start.
+    # one before it and reads what that one left in this pull request's own
+    # slice of the cache, so every check substitutes. Editing while a run is
+    # still going is the case that costs: the concurrency group below cancels
+    # it before it has written any of that, and what replaces it starts cold.
     types: [opened, synchronize, reopened, edited]
 
 permissions:
@@ -29,10 +31,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# Both jobs below are reachable from a fork's pull request, and such a run
+# checks out and executes the fork's own code — its workflow file, its
+# flake.nix, its tests. So they run on runners GitHub owns rather than on ones
+# this org owns, whose credentials reach a binary cache other repositories
+# here trust. release.yml is the exception and stays self-hosted: only a v*
+# tag push reaches it, and pushing a tag needs write access to this
+# repository.
 jobs:
   conventional-subject:
     name: conventional subject
-    runs-on: homelab-runners
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only a pull request has a title. A push to main is the squash of one
     # that passed this, carrying the subject this already read.
@@ -59,7 +68,7 @@ jobs:
 
   flake-check:
     name: nix flake check
-    runs-on: homelab-runners
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
@@ -68,108 +77,27 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
+      # Everything this job builds goes into the GitHub Actions cache, which
+      # costs nothing, needs no account and no secret, and is scoped per
+      # branch — a fork's pull request writes only into its own scope, so a
+      # cache no other run can read is the whole of what a hostile one gets.
+      #
+      # That scoping is also why this is not the cache it replaces. A cache
+      # written on a pull request is unreadable from main, so the squash's run
+      # builds this tree's checks a second time rather than substituting them.
+      # What does carry is the other direction, main to pull request: the
+      # dependency graph keyed on Cargo.lock and beads' module fetch, which
+      # between them are most of a cold run.
+      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+        with:
+          # Build results stay in this repository's own Actions cache. The
+          # FlakeHub upload is a third party and an account, and it wants an
+          # id-token this workflow does not grant.
+          use-flakehub: false
+
       # Every check comes from the flake's `checks` output, so a check added
       # there is a check this runs. Naming one here is the drift to avoid.
       # The conventional-subject job above is the single thing that cannot
       # come from there — it reads a pull request title rather than a tree —
       # and it holds only the trigger, never the rule.
       - run: nix flake check -L
-
-      # Two of the builds behind that check say nothing about this repository:
-      # bd, which tests/no_config.rs needs a real copy of, and the crate's
-      # dependency graph, which is keyed on Cargo.lock. Left to itself every
-      # commit compiles what the commit before it had already compiled and
-      # thrown away, and between them that is nearly the whole job. Seeding
-      # them here is what lets the next run substitute them instead.
-      #
-      # The paths come out of the derivation graph rather than a match against
-      # the store, so moving the beads pin or a dependency moves what this
-      # seeds instead of quietly seeding what the lock used to name. Both
-      # checks are named because they carry different halves of it: the
-      # dependency build for the release profile hangs off build-and-test, and
-      # the one for dev off clippy.
-      #
-      # The checks themselves go in beside them, and they are seeded for a
-      # different reason: this repository is checked twice per change, once on
-      # the pull request and once on the squash. A squash makes a new commit
-      # but almost always the same tree, and a derivation is addressed by its
-      # inputs — so the run on main asks for the output paths this run has
-      # just produced, and substitutes each check rather than running it a
-      # second time. A tree no pull request saw, main having moved between a
-      # branch's verdict and its squash, addresses differently, finds nothing
-      # here, and still gets a real build. That case is the reason `push:
-      # main` stays.
-      - name: seed the dependency builds and this tree's checks into the shared cache
-        run: |
-          mapfile -t roots < <(nix path-info --derivation \
-            .#checks.x86_64-linux.build-and-test \
-            .#checks.x86_64-linux.clippy)
-          mapfile -t drvs < <(nix-store -qR --include-outputs "${roots[@]}" |
-            grep -E '/[a-z0-9]+-(beads|beady-eye(-dev)?-deps)-[^/]*\.drv$')
-
-          # Each of the three has to be in there by name. A total is the wrong
-          # thing to count — beads brings several derivations of its own, so a
-          # renamed dependency build would hide behind them and this would seed
-          # less than it reads as seeding.
-          for want in beads beady-eye-deps beady-eye-dev-deps; do
-            printf '%s\n' "${drvs[@]}" |
-              grep -qE "/[a-z0-9]+-$want-[^/]*\.drv\$" || {
-                echo "nothing named $want among the checks' inputs — it was"
-                echo "renamed, and this step no longer seeds what it says it does."
-                exit 1
-              }
-          done
-
-          # The checks are read off the flake for the same reason the check
-          # step above names nothing: a check added to `checks` has to become
-          # a check this seeds, or main goes quietly back to running that one
-          # for itself.
-          mapfile -t names < <(nix eval --raw \
-            --apply 'checks: builtins.concatStringsSep "\n" (builtins.attrNames checks)' \
-            .#checks.x86_64-linux)
-          checks=()
-          for name in "${names[@]}"; do
-            checks+=(".#checks.x86_64-linux.$name")
-          done
-
-          # Both counts, because mapfile leaves an empty array where the
-          # command inside it failed and says nothing about it. Without them
-          # the step would push the dependency builds, exit 0, and go on
-          # reading as though it seeded the checks while main paid for them
-          # again — every gate green and the change undone.
-          test "${#names[@]}" -gt 0
-          mapfile -t checkDrvs < <(nix path-info --derivation "${checks[@]}")
-          test "${#checkDrvs[@]}" -eq "${#names[@]}"
-          drvs+=("${checkDrvs[@]}")
-
-          # --outputs answers from the derivation, so it names paths that were
-          # never realised: once bd itself substitutes, nothing builds its
-          # module closure and that output is not on this machine to push.
-          mapfile -t paths < <(nix-store -q --outputs "${drvs[@]}")
-          test "${#paths[@]}" -gt 0
-          seed=()
-          for path in "${paths[@]}"; do
-            if nix-store --check-validity "$path" 2>/dev/null; then
-              seed+=("$path")
-            fi
-          done
-
-          # None of it being here is the run this seeding exists to produce:
-          # every check substituted, so nothing was built, so there is nothing
-          # on this machine that the cache does not already hold. Counting the
-          # realised paths instead would fail that run for succeeding.
-          if [ "${#seed[@]}" -eq 0 ]; then
-            echo "nothing to seed — this run built none of it, so the cache"
-            echo "already holds everything this step would have pushed."
-            exit 0
-          fi
-
-          printf 'seeding %s\n' "${seed[@]}"
-
-          # --inputs-from takes attic from this flake's locked nixpkgs. A bare
-          # nixpkgs# resolves through the installer's registry to a weekly
-          # channel, which is an unpinned dependency of every CI run.
-          attic() { nix run --inputs-from . nixpkgs#attic-client -- "$@"; }
-
-          attic login homelab https://cache.example.invalid "$ATTIC_TOKEN"
-          attic push homelab "${seed[@]}"
