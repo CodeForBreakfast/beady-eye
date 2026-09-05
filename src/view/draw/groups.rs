@@ -302,8 +302,8 @@ mod tests {
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "beady-eye"
-path = "/tmp/bdi-ground/beady-eye"
+name = "orbital"
+path = "/tmp/bdi-ground/orbital"
 "#,
         )
         .expect("the config parses");
@@ -334,7 +334,7 @@ path = "/tmp/bdi-ground/beady-eye"
             .to_string()
     }
 
-    /// `wCW:p6` stamped a `display_agent`, a title and a label for each
+    /// `wG:p6` stamped a `display_agent`, a title and a label for each
     /// state, and is working: the row says who it says it is, then the label
     /// for the state it is in — the caption rule a bead's agent already gets
     /// — then where it is.
@@ -343,20 +343,20 @@ path = "/tmp/bdi-ground/beady-eye"
         let frame = frame_over_the_capture();
 
         assert_eq!(
-            row_naming(&frame, "wCW:p6"),
-            "      ├── ◍ wCW:p6 working  bdi-3um.5 · writing the parser and its tests  \
-             /tmp/bdi-ground/beady-eye"
+            row_naming(&frame, "wG:p6"),
+            "      ├── ◍ wG:p6 working  orb-2kd.5 · writing the parser and its tests  \
+             /tmp/bdi-ground/orbital"
         );
     }
 
-    /// `wCW:p1` stamped nothing at all, and its row is the one it had.
+    /// `wG:p1` stamped nothing at all, and its row is the one it had.
     #[test]
     fn a_pane_that_reported_nothing_keeps_the_row_it_had() {
         let frame = frame_over_the_capture();
 
         assert_eq!(
-            row_naming(&frame, "wCW:p1"),
-            "      ├── ◍ wCW:p1 done  /tmp/bdi-ground/beady-eye"
+            row_naming(&frame, "wG:p1"),
+            "      ├── ◍ wG:p1 idle  /tmp/bdi-ground/orbital"
         );
     }
 

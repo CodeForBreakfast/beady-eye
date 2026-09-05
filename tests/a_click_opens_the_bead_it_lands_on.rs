@@ -32,13 +32,13 @@ const SHOW_BEAD: &[u8] = b"\r";
 /// The title of the window over the first bead of the capture's tree, from
 /// `view::show`. Whole rather than one word, because the title is drawn in a
 /// span of its own and so writes its own spaces — and whole is the point: the
-/// tree's header is `bdi-0tp`, so a needle of the id alone would also be met
+/// tree's header is `orb-0tp`, so a needle of the id alone would also be met
 /// by the window this test exists to prove was *not* opened.
-const THE_FIRST_BEADS_WINDOW: &str = "bdi-0tp.6 · Esc to go back";
+const THE_FIRST_BEADS_WINDOW: &str = "orb-0tp.6 · Esc to go back";
 
 /// The same for the tree's header, which is the row the walk leaves the
 /// selection on.
-const THE_TREES_WINDOW: &str = "bdi-0tp · Esc to go back";
+const THE_TREES_WINDOW: &str = "orb-0tp · Esc to go back";
 
 /// A click on a bead's row, and then Enter: the window that opens names the
 /// bead drawn on that row rather than the one the selection was on.

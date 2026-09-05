@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn a_pane_that_has_not_identified_itself_is_kept() {
         let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
-        let p = pane(&panes, "wCW:p1");
+        let p = pane(&panes, "wG:p1");
 
         assert_eq!(p.display_agent, None);
         assert_eq!(p.title, None);
@@ -258,25 +258,25 @@ mod tests {
     #[test]
     fn reads_every_field_of_an_identified_pane() {
         let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
-        let p = pane(&panes, "wCW:p6");
+        let p = pane(&panes, "wG:p6");
 
-        assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/beady-eye"));
-        assert_eq!(p.display_agent.as_deref(), Some("bdi-3um.5"));
+        assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/orbital"));
+        assert_eq!(p.display_agent.as_deref(), Some("orb-2kd.5"));
         assert_eq!(
             p.title.as_deref(),
-            Some("parse herdr agent list into typed panes")
+            Some("read the trailers into typed entries")
         );
         assert_eq!(p.agent_status, PaneStatus::Working);
         assert_eq!(
             p.state_labels.get("idle").map(String::as_str),
-            Some("asleep: fixture captured, awaiting review")
+            Some("asleep: capture taken, awaiting review")
         );
     }
 
     #[test]
     fn caption_prefers_the_label_for_the_current_state() {
         let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
-        let p = pane(&panes, "wCW:p6");
+        let p = pane(&panes, "wG:p6");
 
         assert_eq!(p.agent_status, PaneStatus::Working);
         assert_eq!(p.caption(), Some("writing the parser and its tests"));
@@ -285,10 +285,10 @@ mod tests {
     #[test]
     fn caption_falls_back_to_title_when_a_pane_has_no_labels() {
         let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
-        let p = pane(&panes, "wCW:p5");
+        let p = pane(&panes, "wG:p5");
 
         assert_eq!(p.state_labels, BTreeMap::new());
-        assert_eq!(p.caption(), Some("parse bd dep-tree JSON into typed rows"));
+        assert_eq!(p.caption(), Some("parse the commit log into typed entries"));
     }
 
     /// The same labels under two states, so the lookup cannot be a fixed key.
@@ -382,13 +382,15 @@ mod tests {
 
     const SESSIONS: &str = include_str!("../../tests/fixtures/herdr_session_list.json");
 
-    /// The capture: three sessions running on this machine, and `bdi` in
-    /// none of them in particular.
+    /// The capture: four sessions on the machine it was taken from, three of
+    /// them running and `bdi` in none of them in particular. The fourth had
+    /// been stopped, so the filter below is answered by a capture rather than
+    /// only by the hand-written list under it.
     #[test]
     fn session_list_names_every_running_session() {
         let sessions = parse_session_list(SESSIONS).expect("parses");
 
-        assert_eq!(sessions, ["default", "beacon", "persistent-agents"]);
+        assert_eq!(sessions, ["default", "harbour", "standing-agents"]);
     }
 
     /// A session that is not running has no server to answer for it, so it

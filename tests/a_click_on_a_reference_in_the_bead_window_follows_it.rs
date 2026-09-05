@@ -52,7 +52,7 @@ const A_REFERENCE_THAT_CAN_BE_FOLLOWED: &[u8] = "↑".as_bytes();
 
 /// A bead the capture's answer does not hold, which is drawn saying so and
 /// which `Tab` passes over.
-const A_REFERENCE_THAT_CANNOT: &[u8] = "bdi-rer.9  not in the tracker's answer".as_bytes();
+const A_REFERENCE_THAT_CANNOT: &[u8] = "orb-rer.9  not in the tracker's answer".as_bytes();
 
 /// The heading over the parent, which is the row immediately above the
 /// reference — where a reader aiming at it and missing lands.
@@ -63,13 +63,13 @@ const A_ROW_OF_THE_PAGE_THAT_NAMES_NO_BEAD: &[u8] = "PARENT".as_bytes();
 const A_ROW_THE_WINDOW_IS_NOT_ON: &[u8] = "atlas".as_bytes();
 
 /// The title of the window over the first bead of the capture's tree, and the
-/// whole of it: the tree's header is `bdi-0tp`, so the id alone would also be
+/// whole of it: the tree's header is `orb-0tp`, so the id alone would also be
 /// met by the window over its own root. Drawn on the window's top border,
 /// which is how this test names that row.
-const THE_FIRST_BEADS_WINDOW: &[u8] = "bdi-0tp.6 · Esc to go back".as_bytes();
+const THE_FIRST_BEADS_WINDOW: &[u8] = "orb-0tp.6 · Esc to go back".as_bytes();
 
 /// The title of the window over that bead's parent, which is the tree's root.
-const ITS_PARENTS_WINDOW: &[u8] = "bdi-0tp · Esc to go back".as_bytes();
+const ITS_PARENTS_WINDOW: &[u8] = "orb-0tp · Esc to go back".as_bytes();
 
 /// The part of that title every bead's window says, whichever bead it is on.
 /// This is what says a window is *up*.
@@ -91,7 +91,7 @@ fn the_rows_read_off_a_frame_are_the_rows_bdi_drew_on() {
     let forest = repaint(&mut bdi, ROWS + 1);
 
     assert_eq!(
-        row_of(&forest, "bdi-0tp  Every outside program".as_bytes()),
+        row_of(&forest, "orb-0tp  Every outside program".as_bytes()),
         Some(THE_TREES_HEADER),
         "the tree's header was read off the frame on another row. The screen \
          it drew: {:?}\n{}",
@@ -118,7 +118,7 @@ fn the_rows_read_off_a_frame_are_the_rows_bdi_drew_on() {
 #[test]
 fn words_drawn_twice_are_read_off_no_row() {
     let (bdi, _tracker, page) = at_the_end_of_the_first_beads_page("ambiguous");
-    let in_the_forest_and_in_the_window = "bdi-0tp  Every outside program".as_bytes();
+    let in_the_forest_and_in_the_window = "orb-0tp  Every outside program".as_bytes();
 
     assert_eq!(
         rows_of(&page, in_the_forest_and_in_the_window).len(),

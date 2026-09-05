@@ -38,7 +38,7 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 const SHUT_THE_TREE: &[u8] = b"C";
 
 /// `/` and the id of a bead in that tree, without the Enter that asks for it.
-const TYPE_AN_ID: &[u8] = b"/bdi-0tp.7";
+const TYPE_AN_ID: &[u8] = b"/orb-0tp.7";
 
 /// `Enter`, which asks for what is typed — and, on the forest, shows the
 /// selected bead.
@@ -48,12 +48,12 @@ const ENTER: &[u8] = b"\r";
 const SEARCH_FOR_A_BEAD_NOBODY_HAS: &[u8] = b"/bdi-404\r";
 
 /// The prompt with that id typed into it, as `view::phrase` draws it.
-const THE_PROMPT: &[u8] = "/bdi-0tp.7".as_bytes();
+const THE_PROMPT: &[u8] = "/orb-0tp.7".as_bytes();
 
 /// The title of the window over the bead the search lands on, and the whole
-/// of it: `bdi-0tp` is the tree's header, so the id alone would also be met
+/// of it: `orb-0tp` is the tree's header, so the id alone would also be met
 /// by the window over that row.
-const THE_SEARCHED_BEADS_WINDOW: &[u8] = "bdi-0tp.7 · Esc to go back".as_bytes();
+const THE_SEARCHED_BEADS_WINDOW: &[u8] = "orb-0tp.7 · Esc to go back".as_bytes();
 
 /// That bead's own title, which is what says its row is drawn at all. Read
 /// rather than its id, because every bead in this tree carries the header's

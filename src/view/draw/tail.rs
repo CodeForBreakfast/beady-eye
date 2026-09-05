@@ -376,12 +376,12 @@ mod tests {
         use crate::view::tail;
 
         const ARGV: &str =
-            "herdr --session default agent read wDV:p1 --source visible --lines 6 --format ansi";
+            "herdr --session default agent read wQ:p1 --source visible --lines 6 --format ansi";
         let runner = FakeRunner::default().with(
             ARGV,
             include_str!("../../../tests/fixtures/herdr_agent_read_ansi.txt"),
         );
-        tail::read(key("wDV:p1"), Herdr::new(&runner).read(&key("wDV:p1"), 6))
+        tail::read(key("wQ:p1"), Herdr::new(&runner).read(&key("wQ:p1"), 6))
     }
 
     /// The bead: the band draws the pane's own colour and attributes, read
@@ -394,7 +394,7 @@ mod tests {
         let host = painted.row(4);
         assert!(
             host.iter().any(|run| {
-                run.said == "thinkpad"
+                run.said == "larkspur"
                     && run.style.fg == Some(Color::Rgb(255, 121, 198))
                     && run.style.add_modifier.contains(Modifier::BOLD)
             }),

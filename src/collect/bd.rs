@@ -395,27 +395,24 @@ mod tests {
         let rows = parse_beads(JOINED).expect("the captured rows parse");
         let bead = rows
             .iter()
-            .find(|b| b.id == "bdi-7ao")
-            .expect("bdi-7ao is in the capture");
+            .find(|b| b.id == "orb-9fw")
+            .expect("orb-9fw is in the capture");
 
         assert!(
             bead.description
                 .as_deref()
-                .is_some_and(|said| said.starts_with("`bdi` joins a beads tracker")),
+                .is_some_and(|said| said.starts_with("`orbital` reads a repository")),
             "{:?}",
             bead.description
         );
         assert!(
             bead.notes
                 .as_deref()
-                .is_some_and(|said| said.starts_with("Ready and unstaffed at 17:37 BST")),
+                .is_some_and(|said| said.starts_with("Correction to this bead's roster")),
             "{:?}",
             bead.notes
         );
-        assert_eq!(
-            bead.owner.as_deref(),
-            Some("80714+GraemeF@users.noreply.github.com")
-        );
+        assert_eq!(bead.owner.as_deref(), Some("mira@orbital.invalid"));
     }
 
     /// bd leaves both out of a row that has neither, and a row it writes

@@ -37,9 +37,9 @@ const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 const REFRESH: &[u8] = b"\x12";
 
 /// The title of the window over that bead, from `view::show`, and the whole
-/// of it: the tree's header is `bdi-0tp`, so the id alone would also be met
+/// of it: the tree's header is `orb-0tp`, so the id alone would also be met
 /// by the window over the row above.
-const ITS_WINDOW: &[u8] = "bdi-0tp.6 · Esc to go back".as_bytes();
+const ITS_WINDOW: &[u8] = "orb-0tp.6 · Esc to go back".as_bytes();
 
 /// The part of that title every bead's window says, whichever bead it is on.
 ///
@@ -52,16 +52,18 @@ const ITS_WINDOW: &[u8] = "bdi-0tp.6 · Esc to go back".as_bytes();
 /// looking for `ITS_WINDOW` gone found it gone and passed.
 const A_BEAD_WINDOW: &[u8] = "Esc to go back".as_bytes();
 
-/// A word of the first line of that bead's description, and one nothing else
-/// on the screen says. One word rather than a phrase, because the window
-/// draws its prose in the terminal's own colour, so its spaces are cells
-/// nothing has to write and it reaches the wire a word at a time.
-const THE_TOP_OF_THE_BEAD: &[u8] = "spoke".as_bytes();
+/// A word of the opening lines of that bead's description, and one nothing
+/// else on the screen says — the bead's own title is drawn over it and is
+/// most of that first sentence, so the word has to be one the title stops
+/// short of. One word rather than a phrase, because the window draws its
+/// prose in the terminal's own colour, so its spaces are cells nothing has to
+/// write and it reaches the wire a word at a time.
+const THE_TOP_OF_THE_BEAD: &[u8] = "shape".as_bytes();
 
-/// The same for its last lines, under *Done when*. What makes the pair a
+/// The same for its last lines, under *Blocked on*. What makes the pair a
 /// measurement is that the window is far too short for both to be on it at
 /// once: at forty rows it holds thirty lines of a bead that is over forty.
-const THE_FOOT_OF_THE_BEAD: &[u8] = "watcher".as_bytes();
+const THE_FOOT_OF_THE_BEAD: &[u8] = "twice".as_bytes();
 
 /// Notches enough to reach the foot of that bead from its top, and more:
 /// each is one row, the view stops at the last row of the bead however many
@@ -184,7 +186,7 @@ fn without_the_first_bead() -> String {
         serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("a capture of bd list --json");
     let kept: Vec<serde_json::Value> = rows
         .into_iter()
-        .filter(|row| row["id"] != "bdi-0tp.6")
+        .filter(|row| row["id"] != "orb-0tp.6")
         .collect();
     assert_eq!(kept.len(), 4, "the capture has to have held that bead");
     serde_json::to_string(&kept).expect("rows serialise")

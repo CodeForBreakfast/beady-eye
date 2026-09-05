@@ -928,7 +928,7 @@ mod tests {
     }
 
     /// What herdr reported about a loose pane reaches the snapshot with it.
-    /// `wCW:p6` in the capture stamped a `display_agent`, a title and a label
+    /// `wG:p6` in the capture stamped a `display_agent`, a title and a label
     /// per state; the caption is the label for the state it is in, by the
     /// rule a bead's agent already gets.
     #[test]
@@ -936,8 +936,8 @@ mod tests {
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "beady-eye"
-path = "/tmp/bdi-ground/beady-eye"
+name = "orbital"
+path = "/tmp/bdi-ground/orbital"
 "#,
         )
         .expect("the config parses");
@@ -959,9 +959,9 @@ path = "/tmp/bdi-ground/beady-eye"
         let p6 = snap
             .unattributed
             .iter()
-            .find(|p| p.pane.id == "wCW:p6")
-            .expect("in beady-eye's directory and on no bead");
-        assert_eq!(p6.display_agent.as_deref(), Some("bdi-3um.5"));
+            .find(|p| p.pane.id == "wG:p6")
+            .expect("in orbital's directory and on no bead");
+        assert_eq!(p6.display_agent.as_deref(), Some("orb-2kd.5"));
         assert_eq!(
             p6.title.as_deref(),
             Some("writing the parser and its tests")

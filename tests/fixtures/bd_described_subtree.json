@@ -1,148 +1,148 @@
 [
- {
-  "id": "bdi-0tp",
-  "title": "Every outside program is optional: one seam per capability, and a setup that lacks one runs without it",
-  "description": "bdi reads two programs, bd and herdr, and is about to be public. README\npromises \"bd, and nothing else\" and design.md calls herdr \"a provider, not a\ndependency\". The code keeps neither promise yet. Measured 2026-09-02 at\n58e1f79:\n\n- herdr is reached by name from `Collection::collect` (`herdr::agent_list`)\n  and wired by name in `tui::wire` (`Herdr::new(RealRunner, ..)`). A machine\n  with no herdr gets a foot notice about herdr on every frame of every run.\n- bd is reached by name from `app::tracker`, and its argv is known to 155\n  test sites across 7 files. A change to one bd flag is a change in all of\n  them, and two seats on unrelated beads collide in app/mod.rs's fixtures.\n- every project without a credential_command is entered with `direnv exec`,\n  the zero-config run included. A machine without direnv reads no tracker.\n  README does not name direnv.\n- the change probe is `SELECT dolt_hashof_db()`. On bd's default SQLite\n  backend it fails on every refresh, silently, at one process each.\n- the variable naming the project when there is no config is COMMY_PROJECT.\n\nGraeme asked on 2026-09-02 for the architecture to let capabilities be\noptional (no herdr; other ways of reaching beads; other ways of hearing about\nchanges) and for modularisation that lets seats work concurrently without\ncolliding. Both have one answer: a seam per outside program, with the adapter\nbehind it owning that program's vocabulary, its wire shape and its tests.\n\n## What is a seam today, and what is not\n\n    seam                where             adapter        status\n    Runner              collect::run      RealRunner     real\n    Panes (read,focus)  collect::panes    Herdr          wired by name\n    Changes (sources)   tui::wire         Inbound socket private to tui\n    View                tui::drive        Screen         real\n    collect closure     tui::run          Collection     real\n    agent list          herdr::agent_list called directly  missing\n    tracker             bd::* called directly              missing\n    entering a project  direnv, or credential_command      missing\n\nRunner is at the wrong altitude for optionality. It makes any program\nfakeable, but every caller still spells the program's argv, so a fake tracker\nis eight canned bd calls and nothing but bd's CLI can be a tracker.\n\n## The children, in the order a public user hits them\n\n1. entering a project needs no direnv (P1, public blocker)\n2. the tracker is a seam and app/ stops spelling bd's argv (P1, contention)\n3. the agent provider is a seam and a setup with none is silent (P1)\n4. a tracker with no Dolt probe stops paying for one (P2, after 2)\n5. the project variable is bdi's own (P2)\n6. change sources behind one seam outside tui/, with a file watcher as the\n   zero-setup producer (P3, after bdi-rer.9 and 2)\n7. phrase.rs split by band (P3, contention)\n8. forest/mod.rs tests split by concern (P3, contention)\n\n1, 2 and 3 all edit `Collection::collect` and `app::tracker`, so they are\nsequenced by dependency edge rather than run at once; 5, 7 and 8 touch none\nof those files and run alongside.\n\n## Vocabulary\n\nNeither bd nor herdr names \"the thing behind a seam\". design.md already\nsays provider for the agents side and tracker for the beads side; keep\nthose. Anything a seat has to coin goes in design.md's terminology table.\n\n## Related, not gated on this\n\n- bdi-7ao.65.6 asks whether the layers become workspace crates. These seams\n  are the lines such a split would cut along (model and seams; one crate per\n  adapter; tui). The seams land first either way.\n- bdi-rer.9 is finishing the per-source poll option on top of #30's\n  per-project `Armed`; child 6 waits for it.\n- bdi-iby is the public epic. Child 1 is a public blocker of the same kind\n  as its own, and belongs here because the fix is a seam. bdi-0tp.5, the\n  project variable's name, was filed here and moved under bdi-iby: its fix\n  is a rename, not a seam.\n\n",
-  "status": "open",
-  "priority": 1,
-  "issue_type": "epic",
-  "owner": "80714+GraemeF@users.noreply.github.com",
-  "created_at": "2026-09-02T06:04:14Z",
-  "created_by": "Graeme Foster",
-  "updated_at": "2026-09-02T06:08:23Z",
-  "dependencies": [
-   {
-    "issue_id": "bdi-0tp",
-    "depends_on_id": "bdi-7ao",
-    "type": "parent-child",
-    "created_at": "2026-09-02T06:08:21Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   }
-  ],
-  "dependency_count": 0,
-  "dependent_count": 0,
-  "comment_count": 0,
-  "parent": "bdi-7ao"
- },
- {
-  "id": "bdi-0tp.9",
-  "title": "A credential command or direnv that cannot be run is reported on screen as bd's failure",
-  "description": "`collect::run::RunFailure::from_exit` classifies the stderr and exit of every subprocess bdi runs, and the screen phrases the result as bd's. A credential command or a direnv that cannot be run (`Exec`) reaches the same mapping through `tracker_env`, so a missing `direnv` or a typo in `credential_command` is drawn as \"bd could not be run\". The reader is sent to check bd when bd was never reached.\n\nSurfaced by the `bdi-54w.6` seat at https://chat.example.invalid/#narrow/id/41074 while gating cobra's unknown-flag arm on the program being bd; that change covers the new kind only and leaves `Exec` program-blind. Not measured beyond that report.\n\n## Done when\n\n- A failure to run a credential command or an environment tool is reported on screen as that program's, naming which one, and a bd failure as bd's.\n- Tested with a runner whose `sh` or `direnv` cannot be executed, asserting the words the screen shows.\n",
-  "status": "open",
-  "priority": 3,
-  "issue_type": "bug",
-  "owner": "80714+GraemeF@users.noreply.github.com",
-  "created_at": "2026-09-02T18:11:38Z",
-  "created_by": "Graeme Foster",
-  "updated_at": "2026-09-02T18:11:38Z",
-  "dependencies": [
-   {
-    "issue_id": "bdi-0tp.9",
-    "depends_on_id": "bdi-0tp",
-    "type": "parent-child",
-    "created_at": "2026-09-02T18:11:38Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   }
-  ],
-  "dependency_count": 0,
-  "dependent_count": 0,
-  "comment_count": 0,
-  "parent": "bdi-0tp"
- },
- {
-  "id": "bdi-0tp.8",
-  "title": "forest/mod.rs's tests are one module every forest change appends to",
-  "description": "src/view/forest/mod.rs is 4,467 lines, of which 540 are production. The rest\nis one `mod tests`, and it is where a seat adding a fold test and a seat\nadding a motion test both append. 50 commits touched forest.rs before the\nsplit and 8 have touched forest/mod.rs since, measured 2026-09-02 at\n58e1f79.\n\n## Shape\n\nA forest/tests/ directory module: `mod tests { mod folding; mod motion; mod\nselection; .. }` declared in tests/mod.rs, with the shared fixtures there.\nNo #[path]: the screen-walks check reads a test module in a file of its own\n(dde4449) and cannot follow #[path] (bdi-vtn).\n\n## Done when\n\n- forest/mod.rs is production code and `mod tests;`.\n- screen-walks still refuses an unbounded walk in each new file. Prove it by\n  adding one and watching the check fail before taking it out.\n- cargo-mutants' doubled count is unchanged; lib.rs's cfg pair is its cause,\n  not this.\n",
-  "status": "open",
-  "priority": 3,
-  "issue_type": "chore",
-  "owner": "80714+GraemeF@users.noreply.github.com",
-  "created_at": "2026-09-02T06:04:18Z",
-  "created_by": "Graeme Foster",
-  "updated_at": "2026-09-02T06:04:18Z",
-  "dependencies": [
-   {
-    "issue_id": "bdi-0tp.8",
-    "depends_on_id": "bdi-0tp",
-    "type": "parent-child",
-    "created_at": "2026-09-02T06:04:18Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   }
-  ],
-  "dependency_count": 0,
-  "dependent_count": 0,
-  "comment_count": 0,
-  "parent": "bdi-0tp"
- },
- {
-  "id": "bdi-0tp.6",
-  "title": "Change sources sit behind one seam outside tui/, and a local tracker's files are a producer nobody has to build",
-  "description": "Since #30, three things tell bdi a project's work has moved on: a writer on\nthe inbound socket, the poll each project arms for itself in `tui::armed`\nafter its own read comes back, and ^R. All three feed one window and one\nqueue in the loop, and the loop neither knows nor cares which one spoke.\nThat is the seam; what is left is where it sits and what feeds it.\n\n`Changes` is a private trait in `tui::wire` with one adapter, `Inbound`,\nwhich wraps the socket; `wire` builds it by name. A second external producer\nmeans opening tui/. And the public user's problem stays: README's socket\nprotocol asks them to build a producer before they get push, and the worked\nexample is a shell wrapper around bd.\n\nFor a tracker backed by a local file (SQLite, or a JSONL export) a producer\nalready exists in the filesystem. Watching `.beads/` for writes names the\nproject whose directory moved, exactly as a socket writer does, and costs a\nDolt-backed project nothing: it has no file to watch and keeps its socket or\nits poll.\n\nbdi-rer.9 is finishing the per-source poll option in config and on the\ncommand line; it lands first, and this bead waits for it because both edit\n`config.rs`, `cli.rs` and README.\n\n## Shape\n\n- `Changes` moves out of `tui::wire` to sit beside the socket in collect/,\n  keeping rer.9's names, so a producer is added without opening tui/.\n- A file-watch producer per project whose tracker is a local file, enabled\n  where the tracker seam's adapter says it is one. Which crate does the\n  watching is the seat's to choose against what is maintained now, not from\n  memory.\n- It feeds the loop the way the socket does, so the window and the read are\n  unchanged.\n\n## Done when\n\n- A write to a local tracker's file reads that project without a poll,\n  tested with a real file and a fake loop end.\n- A Dolt-backed project gets no watcher.\n- tui/ names no producer.\n",
-  "status": "open",
-  "priority": 3,
-  "issue_type": "feature",
-  "owner": "80714+GraemeF@users.noreply.github.com",
-  "created_at": "2026-09-02T06:04:17Z",
-  "created_by": "Graeme Foster",
-  "updated_at": "2026-09-02T06:04:17Z",
-  "dependencies": [
-   {
-    "issue_id": "bdi-0tp.6",
-    "depends_on_id": "bdi-rer.9",
-    "type": "blocks",
-    "created_at": "2026-09-02T06:04:19Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   },
-   {
-    "issue_id": "bdi-0tp.6",
-    "depends_on_id": "bdi-0tp",
-    "type": "parent-child",
-    "created_at": "2026-09-02T06:04:16Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   },
-   {
-    "issue_id": "bdi-0tp.6",
-    "depends_on_id": "bdi-0tp.2",
-    "type": "blocks",
-    "created_at": "2026-09-02T06:04:19Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   }
-  ],
-  "dependency_count": 2,
-  "dependent_count": 0,
-  "comment_count": 0,
-  "parent": "bdi-0tp"
- },
- {
-  "id": "bdi-0tp.7",
-  "title": "phrase.rs is one file every screen change edits",
-  "description": "src/view/phrase.rs is 554 production lines and holds every word bdi shows,\nby design. It is also the file most often in two seats' diffs at once: 24\ncommits over the crate's history and 10 of the last 60, measured 2026-09-02\nat 58e1f79, behind only forest.rs and draw.rs, both since split under\nbdi-7ao.33.\n\nThe property worth keeping is the one CLAUDE.md names: every word in one\nplace, under one module name. The property to lose is one file.\n\n## Shape\n\nphrase/ as a directory module with the same `phrase::` surface, split by the\nband the words are drawn in (bead rows, project lines, groups and\nconflicts, the tail, the foot) so a seat on the tail and a seat on the foot\nedit different files. phrase/mod.rs re-exports; the test that checks every\nphrase function is reached (the one that binds each to a `fn() -> &str`)\nmoves with them and still enumerates all of them.\n\n## Done when\n\n- `phrase::` names resolve as they do now; no caller changes.\n- Each file opens with a //! naming the band it holds, per bdi-7ao.65.\n- The reachability test still enumerates every phrase.\n",
-  "status": "open",
-  "priority": 3,
-  "issue_type": "chore",
-  "owner": "80714+GraemeF@users.noreply.github.com",
-  "created_at": "2026-09-02T06:04:17Z",
-  "created_by": "Graeme Foster",
-  "updated_at": "2026-09-02T06:04:17Z",
-  "dependencies": [
-   {
-    "issue_id": "bdi-0tp.7",
-    "depends_on_id": "bdi-0tp",
-    "type": "parent-child",
-    "created_at": "2026-09-02T06:04:17Z",
-    "created_by": "Graeme Foster",
-    "metadata": "{}"
-   }
-  ],
-  "dependency_count": 0,
-  "dependent_count": 0,
-  "comment_count": 0,
-  "parent": "bdi-0tp"
- }
+  {
+    "id": "orb-0tp",
+    "title": "Every outside program is optional: one seam per capability, and a setup that lacks one runs without it",
+    "description": "orbital reads two outside programs, git and a pager, and is about to be\npublic. The README promises \"git, and nothing else\" and `docs/design.md`\ncalls the pager \"a convenience, not a dependency\". The code keeps neither\npromise yet. Measured 2026-09-02 at 58e1f79:\n\n- The pager is reached by name from `render::page` (`pager::open`) and wired\n  by name in `cli::wire` (`Pager::new(RealRunner, ..)`). A machine with no\n  pager gets a warning about the pager on every run, on every invocation.\n- git is reached by name from `read::log`, and its argv is known to three\n  modules rather than one, so a change to how orbital calls it is a change in\n  three places and a test in none of them.\n- The editor is reached only from `note::edit`, which is the shape the other\n  two want.\n\n## What this is not\n\nNot a plugin system, and not configuration. Nothing here lets a setup\nsubstitute a different pager or a different git; the seam exists so that a\nsetup which lacks one runs without it, and so that the argv lives in one\nplace. A setup that wants a different pager already has `PAGER`.\n\n## The seam\n\nOne trait per capability, named for what the capability provides rather than\nfor the program that provides it:\n\n| capability | trait | today |\n|---|---|---|\n| the change log | `Changes` | `read::log`, git by name |\n| paging output | `Paging` | `render::page`, pager by name |\n| editing a note | `Editing` | `note::edit`, editor by name |\n\nEach has exactly one implementation in this crate and each implementation\nnames its program once. `cli::wire` chooses the implementation; nothing below\n`cli/` knows a program name.\n\n## Absence is a state, not a failure\n\nThe distinction the current code loses. A setup with no pager is not a setup\nwhose pager failed: the first is ordinary and the second is worth saying\nsomething about. So each capability resolves to one of three things at wire\ntime — present, absent, or present and broken — and only the third is drawn\non screen.\n\nThat is also what makes the warning stop. Today the warning fires on absence,\nwhich is the common case on a machine that never had a pager, so the reader\nlearns to ignore a line that would matter if it ever said something else.\n\n## Done when\n\n- Each outside program sits behind one seam, and a setup that lacks one runs\n  without it rather than warning about it on every frame.\n- The argv for each is spelled in one place, and a test asserts the whole\n  argv rather than the subcommand.\n- Nothing under `read/`, `render/` or `note/` names a program.\n- A setup whose pager cannot be executed is told so, naming the pager, and\n  a setup that has no pager is told nothing.\n\n## Not in this bead\n\n- Choosing a pager, or reading `PAGER`. That is `orb-0tp.4`.\n- The editor seam's own tests, which want a fake that can fail mid-write and\n  are a bead of their own.\n- Anything about git's own configuration. orbital reads a repository; it does\n  not manage one.\n\n## Why now\n\nThe promise in the README is the reason this is P1 rather than P3. A public\nrepository whose README describes a dependency model the code does not have\nis a bug report waiting to be filed by somebody who tried it, and the fix\nafter that report is the same fix as this one plus an apology.",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "owner": "mira@orbital.invalid",
+    "created_at": "2026-09-05T12:40:52Z",
+    "created_by": "Mira Vance",
+    "updated_at": "2026-09-05T12:49:16Z",
+    "dependencies": [
+      {
+        "issue_id": "orb-0tp",
+        "depends_on_id": "orb-9fw",
+        "type": "parent-child",
+        "created_at": "2026-09-05T13:40:52Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "orb-9fw"
+  },
+  {
+    "id": "orb-0tp.9",
+    "title": "A pager or an editor that cannot be run is reported as git's failure",
+    "description": "`read::run::RunFailure::from_exit` classifies the stderr and exit of every\nsubprocess orbital runs, and the screen phrases the result as git's. A pager\nor an editor that cannot be run (`Exec`) reaches the same mapping, so a\nmissing pager or a typo in `pager_command` is drawn as \"git could not be\nrun\". The reader is sent to check git when git was never reached.\n\n## Done when\n\n- A failure to run a pager or an editor is reported on screen as that\n  program's, naming which one, and a git failure as git's.\n- Tested with a runner whose pager cannot be executed, asserting the words\n  the screen shows.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "bug",
+    "owner": "mira@orbital.invalid",
+    "created_at": "2026-09-05T12:40:59Z",
+    "created_by": "Mira Vance",
+    "updated_at": "2026-09-05T12:49:18Z",
+    "dependencies": [
+      {
+        "issue_id": "orb-0tp.9",
+        "depends_on_id": "orb-0tp",
+        "type": "parent-child",
+        "created_at": "2026-09-05T13:40:58Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "orb-0tp"
+  },
+  {
+    "id": "orb-0tp.8",
+    "title": "group/mod.rs's tests are one module every grouping change appends to",
+    "description": "`group/mod.rs`'s tests are one module every grouping change appends to, and it\nis now long enough that a reader looking for the ordering rules reads the\nwhole file to find out there are none. 1,340 lines, 61 tests, one `mod\ntests`.\n\nSplit it by what each test is about, and let the module names say it. On a\nfirst pass the tests fall into four groups:\n\n- ordering within a type\n- ordering between types\n- what an untyped entry does\n- what an empty group does\n\n## Not a behaviour change\n\nNo test is deleted and none is rewritten. A test that moves keeps its name,\nits body and its assertions; only the module around it is new. The check is\nthat the count is the same before and after and that `cargo test group::`\nruns the same number.\n\n## Done when\n\n- `group/mod.rs`'s tests are split into named modules by subject.\n- The test count is unchanged.\n- No test body changed.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "chore",
+    "owner": "mira@orbital.invalid",
+    "created_at": "2026-09-05T12:40:58Z",
+    "created_by": "Mira Vance",
+    "updated_at": "2026-09-05T12:49:18Z",
+    "dependencies": [
+      {
+        "issue_id": "orb-0tp.8",
+        "depends_on_id": "orb-0tp",
+        "type": "parent-child",
+        "created_at": "2026-09-05T13:40:57Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "orb-0tp"
+  },
+  {
+    "id": "orb-0tp.7",
+    "title": "phrase.rs is one file every screen change edits",
+    "description": "`phrase.rs` is one file every screen change edits, so two seats working on\ndifferent screens collide in it for no reason other than where the words\nlive. Measured over the last forty commits: eleven touch `phrase.rs`, and\nnine of those eleven touch exactly one other file.\n\nMove each phrase next to the screen that says it, and leave `phrase.rs`\nholding only the ones more than one screen shares.\n\n## What stays\n\nA phrase used by two or more screens stays, because moving it to one of them\nmakes the other import from a screen it has nothing else to do with. On\ntoday's count that is six phrases, all of them about failure: the four\ntracker states, \"nothing to show\", and the truncation marker.\n\n## What moves\n\nEverything else, which is thirty-one phrases across five screens. Each goes\ninto the module that draws it, private, with the test that asserts its\nwording moving with it.\n\n## Not a wording change\n\nNo phrase changes. A diff that shows a word changing is a diff that has done\nsomething this bead did not ask for, and the check for that is that the\nstrings are identical before and after — `git diff -w --stat` should show\nthe same total additions and deletions.\n\n## Done when\n\n- `phrase.rs` holds only phrases more than one screen uses.\n- Every moved phrase is private to the module that draws it.\n- No phrase's wording changed.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "chore",
+    "owner": "mira@orbital.invalid",
+    "created_at": "2026-09-05T12:40:57Z",
+    "created_by": "Mira Vance",
+    "updated_at": "2026-09-05T12:49:17Z",
+    "dependencies": [
+      {
+        "issue_id": "orb-0tp.7",
+        "depends_on_id": "orb-0tp",
+        "type": "parent-child",
+        "created_at": "2026-09-05T13:40:57Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "orb-0tp"
+  },
+  {
+    "id": "orb-0tp.6",
+    "title": "Change sources sit behind one seam outside cli/, and a local repository is one implementation of it",
+    "description": "Change sources sit behind one seam outside `cli/`, and a local repository is\none implementation of it rather than the only shape the code knows.\n\nToday `cli::wire` opens the repository itself and hands a path down, so a\nsource that is not a path on this machine cannot be added without changing\nevery layer it passes through. The path reaches `read::log`, `read::refs`\nand `group::order`, and each of the three does its own thing with it.\n\n## The shape\n\nOne trait, `Changes`, with the three questions the rest of the crate asks:\n\n```rust\ntrait Changes {\n    fn entries(&self, since: Option<&Rev>) -> Result<Vec<Entry>>;\n    fn refs(&self) -> Result<Vec<Ref>>;\n    fn head(&self) -> Result<Rev>;\n}\n```\n\n`LocalRepository` implements it and is the only implementation this crate\nships. The point is not to have two; the point is that the layers below\n`cli/` name the trait, so the second one costs a file rather than a\nrefactor.\n\n## Why the boundary is at cli/\n\nBecause that is where the process's own facts already live — the working\ndirectory, the environment, the argv. A layer that has to be told where the\nrepository is has not been given a dependency; it has been given a\nresponsibility it cannot discharge, and every test of it has to construct a\nrepository on disk to say anything at all.\n\n## Done when\n\n- One trait names what a change source provides, and the local repository\n  implements it.\n- `cli/` names the trait and not the implementation.\n- `read/` and `group/` take the trait, and their tests take a fake rather\n  than a temporary directory.\n- No path to a repository is passed below `cli/`.\n\n## Blocked on\n\n`orb-0tp.2`, which pulls the argv into one place — this seam wants that done\nfirst or it moves the same argv twice. And `orb-rer.9`, which is the last\ncaller in `render/` still reaching for a path.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "feature",
+    "owner": "mira@orbital.invalid",
+    "created_at": "2026-09-05T12:40:56Z",
+    "created_by": "Mira Vance",
+    "updated_at": "2026-09-05T12:49:17Z",
+    "dependencies": [
+      {
+        "issue_id": "orb-0tp.6",
+        "depends_on_id": "orb-0tp.2",
+        "type": "blocks",
+        "created_at": "2026-09-05T13:41:12Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "orb-0tp.6",
+        "depends_on_id": "orb-rer.9",
+        "type": "blocks",
+        "created_at": "2026-09-05T13:41:11Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "orb-0tp.6",
+        "depends_on_id": "orb-0tp",
+        "type": "parent-child",
+        "created_at": "2026-09-05T13:40:56Z",
+        "created_by": "Mira Vance",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "orb-0tp"
+  }
 ]

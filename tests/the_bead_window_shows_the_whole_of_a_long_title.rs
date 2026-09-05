@@ -120,7 +120,7 @@ fn with_a_title_that_does_not_fit() -> String {
         serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("a capture of bd list --json");
     let named = rows
         .iter_mut()
-        .find(|row| row["id"] == "bdi-0tp.6")
+        .find(|row| row["id"] == "orb-0tp.6")
         .expect("the capture has to hold the bead the window is opened on");
     named["title"] = serde_json::Value::String(A_TITLE_THAT_DOES_NOT_FIT.to_string());
     serde_json::to_string(&rows).expect("rows serialise")

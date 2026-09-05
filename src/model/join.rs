@@ -446,7 +446,7 @@ mod tests {
     const JOINED_BEADS: &str = include_str!("../../tests/fixtures/joined_bd_list.json");
     const JOINED_PANES: &str = include_str!("../../tests/fixtures/joined_herdr_agent_list.json");
 
-    const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/beady-eye";
+    const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/orbital";
 
     fn project(name: &str, path: &str) -> Project {
         Project {
@@ -694,19 +694,19 @@ mod tests {
     fn a_captured_bead_takes_the_captured_pane_it_names() {
         let beads = rows(JOINED_BEADS);
         let live = parse_agent_list(A_SESSION, JOINED_PANES).expect("the fixture parses");
-        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "beady-eye",
+                project: "orbital",
                 rows: &beads,
             }],
             Listed::all(&live),
             &Config::naming(cfg),
         );
 
-        let a = pane_of(&joined, "beady-eye", "bdi-7ao.22");
-        assert_eq!(a.pane, pane_key("wD6:pJ"));
+        let a = pane_of(&joined, "orbital", "orb-9fw.22");
+        assert_eq!(a.pane, pane_key("wM:pK"));
         assert_eq!(a.source, JoinSource::AgentPane);
         assert_eq!(joined.conflicts, vec![]);
         assert_eq!(joined.refused, BTreeMap::new());
@@ -812,21 +812,22 @@ mod tests {
     fn a_pane_naming_its_bead_resolves_as_inferred() {
         let beads = rows(BEADS);
         let live = parse_agent_list(A_SESSION, PANES).expect("the fixture parses");
-        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "beady-eye",
+                project: "orbital",
                 rows: &beads,
             }],
             Listed::all(&live),
             &Config::naming(cfg),
         );
 
-        // wCW:p5 carries display_agent=bdi-3um.3; no bead in the tracker
-        // names a pane, so the inferred direction is the only one that fires.
-        let a = pane_of(&joined, "beady-eye", "bdi-3um.3");
-        assert_eq!(a.pane, pane_key("wCW:p5"));
+        // wG:p5 carries display_agent=orb-2kd.3; the one bead in the tracker
+        // that names a pane names one this capture does not hold, so the
+        // inferred direction is the only one that fires.
+        let a = pane_of(&joined, "orbital", "orb-2kd.3");
+        assert_eq!(a.pane, pane_key("wG:p5"));
         assert_eq!(a.source, JoinSource::DisplayAgent);
         assert_eq!(joined.agents.len(), 1);
         assert_eq!(joined.conflicts, vec![]);
@@ -1117,25 +1118,22 @@ mod tests {
     fn a_pane_in_no_configured_project_joins_nothing_and_is_unattributed() {
         let beads = rows(BEADS);
         let live = parse_agent_list(A_SESSION, PANES).expect("the fixture parses");
-        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "beady-eye",
+                project: "orbital",
                 rows: &beads,
             }],
             Listed::all(&live),
             &Config::naming(cfg),
         );
 
-        // wCM:pN names bead nix-9670s.5 from an unconfigured summit-works, and
-        // is as unattributed as the panes that named nothing at all.
+        // wF:pD names bead lnd-4t8.5 from an unconfigured lander, and is as
+        // unattributed as the panes that named nothing at all.
         assert_eq!(
             loose(&live, &joined),
-            vec![
-                "wCF:p2", "wCF:pC", "wCM:p2", "wCM:pN", "wCW:p1", "wCW:p2", "wCW:p4", "wCW:p6",
-                "wCY:p1",
-            ]
+            vec!["wE:p1", "wE:p2", "wF:p1", "wF:pD", "wG:p1", "wG:p2", "wG:p4", "wG:p6", "wH:p1",]
         );
         assert_eq!(joined.conflicts, vec![]);
     }
@@ -1535,27 +1533,27 @@ mod tests {
     fn a_contested_pane_carries_its_own_account_of_what_it_is_working_on() {
         let beads = rows(
             r#"[
-              {"id":"bdi-7ao","title":"bdi v1","status":"open"},
-              {"id":"bdi-2bb.16","title":"a claim its seat moved on from",
+              {"id":"orb-9fw","title":"orbital v1","status":"open"},
+              {"id":"orb-2bb.16","title":"a claim its seat moved on from",
                "status":"in_progress",
-               "dependencies":[{"depends_on_id":"bdi-7ao","type":"parent-child"}],
-               "metadata":{"agent_pane":"wD6:pG"}},
-              {"id":"bdi-7ao.12","title":"retiring the dep-tree row shape",
+               "dependencies":[{"depends_on_id":"orb-9fw","type":"parent-child"}],
+               "metadata":{"agent_pane":"wM:pG"}},
+              {"id":"orb-9fw.12","title":"retiring the dep-tree row shape",
                "status":"in_progress",
-               "dependencies":[{"depends_on_id":"bdi-7ao","type":"parent-child"}],
-               "metadata":{"agent_pane":"wD6:pG"}},
-              {"id":"bdi-2bb.19","title":"the other claim it moved on from",
+               "dependencies":[{"depends_on_id":"orb-9fw","type":"parent-child"}],
+               "metadata":{"agent_pane":"wM:pG"}},
+              {"id":"orb-2bb.19","title":"the other claim it moved on from",
                "status":"in_progress",
-               "dependencies":[{"depends_on_id":"bdi-7ao","type":"parent-child"}],
-               "metadata":{"agent_pane":"wD6:pG"}}
+               "dependencies":[{"depends_on_id":"orb-9fw","type":"parent-child"}],
+               "metadata":{"agent_pane":"wM:pG"}}
             ]"#,
         );
         let live = parse_agent_list(A_SESSION, JOINED_PANES).expect("the fixture parses");
-        let cfg = vec![project("beady-eye", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "beady-eye",
+                project: "orbital",
                 rows: &beads,
             }],
             Listed::all(&live),
@@ -1566,14 +1564,14 @@ mod tests {
         assert_eq!(
             joined.conflicts,
             vec![Conflict::SeveralBeadsNameOnePane {
-                pane: pane_key("wD6:pG"),
+                pane: pane_key("wM:pG"),
                 caption: Some(
-                    "bdi-7ao.12: retiring the dep-tree row shape from fixtures".to_string()
+                    "orb-9fw.12: retiring the dep-tree row shape from fixtures".to_string()
                 ),
                 beads: vec![
-                    key("beady-eye", "bdi-2bb.16"),
-                    key("beady-eye", "bdi-2bb.19"),
-                    key("beady-eye", "bdi-7ao.12"),
+                    key("orbital", "orb-2bb.16"),
+                    key("orbital", "orb-2bb.19"),
+                    key("orbital", "orb-9fw.12"),
                 ],
             }]
         );

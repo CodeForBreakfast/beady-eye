@@ -44,13 +44,13 @@ const FOLLOW: &[u8] = b"\r";
 const BACK: &[u8] = b"\x1b";
 
 /// The title of the window over the bead the walk lands on, and the whole of
-/// it: the tree's header is `bdi-0tp`, so the id alone would also be met by
+/// it: the tree's header is `orb-0tp`, so the id alone would also be met by
 /// the window over the row above.
-const THE_FIRST_BEADS_WINDOW: &[u8] = "bdi-0tp.6 · Esc to go back".as_bytes();
+const THE_FIRST_BEADS_WINDOW: &[u8] = "orb-0tp.6 · Esc to go back".as_bytes();
 
 /// The title of the window over that bead's parent, which is the tree's root
 /// and the bead `Tab` puts the ring on.
-const ITS_PARENTS_WINDOW: &[u8] = "bdi-0tp · Esc to go back".as_bytes();
+const ITS_PARENTS_WINDOW: &[u8] = "orb-0tp · Esc to go back".as_bytes();
 
 /// The part of that title every bead's window says, whichever bead it is on.
 /// This is what says a window is *up*.
