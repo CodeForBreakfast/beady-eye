@@ -346,3 +346,8 @@ on nothing any bead accounts for, and the tail.
 
 Built, unreleased, and in daily use against the trackers it was written for.
 The design is in [docs/design.md](docs/design.md).
+
+Versions are `0.x`, and a breaking change bumps the minor: `0.1` → `0.2`. So a
+minor bump can break you — pin the input to a release tag, as the example above
+does. `1.0.0` is a version the maintainers will choose once the shape has
+settled, rather than one a change arrives at by breaking something.
