@@ -85,7 +85,7 @@ Everything reaches `main` through a pull request, squash-merged.
 
 - **type** is one of `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   `refactor`, `revert`, `style`, `test`. A `!` before the colon marks a breaking
-  change.
+  change, and [README.md](README.md#status) says what that does to the version.
 - **scope** is optional, and closed: `collect`, `app`, `model`, `view`, `tui` —
   the five layers under `src/` — plus `ci`, `flake`, `docs`, `tests`, `deps`.
   Leave it out rather than coin one; a new scope is a change to the check.
