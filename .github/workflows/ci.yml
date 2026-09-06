@@ -35,9 +35,7 @@ concurrency:
 # checks out and executes the fork's own code — its workflow file, its
 # flake.nix, its tests. So they run on runners GitHub owns rather than on ones
 # this org owns, whose credentials reach a binary cache other repositories
-# here trust. release.yml is the exception and stays self-hosted: only a v*
-# tag push reaches it, and pushing a tag needs write access to this
-# repository.
+# here trust.
 jobs:
   conventional-subject:
     name: conventional subject
