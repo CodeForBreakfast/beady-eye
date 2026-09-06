@@ -94,6 +94,10 @@ jobs:
       # What does carry is the other direction, main to pull request: the
       # dependency graph keyed on Cargo.lock and beads' module fetch, which
       # between them are most of a cold run.
+      #
+      # The cache fills to its cap and is meant to. Nothing reads a superseded
+      # entry or a merged pull request's scope again, and last access is the
+      # order GitHub evicts in, so the cap takes the dead ones first.
       - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
         with:
           # Build results stay in this repository's own Actions cache. The
