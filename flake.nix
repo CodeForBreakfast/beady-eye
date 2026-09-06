@@ -22,13 +22,34 @@
     let
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
+      # Every check is built from a source tree, and nix hashes the whole of
+      # the one it is handed. So a file in there that no check reads still
+      # gives every check a derivation nothing has built before, and the run
+      # rebuilds all of them for a verdict the tree already has: a pull request
+      # changing only README.md paid for the entire suite.
+      #
+      # An allowlist, for the reason Cargo.toml's `include` is one — a file
+      # that arrives later is out until somebody says so. Out is also the safe
+      # direction: a check that needed the file fails saying it is missing,
+      # where an exclude list that forgot it goes on quietly rebuilding.
+      sourceOf = paths: nixpkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = nixpkgs.lib.fileset.unions paths;
+      };
+
+      # What the compiler, the tests and the tree scans read, and nothing else.
+      # Every `include_str!` in the crate points inside tests/fixtures/, and
+      # the two tests that start from CARGO_MANIFEST_DIR walk into src/ and
+      # tests/shims/.
+      source = sourceOf [ ./Cargo.toml ./Cargo.lock ./src ./tests ];
+
       # The crate names the version once. A release tag that disagrees with it
       # is refused before anything is published, so a crate on crates.io always
       # has a flake output built from the same source at the same version.
       common = {
         pname = cargoToml.package.name;
         version = cargoToml.package.version;
-        src = ./.;
+        src = source;
       };
 
       # The dependency graph, compiled on its own and keyed on Cargo.lock rather
@@ -76,6 +97,63 @@
 
         beady-eye = beadyEyeFor pkgs;
         artifacts = artifactsFor pkgs;
+
+        # What `cargo package` is handed. It builds the tarball Cargo.toml's
+        # `include` list selects, and refuses a `readme` it cannot find — but
+        # all it does with README.md and LICENSE is copy them, and no part of
+        # the check reads a word of either. So it gets a stand-in for both, and
+        # rewriting the README stops being a reason to build anything.
+        #
+        # `pathExists` rather than the paths themselves: naming a path is what
+        # would put the file's contents back into the derivation. Deleting one
+        # is still refused here rather than at publishing time.
+        publishedSource =
+          let
+            copied = [ "README.md" "LICENSE" ];
+            absent = builtins.filter (f: !builtins.pathExists (./. + "/${f}")) copied;
+            stoodInFor = pkgs.runCommand "published-source" { } ''
+              cp -r ${sourceOf [ ./Cargo.toml ./Cargo.lock ./src ]} "$out"
+              chmod -R u+w "$out"
+              for file in ${builtins.concatStringsSep " " copied}; do
+                echo "Stood in for; see publishedSource in flake.nix." > "$out/$file"
+              done
+            '';
+          in
+          nixpkgs.lib.throwIf (absent != [ ])
+            ("Cargo.toml's include list names ${builtins.concatStringsSep " and " absent}, "
+              + "which cargo package needs and this tree has not got.")
+            stoodInFor;
+
+        # Both properties above are silent when they break. Put a documentation
+        # file back into either source and every check still passes, on the
+        # same command, with the same output — only having built what it was
+        # handed already built. Nothing in a green run says which of the two
+        # happened, so they have to be stated somewhere they can fail.
+        documentationIsNotSource =
+          pkgs.runCommand "documentation-is-not-source" { } ''
+            carried="$(find ${source} \( -name '*.md' -o -name docs \) )"
+            if [ -n "$carried" ]; then
+              echo "The source the checks are built from carries documentation:"
+              printf '%s\n' "$carried"
+              echo
+              echo "Every check hashes the whole of that tree, so a change to any"
+              echo "of these rebuilds all of them for a verdict the tree already"
+              echo "has. Take it out of \`source\` in flake.nix — the file stays in"
+              echo "the repository, it just stops being something a check reads."
+              exit 1
+            fi
+
+            if ! grep -q 'Stood in for' ${publishedSource}/README.md; then
+              echo "The package check has been handed the repository's own README.md."
+              echo
+              echo "Its contents then decide that check's derivation, so every"
+              echo "rewrite of it builds the crate again to learn what the last"
+              echo "one already proved. See publishedSource in flake.nix."
+              exit 1
+            fi
+
+            touch $out
+          '';
 
         # Starts bdi and puts it back whenever the source changes, so a copy
         # left running in a terminal keeps up with what the other seats land.
@@ -1895,6 +1973,7 @@ and a second line"
           # library's modules `pub` again and switches `dead_code` off. Only a
           # build without them sees the narrow surface. See src/lib.rs.
           dead-code = checkOf "dead-code" artifacts.dev [ pkgs.clippy ] "cargo clippy -- -D warnings";
+          documentation-is-not-source = documentationIsNotSource;
           fmt = checkOf "fmt" null [ pkgs.rustfmt ] "cargo fmt --check";
           limit-the-job-exceeded-test = limitTheJobExceededTest;
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
@@ -1920,11 +1999,11 @@ and a second line"
           # a warning and an exit code of zero, then verifies a tarball with
           # nothing in it. The tests are left out on purpose, so only the two
           # targets the crate exists to ship are fatal here.
-          package = checkOf "package" artifacts.dev [ ] ''
+          package = (checkOf "package" artifacts.dev [ ] ''
             set -o pipefail
             cargo package --offline --locked 2>&1 | tee package.log
             ! grep -qE "ignoring (library|binary) .* is not included" package.log
-          '';
+          '').overrideAttrs (_: { src = publishedSource; });
         };
       }
     ) // {
