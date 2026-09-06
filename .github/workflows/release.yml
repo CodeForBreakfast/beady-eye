@@ -2,9 +2,28 @@ name: Release
 
 # A tag is a candidate, not a release. This decides whether it becomes one.
 on:
+  # The tag has to be pushed with a person's credentials. GitHub suppresses
+  # workflow triggers for a ref pushed with the default GITHUB_TOKEN, so a tag
+  # push automated from a workflow here would leave no run and no error behind.
+  # workflow_dispatch is a documented exception to that suppression, so such a
+  # workflow can still reach this one by dispatching it.
   push:
     tags:
       - 'v*'
+
+  # Actions re-runs a job, never a step, so a run that dies after cargo publish
+  # cannot simply be repeated: crates.io already holds the version and refuses
+  # it a second time. Dispatching on the tag from a later stage is what turns
+  # that half-release into a whole one.
+  workflow_dispatch:
+    inputs:
+      from:
+        description: the stage to start from
+        type: choice
+        default: publish
+        options:
+          - publish
+          - announce
 
 permissions:
   contents: write
@@ -23,7 +42,9 @@ jobs:
 
       # The flake reads its version from Cargo.toml, so this one comparison
       # covers both artefacts: a tag that passes it names the version the crate
-      # declares and the version the flake output carries.
+      # declares and the version the flake output carries. It runs on a resume
+      # too, where it checks that the tag being finished names the version that
+      # was published.
       - name: the tag must name the version the tree declares
         run: |
           tagged="${GITHUB_REF_NAME#v}"
@@ -31,9 +52,15 @@ jobs:
           echo "tag $tagged, tree $declared"
           test "$tagged" = "$declared"
 
+      # A resume skips every step guarded the way this one is. The guard reads
+      # the event payload rather than the `inputs` context, which is only
+      # available to a dispatched run; the payload is empty on a push, so a push
+      # runs the lot.
+      #
       # Both of these fail the publish anyway, seven minutes later, with the
       # tag already pushed. Saying so first costs nothing.
       - name: the publish preconditions
+        if: github.event.inputs.from != 'announce'
         run: |
           test -n "$CARGO_REGISTRY_TOKEN" || {
             echo "::error::CARGO_REGISTRY_TOKEN is not set; nothing can be published"
@@ -49,7 +76,9 @@ jobs:
       # crates.io cannot take a version back — a yank still serves the files —
       # so the tested-commit gate is re-run here rather than assumed from the
       # push build. Every check comes from the flake's `checks` output.
-      - run: nix flake check -L
+      - name: nix flake check
+        if: github.event.inputs.from != 'announce'
+        run: nix flake check -L
 
       # The one irreversible step, and the last thing that can fail without
       # leaving a mess. cargo verifies the packaged tree builds before it
@@ -58,6 +87,7 @@ jobs:
       # The dev shell is the toolchain the checks above ran against; a cargo
       # from anywhere else is a second, unpinned Rust.
       - name: cargo publish
+        if: github.event.inputs.from != 'announce'
         run: nix develop -c cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -65,8 +95,8 @@ jobs:
       # The announcement, deliberately after the irreversible step. A release
       # exists when this has run: the crate is up, and the tag it names gives
       # the flake output at the same version from the same commit. A tag with
-      # no release is the half-release, and re-running this step is the whole
-      # of the repair.
+      # no release is the half-release, and dispatching this workflow on that
+      # tag with from=announce is the whole of the repair.
       #
       # gh comes from this flake's locked nixpkgs. A bare nixpkgs# resolves
       # through the installer's registry to a weekly channel, which is an
