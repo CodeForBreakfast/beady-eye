@@ -73,7 +73,13 @@ jobs:
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
       # runs with this repository's token.
+      #
+      # The whole history, because the step below evaluates main's flake
+      # beside this tree's and a pull request is checked out as a merge ref
+      # with nothing else fetched.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
@@ -95,9 +101,50 @@ jobs:
           # id-token this workflow does not grant.
           use-flakehub: false
 
+      # A pull request that changes no file any check reads asks for the very
+      # derivations main has already been given a verdict on, so building them
+      # again can only arrive at that same verdict. This is what makes that
+      # cheap without a cache to substitute from: the run does not build them.
+      #
+      # Which changes those are is a question for the flake rather than a list
+      # of documentation paths kept here. A derivation path answers for the
+      # source, for flake.nix and for flake.lock at once, so a dependency bump
+      # or an edited check is caught by construction and there is no second
+      # list here to fall out of step with the one in flake.nix.
+      #
+      # Only a pull request may skip. A push to main is the run a bead close
+      # reads, and leaving that one unconditional means a mistake here costs a
+      # pull request its early exit and can never put an untested tree on main.
+      - name: what main has not already built
+        id: unbuilt
+        if: github.event_name == 'pull_request'
+        run: |
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          derivations() {
+            nix eval --json "$1#checks.$system" \
+              --apply 'builtins.mapAttrs (_: check: check.drvPath)'
+          }
+
+          # Unpacked rather than checked out, so what is evaluated is main's
+          # committed tree and nothing this job has since put beside it.
+          base="$RUNNER_TEMP/main"
+          mkdir -p "$base"
+          git archive origin/main | tar -x -C "$base"
+
+          if [ "$(derivations .)" = "$(derivations "path:$base")" ]; then
+            echo "Every check here is a derivation main has already had a verdict on."
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Every check comes from the flake's `checks` output, so a check added
       # there is a check this runs. Naming one here is the drift to avoid.
       # The conventional-subject job above is the single thing that cannot
       # come from there — it reads a pull request title rather than a tree —
       # and it holds only the trigger, never the rule.
-      - run: nix flake check -L
+      #
+      # The step above is skipped on a push to main, which leaves its output
+      # empty rather than "false", so main always builds.
+      - if: steps.unbuilt.outputs.any != 'false'
+        run: nix flake check -L
