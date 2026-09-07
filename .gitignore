@@ -30,3 +30,7 @@ CLAUDE.local.md
 
 # A seat's worktree is a checkout of this repository, not a source file.
 .claude/worktrees/
+
+# python: the frame tooling under tools/capture/ is run rather than imported,
+# but running it writes a cache beside it either way.
+__pycache__/

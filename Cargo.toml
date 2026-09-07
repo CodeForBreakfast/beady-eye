@@ -16,6 +16,15 @@ categories = ["command-line-utilities", "development-tools"]
 #
 # Every pattern is anchored. Cargo matches these the way gitignore does, so an
 # unanchored "README.md" also selects .beads/README.md.
+#
+# The README's picture is deliberately absent. Cargo sends the README's text in
+# the publish request and crates.io never opens the tarball to render it, so an
+# image reaches a reader over the network whatever this list says: crates.io
+# rewrites the relative path to `<repository>/raw/HEAD/<path>`. Adding the file
+# here would grow the tarball and change nothing. What it does mean is that
+# every published version's README points at whatever stands at that path on
+# the default branch, so `docs/bdi-frame.svg` cannot be moved or deleted
+# without breaking the front page of releases already out.
 include = [
     "/src/**",
     "/Cargo.toml",
