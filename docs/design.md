@@ -1545,6 +1545,13 @@ repoint it from. Reading both is also what makes the answer keep until the
 `bind` that follows it: every directory either way down is this user's or the
 system's, so there is nobody left to move a link or a directory in the meantime.
 
+**A way down that cannot be read is refused rather than passed.** Reading a
+directory is how it gets cleared, so one that cannot be read is one nothing
+has cleared. The owner of a directory above the socket can make the reading
+fail whenever they like — a link pointed at itself for the moment the check
+runs, and back before the `bind` that follows it — so letting an unreadable
+way down through would hand them every check above at once.
+
 **The owner as well as the mode, because an owner may always take any name in
 their own directory.** A directory belonging to somebody else is one they may
 take the socket's name in however narrowly it is set — theirs at `0755` is no

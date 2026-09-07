@@ -27,7 +27,7 @@ use std::{fmt, fs, thread};
 /// needed to create in, so where a derived socket sat said who could reach
 /// it. A told path can sit anywhere, so that is no longer a fact about every
 /// run: [`OWNER_ONLY`] is what each run does for itself about who may reach
-/// the socket, and [`where_others_may_take_a_name`] is what it asks about who
+/// the socket, and [`only_this_user_may_take_a_name_under`] is what it asks about who
 /// may replace it.
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 
@@ -321,7 +321,7 @@ pub struct Socket {
 /// the name holds nothing, or holds something that cannot be read.
 ///
 /// Whose hands the name can change into is what
-/// [`where_others_may_take_a_name`] settles, and it leaves this user's own: a
+/// [`only_this_user_may_take_a_name_under`] settles, and it leaves this user's own: a
 /// reader may remove the socket and put something else at the name while
 /// `bdi` is up, and that file is theirs. So asking is still worth it, and
 /// what it buys is the direction it is wrong in — every case it catches and
@@ -409,9 +409,7 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
 
     // Asked after the directory is made, so a directory `bdi` made answers
     // for itself rather than not being there to answer.
-    if let Some(theirs) = where_others_may_take_a_name(directory) {
-        return Err(Refused::NameOthersMayTake(theirs));
-    }
+    only_this_user_may_take_a_name_under(directory)?;
 
     let listener = match UnixListener::bind(at) {
         Ok(listener) => listener,
@@ -425,10 +423,23 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
     Ok(listener)
 }
 
-/// The nearest directory at or above this one that somebody else may take a
-/// name in, and so the nearest one that puts the socket within their reach.
-/// Nothing where the whole way down to the socket is this user's or the
-/// system's.
+/// The directory the socket's name is in, as a directory rather than as what
+/// `Path` says about the spelling.
+///
+/// A bare name is a name in the directory the run was started in, and
+/// `Path::parent` gives that as the empty path — which nothing can be asked
+/// about, and which would leave `--socket changes.sock` unjudged in whatever
+/// directory a reader happened to run `bdi` from.
+fn directory_holding(at: &Path) -> &Path {
+    match at.parent() {
+        Some(directory) if !directory.as_os_str().is_empty() => directory,
+        _ => Path::new("."),
+    }
+}
+
+/// Whether the whole way down to the socket is this user's or the system's,
+/// refusing for the nearest directory somebody else may take a name in — the
+/// nearest one, that is, that puts the socket within their reach.
 ///
 /// Every directory on the way, rather than the one the socket sits in.
 /// Renaming a directory aside and putting your own there gives you every name
@@ -447,40 +458,33 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
 /// down is one no other user may write in, so there is nobody left to move a
 /// link or a directory between this answer and the `bind` that follows it.
 ///
-/// The directory the socket's name is in, as a directory rather than as what
-/// `Path` says about the spelling.
+/// **A way down that cannot be read is refused, not passed.** Reading it is
+/// how the socket's own directory is cleared, so an unreadable one is a
+/// directory nothing has cleared — and the owner of a directory above it can
+/// make the reading fail on purpose. A symlink pointed at itself for the
+/// moment this runs, and back afterwards, would otherwise carry a path
+/// straight through to `bind` with every check skipped.
 ///
-/// A bare name is a name in the directory the run was started in, and
-/// `Path::parent` gives that as the empty path — which nothing can be asked
-/// about, and which would leave `--socket changes.sock` unjudged in whatever
-/// directory a reader happened to run `bdi` from.
-fn directory_holding(at: &Path) -> &Path {
-    match at.parent() {
-        Some(directory) if !directory.as_os_str().is_empty() => directory,
-        _ => Path::new("."),
-    }
-}
+/// That is the whole reason it does not defer to `bind`, which touches the
+/// path next and would say what went wrong with it in hand. `bind` asks a
+/// different question, and gets its answer after this one has been acted on.
+fn only_this_user_may_take_a_name_under(under: &Path) -> Result<(), Refused> {
+    let unreadable = |directory: &Path| {
+        let directory = directory.to_path_buf();
+        move |why| Refused::Unopenable(directory, why)
+    };
 
-/// A way down that cannot be read is not answered for here. `bind` is the
-/// next thing to touch it and says what went wrong with the path in hand,
-/// which is the more useful of the two answers.
-///
-/// `None` therefore means two things: nothing here may be taken, and this
-/// could not be read. A caller cannot tell them apart, so a path spelled such
-/// that the reading fails arrives at `bind` as a path nothing objected to.
-/// Every spelling known to do that is sent somewhere readable before it gets
-/// here, and the next one will not resemble those. `bdi-rer.13` is making the
-/// two answers different types.
-fn where_others_may_take_a_name(under: &Path) -> Option<PathBuf> {
-    let resolved = fs::canonicalize(under).ok()?;
+    let resolved = fs::canonicalize(under).map_err(unreadable(under))?;
     let this_user = this_user();
-    let mut ways = directories_on(under).chain(directories_on(&resolved));
-    ways.find(|directory| {
-        fs::metadata(directory).is_ok_and(|what| {
-            others_may_take_a_name_in(what.permissions().mode(), what.uid(), this_user)
-        })
-    })
-    .map(Path::to_path_buf)
+
+    for directory in directories_on(under).chain(directories_on(&resolved)) {
+        let what = fs::metadata(directory).map_err(unreadable(directory))?;
+        if others_may_take_a_name_in(what.permissions().mode(), what.uid(), this_user) {
+            return Err(Refused::NameOthersMayTake(directory.to_path_buf()));
+        }
+    }
+
+    Ok(())
 }
 
 /// The directory at the end of this way down and every one above it, nearest
@@ -1067,6 +1071,32 @@ mod tests {
             "and it is that directory the refusal names"
         );
         assert!(!at.exists(), "and nothing of bdi's is left at the name");
+    }
+
+    /// An unreadable way down is one nothing has cleared, so it is refused
+    /// rather than let through. The owner of a directory above the socket can
+    /// make the reading fail whenever they like — a link pointed at itself
+    /// for the moment the check runs, and back before `bind` follows it — so
+    /// passing an unreadable way down would hand them every check at once.
+    ///
+    /// Asked of the walk directly, because `bind` makes the directory before
+    /// it asks and would meet the same link one call earlier.
+    #[test]
+    fn a_way_down_that_cannot_be_read_is_refused_rather_than_passed() {
+        let around = std::env::temp_dir().join(format!("bdi-loop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&around);
+        std::fs::create_dir_all(&around).expect("a directory to keep the test's own in");
+
+        let itself = around.join("itself");
+        std::os::unix::fs::symlink("itself", &itself).expect("a link pointed at its own name");
+
+        match only_this_user_may_take_a_name_under(&itself) {
+            Err(Refused::Unopenable(named, _)) => assert_eq!(
+                named, itself,
+                "and the refusal names the way down it could not read"
+            ),
+            otherwise => panic!("a way down that cannot be read is refused, not {otherwise:?}"),
+        }
     }
 
     /// Renaming a directory aside and putting your own there gives you every
