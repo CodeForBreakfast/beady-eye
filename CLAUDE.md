@@ -60,6 +60,17 @@ evening reading a ten-second wait for a collection as a defect in `bd`. So
 never read the master yourself, and never take a test's silence as a licence to
 stop draining.
 
+The stronger reason is that stopping is a deadlock rather than a delay. A `bdi`
+blocked in `write` cannot finish exiting, and a process that cannot finish
+exiting is never reaped — so a wait for it that stops reading in order to wait
+is each side waiting for the other, and it does not end. A `SIGKILL` is no
+escape either: it reaches a process already inside `exit` and is waited on with
+everything else. Measured on Darwin 25.6.0, whose tty holds 1024 bytes against
+a frame several times that: fifteen seconds of `try_wait` with nobody reading
+never reaped it, ten seconds more after a `SIGKILL` never reaped it, and the
+first read of the master reaped it in 147µs. **So the drain outlives the
+reap**: `Driven::drop` reaps first and stops draining second.
+
 An absence assertion has to name the thing whose absence it means, and on this
 screen that is rarely a bead's id. The bead window is drawn from the
 *selection* rather than from the bead it was opened on, so a screen that

@@ -6,19 +6,14 @@
 //! shell underneath comes back unusable. These tests kill a real `bdi` on a
 //! real pty and read what it wrote on the way out.
 
-use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::path::PathBuf;
-use std::process::Child;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 mod terminal;
 
-use terminal::driver::GIVING_UP;
+use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{
-    a_home_naming_one_project, a_home_naming_one_project_settled, a_pty, bdi_on, contains,
-    ENTER_ALTERNATE_SCREEN,
+    a_home_naming_one_project, a_home_naming_one_project_settled, contains, ENTER_ALTERNATE_SCREEN,
 };
 
 /// The pty the tests draw on.
@@ -63,10 +58,10 @@ fn a_hangup_puts_the_terminal_back() {
 /// Run `bdi` on a pty until it is drawing, signal it, and assert it handed
 /// the terminal back on the way out.
 fn assert_restored_after(signal: i32, named: &str) {
-    let mut session = Session::on(a_home_naming_one_project(named), &[]);
-    session.read_until(ENTER_ALTERNATE_SCREEN);
+    let mut bdi = Driven::bdi(ROWS, COLS, a_home_naming_one_project(named), &[]);
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
 
-    let restoring = session.signal_and_read(signal);
+    let restoring = signal_and_read(&mut bdi, signal);
 
     let said = String::from_utf8_lossy(&restoring);
     assert!(
@@ -106,11 +101,11 @@ fn an_interrupt_while_the_first_collection_runs_puts_the_terminal_back() {
     let tracker = ShimmedTracker::beside(&home);
     tracker.hang();
 
-    let mut session = Session::on(home, &tracker.environment());
-    session.read_until(ENTER_ALTERNATE_SCREEN);
+    let mut bdi = Driven::bdi(ROWS, COLS, home, &tracker.environment());
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
     tracker.wait_until_holding(GIVING_UP);
 
-    let restoring = session.signal_and_read(libc::SIGINT);
+    let restoring = signal_and_read(&mut bdi, libc::SIGINT);
 
     let said = String::from_utf8_lossy(&restoring);
     assert!(
@@ -128,112 +123,13 @@ fn an_interrupt_while_the_first_collection_runs_puts_the_terminal_back() {
     }
 }
 
-/// A `bdi` drawing on a pty of our own.
-struct Session {
-    child: Child,
-    terminal: OwnedFd,
-    home: PathBuf,
-}
-
-impl Session {
-    /// Start `bdi` on a `HOME` of its own, and on the environment given.
-    ///
-    /// Every test here then waits until `bdi` is actually on the alternate
-    /// screen, and a sleep cannot stand in for that however long it is: a
-    /// `bdi` signalled before it has drawn has nothing to put back, so it
-    /// writes no restore sequences — and a test that read that as a pass
-    /// would pass against a build that never restores at all.
-    fn on(home: PathBuf, environment: &[(String, String)]) -> Self {
-        let (ours, theirs) = a_pty(ROWS, COLS);
-
-        let child = bdi_on(&theirs, &home, &[], environment);
-        drop(theirs);
-
-        Self {
-            child,
-            terminal: ours,
-            home,
-        }
-    }
-
-    /// Send a signal and collect everything written after it.
-    fn signal_and_read(&mut self, signal: i32) -> Vec<u8> {
-        let pid = self.child.id() as libc::pid_t;
-        assert_eq!(
-            unsafe { libc::kill(pid, signal) },
-            0,
-            "the signal is ours to send"
-        );
-
-        let mut restoring = Vec::new();
-        let giving_up = Instant::now() + LONG_ENOUGH_TO_DIE;
-        while Instant::now() < giving_up {
-            if let Ok(Some(_)) = self.child.try_wait() {
-                break;
-            }
-            self.read_some(&mut restoring);
-        }
-        self.read_some(&mut restoring);
-        restoring
-    }
-
-    /// Read until the terminal has said this, or until we give up on it —
-    /// at once where `bdi` has exited, since nothing more is coming.
-    #[track_caller]
-    fn read_until(&mut self, said: &[u8]) {
-        let mut seen = Vec::new();
-        let giving_up = Instant::now() + GIVING_UP;
-        while Instant::now() < giving_up {
-            self.read_some(&mut seen);
-            if contains(&seen, said) {
-                return;
-            }
-            if let Ok(Some(exited)) = self.child.try_wait() {
-                self.read_some(&mut seen);
-                assert!(
-                    contains(&seen, said),
-                    "bdi exited ({exited}) before it put the terminal on the alternate \
-                     screen; it wrote {} bytes: {:?}",
-                    seen.len(),
-                    String::from_utf8_lossy(&seen)
-                );
-                return;
-            }
-        }
-        panic!(
-            "bdi never put the terminal on the alternate screen in {GIVING_UP:?}; \
-             it wrote {} bytes: {:?}",
-            seen.len(),
-            String::from_utf8_lossy(&seen)
-        );
-    }
-
-    fn read_some(&mut self, into: &mut Vec<u8>) {
-        wait_for_reading(&self.terminal, Duration::from_millis(200));
-        let mut buffer = [0u8; 8192];
-        let mut terminal = unsafe { std::fs::File::from_raw_fd(self.terminal.as_raw_fd()) };
-        let read = terminal.read(&mut buffer);
-        std::mem::forget(terminal);
-        if let Ok(count) = read {
-            into.extend_from_slice(&buffer[..count]);
-        }
-    }
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.home);
-    }
-}
-
-/// Block until there is something to read, or the wait is up.
-fn wait_for_reading(fd: &OwnedFd, patience: Duration) {
-    let mut polling = libc::pollfd {
-        fd: fd.as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    unsafe { libc::poll(&mut polling, 1, patience.as_millis() as i32) };
+/// Send a signal and collect everything written after it.
+fn signal_and_read(bdi: &mut Driven, signal: i32) -> Vec<u8> {
+    let before = bdi.mark();
+    assert_eq!(
+        unsafe { libc::kill(bdi.pid(), signal) },
+        0,
+        "the signal is ours to send"
+    );
+    bdi.last_words(before, LONG_ENOUGH_TO_DIE)
 }
