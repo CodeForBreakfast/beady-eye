@@ -240,8 +240,12 @@ pub struct Changes {
     /// runtime directory at all — macOS — has nothing to derive and gets its
     /// channel from this key or not at all.
     ///
-    /// The socket is created `0600` wherever it goes, which a derived path
-    /// got from the directory it sat under and a told path may not.
+    /// The socket is created `0600` wherever it goes, and both platforms
+    /// `bdi` runs on check that mode when something connects, so the channel
+    /// is this user's for the same reason on either. Who may replace the
+    /// socket is the directories above it to say, so `bdi` reads the way down
+    /// to it as well: where a directory on that way is one somebody else may
+    /// take a name in, `bdi` names that directory and polls.
     ///
     /// Per user, so it cannot be what two simultaneous `bdi` runs differ by —
     /// both read this file and derive this path. `--socket` is what one of

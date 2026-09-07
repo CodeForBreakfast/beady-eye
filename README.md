@@ -357,11 +357,24 @@ belongs in the config:
 socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
 ```
 
-`--socket` overrides the key. Wherever the socket goes it is created `0600`,
-and a directory `bdi` makes to put it in is created `0700` — a directory
-already there is left as it stands. Both are worth knowing for a path you name
-rather than for the default: `$XDG_RUNTIME_DIR` is a directory no other user
-can reach, and a path you name may sit somewhere any of them can walk through.
+`--socket` overrides the key.
+
+Two things are worth knowing for a path you name rather than for the default,
+because `$XDG_RUNTIME_DIR` is a directory no other user can reach and a path
+you name may sit somewhere any of them can walk through.
+
+The socket is created `0600` wherever it goes, and both Linux and macOS check
+that mode when something connects, so the channel is yours to speak on either.
+Who may replace the socket is for the directories above it to say. `bdi`
+creates a directory it makes `0700` and takes one already there as it stands,
+and it reads every directory on the way down, both as you spelled it and as it
+resolves. Each has to be yours or the system's, and closed to everybody else —
+or sticky, which is how `/tmp` keeps each name for whoever made it. Where one
+of them is a directory somebody else may take a name in, `bdi` names that
+directory and polls.
+
+So `/tmp/beady-eye/changes.sock` is a channel. `/tmp` keeps each name for
+whoever made it, and `bdi` makes the directory under it and keeps that to you.
 
 A path already holding something that is not a socket is refused, and what is
 there is left alone. `bdi` clears away the socket a crashed run left behind,
