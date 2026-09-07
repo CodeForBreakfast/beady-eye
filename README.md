@@ -380,10 +380,11 @@ belongs in the config:
 socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
 ```
 
-`--socket` overrides the key. Wherever the socket goes it is created `0600`.
-That is worth knowing for a path you name rather than for the default:
-`$XDG_RUNTIME_DIR` is a directory no other user can reach, and a path you name
-may sit somewhere any of them can walk through.
+`--socket` overrides the key. Wherever the socket goes it is created `0600`,
+and a directory `bdi` makes to put it in is created `0700` — a directory
+already there is left as it stands. Both are worth knowing for a path you name
+rather than for the default: `$XDG_RUNTIME_DIR` is a directory no other user
+can reach, and a path you name may sit somewhere any of them can walk through.
 
 A path already holding something that is not a socket is refused, and what is
 there is left alone. `bdi` clears away the socket a crashed run left behind,

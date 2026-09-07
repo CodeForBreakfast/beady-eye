@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -45,6 +45,13 @@ const LONGEST_MESSAGE: usize = 512;
 /// no other user can reach, and a told path need not be and often will not —
 /// `/tmp` is world-traversable.
 const OWNER_ONLY: u32 = 0o600;
+
+/// The mode of a directory `bdi` makes to put a socket in.
+///
+/// Execute as well as read, since entering is what a directory is for. It
+/// covers the moment between the socket appearing and [`OWNER_ONLY`] being
+/// set on it, which nothing about the socket itself can.
+const ONLY_THIS_USER_MAY_ENTER: u32 = 0o700;
 
 /// What `bdi` makes of one message, and what it says back to whoever sent it.
 ///
@@ -326,7 +333,18 @@ pub fn listen(
 
 fn bind(at: &Path) -> Result<UnixListener, Refused> {
     if let Some(directory) = at.parent() {
-        fs::create_dir_all(directory).map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
+        // Made this user's own from the moment it exists, rather than left to
+        // umask and narrowed afterwards. A socket is connectable the instant
+        // `bind` returns and takes its mode from umask until the line below
+        // changes it, so a directory nobody else may enter is what covers
+        // that. It reaches only directories this run makes: `recursive` takes
+        // one that is already there as it stands, which is right — an
+        // existing directory is somebody's, and how it is set is theirs.
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(ONLY_THIS_USER_MAY_ENTER)
+            .create(directory)
+            .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
     }
 
     let listener = match UnixListener::bind(at) {
@@ -798,6 +816,28 @@ mod tests {
 
         say(&at, &[("atlas\n", "ok atlas")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
+    }
+
+    /// A socket is connectable the instant `bind` returns and wears whatever
+    /// umask gave it until its mode is set, so nothing about the socket
+    /// itself covers that moment. The directory does, for as long as it is
+    /// one this run made.
+    #[test]
+    fn the_directory_bdi_makes_for_its_socket_is_this_users_own() {
+        let at = a_socket_path("directory-mode");
+        let (_socket, _changes) = open(&at, &watching(["atlas"]));
+
+        let directory = at.parent().expect("the socket is in a directory");
+        let mode = std::fs::metadata(directory)
+            .expect("the directory bdi made")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(
+            mode, ONLY_THIS_USER_MAY_ENTER,
+            "nobody else may enter the directory bdi made to put its socket in"
+        );
     }
 
     /// A told path may sit in a directory other people can write to, so what
