@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -246,11 +246,41 @@ impl fmt::Display for Refused {
 /// is the run that clears it away and the next one has nothing to reclaim.
 pub struct Socket {
     at: PathBuf,
+    /// The file this run bound, so the one it clears away is that file and
+    /// not whatever holds the name by then.
+    bound: Option<File>,
+}
+
+/// Which file a name holds, as the filesystem tells them apart. Nothing where
+/// the name holds nothing, or holds something that cannot be read.
+///
+/// Asking narrows the window rather than closing it: in a directory other
+/// people may write to, the name can change hands between the answer and
+/// whatever is done with it, and no unlink takes an identity to check
+/// against. What it buys is the direction it is wrong in — every case it
+/// catches and every case it cannot read leave the file alone, and the only
+/// cost of leaving a socket of ours behind is that the next run reclaims it.
+type File = (u64, u64);
+
+fn file_at(named: &Path) -> Option<File> {
+    fs::symlink_metadata(named)
+        .ok()
+        .map(|what| (what.dev(), what.ino()))
 }
 
 impl Drop for Socket {
+    /// Only where the name still holds the file this run bound. A told path
+    /// can sit in a directory other people may write to, so the socket can be
+    /// unlinked and the name given to something else while `bdi` is up —
+    /// and removing that on the way out is a reader's file gone, exactly as
+    /// reclaiming it would have been at the other end of the run.
+    ///
+    /// Leaving one behind instead costs nothing: a socket of ours that
+    /// nothing is listening on is what the next run reclaims.
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.at);
+        if file_at(&self.at) == self.bound {
+            let _ = fs::remove_file(&self.at);
+        }
     }
 }
 
@@ -282,11 +312,16 @@ pub fn listen(
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
     let listener = bind(&at)?;
+    // Read before anything else this run does, so the name has had as little
+    // time as it can to change hands. It cannot be read from the listener
+    // instead: a bound socket's descriptor stats as its own inode on sockfs,
+    // which is a different device from the directory entry the name is.
+    let bound = file_at(&at);
 
     let reported = reported.clone();
     thread::spawn(move || accept(&listener, &reported, &changed));
 
-    Ok(Socket { at })
+    Ok(Socket { at, bound })
 }
 
 fn bind(at: &Path) -> Result<UnixListener, Refused> {
@@ -763,6 +798,27 @@ mod tests {
 
         say(&at, &[("atlas\n", "ok atlas")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
+    }
+
+    /// A told path may sit in a directory other people can write to, so what
+    /// holds the name when a run ends need not be what that run bound.
+    /// Removing it then is the same file loss reclaiming would have been, at
+    /// the other end of the run.
+    #[test]
+    fn a_file_that_replaced_the_socket_under_a_run_outlives_it() {
+        let at = a_socket_path("replaced-socket");
+        let (socket, _changes) = open(&at, &watching(["atlas"]));
+
+        std::fs::remove_file(&at).expect("somebody else takes the name");
+        std::fs::write(&at, "what they put there").expect("and leaves their own file at it");
+
+        drop(socket);
+
+        assert_eq!(
+            std::fs::read_to_string(&at).ok().as_deref(),
+            Some("what they put there"),
+            "the name no longer holds the socket this run bound, so it is not this run's to clear"
+        );
     }
 
     /// A path a run is told is a path a person typed, and one keystroke is
