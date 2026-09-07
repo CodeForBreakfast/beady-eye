@@ -199,6 +199,9 @@ render = "⏸ waiting"
 [join]
 pane_key = "agent_pane"
 
+[changes]
+socket = "/run/user/1000/beady-eye/changes.sock"
+
 [anomalies]
 stale_claim_days = 30
 
@@ -273,6 +276,15 @@ here and drawn as written.
 `pane_key` is the metadata key that names the herdr pane an agent sits in. It
 ties an agent to its bead exactly, rather than guessing from what the pane calls
 itself.
+
+### `[changes]`
+
+`socket` is where `bdi` listens for something saying a project's work has
+moved. It defaults to `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, and a machine
+with no `$XDG_RUNTIME_DIR` has no channel until this names one. `--socket`
+overrides it for one run, which is how two `bdi` runs on one machine each get
+a channel. [Telling `bdi` where to listen](#telling-bdi-where-to-listen) has
+the whole of it.
 
 ### `[anomalies]`
 
