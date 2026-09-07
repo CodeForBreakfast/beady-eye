@@ -466,6 +466,16 @@ fn directory_holding(at: &Path) -> &Path {
 /// A way down that cannot be read is not answered for here. `bind` is the
 /// next thing to touch it and says what went wrong with the path in hand,
 /// which is the more useful of the two answers.
+///
+/// **`None` therefore means two things: nothing here may be taken, and this
+/// could not be read.** They are not the same answer and a caller cannot tell
+/// them apart, so a path spelled such that the reading fails arrives at `bind`
+/// as a path nothing objected to. Every spelling that has done so is now sent
+/// somewhere readable before it gets here — a bare name to the directory the
+/// run was started in, a name in the root to the root — and the next one will
+/// look like neither of those. `bdi-rer.13` is the ticket for making the two
+/// answers different types, which is a change to what a refusal means and not
+/// one to make in passing.
 fn where_others_may_take_a_name(under: &Path) -> Option<PathBuf> {
     let resolved = fs::canonicalize(under).ok()?;
     let this_user = this_user();
