@@ -34,11 +34,9 @@ jobs:
   # a Darwin build that fails costs a deleted tag, where anything failing after
   # `cargo publish` costs a version crates.io will not take back.
   #
-  # Nothing here is guarded by the `from` input, and the two minutes it costs a
-  # resume are the price of the half-release repair still working. A resume is
-  # a fresh run holding no artifacts, so a job skipped on one leaves the
-  # announcement with nothing to attach and no way to finish the tag it exists
-  # to finish.
+  # Nothing here is guarded by the `from` input. A resume is a fresh run
+  # holding no artifacts, so a job skipped on one leaves the announcement with
+  # nothing to attach and no way to finish the tag it exists to finish.
   darwin-binaries:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
@@ -69,8 +67,7 @@ jobs:
       - name: build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      # An unrun binary is what ships broken, and this is also the first thing
-      # the README tells a reader who downloaded one to type.
+      # An unrun binary is what ships broken.
       - name: the binary runs
         run: ./target/${{ matrix.target }}/release/bdi --version
 
@@ -177,8 +174,7 @@ jobs:
         # announced, so a create that succeeded with an upload that did not
         # would leave a Release the from=announce repair could not finish. What
         # this costs instead is a Release briefly without its binaries during a
-        # run that is going well, and the next command closes that. Seconds
-        # something clears beat a state nothing clears.
+        # run that is going well, and the next command closes that.
         #
         # The guard is also what keeps a repair from generating release notes
         # over the ones somebody has already read.
