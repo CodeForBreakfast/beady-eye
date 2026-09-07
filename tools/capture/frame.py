@@ -211,7 +211,7 @@ def as_svg(g, font_size, line_height, title):
         f'viewBox="0 0 {width + 2 * pad:.2f} {height + 2 * pad:.2f}" '
         f'font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, '
         f'&quot;DejaVu Sans Mono&quot;, monospace" '
-        f'font-size="{font_size}" role="img" aria-label="{escape(title, {chr(34): "&quot;"})}">',
+        f'font-size="{font_size}">',
         f"<title>{escape(title)}</title>",
         f'<rect width="100%" height="100%" rx="{pad:.2f}" fill="{BACKGROUND}"/>',
     ]
