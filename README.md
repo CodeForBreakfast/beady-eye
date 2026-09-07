@@ -70,7 +70,7 @@ get a build you can name afterwards — and take either the package or the
 overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.1.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.2.0";
 
 # then either
 beady-eye.packages.${system}.default
@@ -91,7 +91,7 @@ $ ./bdi-aarch64-apple-darwin --version
 
 `aarch64-apple-darwin` is an Apple silicon Mac and `x86_64-apple-darwin` an
 Intel one. Move it somewhere on your `PATH` under the name `bdi` and the rest of
-this page reads as written. `v0.1.0` carries no binaries.
+this page reads as written.
 
 A `.sha256` sits beside each one, and it names the file it is for, so keep that
 name to check it:
@@ -425,9 +425,8 @@ is built and tested by hand.
 macOS has no `$XDG_RUNTIME_DIR`, so the channel that tells `bdi` a project
 changed has nowhere to derive a socket from and has to be given a path: the
 `[changes]` key, or `--socket` for one run. Until it has one, a Mac polls every
-project, which is slower and never wrong. The key and the flag both arrived
-after `v0.1.0`, which takes neither, so a Mac on the released build polls and
-has no path it can be given. *Telling `bdi` where to listen* has the paths.
+project, which is slower and never wrong. *Telling `bdi` where to listen* has
+the paths.
 
 **A terminal that honours OSC 52, to copy with `y`.** The copy is that escape
 sequence and nothing else, which is what carries it through ssh and a
