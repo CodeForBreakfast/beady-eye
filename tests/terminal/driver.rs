@@ -107,7 +107,19 @@ impl Driven {
     /// Start `bdi` on a pty of the given size, with `environment` on top of
     /// what a test binary already carries.
     pub fn bdi(rows: u16, cols: u16, home: PathBuf, environment: &[(String, String)]) -> Self {
-        Self::bdi_with_the_drain_held_back(rows, cols, home, environment, Duration::ZERO)
+        Self::on_a_pty(rows, cols, home, &[], environment, Duration::ZERO)
+    }
+
+    /// The same, on a command line of the test's own — `--socket`, say, for a
+    /// test whose subject is where this run listens.
+    pub fn bdi_with_arguments(
+        rows: u16,
+        cols: u16,
+        home: PathBuf,
+        arguments: &[&str],
+        environment: &[(String, String)],
+    ) -> Self {
+        Self::on_a_pty(rows, cols, home, arguments, environment, Duration::ZERO)
     }
 
     /// The same, with the drain thread held back this long before each read.
@@ -126,9 +138,22 @@ impl Driven {
         environment: &[(String, String)],
         held_back: Duration,
     ) -> Self {
+        Self::on_a_pty(rows, cols, home, &[], environment, held_back)
+    }
+
+    /// Everything the three above have in common: the pty, the `bdi` on it,
+    /// and the thread draining it from the moment it starts.
+    fn on_a_pty(
+        rows: u16,
+        cols: u16,
+        home: PathBuf,
+        arguments: &[&str],
+        environment: &[(String, String)],
+        held_back: Duration,
+    ) -> Self {
         let (ours, theirs) = a_pty(rows, cols);
         let started = Instant::now();
-        let child = bdi_on(&theirs, &home, environment);
+        let child = bdi_on(&theirs, &home, arguments, environment);
         drop(theirs);
 
         let terminal = Arc::new(ours);

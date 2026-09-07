@@ -146,7 +146,7 @@ impl Session {
     fn on(home: PathBuf, environment: &[(String, String)]) -> Self {
         let (ours, theirs) = a_pty(ROWS, COLS);
 
-        let child = bdi_on(&theirs, &home, environment);
+        let child = bdi_on(&theirs, &home, &[], environment);
         drop(theirs);
 
         Self {

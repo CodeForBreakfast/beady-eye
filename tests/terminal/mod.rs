@@ -9,8 +9,9 @@
 //! Start here rather than writing another one. What it can do is listed
 //! rather than left to be found:
 //!
-//! * a sized pty and a `bdi` owning it — [`a_pty`], [`own_the_terminal`],
-//!   [`bdi_on`];
+//! * a sized pty and a `bdi` owning it, on a command line of the test's own
+//!   — [`a_pty`], [`own_the_terminal`], [`bdi_on`],
+//!   [`driver::Driven::bdi_with_arguments`];
 //! * a `bdi` that dies with the binary that spawned it, so a test binary
 //!   killed before its `Drop` leaves nothing running — [`own_the_terminal`];
 //! * typing at it and timestamping what comes back — [`driver::Driven`];
@@ -244,17 +245,30 @@ pub fn said_by(panic: &Box<dyn std::any::Any + Send>) -> String {
         .expect("the refusal is a message")
 }
 
-/// A `bdi` drawing on the far end of a pty, with `environment` on top of what
-/// the test binary carries.
-pub fn bdi_on(theirs: &std::fs::File, home: &Path, environment: &[(String, String)]) -> Child {
+/// A `bdi` drawing on the far end of a pty, given `arguments` on its command
+/// line and `environment` on top of what the test binary carries.
+///
+/// The runtime directory a run has is the test's to give and never the
+/// machine's: [`a_socket_of_its_own`] gives one, and what a run without one
+/// draws is then the same wherever the suite is run rather than following
+/// whether whoever is sitting there has a runtime directory and what else is
+/// already listening in it.
+pub fn bdi_on(
+    theirs: &std::fs::File,
+    home: &Path,
+    arguments: &[&str],
+    environment: &[(String, String)],
+) -> Child {
     let spawned_by = std::process::id();
     unsafe {
         Command::new(env!("CARGO_BIN_EXE_bdi"))
+            .args(arguments)
             .current_dir(home)
             .env("HOME", home)
             .env("TERM", "xterm-256color")
             .env_remove("BEADS_DIR")
             .env_remove("BDI_PROJECT")
+            .env_remove("XDG_RUNTIME_DIR")
             .envs(environment.iter().map(|(named, value)| (named, value)))
             .stdin(theirs.try_clone().expect("the pty is ours to hand over"))
             .stdout(theirs.try_clone().expect("the pty is ours to hand over"))
@@ -395,11 +409,14 @@ fn move_to(sequence: &[u8]) -> Option<(u16, u16)> {
 /// and carries no notice about having failed to.
 ///
 /// The foot gives up the keys to make room for notices, and a notice shifts
-/// the rows of the forest a window is drawn over. A run that cannot open its
-/// socket carries one — because the machine has no runtime directory, which
-/// the build sandbox has not, or because another `bdi` holds it, which this
-/// machine's does — so without this the screen a test reads differs between
-/// machines for a reason that has nothing to do with what it asserts.
+/// the rows of the forest a window is drawn over. A run with no runtime
+/// directory and nothing telling it where to listen has nowhere to put a
+/// socket, so it carries that notice — and [`bdi_on`] takes the machine's
+/// runtime directory away from every run, which is what makes the two
+/// screens a test can be given the two it chooses between.
+///
+/// A run told a path by `--socket` or by its config gets its channel that
+/// way instead, and this is the environment's way of saying the same thing.
 pub fn a_socket_of_its_own(home: &Path) -> (String, String) {
     ("XDG_RUNTIME_DIR".to_string(), home.display().to_string())
 }
