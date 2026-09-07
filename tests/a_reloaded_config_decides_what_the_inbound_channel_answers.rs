@@ -31,14 +31,12 @@
 
 mod terminal;
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{a_socket_of_its_own, THE_DESCRIBED_SUBTREE};
+use terminal::{a_socket_of_its_own, the_socket_under, Producer, THE_DESCRIBED_SUBTREE};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -51,10 +49,6 @@ const FERRY: &[u8] = "ferry".as_bytes();
 /// is `tui::reload::CHECKED_EVERY`, which is not a config setting and so
 /// cannot be shortened for a test.
 const A_RELOAD_AND_ITS_COLLECTION: Duration = Duration::from_secs(20);
-
-/// Long enough that an answer which was coming has, and short enough that a
-/// test waiting for one that is not is a failure rather than a hang.
-const AN_ANSWER: Duration = Duration::from_secs(10);
 
 /// A `HOME` whose config names `projects`, each in a directory of its own
 /// under it.
@@ -89,42 +83,6 @@ fn naming(home: &Path, projects: &[&str]) {
         .expect("the config is ours to write");
 }
 
-/// Something outside `bdi` saying a project's work has moved on, holding its
-/// connection open across the reader's edit the way a real one does.
-struct Producer {
-    speaking: UnixStream,
-    listening: BufReader<UnixStream>,
-}
-
-impl Producer {
-    /// Connected to the run whose runtime directory is this `HOME`.
-    fn connected_to(home: &Path) -> Self {
-        let at = home.join("beady-eye/changes.sock");
-        let speaking = UnixStream::connect(&at)
-            .unwrap_or_else(|why| panic!("bdi is listening on {} ({why})", at.display()));
-        let listening = speaking
-            .try_clone()
-            .expect("the connection is ours to read");
-        listening
-            .set_read_timeout(Some(AN_ANSWER))
-            .expect("a read that is not answered is ours to give up on");
-        Self {
-            speaking,
-            listening: BufReader::new(listening),
-        }
-    }
-
-    /// Say one project's work has moved, and hand back what `bdi` answered.
-    fn says(&mut self, project: &str) -> String {
-        writeln!(self.speaking, "{project}").expect("the message is ours to send");
-        let mut answer = String::new();
-        self.listening
-            .read_line(&mut answer)
-            .expect("bdi answers every line");
-        answer.trim_end().to_string()
-    }
-}
-
 #[test]
 fn the_names_the_channel_accepts_follow_the_config_the_reader_wrote() {
     let home = a_home_naming("channel-follows-config", &["atlas"]);
@@ -136,7 +94,7 @@ fn the_names_the_channel_accepts_follow_the_config_the_reader_wrote() {
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &environment);
     bdi.read_until(ATLAS, GIVING_UP);
 
-    let mut producer = Producer::connected_to(&home);
+    let mut producer = Producer::connected_to(&the_socket_under(&home));
     assert_eq!(
         producer.says("atlas"),
         "ok atlas",

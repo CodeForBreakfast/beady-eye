@@ -283,8 +283,8 @@ itself.
 moved. It defaults to `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, and a machine
 with no `$XDG_RUNTIME_DIR` has no channel until this names one. `--socket`
 overrides it for one run, which is how two `bdi` runs on one machine each get
-a channel. [Telling `bdi` where to listen](#telling-bdi-where-to-listen) has
-the whole of it.
+a channel. *Telling `bdi` where to listen*, under *Telling `bdi` a project
+changed*, has the whole of it.
 
 ### `[anomalies]`
 
