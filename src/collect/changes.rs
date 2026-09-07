@@ -88,10 +88,9 @@ const NAMES_STAY_THEIR_OWNERS: u32 = 0o1000;
 /// The one owner besides this user that a directory on the socket's way down
 /// may have.
 ///
-/// Not a concession: `root` can reach anything on the machine whatever a
-/// directory says, so a rule refusing it would buy nothing. It is also who
-/// owns every shared directory a reader reaches for — `/tmp` and `/var/tmp`
-/// on both platforms.
+/// `root` can reach anything on the machine whatever a directory says, so a
+/// rule refusing it would buy nothing. It is also who owns every shared
+/// directory a reader reaches for — `/tmp` and `/var/tmp` on both platforms.
 const THE_SYSTEM: u32 = 0;
 
 /// What `bdi` makes of one message, and what it says back to whoever sent it.
@@ -292,8 +291,7 @@ impl fmt::Display for Refused {
             // the one the reader typed the socket into — so the remedy is a
             // path with nothing of that kind above it rather than a deeper
             // name, which under a shared directory would be advice to go
-            // further into it. Naming the directory is what lets a reader see
-            // which part of their path this is about.
+            // further into it.
             Refused::NameOthersMayTake(directory) => {
                 write!(
                     f,
@@ -467,15 +465,12 @@ fn directory_holding(at: &Path) -> &Path {
 /// next thing to touch it and says what went wrong with the path in hand,
 /// which is the more useful of the two answers.
 ///
-/// **`None` therefore means two things: nothing here may be taken, and this
-/// could not be read.** They are not the same answer and a caller cannot tell
-/// them apart, so a path spelled such that the reading fails arrives at `bind`
-/// as a path nothing objected to. Every spelling that has done so is now sent
-/// somewhere readable before it gets here — a bare name to the directory the
-/// run was started in, a name in the root to the root — and the next one will
-/// look like neither of those. `bdi-rer.13` is the ticket for making the two
-/// answers different types, which is a change to what a refusal means and not
-/// one to make in passing.
+/// `None` therefore means two things: nothing here may be taken, and this
+/// could not be read. A caller cannot tell them apart, so a path spelled such
+/// that the reading fails arrives at `bind` as a path nothing objected to.
+/// Every spelling known to do that is sent somewhere readable before it gets
+/// here, and the next one will not resemble those. `bdi-rer.13` is making the
+/// two answers different types.
 fn where_others_may_take_a_name(under: &Path) -> Option<PathBuf> {
     let resolved = fs::canonicalize(under).ok()?;
     let this_user = this_user();
@@ -491,13 +486,15 @@ fn where_others_may_take_a_name(under: &Path) -> Option<PathBuf> {
 /// The directory at the end of this way down and every one above it, nearest
 /// first.
 ///
-/// The root is among them only where it is the end. Above that it is nobody's
-/// to answer for: a refusal is answered by naming another path, no path
-/// leaves the root out, and a root somebody else owns is a whole filesystem
-/// somebody else owns rather than something a socket is the place to find out
-/// — `/` inside a nix build sandbox belongs to `65534`. Where the socket's own
-/// name is *in* the root there is another path to name, one directory deeper,
-/// so that one is judged like any other.
+/// **The root is among them only where it is the end, and the two halves of
+/// that are both load-bearing.** Above the socket's own directory it is
+/// nobody's to answer for: a refusal is answered by naming another path, no
+/// path leaves the root out, and a root somebody else owns is a whole
+/// filesystem somebody else owns — `/` inside a nix build sandbox belongs to
+/// `65534`. Where the socket's own name is *in* the root there is another
+/// path to name, one directory deeper, so that one is judged like any other.
+/// Skipping it there instead is an unjudged bind on a directory everybody can
+/// see, which is what this whole walk exists to stop.
 fn directories_on(way: &Path) -> impl Iterator<Item = &Path> {
     way.ancestors()
         .enumerate()
@@ -508,9 +505,7 @@ fn directories_on(way: &Path) -> impl Iterator<Item = &Path> {
 /// Whom this run is, which is the only party besides [`THE_SYSTEM`] a
 /// directory on the socket's way down may belong to.
 ///
-/// `getuid` cannot fail and touches nothing, which is the whole of what the
-/// `unsafe` is for: there is no safe `std` call that says which user a
-/// process is.
+/// There is no safe `std` call that says which user a process is.
 fn this_user() -> u32 {
     // SAFETY: `getuid` takes no arguments, reads no memory and is defined to
     // succeed on every unix.

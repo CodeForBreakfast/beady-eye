@@ -1532,7 +1532,7 @@ refusal is answered by naming another path and no path higher up leaves the
 root out, so refusing there would say the machine cannot have a channel rather
 than saying where to put one — and a root somebody else owns is a whole
 filesystem somebody else owns rather than something a socket is the place to
-find out. Not exotic either: `/` inside a nix build sandbox belongs to `65534`.
+find out: `/` inside a nix build sandbox belongs to `65534`.
 Where the socket's own name is *in* the root there is another path to name, one
 directory deeper, so that one is judged like any other.
 
@@ -1552,12 +1552,12 @@ better than anybody's at `0777` — so the only owners a directory on the way ma
 have are this user and `root`. `root` is not a concession, since it can reach
 anything on the machine whatever a directory says.
 
-Reading the owner costs `getuid`, and that costs two things worth saying out
-loud. `libc` becomes a runtime dependency, where it was a dev-dependency for
-the pty harness — the crate is compiled either way, as signal-hook's own, but
-what ships now names it. And the call is the crate's first `unsafe` block:
-`getuid` takes no arguments, reads no memory and cannot fail, which is the
-mildest crossing available, and nothing in `std` says which user a process is.
+Reading the owner costs `getuid`, and that costs two things. `libc` becomes a
+runtime dependency, where it was a dev-dependency for the pty harness — the
+crate is compiled either way, as signal-hook's own, but what ships now names
+it. And the call is the crate's first `unsafe` block: `getuid` takes no
+arguments, reads no memory and cannot fail, which is the mildest crossing
+available, and nothing in `std` says which user a process is.
 The alternative is a crate wrapping it safely, which trades three lines for a
 dependency of substance.
 
