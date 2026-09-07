@@ -1486,9 +1486,19 @@ and receives every tenant's rows on one stream. An interface fits every setup:
 a Dolt trigger, a git hook, a bd wrapper, a systemd path unit, a cron comparing
 a head hash, someone typing the line.
 
-**The socket.** `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, a stream socket
-created mode `0600`. Under the runtime directory it is user-scoped: it needs no
-privilege to create and no other user can reach it. `bdi` removes it when it
+**The socket.** A stream socket created mode `0600`, at
+`$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless the run is told a path — by
+`[changes] socket` in the config, or by `--socket` for one run. The mode is
+what makes it this user's alone: a derived path sat under a directory the
+session owned, which needed no privilege to create in and no other user could
+reach, but a told path may sit anywhere and `/tmp` is world-traversable. It is
+told rather than derived for two reasons. A path derived per session is one
+path, so a second `bdi` beside a first is refused the channel and polls for the
+rest of its life — the normal case wherever one person runs more than one. And
+a machine that owns no runtime directory at all, which is macOS, has nothing to
+derive and no channel until it is told one. `--socket` as well as the key
+because two simultaneous runs of one binary read one config file, so a setting
+they must differ by cannot live only there. `bdi` removes the socket when it
 exits, and reclaims a stale one left by a run that crashed. A unix socket
 rather than a signal because the message must carry *which* project changed —
 `bdi` watches several and refreshing all of them throws away the saving — and
@@ -1528,16 +1538,20 @@ producer that dies, and an automatic fallback would hide the failure you need
 to see. `--poll` and `--no-poll` override every project for one run.
 
 **A socket that cannot be opened is said twice, deliberately, and the two are
-not copies.** No `XDG_RUNTIME_DIR`, or another `bdi` already listening, and
-this one polls everything exactly as it did before. The notice at the foot
-says what it costs the reader — *nothing can tell bdi a project changed ·
-every project is polled instead*, or *another bdi held the inbound channel*
-where that is the cause, since that one names a process the reader can close.
-The `stderr` line names the path and the `io::Error` under it, which is the
-actionable half and precisely the half no phrase may carry on screen; it is
-written before the alternate screen opens, so it survives the teardown and is
-still on the primary screen when the view tears down, and it can be redirected
-to a file where a status bar never can. A reader seeing an `eprintln!` beside
+not copies.** No path to put it at, or another `bdi` already listening on the
+one it has, and this one polls everything exactly as it did before. The notice
+at the foot says what it costs the reader — *nothing can tell bdi a project
+changed · every project is polled instead*, or *another bdi held the inbound
+channel* where that is the cause, since that one names a process the reader can
+close. The `stderr` line names the path and the `io::Error` under it, and the
+remedy: a process to close where there is one, and where there is not, the flag
+and the key that name a path — a reader with no runtime directory has none to
+make appear, and without the remedy the line reads as a verdict on their
+machine rather than as something to set. That is the actionable half and
+precisely the half no phrase may carry on screen; it is written before the
+alternate screen opens, so it survives the teardown and is still on the primary
+screen when the view tears down, and it can be redirected to a file where a
+status bar never can. A reader seeing an `eprintln!` beside
 a status-bar notice should not delete either. The socket is asked for once and
 never again, so a run that started without it goes on polling even after the
 path comes free — closing the other `bdi` frees the channel for the next run,

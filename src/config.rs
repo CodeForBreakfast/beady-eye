@@ -22,6 +22,8 @@ pub struct Config {
     #[serde(default)]
     pub join: Join,
     #[serde(default)]
+    pub changes: Changes,
+    #[serde(default)]
     pub tui: Tui,
     #[serde(default)]
     pub theme: Theme,
@@ -223,6 +225,31 @@ pub struct Join {
     pub pane_key: String,
 }
 
+/// Where `bdi` listens for something saying a project's work has moved on.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Changes {
+    /// The socket to listen on, rather than the one under the directory this
+    /// login session owns.
+    ///
+    /// Told rather than derived because the two parties that have to agree on
+    /// it can be in different login sessions: `bdi` is a TUI a human runs and
+    /// a producer is a daemon, and a runtime directory scopes to exactly the
+    /// session. Derived, each is free to be right about a different path;
+    /// named here, it is one fact both are given. A machine that owns no
+    /// runtime directory at all — macOS — has nothing to derive and gets its
+    /// channel from this key or not at all.
+    ///
+    /// The socket is created `0600` wherever it goes, which is the whole of
+    /// the channel's protection once the path may sit outside a directory
+    /// only this user can reach.
+    ///
+    /// Per user, so it cannot be what two simultaneous `bdi` runs differ by —
+    /// both read this file and derive this path. `--socket` is what one of
+    /// them overrides it with.
+    pub socket: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Tui {
@@ -389,6 +416,7 @@ impl Config {
             badges: Vec::new(),
             anomalies: Anomalies::default(),
             join: Join::default(),
+            changes: Changes::default(),
             tui: Tui::default(),
             theme: Theme::default(),
             scope: Scope::default(),
@@ -669,6 +697,9 @@ stale_claim_days = 7
 [join]
 pane_key = "herdr_pane"
 
+[changes]
+socket = "/var/folders/T/beady-eye/changes.sock"
+
 [tui]
 refresh_seconds = 5
 unanswered_after_seconds = 90
@@ -766,6 +797,10 @@ path = "/home/user/dev/cinder"
         );
         assert_eq!(cfg.anomalies.stale_claim_days, 7);
         assert_eq!(cfg.join.pane_key, "herdr_pane");
+        assert_eq!(
+            cfg.changes.socket,
+            Some(PathBuf::from("/var/folders/T/beady-eye/changes.sock"))
+        );
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
@@ -781,6 +816,7 @@ path = "/home/user/dev/cinder"
         assert!(cfg.badges.is_empty());
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
+        assert_eq!(cfg.changes.socket, None);
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);

@@ -302,9 +302,10 @@ reads in full if it has. That probe needs a Dolt server; bd's embedded store
 refuses it, and `bdi` then reads in full on every poll.
 
 Anything that already knows a tracker changed can skip the wait. `bdi` listens
-on `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, a stream socket created mode
-`0600` and removed on exit. Write a project's name as one line; `bdi` reads that
-project now and answers on the same connection:
+on a stream socket, created mode `0600` and removed on exit —
+`$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless it is told otherwise. Write a
+project's name as one line; `bdi` reads that project now and answers on the
+same connection:
 
 | answer | meaning |
 |---|---|
@@ -317,7 +318,8 @@ the writer does. A project that is reported for is never polled — each report
 pushes the next poll past its interval — and one whose producer goes quiet is
 polled again from one interval later. The view degrades to slow, never to stale.
 
-The cheapest producer is a wrapper round `bd` itself:
+The cheapest producer is a wrapper round `bd` itself. It reads the default
+path; a `bdi` told a different one has to be told to the producer too.
 
 ```bash
 bdi_changed() {
@@ -341,8 +343,38 @@ well; `bdi` provides the socket and cannot tell them apart.
 `--poll` and `--no-poll` override every project's `poll` setting for one run,
 which is how to find out whether a suspect producer was the only thing wrong.
 
-If the socket cannot be opened — no `XDG_RUNTIME_DIR`, or another `bdi` already
-listening — `bdi` says so on stderr at startup and polls everything.
+### Telling `bdi` where to listen
+
+The default path is one per login session, so two `bdi` runs on one machine
+derive the same one and the second finds the first already listening. It says
+so on stderr and polls everything for the rest of its life: the socket is asked
+for once at startup and never again, so closing the first run frees the path
+for the next run rather than for this one. Give one of them a socket of its own
+and both have a channel:
+
+```
+$ bdi --socket /run/user/1000/beady-eye/worktree.sock
+```
+
+`--socket` is per run, which is what two simultaneous runs of one binary need:
+a config file is per user, so both of them read the same one.
+
+A machine with no `$XDG_RUNTIME_DIR` — macOS has none — has no path to derive
+and no channel until it is told one. It wants the same path every run, so it
+belongs in the config:
+
+```toml
+[changes]
+socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
+```
+
+`--socket` overrides the key. Wherever the socket goes it is created `0600`,
+which is the whole of the channel's protection — a path you name may sit
+somewhere any user can walk through, where `$XDG_RUNTIME_DIR` could not.
+
+If the socket still cannot be opened — no path to put it at, or another `bdi`
+already listening on the one it has — `bdi` says so on stderr at startup, names
+the remedy, and polls everything.
 
 ## What it needs
 

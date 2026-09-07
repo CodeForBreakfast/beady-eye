@@ -20,9 +20,14 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::{fmt, fs, thread};
 
-/// The variable naming the directory this login session owns. A socket under
-/// it is reachable by this user and no other, which is the whole of the
-/// channel's protection.
+/// The variable naming the directory this login session owns, which is where
+/// the socket goes when nothing tells `bdi` where to put it.
+///
+/// A directory this session owns is one no other user can reach and none is
+/// needed to create in, so a socket derived under it was protected by where
+/// it sat. A told path can sit anywhere — `/tmp` is world-traversable — so
+/// that is no longer true of every run, and `OWNER_ONLY` is what protects the
+/// channel now.
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 
 /// Where `bdi` puts its socket inside that directory.
@@ -34,8 +39,9 @@ const SOCKET: &str = "beady-eye/changes.sock";
 const LONGEST_MESSAGE: usize = 512;
 
 /// Only this user may reach the channel, whatever umask the run was started
-/// with. The runtime directory says the same thing; a channel that anything
-/// can write to should not depend on being told twice.
+/// with and wherever the run was told to put its socket. The whole of the
+/// channel's protection, since a told path need not sit under a directory
+/// only this user can reach and often will not.
 const OWNER_ONLY: u32 = 0o600;
 
 /// What `bdi` makes of one message, and what it says back to whoever sent it.
@@ -148,12 +154,14 @@ impl Reported {
 /// than fatal.
 #[derive(Debug)]
 pub enum Refused {
-    /// This session owns no runtime directory, so there is nowhere to put a
-    /// socket only this user can reach.
+    /// Nothing told this run where to listen and this session owns no runtime
+    /// directory to put a socket under, so there is no path to open. A
+    /// machine that has no runtime directory at all — macOS — is refused for
+    /// this reason until it is told one.
     NoRuntimeDirectory,
     /// Another `bdi` is listening there already, so this one has the channel
-    /// only when that one lets it go. The reader's remedy, and the only
-    /// refusal here that has one.
+    /// only when that one lets it go — or when one of them is told a
+    /// different path.
     AlreadyListening(PathBuf),
     /// The socket could not be made, or could not be made this user's alone.
     Unopenable(PathBuf, std::io::Error),
@@ -166,17 +174,26 @@ impl fmt::Display for Refused {
             "nothing can tell bdi a project changed, so every project is polled: "
         )?;
         match self {
+            // The refusal a machine can be in for ever, so the one whose
+            // remedy has to travel with it. A reader here has no runtime
+            // directory to make appear and nothing to close, and until they
+            // are told the path exists the sentence reads as a verdict on
+            // their machine rather than as something to set. Both ways of
+            // telling it, because they answer different questions: the key
+            // is what a Mac wants every run, the flag is what a second `bdi`
+            // beside a first wants once.
             Refused::NoRuntimeDirectory => {
                 write!(
                     f,
-                    "this session has no {RUNTIME_DIRECTORY} to put the socket in"
+                    "this session has no {RUNTIME_DIRECTORY} to put the socket in — name a path with --socket, or with socket under [changes] in the config, and bdi listens there"
                 )
             }
-            // The one refusal with a remedy, so the one that says how to
-            // reach it. The foot can name the cause and no more; naming a
-            // process is a thing to be done here, where there is room for
-            // the path and for a way of asking who holds it that is live
-            // when the reader asks rather than as old as this line.
+            // The one refusal a reader answers by closing something, so the
+            // one that says how to find what to close. The foot can name the
+            // cause and no more; naming a process is a thing to be done here,
+            // where there is room for the path and for a way of asking who
+            // holds it that is live when the reader asks rather than as old
+            // as this line.
             //
             // The restart is half the remedy and not a flourish. `wire` asks
             // for the socket once, before the screen opens, and never binds
@@ -219,14 +236,19 @@ impl Drop for Socket {
     }
 }
 
-/// Where a writer finds `bdi`, or nothing where this session owns no runtime
-/// directory.
-pub fn where_writers_find_bdi() -> Option<PathBuf> {
-    under(
-        std::env::var_os(RUNTIME_DIRECTORY)
-            .map(PathBuf::from)
-            .as_deref(),
-    )
+/// Where a writer finds `bdi`: the path this run was told to listen on, or
+/// the one under the directory this session owns where it was told none.
+///
+/// Nothing where neither, which is the one way left to have nowhere to put a
+/// socket and is what [`Refused::NoRuntimeDirectory`] reports.
+pub fn where_writers_find_bdi(told: Option<PathBuf>) -> Option<PathBuf> {
+    told.or_else(|| {
+        under(
+            std::env::var_os(RUNTIME_DIRECTORY)
+                .map(PathBuf::from)
+                .as_deref(),
+        )
+    })
 }
 
 fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
@@ -765,6 +787,21 @@ mod tests {
         assert!(said.contains("restart bdi"), "{said}");
     }
 
+    /// A reader with no runtime directory cannot make one appear and has
+    /// nothing to close, so without the remedy the line is a verdict on their
+    /// machine. Both ways of naming a path are asserted because they answer
+    /// different questions and a reader arrives with one of them: a Mac wants
+    /// the key on every run, a second `bdi` beside a first wants the flag
+    /// once.
+    #[test]
+    fn the_line_for_a_session_that_owns_no_directory_says_how_to_name_a_path() {
+        let said = Refused::NoRuntimeDirectory.to_string();
+
+        assert!(said.contains(RUNTIME_DIRECTORY), "{said}");
+        assert!(said.contains("--socket"), "{said}");
+        assert!(said.contains("socket under [changes]"), "{said}");
+    }
+
     #[test]
     fn the_socket_goes_with_the_run_that_made_it() {
         let at = a_socket_path("removed-on-exit");
@@ -776,6 +813,12 @@ mod tests {
         assert!(!at.exists(), "the next run has nothing to reclaim");
     }
 
+    /// Told nothing, `bdi` listens where it has always listened, so a run
+    /// with no config keeps the path every producer already written against
+    /// it uses.
+    /// Told nothing, `bdi` listens where it has always listened, so a run
+    /// with no config keeps the path every producer already written against
+    /// it uses.
     #[test]
     fn writers_find_bdi_under_the_directory_the_session_owns() {
         let socket = under(Some(Path::new("/run/user/1000")));
@@ -785,5 +828,17 @@ mod tests {
             Some(PathBuf::from("/run/user/1000/beady-eye/changes.sock"))
         );
         assert_eq!(under(None), None);
+    }
+
+    /// Told where to listen, `bdi` listens there, and what the session owns
+    /// is not consulted at all — which is what makes this deterministic
+    /// wherever it runs. That is what lets two `bdi`s in one session each
+    /// have a channel, and it is the only way a machine with no runtime
+    /// directory has one.
+    #[test]
+    fn a_run_told_where_to_listen_listens_there() {
+        let told = PathBuf::from("/var/folders/T/bdi/changes.sock");
+
+        assert_eq!(where_writers_find_bdi(Some(told.clone())), Some(told));
     }
 }
