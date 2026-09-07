@@ -62,6 +62,10 @@ const THE_LAUNCHING_SHELLS_ROOT: &str = "bdi-2bb";
 const ANOTHER_PREFIX: &str = "own-";
 const THE_PROJECTS_OWN_ROOT: &str = "own-2bb";
 
+/// What a config that names a project calls it, which is also what the
+/// snapshot calls it back.
+const THE_CONFIGURED_PROJECT: &str = "atlas";
+
 fn the_projects_own() -> String {
     THE_LAUNCHING_SHELLS.replace("bdi-", ANOTHER_PREFIX)
 }
@@ -172,7 +176,7 @@ fn a_configured_environment_command_wins_over_what_the_directory_implies() {
     configured(
         &cwd,
         &format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\nenvironment_command = \"direnv exec {}\"\n",
+            "[[projects]]\nname = \"{THE_CONFIGURED_PROJECT}\"\npath = \"{}\"\nenvironment_command = \"direnv exec {}\"\n",
             cwd.display(),
             asked_for.display()
         ),
@@ -204,6 +208,9 @@ fn a_configured_environment_command_wins_over_what_the_directory_implies() {
 /// `bdi` is run somewhere else entirely, which is the whole of what makes
 /// this readable: run from inside the project, both searches look in the same
 /// place and the question cannot be asked.
+///
+/// What the decision leads to is the platform's, so
+/// [`the_projects_own_direnv_was_found`] is where the reading is taken.
 #[test]
 fn a_direnv_the_project_supplies_is_found_from_the_projects_own_directory() {
     let elsewhere = a_project("elsewhere");
@@ -225,7 +232,7 @@ fn a_direnv_the_project_supplies_is_found_from_the_projects_own_directory() {
     configured(
         &elsewhere,
         &format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n",
+            "[[projects]]\nname = \"{THE_CONFIGURED_PROJECT}\"\npath = \"{}\"\n",
             project.display()
         ),
     );
@@ -235,18 +242,84 @@ fn a_direnv_the_project_supplies_is_found_from_the_projects_own_directory() {
     environment[0] = ("PATH".to_string(), format!(":{without_direnv}"));
 
     let out = bdi(&elsewhere, &environment);
+    let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
     let said = String::from_utf8_lossy(&out.stderr).to_string();
 
     assert!(out.status.success(), "bdi exited {}: {said}", out.status);
-    assert_eq!(
-        tracker.direnv_runs(),
-        vec!["exec . env -0".to_string()],
+    assert!(
+        the_projects_own_direnv_was_found(&tracker, &snapshot),
         "a direnv the project's own directory supplies was not found, because \
          the search was made from wherever bdi was started rather than from \
-         the directory the wrapper would have run in"
+         the directory the wrapper would have run in. direnv was run {:?}, \
+         and the snapshot is {snapshot}",
+        tracker.direnv_runs()
     );
 
     std::fs::remove_dir_all(&elsewhere).expect("the directory is ours to remove");
+}
+
+/// That the search above found the direnv the project's own directory
+/// supplies, read off what `bdi` did next.
+///
+/// The reading differs by platform, because what the search decides on is a
+/// spawn and the two platforms do not spawn alike. Neither reading is the
+/// weaker one: a `bdi` that made the search from where it was started finds
+/// no direnv on either platform, so `detected` yields no command, no spawn is
+/// attempted, and the project is read in `bdi`'s own environment — which is
+/// neither of the two answers below.
+///
+/// POSIX gives an empty `PATH` entry the working directory, and Linux gives
+/// the child the working directory it was handed before it searches, so the
+/// direnv the project supplies is the one that runs and the run is the
+/// reading.
+///
+/// Darwin does not resolve a relative `PATH` entry against the working
+/// directory a child is given. Measured 2026-09-07 on macOS 26.6.2 over the
+/// entries `""`, `.`, `./`, `bin` and `./bin`: a child handed a working
+/// directory other than its parent's answers `ENOENT` to every one, whichever
+/// of the two directories holds the program, while a child handed its
+/// parent's own directory runs it. Telling the child its `PATH` rather than
+/// letting it inherit one is a different spawn and behaves as Linux does, so
+/// it is inheritance that carries the difference — and inheritance is what
+/// `bdi` does here. The spawn the search decided on therefore cannot start,
+/// and the project that asked to be entered is reported as one whose
+/// environment `bdi` could not produce. That report is the reading: nothing
+/// but a search made from the project's own directory produces it.
+///
+/// `cfg!` rather than `#[cfg]`, so both readings are compiled wherever the
+/// suite is built and the one this platform does not take cannot rot unseen.
+/// CI runs on Linux only, and Darwin is reached by hand.
+fn the_projects_own_direnv_was_found(tracker: &ShimmedTracker, snapshot: &str) -> bool {
+    if cfg!(target_os = "macos") {
+        the_project_asked_for_an_environment_and_got_none(snapshot)
+    } else {
+        tracker.direnv_runs() == ["exec . env -0"]
+    }
+}
+
+/// The one project of this run, reported as having asked to be entered and
+/// got no environment — read as fields, because `bdi` writes the snapshot
+/// indented and a compact spelling of a pair matches nothing however right it
+/// is.
+fn the_project_asked_for_an_environment_and_got_none(snapshot: &str) -> bool {
+    /// What the published contract calls it.
+    const NO_ENVIRONMENT: &str = "no-environment";
+
+    let snapshot: serde_json::Value = serde_json::from_str(snapshot).expect("bdi wrote a snapshot");
+    let failed: Vec<(&str, &str)> = snapshot["failed_projects"]
+        .as_array()
+        .expect("the snapshot reports the projects that could not be read")
+        .iter()
+        .map(|failed| {
+            (
+                failed["project"].as_str().expect("each one is named"),
+                failed["tracker"]
+                    .as_str()
+                    .expect("and carries why it could not be read"),
+            )
+        })
+        .collect();
+    failed == [(THE_CONFIGURED_PROJECT, NO_ENVIRONMENT)]
 }
 
 /// A config under the `HOME` the run is given, which is where `bdi` looks for
