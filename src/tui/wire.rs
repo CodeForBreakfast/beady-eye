@@ -58,6 +58,7 @@ fn said_at_the_foot(refused: &changes::Refused) -> Notice {
         changes::Refused::AlreadyListening(_) => Notice::AnotherBdiHadTheInboundChannel,
         changes::Refused::NoRuntimeDirectory
         | changes::Refused::NotASocket(_)
+        | changes::Refused::NameOthersMayTake(_)
         | changes::Refused::Unopenable(_, _) => Notice::NoInboundChannel,
     }
 }

@@ -26,7 +26,9 @@ use std::{fmt, fs, thread};
 /// A directory this session owns is one no other user can reach and none is
 /// needed to create in, so where a derived socket sat said who could reach
 /// it. A told path can sit anywhere, so that is no longer a fact about every
-/// run, and [`OWNER_ONLY`] is what each run does for itself.
+/// run: [`OWNER_ONLY`] is what each run does for itself about who may reach
+/// the socket, and [`only_this_user_may_take_a_name_under`] is what it asks about who
+/// may replace it.
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 
 /// Where `bdi` puts its socket inside that directory.
@@ -44,6 +46,16 @@ const LONGEST_MESSAGE: usize = 512;
 /// it sits stopped being a fact about it: a derived path is under a directory
 /// no other user can reach, and a told path need not be and often will not —
 /// `/tmp` is world-traversable.
+///
+/// Both platforms `bdi` runs on check these bits when something connects, so
+/// this is what keeps other users off the channel rather than a hope about
+/// where the socket sits. Measured 2026-09-07 on Linux 7.2.3 and on Darwin
+/// 25.6.0 with one program: a socket its own owner sets to `0400` refuses
+/// that owner and one set to `0200` takes them, which is write permission
+/// being checked rather than the bits being read and ignored; and a socket
+/// `0600` under another user refuses this one. Darwin's `unix(4)` says the
+/// same in its own words — *the destination of a `connect(2)` or `sendto(2)`
+/// must be writable*.
 const OWNER_ONLY: u32 = 0o600;
 
 /// The mode of a directory `bdi` makes to put a socket in.
@@ -52,6 +64,34 @@ const OWNER_ONLY: u32 = 0o600;
 /// covers the moment between the socket appearing and [`OWNER_ONLY`] being
 /// set on it, which nothing about the socket itself can.
 const ONLY_THIS_USER_MAY_ENTER: u32 = 0o700;
+
+/// The bits by which a directory lets a group put a name in it and take one
+/// out, and [`ANYBODY_MAY_TAKE_NAMES`] the same for everybody else.
+///
+/// Write and search, both. Making a name needs the directory searched as well
+/// as written, so reading the write bit alone would refuse a directory
+/// nobody but its owner can touch. Measured 2026-09-07 on Linux 7.2.3 and on
+/// Darwin 25.6.0: a directory its owner sets to `0600` refuses that owner a
+/// new name and one set to `0300` takes it.
+const A_GROUP_MAY_TAKE_NAMES: u32 = 0o030;
+const ANYBODY_MAY_TAKE_NAMES: u32 = 0o003;
+
+/// The bit by which a directory keeps each of its names for whoever owns
+/// them, however many people may write there. `/tmp` and `/var/tmp` carry it
+/// on both platforms.
+///
+/// It keeps a name from everybody but the directory's own owner, who may
+/// still take any name in it — so it is worth something only where that owner
+/// is somebody this run is content to be interfered with by.
+const NAMES_STAY_THEIR_OWNERS: u32 = 0o1000;
+
+/// The one owner besides this user that a directory on the socket's way down
+/// may have.
+///
+/// `root` can reach anything on the machine whatever a directory says, so a
+/// rule refusing it would buy nothing. It is also who owns every shared
+/// directory a reader reaches for — `/tmp` and `/var/tmp` on both platforms.
+const THE_SYSTEM: u32 = 0;
 
 /// What `bdi` makes of one message, and what it says back to whoever sent it.
 ///
@@ -176,6 +216,13 @@ pub enum Refused {
     /// not this run's to take. Reachable only where a run was told where to
     /// listen: a derived path names a file `bdi` puts there itself.
     NotASocket(PathBuf),
+    /// A directory on the way down to the socket is one another user may take
+    /// a name in, so nothing bound beneath it stays what was bound. Carries
+    /// that directory rather than the socket's own, which may be several
+    /// below it. Reachable only where a run was told where to listen: a
+    /// directory `bdi` makes is [`ONLY_THIS_USER_MAY_ENTER`], and the runtime
+    /// directory a derived path sits under is this session's alone.
+    NameOthersMayTake(PathBuf),
     /// The socket could not be made, or could not be made this user's alone.
     Unopenable(PathBuf, std::io::Error),
 }
@@ -240,6 +287,18 @@ impl fmt::Display for Refused {
                     at.display()
                 )
             }
+            // The directory named is the one at fault, which is not always
+            // the one the reader typed the socket into — so the remedy is a
+            // path with nothing of that kind above it rather than a deeper
+            // name, which under a shared directory would be advice to go
+            // further into it.
+            Refused::NameOthersMayTake(directory) => {
+                write!(
+                    f,
+                    "another user may take a name in {} — name a socket path with no such directory above it, with --socket or with socket under [changes] in the config",
+                    directory.display()
+                )
+            }
             Refused::Unopenable(at, why) => {
                 write!(f, "{} could not be opened ({why})", at.display())
             }
@@ -261,12 +320,13 @@ pub struct Socket {
 /// Which file a name holds, as the filesystem tells them apart. Nothing where
 /// the name holds nothing, or holds something that cannot be read.
 ///
-/// Asking narrows the window rather than closing it: in a directory other
-/// people may write to, the name can change hands between the answer and
-/// whatever is done with it, and no unlink takes an identity to check
-/// against. What it buys is the direction it is wrong in — every case it
-/// catches and every case it cannot read leave the file alone, and the only
-/// cost of leaving a socket of ours behind is that the next run reclaims it.
+/// Whose hands the name can change into is what
+/// [`only_this_user_may_take_a_name_under`] settles, and it leaves this user's own: a
+/// reader may remove the socket and put something else at the name while
+/// `bdi` is up, and that file is theirs. So asking is still worth it, and
+/// what it buys is the direction it is wrong in — every case it catches and
+/// every case it cannot read leave the file alone, and the only cost of
+/// leaving a socket of ours behind is that the next run reclaims it.
 type File = (u64, u64);
 
 fn file_at(named: &Path) -> Option<File> {
@@ -276,11 +336,11 @@ fn file_at(named: &Path) -> Option<File> {
 }
 
 impl Drop for Socket {
-    /// Only where the name still holds the file this run bound. A told path
-    /// can sit in a directory other people may write to, so the socket can be
-    /// unlinked and the name given to something else while `bdi` is up —
-    /// and removing that on the way out is a reader's file gone, exactly as
-    /// reclaiming it would have been at the other end of the run.
+    /// Only where the name still holds the file this run bound. The reader
+    /// owns the name and may unlink the socket and give the name to something
+    /// else while `bdi` is up — and removing that on the way out is their
+    /// file gone, exactly as reclaiming it would have been at the other end
+    /// of the run.
     ///
     /// Leaving one behind instead costs nothing: a socket of ours that
     /// nothing is listening on is what the next run reclaims.
@@ -332,20 +392,24 @@ pub fn listen(
 }
 
 fn bind(at: &Path) -> Result<UnixListener, Refused> {
-    if let Some(directory) = at.parent() {
-        // Made this user's own from the moment it exists, rather than left to
-        // umask and narrowed afterwards. A socket is connectable the instant
-        // `bind` returns and takes its mode from umask until the line below
-        // changes it, so a directory nobody else may enter is what covers
-        // that. It reaches only directories this run makes: `recursive` takes
-        // one that is already there as it stands, which is right — an
-        // existing directory is somebody's, and how it is set is theirs.
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(ONLY_THIS_USER_MAY_ENTER)
-            .create(directory)
-            .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
-    }
+    let directory = directory_holding(at);
+
+    // Made this user's own from the moment it exists, rather than left to
+    // umask and narrowed afterwards. A socket is connectable the instant
+    // `bind` returns and takes its mode from umask until the line below
+    // changes it, so a directory nobody else may enter is what covers
+    // that. It reaches only directories this run makes: `recursive` takes
+    // one that is already there as it stands, which is right — an
+    // existing directory is somebody's, and how it is set is theirs.
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(ONLY_THIS_USER_MAY_ENTER)
+        .create(directory)
+        .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
+
+    // Asked after the directory is made, so a directory `bdi` made answers
+    // for itself rather than not being there to answer.
+    only_this_user_may_take_a_name_under(directory)?;
 
     let listener = match UnixListener::bind(at) {
         Ok(listener) => listener,
@@ -357,6 +421,135 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
         .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
 
     Ok(listener)
+}
+
+/// The directory the socket's name is in, as a directory rather than as what
+/// `Path` says about the spelling.
+///
+/// A bare name is a name in the directory the run was started in, and
+/// `Path::parent` gives that as the empty path — which nothing can be asked
+/// about, and which would leave `--socket changes.sock` unjudged in whatever
+/// directory a reader happened to run `bdi` from.
+fn directory_holding(at: &Path) -> &Path {
+    match at.parent() {
+        Some(directory) if !directory.as_os_str().is_empty() => directory,
+        _ => Path::new("."),
+    }
+}
+
+/// Whether the whole way down to the socket is this user's or the system's,
+/// refusing for the nearest directory somebody else may take a name in — the
+/// nearest one, that is, that puts the socket within their reach.
+///
+/// Every directory on the way, rather than the one the socket sits in.
+/// Renaming a directory aside and putting your own there gives you every name
+/// beneath it, so a private directory under a shared one is as open as the
+/// shared one — and the remedy `bdi` names is a directory deeper, which would
+/// otherwise be advice to walk further into the same hole.
+///
+/// Both how the path is spelled and what it resolves to, because neither
+/// covers the other. A link is followed to somewhere else entirely, so what a
+/// name means is what the links in it point at; and a link is *reached
+/// through* the directory holding it without appearing anywhere beneath what
+/// it points at, so a resolved way down alone would judge where a link goes
+/// and never the directory anybody may repoint it from.
+///
+/// Together they are what makes the answer keep: every directory either way
+/// down is one no other user may write in, so there is nobody left to move a
+/// link or a directory between this answer and the `bind` that follows it.
+///
+/// **A way down that cannot be read is refused, not passed.** Reading it is
+/// how the socket's own directory is cleared, so an unreadable one is a
+/// directory nothing has cleared — and the owner of a directory above it can
+/// make the reading fail on purpose. A symlink pointed at itself for the
+/// moment this runs, and back afterwards, would otherwise carry a path
+/// straight through to `bind` with every check skipped.
+///
+/// That is the whole reason it does not defer to `bind`, which touches the
+/// path next and would say what went wrong with it in hand. `bind` asks a
+/// different question, and gets its answer after this one has been acted on.
+fn only_this_user_may_take_a_name_under(under: &Path) -> Result<(), Refused> {
+    let unreadable = |directory: &Path| {
+        let directory = directory.to_path_buf();
+        move |why| Refused::Unopenable(directory, why)
+    };
+
+    let resolved = fs::canonicalize(under).map_err(unreadable(under))?;
+    let this_user = this_user();
+
+    for directory in directories_on(under).chain(directories_on(&resolved)) {
+        let what = fs::metadata(directory).map_err(unreadable(directory))?;
+        if others_may_take_a_name_in(what.permissions().mode(), what.uid(), this_user) {
+            return Err(Refused::NameOthersMayTake(directory.to_path_buf()));
+        }
+    }
+
+    Ok(())
+}
+
+/// The directory at the end of this way down and every one above it, nearest
+/// first.
+///
+/// **The root is among them only where it is the end, and the two halves of
+/// that are both load-bearing.** Above the socket's own directory it is
+/// nobody's to answer for: a refusal is answered by naming another path, no
+/// path leaves the root out, and a root somebody else owns is a whole
+/// filesystem somebody else owns — `/` inside a nix build sandbox belongs to
+/// `65534`. Where the socket's own name is *in* the root there is another
+/// path to name, one directory deeper, so that one is judged like any other.
+/// Skipping it there instead is an unjudged bind on a directory everybody can
+/// see, which is what this whole walk exists to stop.
+fn directories_on(way: &Path) -> impl Iterator<Item = &Path> {
+    way.ancestors()
+        .enumerate()
+        .filter(|(above, directory)| *above == 0 || directory.parent().is_some())
+        .map(|(_, directory)| directory)
+}
+
+/// Whom this run is, which is the only party besides [`THE_SYSTEM`] a
+/// directory on the socket's way down may belong to.
+///
+/// The *effective* user, because that is the one the kernel weighs a
+/// directory's owner and mode against — so it is the one whose answer this
+/// walk is predicting. It is the real user too on an ordinary run, and the
+/// two part company under a setuid wrapper, where reading the real one would
+/// judge every directory against a user the filesystem is not consulting.
+///
+/// There is no safe `std` call that says which user a process is.
+fn this_user() -> u32 {
+    // SAFETY: `geteuid` takes no arguments, reads no memory and is defined to
+    // succeed on every unix.
+    unsafe { libc::geteuid() }
+}
+
+/// Whether somebody other than this user could put their own file at a name
+/// in a directory owned and set like this.
+///
+/// An owner may always take any name in their own directory, so a directory
+/// belonging to somebody else is one they may take the socket's name in
+/// however narrowly it is set — a directory of theirs at `0755` as much as one
+/// at `0777`. That is the first half, and it is the half a mode cannot say.
+///
+/// The second is who else may write there. Write permission outside the owner
+/// is what lets anybody else touch the directory's names at all, and the
+/// sticky bit takes it back for names that already exist, since with it only a
+/// name's own owner may remove or rename it. So a socket bound in `/tmp` is
+/// still that socket for as long as it is there, however many people may write
+/// beside it.
+///
+/// This is what lets the two unlinks be safe rather than merely careful. Each
+/// looks at what is at the name and then removes it, and no unlink takes a
+/// file to check against, so on their own they narrow the window rather than
+/// closing it. Where the name cannot change hands there is no window: the
+/// file is this user's and removing it is this user's to do, or it is
+/// somebody else's and the remove is refused.
+fn others_may_take_a_name_in(how: u32, owner: u32, this_user: u32) -> bool {
+    if owner != this_user && owner != THE_SYSTEM {
+        return true;
+    }
+    let anybody_else = how & A_GROUP_MAY_TAKE_NAMES == A_GROUP_MAY_TAKE_NAMES
+        || how & ANYBODY_MAY_TAKE_NAMES == ANYBODY_MAY_TAKE_NAMES;
+    anybody_else && how & NAMES_STAY_THEIR_OWNERS == 0
 }
 
 /// A socket already at the path is either a live `bdi`'s or the litter of one
@@ -473,6 +666,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
         dir.join("beady-eye").join("changes.sock")
+    }
+
+    /// A socket named straight in a directory whose mode is the thing under
+    /// test, rather than in one `bdi` made and set for itself.
+    ///
+    /// The directory under test sits inside one nobody else may enter, so a
+    /// test that opens a directory up opens nothing up in `/tmp`.
+    fn a_socket_in_a_directory_moded(named: &str, how: u32) -> PathBuf {
+        let around = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&around);
+        std::fs::create_dir_all(&around).expect("a directory to keep the test's own in");
+        std::fs::set_permissions(
+            &around,
+            std::fs::Permissions::from_mode(ONLY_THIS_USER_MAY_ENTER),
+        )
+        .expect("and nobody else may enter it");
+
+        let told = around.join("told");
+        std::fs::create_dir_all(&told).expect("a directory to put the socket in");
+        std::fs::set_permissions(&told, std::fs::Permissions::from_mode(how))
+            .expect("set as the test means it rather than as umask left it");
+        told.join("changes.sock")
     }
 
     /// An open channel, and the end of it the loop would be reading.
@@ -840,10 +1055,199 @@ mod tests {
         );
     }
 
-    /// A told path may sit in a directory other people can write to, so what
-    /// holds the name when a run ends need not be what that run bound.
-    /// Removing it then is the same file loss reclaiming would have been, at
-    /// the other end of the run.
+    /// Where the name can change hands, looking at what is at it buys a
+    /// narrower window and never a closed one, because no unlink takes a file
+    /// to check against. So the remedy is the directory rather than a sharper
+    /// look: `bdi` does not bind where the name is not its own to keep.
+    #[test]
+    fn a_directory_others_may_take_a_name_in_is_one_bdi_will_not_bind_in() {
+        let at = a_socket_in_a_directory_moded("open-directory", 0o777);
+
+        let (changed, _changes) = mpsc::channel();
+        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+
+        let named = match refused.err() {
+            Some(Refused::NameOthersMayTake(directory)) => directory,
+            otherwise => panic!("a directory anyone may write in is refused, not {otherwise:?}"),
+        };
+        assert_eq!(
+            std::fs::canonicalize(&named).ok(),
+            at.parent()
+                .and_then(|directory| std::fs::canonicalize(directory).ok()),
+            "and it is that directory the refusal names"
+        );
+        assert!(!at.exists(), "and nothing of bdi's is left at the name");
+    }
+
+    /// An unreadable way down is one nothing has cleared, so it is refused
+    /// rather than let through. The owner of a directory above the socket can
+    /// make the reading fail whenever they like — a link pointed at itself
+    /// for the moment the check runs, and back before `bind` follows it — so
+    /// passing an unreadable way down would hand them every check at once.
+    ///
+    /// Asked of the walk directly, because `bind` makes the directory before
+    /// it asks and would meet the same link one call earlier.
+    #[test]
+    fn a_way_down_that_cannot_be_read_is_refused_rather_than_passed() {
+        let around = std::env::temp_dir().join(format!("bdi-loop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&around);
+        std::fs::create_dir_all(&around).expect("a directory to keep the test's own in");
+
+        let itself = around.join("itself");
+        std::os::unix::fs::symlink("itself", &itself).expect("a link pointed at its own name");
+
+        match only_this_user_may_take_a_name_under(&itself) {
+            Err(Refused::Unopenable(named, _)) => assert_eq!(
+                named, itself,
+                "and the refusal names the way down it could not read"
+            ),
+            otherwise => panic!("a way down that cannot be read is refused, not {otherwise:?}"),
+        }
+    }
+
+    /// Renaming a directory aside and putting your own there gives you every
+    /// name beneath it, so a directory of this user's own under a shared one
+    /// is as open as the shared one — and the remedy the refusal names would
+    /// otherwise be advice to walk further into it.
+    #[test]
+    fn a_private_directory_under_one_others_may_take_a_name_in_is_refused_for_that_one() {
+        let shared = a_socket_in_a_directory_moded("shared-above", 0o777)
+            .parent()
+            .expect("the socket is in a directory")
+            .to_path_buf();
+        let at = shared.join("mine").join("changes.sock");
+
+        let (changed, _changes) = mpsc::channel();
+        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+
+        let named = match refused.err() {
+            Some(Refused::NameOthersMayTake(directory)) => directory,
+            otherwise => panic!("a path under a shared directory is refused, not {otherwise:?}"),
+        };
+        assert_eq!(
+            std::fs::canonicalize(&named).ok(),
+            std::fs::canonicalize(&shared).ok(),
+            "and the refusal names the directory at fault rather than the socket's own"
+        );
+    }
+
+    /// A link is reached through the directory holding it and appears nowhere
+    /// beneath what it points at, so a resolved way down on its own judges
+    /// where the link goes and never the directory anybody may repoint it
+    /// from — leaving the socket to be bound wherever it is pointed next.
+    #[test]
+    fn a_link_out_of_a_shared_directory_is_refused_for_the_directory_holding_it() {
+        let shared = a_socket_in_a_directory_moded("shared-holding-a-link", 0o777)
+            .parent()
+            .expect("the socket is in a directory")
+            .to_path_buf();
+        let mine = shared
+            .parent()
+            .expect("the test's own directory is around it")
+            .join("mine");
+        std::fs::create_dir_all(&mine).expect("somewhere of this user's own to point at");
+        std::os::unix::fs::symlink(&mine, shared.join("link")).expect("a link anybody may repoint");
+
+        let at = shared.join("link").join("changes.sock");
+        let (changed, _changes) = mpsc::channel();
+        let refused = listen(Some(at), &watching(["atlas"]), changed);
+
+        let named = match refused.err() {
+            Some(Refused::NameOthersMayTake(directory)) => directory,
+            otherwise => panic!("a path through a shared directory is refused, not {otherwise:?}"),
+        };
+        assert_eq!(
+            std::fs::canonicalize(&named).ok(),
+            std::fs::canonicalize(&shared).ok(),
+            "and it is the directory holding the link that is named, which resolving loses"
+        );
+    }
+
+    /// A bare name is judged in the directory the run was started in, which
+    /// is what `--socket changes.sock` means and is not what `Path::parent`
+    /// says it means. Left as the empty path it is a name nothing can be
+    /// asked about, in whatever directory a reader happened to be.
+    #[test]
+    fn a_socket_named_without_a_directory_is_judged_where_the_run_was_started() {
+        assert_eq!(directory_holding(Path::new("changes.sock")), Path::new("."));
+        assert_eq!(
+            directory_holding(Path::new("beady-eye/changes.sock")),
+            Path::new("beady-eye")
+        );
+        assert_eq!(
+            directory_holding(Path::new("/tmp/changes.sock")),
+            Path::new("/tmp")
+        );
+    }
+
+    /// The root is left alone above the socket, because no path a reader
+    /// could name instead leaves it out. Where the socket's own name is in
+    /// it there is such a path — one directory deeper — so it is judged like
+    /// any other, and skipping it there would be the empty parent again in
+    /// another spelling.
+    #[test]
+    fn the_root_is_judged_where_the_name_is_in_it_and_left_alone_above() {
+        assert_eq!(
+            directories_on(Path::new("/")).collect::<Vec<_>>(),
+            [Path::new("/")],
+            "a socket named in the root is judged by the root"
+        );
+        assert_eq!(
+            directories_on(Path::new("/tmp/beady-eye")).collect::<Vec<_>>(),
+            [Path::new("/tmp/beady-eye"), Path::new("/tmp")],
+            "and above the socket's own directory the root is left out"
+        );
+    }
+
+    /// Two things a mode cannot say on its own, and the rows that say them.
+    ///
+    /// A directory belonging to somebody else is one they may take any name
+    /// in however narrowly it is set, so `0755` under them is no better than
+    /// `0777` under anybody. And the sticky bit is worth something only under
+    /// an owner this run is content to be interfered with by, since that
+    /// owner may take a name in it whatever the bit says.
+    ///
+    /// Asked of the rule rather than of a directory, because no machine a
+    /// test runs on has a directory in somebody else's name to point it at.
+    #[test]
+    fn a_directory_is_this_users_to_bind_under_by_its_owner_as_well_as_its_mode() {
+        let me = 501;
+        let them = 1000;
+
+        for (how, owner, taken, what) in [
+            (0o700, me, false, "a directory of this user's own"),
+            (0o755, THE_SYSTEM, false, "one of the system's"),
+            (0o755, them, true, "a narrow one somebody else owns"),
+            (0o700, them, true, "even a private one somebody else owns"),
+            (
+                0o777,
+                me,
+                true,
+                "one of this user's anybody may take a name in",
+            ),
+            (0o770, me, true, "one of this user's their group may"),
+            (0o760, me, false, "one their group may write and not search"),
+            (0o1777, me, false, "a sticky one of this user's"),
+            (
+                0o1777,
+                THE_SYSTEM,
+                false,
+                "a sticky one of the system's, which /tmp is",
+            ),
+            (0o1777, them, true, "a sticky one somebody else owns"),
+        ] {
+            assert_eq!(
+                others_may_take_a_name_in(how, owner, me),
+                taken,
+                "{what} ({how:04o}, owner {owner})"
+            );
+        }
+    }
+
+    /// The name is the reader's, and they may take the socket off it and put
+    /// their own file there while the run is up — so what holds the name when
+    /// a run ends need not be what that run bound. Removing it then is the
+    /// same file loss reclaiming would have been, at the other end of the run.
     #[test]
     fn a_file_that_replaced_the_socket_under_a_run_outlives_it() {
         let at = a_socket_path("replaced-socket");

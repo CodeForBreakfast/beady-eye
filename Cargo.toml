@@ -46,6 +46,13 @@ anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"] }
+# Which user this run is, which nothing in `std` will say and the socket's way
+# down has to be judged against. It is also the pty a test drives bdi through,
+# which is what it was here for while it was a dev-dependency. Named for the
+# same reason signal-hook is: the crate is compiled either way as signal-hook's
+# own, and one reached only through another crate's tree is not one this code
+# may `use`.
+libc = "0.2"
 pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = "0.30"
 serde = { version = "1", features = ["derive", "rc"] }
@@ -65,7 +72,4 @@ testing = []
 
 [dev-dependencies]
 beady-eye = { path = ".", features = ["testing"] }
-# A pty, so a test can drive bdi as a terminal would and read what it
-# writes on the way out. Already in the lock as signal-hook's own.
-libc = "0.2"
 pretty_assertions = "1"
