@@ -80,6 +80,30 @@ nixpkgs.overlays = [ beady-eye.overlays.default ];   # pkgs.beady-eye
 
 The crate is `beady-eye`; the command it installs is `bdi`.
 
+On a Mac with neither `cargo` nor Nix, take the binary from the latest release.
+It is one fetch and a `chmod`:
+
+```console
+$ curl -fLo bdi https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-aarch64-apple-darwin
+$ chmod +x bdi
+$ ./bdi --version
+```
+
+`aarch64-apple-darwin` is an Apple silicon Mac and `x86_64-apple-darwin` an
+Intel one. Each has a `.sha256` beside it, so fetch that too and
+`shasum -a 256 -c bdi-aarch64-apple-darwin.sha256` says whether what arrived is
+what was built. `v0.1.0` carries neither.
+
+The binaries are not signed by Apple. Gatekeeper decides on a
+`com.apple.quarantine` attribute that whatever downloaded the file puts on it,
+and `curl` puts none there, so a binary fetched the way above runs. A browser
+puts one on, and macOS then refuses to run the file and asks you about it
+instead. Clearing the attribute is what gets past that:
+
+```console
+$ xattr -d com.apple.quarantine bdi
+```
+
 ## Run it
 
 Inside a repository beads tracks, `bdi` needs no config:
