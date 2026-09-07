@@ -271,6 +271,41 @@ impl Driven {
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
     }
 
+    /// Mark the place in what `bdi` has said so far, without typing at it, so
+    /// what it writes after something the test does by other means — a signal
+    /// — can be told from the frame before.
+    ///
+    /// [`Driven::send`] marks the same place for a keystroke and cannot call
+    /// this: it holds the lock across the mark and the write, which is what
+    /// makes the key the first thing on the far side of the mark.
+    pub fn mark(&self) -> Mark {
+        let mut said = self.said.lock().expect("the drain is running");
+        hear_what_is_waiting(&self.terminal, self.started, &mut said);
+        Mark(said.len())
+    }
+
+    /// Read until `bdi` has died, and hand back everything it wrote after
+    /// `since`.
+    ///
+    /// The drain has to be running for this to terminate at all, which is the
+    /// fact [`Driven::drop`] below turns on and `CLAUDE.md` has the Darwin
+    /// measurements for. Here it means the wait cannot be the reader.
+    ///
+    /// A `bdi` still alive at the deadline is left to the caller with
+    /// whatever it wrote, since what it failed to write is the assertion
+    /// these tests came to make.
+    pub fn last_words(&mut self, since: Mark, patience: Duration) -> Vec<u8> {
+        let giving_up = Instant::now() + patience;
+        while Instant::now() < giving_up {
+            if self.exited().is_some() {
+                break;
+            }
+            std::thread::sleep(A_GLANCE);
+        }
+        self.hear_what_is_waiting();
+        self.said_since(since)
+    }
+
     /// Type at `bdi`, and mark the place in what it has said so far, so its
     /// answer can be told from everything that came before.
     ///
@@ -357,6 +392,11 @@ impl Driven {
                 break;
             }
         }
+        self.said_since(since)
+    }
+
+    /// Everything `bdi` wrote after `since`, as it stands now.
+    fn said_since(&self, since: Mark) -> Vec<u8> {
         self.said.lock().expect("the drain is running")[since.0..]
             .iter()
             .flat_map(|said| said.bytes.iter().copied())
