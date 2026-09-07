@@ -44,9 +44,6 @@ nothing behind it.
 
 ## Install
 
-Nothing is published yet. These are the commands the first release tag will
-make work.
-
 From crates.io:
 
 ```console
@@ -65,8 +62,35 @@ or keep it:
 $ nix profile install github:CodeForBreakfast/beady-eye
 ```
 
-To use it from your own flake, pin the input to a release tag and take either
-the package or the overlay:
+Neither is a download. Nothing publishes a binary cache for this project, so
+the first run compiles it from source and takes minutes. And both follow
+`main`, so what they build is the tip of the default branch rather than the
+last release.
+
+They also need flakes, and a Nix without them refuses twice — once per feature,
+and obeying the first refusal does not clear the second:
+
+```console
+$ nix run github:CodeForBreakfast/beady-eye
+error: experimental Nix feature 'nix-command' is disabled; add '--extra-experimental-features nix-command' to enable it
+
+$ nix --extra-experimental-features nix-command run github:CodeForBreakfast/beady-eye
+error: experimental Nix feature 'flakes' is disabled; add '--extra-experimental-features flakes' to enable it
+```
+
+Ask for both at once:
+
+```console
+$ NIX_CONFIG='experimental-features = nix-command flakes' nix run github:CodeForBreakfast/beady-eye
+```
+
+or write that same line into `nix.conf` and the prefix stops being needed. The
+flag nix itself suggests does the same, as long as both features are named at
+once — naming them one at a time is the loop above.
+
+To use it from your own flake, pin the input to a release tag — which is how you
+get a build you can name afterwards — and take either the package or the
+overlay:
 
 ```nix
 inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.1.0";
@@ -93,13 +117,17 @@ the forest, with a line per project and its trees under it; a tail showing the
 last rows of the selected bead's pane; and a foot row with notices on the left
 and keys on the right.
 
+These are the keys to get started with; `?` shows every binding there is:
+
 | key | does |
 |---|---|
-| arrows, `hjkl` | move |
-| `Enter` | open the selected bead |
-| `f` | bring its pane to the front |
+| `↑` `↓`, `j` `k` | move up and down a row |
+| `←` `→`, `h` `l` | collapse, or move to the parent when it is already collapsed; expand, or move to the first child when it is already expanded |
+| `Enter` | show the selected bead, or focus its pane from the bead view |
+| `f` | focus the selected bead's pane |
 | `a` | show every tree, not only those with a live agent |
-| `Space`, `E` | fold or unfold a node; expand it and everything under it |
+| `Space` | fold or unfold the selected node |
+| `E`, `C` | expand or collapse the selected node and everything under it |
 | `/`, `n`, `N` | find part of an id or title; next and previous match |
 | `y` | copy the selected bead's id to the clipboard (OSC 52, so it works over ssh and through a multiplexer) |
 | `^R` | read the trackers again now |
@@ -344,8 +372,8 @@ on nothing any bead accounts for, and the tail.
 
 ## Status
 
-Built, unreleased, and in daily use against the trackers it was written for.
-The design is in [docs/design.md](docs/design.md).
+Released, and in daily use against the trackers it was written for. The design
+is in [docs/design.md](docs/design.md).
 
 Versions are `0.x`, and a breaking change bumps the minor: `0.1` → `0.2`. So a
 minor bump can break you — pin the input to a release tag, as the example above
