@@ -10,35 +10,9 @@ Neither knows about the other, so "what is left, what is done, and who is on
 what right now" has no single answer — and a closed bead whose agent never
 exited, or a claim whose agent died, is invisible to both. `bdi` joins them.
 
-```
-▾ atlas  ✓ 29s ago                                                   3/12  3 agents  ⚠ 1
-  ├── ○ atlas-1   Payments move to the new gateway                                   2/9
-  │   ├── ◐ atlas-3   The refund path calls the gateway          0/3  ◍ wE3:pE · working
-  │   │   ├── ◐ atlas-5   Retire the old refund worker               ⚠ claimed · no pane
-  │   │   └── ○ atlas-4   Backfill the refund ledger
-  │   ├── ◐ atlas-7   Webhook retries are not idempotent              ◍ wE3:pD · working
-  │   ├── ○ atlas-2   Pin the gateway client version
-  │   ├── ○ atlas-6   Cut the live keys over                                         0/2
-  │   │   └┄┄ ○ atlas-2   Pin the gateway client version
-  │   ├── ✓ atlas-8   Reconcile the settlement report
-  │   └── ✓ atlas-9   Drop the gateway shim
-  ├── ○ atlas-10  Search returns stale results after an edit                         1/3
-  │   ├── ◐ atlas-11  Invalidate the index on write                   ◍ wE3:pF · working
-  │   └── ✓ atlas-12  Measure the reindex cost
-  └── ⚠ 3 unattributed panes
-────────────────────────────────────────────────────────────────────────────────────────
-  no pane · nobody is working this bead
+![A bdi screen: the atlas project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-
-
-
-
-Enter show   a all   ? keys   q quit
-```
-
-A real run at 88 columns, against a throwaway tracker of made-up work joined to
-the panes that were alive on the machine. `atlas-5` is the drift: a claim with
-nothing behind it.
+Invented ground: the atlas project, its work and its panes are all made up, and `tools/capture/` is what draws the frame. `atlas-5` is the drift — a claim with no pane behind it, which is the thing neither beads nor herdr can see on its own.
 
 `bdi` only reads. Changing the work stays bd's job.
 
