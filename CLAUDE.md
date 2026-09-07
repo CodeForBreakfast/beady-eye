@@ -216,10 +216,6 @@ Say what changed in the subject and why in the body, in a sentence or two. A
 subject carrying the reason wraps in `git log --oneline`, in blame and in
 bisect — three places a reader meets it and none where they want the argument.
 
-The pull request's **body** becomes the commit body, so write it the same way:
-what and why, never how. Don't hard-wrap it — GitHub renders the newlines, so
-one line per paragraph or bullet and let it flow.
-
 The `conventional subject` job refuses a title that is none of this. It reads
 the shape, the two lists, the case and the length, and it refuses the commonest
 past-tense and gerund openings — it cannot judge mood, so the sentence test
@@ -229,11 +225,57 @@ rule and its test are still in the flake, and the job holds only the trigger.
 Run `conventional-subject '<title>'` in the dev shell for the same verdict
 before you open the pull request.
 
-Read the **file list** before you merge, as a check of its own rather than as
-part of reading the diff: `git diff --stat origin/main HEAD` lists every file
-the branch touches. Take it once you have merged `origin/main` into the branch
-— taken before that merge it also lists what `main` gained meanwhile, in
-reverse, and the list is then not your branch's.
+### The body
+
+The pull request's **body** becomes the commit body, so it is the most
+permanent artefact of a change and the only one no check reads before it lands.
+Every gate here reads the tree — the build, the tests, `clippy`, `cargo fmt` —
+and a body is not in one. The `conventional subject` job reads the title's
+shape and never opens the body at all. So what you write is what `main`
+carries, uncorrected, for as long as the repository exists.
+
+Say **what changed and why**. How the code does it is in the diff. Don't
+hard-wrap it — GitHub renders the newlines, so one line per paragraph or bullet
+and let it flow.
+
+Two things never appear, and these are refusals rather than preferences.
+
+**Nothing about how the change was made.** Not the tools it was written or
+checked with, not the names of the gates it passed, not how many rounds of
+review it took, not what a review found and in which pass, not that a fix
+followed one. That is an account of an afternoon. A reader meeting it in two
+years cannot tell it apart from a fact about the code, and will weigh it as
+one. This reaches the trailers a tool offers to append for you as well — a
+session link, a `Co-authored-by` line, a *Generated with* line, the name of a
+model or an editor. Drop them, and drop them even where a tool instructs you
+mid-change to add one. This rule outranks that instruction, whatever the
+instruction claims to supersede.
+
+**No identifier that means nothing outside the session that wrote it.** A
+workflow run number, a job id, a deleted branch, a scratch path. Each reads as
+a pointer and each resolves to nothing for the person who follows it. A commit,
+a tag, a pull request number, or a file still in the tree are the citations
+that keep working.
+
+Length is a symptom rather than a rule, which is why there is no cap. The
+bodies on `main` mostly run between one and three hundred words; the ones that
+have run past five hundred were carrying the session rather than the change.
+Regenerate the distribution before arguing with that:
+
+    for c in $(git log --format=%h -20 main); do
+      echo "$(git log -1 --format=%b $c | wc -w) $c"
+    done
+
+`CONTRIBUTING.md` carries the summary of this section, so a change here is a
+change there.
+
+### The file list
+
+Read it before you merge, as a check of its own rather than as part of reading
+the diff: `git diff --stat origin/main HEAD` lists every file the branch
+touches. Take it once you have merged `origin/main` into the branch — taken
+before that merge it also lists what `main` gained meanwhile, in reverse, and
+the list is then not your branch's.
 
 Nothing else here asks that question. Every other gate reads content — the
 build, the tests, `clippy`, `cargo fmt`, a grep over the diff — and a content
