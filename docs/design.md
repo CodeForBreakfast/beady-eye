@@ -1492,7 +1492,16 @@ a head hash, someone typing the line.
 set on every run rather than left to where the socket sits: a derived path sat
 under a directory the session owned, which needed no privilege to create in
 and no other user could reach, but a told path may sit anywhere and `/tmp` is
-world-traversable. It is
+world-traversable. Both platforms check that mode when something connects, so
+it is what keeps other users off the channel rather than a hope about where the
+socket sits. Measured 2026-09-07 on Linux 7.2.3 and on Darwin 25.6.0, with one
+program run on each: a socket its own owner sets to `0400` refuses that owner
+and one set to `0200` takes them, which is write permission being checked
+rather than the bits being read and ignored, and a socket `0600` under another
+user refuses this one. Darwin's `unix(4)` says the same in its own words —
+*Normal filesystem access-control mechanisms are also applied when referencing
+pathnames; e.g., the destination of a `connect(2)` or `sendto(2)` must be
+writable.* It is
 told rather than derived for two reasons. A path derived per session is one
 path, so a second `bdi` beside a first is refused the channel and polls for the
 rest of its life — the normal case wherever one person runs more than one. And
@@ -1504,6 +1513,89 @@ exits, and reclaims a stale one left by a run that crashed. A unix socket
 rather than a signal because the message must carry *which* project changed —
 `bdi` watches several and refreshing all of them throws away the saving — and
 rather than a FIFO because a FIFO handles several writers badly.
+
+**Where the socket may sit.** A mode says who may reach the socket and nothing
+about who may replace it, which the directories above it say. `bdi` makes a
+directory it creates `0700`, takes one already there as it stands, and refuses
+to bind under a directory somebody else may take a name in — one owned by
+another user, or one a group or everybody may both write and search without
+the sticky bit. Both bits, because making a name needs the directory searched
+as well as written, so reading the write bit alone would refuse a directory
+nobody but its owner can touch.
+
+**Every directory on the way down, rather than the socket's own.** Renaming a
+directory aside and putting your own there gives you every name beneath it, so
+a private directory under a shared one is as open as the shared one.
+
+The root is the one exception, and only above the socket's own directory. A
+refusal is answered by naming another path and no path higher up leaves the
+root out, so refusing there would say the machine cannot have a channel rather
+than saying where to put one — and a root somebody else owns is a whole
+filesystem somebody else owns rather than something a socket is the place to
+find out: `/` inside a nix build sandbox belongs to `65534`.
+Where the socket's own name is *in* the root there is another path to name, one
+directory deeper, so that one is judged like any other.
+
+**Both how the path is spelled and what it resolves to, because neither covers
+the other.** A link is followed somewhere else entirely, so what a name means
+is what the links in it point at; and a link is reached *through* the directory
+holding it while appearing nowhere beneath what it points at, so a resolved way
+down alone would judge where a link goes and never the directory anybody may
+repoint it from. Reading both is also what makes the answer keep until the
+`bind` that follows it: every directory either way down is this user's or the
+system's, so there is nobody left to move a link or a directory in the meantime.
+
+**A way down that cannot be read is refused rather than passed.** Reading a
+directory is how it gets cleared, so one that cannot be read is one nothing
+has cleared. The owner of a directory above the socket can make the reading
+fail whenever they like — a link pointed at itself for the moment the check
+runs, and back before the `bind` that follows it — so letting an unreadable
+way down through would hand them every check above at once.
+
+**The owner as well as the mode, because an owner may always take any name in
+their own directory.** A directory belonging to somebody else is one they may
+take the socket's name in however narrowly it is set — theirs at `0755` is no
+better than anybody's at `0777` — so the only owners a directory on the way may
+have are this user and `root`. `root` is not a concession, since it can reach
+anything on the machine whatever a directory says.
+
+The user read is the effective one, since that is the user the kernel weighs a
+directory's owner and mode against, and so the user whose answer this walk is
+predicting. They are the same on an ordinary run and part company under a
+setuid wrapper.
+
+Reading the owner costs `geteuid`, and that costs two things. `libc` becomes a
+runtime dependency, where it was a dev-dependency for the pty harness — the
+crate is compiled either way, as signal-hook's own, but what ships now names
+it. And the call is the crate's first `unsafe` block: `geteuid` takes no
+arguments, reads no memory and cannot fail, which is the mildest crossing
+available, and nothing in `std` says which user a process is.
+The alternative is a crate wrapping it safely, which trades three lines for a
+dependency of substance.
+
+**No test drives the real runtime directory**, on either platform. Every test
+that opens a channel builds the directory it puts the socket in, so the suite
+exercises this walk over its own scaffolding and never over `/run/user` or
+`/private/tmp` — and a nix build sandbox has no `/run/user` to drive it with
+even if one wanted to. It is checked by running `bdi` against the real path by
+hand, which is what caught the sandbox root above.
+
+The sticky bit is what keeps the obvious path usable. `/tmp` and `/var/tmp` are
+`1777` and root's on both platforms, so a socket bound there stays the socket
+that was bound however many people may write beside it.
+
+What the rule buys is the two unlinks — the one reclaiming a crashed run's
+socket at the start and the one clearing this run's away at the end. Each looks
+at what is at the name and then removes it, and no unlink takes a file to check
+against, so where the name can change hands they narrow the window and cannot
+close it. Where it cannot, there is no window: the file is this user's and
+removing it is this user's to do, or it is somebody else's and the remove is
+refused.
+
+The refusal is said and polled like every other, and it names the directory at
+fault, which is not always the one the socket was to sit in — so the remedy it
+gives is a path with no such directory above it rather than a deeper name,
+which under a shared directory would be advice to walk further into it.
 
 **The protocol.** Send the name of a project whose work has moved, as one UTF-8
 line ending in `\n`. `bdi` answers each line with one line of its own:
