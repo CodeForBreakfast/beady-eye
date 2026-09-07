@@ -12,7 +12,10 @@ exited, or a claim whose agent died, is invisible to both. `bdi` joins them.
 
 ![A bdi screen: the atlas project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-Invented ground: the atlas project, its work and its panes are all made up, and `tools/capture/` is what draws the frame. `atlas-5` is the drift — a claim with no pane behind it, which is the thing neither beads nor herdr can see on its own.
+Invented ground: the atlas project, its work and its panes are all made up,
+and `tools/capture/` is what draws the frame. `atlas-5` is the drift — a claim
+with no pane behind it, which is the thing neither beads nor herdr can see on
+its own.
 
 `bdi` only reads. Changing the work stays bd's job.
 
