@@ -84,7 +84,7 @@ fn a_bdi_whose_parent_is_about_to_be_killed() {
     };
 
     let home = a_home_naming_one_project("orphaned");
-    let mut child = bdi_on(&theirs, &home, &[]);
+    let mut child = bdi_on(&theirs, &home, &[], &[]);
     // Read before anything can reap it: its pid is ours until we do, so what
     // this names is the `bdi` and not a later holder of the number.
     let bdi = Process::named(child.id() as libc::pid_t).expect("it was spawned");

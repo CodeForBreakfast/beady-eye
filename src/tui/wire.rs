@@ -5,6 +5,7 @@
 //! the time they leave here: an `Event` on the one channel the loop waits
 //! on. Each source blocks on its own thread so the loop never has to.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -44,17 +45,20 @@ fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<
 
 /// Which refusal this was, in the one form the foot can draw.
 ///
-/// Only one of them is the reader's to fix, and it is the one that names a
-/// process: a session with no runtime directory and a socket that would not
-/// open leave nothing to close. So the cause is carried through where it is
-/// actionable and dropped where it is not, rather than every refusal arriving
-/// as the same sentence about being polled.
+/// Only one of them is answered by closing something, and it is the one that
+/// names a process. The rest are answered by naming a different path, which
+/// is a restart rather than something to do while looking at the screen — so
+/// those remedies ride the stderr line, which has room for the flag and the
+/// key that carry them, and for whatever is standing in the way. The cause is
+/// carried through where the reader can act on it without leaving the view
+/// and dropped where they cannot, rather than every refusal arriving as the
+/// same sentence about being polled.
 fn said_at_the_foot(refused: &changes::Refused) -> Notice {
     match refused {
         changes::Refused::AlreadyListening(_) => Notice::AnotherBdiHadTheInboundChannel,
-        changes::Refused::NoRuntimeDirectory | changes::Refused::Unopenable(_, _) => {
-            Notice::NoInboundChannel
-        }
+        changes::Refused::NoRuntimeDirectory
+        | changes::Refused::NotASocket(_)
+        | changes::Refused::Unopenable(_, _) => Notice::NoInboundChannel,
     }
 }
 
@@ -74,6 +78,7 @@ pub(super) type Wired = (
 pub(super) fn wire(
     reported: Reported,
     agents: Arc<dyn Agents>,
+    listening_on: Option<PathBuf>,
     collect: Collecting,
     asked_to_stop: Signals,
 ) -> Wired {
@@ -106,11 +111,7 @@ pub(super) fn wire(
     // being settled at startup: a channel arriving later has to retract it,
     // and its `Socket` has to reach the loop, or nothing takes the socket off
     // the filesystem when the run ends.
-    let (socket, refused) = inbound(changes::listen(
-        changes::where_writers_find_bdi(),
-        &reported,
-        changed.clone(),
-    ));
+    let (socket, refused) = inbound(changes::listen(listening_on, &reported, changed.clone()));
 
     thread::spawn(move || {
         report(
