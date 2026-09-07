@@ -240,9 +240,8 @@ pub struct Changes {
     /// runtime directory at all — macOS — has nothing to derive and gets its
     /// channel from this key or not at all.
     ///
-    /// The socket is created `0600` wherever it goes, which is the whole of
-    /// the channel's protection once the path may sit outside a directory
-    /// only this user can reach.
+    /// The socket is created `0600` wherever it goes, which a derived path
+    /// got from the directory it sat under and a told path may not.
     ///
     /// Per user, so it cannot be what two simultaneous `bdi` runs differ by —
     /// both read this file and derive this path. `--socket` is what one of

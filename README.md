@@ -380,9 +380,10 @@ belongs in the config:
 socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
 ```
 
-`--socket` overrides the key. Wherever the socket goes it is created `0600`,
-which is the whole of the channel's protection — a path you name may sit
-somewhere any user can walk through, where `$XDG_RUNTIME_DIR` could not.
+`--socket` overrides the key. Wherever the socket goes it is created `0600`.
+That is worth knowing for a path you name rather than for the default:
+`$XDG_RUNTIME_DIR` is a directory no other user can reach, and a path you name
+may sit somewhere any of them can walk through.
 
 A path already holding something that is not a socket is refused, and what is
 there is left alone. `bdi` clears away the socket a crashed run left behind,

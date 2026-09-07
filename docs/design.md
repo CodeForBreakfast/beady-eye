@@ -1489,9 +1489,10 @@ a head hash, someone typing the line.
 **The socket.** A stream socket created mode `0600`, at
 `$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless the run is told a path — by
 `[changes] socket` in the config, or by `--socket` for one run. The mode is
-what makes it this user's alone: a derived path sat under a directory the
-session owned, which needed no privilege to create in and no other user could
-reach, but a told path may sit anywhere and `/tmp` is world-traversable. It is
+set on every run rather than left to where the socket sits: a derived path sat
+under a directory the session owned, which needed no privilege to create in
+and no other user could reach, but a told path may sit anywhere and `/tmp` is
+world-traversable. It is
 told rather than derived for two reasons. A path derived per session is one
 path, so a second `bdi` beside a first is refused the channel and polls for the
 rest of its life — the normal case wherever one person runs more than one. And

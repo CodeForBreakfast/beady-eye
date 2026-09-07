@@ -24,10 +24,9 @@ use std::{fmt, fs, thread};
 /// the socket goes when nothing tells `bdi` where to put it.
 ///
 /// A directory this session owns is one no other user can reach and none is
-/// needed to create in, so a socket derived under it was protected by where
-/// it sat. A told path can sit anywhere — `/tmp` is world-traversable — so
-/// that is no longer true of every run, and `OWNER_ONLY` is what protects the
-/// channel now.
+/// needed to create in, so where a derived socket sat said who could reach
+/// it. A told path can sit anywhere, so that is no longer a fact about every
+/// run, and [`OWNER_ONLY`] is what each run does for itself.
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 
 /// Where `bdi` puts its socket inside that directory.
@@ -38,10 +37,13 @@ const SOCKET: &str = "beady-eye/changes.sock";
 /// that never ends its line from being read into memory without limit.
 const LONGEST_MESSAGE: usize = 512;
 
-/// Only this user may reach the channel, whatever umask the run was started
-/// with and wherever the run was told to put its socket. The whole of the
-/// channel's protection, since a told path need not sit under a directory
-/// only this user can reach and often will not.
+/// The mode the socket is created with, whatever umask the run was started
+/// under and wherever it was told to put it.
+///
+/// Set on every run rather than left to where the socket sits, because where
+/// it sits stopped being a fact about it: a derived path is under a directory
+/// no other user can reach, and a told path need not be and often will not —
+/// `/tmp` is world-traversable.
 const OWNER_ONLY: u32 = 0o600;
 
 /// What `bdi` makes of one message, and what it says back to whoever sent it.
