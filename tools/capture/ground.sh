@@ -18,6 +18,22 @@ ground=${1:?a directory to lay the ground in}
 atlas="$ground/atlas"
 answers="$ground/bd-answers"
 agents="$ground/herdr-agents"
+
+# Laid fresh, not added to. A previous run leaves its `bd-unanswered` behind,
+# and that file is what `capture.sh` reads to decide the capture was served —
+# so a ground that is only ever `mkdir -p`ed makes one run's unanswered call
+# fail every run after it. An answer file that outlives the fixture it was
+# written for is the quieter half: the shim serves it, the frame draws, and
+# the picture is of a tracker this script no longer describes.
+#
+# Only a directory this script wrote is cleared, and the marker is the last
+# file it writes. The argument is a path from whoever ran it, so mistyping it
+# would otherwise hand `rm -rf` a directory that was never a ground.
+if [ -e "$ground" ] && [ ! -e "$ground/environment" ]; then
+  echo "$ground exists and is not a capture ground: refusing to clear it" >&2
+  exit 1
+fi
+rm -rf "$ground"
 mkdir -p "$atlas" "$answers" "$agents" "$ground/.config/beady-eye"
 
 cat >"$ground/.config/beady-eye/config.toml" <<TOML

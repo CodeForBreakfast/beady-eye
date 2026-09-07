@@ -17,6 +17,7 @@ rows=${1:?rows}
 cols=${2:?columns}
 out=${3:?where to write the raw stream}
 ground=${4:-/tmp/bdi-frame-ground}
+keys=${5:-}
 
 runtime=$(mktemp -d /tmp/bdi-rt.XXXX)
 trap 'rm -rf "$runtime"' EXIT
@@ -26,19 +27,35 @@ trap 'rm -rf "$runtime"' EXIT
 source "$ground/environment"
 export XDG_RUNTIME_DIR="$runtime"
 
+# `%q` because the path is interpolated into a command line a second shell
+# parses: a repository checked out somewhere with a space in it would
+# otherwise be split into words and the capture would run something else.
+printf -v draw 'stty rows %q cols %q; %q' "$rows" "$cols" "$repo/target/release/bdi"
+
 # Keys are typed a moment in, so the first collection has been drawn before
 # anything is pressed: a key that arrives before the first frame is refused.
-# Stdin is held open afterwards rather than closed, because `script` exits
-# when its own stdin ends and would take the frame with it.
-keys=${5:-}
-
+# Then a settle, then `q` — `bdi` leaves on its own that way, rather than the
+# capture waiting out a timeout that is only there as a backstop.
 cd "$ground"
 {
   sleep 3
   printf '%b' "$keys"
-  sleep 3
-} | timeout 15 script -q \
-  -c "stty rows $rows cols $cols; $repo/target/release/bdi" /dev/null >"$out" || true
+  sleep 2
+  printf 'q'
+  sleep 1
+} | timeout 30 script -q -c "$draw" /dev/null >"$out" || true
+
+# The exit status is not the check, and reaching for it is worse than not
+# checking at all: measured here, a healthy capture that the backstop had to
+# kill exits **124**, and a run whose binary does not exist exits **0** with
+# a shell's error message in the file. `frame.py` would replay that into a
+# well-formed picture of nothing. What separates the two is whether `bdi`
+# ever took the terminal, so that is what is asked.
+if ! grep -q $'\033\[?1049h' "$out"; then
+  echo "no frame: bdi never reached the alternate screen. What it wrote:" >&2
+  head -c 400 "$out" >&2
+  exit 1
+fi
 
 if [ -s "$ground/bd-unanswered" ]; then
   echo "bd was asked what the ground has no answer for:" >&2
