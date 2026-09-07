@@ -176,6 +176,9 @@ render = "⏸ waiting"
 [join]
 pane_key = "agent_pane"
 
+[changes]
+socket = "/run/user/1000/beady-eye/changes.sock"
+
 [anomalies]
 stale_claim_days = 30
 
@@ -251,6 +254,15 @@ here and drawn as written.
 ties an agent to its bead exactly, rather than guessing from what the pane calls
 itself.
 
+### `[changes]`
+
+`socket` is where `bdi` listens for something saying a project's work has
+moved. It defaults to `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, and a machine
+with no `$XDG_RUNTIME_DIR` has no channel until this names one. `--socket`
+overrides it for one run, which is how two `bdi` runs on one machine each get
+a channel. *Telling `bdi` where to listen*, under *Telling `bdi` a project
+changed*, has the whole of it.
+
 ### `[anomalies]`
 
 `stale_claim_days` is how long a claim may go untouched before `bdi` flags it.
@@ -279,9 +291,10 @@ reads in full if it has. That probe needs a Dolt server; bd's embedded store
 refuses it, and `bdi` then reads in full on every poll.
 
 Anything that already knows a tracker changed can skip the wait. `bdi` listens
-on `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, a stream socket created mode
-`0600` and removed on exit. Write a project's name as one line; `bdi` reads that
-project now and answers on the same connection:
+on a stream socket, created mode `0600` and removed on exit —
+`$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless it is told otherwise. Write a
+project's name as one line; `bdi` reads that project now and answers on the
+same connection:
 
 | answer | meaning |
 |---|---|
@@ -294,7 +307,8 @@ the writer does. A project that is reported for is never polled — each report
 pushes the next poll past its interval — and one whose producer goes quiet is
 polled again from one interval later. The view degrades to slow, never to stale.
 
-The cheapest producer is a wrapper round `bd` itself:
+The cheapest producer is a wrapper round `bd` itself. It reads the default
+path; a `bdi` told a different one has to be told to the producer too.
 
 ```bash
 bdi_changed() {
@@ -318,8 +332,45 @@ well; `bdi` provides the socket and cannot tell them apart.
 `--poll` and `--no-poll` override every project's `poll` setting for one run,
 which is how to find out whether a suspect producer was the only thing wrong.
 
-If the socket cannot be opened — no `XDG_RUNTIME_DIR`, or another `bdi` already
-listening — `bdi` says so on stderr at startup and polls everything.
+### Telling `bdi` where to listen
+
+The default path is one per login session, so two `bdi` runs on one machine
+derive the same one and the second finds the first already listening. It says
+so on stderr and polls everything for the rest of its life: the socket is asked
+for once at startup and never again, so closing the first run frees the path
+for the next run rather than for this one. Give one of them a socket of its own
+and both have a channel:
+
+```
+$ bdi --socket /run/user/1000/beady-eye/worktree.sock
+```
+
+`--socket` is per run, which is what two simultaneous runs of one binary need:
+a config file is per user, so both of them read the same one.
+
+A machine with no `$XDG_RUNTIME_DIR` — macOS has none — has no path to derive
+and no channel until it is told one. It wants the same path every run, so it
+belongs in the config:
+
+```toml
+[changes]
+socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
+```
+
+`--socket` overrides the key. Wherever the socket goes it is created `0600`,
+and a directory `bdi` makes to put it in is created `0700` — a directory
+already there is left as it stands. Both are worth knowing for a path you name
+rather than for the default: `$XDG_RUNTIME_DIR` is a directory no other user
+can reach, and a path you name may sit somewhere any of them can walk through.
+
+A path already holding something that is not a socket is refused, and what is
+there is left alone. `bdi` clears away the socket a crashed run left behind,
+and a name one keystroke from a file you need would otherwise be cleared away
+the same way.
+
+If the socket still cannot be opened — no path to put it at, or another `bdi`
+already listening on the one it has — `bdi` says so on stderr at startup, names
+the remedy, and polls everything.
 
 ## What it needs
 

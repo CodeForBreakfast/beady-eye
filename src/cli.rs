@@ -14,6 +14,7 @@ use clap::Parser;
 use crate::app::Asked;
 use crate::collect::agents::Agents;
 use crate::collect::bd;
+use crate::collect::changes;
 use crate::collect::discovery;
 use crate::collect::herdr;
 use crate::collect::run::{RealRunner, Runner};
@@ -74,6 +75,25 @@ struct Cli {
     /// Poll no project this run, whatever the config says about each.
     #[arg(long = "no-poll")]
     no_poll: bool,
+
+    /// Listen for reports that a project's work has moved on this socket,
+    /// rather than the one the config names or the one under
+    /// $XDG_RUNTIME_DIR. A second bdi on one machine needs this to have a
+    /// channel of its own.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+/// What this run was told about where to listen, over what its config says.
+/// Nothing where neither said, which leaves the path to be derived.
+///
+/// A run-level override as well as a config key for the reason `--poll` has
+/// one, and a sharper one: the config file is per user, so two `bdi`s reading
+/// it are told one path and the second is refused the channel. That is the
+/// normal case here rather than an edge — a run in a worktree beside a run in
+/// the checkout — and it is the whole of why a key alone would not do.
+fn told_to_listen_on(cli: &Cli, cfg: &Config) -> Option<PathBuf> {
+    cli.socket.clone().or_else(|| cfg.changes.socket.clone())
 }
 
 /// What this run said about polling, over what its config says about each
@@ -209,6 +229,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // the reader writes after it, so this is the one that says what the
     // first frame draws.
     let started_on = cfg.clone();
+    // Settled here, where the command line and the config are both in hand.
+    // The socket is asked for once, so a config the reader writes later
+    // cannot move it, and nothing below this line reads the path again.
+    let listening_on = changes::where_writers_find_bdi(told_to_listen_on(&cli, &cfg));
     let polling = Polling::asked_for(&cli);
     // Asked again whenever the reader writes a config, so the set of
     // projects that poll is the set the file names. The command line is what
@@ -264,6 +288,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         filter,
         arms,
         agents,
+        listening_on,
         Box::new(move |asked| match asked {
             // Nothing is drawn for a config the reader has written: what it
             // changes is what every read after it reads, and the loop asks
@@ -1035,6 +1060,51 @@ detached
             Some(every)
         );
         assert_eq!(Polling::Nothing.after_a_read(&polled, every), None);
+    }
+
+    /// A config file is per user, so both `bdi`s in the case this exists for
+    /// read the same one. The flag is what one of them differs by, and it has
+    /// to win outright for that to be worth anything.
+    #[test]
+    fn the_socket_this_run_was_told_outranks_the_one_its_config_names() {
+        let configured = a_config_listening_on(Some("/run/user/1000/first.sock"));
+
+        assert_eq!(
+            told_to_listen_on(
+                &Cli::parse_from(["bdi", "--socket", "/run/user/1000/second.sock"]),
+                &configured
+            ),
+            Some(PathBuf::from("/run/user/1000/second.sock"))
+        );
+    }
+
+    /// A machine that needs the same path every run — one with no runtime
+    /// directory to derive from — says so once in the file rather than in
+    /// every invocation.
+    #[test]
+    fn a_run_that_says_nothing_listens_where_its_config_says() {
+        let configured = a_config_listening_on(Some("/var/folders/T/bdi.sock"));
+
+        assert_eq!(
+            told_to_listen_on(&Cli::parse_from(["bdi"]), &configured),
+            Some(PathBuf::from("/var/folders/T/bdi.sock"))
+        );
+    }
+
+    /// Told by neither, nothing is told at all, and the path falls to
+    /// `changes::where_writers_find_bdi` to derive as it always has.
+    #[test]
+    fn a_run_neither_told_nor_configured_is_told_nothing() {
+        assert_eq!(
+            told_to_listen_on(&Cli::parse_from(["bdi"]), &a_config_listening_on(None)),
+            None
+        );
+    }
+
+    fn a_config_listening_on(socket: Option<&str>) -> Config {
+        let mut cfg = Config::naming(Vec::new());
+        cfg.changes.socket = socket.map(PathBuf::from);
+        cfg
     }
 
     fn a_project(poll: bool) -> crate::config::Project {

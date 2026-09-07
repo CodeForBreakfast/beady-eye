@@ -13,16 +13,20 @@
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::{fmt, fs, thread};
 
-/// The variable naming the directory this login session owns. A socket under
-/// it is reachable by this user and no other, which is the whole of the
-/// channel's protection.
+/// The variable naming the directory this login session owns, which is where
+/// the socket goes when nothing tells `bdi` where to put it.
+///
+/// A directory this session owns is one no other user can reach and none is
+/// needed to create in, so where a derived socket sat said who could reach
+/// it. A told path can sit anywhere, so that is no longer a fact about every
+/// run, and [`OWNER_ONLY`] is what each run does for itself.
 const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 
 /// Where `bdi` puts its socket inside that directory.
@@ -33,10 +37,21 @@ const SOCKET: &str = "beady-eye/changes.sock";
 /// that never ends its line from being read into memory without limit.
 const LONGEST_MESSAGE: usize = 512;
 
-/// Only this user may reach the channel, whatever umask the run was started
-/// with. The runtime directory says the same thing; a channel that anything
-/// can write to should not depend on being told twice.
+/// The mode the socket is created with, whatever umask the run was started
+/// under and wherever it was told to put it.
+///
+/// Set on every run rather than left to where the socket sits, because where
+/// it sits stopped being a fact about it: a derived path is under a directory
+/// no other user can reach, and a told path need not be and often will not —
+/// `/tmp` is world-traversable.
 const OWNER_ONLY: u32 = 0o600;
+
+/// The mode of a directory `bdi` makes to put a socket in.
+///
+/// Execute as well as read, since entering is what a directory is for. It
+/// covers the moment between the socket appearing and [`OWNER_ONLY`] being
+/// set on it, which nothing about the socket itself can.
+const ONLY_THIS_USER_MAY_ENTER: u32 = 0o700;
 
 /// What `bdi` makes of one message, and what it says back to whoever sent it.
 ///
@@ -148,13 +163,19 @@ impl Reported {
 /// than fatal.
 #[derive(Debug)]
 pub enum Refused {
-    /// This session owns no runtime directory, so there is nowhere to put a
-    /// socket only this user can reach.
+    /// Nothing told this run where to listen and this session owns no runtime
+    /// directory to put a socket under, so there is no path to open. A
+    /// machine that has no runtime directory at all — macOS — is refused for
+    /// this reason until it is told one.
     NoRuntimeDirectory,
     /// Another `bdi` is listening there already, so this one has the channel
-    /// only when that one lets it go. The reader's remedy, and the only
-    /// refusal here that has one.
+    /// only when that one lets it go — or when one of them is told a
+    /// different path.
     AlreadyListening(PathBuf),
+    /// Something that is not a socket is already at the path, so the path is
+    /// not this run's to take. Reachable only where a run was told where to
+    /// listen: a derived path names a file `bdi` puts there itself.
+    NotASocket(PathBuf),
     /// The socket could not be made, or could not be made this user's alone.
     Unopenable(PathBuf, std::io::Error),
 }
@@ -166,17 +187,26 @@ impl fmt::Display for Refused {
             "nothing can tell bdi a project changed, so every project is polled: "
         )?;
         match self {
+            // The refusal a machine can be in for ever, so the one whose
+            // remedy has to travel with it. A reader here has no runtime
+            // directory to make appear and nothing to close, and until they
+            // are told the path exists the sentence reads as a verdict on
+            // their machine rather than as something to set. Both ways of
+            // telling it, because they answer different questions: the key
+            // is what a Mac wants every run, the flag is what a second `bdi`
+            // beside a first wants once.
             Refused::NoRuntimeDirectory => {
                 write!(
                     f,
-                    "this session has no {RUNTIME_DIRECTORY} to put the socket in"
+                    "this session has no {RUNTIME_DIRECTORY} to put the socket in — name a path with --socket, or with socket under [changes] in the config, and bdi listens there"
                 )
             }
-            // The one refusal with a remedy, so the one that says how to
-            // reach it. The foot can name the cause and no more; naming a
-            // process is a thing to be done here, where there is room for
-            // the path and for a way of asking who holds it that is live
-            // when the reader asks rather than as old as this line.
+            // The one refusal a reader answers by closing something, so the
+            // one that says how to find what to close. The foot can name the
+            // cause and no more; naming a process is a thing to be done here,
+            // where there is room for the path and for a way of asking who
+            // holds it that is live when the reader asks rather than as old
+            // as this line.
             //
             // The restart is half the remedy and not a flourish. `wire` asks
             // for the socket once, before the screen opens, and never binds
@@ -198,6 +228,18 @@ impl fmt::Display for Refused {
                     at.display()
                 )
             }
+            // The remedy is a different path, and which path is the reader's
+            // to choose — so what this owes them is what is in the way. A
+            // reader who typed one character wrong recognises the name and
+            // needs nothing else; one who meant it learns that `bdi` will not
+            // take the file, which is the answer either way.
+            Refused::NotASocket(at) => {
+                write!(
+                    f,
+                    "{} is not a socket and bdi will not take it — name another path with --socket, or with socket under [changes] in the config",
+                    at.display()
+                )
+            }
             Refused::Unopenable(at, why) => {
                 write!(f, "{} could not be opened ({why})", at.display())
             }
@@ -211,22 +253,57 @@ impl fmt::Display for Refused {
 /// is the run that clears it away and the next one has nothing to reclaim.
 pub struct Socket {
     at: PathBuf,
+    /// The file this run bound, so the one it clears away is that file and
+    /// not whatever holds the name by then.
+    bound: Option<File>,
+}
+
+/// Which file a name holds, as the filesystem tells them apart. Nothing where
+/// the name holds nothing, or holds something that cannot be read.
+///
+/// Asking narrows the window rather than closing it: in a directory other
+/// people may write to, the name can change hands between the answer and
+/// whatever is done with it, and no unlink takes an identity to check
+/// against. What it buys is the direction it is wrong in — every case it
+/// catches and every case it cannot read leave the file alone, and the only
+/// cost of leaving a socket of ours behind is that the next run reclaims it.
+type File = (u64, u64);
+
+fn file_at(named: &Path) -> Option<File> {
+    fs::symlink_metadata(named)
+        .ok()
+        .map(|what| (what.dev(), what.ino()))
 }
 
 impl Drop for Socket {
+    /// Only where the name still holds the file this run bound. A told path
+    /// can sit in a directory other people may write to, so the socket can be
+    /// unlinked and the name given to something else while `bdi` is up —
+    /// and removing that on the way out is a reader's file gone, exactly as
+    /// reclaiming it would have been at the other end of the run.
+    ///
+    /// Leaving one behind instead costs nothing: a socket of ours that
+    /// nothing is listening on is what the next run reclaims.
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.at);
+        if file_at(&self.at) == self.bound {
+            let _ = fs::remove_file(&self.at);
+        }
     }
 }
 
-/// Where a writer finds `bdi`, or nothing where this session owns no runtime
-/// directory.
-pub fn where_writers_find_bdi() -> Option<PathBuf> {
-    under(
-        std::env::var_os(RUNTIME_DIRECTORY)
-            .map(PathBuf::from)
-            .as_deref(),
-    )
+/// Where a writer finds `bdi`: the path this run was told to listen on, or
+/// the one under the directory this session owns where it was told none.
+///
+/// Nothing where neither, which is the one way left to have nowhere to put a
+/// socket and is what [`Refused::NoRuntimeDirectory`] reports.
+pub fn where_writers_find_bdi(told: Option<PathBuf>) -> Option<PathBuf> {
+    told.or_else(|| {
+        under(
+            std::env::var_os(RUNTIME_DIRECTORY)
+                .map(PathBuf::from)
+                .as_deref(),
+        )
+    })
 }
 
 fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
@@ -242,16 +319,32 @@ pub fn listen(
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
     let listener = bind(&at)?;
+    // Read before anything else this run does, so the name has had as little
+    // time as it can to change hands. It cannot be read from the listener
+    // instead: a bound socket's descriptor stats as its own inode on sockfs,
+    // which is a different device from the directory entry the name is.
+    let bound = file_at(&at);
 
     let reported = reported.clone();
     thread::spawn(move || accept(&listener, &reported, &changed));
 
-    Ok(Socket { at })
+    Ok(Socket { at, bound })
 }
 
 fn bind(at: &Path) -> Result<UnixListener, Refused> {
     if let Some(directory) = at.parent() {
-        fs::create_dir_all(directory).map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
+        // Made this user's own from the moment it exists, rather than left to
+        // umask and narrowed afterwards. A socket is connectable the instant
+        // `bind` returns and takes its mode from umask until the line below
+        // changes it, so a directory nobody else may enter is what covers
+        // that. It reaches only directories this run makes: `recursive` takes
+        // one that is already there as it stands, which is right — an
+        // existing directory is somebody's, and how it is set is theirs.
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(ONLY_THIS_USER_MAY_ENTER)
+            .create(directory)
+            .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
     }
 
     let listener = match UnixListener::bind(at) {
@@ -270,13 +363,32 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
 /// that crashed — a `UnixListener` leaves its file behind when its process
 /// goes. Connecting tells them apart: a live listener accepts, and a file
 /// nothing is listening on refuses.
+///
+/// Anything that is not a socket is neither, and removing it is how a
+/// mistyped path costs a reader a file. `bind` answers *address already in
+/// use* for every kind of thing in the way, and a `connect` to a regular file
+/// is refused exactly as a dead socket's is — so what is there has to be
+/// looked at rather than inferred from either of them.
 fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
     if UnixStream::connect(at).is_ok() {
         return Err(Refused::AlreadyListening(at.to_path_buf()));
     }
 
+    if !is_a_socket(at) {
+        return Err(Refused::NotASocket(at.to_path_buf()));
+    }
+
     fs::remove_file(at).map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
     UnixListener::bind(at).map_err(|why| Refused::Unopenable(at.to_path_buf(), why))
+}
+
+/// Whether the path holds a socket, as it stands now.
+///
+/// A path that cannot be read at all is not one to remove either, so it
+/// answers no: the caller refuses, and the reader is told what stood in the
+/// way rather than losing it.
+fn is_a_socket(at: &Path) -> bool {
+    fs::symlink_metadata(at).is_ok_and(|what| what.file_type().is_socket())
 }
 
 /// Take writers until the socket stops giving them.
@@ -706,6 +818,74 @@ mod tests {
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
     }
 
+    /// A socket is connectable the instant `bind` returns and wears whatever
+    /// umask gave it until its mode is set, so nothing about the socket
+    /// itself covers that moment. The directory does, for as long as it is
+    /// one this run made.
+    #[test]
+    fn the_directory_bdi_makes_for_its_socket_is_this_users_own() {
+        let at = a_socket_path("directory-mode");
+        let (_socket, _changes) = open(&at, &watching(["atlas"]));
+
+        let directory = at.parent().expect("the socket is in a directory");
+        let mode = std::fs::metadata(directory)
+            .expect("the directory bdi made")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(
+            mode, ONLY_THIS_USER_MAY_ENTER,
+            "nobody else may enter the directory bdi made to put its socket in"
+        );
+    }
+
+    /// A told path may sit in a directory other people can write to, so what
+    /// holds the name when a run ends need not be what that run bound.
+    /// Removing it then is the same file loss reclaiming would have been, at
+    /// the other end of the run.
+    #[test]
+    fn a_file_that_replaced_the_socket_under_a_run_outlives_it() {
+        let at = a_socket_path("replaced-socket");
+        let (socket, _changes) = open(&at, &watching(["atlas"]));
+
+        std::fs::remove_file(&at).expect("somebody else takes the name");
+        std::fs::write(&at, "what they put there").expect("and leaves their own file at it");
+
+        drop(socket);
+
+        assert_eq!(
+            std::fs::read_to_string(&at).ok().as_deref(),
+            Some("what they put there"),
+            "the name no longer holds the socket this run bound, so it is not this run's to clear"
+        );
+    }
+
+    /// A path a run is told is a path a person typed, and one keystroke is
+    /// all that separates the name of a socket from the name of a file they
+    /// need. What is there is neither a live `bdi` nor a crashed one's
+    /// litter, so it is not `bdi`'s to clear away to make room.
+    #[test]
+    fn a_path_holding_something_that_is_not_a_socket_is_left_where_it_is() {
+        let at = a_socket_path("not-a-socket");
+        std::fs::create_dir_all(at.parent().expect("the socket is in a directory"))
+            .expect("a directory to put the socket in");
+        std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
+
+        let (changed, _changes) = mpsc::channel();
+        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+
+        assert!(
+            matches!(refused, Err(Refused::NotASocket(_))),
+            "a path holding something else is refused for what is there"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&at).ok().as_deref(),
+            Some("what the reader meant to keep"),
+            "the file is still the reader's"
+        );
+    }
+
     /// Two `bdi`s in one session is a different thing from a crashed one, and
     /// stealing the socket would leave the live one deaf.
     #[test]
@@ -765,6 +945,21 @@ mod tests {
         assert!(said.contains("restart bdi"), "{said}");
     }
 
+    /// A reader with no runtime directory cannot make one appear and has
+    /// nothing to close, so without the remedy the line is a verdict on their
+    /// machine. Both ways of naming a path are asserted because they answer
+    /// different questions and a reader arrives with one of them: a Mac wants
+    /// the key on every run, a second `bdi` beside a first wants the flag
+    /// once.
+    #[test]
+    fn the_line_for_a_session_that_owns_no_directory_says_how_to_name_a_path() {
+        let said = Refused::NoRuntimeDirectory.to_string();
+
+        assert!(said.contains(RUNTIME_DIRECTORY), "{said}");
+        assert!(said.contains("--socket"), "{said}");
+        assert!(said.contains("socket under [changes]"), "{said}");
+    }
+
     #[test]
     fn the_socket_goes_with_the_run_that_made_it() {
         let at = a_socket_path("removed-on-exit");
@@ -776,6 +971,12 @@ mod tests {
         assert!(!at.exists(), "the next run has nothing to reclaim");
     }
 
+    /// Told nothing, `bdi` listens where it has always listened, so a run
+    /// with no config keeps the path every producer already written against
+    /// it uses.
+    /// Told nothing, `bdi` listens where it has always listened, so a run
+    /// with no config keeps the path every producer already written against
+    /// it uses.
     #[test]
     fn writers_find_bdi_under_the_directory_the_session_owns() {
         let socket = under(Some(Path::new("/run/user/1000")));
@@ -785,5 +986,17 @@ mod tests {
             Some(PathBuf::from("/run/user/1000/beady-eye/changes.sock"))
         );
         assert_eq!(under(None), None);
+    }
+
+    /// Told where to listen, `bdi` listens there, and what the session owns
+    /// is not consulted at all — which is what makes this deterministic
+    /// wherever it runs. That is what lets two `bdi`s in one session each
+    /// have a channel, and it is the only way a machine with no runtime
+    /// directory has one.
+    #[test]
+    fn a_run_told_where_to_listen_listens_there() {
+        let told = PathBuf::from("/var/folders/T/bdi/changes.sock");
+
+        assert_eq!(where_writers_find_bdi(Some(told.clone())), Some(told));
     }
 }

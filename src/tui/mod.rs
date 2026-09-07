@@ -3,6 +3,7 @@
 //! One concern, and it is an ordering: what `bdi` starts, in the order it
 //! has to start it in. `run` below says why that order is the one it is.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -87,6 +88,7 @@ pub fn run(
     filter: Filter,
     arms: Arming,
     agents: Arc<dyn Agents>,
+    listening_on: Option<PathBuf>,
     collect: Collecting,
     reload: Option<Reload>,
 ) -> anyhow::Result<()> {
@@ -116,8 +118,13 @@ pub fn run(
     let reported = Reported::watching(projects);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, from_the_wiring) =
-        wire(reported.clone(), agents, collect, asked_to_stop);
+    let (events, ask, panes, _socket, from_the_wiring) = wire(
+        reported.clone(),
+        agents,
+        listening_on,
+        collect,
+        asked_to_stop,
+    );
     // Only this process's own, and only the wiring's: what settling the config
     // could not do is on the snapshot, where both mouths read it.
     let at_startup: Vec<Notice> = from_the_wiring.into_iter().collect();
