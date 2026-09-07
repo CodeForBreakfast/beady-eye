@@ -374,8 +374,42 @@ the remedy, and polls everything.
 
 ## What it needs
 
+**Linux or macOS.** `bdi` listens on a unix socket and waits on unix signals,
+so those are the two platforms it runs on. CI builds and tests on Linux; macOS
+is built and tested by hand.
+
+macOS has no `$XDG_RUNTIME_DIR`, so the channel that tells `bdi` a project
+changed has nowhere to derive a socket from and has to be given a path: the
+`[changes]` key, or `--socket` for one run. Until it has one, a Mac polls every
+project, which is slower and never wrong. The key and the flag both arrived
+after `v0.1.0`, which takes neither, so a Mac on the released build polls and
+has no path it can be given. *Telling `bdi` where to listen* has the paths.
+
+**A terminal that honours OSC 52, to copy with `y`.** The copy is that escape
+sequence and nothing else, which is what carries it through ssh and a
+multiplexer. A terminal that does not honour it drops the sequence and tells
+nobody: the foot says *copied* and the clipboard is unchanged. Apple's
+Terminal.app is one of those. Nothing else on the screen needs it.
+
 **bd 1.1.0 or newer.** An older bd is reported as such on the project's line,
-rather than as a tracker that cannot answer.
+rather than as a tracker that cannot answer. A packaged bd is not always
+current: nixpkgs' `beads` was under this floor on current stable and on
+unstable alike, read on 2026-09-07. Check the version yours reports.
+
+**A tracker bd can open, server or embedded.** `bdi` speaks to no database; it
+asks bd, so what it reads is what bd reads. A tracker on a Dolt server
+authenticates, and the password reaches bd in `BEADS_DOLT_PASSWORD` — from the
+shell `bdi` was started in, or from that project's `credential_command`. The
+store `bd init` makes is embedded Dolt, authenticates to nothing, and needs
+neither.
+
+The two part company over the cheap question of whether anything moved, which
+is a `bd sql` statement the embedded store refuses. `bdi` learns that from the
+first refusal of a run and reads such a tracker in full on every poll instead.
+That is slower and never wrong, and it shows against a tracker being written
+hard: `bdi`'s read waits behind the writes rather than either side failing, and
+a read taking longer than `unanswered_after_seconds` is reported as a tracker
+that has stopped answering.
 
 **Each tracker read by its own bd.** `bdi` never writes to a tracker, but bd
 does: on finding itself newer than the bd that last opened a tracker, bd
