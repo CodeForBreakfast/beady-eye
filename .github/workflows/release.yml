@@ -171,16 +171,32 @@ jobs:
       # through the installer's registry to a weekly channel, which is an
       # unpinned dependency of every release.
       - name: announce the release
-        # Every asset is named rather than globbed, so a Release cannot be
-        # announced missing one of them: a pattern that matches nothing leaves
-        # `gh` creating the Release with whatever it found.
+        # Two commands that can each be run again, rather than one create
+        # carrying its assets. The atomic form is the one to want and it is
+        # given up on purpose: `gh release create` refuses a tag it has already
+        # announced, so a create that succeeded with an upload that did not
+        # would leave a Release the from=announce repair could not finish. What
+        # this costs instead is a Release briefly without its binaries during a
+        # run that is going well, and the next command closes that. Seconds
+        # something clears beat a state nothing clears.
+        #
+        # The guard is also what keeps a repair from generating release notes
+        # over the ones somebody has already read.
+        #
+        # Every asset is named rather than globbed, so an upload cannot quietly
+        # leave one out: a pattern matching nothing uploads nothing and says
+        # the step passed.
         run: |
-          nix run --inputs-from . nixpkgs#gh -- release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+          gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
             dist/bdi-aarch64-apple-darwin \
             dist/bdi-aarch64-apple-darwin.sha256 \
             dist/bdi-x86_64-apple-darwin \
-            dist/bdi-x86_64-apple-darwin.sha256
+            dist/bdi-x86_64-apple-darwin.sha256 \
+            --clobber
         env:
           GH_TOKEN: ${{ github.token }}
