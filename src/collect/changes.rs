@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
@@ -163,6 +163,10 @@ pub enum Refused {
     /// only when that one lets it go — or when one of them is told a
     /// different path.
     AlreadyListening(PathBuf),
+    /// Something that is not a socket is already at the path, so the path is
+    /// not this run's to take. Reachable only where a run was told where to
+    /// listen: a derived path names a file `bdi` puts there itself.
+    NotASocket(PathBuf),
     /// The socket could not be made, or could not be made this user's alone.
     Unopenable(PathBuf, std::io::Error),
 }
@@ -212,6 +216,18 @@ impl fmt::Display for Refused {
                 write!(
                     f,
                     "another bdi is listening on {}; ss -lxp or lsof -U names which — close it and restart bdi to get the channel",
+                    at.display()
+                )
+            }
+            // The remedy is a different path, and which path is the reader's
+            // to choose — so what this owes them is what is in the way. A
+            // reader who typed one character wrong recognises the name and
+            // needs nothing else; one who meant it learns that `bdi` will not
+            // take the file, which is the answer either way.
+            Refused::NotASocket(at) => {
+                write!(
+                    f,
+                    "{} is not a socket and bdi will not take it — name another path with --socket, or with socket under [changes] in the config",
                     at.display()
                 )
             }
@@ -292,13 +308,32 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
 /// that crashed — a `UnixListener` leaves its file behind when its process
 /// goes. Connecting tells them apart: a live listener accepts, and a file
 /// nothing is listening on refuses.
+///
+/// Anything that is not a socket is neither, and removing it is how a
+/// mistyped path costs a reader a file. `bind` answers *address already in
+/// use* for every kind of thing in the way, and a `connect` to a regular file
+/// is refused exactly as a dead socket's is — so what is there has to be
+/// looked at rather than inferred from either of them.
 fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
     if UnixStream::connect(at).is_ok() {
         return Err(Refused::AlreadyListening(at.to_path_buf()));
     }
 
+    if !is_a_socket(at) {
+        return Err(Refused::NotASocket(at.to_path_buf()));
+    }
+
     fs::remove_file(at).map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
     UnixListener::bind(at).map_err(|why| Refused::Unopenable(at.to_path_buf(), why))
+}
+
+/// Whether the path holds a socket, as it stands now.
+///
+/// A path that cannot be read at all is not one to remove either, so it
+/// answers no: the caller refuses, and the reader is told what stood in the
+/// way rather than losing it.
+fn is_a_socket(at: &Path) -> bool {
+    fs::symlink_metadata(at).is_ok_and(|what| what.file_type().is_socket())
 }
 
 /// Take writers until the socket stops giving them.
@@ -726,6 +761,31 @@ mod tests {
 
         say(&at, &[("atlas\n", "ok atlas")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
+    }
+
+    /// A path a run is told is a path a person typed, and one keystroke is
+    /// all that separates the name of a socket from the name of a file they
+    /// need. What is there is neither a live `bdi` nor a crashed one's
+    /// litter, so it is not `bdi`'s to clear away to make room.
+    #[test]
+    fn a_path_holding_something_that_is_not_a_socket_is_left_where_it_is() {
+        let at = a_socket_path("not-a-socket");
+        std::fs::create_dir_all(at.parent().expect("the socket is in a directory"))
+            .expect("a directory to put the socket in");
+        std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
+
+        let (changed, _changes) = mpsc::channel();
+        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+
+        assert!(
+            matches!(refused, Err(Refused::NotASocket(_))),
+            "a path holding something else is refused for what is there"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&at).ok().as_deref(),
+            Some("what the reader meant to keep"),
+            "the file is still the reader's"
+        );
     }
 
     /// Two `bdi`s in one session is a different thing from a crashed one, and

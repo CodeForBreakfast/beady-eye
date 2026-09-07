@@ -384,6 +384,11 @@ socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
 which is the whole of the channel's protection — a path you name may sit
 somewhere any user can walk through, where `$XDG_RUNTIME_DIR` could not.
 
+A path already holding something that is not a socket is refused, and what is
+there is left alone. `bdi` clears away the socket a crashed run left behind,
+and a name one keystroke from a file you need would otherwise be cleared away
+the same way.
+
 If the socket still cannot be opened — no path to put it at, or another `bdi`
 already listening on the one it has — `bdi` says so on stderr at startup, names
 the remedy, and polls everything.

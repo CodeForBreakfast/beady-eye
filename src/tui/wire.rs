@@ -46,19 +46,19 @@ fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<
 /// Which refusal this was, in the one form the foot can draw.
 ///
 /// Only one of them is answered by closing something, and it is the one that
-/// names a process. A session with no runtime directory has nothing to close
-/// and is answered by naming a path instead, which is a restart rather than
-/// something to do while looking at the screen — so that remedy rides the
-/// stderr line, which has room for the flag and the key that carry it. The
-/// cause is carried through where the reader can act on it without leaving
-/// the view and dropped where they cannot, rather than every refusal arriving
-/// as the same sentence about being polled.
+/// names a process. The rest are answered by naming a different path, which
+/// is a restart rather than something to do while looking at the screen — so
+/// those remedies ride the stderr line, which has room for the flag and the
+/// key that carry them, and for whatever is standing in the way. The cause is
+/// carried through where the reader can act on it without leaving the view
+/// and dropped where they cannot, rather than every refusal arriving as the
+/// same sentence about being polled.
 fn said_at_the_foot(refused: &changes::Refused) -> Notice {
     match refused {
         changes::Refused::AlreadyListening(_) => Notice::AnotherBdiHadTheInboundChannel,
-        changes::Refused::NoRuntimeDirectory | changes::Refused::Unopenable(_, _) => {
-            Notice::NoInboundChannel
-        }
+        changes::Refused::NoRuntimeDirectory
+        | changes::Refused::NotASocket(_)
+        | changes::Refused::Unopenable(_, _) => Notice::NoInboundChannel,
     }
 }
 
