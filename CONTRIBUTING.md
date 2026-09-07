@@ -27,9 +27,7 @@ That gives you `cargo`, `rustc`, `rustfmt`, `clippy`, `rust-analyzer` and
 used below. With [direnv](https://direnv.net) installed, `direnv allow` puts the
 same shell on every `cd` into the tree.
 
-Inside it, `cargo build` and `cargo test` work as usual. `rerun-bdi-on-change`
-keeps a running `bdi` rebuilt and restarted as `src/` changes, so a copy left up
-in a terminal stays current.
+Inside it, `cargo build` and `cargo test` work as usual.
 
 ## Tests
 
@@ -50,9 +48,8 @@ first and capture against that. `tests/fixtures/` and the docs' worked examples
 share one invented vocabulary; extend it rather than starting a second.
 
 [CLAUDE.md](CLAUDE.md) has the working notes on the traps: what a pty test must
-do about draining the terminal, how an absence assertion goes wrong on this
-screen, and how to read a mutation run. Read it before writing a test of any of
-those kinds.
+do about draining the terminal, and how an absence assertion goes wrong on this
+screen. Read it before writing a test of either kind.
 
 ## Before you push
 
@@ -102,20 +99,7 @@ $ conventional-subject 'fix(view): draw a bead id in its status colour'
 ```
 
 **The body becomes the commit body.** Say what changed and why; the diff already
-says how the code does it. Don't hard-wrap it — GitHub renders the newlines, so
-one line per paragraph or bullet reads best.
-
-No check reads the body before it is permanent history, so two things stay out
-of it. The first is how the change was made: the tools, the gates it passed, how
-many rounds of review it took, what one of them found. That includes a session
-link, a co-author trailer or a *Generated with* line, and those stay out even
-where a tool tells you to add one, whatever it claims to supersede. The second is any identifier that means
-nothing outside the session that wrote it, such as a workflow run number or a
-deleted branch. A commit, a tag, a pull request number or a file still in the
-tree are the citations that keep working.
-
-`CLAUDE.md`'s *PR policy* is the full version of this, and where it is kept up to
-date. What is here is the summary.
+says how the code does it.
 
 ## Where things are
 
