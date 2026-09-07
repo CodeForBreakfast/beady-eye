@@ -57,6 +57,33 @@ if ! grep -q $'\033\[?1049h' "$out"; then
   exit 1
 fi
 
+# Taking the terminal is not drawing on it. `bdi` can reach the screen and
+# then die — a panic, or an exit down a path that returns early — and leave a
+# stream that replays into a blank or half-drawn picture over the committed
+# one. The change that breaks the draw is exactly the change that sends
+# somebody to `regenerate.sh`, so this is the likely case rather than the
+# unlucky one.
+if grep -qa 'panicked at' "$out"; then
+  echo "no frame: bdi panicked. What it said:" >&2
+  grep -a -m1 -A3 'panicked at' "$out" >&2
+  exit 1
+fi
+
+# The key row is asked for because it is the last of the frame's furniture to
+# be drawn, so a stream carrying it is one where the draw ran to the end. It
+# closes the notice the header describes as well: `status_bar` yields notices
+# last, so a notice at these widths takes the key row off the screen rather
+# than adding a line, and the picture silently loses a row.
+#
+# One word rather than the phrase the row reads as, because crossterm moves
+# the cursor between them: the row arrives as `[26;27Hq[26;29Hquit`, and
+# nothing a person can see on the screen is contiguous in the stream.
+if ! grep -qa 'quit' "$out"; then
+  echo "no frame: bdi took the terminal and drew no key row. What it wrote:" >&2
+  tail -c 400 "$out" >&2
+  exit 1
+fi
+
 if [ -s "$ground/bd-unanswered" ]; then
   echo "bd was asked what the ground has no answer for:" >&2
   cat "$ground/bd-unanswered" >&2
