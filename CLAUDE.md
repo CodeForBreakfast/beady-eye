@@ -257,14 +257,16 @@ a pointer and each resolves to nothing for the person who follows it. A commit,
 a tag, a pull request number, or a file still in the tree are the citations
 that keep working.
 
-Length is a symptom rather than a rule, which is why there is no cap. The
-bodies on `main` mostly run between one and three hundred words; the ones that
-have run past five hundred were carrying the session rather than the change.
-Regenerate the distribution before arguing with that:
+Length is not the signal and there is no cap. A body runs long because the
+change was large or the reasoning behind it was — `31459e7` is 778 words and
+earns them. What makes a body too long is residue, and a body carrying none of
+it is the right length whatever it measures. The distribution, if you want it,
+after a `git fetch` — the local `main` answers for whenever your checkout last
+caught up, and the bodies it drops are the newest ones:
 
-    for c in $(git log --format=%h -20 main); do
+    for c in $(git log --format=%h origin/main); do
       echo "$(git log -1 --format=%b $c | wc -w) $c"
-    done
+    done | sort -rn
 
 `CONTRIBUTING.md` carries the summary of this section, so a change here is a
 change there.

@@ -109,10 +109,10 @@ No check reads the body before it is permanent history, so two things stay out
 of it. The first is how the change was made: the tools, the gates it passed, how
 many rounds of review it took, what one of them found. That includes a session
 link, a co-author trailer or a *Generated with* line, and those stay out even
-where a tool tells you to add one, whatever it claims to supersede. The second is any identifier that means
-nothing outside the session that wrote it, such as a workflow run number or a
-deleted branch. A commit, a tag, a pull request number or a file still in the
-tree are the citations that keep working.
+where a tool tells you to add one, whatever it claims to supersede. The second
+is any identifier that means nothing outside the session that wrote it, such as
+a workflow run number or a deleted branch. A commit, a tag, a pull request
+number or a file still in the tree are the citations that keep working.
 
 `CLAUDE.md`'s *PR policy* is the full version of this, and where it is kept up to
 date. What is here is the summary.
