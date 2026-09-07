@@ -29,8 +29,66 @@ permissions:
   contents: write
 
 jobs:
+  # A Linux runner cannot produce a Mach-O binary, so the Darwin builds are
+  # their own job and the release job waits on them. They run first on purpose:
+  # a Darwin build that fails costs a deleted tag, where anything failing after
+  # `cargo publish` costs a version crates.io will not take back.
+  #
+  # Nothing here is guarded by the `from` input. A resume is a fresh run
+  # holding no artifacts, so a job skipped on one leaves the announcement with
+  # nothing to attach and no way to finish the tag it exists to finish.
+  darwin-binaries:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    # Nothing here writes to the repository; the release job holds that.
+    permissions:
+      contents: read
+    strategy:
+      # Each binary is built on the architecture it is for and run there before
+      # it is handed on, so neither ships without having executed once.
+      # macos-15-intel is the last x86_64 image GitHub offers and it goes in
+      # autumn 2027; cross-compiling that target from an arm64 runner is what
+      # replaces it.
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The runner's own Rust rather than the flake's. What pins the toolchain
+      # this code is tested with is `nix flake check` below; this job compiles
+      # the same locked sources for a platform that check cannot reach, and
+      # installing nix here to substitute a Darwin toolchain would put an
+      # uncached build on the path to `cargo publish`.
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # An unrun binary is what ships broken.
+      - name: the binary runs
+        run: ./target/${{ matrix.target }}/release/bdi --version
+
+      # The checksum sits beside its own binary rather than in one combined
+      # file, so `shasum -a 256 -c` takes the file downloaded next to it.
+      - name: name it for its target and checksum it
+        run: |
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/bdi" "dist/bdi-${{ matrix.target }}"
+          cd dist
+          shasum -a 256 "bdi-${{ matrix.target }}" > "bdi-${{ matrix.target }}.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bdi-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
   release:
     name: publish ${{ github.ref_name }}
+    needs: darwin-binaries
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -92,6 +150,14 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      # Unguarded for the same reason the Darwin jobs are: a resume announces
+      # nothing if this is skipped.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: bdi-*
+          merge-multiple: true
+
       # The announcement, deliberately after the irreversible step. A release
       # exists when this has run: the crate is up, and the tag it names gives
       # the flake output at the same version from the same commit. A tag with
@@ -102,9 +168,31 @@ jobs:
       # through the installer's registry to a weekly channel, which is an
       # unpinned dependency of every release.
       - name: announce the release
+        # Two commands that can each be run again, rather than one create
+        # carrying its assets. The atomic form is the one to want and it is
+        # given up on purpose: `gh release create` refuses a tag it has already
+        # announced, so a create that succeeded with an upload that did not
+        # would leave a Release the from=announce repair could not finish. What
+        # this costs instead is a Release briefly without its binaries during a
+        # run that is going well, and the next command closes that.
+        #
+        # The guard is also what keeps a repair from generating release notes
+        # over the ones somebody has already read.
+        #
+        # Every asset is named rather than globbed, so an upload cannot quietly
+        # leave one out: a pattern matching nothing uploads nothing and says
+        # the step passed.
         run: |
-          nix run --inputs-from . nixpkgs#gh -- release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/bdi-aarch64-apple-darwin \
+            dist/bdi-aarch64-apple-darwin.sha256 \
+            dist/bdi-x86_64-apple-darwin \
+            dist/bdi-x86_64-apple-darwin.sha256 \
+            --clobber
         env:
           GH_TOKEN: ${{ github.token }}
