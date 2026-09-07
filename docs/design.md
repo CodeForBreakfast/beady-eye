@@ -1559,10 +1559,15 @@ better than anybody's at `0777` — so the only owners a directory on the way ma
 have are this user and `root`. `root` is not a concession, since it can reach
 anything on the machine whatever a directory says.
 
-Reading the owner costs `getuid`, and that costs two things. `libc` becomes a
+The user read is the effective one, since that is the user the kernel weighs a
+directory's owner and mode against, and so the user whose answer this walk is
+predicting. They are the same on an ordinary run and part company under a
+setuid wrapper.
+
+Reading the owner costs `geteuid`, and that costs two things. `libc` becomes a
 runtime dependency, where it was a dev-dependency for the pty harness — the
 crate is compiled either way, as signal-hook's own, but what ships now names
-it. And the call is the crate's first `unsafe` block: `getuid` takes no
+it. And the call is the crate's first `unsafe` block: `geteuid` takes no
 arguments, reads no memory and cannot fail, which is the mildest crossing
 available, and nothing in `std` says which user a process is.
 The alternative is a crate wrapping it safely, which trades three lines for a

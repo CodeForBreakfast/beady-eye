@@ -509,11 +509,17 @@ fn directories_on(way: &Path) -> impl Iterator<Item = &Path> {
 /// Whom this run is, which is the only party besides [`THE_SYSTEM`] a
 /// directory on the socket's way down may belong to.
 ///
+/// The *effective* user, because that is the one the kernel weighs a
+/// directory's owner and mode against — so it is the one whose answer this
+/// walk is predicting. It is the real user too on an ordinary run, and the
+/// two part company under a setuid wrapper, where reading the real one would
+/// judge every directory against a user the filesystem is not consulting.
+///
 /// There is no safe `std` call that says which user a process is.
 fn this_user() -> u32 {
-    // SAFETY: `getuid` takes no arguments, reads no memory and is defined to
+    // SAFETY: `geteuid` takes no arguments, reads no memory and is defined to
     // succeed on every unix.
-    unsafe { libc::getuid() }
+    unsafe { libc::geteuid() }
 }
 
 /// Whether somebody other than this user could put their own file at a name
