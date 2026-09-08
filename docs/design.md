@@ -1280,6 +1280,16 @@ environment_command = "nix develop -c"
   refusal needs no parsing where a version string would.
 - **No error text reaches the output verbatim.** bd's failures name the database
   and user; the reason is reported, the raw stderr is not.
+- **`parse` is the one reason that says more than itself**, and what bounds it
+  is where its words come from. A command whose output would not parse is a
+  command that *succeeded*, so there was no stderr for the classification to
+  read and nothing bd wrote about a credential to redact. What it carries is
+  the read `bdi` asked for and the parser's account of `bdi`'s own structs —
+  a shape that did not match, and where in the answer it was. Those two are
+  what let a reader run the read by hand and land on the row that broke it,
+  which is the whole of what anyone can do about an answer that will not
+  parse. The reason alone sends them to a tracker with five reads in it and
+  no way to tell which.
 
 An earlier draft rejected `direnv exec` on two guesses, and both were wrong:
 that it costs a direnv evaluation per call, and that it requires every tracker
@@ -1721,7 +1731,7 @@ name to the socket after any command that wrote something.
     }
   ],
   "hidden_trees": [ { "project": "summit-works", "root": "smt-3pd9k", "title": "…", "reason": "no-live-agent" } ],
-  "failed_projects": [ { "project": "meadow", "tracker": "auth" }, { "project": "orbital", "tracker": "no-environment" } ],
+  "failed_projects": [ { "project": "meadow", "tracker": { "reason": "auth" } }, { "project": "orbital", "tracker": { "reason": "parse", "read": "list", "cause": "invalid type: null, expected a string at line 1 column 25" } } ],
   "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "smt-4kd3p.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": [],
@@ -1755,7 +1765,13 @@ be read, or `root-not-found` where the tracker answered and holds no bead of
 that id — which only a root named in config or on the command line can be,
 since every other root came out of the tracker's own answers. `dangling` and
 `cycles` name ids that are still in `nodes`. `hidden_trees` is never
-empty-by-omission — a filtered tree is reported, not dropped. `failed_projects`
+empty-by-omission — a filtered tree is reported, not dropped. A reason is
+`{ "reason": <kind> }`, tagged inside its own object the way an anomaly's
+`rule` and a conflict's `conflict` are, so every reason reads the same way and
+the ones that know more are found by their extra keys. `parse` is the only one
+that knows more, and it carries `read` and `cause` beside its kind: `read` is
+the bd subcommand whose answer would not parse, and `cause` is the shape that
+did not match and where in the answer it was. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
 Two of those reasons are not about bd, and they are the two ways opening a
 tracker fails. `no-environment` is a project that asked to be read in a captured

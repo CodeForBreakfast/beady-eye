@@ -321,6 +321,7 @@ detached
             kind: FailureKind::Unavailable,
             program: "git".to_string(),
             detail: "git exited 128 for a reason bdi cannot place".to_string(),
+            unreadable: None,
         }
     }
 
@@ -1183,6 +1184,7 @@ path = "/tmp/seat-b/wt/crates/dish"
                 kind: FailureKind::Unavailable,
                 program: "bd".to_string(),
                 detail: "bd exited 1 for a reason bdi cannot place".to_string(),
+                unreadable: None,
             },
         );
 

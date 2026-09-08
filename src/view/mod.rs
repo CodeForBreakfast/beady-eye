@@ -321,6 +321,7 @@ mod tests {
     use crate::collect::run::FailureKind;
     use crate::model::join::JoinSource;
     use crate::model::snapshot::TrackerFailure;
+    use crate::model::types::testing::an_unreadable;
     use chrono::{TimeDelta, TimeZone};
     use pretty_assertions::assert_eq;
 
@@ -411,8 +412,10 @@ mod tests {
                 TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
                 TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
                 TrackerFailure::Unstartable => Some(TrackerFailure::InstalledUnstartable),
-                TrackerFailure::InstalledUnstartable => Some(TrackerFailure::Parse),
-                TrackerFailure::Parse => Some(TrackerFailure::UnknownFlag),
+                TrackerFailure::InstalledUnstartable => {
+                    Some(TrackerFailure::Parse(an_unreadable()))
+                }
+                TrackerFailure::Parse(_) => Some(TrackerFailure::UnknownFlag),
                 TrackerFailure::UnknownFlag => None,
             },
         )

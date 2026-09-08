@@ -444,7 +444,7 @@ impl TreeLayout<'_> {
                 place: Some(root),
                 content: Content::Unread(Unread {
                     root: self.tree.root.clone(),
-                    tracker: self.tree.tracker,
+                    tracker: self.tree.tracker.clone(),
                 }),
             });
             return;

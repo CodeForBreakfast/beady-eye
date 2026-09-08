@@ -313,7 +313,7 @@ fn the_project_asked_for_an_environment_and_got_none(snapshot: &str) -> bool {
         .map(|failed| {
             (
                 failed["project"].as_str().expect("each one is named"),
-                failed["tracker"]
+                failed["tracker"]["reason"]
                     .as_str()
                     .expect("and carries why it could not be read"),
             )

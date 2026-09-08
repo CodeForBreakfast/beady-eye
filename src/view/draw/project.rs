@@ -100,15 +100,15 @@ pub(super) fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fit
         Span::styled(WARNING.to_string(), palette::ATTENTION),
         Span::raw(format!(" {:id_width$}", unread.root)),
     ];
-    let why = match unread.tracker {
+    let why = match &unread.tracker {
         TrackerState::Unreachable(failure) => phrase::tracker_failure(failure),
-        TrackerState::RootNotFound => phrase::root_not_found(),
-        TrackerState::Ok => phrase::root_unread(),
+        TrackerState::RootNotFound => phrase::root_not_found().to_string(),
+        TrackerState::Ok => phrase::root_unread().to_string(),
     };
 
     Fitted::new(
         identity,
-        vec![Span::styled(why.to_string(), palette::ATTENTION)],
+        vec![Span::styled(why, palette::ATTENTION)],
         Vec::new(),
     )
 }

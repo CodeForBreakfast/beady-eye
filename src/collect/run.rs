@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::collect::environment::NEVER_INHERITED;
+use crate::model::types::Unreadable;
 
 /// The variables a child process is given on top of the environment `bdi`
 /// itself runs in; a set value replaces whatever the parent holds.
@@ -60,11 +61,17 @@ pub enum FailureKind {
 /// `detail` is written here and never copied from the command's own stderr:
 /// bd names the database and the user it authenticated as when it fails, and
 /// text that is never kept cannot leak into the output.
+///
+/// `unreadable` is the one thing a failure carries past its classification,
+/// and only a `Parse` has it. Nothing was on stderr for it to have come from:
+/// a command whose output would not parse is a command that succeeded, so
+/// what is described is its stdout and `bdi`'s reading of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunFailure {
     pub kind: FailureKind,
     pub program: String,
     pub detail: String,
+    pub unreadable: Option<Unreadable>,
 }
 
 /// What bd's client says when the server refuses the credential. Measured
@@ -297,6 +304,7 @@ impl RunFailure {
             kind: FailureKind::NotInstalled,
             program: program.to_string(),
             detail: format!("{program} is not installed: {cause}"),
+            unreadable: None,
         }
     }
 
@@ -312,6 +320,7 @@ impl RunFailure {
             kind,
             program: program.to_string(),
             detail: format!("{program} could not be started: {cause}"),
+            unreadable: None,
         }
     }
 
@@ -378,12 +387,31 @@ impl RunFailure {
         }
     }
 
+    /// The read is left blank here and named by `reading`, because the two
+    /// places a parse failure arises know different halves of it. A caller
+    /// deserialising an answer it asked for knows both; the runner decoding
+    /// that answer's bytes was handed a command line rather than the question
+    /// that composed it, and cannot tell which of its arguments was the
+    /// subcommand.
     pub fn parse(program: &str, cause: impl fmt::Display) -> Self {
         Self {
             kind: FailureKind::Parse,
             program: program.to_string(),
             detail: format!("{program} returned output bdi cannot read: {cause}"),
+            unreadable: Some(Unreadable {
+                read: String::new(),
+                cause: cause.to_string(),
+            }),
         }
+    }
+
+    /// Name the read this failure came from. A no-op on every kind but
+    /// `Parse`: nothing else carries anything for it to name.
+    pub fn reading(mut self, read: &str) -> Self {
+        if let Some(unreadable) = self.unreadable.as_mut() {
+            unreadable.read = read.to_string();
+        }
+        self
     }
 
     /// Classify a non-zero exit from what the command wrote to stderr, then
@@ -432,6 +460,7 @@ impl RunFailure {
             kind,
             program: program.to_string(),
             detail,
+            unreadable: None,
         }
     }
 }
@@ -826,6 +855,31 @@ mod tests {
 
         for secret in ["atlas", "db.example.invalid", "Access denied", "1045"] {
             assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
+        }
+    }
+
+    /// And no failure classified from that text carries anything out of it.
+    ///
+    /// `unreadable` is the one thing a failure holds beyond its kind, so it
+    /// is the one place text could reach the screen from. Every failure that
+    /// reads stderr has to arrive without one, whatever was on it — which is
+    /// what makes an answer that would not parse a bounded exception rather
+    /// than a hole in the rule above. That failure never read stderr: the run
+    /// succeeded.
+    #[test]
+    fn no_failure_classified_from_stderr_carries_anything_out_of_it() {
+        for said in [
+            REFUSED,
+            UNREACHABLE,
+            EMBEDDED,
+            NO_SUCH_PANE,
+            PANE_BUSY,
+            UNPLACED,
+        ] {
+            assert!(
+                failing_command(said).unreadable.is_none(),
+                "text on stderr reached a failure's own field: {said:?}"
+            );
         }
     }
 

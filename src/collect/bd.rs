@@ -235,7 +235,9 @@ impl Reader<'_> {
         let named = self.path.to_string_lossy();
         let mut argv = vec!["-C", named.as_ref(), "--readonly"];
         argv.extend_from_slice(subcommand);
-        self.runner.run("bd", &argv, Some(&self.path), &self.env)
+        self.runner
+            .run("bd", &argv, Some(&self.path), &self.env)
+            .map_err(|failure| failure.reading(subcommand[0]))
     }
 
     /// The tracker's Dolt working root: one hash over everything the
@@ -256,11 +258,11 @@ impl Reader<'_> {
     fn working_root(&self) -> Result<String, RunFailure> {
         let out = self.asked(&["sql", "--json", WORKING_ROOT])?;
         let rows: Vec<HashRow> =
-            serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
+            serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e).reading("sql"))?;
         rows.into_iter()
             .next()
             .map(|row| row.h)
-            .ok_or_else(|| RunFailure::parse("bd", "bd sql answered no row"))
+            .ok_or_else(|| RunFailure::parse("bd", "the answer holds no row").reading("sql"))
     }
 
     /// A tracker's wisps, closed ones included.
@@ -311,8 +313,8 @@ impl Tracker for Reader<'_> {
     /// the kind of wrong that reads as right.
     fn all(&self) -> Result<Vec<Bead>, RunFailure> {
         let out = self.asked(&["list", "--all", "--limit", "0", "--json"])?;
-        let mut beads = rows(&out)?;
-        beads.extend(rows(&self.wisps()?)?);
+        let mut beads = rows(&out, "list")?;
+        beads.extend(rows(&self.wisps()?, "query")?);
         Ok(beads)
     }
 
@@ -320,7 +322,10 @@ impl Tracker for Reader<'_> {
     /// it is asked for rather than inferred from status.
     fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
         let out = self.asked(&["ready", "--limit", "0", "--json"])?;
-        Ok(rows(&out)?.into_iter().map(|bead| bead.id).collect())
+        Ok(rows(&out, "ready")?
+            .into_iter()
+            .map(|bead| bead.id)
+            .collect())
     }
 
     /// A dep-tree row carries its tree parent, not its blocker set: a bead
@@ -328,8 +333,8 @@ impl Tracker for Reader<'_> {
     /// nowhere in the output. `bd blocked` takes no limit of its own.
     fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
         let out = self.asked(&["blocked", "--json"])?;
-        let blocked: Vec<BlockedRow> =
-            serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e))?;
+        let blocked: Vec<BlockedRow> = serde_json::from_str(&out)
+            .map_err(|e| RunFailure::parse("bd", e).reading("blocked"))?;
         Ok(blocked
             .into_iter()
             .map(|row| (row.id, row.blocked_by))
@@ -356,9 +361,14 @@ struct HashRow {
 /// The `bd query` expression that selects wisps and nothing else.
 const EPHEMERAL: &str = "ephemeral=true";
 
-/// `bd list`, `bd ready` and `bd query` all answer with the same rows.
-fn rows(out: &str) -> Result<Vec<Bead>, RunFailure> {
-    parse_beads(out).map_err(|e| RunFailure::parse("bd", e))
+/// `bd list`, `bd ready` and `bd query` all answer with the same rows, and
+/// each names itself so a reader is sent back to the one that broke.
+///
+/// The root cause rather than the whole chain: `parse_beads` wraps the
+/// parser's account in a sentence saying the answer was not understood, which
+/// is what the phrase around this already says.
+fn rows(out: &str, read: &str) -> Result<Vec<Bead>, RunFailure> {
+    parse_beads(out).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
 }
 
 #[cfg(test)]
@@ -788,6 +798,7 @@ mod tests {
             kind: FailureKind::Unsupported,
             program: "bd".to_string(),
             detail: "bd cannot run that against this tracker".to_string(),
+            unreadable: None,
         }
     }
 
@@ -798,6 +809,7 @@ mod tests {
             kind: FailureKind::Unavailable,
             program: "bd".to_string(),
             detail: "bd could not reach the tracker".to_string(),
+            unreadable: None,
         }
     }
 
@@ -1154,12 +1166,73 @@ mod tests {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
                 detail: "bd was refused the tracker's credential".to_string(),
+                unreadable: None,
             },
         );
 
         let failure = opened(&runner).all().unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Auth);
+    }
+
+    /// Which read broke and where in its answer, because that is the whole
+    /// of what a reader can do about one: run that read themselves and go to
+    /// the row the parser stopped at. The kind alone sends them to a tracker
+    /// with five reads in it and no way to tell which.
+    #[test]
+    fn a_listing_that_will_not_parse_names_the_read_and_where_it_broke() {
+        let row = r#"[{"id":"atl-1","title":null,"status":"open"}]"#;
+        let runner = FakeRunner::default().with(&spelled(TRACKER_CALL), row);
+
+        let unreadable = opened(&runner)
+            .all()
+            .unwrap_err()
+            .unreadable
+            .expect("a parse failure knows what would not parse");
+
+        assert_eq!(unreadable.read, "list");
+        assert_eq!(
+            unreadable.cause,
+            "invalid type: null, expected a string at line 1 column 27"
+        );
+    }
+
+    /// The wisps are a second read of the same rows, and a reader sent to
+    /// `bd list` for a row `bd query` answered with looks at an answer that
+    /// holds no such row.
+    #[test]
+    fn a_wisp_that_will_not_parse_names_the_read_that_carried_it() {
+        let row = r#"[{"id":"atl-2","title":null,"status":"open"}]"#;
+        let runner = FakeRunner::default()
+            .with(&spelled(TRACKER_CALL), "[]")
+            .with(&spelled(WISP_CALL), row);
+
+        let unreadable = opened(&runner)
+            .all()
+            .unwrap_err()
+            .unreadable
+            .expect("a parse failure knows what would not parse");
+
+        assert_eq!(unreadable.read, "query");
+    }
+
+    /// Bytes that are not UTF-8 refuse before any row is looked at, so the
+    /// read is named by the call that composed the command line rather than
+    /// by the parser.
+    #[test]
+    fn an_answer_that_is_not_text_names_the_read_it_came_from() {
+        let runner = FakeRunner::default().failing(
+            &spelled("blocked --json"),
+            RunFailure::parse("bd", "invalid utf-8 sequence of 1 bytes from index 3"),
+        );
+
+        let unreadable = opened(&runner)
+            .blocked()
+            .unwrap_err()
+            .unreadable
+            .expect("a parse failure knows what would not parse");
+
+        assert_eq!(unreadable.read, "blocked");
     }
 
     #[test]

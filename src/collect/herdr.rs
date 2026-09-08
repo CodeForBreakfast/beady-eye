@@ -144,7 +144,7 @@ impl Agents for Herdr<'_> {
 /// to a tier with no panes in it.
 fn session_list(runner: &dyn Runner) -> Result<Vec<String>, RunFailure> {
     let out = runner.run("herdr", &["session", "list", "--json"], None, &Env::new())?;
-    parse_session_list(&out).map_err(|e| RunFailure::parse("herdr", e))
+    parse_session_list(&out).map_err(|e| RunFailure::parse("herdr", e).reading("session list"))
 }
 
 /// `herdr --session <name> agent list`, which answers with JSON and needs no
@@ -162,7 +162,7 @@ fn agent_list(runner: &dyn Runner, session: &str) -> Result<Vec<Pane>, RunFailur
         None,
         &Env::new(),
     )?;
-    parse_agent_list(session, &out).map_err(|e| RunFailure::parse("herdr", e))
+    parse_agent_list(session, &out).map_err(|e| RunFailure::parse("herdr", e).reading("agent list"))
 }
 
 /// `herdr --session <session> agent read <pane>`, as the lines it drew.
@@ -557,6 +557,7 @@ mod tests {
             kind: FailureKind::Gone,
             program: "herdr".to_string(),
             detail: "herdr no longer has that pane".to_string(),
+            unreadable: None,
         }
     }
 

@@ -180,6 +180,7 @@ path = "{FERRY}"
             kind,
             program: "bd".to_string(),
             detail: "bd could not read the tracker".to_string(),
+            unreadable: None,
         }
     }
 

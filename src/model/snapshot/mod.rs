@@ -24,7 +24,7 @@ use crate::model::badges::Badged;
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link};
-use crate::model::types::{Edge, PaneKey, PaneStatus, Status};
+use crate::model::types::{Edge, PaneKey, PaneStatus, Status, Unreadable};
 
 /// Which agent provider this run read, and how that went.
 ///
@@ -140,8 +140,14 @@ pub enum Filter {
 /// Why a tracker could not be read, in `bdi`'s own words rather than bd's:
 /// bd names the database and the SQL user when it refuses a credential, so
 /// nothing it wrote is carried this far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+///
+/// `Parse` is the one kind that carries anything more, and what it carries is
+/// not bd's account of anything. bd names the database and the user on
+/// *stderr*, when it refuses a credential and exits non-zero; a parse failure
+/// is a run that succeeded, so what would not read is bd's stdout — the
+/// tracker's own rows, which `bdi` draws.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum TrackerFailure {
     /// The project asked to be read in a captured environment — by the command
     /// its config names, or by the `.envrc` in its own directory — and `bdi`
@@ -181,14 +187,15 @@ pub enum TrackerFailure {
     /// bd is there and never ran: no execute bit, a dangling symlink, or a
     /// project directory that is not there to run it in.
     InstalledUnstartable,
-    /// bd answered with something `bdi` cannot read.
-    Parse,
+    /// bd answered with something `bdi` cannot read, and where in the answer
+    /// the reader will find it.
+    Parse(Unreadable),
     /// bd does not know a flag `bdi` uses, so it refused the command line
     /// before reading anything: a bd below the floor README states.
     UnknownFlag,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrackerState {
     Ok,
@@ -643,7 +650,7 @@ mod tests {
     use crate::model::edges;
     use crate::model::join::{self, Joined, Listed, ProjectRows};
     use crate::model::tree::{Assembled, Nesting};
-    use crate::model::types::testing::A_SESSION;
+    use crate::model::types::testing::{an_unreadable, A_SESSION};
     use crate::model::types::{Bead, Pane};
     use pretty_assertions::assert_eq;
 
@@ -863,7 +870,7 @@ render = "⏸ waiting"
                 )],
                 failed_projects: vec![FailedProject {
                     project: "orbital".to_string(),
-                    tracker: TrackerFailure::Parse,
+                    tracker: TrackerFailure::Parse(an_unreadable()),
                 }],
                 ..Default::default()
             },
@@ -876,9 +883,46 @@ render = "⏸ waiting"
         );
         let json: serde_json::Value = serde_json::to_value(&snap).expect("the snapshot serialises");
 
-        assert_eq!(json["trees"][0]["tracker"]["unreachable"], "auth");
-        assert_eq!(json["failed_projects"][0]["tracker"], "parse");
+        assert_eq!(json["trees"][0]["tracker"]["unreachable"]["reason"], "auth");
         assert_eq!(json["trees"][0]["counts"]["total"], 0);
+
+        // Every reason is an object under one key, and the one that knows
+        // more writes the rest inside it, so a consumer reads one shape.
+        let tracker = &json["failed_projects"][0]["tracker"];
+        assert_eq!(tracker["reason"], "parse");
+        assert_eq!(tracker["read"], "list");
+        assert_eq!(
+            tracker["cause"],
+            "invalid type: null, expected a string at line 1 column 25"
+        );
+    }
+
+    /// A reason that knows nothing beyond itself writes its reason and
+    /// nothing else, so a consumer reading `read` tells a parse failure from
+    /// every other kind by the key's absence rather than by an empty string.
+    #[test]
+    fn a_failure_that_knows_only_its_kind_writes_only_its_kind() {
+        let snap = build(
+            Collected {
+                failed_projects: vec![FailedProject {
+                    project: "orbital".to_string(),
+                    tracker: TrackerFailure::Auth,
+                }],
+                ..Default::default()
+            },
+            &[],
+            &Joined::default(),
+            &cfg(),
+            a_provider(ProviderState::Answering),
+            Filter::LiveAgents,
+            now(),
+        );
+        let json: serde_json::Value = serde_json::to_value(&snap).expect("the snapshot serialises");
+
+        let tracker = &json["failed_projects"][0]["tracker"];
+        assert_eq!(tracker["reason"], "auth");
+        assert_eq!(tracker.get("read"), None);
+        assert_eq!(tracker.get("cause"), None);
     }
 
     #[test]

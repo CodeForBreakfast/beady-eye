@@ -109,6 +109,7 @@ mod tests {
             kind: crate::collect::run::FailureKind::Gone,
             program: THE_FAKE.to_string(),
             detail: "the pane is not there".to_string(),
+            unreadable: None,
         });
         let shared: Arc<dyn Agents> = Arc::new(refusing);
 
@@ -260,6 +261,7 @@ pub mod testing {
             kind: crate::collect::run::FailureKind::Gone,
             program: THE_FAKE.to_string(),
             detail: format!("no test staged a read of {} in {}", pane.id, pane.session),
+            unreadable: None,
         }
     }
 
