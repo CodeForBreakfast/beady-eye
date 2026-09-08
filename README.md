@@ -70,7 +70,7 @@ get a build you can name afterwards — and take either the package or the
 overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.2.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.3.0";
 
 # then either
 beady-eye.packages.${system}.default
