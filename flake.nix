@@ -2177,6 +2177,315 @@ and a second line"
           touch $out
         '';
 
+        # A release merge starts CI and Release on one commit, and both used to
+        # build the same tree. Two verdicts on one tree is the defect: the
+        # second build cannot say anything the first did not, and it can
+        # disagree with it. So the release job reads CI's verdict instead of
+        # taking one of its own, and this is the reading.
+        #
+        # It stands above an irreversible step, so it is written as a refusal
+        # with one way through. Each function names what it found and only
+        # "success" is a pass — a conclusion GitHub has not invented yet comes
+        # back "refused" rather than falling through to green.
+        #
+        # A run's own conclusion is not enough on its own. GitHub concludes a
+        # run "success" when its jobs were skipped, and ci.yml's
+        # conventional-subject job is skipped on every push to main, so the job
+        # that builds the tree is asked for by name. Renaming it in ci.yml
+        # leaves this lookup empty and stops the release, which is the
+        # direction for that mistake to fall.
+        # The runs the gate will read a verdict out of, as a jq filter over what
+        # `gh run list` answers. Shared so that the run a state is decided from
+        # and the run whose jobs are then fetched cannot come apart.
+        pushesToMain = ''[.[] | select(.event == "push" and .headBranch == "main")]'';
+
+        ciVerdict = ''
+          jq=${pkgs.jq}/bin/jq
+
+          # What `gh run list --workflow ci.yml --commit <sha>` said, on stdin.
+          #
+          # Only a push to main is a verdict on the tree at that sha. ci.yml's
+          # `what main has not already built` lets a pull request's run skip
+          # the build where its derivations match main's, and such a run still
+          # concludes success; it also checks out the merge ref rather than the
+          # head, so it was never this tree. Both leave a green run that proves
+          # nothing, and this is where a release would otherwise read one.
+          #
+          # A push to main makes one run, so several is a shape ci.yml cannot
+          # produce. It is not a first-element pick, because choosing between
+          # two verdicts is the guess this exists to refuse.
+          ci_run_state() {
+            $jq -r --arg sha "$1" '
+              ${pushesToMain} as $push |
+              if   length == 0 then "none"
+              elif any(.[]; .headSha != $sha) then "stray"
+              elif ($push | length) == 0 then "unusable"
+              elif ($push | length) > 1 then "several"
+              elif any($push[]; .status != "completed") then "running"
+              elif all($push[]; .conclusion == "success") then "success"
+              elif all($push[]; .conclusion == "cancelled") then "cancelled"
+              else "refused" end'
+          }
+
+          ci_run_id() {
+            $jq -r '${pushesToMain}[0].databaseId'
+          }
+
+          # What `gh api repos/{owner}/{repo}/actions/runs/<id>/jobs` said, on
+          # stdin. The name is ci.yml's, and the two files have to agree.
+          ci_check_job_state() {
+            $jq -r '
+              [.jobs[] | select(.name == "nix flake check")] as $job |
+              if   ($job | length) == 0 then "missing"
+              elif ($job | length) > 1 then "several"
+              elif all($job[]; .conclusion == "success") then "success"
+              else "refused" end'
+          }
+        '';
+
+        # The release job calls this where it used to run `nix flake check`, so
+        # a commit still reaches `cargo publish` only behind a full check of its
+        # own tree. What changed is whose check it is.
+        #
+        # Waiting is the cost of keeping both workflows on the same push. The
+        # cap is well inside the release job's own timeout-minutes, so a CI run
+        # that never concludes ends here with a sentence rather than at the job
+        # limit with none.
+        awaitCiVerdict = pkgs.writeShellScriptBin "await-ci-verdict" ''
+          set -u
+
+          gh=${pkgs.gh}/bin/gh
+          grep=${pkgs.gnugrep}/bin/grep
+          date=${pkgs.coreutils}/bin/date
+          sleep=${pkgs.coreutils}/bin/sleep
+
+          ${ciVerdict}
+
+          cap=2400
+          interval=20
+
+          if [ "$#" -ne 1 ]; then
+            echo "usage: await-ci-verdict <full 40-character sha>" >&2
+            echo >&2
+            echo "Waits until CI has concluded for that commit, and exits 0 only for a" >&2
+            echo "run whose own conclusion is success and whose nix flake check job" >&2
+            echo "succeeded. Every other answer exits non-zero, silence included." >&2
+            exit 2
+          fi
+
+          sha="$1"
+
+          # gh answers a short sha with an empty list and exit 0, which is what
+          # a commit with no run answers too. Nothing downstream can tell those
+          # apart, so the shortening is refused here rather than read as a
+          # commit CI has not reached yet.
+          if ! printf '%s' "$sha" | $grep -Eq '^[0-9a-f]{40}$'; then
+            echo "await-ci-verdict: '$sha' is not a full 40-character sha, and gh answers" >&2
+            echo "a short one with an empty list and exit 0 — the same answer it gives for" >&2
+            echo "a commit with no run. Pass GITHUB_SHA rather than an abbreviation." >&2
+            exit 1
+          fi
+
+          deadline=$(( $($date +%s) + cap ))
+
+          while :; do
+            runs="$($gh run list --workflow ci.yml --commit "$sha" --limit 20 \
+              --json databaseId,headSha,status,conclusion,event,headBranch)" || {
+              echo "::error::gh would not list CI's runs for $sha, so this release has no verdict to publish on."
+              exit 1
+            }
+
+            state="$(printf '%s' "$runs" | ci_run_state "$sha")" || state=unreadable
+
+            case "$state" in
+              success) break ;;
+              none)    echo "no CI run for $sha yet" ;;
+              running) echo "CI has not finished with $sha yet" ;;
+              cancelled)
+                echo "::error::CI's run for $sha was cancelled, so this commit has no verdict. A cancelled run is neither green nor red, and this release is not going out on one."
+                exit 1
+                ;;
+              unusable)
+                echo "::error::CI has run on $sha, but never as a push to main. A pull request's run builds the merge ref rather than this commit, and ci.yml lets it skip the build where its derivations match main's, so its success does not say this tree was checked. Release a commit that is on main."
+                exit 1
+                ;;
+              stray)
+                echo "::error::gh answered for a commit other than $sha. Refusing to guess which of those verdicts is this release's."
+                exit 1
+                ;;
+              several)
+                echo "::error::gh returned more than one CI run for $sha. ci.yml makes one run per push, so picking between them would be a guess about which tree was checked."
+                exit 1
+                ;;
+              *)
+                echo "::error::CI's run for $sha concluded something this cannot read as a pass."
+                printf '%s\n' "$runs" >&2
+                exit 1
+                ;;
+            esac
+
+            if [ "$($date +%s)" -ge "$deadline" ]; then
+              echo "::error::CI has still not concluded for $sha after $(( cap / 60 )) minutes. Nothing has been tagged or published. Once CI is green, dispatch this workflow with from=publish to release this commit."
+              exit 1
+            fi
+
+            $sleep "$interval"
+          done
+
+          id="$(printf '%s' "$runs" | ci_run_id)"
+
+          jobs="$($gh api "repos/{owner}/{repo}/actions/runs/$id/jobs")" || {
+            echo "::error::CI's run $id passed for $sha, but GitHub would not say which of its jobs did. A run conclusion on its own does not say the tree was built, so this refuses rather than assume it."
+            exit 1
+          }
+
+          job="$(printf '%s' "$jobs" | ci_check_job_state)" || job=unreadable
+
+          case "$job" in
+            success) ;;
+            missing)
+              echo "::error::CI's run $id for $sha has no job named 'nix flake check', so nothing in it says this tree was built. If that job was renamed in ci.yml, rename it in ciVerdict too."
+              exit 1
+              ;;
+            *)
+              echo "::error::CI's run $id passed for $sha, but its 'nix flake check' job did not. A run concludes success when its jobs are skipped, and a skipped check is not a checked tree."
+              exit 1
+              ;;
+          esac
+
+          echo "CI's run $id checked $sha and passed."
+        '';
+
+        # Nothing in this repository runs a workflow file, so the release's own
+        # wiring is read rather than checked. What can be checked is the
+        # decision, and this is where it is: every answer GitHub can give,
+        # against the exit this repository wants for it.
+        #
+        # The two-job success fixture is the shape of a real push to main —
+        # `nix flake check` succeeded and `conventional subject` was skipped —
+        # which is why a run conclusion alone was not enough to read.
+        awaitCiVerdictTest = pkgs.runCommand "await-ci-verdict-test"
+          { nativeBuildInputs = [ awaitCiVerdict ]; } ''
+          set -u
+          ${ciVerdict}
+
+          sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          other=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+          fail() { echo "FAIL: $1"; exit 1; }
+
+          # A push to main, as gh reports one. `conclusion` is JSON, so a run
+          # that has not finished is given the null gh actually sends.
+          run() {
+            printf '{"databaseId":1,"headSha":"%s","status":"%s","conclusion":%s,"event":"push","headBranch":"main"}' \
+              "$1" "$2" "$3"
+          }
+
+          # The same commit's run as a pull request, which is the shape whose
+          # success says least: it may have skipped the build, and what it
+          # checked out was the merge ref.
+          pull_request_run() {
+            printf '{"databaseId":2,"headSha":"%s","status":"%s","conclusion":%s,"event":"pull_request","headBranch":"a-branch"}' \
+              "$1" "$2" "$3"
+          }
+
+          reads() {
+            want="$1"
+            shift
+            got="$(printf '[%s]' "$*" | ci_run_state "$sha")" || got="(jq refused it)"
+            [ "$got" = "$want" ] ||
+              fail "a run list this expected to read as '$want' read as '$got': [$*]"
+          }
+
+          reads none
+          reads running   "$(run "$sha" in_progress null)"
+          reads running   "$(run "$sha" queued null)"
+          reads success   "$(run "$sha" completed '"success"')"
+          reads cancelled "$(run "$sha" completed '"cancelled"')"
+
+          # Every other conclusion GitHub records, and the one it records for a
+          # run that finished without reaching one. None of these is a pass and
+          # none of them is worth waiting on.
+          reads refused "$(run "$sha" completed '"failure"')"
+          reads refused "$(run "$sha" completed '"timed_out"')"
+          reads refused "$(run "$sha" completed '"startup_failure"')"
+          reads refused "$(run "$sha" completed '"action_required"')"
+          reads refused "$(run "$sha" completed '"neutral"')"
+          reads refused "$(run "$sha" completed '"stale"')"
+          reads refused "$(run "$sha" completed '"skipped"')"
+          reads refused "$(run "$sha" completed null)"
+
+          # A conclusion nobody here has heard of is refused rather than
+          # waited on or passed, so the day GitHub adds one no release goes out
+          # on it.
+          reads refused "$(run "$sha" completed '"embargoed"')"
+
+          # The verdict belongs to another commit. A green one is still not
+          # this release's, and gh answering with it at all is reason enough to
+          # stop.
+          reads stray "$(run "$other" completed '"success"')"
+          reads stray "$(run "$sha" completed '"success"'), $(run "$other" completed '"success"')"
+
+          # Two runs for the one commit is not a shape ci.yml makes, so it is
+          # refused rather than resolved by taking the first.
+          reads several \
+            "$(run "$sha" completed '"success"'), $(run "$sha" completed '"failure"')"
+
+          # Green, for this very commit, and still not a verdict on it. This is
+          # what a release dispatched on a pull request's branch would find, and
+          # taking it would publish a tree nothing had built.
+          reads unusable "$(pull_request_run "$sha" completed '"success"')"
+          reads unusable "$(pull_request_run "$sha" in_progress null)"
+
+          # Where main's own run is there too, that one answers. A pull
+          # request's run neither adds to it nor makes it ambiguous, so a
+          # branch pushed at a commit that is already on main still releases.
+          reads success \
+            "$(run "$sha" completed '"success"'), $(pull_request_run "$sha" completed '"failure"')"
+
+          # And the jobs are then fetched for main's run rather than for
+          # whichever gh happened to list first.
+          id="$(printf '[%s]' \
+            "$(pull_request_run "$sha" completed '"failure"'), $(run "$sha" completed '"success"')" \
+            | ci_run_id)"
+          [ "$id" = 1 ] || fail "expected the push to main's run id, got '$id'"
+
+          jobs() {
+            got="$(printf '{"jobs":[%s]}' "$2" | ci_check_job_state)" || got="(jq refused it)"
+            [ "$got" = "$1" ] ||
+              fail "a job list this expected to read as '$1' read as '$got': $2"
+          }
+
+          check='{"name":"nix flake check","conclusion":"success"}'
+          subject='{"name":"conventional subject","conclusion":"skipped"}'
+
+          jobs success "$check,$subject"
+
+          # The hole a run conclusion leaves. GitHub concludes the run success
+          # in both of these, and in neither was the tree built.
+          jobs refused '{"name":"nix flake check","conclusion":"skipped"},'"$subject"
+          jobs refused '{"name":"nix flake check","conclusion":"failure"},'"$subject"
+
+          # ci.yml renamed the job. The lookup empties and the release stops,
+          # rather than reading a run with no check in it as a checked tree.
+          jobs missing "$subject"
+          jobs several "$check,$check"
+
+          # The two the script decides on its own, before it has asked GitHub
+          # anything.
+          output="$( await-ci-verdict 2b487e6 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected exit 1 for a short sha, got $status: $output"
+          case "$output" in
+            *"empty list"*) ;;
+            *) fail "the short-sha refusal did not say what gh answers one with: $output" ;;
+          esac
+
+          output="$( await-ci-verdict 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no argument, got $status: $output"
+
+          touch $out
+        '';
+
         # A formula in homebrew-core is version-bumped by Homebrew's own bot,
         # which is the one service a tap does not come with. So the tap serves
         # whatever version was last written into it, and this is what writes the
@@ -2487,12 +2796,14 @@ and a second line"
 
         packages.default = beady-eye;
         packages.beady-eye = beady-eye;
+        packages.await-ci-verdict = awaitCiVerdict;
         packages.conventional-subject = conventionalSubject;
         packages.tap-formula = tapFormula;
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
         checks = {
+          await-ci-verdict-test = awaitCiVerdictTest;
           build-and-test = beady-eye;
           check-before-push = checkBeforePushTest;
           clippy = checkOf "clippy" artifacts.dev [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";

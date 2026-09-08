@@ -117,6 +117,12 @@ jobs:
       # Only a pull request may skip. A push to main is the run a bead close
       # reads, and leaving that one unconditional means a mistake here costs a
       # pull request its early exit and can never put an untested tree on main.
+      #
+      # A release also reads it. `await-ci-verdict` publishes on this run
+      # rather than building anything of its own, and it accepts only a push
+      # to main precisely because that one cannot have taken the exit above.
+      # Widen this to any other event and a release publishes on a run that
+      # built nothing.
       - name: what main has not already built
         id: unbuilt
         if: github.event_name == 'pull_request'

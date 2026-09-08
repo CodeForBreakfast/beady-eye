@@ -209,6 +209,13 @@ jobs:
     needs: [detect, darwin-binaries, linux-binaries]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # `contents` is the tag push and the Release; `actions` is CI's verdict,
+    # which this job now waits for rather than re-deriving. The workflow-level
+    # block grants `contents` alone and a permissions map grants nothing it
+    # does not name, so both are stated here.
+    permissions:
+      contents: write
+      actions: read
     # The tag push, the publish and the announcement are one sequence against
     # state nothing can take back, so only one run may be inside it for a
     # version. Per version rather than global: GitHub cancels a pending run
@@ -328,11 +335,32 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       # crates.io cannot take a version back — a yank still serves the files —
-      # so the tested-commit gate is re-run here rather than assumed from the
-      # push build. Every check comes from the flake's `checks` output.
-      - name: nix flake check
+      # so nothing is published on a tree that has not been through the whole
+      # of `nix flake check`. This waits for that check rather than running it:
+      # the same push starts CI on this commit, CI builds every check the
+      # flake declares, and a second build of one tree cannot say anything the
+      # first did not while it can disagree with it.
+      #
+      # `await-ci-verdict` is what makes that safe, and the decision it makes
+      # is checked — `await-ci-verdict-test` in the flake holds every
+      # conclusion GitHub can give against the exit this wants for it. What is
+      # not checked is this step: no gate here reads a workflow file.
+      #
+      # The verdict it reads is a push to main's, and no other run counts. A
+      # pull request's run for the same sha builds the merge ref rather than
+      # the commit, and ci.yml lets it skip the build entirely where its
+      # derivations match main's, so a dispatch on a branch is refused rather
+      # than published on a green run that built nothing.
+      #
+      # A push to main cannot have its CI run cancelled out from under this.
+      # ci.yml groups a push by sha and shares that group with nothing, so
+      # nothing supersedes it and only a person pressing cancel can end it —
+      # which stops the release rather than hanging it.
+      - name: CI's verdict for this commit
         if: github.event.inputs.from != 'announce'
-        run: nix flake check -L
+        run: nix run .#await-ci-verdict -- "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # The record of which commit produced the release, cut last of everything
       # that can still fail cheaply. A tag naming a version is a claim that the
