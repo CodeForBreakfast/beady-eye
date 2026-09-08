@@ -111,6 +111,26 @@ instead. Clearing the attribute is what gets past that:
 $ xattr -d com.apple.quarantine bdi-aarch64-apple-darwin
 ```
 
+On Linux with neither `cargo` nor Nix, take the binary the same way. It is
+linked statically, so it depends on nothing the distribution has to supply:
+
+```console
+$ curl -fLO https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-x86_64-unknown-linux-musl
+$ chmod +x bdi-x86_64-unknown-linux-musl
+$ ./bdi-x86_64-unknown-linux-musl --version
+```
+
+`x86_64-unknown-linux-musl` is an Intel or AMD machine and
+`aarch64-unknown-linux-musl` an arm64 one, and `uname -m` says which you are on.
+Move it somewhere on your `PATH` under the name `bdi`, as above.
+
+A `.sha256` sits beside each of these too:
+
+```console
+$ curl -fLO https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-x86_64-unknown-linux-musl.sha256
+$ sha256sum -c bdi-x86_64-unknown-linux-musl.sha256
+```
+
 ## Run it
 
 Inside a repository beads tracks, `bdi` needs no config:
