@@ -218,9 +218,13 @@ jobs:
       # else here exercises, and it is what `nix flake check` and every binary
       # a consumer builds go through.
       #
-      # The tag is what a resume checks. It exists by then, and it has to be
-      # this commit's: a dispatch on the wrong ref would otherwise finish a
-      # release for a tree that did not produce it.
+      # The tag is what a resume checks, both ways round. `from=announce`
+      # finishes a release that has already published, so its tag exists by
+      # definition; without that check a dispatch on an untagged branch would
+      # cut a tag and announce a Release for a version crates.io never took,
+      # and the tag would then make every later merge a no-op. And an existing
+      # tag has to be this commit's, or the run is finishing a release for a
+      # tree that did not produce it.
       #
       # The notes file is checked here rather than beside the step that reads
       # it, which runs after `cargo publish` and so after the one thing
@@ -233,6 +237,10 @@ jobs:
           test "$VERSION" = "$declared"
 
           existing=$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1)
+          if [ "$FROM" = announce ] && [ -z "$existing" ]; then
+            echo "::error::$TAG does not exist, so there is no release for from=announce to finish"
+            exit 1
+          fi
           if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
             echo "::error::$TAG already names $existing, not the commit this run is on"
             exit 1
@@ -242,6 +250,8 @@ jobs:
             echo "::error::RELEASE-NOTES/$VERSION.md is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
             exit 1
           }
+        env:
+          FROM: ${{ github.event.inputs.from }}
 
       # The record of which commit produced the release. It goes after the
       # binaries and before `cargo publish`, so a build that fails costs no tag
