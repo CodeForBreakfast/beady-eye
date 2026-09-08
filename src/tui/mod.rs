@@ -138,9 +138,10 @@ pub fn run(
     // which is why nothing is armed here: a project armed at startup would
     // ask for a second read of what is already being collected.
     let mut outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
-    outstanding.ask(Wanted::Everything, Utc::now());
+    let started = Utc::now();
+    outstanding.ask(Wanted::Everything, started);
 
-    let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg))?;
+    let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg), started)?;
     screen.collecting(outstanding.awaited());
 
     drive(
