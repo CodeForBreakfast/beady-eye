@@ -86,9 +86,60 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # A binary linked against the runner image's glibc refuses to start on any
+  # distribution older than that image, and says so as a GLIBC_2.xx link error
+  # with nothing pointing at the cause. musl is linked statically instead, so
+  # the binary asks the machine it lands on for nothing. Rust ships the crt
+  # objects for these targets, and the dependency tree compiles no C, so a
+  # musl C toolchain is not among the things this needs.
+  linux-binaries:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      # As with the Darwin pair, each binary is built on the architecture it is
+      # for and run there before it is handed on. arm64 Linux runners are free
+      # to public repositories, which is what this one is.
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The image carries only its own host target, so the musl standard
+      # library has to be asked for.
+      - name: the target's standard library
+        run: rustup target add ${{ matrix.target }}
+
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: the binary runs
+        run: ./target/${{ matrix.target }}/release/bdi --version
+
+      # sha256sum writes what shasum does, so one `-c` line in the README reads
+      # either checksum file whichever platform it came from.
+      - name: name it for its target and checksum it
+        run: |
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/bdi" "dist/bdi-${{ matrix.target }}"
+          cd dist
+          sha256sum "bdi-${{ matrix.target }}" > "bdi-${{ matrix.target }}.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bdi-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+
   release:
     name: publish ${{ github.ref_name }}
-    needs: darwin-binaries
+    needs: [darwin-binaries, linux-binaries]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
