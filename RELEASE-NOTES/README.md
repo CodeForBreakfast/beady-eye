@@ -4,10 +4,11 @@ One file per release, `RELEASE-NOTES/<version>.md`, where `<version>` is the
 `MAJOR.MINOR.PATCH` the release bumps to — so `RELEASE-NOTES/0.3.0.md`. The
 pull request that bumps the version checks it in.
 
-The [`Release` workflow](../.github/workflows/release.yml) refuses a version
-whose notes file is absent, before it has published anything, and cuts the
-GitHub Release from the file it finds. What is written here is what a reader
-gets, word for word.
+The [`Release` workflow](../.github/workflows/release.yml) cuts the GitHub
+Release from the file it finds. What is written here is what a reader gets,
+word for word. A version bump merged without its notes file releases nothing:
+no tag is cut and nothing is published, so landing the file afterwards is the
+whole of the repair.
 
 ## Style
 
