@@ -346,6 +346,12 @@ jobs:
       # conclusion GitHub can give against the exit this wants for it. What is
       # not checked is this step: no gate here reads a workflow file.
       #
+      # The verdict it reads is a push to main's, and no other run counts. A
+      # pull request's run for the same sha builds the merge ref rather than
+      # the commit, and ci.yml lets it skip the build entirely where its
+      # derivations match main's, so a dispatch on a branch is refused rather
+      # than published on a green run that built nothing.
+      #
       # A push to main cannot have its CI run cancelled out from under this.
       # ci.yml groups a push by sha and shares that group with nothing, so
       # nothing supersedes it and only a person pressing cancel can end it —

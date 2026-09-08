@@ -2194,28 +2194,41 @@ and a second line"
         # that builds the tree is asked for by name. Renaming it in ci.yml
         # leaves this lookup empty and stops the release, which is the
         # direction for that mistake to fall.
+        # The runs the gate will read a verdict out of, as a jq filter over what
+        # `gh run list` answers. Shared so that the run a state is decided from
+        # and the run whose jobs are then fetched cannot come apart.
+        pushesToMain = ''[.[] | select(.event == "push" and .headBranch == "main")]'';
+
         ciVerdict = ''
           jq=${pkgs.jq}/bin/jq
 
           # What `gh run list --workflow ci.yml --commit <sha>` said, on stdin.
           #
-          # GitHub makes one CI run per push and a squash lands a sha no pull
-          # request run ever saw, so one run is the only shape this can read.
-          # Several is not a first-element pick, because choosing between two
-          # verdicts is the guess this exists to refuse.
+          # Only a push to main is a verdict on the tree at that sha. ci.yml's
+          # `what main has not already built` lets a pull request's run skip
+          # the build where its derivations match main's, and such a run still
+          # concludes success; it also checks out the merge ref rather than the
+          # head, so it was never this tree. Both leave a green run that proves
+          # nothing, and this is where a release would otherwise read one.
+          #
+          # A push to main makes one run, so several is a shape ci.yml cannot
+          # produce. It is not a first-element pick, because choosing between
+          # two verdicts is the guess this exists to refuse.
           ci_run_state() {
             $jq -r --arg sha "$1" '
+              ${pushesToMain} as $push |
               if   length == 0 then "none"
               elif any(.[]; .headSha != $sha) then "stray"
-              elif length > 1 then "several"
-              elif any(.[]; .status != "completed") then "running"
-              elif all(.[]; .conclusion == "success") then "success"
-              elif all(.[]; .conclusion == "cancelled") then "cancelled"
+              elif ($push | length) == 0 then "unusable"
+              elif ($push | length) > 1 then "several"
+              elif any($push[]; .status != "completed") then "running"
+              elif all($push[]; .conclusion == "success") then "success"
+              elif all($push[]; .conclusion == "cancelled") then "cancelled"
               else "refused" end'
           }
 
           ci_run_id() {
-            $jq -r '.[0].databaseId'
+            $jq -r '${pushesToMain}[0].databaseId'
           }
 
           # What `gh api repos/{owner}/{repo}/actions/runs/<id>/jobs` said, on
@@ -2277,7 +2290,7 @@ and a second line"
 
           while :; do
             runs="$($gh run list --workflow ci.yml --commit "$sha" --limit 20 \
-              --json databaseId,headSha,status,conclusion)" || {
+              --json databaseId,headSha,status,conclusion,event,headBranch)" || {
               echo "::error::gh would not list CI's runs for $sha, so this release has no verdict to publish on."
               exit 1
             }
@@ -2290,6 +2303,10 @@ and a second line"
               running) echo "CI has not finished with $sha yet" ;;
               cancelled)
                 echo "::error::CI's run for $sha was cancelled, so this commit has no verdict. A cancelled run is neither green nor red, and this release is not going out on one."
+                exit 1
+                ;;
+              unusable)
+                echo "::error::CI has run on $sha, but never as a push to main. A pull request's run builds the merge ref rather than this commit, and ci.yml lets it skip the build where its derivations match main's, so its success does not say this tree was checked. Release a commit that is on main."
                 exit 1
                 ;;
               stray)
@@ -2357,10 +2374,18 @@ and a second line"
 
           fail() { echo "FAIL: $1"; exit 1; }
 
-          # A run as gh reports one. `conclusion` is JSON, so a run that has
-          # not finished is given the null gh actually sends.
+          # A push to main, as gh reports one. `conclusion` is JSON, so a run
+          # that has not finished is given the null gh actually sends.
           run() {
-            printf '{"databaseId":1,"headSha":"%s","status":"%s","conclusion":%s}' \
+            printf '{"databaseId":1,"headSha":"%s","status":"%s","conclusion":%s,"event":"push","headBranch":"main"}' \
+              "$1" "$2" "$3"
+          }
+
+          # The same commit's run as a pull request, which is the shape whose
+          # success says least: it may have skipped the build, and what it
+          # checked out was the merge ref.
+          pull_request_run() {
+            printf '{"databaseId":2,"headSha":"%s","status":"%s","conclusion":%s,"event":"pull_request","headBranch":"a-branch"}' \
               "$1" "$2" "$3"
           }
 
@@ -2405,6 +2430,25 @@ and a second line"
           # refused rather than resolved by taking the first.
           reads several \
             "$(run "$sha" completed '"success"'), $(run "$sha" completed '"failure"')"
+
+          # Green, for this very commit, and still not a verdict on it. This is
+          # what a release dispatched on a pull request's branch would find, and
+          # taking it would publish a tree nothing had built.
+          reads unusable "$(pull_request_run "$sha" completed '"success"')"
+          reads unusable "$(pull_request_run "$sha" in_progress null)"
+
+          # Where main's own run is there too, that one answers. A pull
+          # request's run neither adds to it nor makes it ambiguous, so a
+          # branch pushed at a commit that is already on main still releases.
+          reads success \
+            "$(run "$sha" completed '"success"'), $(pull_request_run "$sha" completed '"failure"')"
+
+          # And the jobs are then fetched for main's run rather than for
+          # whichever gh happened to list first.
+          id="$(printf '[%s]' \
+            "$(pull_request_run "$sha" completed '"failure"'), $(run "$sha" completed '"success"')" \
+            | ci_run_id)"
+          [ "$id" = 1 ] || fail "expected the push to main's run id, got '$id'"
 
           jobs() {
             got="$(printf '{"jobs":[%s]}' "$2" | ci_check_job_state)" || got="(jq refused it)"
