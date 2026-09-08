@@ -122,8 +122,9 @@ jobs:
       - name: the binary runs
         run: ./target/${{ matrix.target }}/release/bdi --version
 
-      # sha256sum writes what shasum does, so one `-c` line in the README reads
-      # either checksum file whichever platform it came from.
+      # macOS ships no sha256sum and a minimal Linux ships no shasum, so each
+      # platform's job writes the checksum with the tool that platform has.
+      # The format is the same, so the two sets of assets do not differ.
       - name: name it for its target and checksum it
         run: |
           mkdir dist
