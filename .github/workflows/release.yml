@@ -50,7 +50,11 @@ jobs:
       # both before anything was published.
       #
       # A push asks both. The existing tag is what makes every merge after the
-      # bump a no-op.
+      # bump a no-op, and it is also what separates a notes file somebody
+      # pruned from one nobody ever wrote. The second of those fails rather
+      # than skipping, and goes on failing every merge until the file lands,
+      # because what it reports is the state of main rather than the push that
+      # reached it.
       - name: decide
         id: decide
         run: |
@@ -63,13 +67,19 @@ jobs:
             exit 0
           fi
 
+          released() { git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; }
+
           if [ ! -f "RELEASE-NOTES/$version.md" ]; then
-            echo "no RELEASE-NOTES/$version.md, so this merge releases nothing"
+            released || {
+              echo "::error::Cargo.toml declares $version, RELEASE-NOTES/$version.md is missing and v$version is not tagged, so main declares a version nobody released and no release can be cut for it. See RELEASE-NOTES/README.md."
+              exit 1
+            }
+            echo "v$version is released and its notes file is gone, so this merge releases nothing"
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+          if released; then
             echo "v$version is already tagged, so this merge releases nothing"
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
