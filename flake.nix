@@ -2177,6 +2177,202 @@ and a second line"
           touch $out
         '';
 
+        # A formula in homebrew-core is version-bumped by Homebrew's own bot,
+        # which is the one service a tap does not come with. So the tap serves
+        # whatever version was last written into it, and this is what writes the
+        # next one: the release cuts the formula rather than a maintainer
+        # editing a version and four checksums by hand and nothing noticing
+        # when they do not.
+        #
+        # The checksums are read from the files the release downloaded beside
+        # the binaries it is announcing, so nothing is hashed twice and nothing
+        # is fetched in order to be hashed.
+        tapFormula = pkgs.writeShellScriptBin "tap-formula" ''
+          set -u
+
+          grep=${pkgs.gnugrep}/bin/grep
+
+          if [ "$#" -ne 2 ]; then
+            echo "usage: tap-formula <version> <directory of release assets>" >&2
+            echo >&2
+            echo "Writes Formula/bdi.rb for that version to stdout, taking each" >&2
+            echo "checksum from the bdi-<target>.sha256 beside its binary." >&2
+            exit 2
+          fi
+
+          version="$1"
+          assets="$2"
+
+          # A checksum that could not be read would otherwise reach the formula
+          # as the empty string, or as the one before it, and brew would report
+          # a mismatch against a download nobody can reproduce. So each is read
+          # into a variable of its own and asserted there, rather than
+          # substituted where it is used.
+          sum=""
+          checksum() {
+            file="$assets/bdi-$1.sha256"
+            if [ ! -f "$file" ]; then
+              echo "tap-formula: $file is not there, so this release has no checksum for $1." >&2
+              exit 1
+            fi
+            sum=""
+            read -r sum _ < "$file" || true
+            if ! printf '%s' "$sum" | $grep -Eq '^[0-9a-f]{64}$'; then
+              echo "tap-formula: $file does not open with a sha256: '$sum'" >&2
+              exit 1
+            fi
+          }
+
+          checksum aarch64-apple-darwin
+          macos_arm="$sum"
+          checksum x86_64-apple-darwin
+          macos_intel="$sum"
+          checksum aarch64-unknown-linux-musl
+          linux_arm="$sum"
+          checksum x86_64-unknown-linux-musl
+          linux_intel="$sum"
+
+          releases=https://github.com/CodeForBreakfast/beady-eye/releases/download
+
+          cat <<EOF
+          class Bdi < Formula
+            desc "Tree of work in flight: bead graphs annotated with the live agents working them"
+            homepage "https://github.com/CodeForBreakfast/beady-eye"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "$releases/v$version/bdi-aarch64-apple-darwin"
+                sha256 "$macos_arm"
+              end
+
+              on_intel do
+                url "$releases/v$version/bdi-x86_64-apple-darwin"
+                sha256 "$macos_intel"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "$releases/v$version/bdi-aarch64-unknown-linux-musl"
+                sha256 "$linux_arm"
+              end
+
+              on_intel do
+                url "$releases/v$version/bdi-x86_64-unknown-linux-musl"
+                sha256 "$linux_intel"
+              end
+            end
+
+            def install
+              bin.install Dir["bdi-*"].first => "bdi"
+            end
+
+            test do
+              assert_match "bdi #{version}", shell_output("#{bin}/bdi --version")
+            end
+          end
+          EOF
+        '';
+
+        # Nothing in this repository installs from the tap, and the formula is
+        # read by brew rather than by anything here, so what a wrong one costs
+        # is a reader's install rather than a red branch. This is what stands in
+        # for that: the formula is asserted whole, against four checksums a
+        # reader can tell apart on sight, so a pair swapped between two targets
+        # is a failure here rather than a Mach-O binary offered to a Linux box.
+        tapFormulaTest = pkgs.runCommand "tap-formula-test"
+          { nativeBuildInputs = [ tapFormula ]; } ''
+          set -u
+
+          fail() { echo "FAIL: $1"; printf '%s\n' "$output"; exit 1; }
+          output=""
+
+          assets="$NIX_BUILD_TOP/assets"
+          mkdir -p "$assets"
+          checksum() {
+            printf '%s  bdi-%s\n' "$2" "$1" > "$assets/bdi-$1.sha256"
+          }
+
+          checksum aarch64-apple-darwin      aaaaaaaa11111111aaaaaaaa11111111aaaaaaaa11111111aaaaaaaa11111111
+          checksum x86_64-apple-darwin       bbbbbbbb22222222bbbbbbbb22222222bbbbbbbb22222222bbbbbbbb22222222
+          checksum aarch64-unknown-linux-musl cccccccc33333333cccccccc33333333cccccccc33333333cccccccc33333333
+          checksum x86_64-unknown-linux-musl dddddddd44444444dddddddd44444444dddddddd44444444dddddddd44444444
+
+          tap-formula 9.9.9 "$assets" > "$NIX_BUILD_TOP/formula.rb" ||
+            fail "it refused a complete set of assets:"
+
+          cat > "$NIX_BUILD_TOP/expected.rb" <<'EOF'
+          class Bdi < Formula
+            desc "Tree of work in flight: bead graphs annotated with the live agents working them"
+            homepage "https://github.com/CodeForBreakfast/beady-eye"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/CodeForBreakfast/beady-eye/releases/download/v9.9.9/bdi-aarch64-apple-darwin"
+                sha256 "aaaaaaaa11111111aaaaaaaa11111111aaaaaaaa11111111aaaaaaaa11111111"
+              end
+
+              on_intel do
+                url "https://github.com/CodeForBreakfast/beady-eye/releases/download/v9.9.9/bdi-x86_64-apple-darwin"
+                sha256 "bbbbbbbb22222222bbbbbbbb22222222bbbbbbbb22222222bbbbbbbb22222222"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/CodeForBreakfast/beady-eye/releases/download/v9.9.9/bdi-aarch64-unknown-linux-musl"
+                sha256 "cccccccc33333333cccccccc33333333cccccccc33333333cccccccc33333333"
+              end
+
+              on_intel do
+                url "https://github.com/CodeForBreakfast/beady-eye/releases/download/v9.9.9/bdi-x86_64-unknown-linux-musl"
+                sha256 "dddddddd44444444dddddddd44444444dddddddd44444444dddddddd44444444"
+              end
+            end
+
+            def install
+              bin.install Dir["bdi-*"].first => "bdi"
+            end
+
+            test do
+              assert_match "bdi #{version}", shell_output("#{bin}/bdi --version")
+            end
+          end
+          EOF
+
+          output="$( diff -u "$NIX_BUILD_TOP/expected.rb" "$NIX_BUILD_TOP/formula.rb" 2>&1 )" ||
+            fail "the formula is not the one this expects:"
+
+          # An asset that never arrived, and one that arrived truncated. Both
+          # have to be refused by name: a formula naming three checksums and one
+          # blank is a file brew reads, and the release that wrote it has
+          # already announced.
+          rm "$assets/bdi-x86_64-apple-darwin.sha256"
+          output="$( tap-formula 9.9.9 "$assets" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected exit 1 for a missing checksum, got $status:"
+          case "$output" in
+            *x86_64-apple-darwin*) ;;
+            *) fail "the refusal did not name the target with no checksum:" ;;
+          esac
+
+          printf 'not a checksum\n' > "$assets/bdi-x86_64-apple-darwin.sha256"
+          output="$( tap-formula 9.9.9 "$assets" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected exit 1 for a malformed checksum, got $status:"
+          case "$output" in
+            *sha256*) ;;
+            *) fail "the refusal did not say what it read instead of a sha256:" ;;
+          esac
+
+          # A caller that passes only a version is asking for a formula built
+          # from whatever is in the working directory. It is told instead.
+          output="$( tap-formula 9.9.9 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 for a missing argument, got $status:"
+
+          touch $out
+        '';
+
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
@@ -2193,6 +2389,7 @@ and a second line"
           checkBeforePush
           readCiVerdict
           conventionalSubject
+          tapFormula
           mutationTestThisChange
         ];
 
@@ -2291,6 +2488,7 @@ and a second line"
         packages.default = beady-eye;
         packages.beady-eye = beady-eye;
         packages.conventional-subject = conventionalSubject;
+        packages.tap-formula = tapFormula;
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
@@ -2342,6 +2540,7 @@ and a second line"
           screen-walks = checkOf "screen-walks" null [ screenWalksAreBounded ]
             "screen-walks-are-bounded";
           screen-walks-test = screenWalksAreBoundedTest;
+          tap-formula-test = tapFormulaTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
           # and builds that tarball rather than the working tree. A crate that

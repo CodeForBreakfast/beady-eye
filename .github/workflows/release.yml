@@ -220,6 +220,7 @@ jobs:
     env:
       VERSION: ${{ needs.detect.outputs.version }}
       TAG: v${{ needs.detect.outputs.version }}
+      TAP: CodeForBreakfast/homebrew-tap
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
       # runs with this repository's token.
@@ -286,6 +287,45 @@ jobs:
           }
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # The tap credential cannot be checked in the step above, because a
+      # resume skips that step and still writes the tap. It is checked here for
+      # the same reason that one gives: the push fails anyway, and by then the
+      # release has announced and the failure reads as a broken release rather
+      # than a missing secret.
+      #
+      # The tap is public, and git sends no credentials to a server that does
+      # not ask for them — so cloning or listing it proves nothing about the
+      # token, and a revoked one would read as a working one right up until the
+      # push. The API is asked instead, because it refuses a credential it does
+      # not accept whether or not the repository is public.
+      #
+      # What the answer proves is one direction only. A fine-grained token
+      # cannot carry more than its owner has, so `push: false` is a token that
+      # certainly cannot write; `push: true` may still be the owner's access
+      # rather than the token's contents grant, and nothing short of a write
+      # tells those apart. The push below is where that is settled, and this is
+      # what keeps the ordinary spelling of a wrong secret — unset, revoked,
+      # expired, or made for the wrong repository — out of the minutes after
+      # cargo publish.
+      - name: the tap precondition
+        run: |
+          test -n "$GH_TOKEN" || {
+            echo "::error::HOMEBREW_TAP_TOKEN is not set, so this release cannot write $TAP. It is a fine-grained token with contents write on that repository; github.token will not do, because it is scoped to this one."
+            exit 1
+          }
+
+          gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          push="$( gh api "repos/$TAP" --jq .permissions.push )" || {
+            echo "::error::GitHub would not answer for $TAP with HOMEBREW_TAP_TOKEN, so this release cannot write the tap. A revoked or expired token is what this looks like."
+            exit 1
+          }
+          [ "$push" = true ] || {
+            echo "::error::HOMEBREW_TAP_TOKEN does not carry write on $TAP; GitHub reports push access as '$push'. It is a fine-grained token with contents write on that repository."
+            exit 1
+          }
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       # crates.io cannot take a version back — a yank still serves the files —
       # so the tested-commit gate is re-run here rather than assumed from the
@@ -370,3 +410,69 @@ jobs:
             --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+
+      # A formula in homebrew-core is bumped by Homebrew's own bot; a tap gets
+      # no such service, so the formula serves the version last written into it
+      # and this is what writes this one. It runs after the announcement
+      # because it points at a Release that has to exist: a tap lagging the
+      # Release by a few seconds is recoverable, where a Release that never
+      # announced is not.
+      #
+      # The tap holds a formula per project, and another project's release can
+      # push between this clone and this push. So only Formula/bdi.rb is
+      # written, and a rejected push is replayed onto what arrived rather than
+      # forced over it — a force here discards a formula whose own release has
+      # already announced.
+      #
+      # Unguarded by `from`, because a run that died after cargo publish also
+      # died before this, and a guarded step would leave that version's formula
+      # unwritten for good. The cost is that a from=announce dispatch on an
+      # older tag reaches here too, and the version gate has no opinion about
+      # which tag that is — so this declines to write when the tap already
+      # serves a newer version than the one being repaired, rather than
+      # downgrading every `brew install` to finish an old release.
+      - name: update the tap's formula
+        run: |
+          formula="$RUNNER_TEMP/bdi.rb"
+          nix run .#tap-formula -- "$VERSION" dist > "$formula"
+
+          tap="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/$TAP" "$tap"
+          branch="$( git -C "$tap" symbolic-ref --short HEAD )"
+
+          # Read afresh on every attempt: a replay is onto whatever arrived,
+          # and what arrived can be another bdi release's formula.
+          for attempt in 1 2 3; do
+            held="$( sed -n 's|.*/releases/download/v\([^/]*\)/.*|\1|p' \
+              "$tap/Formula/bdi.rb" | head -1 )"
+            newest="$( printf '%s\n%s\n' "$held" "$VERSION" | sort -V | tail -1 )"
+            if [ "$held" != "$VERSION" ] && [ "$held" = "$newest" ]; then
+              echo "$TAP serves $held, which is later than $TAG, so this leaves it alone"
+              exit 0
+            fi
+
+            cp "$formula" "$tap/Formula/bdi.rb"
+            if git -C "$tap" diff --quiet -- Formula/bdi.rb; then
+              echo "$TAP already serves $TAG"
+              exit 0
+            fi
+
+            git -C "$tap" \
+              -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "bdi $VERSION" -- Formula/bdi.rb
+
+            if git -C "$tap" push origin "HEAD:$branch"; then
+              echo "$TAP serves $TAG"
+              exit 0
+            fi
+
+            echo "$TAP moved under this push, so attempt $attempt replays onto it"
+            git -C "$tap" fetch origin "$branch"
+            git -C "$tap" reset --hard "origin/$branch"
+          done
+
+          echo "::error::$TAP would not take Formula/bdi.rb for $TAG. The release itself is out; the tap serves the version before it until this is repaired by dispatching this workflow on $TAG with from=announce."
+          exit 1
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
