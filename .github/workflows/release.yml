@@ -200,9 +200,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     # The tag push, the publish and the announcement are one sequence against
-    # state nothing can take back, so only one run may be inside it.
+    # state nothing can take back, so only one run may be inside it for a
+    # version. Per version rather than global: GitHub cancels a pending run
+    # when a third enters the group, and a global group would spend that
+    # cancellation on a different version's release.
     concurrency:
-      group: release
+      group: release-${{ needs.detect.outputs.version }}
       cancel-in-progress: false
     env:
       VERSION: ${{ needs.detect.outputs.version }}
