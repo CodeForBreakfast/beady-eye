@@ -2177,6 +2177,282 @@ and a second line"
           touch $out
         '';
 
+        # The two questions a run's early exit turns on, kept out of the
+        # command that asks them so a test can put every answer git and gh
+        # can give in front of the decision itself.
+        alreadyJudged = ''
+          jq=${pkgs.jq}/bin/jq
+          sed=${pkgs.gnused}/bin/sed
+
+          # The pull request a squash names, out of the subject GitHub built
+          # from its title. Empty where the subject names none, which is a
+          # commit that reached main by some route that left no run to read.
+          pull_request_in() {
+            printf '%s\n' "$1" | $sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p'
+          }
+
+          # What `gh run list --workflow ci.yml --commit <head>` said, on
+          # stdin. Only that head's own pull request runs answer: a commit can
+          # be a branch tip as well, and a run reached that way was handed the
+          # tree at the tip rather than the merge of this head with its base.
+          #
+          # One head carries several runs whenever a title was edited after CI
+          # started, and the concurrency group cancels the one it superseded.
+          # So this asks whether any run passed rather than what the newest
+          # one concluded, and only "success" is a pass — a conclusion GitHub
+          # has not invented yet comes back "refused" rather than falling
+          # through to one.
+          head_run_state() {
+            $jq -r --arg sha "$1" '
+              [.[] | select(.event == "pull_request" and .headSha == $sha)] as $runs |
+              if   ($runs | length) == 0 then "none"
+              elif any($runs[]; .status == "completed" and .conclusion == "success") then "success"
+              elif any($runs[]; .status != "completed") then "running"
+              else "refused" end'
+          }
+        '';
+
+        # ci.yml calls this where the step used to hold the shell itself, so
+        # what decides that a tree is not built is a check in the flake rather
+        # than a script only a run ever executes. The workflow keeps the half
+        # a tree cannot hold: the event, and the token gh reads.
+        #
+        # A tree that asks for the very derivations something has already been
+        # given a verdict on can only arrive at that same verdict, so the run
+        # does not build them. Which trees those are is a question for the
+        # flake rather than a list of documentation paths kept in a workflow: a
+        # derivation path answers for the source, for flake.nix and for
+        # flake.lock at once, so a dependency bump or an edited check is caught
+        # by construction.
+        #
+        # The verdict travels with the derivation rather than with the run that
+        # reported it. Two equal drvPath sets are the same build and not a
+        # similar one, so a skip here does not weaken what a green
+        # `nix flake check` job means: every check the flake declares for that
+        # tree has passed. What it stops meaning is that this particular run is
+        # where the building happened.
+        unbuiltChecks = pkgs.writeShellScriptBin "unbuilt-checks" ''
+          set -u
+
+          git=${pkgs.git}/bin/git
+          gh=${pkgs.gh}/bin/gh
+          mktemp=${pkgs.coreutils}/bin/mktemp
+          tar=${pkgs.gnutar}/bin/tar
+
+          ${alreadyJudged}
+
+          case "''${1:-}" in
+            -h|--help)
+              cat <<'USAGE'
+          unbuilt-checks
+
+          Prints "false" where every check this tree declares is a derivation
+          something has already had a verdict on, and "true" otherwise. Which
+          tree that verdict came from depends on GITHUB_EVENT_NAME:
+
+            pull_request   the branch it targets, whose own push run built it.
+            push           the head of the pull request the subject names,
+                           whose run main's ruleset required green before the
+                           squash could land.
+
+          Anything it cannot decide answers "true", so an unreadable subject,
+          an unreachable head and a gh that will not answer each cost a needless
+          build rather than leaving a tree nothing has checked.
+          USAGE
+              exit 0
+              ;;
+          esac
+
+          if [ "$#" -ne 0 ]; then
+            echo "unbuilt-checks: takes no argument, and was given: $*" >&2
+            exit 2
+          fi
+
+          # Every way out prints one word. The reason goes to stderr, where the
+          # run log keeps it beside the decision it explains.
+          builds() {
+            echo "$1" >&2
+            echo true
+            exit 0
+          }
+
+          event="''${GITHUB_EVENT_NAME:-}"
+          case "$event" in
+            pull_request|push) ;;
+            *) builds "Nothing gives a '$event' event's tree a verdict in advance." ;;
+          esac
+
+          cd "$($git rev-parse --show-toplevel)" || exit 1
+
+          if [ "$event" = pull_request ]; then
+            judged=origin/main
+          else
+            number="$(pull_request_in "$($git log -1 --format=%s)")"
+            [ -n "$number" ] ||
+              builds "This commit's subject names no pull request, so nothing has judged its tree."
+
+            # The merge ref a pull request's run was given is deleted when the
+            # pull request merges, so the head is what is left to compare
+            # against. Where main moved under the branch, the squash carries
+            # the base's changes too and its derivations differ from the
+            # head's, which is the build this must not skip and does not.
+            $git fetch --quiet --no-tags origin "refs/pull/$number/head" ||
+              builds "Pull request #$number's head could not be fetched, so its verdict cannot be read."
+            judged=FETCH_HEAD
+
+            head="$($git rev-parse FETCH_HEAD)"
+            runs="$($gh run list --workflow ci.yml --commit "$head" --limit 50 \
+                      --json databaseId,headSha,status,conclusion,event)" ||
+              builds "gh would not say what CI made of pull request #$number's head."
+
+            state="$(printf '%s' "$runs" | head_run_state "$head")"
+            [ "$state" = success ] ||
+              builds "CI's verdict on pull request #$number's head $head reads $state rather than success."
+          fi
+
+          # The nix that evaluates this is the one that ran this script, since
+          # it is the same nix that has to build what the answer does not skip.
+          derivations() {
+            nix eval --json "$1#checks.${system}" \
+              --apply 'builtins.mapAttrs (_: check: check.drvPath)'
+          }
+
+          # Unpacked rather than checked out, so what is evaluated is the
+          # committed tree and nothing this run has since put beside it.
+          base="$($mktemp -d)"
+          $git archive "$judged" | $tar -x -C "$base" ||
+            builds "$judged's tree could not be unpacked."
+
+          here="$(derivations .)" ||
+            builds "This tree's checks could not be evaluated."
+          [ -n "$here" ] ||
+            builds "This tree declares no check, which is not a tree to skip."
+          there="$(derivations "path:$base")" ||
+            builds "$judged's checks could not be evaluated."
+
+          if [ "$here" = "$there" ]; then
+            echo "Every check here is a derivation $judged has already had a verdict on." >&2
+            echo false
+          else
+            echo true
+          fi
+        '';
+
+        # ci.yml holds the trigger and this holds the decision, the way the
+        # conventional-subject rule is split. A step is prose until a run
+        # executes it, and the step this replaces decided whether a tree got
+        # built with nothing checking that it decided right.
+        unbuiltChecksTest = pkgs.runCommand "unbuilt-checks-test"
+          { nativeBuildInputs = [ unbuiltChecks ]; } ''
+          set -u
+          ${alreadyJudged}
+
+          sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          other=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+          fail() { echo "FAIL: $1"; exit 1; }
+
+          names() {
+            got="$(pull_request_in "$2")" || got="(sed refused it)"
+            [ "$got" = "$1" ] ||
+              fail "the pull request in '$2' read as '$got' rather than '$1'"
+          }
+
+          # A squash subject here is the pull request's title with the number
+          # GitHub appends to it, so that is what the number is read out of.
+          names 41 "feat(tui): retire a notice settled at startup after a minute (#41)"
+          names 7 "fix: a subject (#7)"
+          names 1234 "chore: a subject (#1234)"
+
+          # A subject that mentions a pull request without being one, and the
+          # shapes a commit that reached main some other way arrives in. Each
+          # has to come back empty rather than send this to somebody else's
+          # run for a verdict on a tree that is not this one.
+          names "" "revert: undo what (#41) landed yesterday"
+          names "" "fix: a subject"
+          names "" "fix: a subject #41"
+          names "" "fix: a subject (41)"
+          names "" "fix: a subject (#) "
+
+          pull_request_run() {
+            printf '{"databaseId":1,"headSha":"%s","status":"%s","conclusion":%s,"event":"pull_request"}' \
+              "$1" "$2" "$3"
+          }
+
+          push_run() {
+            printf '{"databaseId":2,"headSha":"%s","status":"%s","conclusion":%s,"event":"push"}' \
+              "$1" "$2" "$3"
+          }
+
+          reads() {
+            want="$1"
+            shift
+            got="$(printf '[%s]' "$*" | head_run_state "$sha")" || got="(jq refused it)"
+            [ "$got" = "$want" ] ||
+              fail "a run list this expected to read as '$want' read as '$got': [$*]"
+          }
+
+          reads none
+          reads success "$(pull_request_run "$sha" completed '"success"')"
+          reads running "$(pull_request_run "$sha" in_progress null)"
+          reads running "$(pull_request_run "$sha" queued null)"
+
+          # Every other conclusion GitHub records, and the one it records for
+          # a run that finished without reaching one. None of these is a tree
+          # anything passed on.
+          reads refused "$(pull_request_run "$sha" completed '"failure"')"
+          reads refused "$(pull_request_run "$sha" completed '"cancelled"')"
+          reads refused "$(pull_request_run "$sha" completed '"timed_out"')"
+          reads refused "$(pull_request_run "$sha" completed '"skipped"')"
+          reads refused "$(pull_request_run "$sha" completed null)"
+
+          # A conclusion nobody here has heard of asks for a build rather than
+          # being read as one, so the day GitHub adds one no tree skips on it.
+          reads refused "$(pull_request_run "$sha" completed '"embargoed"')"
+
+          # One head carries several runs whenever a title was edited after
+          # CI started, and the concurrency group cancels the one it
+          # superseded. Order is gh's, so neither position may be the one
+          # that decides.
+          reads success \
+            "$(pull_request_run "$sha" completed '"cancelled"'), $(pull_request_run "$sha" completed '"success"')"
+          reads success \
+            "$(pull_request_run "$sha" completed '"success"'), $(pull_request_run "$sha" completed '"cancelled"')"
+
+          # A run still going beside a green one does not unjudge the tree the
+          # green one passed.
+          reads success \
+            "$(pull_request_run "$sha" completed '"success"'), $(pull_request_run "$sha" in_progress null)"
+
+          # Somebody else's head. gh was asked about one commit and answering
+          # with another is not a verdict on this tree.
+          reads none "$(pull_request_run "$other" completed '"success"')"
+
+          # The same commit reached by a push. That run was given the tree at
+          # a branch tip rather than the merge of this head with its base, so
+          # it says nothing about what a pull request was judged on.
+          reads none "$(push_run "$sha" completed '"success"')"
+          reads success \
+            "$(push_run "$sha" completed '"failure"'), $(pull_request_run "$sha" completed '"success"')"
+
+          # The three the command decides before it has looked at a tree.
+          # Nothing here is in a git repository and none of these needs one.
+          output="$( unbuilt-checks --help 2>&1 )" && status=0 || status=$?
+          [ "$status" = 0 ] || fail "expected exit 0 for --help, got $status: $output"
+
+          output="$( unbuilt-checks a-tree 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 for an argument, got $status: $output"
+
+          # An event this cannot name a judged tree for builds, rather than
+          # going looking for a verdict that was never taken on anything.
+          answer="$( GITHUB_EVENT_NAME=schedule unbuilt-checks 2>/dev/null )" && status=0 || status=$?
+          [ "$status" = 0 ] || fail "expected exit 0 for an unknown event, got $status"
+          [ "$answer" = true ] ||
+            fail "an unknown event answered '$answer' rather than asking for a build"
+
+          touch $out
+        '';
+
         # A release merge starts CI and Release on one commit, and both used to
         # build the same tree. Two verdicts on one tree is the defect: the
         # second build cannot say anything the first did not, and it can
@@ -2204,12 +2480,19 @@ and a second line"
 
           # What `gh run list --workflow ci.yml --commit <sha>` said, on stdin.
           #
-          # Only a push to main is a verdict on the tree at that sha. ci.yml's
-          # `what main has not already built` lets a pull request's run skip
-          # the build where its derivations match main's, and such a run still
-          # concludes success; it also checks out the merge ref rather than the
-          # head, so it was never this tree. Both leave a green run that proves
-          # nothing, and this is where a release would otherwise read one.
+          # Only a push to main is a verdict on the tree at that sha. A pull
+          # request's run checks out the merge ref rather than the commit, so
+          # it was never handed this tree, and `unbuilt-checks` may have let it
+          # skip the build besides. Either way it concludes success while
+          # proving nothing about a sha on main, and this is where a release
+          # would otherwise read one.
+          #
+          # A push to main's run may skip that build too, where every
+          # derivation this tree declares was already judged on the pull
+          # request the squash is of. It is still a verdict on this tree: two
+          # equal drvPath sets are the same build rather than a similar one, so
+          # what a green run says is that every check the flake declares here
+          # has passed, not that this run is where the building happened.
           #
           # A push to main makes one run, so several is a shape ci.yml cannot
           # produce. It is not a first-element pick, because choosing between
@@ -2799,6 +3082,7 @@ and a second line"
         packages.await-ci-verdict = awaitCiVerdict;
         packages.conventional-subject = conventionalSubject;
         packages.tap-formula = tapFormula;
+        packages.unbuilt-checks = unbuiltChecks;
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
@@ -2852,6 +3136,7 @@ and a second line"
             "screen-walks-are-bounded";
           screen-walks-test = screenWalksAreBoundedTest;
           tap-formula-test = tapFormulaTest;
+          unbuilt-checks-test = unbuiltChecksTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
           # and builds that tarball rather than the working tree. A crate that
