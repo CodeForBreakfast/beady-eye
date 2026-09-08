@@ -32,20 +32,21 @@ pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
 /// One row of a bd listing, in the shape bd writes it, holding only the
 /// fields `bdi` reads.
 ///
-/// Unknown fields are ignored; a present field of the wrong type is an error.
-/// Every field bd omits when empty is optional here, because bd omits it
-/// rather than writing null.
+/// Unknown fields are ignored, and a field written as null reads as the one
+/// bd left out; a field of any other wrong type is still an error.
 ///
 /// `depth` is deliberately absent: bd flattens it under `--max-depth`, so the
 /// tree recomputes nesting from the dependency edges instead.
 #[derive(Deserialize)]
 struct Row {
     id: String,
+    #[serde(deserialize_with = "null_is_default")]
     title: String,
+    #[serde(deserialize_with = "null_is_unrecognised")]
     status: Status,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     priority: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_default")]
     issue_type: String,
     /// bd writes the top of a chain as an empty parent, or leaves the field
     /// out; either reads as none.
@@ -128,23 +129,53 @@ fn empty_is_none<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::E
     Ok(Option::<String>::deserialize(d)?.filter(|parent| !parent.is_empty()))
 }
 
+/// A field bd wrote as null holds what a field bd left out holds: nothing.
+fn null_is_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
+/// A row whose status is null claims no status, which is outside bd's set
+/// rather than any member of it. bdi says that on the screen instead of
+/// picking a status the row does not claim.
+fn null_is_unrecognised<'de, D: Deserializer<'de>>(d: D) -> Result<Status, D::Error> {
+    Ok(Option::<Status>::deserialize(d)?.unwrap_or_else(|| Status::Other(String::new())))
+}
+
 /// A bead's metadata is whatever JSON was written into it, and bdi draws it
 /// as text. So each value is read as the text it prints as, and a value that
 /// is not a string costs nothing.
+///
+/// bd wrote the object itself as a string spelling one until April 2026, so
+/// a tracker that straddles that date holds rows of both shapes and both are
+/// read here. Anything else bd could write there — a null, a number, a string
+/// spelling something that is not an object — is read as no metadata.
 ///
 /// A tracker is read whole, so the alternative is not a bead without its
 /// badge — it is every bead in that project, gone.
 fn text_of_each_value<'de, D: Deserializer<'de>>(
     d: D,
 ) -> Result<BTreeMap<String, String>, D::Error> {
-    let raw = BTreeMap::<String, serde_json::Value>::deserialize(d)?;
-    Ok(raw
+    Ok(match Option::<serde_json::Value>::deserialize(d)? {
+        Some(serde_json::Value::Object(fields)) => text_of_each(fields),
+        Some(serde_json::Value::String(spelled)) => serde_json::from_str(&spelled)
+            .map(text_of_each)
+            .unwrap_or_default(),
+        _ => BTreeMap::new(),
+    })
+}
+
+fn text_of_each(fields: serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
+    fields
         .into_iter()
         .map(|(key, value)| match value {
             serde_json::Value::String(text) => (key, text),
             written => (key, written.to_string()),
         })
-        .collect())
+        .collect()
 }
 
 /// One row of `bd blocked --json`, which carries a blocker set no dep-tree
@@ -542,6 +573,86 @@ mod tests {
             Some(&"x".to_string()),
             "a string keeps its own text, without the quotes JSON writes it in"
         );
+    }
+
+    /// bd wrote a bead's whole metadata object as a string spelling one until
+    /// April 2026, and a tracker old enough to straddle that holds rows of
+    /// both shapes.
+    #[test]
+    fn a_metadata_written_as_a_string_is_read_as_the_object_it_spells() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","metadata":"{}"},
+            {"id":"b","title":"t","status":"open",
+             "metadata":"{\"phase\":\"vacuum-soak\",\"attempts\":3}"}
+        ]"#;
+
+        let beads = parse_beads(rows).expect("a metadata written as a string still parses");
+
+        assert!(beads[0].metadata.is_empty());
+        assert_eq!(
+            beads[1].metadata.get("phase"),
+            Some(&"vacuum-soak".to_string())
+        );
+        assert_eq!(
+            beads[1].metadata.get("attempts"),
+            Some(&"3".to_string()),
+            "a value inside the string is read the way one inside an object is"
+        );
+    }
+
+    /// The other things that string could hold, and the other types the field
+    /// could be written as, read as no metadata rather than being refused: a
+    /// badge nobody can draw costs one bead, and a refusal costs the project.
+    #[test]
+    fn a_metadata_that_spells_no_object_is_read_as_none() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","metadata":"the sails"},
+            {"id":"b","title":"t","status":"open","metadata":7}
+        ]"#;
+
+        let beads = parse_beads(rows).expect("neither costs the tracker it is in");
+
+        assert!(beads[0].metadata.is_empty());
+        assert!(beads[1].metadata.is_empty());
+    }
+
+    /// bd omits a field it has nothing for, and `#[serde(default)]` covers
+    /// that. It does not extend to an explicit null, which is the same
+    /// nothing written the other way.
+    #[test]
+    fn a_field_written_null_reads_as_the_field_bd_left_out() {
+        let rows = r#"[{"id":"a","title":null,"status":"open",
+                        "priority":null,"issue_type":null,"metadata":null,
+                        "owner":null,"updated_at":null}]"#;
+
+        let beads = parse_beads(rows).expect("a null field does not lose a tracker");
+
+        assert_eq!(beads[0].title, "");
+        assert_eq!(beads[0].priority, 0);
+        assert_eq!(beads[0].issue_type, "");
+        assert!(beads[0].metadata.is_empty());
+    }
+
+    /// A null status is not a status bd wrote, so bdi does not put one on the
+    /// bead. It reads as a status outside bd's set, which the screen says it
+    /// does not recognise — where reading it as `open` would have the bead
+    /// claim a status nothing wrote.
+    #[test]
+    fn a_null_status_is_a_status_bdi_does_not_recognise() {
+        let rows = r#"[{"id":"a","title":"t","status":null}]"#;
+
+        let beads = parse_beads(rows).expect("a null status does not lose a tracker");
+
+        assert_eq!(beads[0].status, Status::Other(String::new()));
+    }
+
+    /// Leniency about null is not leniency about absence. bd writes a title
+    /// and a status on every row, so a listing with neither is a shape bdi
+    /// does not understand rather than a row with nothing in those fields.
+    #[test]
+    fn a_row_that_names_no_title_or_no_status_is_still_an_error() {
+        assert!(parse_beads(r#"[{"id":"a","status":"open"}]"#).is_err());
+        assert!(parse_beads(r#"[{"id":"a","title":"t"}]"#).is_err());
     }
 
     #[test]
@@ -1181,7 +1292,7 @@ mod tests {
     /// with five reads in it and no way to tell which.
     #[test]
     fn a_listing_that_will_not_parse_names_the_read_and_where_it_broke() {
-        let row = r#"[{"id":"atl-1","title":null,"status":"open"}]"#;
+        let row = r#"[{"id":"atl-1","title":42,"status":"open"}]"#;
         let runner = FakeRunner::default().with(&spelled(TRACKER_CALL), row);
 
         let unreadable = opened(&runner)
@@ -1193,7 +1304,7 @@ mod tests {
         assert_eq!(unreadable.read, "list");
         assert_eq!(
             unreadable.cause,
-            "invalid type: null, expected a string at line 1 column 27"
+            "invalid type: integer `42`, expected a string at line 1 column 25"
         );
     }
 
@@ -1202,7 +1313,7 @@ mod tests {
     /// holds no such row.
     #[test]
     fn a_wisp_that_will_not_parse_names_the_read_that_carried_it() {
-        let row = r#"[{"id":"atl-2","title":null,"status":"open"}]"#;
+        let row = r#"[{"id":"atl-2","title":42,"status":"open"}]"#;
         let runner = FakeRunner::default()
             .with(&spelled(TRACKER_CALL), "[]")
             .with(&spelled(WISP_CALL), row);

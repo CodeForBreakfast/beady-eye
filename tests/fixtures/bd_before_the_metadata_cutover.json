@@ -1,0 +1,75 @@
+[
+  {
+    "id": "orb-v1",
+    "title": "seal the airlock",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "parent": "",
+    "created_at": "2026-03-14T09:00:00Z",
+    "updated_at": "2026-03-14T09:00:00Z",
+    "metadata": "{}",
+    "dependencies": []
+  },
+  {
+    "id": "orb-v2",
+    "title": "shim the gimbal",
+    "status": "in_progress",
+    "priority": 1,
+    "issue_type": "task",
+    "parent": "",
+    "created_at": "2026-03-14T09:10:00Z",
+    "updated_at": "2026-03-14T09:10:00Z",
+    "started_at": "2026-03-14T09:10:00Z",
+    "metadata": "{\"phase\":\"vacuum-soak\"}",
+    "dependencies": []
+  },
+  {
+    "id": "orb-v3",
+    "title": "regrind the coupling",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "created_at": "2026-03-14T09:20:00Z",
+    "updated_at": "2026-03-14T09:20:00Z",
+    "metadata": null,
+    "dependencies": []
+  },
+  {
+    "id": "orb-v4",
+    "title": null,
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "created_at": "2026-03-14T09:30:00Z",
+    "updated_at": "2026-03-14T09:30:00Z",
+    "metadata": "{}",
+    "dependencies": []
+  },
+  {
+    "id": "orb-v5",
+    "title": "stow the boom",
+    "status": null,
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "",
+    "created_at": "2026-03-14T09:40:00Z",
+    "updated_at": "2026-03-14T09:40:00Z",
+    "metadata": "{}",
+    "dependencies": []
+  },
+  {
+    "id": "orb-v6",
+    "title": "log the burn",
+    "status": "open",
+    "priority": null,
+    "issue_type": null,
+    "parent": "",
+    "created_at": "2026-03-14T09:50:00Z",
+    "updated_at": "2026-03-14T09:50:00Z",
+    "metadata": "{}",
+    "dependencies": []
+  }
+]
