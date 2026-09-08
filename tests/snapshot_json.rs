@@ -3,7 +3,7 @@
 
 use beady_eye::collect::bd::parse_beads;
 use beady_eye::collect::herdr::Herdr;
-use beady_eye::collect::run::FailureKind;
+use beady_eye::collect::run::{FailureKind, RunFailure};
 use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
@@ -508,7 +508,7 @@ fn a_tracker_that_stops_answering_is_named_in_the_json_as_the_project_it_is() {
     assert_eq!(emitted["trees"], json!([]));
     assert_eq!(
         emitted["failed_projects"],
-        json!([{"project": "orbital", "tracker": "unavailable"}])
+        json!([{"project": "orbital", "tracker": {"reason": "unavailable"}}])
     );
     assert_eq!(emitted["hidden_trees"], json!([]), "never filtered away");
 }
@@ -520,7 +520,39 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
     assert_eq!(emitted["trees"], json!([]));
     assert_eq!(
         emitted["failed_projects"],
-        json!([{"project": "orbital", "tracker": "auth"}])
+        json!([{"project": "orbital", "tracker": {"reason": "auth"}}])
+    );
+}
+
+/// The one reason that says more than itself says it under the same key,
+/// alongside the reason rather than instead of it. A consumer reads every
+/// failure the same way and finds the extra where there is any.
+///
+/// The read is what sends a reader back to the command that broke, and the
+/// cause is where in that command's answer it broke. Neither is bd's account
+/// of anything: `a_trackers_own_words_never_reach_the_json` holds that, and
+/// this run never reached a failing exit for bd to have written one.
+#[test]
+fn a_tracker_whose_answer_would_not_parse_says_which_read_and_where_in_it() {
+    let would_not_parse = RunFailure::parse(
+        "bd",
+        "invalid type: null, expected a string at line 1 column 29",
+    )
+    .reading("list");
+    let trackers = orbital_with(orbital_tracker().failing(Asked::All, would_not_parse));
+
+    let emitted = emit(&panes(), &trackers, Filter::LiveAgents);
+
+    assert_eq!(
+        emitted["failed_projects"],
+        json!([{
+            "project": "orbital",
+            "tracker": {
+                "reason": "parse",
+                "read": "list",
+                "cause": "invalid type: null, expected a string at line 1 column 29",
+            },
+        }])
     );
 }
 
@@ -535,7 +567,7 @@ fn a_project_whose_bd_does_not_know_a_flag_is_named_in_the_json_as_such() {
 
     assert_eq!(
         emitted["failed_projects"],
-        json!([{"project": "orbital", "tracker": "unknown-flag"}])
+        json!([{"project": "orbital", "tracker": {"reason": "unknown-flag"}}])
     );
 }
 
@@ -551,11 +583,11 @@ fn a_bd_that_is_not_installed_and_one_that_will_not_start_carry_different_reason
 
     assert_eq!(
         emit(&panes(), &missing, Filter::LiveAgents)["failed_projects"],
-        json!([{"project": "orbital", "tracker": "not-installed"}])
+        json!([{"project": "orbital", "tracker": {"reason": "not-installed"}}])
     );
     assert_eq!(
         emit(&panes(), &broken, Filter::LiveAgents)["failed_projects"],
-        json!([{"project": "orbital", "tracker": "unstartable"}])
+        json!([{"project": "orbital", "tracker": {"reason": "unstartable"}}])
     );
 }
 
@@ -802,7 +834,7 @@ fn one_projects_tracker_failing_leaves_the_others_trees_standing() {
 
     assert_eq!(
         emitted["failed_projects"],
-        json!([{"project": "harbour", "tracker": "auth"}])
+        json!([{"project": "harbour", "tracker": {"reason": "auth"}}])
     );
 
     let trees = emitted["trees"].as_array().expect("trees is an array");

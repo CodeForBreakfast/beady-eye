@@ -1678,6 +1678,7 @@ mod tests {
                 kind: FailureKind::Gone,
                 program: "a provider".to_string(),
                 detail: "the test said so".to_string(),
+                unreadable: None,
             }),
         }
     }

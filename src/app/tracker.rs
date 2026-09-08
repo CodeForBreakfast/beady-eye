@@ -16,7 +16,7 @@ use crate::model::edges::{self, Relations};
 use crate::model::join;
 use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{Assembled, Nesting};
-use crate::model::types::{Bead, Pane};
+use crate::model::types::{Bead, Pane, Unreadable};
 
 /// One project's roots in id order, each either read or unreadable, and
 /// what every bead in the answer is tied to.
@@ -27,7 +27,7 @@ pub(super) struct ProjectWork {
 }
 
 /// Why a root drew no rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum RootUnread {
     /// The tracker could not be read.
     Tracker(TrackerFailure),
@@ -289,9 +289,12 @@ fn what_no_root_reached(
 
     tops.into_iter()
         .map(|id| {
-            let read = nesting
-                .assemble(&id)
-                .map_err(|_| RootUnread::Tracker(TrackerFailure::Parse));
+            let read = nesting.assemble(&id).map_err(|missing| {
+                RootUnread::Tracker(TrackerFailure::Parse(Unreadable {
+                    read: "list".to_string(),
+                    cause: missing.to_string(),
+                }))
+            });
             (id, read)
         })
         .collect()
@@ -456,12 +459,12 @@ pub(super) fn open_failure(failure: &OpenFailure) -> TrackerFailure {
     match failure {
         OpenFailure::NoEnvironment => TrackerFailure::NoEnvironment,
         OpenFailure::NoCredential => TrackerFailure::NoCredential,
-        OpenFailure::Refused(refusal) => tracker_failure(refusal.kind),
+        OpenFailure::Refused(refusal) => tracker_failure(refusal),
     }
 }
 
-pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
-    match kind {
+pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
+    match failure.kind {
         FailureKind::Auth => TrackerFailure::Auth,
         FailureKind::Unavailable
         | FailureKind::Gone
@@ -470,7 +473,9 @@ pub(super) fn tracker_failure(kind: FailureKind) -> TrackerFailure {
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
-        FailureKind::Parse => TrackerFailure::Parse,
+        // `RunFailure::parse` fills both halves, so the fallback is only
+        // reached by a failure built by hand.
+        FailureKind::Parse => TrackerFailure::Parse(failure.unreadable.clone().unwrap_or_default()),
         FailureKind::UnknownFlag => TrackerFailure::UnknownFlag,
     }
 }
@@ -1424,13 +1429,14 @@ orbital = ["bdi-404"]
             TrackerState::RootNotFound
         );
         assert!(
-            snap.trees
-                .iter()
-                .all(|tree| tree.tracker != TrackerState::Unreachable(TrackerFailure::Parse)),
+            snap.trees.iter().all(|tree| !matches!(
+                tree.tracker,
+                TrackerState::Unreachable(TrackerFailure::Parse(_))
+            )),
             "no tree blames the tracker's answer: {:?}",
             snap.trees
                 .iter()
-                .map(|tree| (tree.root.as_str(), tree.tracker))
+                .map(|tree| (tree.root.as_str(), tree.tracker.clone()))
                 .collect::<Vec<_>>()
         );
     }
@@ -1640,7 +1646,7 @@ orbital = ["bdi-404"]
             .expect_err("the one directory on PATH cannot be searched");
         let readable_again = std::fs::set_permissions(&locked, Permissions::from_mode(0o755));
 
-        let said = crate::view::phrase::tracker_failure(tracker_failure(failure.kind));
+        let said = crate::view::phrase::tracker_failure(&tracker_failure(&failure));
         readable_again.expect("the mode is ours to set");
         std::fs::remove_dir_all(&locked).expect("the directory is ours to remove");
 
@@ -1672,7 +1678,10 @@ orbital = ["bdi-404"]
                 FailureKind::InstalledUnstartable,
                 TrackerFailure::InstalledUnstartable,
             ),
-            (FailureKind::Parse, TrackerFailure::Parse),
+            (
+                FailureKind::Parse,
+                TrackerFailure::Parse(Unreadable::default()),
+            ),
             (FailureKind::Unsupported, TrackerFailure::Unavailable),
             (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
         ];
@@ -1684,6 +1693,28 @@ orbital = ["bdi-404"]
 
             assert_eq!(snap.failed_projects[0].tracker, expected, "on {kind:?}");
         }
+    }
+
+    /// And the one kind that knows more than its kind keeps what it knows.
+    ///
+    /// The row above proves a parse failure arrives as a parse failure. It
+    /// cannot prove the read and the parser's account survive the crossing,
+    /// because the failure it is given carries neither.
+    #[test]
+    fn a_tracker_whose_answer_would_not_parse_keeps_what_would_not_parse() {
+        let would_not_parse =
+            RunFailure::parse("bd", "invalid type: null, expected a string").reading("list");
+        let trackers = orbital_with(orbital_tracker().failing(Asked::All, would_not_parse));
+
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
+
+        assert_eq!(
+            snap.failed_projects[0].tracker,
+            TrackerFailure::Parse(Unreadable {
+                read: "list".to_string(),
+                cause: "invalid type: null, expected a string".to_string(),
+            })
+        );
     }
 
     /// A project that asked to be read in a captured environment and did not
@@ -1804,6 +1835,7 @@ orbital = ["orb-404"]
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
                 detail: "Access denied for user 'orbital' at db.example.invalid:3306".to_string(),
+                unreadable: None,
             },
         ));
 

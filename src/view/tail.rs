@@ -230,6 +230,7 @@ mod tests {
             kind,
             program: "herdr".to_string(),
             detail: "the test said so".to_string(),
+            unreadable: None,
         }
     }
 

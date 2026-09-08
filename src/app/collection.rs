@@ -308,7 +308,7 @@ impl Collection {
                         cfg,
                         now,
                     ),
-                    Err(why) => Tree::unread(project, root, TrackerState::from(*why)),
+                    Err(why) => Tree::unread(project, root, TrackerState::from(why.clone())),
                 })
             })
             .collect();
@@ -318,7 +318,7 @@ impl Collection {
             .filter_map(|(project, read)| {
                 read.work.as_ref().err().map(|failure| FailedProject {
                     project: project.to_string(),
-                    tracker: *failure,
+                    tracker: failure.clone(),
                 })
             })
             .collect();
@@ -591,6 +591,7 @@ mod tests {
             kind: FailureKind::Unavailable,
             program: "a provider".to_string(),
             detail: "no such session".to_string(),
+            unreadable: None,
         });
 
         let snap = run(
@@ -1855,6 +1856,7 @@ path = "{}"
             kind: FailureKind::Unavailable,
             program: THE_FAKE.to_string(),
             detail: "no socket".to_string(),
+            unreadable: None,
         }
     }
 

@@ -31,7 +31,36 @@ macro_rules! bd_floor {
     };
 }
 
-pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
+/// Why a tracker could not be read, and for the one failure that knows more
+/// than its kind, what else it knows.
+///
+/// Only `Parse` says anything beyond `redacted`, and what it adds is `bdi`'s
+/// own command line and the parser's account of `bdi`'s own structs. Both are
+/// how a reader gets from this line to the row that broke the read, which is
+/// the whole of what they can do about one.
+pub fn tracker_failure(failure: &TrackerFailure) -> String {
+    let TrackerFailure::Parse(unreadable) = failure else {
+        return redacted(failure).to_string();
+    };
+    // Either half missing is a failure built without one, which nothing in
+    // `bdi` does.
+    let mut said = vec![redacted(failure).to_string()];
+    if !unreadable.read.is_empty() {
+        said.push(format!("bd {}", unreadable.read));
+    }
+    if !unreadable.cause.is_empty() {
+        said.push(unreadable.cause.clone());
+    }
+    said.join(" · ")
+}
+
+/// The sentence every failure gets, and the whole of what eight of the nine
+/// ever say.
+///
+/// `&'static str` is the guarantee: a phrase that cannot hold a `String`
+/// cannot hold anything a tool wrote, and bd names the database and the SQL
+/// user on stderr whenever it refuses a credential.
+fn redacted(failure: &TrackerFailure) -> &'static str {
     match failure {
         TrackerFailure::NoEnvironment => concat!(
             "asked for an environment bdi could not produce · nothing was read, ",
@@ -46,7 +75,7 @@ pub fn tracker_failure(failure: TrackerFailure) -> &'static str {
         TrackerFailure::NotInstalled => "bd is not installed",
         TrackerFailure::Unstartable => "bd could not be started",
         TrackerFailure::InstalledUnstartable => "bd is installed and could not be started",
-        TrackerFailure::Parse => "bd answered with something bdi cannot read",
+        TrackerFailure::Parse(_) => "bd answered with something bdi cannot read",
         TrackerFailure::UnknownFlag => concat!(
             "bd does not know a flag bdi uses · bdi needs bd ",
             bd_floor!(),
@@ -276,7 +305,7 @@ fn age(since: TimeDelta) -> String {
 }
 
 pub fn failed_project(failed: &FailedProject) -> String {
-    format!("{}: {}", failed.project, tracker_failure(failed.tracker))
+    format!("{}: {}", failed.project, tracker_failure(&failed.tracker))
 }
 
 pub fn anomaly(anomaly: &Anomaly) -> String {
@@ -738,7 +767,8 @@ fn saying(caption: &str) -> String {
 mod tests {
     use super::*;
     use crate::collect::run::{Env, RealRunner, Runner};
-    use crate::model::types::testing::key as pane_key;
+    use crate::model::types::testing::{an_unreadable, key as pane_key};
+    use crate::model::types::Unreadable;
     use crate::view::fitted::columns;
     use crate::view::tests::{
         every_failure_kind, every_join_source, every_mark, every_notice, every_said,
@@ -783,7 +813,7 @@ mod tests {
         let mut said: Vec<String> = Vec::new();
 
         for failure in every_tracker_failure() {
-            said.push(tracker_failure(failure).to_string());
+            said.push(tracker_failure(&failure));
             said.push(failed_project(&FailedProject {
                 project: "summit-works".into(),
                 tracker: failure,
@@ -1388,7 +1418,7 @@ mod tests {
     /// `every_phrase`, which is where the guarantee is now made.
     #[test]
     fn the_failure_phrases_are_static() {
-        let _: fn(TrackerFailure) -> &'static str = tracker_failure;
+        let _: fn(&TrackerFailure) -> &'static str = redacted;
         let _: fn(JoinSource) -> Option<&'static str> = join_caveat;
         let _: fn() -> &'static str = no_bead_to_tail;
         let _: fn() -> &'static str = no_agent_to_tail;
@@ -1433,12 +1463,64 @@ mod tests {
             .all(|phrase| !phrase.trim().is_empty()));
     }
 
+    /// An answer that would not parse is the one failure a reader can chase,
+    /// and only if the line says which of the tracker's five reads answered
+    /// it and where in that answer the parser stopped.
+    #[test]
+    fn an_answer_that_would_not_parse_says_which_read_broke_and_where() {
+        let said = tracker_failure(&TrackerFailure::Parse(an_unreadable()));
+
+        says(&said, "bdi cannot read");
+        says(&said, "bd list");
+        says(&said, "expected a string");
+        says(&said, "line 1 column 25");
+    }
+
+    /// And nothing else says more than its kind.
+    ///
+    /// The redaction is why the phrases are written here at all: bd names the
+    /// database and the SQL user it authenticated as whenever it refuses a
+    /// credential, and it writes that on stderr — which is what a failing
+    /// exit is classified from. An answer that would not parse is the one
+    /// case where nothing was on stderr to redact, because the run succeeded
+    /// and what would not read is the tracker's own rows.
+    #[test]
+    fn no_failure_but_the_unreadable_answer_says_more_than_its_kind() {
+        for failure in every_tracker_failure() {
+            if matches!(failure, TrackerFailure::Parse(_)) {
+                continue;
+            }
+            assert_eq!(
+                tracker_failure(&failure),
+                redacted(&failure),
+                "{failure:?} said more than the kind it was classified as"
+            );
+        }
+    }
+
+    /// A failure that named neither half says its kind alone, rather than a
+    /// sentence with holes in it. Nothing in `bdi` builds one —
+    /// `RunFailure::parse` fills both — so this is the degrade rather than a
+    /// case the collector produces.
+    #[test]
+    fn a_parse_failure_that_named_nothing_still_says_its_kind() {
+        let nothing_named = TrackerFailure::Parse(Unreadable::default());
+
+        assert_eq!(
+            tracker_failure(&nothing_named),
+            redacted(&nothing_named),
+            "a failure with nothing to add added punctuation"
+        );
+    }
+
     /// A reader who cannot tell which failure it is cannot act on it, so no
     /// two of them may read the same. Walked rather than counted in the
     /// name: a name saying how many there are goes stale without going red.
     #[test]
     fn every_tracker_failure_is_told_apart_from_the_rest() {
-        let said: Vec<&str> = every_tracker_failure().map(tracker_failure).collect();
+        let said: Vec<String> = every_tracker_failure()
+            .map(|failure| tracker_failure(&failure))
+            .collect();
         let mut distinct = said.clone();
         distinct.sort_unstable();
         distinct.dedup();
@@ -1451,16 +1533,13 @@ mod tests {
     /// and find out which of those it is. One phrase for them said none.
     #[test]
     fn a_bd_that_is_not_installed_is_told_apart_from_one_that_will_not_start() {
+        says(redacted(&TrackerFailure::NotInstalled), "not installed");
         says(
-            tracker_failure(TrackerFailure::NotInstalled),
-            "not installed",
-        );
-        says(
-            tracker_failure(TrackerFailure::Unstartable),
+            redacted(&TrackerFailure::Unstartable),
             "could not be started",
         );
         says(
-            tracker_failure(TrackerFailure::InstalledUnstartable),
+            redacted(&TrackerFailure::InstalledUnstartable),
             "is installed and could not be started",
         );
     }
@@ -1476,14 +1555,11 @@ mod tests {
     #[test]
     fn only_a_bd_that_was_found_is_said_to_be_installed() {
         assert!(
-            !tracker_failure(TrackerFailure::Unstartable).contains("installed"),
+            !redacted(&TrackerFailure::Unstartable).contains("installed"),
             "a failure that established no installation asserted one: {}",
-            tracker_failure(TrackerFailure::Unstartable)
+            redacted(&TrackerFailure::Unstartable)
         );
-        says(
-            tracker_failure(TrackerFailure::InstalledUnstartable),
-            "installed",
-        );
+        says(redacted(&TrackerFailure::InstalledUnstartable), "installed");
     }
 
     /// A bd that does not know a flag bdi uses is one the reader replaces,
@@ -1491,7 +1567,7 @@ mod tests {
     /// the one place the code holds it.
     #[test]
     fn a_bd_that_does_not_know_a_flag_is_sent_to_the_floor() {
-        let said = tracker_failure(TrackerFailure::UnknownFlag);
+        let said = redacted(&TrackerFailure::UnknownFlag);
 
         says(said, "bd");
         says(said, "flag");
@@ -1504,7 +1580,7 @@ mod tests {
     /// to their own configuration instead.
     #[test]
     fn a_project_with_no_environment_is_not_reported_as_a_fault_in_bd() {
-        let said = tracker_failure(TrackerFailure::NoEnvironment);
+        let said = redacted(&TrackerFailure::NoEnvironment);
 
         says(said, "asked for an environment");
         says(said, "nothing was read");
@@ -1524,7 +1600,7 @@ mod tests {
     /// tracker refused the credential it was given*.
     #[test]
     fn a_project_whose_credential_command_will_not_run_is_not_reported_as_a_fault_in_bd() {
-        let said = tracker_failure(TrackerFailure::NoCredential);
+        let said = redacted(&TrackerFailure::NoCredential);
 
         says(said, "credential command");
         says(said, "nothing was read");
@@ -1545,7 +1621,7 @@ mod tests {
     /// is theirs, and it is the only one of the two they can go and edit.
     #[test]
     fn the_credential_failure_names_the_setting_rather_than_the_shell() {
-        let said = tracker_failure(TrackerFailure::NoCredential);
+        let said = redacted(&TrackerFailure::NoCredential);
 
         for program in ["sh ", "bash", "op", "pass"] {
             assert!(
@@ -1561,7 +1637,7 @@ mod tests {
     /// `bdi` reporting its own inference to somebody who never mentioned it.
     #[test]
     fn the_environment_failure_names_no_program() {
-        let said = tracker_failure(TrackerFailure::NoEnvironment);
+        let said = redacted(&TrackerFailure::NoEnvironment);
 
         for program in ["direnv", "nix", "mise", "sh "] {
             assert!(
@@ -1575,7 +1651,10 @@ mod tests {
     /// the phrase must not send the reader to it.
     #[test]
     fn a_root_the_tracker_does_not_hold_is_told_apart_from_an_unreadable_answer() {
-        assert_ne!(root_not_found(), tracker_failure(TrackerFailure::Parse));
+        assert_ne!(
+            root_not_found(),
+            redacted(&TrackerFailure::Parse(an_unreadable()))
+        );
         assert!(root_not_found().contains("config"));
     }
 

@@ -52,6 +52,22 @@ pub struct Dependency {
     pub edge: Edge,
 }
 
+/// What is known about an answer that would not parse, beyond that it would
+/// not: which read was asked for, and what the parser made of what came back.
+///
+/// Together they are enough to run the read by hand and land on the row that
+/// broke it, which is the whole of what a reader can do about one. Neither is
+/// the tool's prose — `read` is `bdi`'s own command line, and `cause` is the
+/// parser describing `bdi`'s own structs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Unreadable {
+    /// The subcommand whose answer would not parse, as `bdi` spells it on
+    /// the command line: `list`, `ready`, `query`, `blocked`, `sql`.
+    pub read: String,
+    /// The shape that did not match, and where in the answer it was.
+    pub cause: String,
+}
+
 /// One bead as `bdi` holds it: only the fields it uses, in its own shape.
 /// How a tracker spells them on the wire is the adapter's business.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,11 +207,23 @@ impl Pane {
 /// `tests/`, which is why it sits behind the feature rather than `cfg(test)`.
 #[cfg(feature = "testing")]
 pub mod testing {
-    use super::PaneKey;
+    use super::{PaneKey, Unreadable};
 
     /// The session a test's panes are in unless it says otherwise: the one
     /// herdr runs where nothing names another.
     pub const A_SESSION: &str = "default";
+
+    /// A parse failure as one arrives from the collector: the read `bdi`
+    /// asked for, and the parser's own account of the row that broke it.
+    ///
+    /// The cause is what `serde_json` writes for a row whose title bd sent
+    /// as an explicit null, measured against `parse_beads`.
+    pub fn an_unreadable() -> Unreadable {
+        Unreadable {
+            read: "list".to_string(),
+            cause: "invalid type: null, expected a string at line 1 column 25".to_string(),
+        }
+    }
 
     /// A pane in that session, by id.
     pub fn key(id: &str) -> PaneKey {

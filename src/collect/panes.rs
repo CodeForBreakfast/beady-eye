@@ -182,6 +182,7 @@ fn no_answer(provider: &str) -> RunFailure {
         kind: FailureKind::Unavailable,
         program: provider.to_string(),
         detail: format!("{provider} did not answer in time"),
+        unreadable: None,
     }
 }
 
