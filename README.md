@@ -1,211 +1,93 @@
 # beady-eye
 
-`bdi` shows the work in flight across your [beads](https://github.com/gastownhall/beads)
-trackers as a tree, with the live [herdr](https://herdr.dev) agent drawn beside
-each bead it is working on.
+`bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
+tracker you point it at. It draws each tracker's work as a tree, and beside
+every bead an agent has claimed, the live [herdr](https://herdr.dev) pane that
+agent is sitting in.
 
-beads knows the work: the tree, the dependencies, each bead's status and who
-claimed it. herdr knows the agents: which pane is alive and what it is doing.
-Neither knows about the other, so "what is left, what is done, and who is on
-what right now" has no single answer — and a closed bead whose agent never
-exited, or a claim whose agent died, is invisible to both. `bdi` joins them.
+beads knows the work. herdr knows the agents. Neither has heard of the other,
+so neither can tell you that `atlas-5` was claimed by a pane that died on
+Tuesday. Something old has opened an eye over both, and it can.
 
 ![A bdi screen: the atlas project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-Invented ground: the atlas project, its work and its panes are all made up,
-and `tools/capture/` is what draws the frame. `atlas-5` is the drift — a claim
-with no pane behind it, which is the thing neither beads nor herdr can see on
-its own.
+The atlas project is invented. `atlas-5` is the drift: claimed, with nothing
+behind the claim.
 
-`bdi` only reads. Changing the work stays bd's job.
+The eye only looks. It never writes to a tracker. Changing the work is still
+`bd`'s job, and the eye finds this arrangement acceptable.
 
-## Install
+## Summoning
 
-With Homebrew:
+Homebrew fetches a built binary, for macOS and Linux on Intel and arm64:
 
 ```console
 $ brew install codeforbreakfast/tap/bdi
 ```
 
-The full name taps `codeforbreakfast/tap` and installs from it in one command.
-It downloads the released binary rather than building one, and covers macOS and
-Linux on both Intel and arm64.
-
-From crates.io:
+crates.io, if you would rather compile it yourself:
 
 ```console
 $ cargo install beady-eye
 ```
 
-With Nix, run it without installing:
+Nix, with flakes on, builds the tip of `main`. Nothing caches it, so the first
+run is a cup of tea:
 
 ```console
 $ nix run github:CodeForBreakfast/beady-eye
 ```
 
-or keep it:
-
-```console
-$ nix profile install github:CodeForBreakfast/beady-eye
-```
-
-Neither is a download. Nothing publishes a binary cache for this project, so
-the first run compiles it from source and takes minutes. And both follow
-`main`, so what they build is the tip of the default branch rather than the
-last release.
-
-They also need flakes, and a Nix without them refuses twice — once per feature,
-and obeying the first refusal does not clear the second:
-
-```console
-$ nix run github:CodeForBreakfast/beady-eye
-error: experimental Nix feature 'nix-command' is disabled; add '--extra-experimental-features nix-command' to enable it
-
-$ nix --extra-experimental-features nix-command run github:CodeForBreakfast/beady-eye
-error: experimental Nix feature 'flakes' is disabled; add '--extra-experimental-features flakes' to enable it
-```
-
-Ask for both at once:
-
-```console
-$ NIX_CONFIG='experimental-features = nix-command flakes' nix run github:CodeForBreakfast/beady-eye
-```
-
-or write that same line into `nix.conf` and the prefix stops being needed. The
-flag nix itself suggests does the same, as long as both features are named at
-once — naming them one at a time is the loop above.
-
-To use it from your own flake, pin the input to a release tag — which is how you
-get a build you can name afterwards — and take either the package or the
-overlay:
+From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
 inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.3.0";
 
-# then either
-beady-eye.packages.${system}.default
-# or
-nixpkgs.overlays = [ beady-eye.overlays.default ];   # pkgs.beady-eye
+beady-eye.packages.${system}.default                # the package
+nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
 ```
 
-The crate is `beady-eye`; the command it installs is `bdi`.
+Or take a binary from the [latest release](https://github.com/CodeForBreakfast/beady-eye/releases/latest).
+There is one per platform with a `.sha256` beside it, and the Linux ones are
+static. Rename it `bdi` and put it on your `PATH`. Apple has not been asked to
+sign it, so a copy a browser downloaded needs
+`xattr -d com.apple.quarantine bdi` before macOS will let it open its eye.
 
-On a Mac with neither `cargo` nor Nix, take the binary from the latest release.
-It is one fetch and a `chmod`:
+The crate is `beady-eye`. The command is `bdi`.
 
-```console
-$ curl -fLO https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-aarch64-apple-darwin
-$ chmod +x bdi-aarch64-apple-darwin
-$ ./bdi-aarch64-apple-darwin --version
-```
+## Opening the eye
 
-`aarch64-apple-darwin` is an Apple silicon Mac and `x86_64-apple-darwin` an
-Intel one. Move it somewhere on your `PATH` under the name `bdi` and the rest of
-this page reads as written.
-
-A `.sha256` sits beside each one, and it names the file it is for, so keep that
-name to check it:
+Stand in a repository beads tracks and run it:
 
 ```console
-$ curl -fLO https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-aarch64-apple-darwin.sha256
-$ shasum -a 256 -c bdi-aarch64-apple-darwin.sha256
-```
-
-The binaries are not signed by Apple. Gatekeeper decides on a
-`com.apple.quarantine` attribute that whatever downloaded the file puts on it,
-and `curl` puts none there, so a binary fetched the way above runs. A browser
-puts one on, and macOS then refuses to run the file and asks you about it
-instead. Clearing the attribute is what gets past that:
-
-```console
-$ xattr -d com.apple.quarantine bdi-aarch64-apple-darwin
-```
-
-On Linux with neither `cargo` nor Nix, take the binary the same way. It is
-linked statically, so it depends on nothing the distribution has to supply:
-
-```console
-$ curl -fLO https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-x86_64-unknown-linux-musl
-$ chmod +x bdi-x86_64-unknown-linux-musl
-$ ./bdi-x86_64-unknown-linux-musl --version
-```
-
-`x86_64-unknown-linux-musl` is an Intel or AMD machine and
-`aarch64-unknown-linux-musl` an arm64 one, and `uname -m` says which you are on.
-Move it somewhere on your `PATH` under the name `bdi`, as above.
-
-A `.sha256` sits beside each of these too:
-
-```console
-$ curl -fLO https://github.com/CodeForBreakfast/beady-eye/releases/latest/download/bdi-x86_64-unknown-linux-musl.sha256
-$ sha256sum -c bdi-x86_64-unknown-linux-musl.sha256
-```
-
-## Run it
-
-Inside a repository beads tracks, `bdi` needs no config:
-
-```console
-$ cd ~/atlas
 $ bdi
 ```
 
-It draws that project's trees and keeps them live. The screen has three bands:
-the forest, with a line per project and its trees under it; a tail showing the
-last rows of the selected bead's pane; and a foot row with notices on the left
-and keys on the right.
+No config. It reads that project, draws its trees, and keeps them fresh. Three
+bands: the forest at the top, the tail of the selected bead's pane under it,
+and a foot row with notices on the left and keys on the right.
 
-These are the keys to get started with; `?` shows every binding there is:
+Keys to start with. `?` lists the lot.
 
 | key | does |
 |---|---|
-| `↑` `↓`, `j` `k` | move up and down a row |
-| `←` `→`, `h` `l` | collapse, or move to the parent when it is already collapsed; expand, or move to the first child when it is already expanded |
-| `Enter` | show the selected bead, or focus its pane from the bead view |
+| `↑` `↓` `j` `k` | move |
+| `←` `→` `h` `l` | collapse or expand; again to move to the parent or first child |
+| `Enter` | open the bead, and from there, focus its pane |
 | `f` | focus the selected bead's pane |
-| `a` | show every tree, not only those with a live agent |
-| `Space` | fold or unfold the selected node |
-| `E`, `C` | expand or collapse the selected node and everything under it |
-| `/`, `n`, `N` | find part of an id or title; next and previous match |
-| `y` | copy the selected bead's id to the clipboard (OSC 52, so it works over ssh and through a multiplexer) |
+| `a` | every tree, not only the ones with a live agent |
+| `/` `n` `N` | search ids and titles |
+| `y` | copy the bead id (OSC 52, so it survives ssh and a multiplexer) |
 | `^R` | read the trackers again now |
-| `?` | every binding |
-| `q` | quit |
+| `q` | avert the eye |
 
-`bdi --json` writes the same snapshot to stdout instead of drawing it. That is
-also what to use when stdout is not a terminal — `bdi | cat` says so and exits.
+`bdi --json` writes the same snapshot to stdout instead of drawing it. That
+is also what to reach for when stdout is not a terminal; `bdi | cat` says so and
+exits.
 
-Outside anything beads tracks, and with no config file, there is nothing to
-read:
+## Several trackers
 
-```console
-$ bdi
-Error: there is no config at /home/you/.config/beady-eye/config.toml, so bdi read the current directory
-
-Caused by:
-    /home/you is not in anything beads tracks
-```
-
-### Which projects a run reads
-
-With a config naming several projects, the directory you start in decides.
-Under one of them — its directory, a repository inside it, or a linked worktree
-— `bdi` reads that project alone and says so on screen. Anywhere else, it reads
-all of them.
-
-`--all-projects` reads every configured project from anywhere. `--project NAME`
-(repeatable) reads only those, from anywhere. A bead named on the command line
-as `PROJECT:ID` adds its tree to the run, and reads that project if the
-directory would have left it out.
-
-## Configure it
-
-`bdi` reads `~/.config/beady-eye/config.toml`, or the file `--config` names,
-and re-reads it while running: an edit takes effect a couple of seconds later.
-A file that does not parse leaves the previous config in force and says so at
-the foot until it is fixed.
-
-Everything has a default except the project list:
+A config file opens the eye on all of them:
 
 ```toml
 [[projects]]
@@ -216,301 +98,42 @@ path = "/home/you/atlas"
 name = "orbital"
 path = "/srv/work/orbital"
 environment_command = "nix develop -c"
-
-[[projects]]
-name = "beacon"
-path = "/home/you/dev/beacon"
-credential_command = "secret-tool lookup tracker beacon"
-
-[roots.explicit]
-atlas = ["atlas-1", "atlas-10"]
-
-[[badges]]
-key    = "delivery_pr"
-render = "⇢ {}"
-
-[[badges]]
-key    = "blocked_on"
-match  = "human"
-render = "⏸ waiting"
-
-[join]
-pane_key = "agent_pane"
-
-[changes]
-socket = "/run/user/1000/beady-eye/changes.sock"
-
-[anomalies]
-stale_claim_days = 30
-
-[tui]
-refresh_seconds = 30
-unanswered_after_seconds = 30
-tail_refresh_millis = 250
-
-[theme]
-background = "light"
 ```
 
-### `[[projects]]`
+That lives at `~/.config/beady-eye/config.toml`, or wherever `--config` says,
+and an edit takes effect while `bdi` runs. Start it under one of the projects
+and it reads that one alone. Start it anywhere else, or pass `--all-projects`,
+and it reads them all. `--project NAME` picks.
 
-A `name` and the `path` of its repository. The name is how `bdi` tells one
-tracker's beads from another's, so no two projects share one.
+Each project is read with its own `bd`, entered the way you would enter it
+yourself. An `.envrc` and direnv need nothing said. Anything else, say it with
+`environment_command`.
 
-Without a config, the one project is named after the repository's `origin`
-remote, or its directory if there is no remote or no git. `BDI_PROJECT` in the
-environment overrides that name, which is how to keep one name across machines
-that cloned into differently-named directories.
-
-**`environment_command`** — the wrapper you would type yourself to enter the
-project's environment, if `bdi` cannot work it out. A directory with an
-`.envrc`, on a machine with direnv, needs nothing: `bdi` enters it with
-`direnv exec .` on its own. Otherwise name the wrapper:
-
-| entered with | write |
-|---|---|
-| nix | `environment_command = "nix develop -c"` |
-| mise | `environment_command = "mise exec --"` |
-| direnv, from an `.envrc` somewhere else | `environment_command = "direnv exec ."` |
-
-The command runs in the project's directory. It is split on spaces with no
-quoting, so an argument containing a space is written as a list:
-
-```toml
-environment_command = ["nix", "develop", ".#dev shell", "-c"]
-```
-
-Whichever way it is entered, the tracker is read with the `bd` that environment
-supplies — the one you would get by standing in the directory yourself. A
-project that asked for an environment `bdi` could not produce is not read at
-all, and the screen says so; on a fresh clone that is usually an `.envrc`
-waiting for `direnv allow`. See [What it needs](#what-it-needs) for why there is
-no fallback.
-
-**`credential_command`** — a command whose stdout is the tracker's password.
-It runs inside the project's environment, and its output is captured rather
-than passed on a command line, so the password never shows in `ps`.
-
-**`poll = false`** — stop polling this project and rely on something
-[telling `bdi` when it changed](#telling-bdi-a-project-changed). Nothing then
-covers for a producer that dies, which is deliberate: an automatic fallback
-would hide the failure.
-
-### `[roots.explicit]`
-
-Trees to draw beyond the ones `bdi` finds for itself, listed under the project
-whose tracker holds them. Bead prefixes are per-tracker, so an id has to be
-placed.
-
-### `[[badges]]`
-
-Draw a metadata key beside every bead that carries it. `render` is the text,
-with `{}` for the value; `match` restricts the badge to one value. `bdi` has no
-idea what your metadata means — a convention your setup encodes there is named
-here and drawn as written.
-
-### `[join]`
-
-`pane_key` is the metadata key that names the herdr pane an agent sits in. It
-ties an agent to its bead exactly, rather than guessing from what the pane calls
-itself.
-
-### `[changes]`
-
-`socket` is where `bdi` listens for something saying a project's work has
-moved. It defaults to `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, and a machine
-with no `$XDG_RUNTIME_DIR` has no channel until this names one. `--socket`
-overrides it for one run, which is how two `bdi` runs on one machine each get
-a channel. *Telling `bdi` where to listen*, under *Telling `bdi` a project
-changed*, has the whole of it.
-
-### `[anomalies]`
-
-`stale_claim_days` is how long a claim may go untouched before `bdi` flags it.
-The default is `bd stale`'s own window.
-
-### `[tui]`
-
-Three intervals, each a gap *after* an answer rather than a fixed period, so a
-slow tracker stretches its own gap instead of queueing reads behind itself.
-`refresh_seconds` is how long a project waits between reads;
-`unanswered_after_seconds` is how long a read may take before the screen says
-the tracker has stopped answering; `tail_refresh_millis` is how often the tail
-asks herdr for the selected pane.
-
-### `[theme]`
-
-`background` is `dark` or `light`. `bdi` cannot see your terminal's background
-and assumes `dark`; on a light one the tail band becomes hard to read until you
-say so.
-
-## Telling `bdi` a project changed
-
-`bdi` polls, and most polls find nothing moved. A poll first asks the tracker
-whether anything has changed (one `bd sql` for the Dolt working root) and only
-reads in full if it has. That probe needs a Dolt server; bd's embedded store
-refuses it, and `bdi` then reads in full on every poll.
-
-Anything that already knows a tracker changed can skip the wait. `bdi` listens
-on a stream socket, created mode `0600` and removed on exit —
-`$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless it is told otherwise. Write a
-project's name as one line; `bdi` reads that project now and answers on the
-same connection:
-
-| answer | meaning |
-|---|---|
-| `ok <project>` | read again now |
-| `unknown <project>` | not a project this run is reading |
-| `malformed` | blank, or over 512 bytes |
-
-A connection can carry as many lines as you like and stay open for as long as
-the writer does. A project that is reported for is never polled — each report
-pushes the next poll past its interval — and one whose producer goes quiet is
-polled again from one interval later. The view degrades to slow, never to stale.
-
-The cheapest producer is a wrapper round `bd` itself. It reads the default
-path; a `bdi` told a different one has to be told to the producer too.
-
-```bash
-bdi_changed() {
-  local sock="$XDG_RUNTIME_DIR/beady-eye/changes.sock"
-  [ -S "$sock" ] || return 0
-  printf '%s\n' "$1" | socat - UNIX-CONNECT:"$sock" >/dev/null 2>&1
-}
-
-bd() {
-  command bd "$@" || return
-  case "$1" in
-    create|update|close|note|dep) bdi_changed my-project ;;
-  esac
-}
-```
-
-`nc -N -U "$sock"` does the same with OpenBSD netcat. A Dolt trigger, a git
-hook, a systemd path unit or a cron job comparing a head hash all work equally
-well; `bdi` provides the socket and cannot tell them apart.
-
-`--poll` and `--no-poll` override every project's `poll` setting for one run,
-which is how to find out whether a suspect producer was the only thing wrong.
-
-### Telling `bdi` where to listen
-
-The default path is one per login session, so two `bdi` runs on one machine
-derive the same one and the second finds the first already listening. It says
-so on stderr and polls everything for the rest of its life: the socket is asked
-for once at startup and never again, so closing the first run frees the path
-for the next run rather than for this one. Give one of them a socket of its own
-and both have a channel:
-
-```
-$ bdi --socket /run/user/1000/beady-eye/worktree.sock
-```
-
-`--socket` is per run, which is what two simultaneous runs of one binary need:
-a config file is per user, so both of them read the same one.
-
-A machine with no `$XDG_RUNTIME_DIR` — macOS has none — has no path to derive
-and no channel until it is told one. It wants the same path every run, so it
-belongs in the config:
-
-```toml
-[changes]
-socket = "/Users/you/Library/Caches/beady-eye/changes.sock"
-```
-
-`--socket` overrides the key.
-
-Two things are worth knowing for a path you name rather than for the default,
-because `$XDG_RUNTIME_DIR` is a directory no other user can reach and a path
-you name may sit somewhere any of them can walk through.
-
-The socket is created `0600` wherever it goes, and both Linux and macOS check
-that mode when something connects, so the channel is yours to speak on either.
-Who may replace the socket is for the directories above it to say. `bdi`
-creates a directory it makes `0700` and takes one already there as it stands,
-and it reads every directory on the way down, both as you spelled it and as it
-resolves. Each has to be yours or the system's, and closed to everybody else —
-or sticky, which is how `/tmp` keeps each name for whoever made it. Where one
-of them is a directory somebody else may take a name in, `bdi` names that
-directory and polls.
-
-So `/tmp/beady-eye/changes.sock` is a channel. `/tmp` keeps each name for
-whoever made it, and `bdi` makes the directory under it and keeps that to you.
-
-A path already holding something that is not a socket is refused, and what is
-there is left alone. `bdi` clears away the socket a crashed run left behind,
-and a name one keystroke from a file you need would otherwise be cleared away
-the same way.
-
-If the socket still cannot be opened — no path to put it at, or another `bdi`
-already listening on the one it has — `bdi` says so on stderr at startup, names
-the remedy, and polls everything.
+[docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
+bead metadata, credentials, extra roots, intervals, the light theme, and the
+socket you can poke to say a tracker changed so the eye stops polling it.
 
 ## What it needs
 
-**Linux or macOS.** `bdi` listens on a unix socket and waits on unix signals,
-so those are the two platforms it runs on. CI builds and tests on Linux; macOS
-is built and tested by hand.
-
-macOS has no `$XDG_RUNTIME_DIR`, so the channel that tells `bdi` a project
-changed has nowhere to derive a socket from and has to be given a path: the
-`[changes]` key, or `--socket` for one run. Until it has one, a Mac polls every
-project, which is slower and never wrong. *Telling `bdi` where to listen* has
-the paths.
-
-**A terminal that honours OSC 52, to copy with `y`.** The copy is that escape
-sequence and nothing else, which is what carries it through ssh and a
-multiplexer. A terminal that does not honour it drops the sequence and tells
-nobody: the foot says *copied* and the clipboard is unchanged. Apple's
-Terminal.app is one of those. Nothing else on the screen needs it.
-
-**bd 1.1.0 or newer.** An older bd is reported as such on the project's line,
-rather than as a tracker that cannot answer. A packaged bd is not always
-current: nixpkgs' `beads` was under this floor on current stable and on
-unstable alike, read on 2026-09-07. Check the version yours reports.
-
-**A tracker bd can open, server or embedded.** `bdi` speaks to no database; it
-asks bd, so what it reads is what bd reads. A tracker on a Dolt server
-authenticates, and the password reaches bd in `BEADS_DOLT_PASSWORD` — from the
-shell `bdi` was started in, or from that project's `credential_command`. The
-store `bd init` makes is embedded Dolt, authenticates to nothing, and needs
-neither.
-
-The two part company over the cheap question of whether anything moved, which
-is a `bd sql` statement the embedded store refuses. `bdi` learns that from the
-first refusal of a run and reads such a tracker in full on every poll instead.
-That is slower and never wrong, and it shows against a tracker being written
-hard: `bdi`'s read waits behind the writes rather than either side failing, and
-a read taking longer than `unanswered_after_seconds` is reported as a tracker
-that has stopped answering.
-
-**Each tracker read by its own bd.** `bdi` never writes to a tracker, but bd
-does: on finding itself newer than the bd that last opened a tracker, bd
-rewrites `.beads/.local_version` and migrates the schema, before running
-whatever subcommand it was given. `--readonly` does not stop that, and under
-`--json` bd says nothing about it. So a tracker read with a bd that is not its
-project's can be moved to a schema its project's bd cannot open — which is why
-`bdi` runs each project's own `bd` through the environment ladder above, and
-refuses to fall back to its own when that fails. Upgrading a project's bd
-migrates on the first read afterwards; that is the upgrade you chose.
-`docs/design.md` has the measurements.
-
-**git, optionally.** `bdi` uses it for the repository a directory sits in, the
-`origin` name, and the linked worktrees. Without git it still reads the
-tracker, names the project after its directory, and cannot place a pane by
-worktree.
-
-**herdr, optionally.** Without it you get the trees, the counts and the claims,
-with every tree drawn since there are no agents to filter on. herdr adds the
-part this is for: which claim has a live pane behind it, which pane is working
-on nothing any bead accounts for, and the tail.
+- **Linux or macOS.** Unix sockets and unix signals. Windows would need a
+  different ritual entirely.
+- **bd 1.1.0 or newer.** An older one is reported on the project's line rather
+  than obeyed. Packaged builds lag, so check what yours says.
+- **A tracker bd can open.** Server or embedded. A Dolt server wants a
+  password, and it reaches bd in `BEADS_DOLT_PASSWORD`, from your shell or from
+  a project's `credential_command`.
+- **herdr, for the agents.** Without it you get the trees and the claims, and
+  every tree is drawn. With it you get the point: which claim has a live pane
+  behind it, which pane toils on nothing any bead has heard of, and the tail.
+- **git, for worktrees.** Without it the project is named after its directory
+  and a pane cannot be placed by worktree.
+- **A terminal that honours OSC 52**, for `y`. Terminal.app does not, and says
+  nothing about it.
 
 ## Status
 
-Released, and in daily use against the trackers it was written for. The design
-is in [docs/design.md](docs/design.md).
+Released, and gazed into daily by the people who wrote it. The design is in
+[docs/design.md](docs/design.md).
 
-Versions are `0.x`, and a breaking change bumps the minor: `0.1` → `0.2`. So a
-minor bump can break you — pin the input to a release tag, as the example above
-does. `1.0.0` is a version the maintainers will choose once the shape has
-settled, rather than one a change arrives at by breaking something.
+Versions are `0.x`, and a breaking change bumps the minor. Pin a tag. `1.0.0`
+arrives when the shape has settled, not when something breaks.
