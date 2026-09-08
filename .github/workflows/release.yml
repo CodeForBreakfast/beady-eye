@@ -256,28 +256,13 @@ jobs:
         env:
           FROM: ${{ github.event.inputs.from }}
 
-      # The record of which commit produced the release. It goes after the
-      # binaries and before `cargo publish`, so a build that fails costs no tag
-      # and every version crates.io takes is one a tag already names.
-      #
-      # GitHub suppresses workflow triggers for a ref pushed with the default
-      # token. Nothing triggers on this tag, so that costs nothing.
-      #
-      # A resume runs this against a tag it pushed itself, so it asks first.
-      - name: tag the commit this release is cut from
-        run: |
-          git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null || {
-            git tag "$TAG"
-            git push origin "$TAG"
-          }
-
       # A resume skips every step guarded the way this one is. The guard reads
       # the event payload rather than the `inputs` context, which is only
       # available to a dispatched run; the payload is empty on a push, so a push
       # runs the lot.
       #
-      # Both of these fail the publish anyway, seven minutes later, with the
-      # tag already pushed. Saying so first costs nothing.
+      # Both of these fail the publish anyway, seven minutes later. Saying so
+      # first costs nothing.
       - name: the publish preconditions
         if: github.event.inputs.from != 'announce'
         run: |
@@ -298,6 +283,23 @@ jobs:
       - name: nix flake check
         if: github.event.inputs.from != 'announce'
         run: nix flake check -L
+
+      # The record of which commit produced the release, cut last of everything
+      # that can still fail cheaply. A tag naming a version is a claim that the
+      # version was released, and the claim is what makes every later merge to
+      # main a no-op — so a tag pushed ahead of a check that then fails leaves
+      # the fix unreleasable without somebody deleting it by hand.
+      #
+      # GitHub suppresses workflow triggers for a ref pushed with the default
+      # token. Nothing triggers on this tag, so that costs nothing.
+      #
+      # A resume runs this against a tag it pushed itself, so it asks first.
+      - name: tag the commit this release is cut from
+        run: |
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null || {
+            git tag "$TAG"
+            git push origin "$TAG"
+          }
 
       # The one irreversible step, and the last thing that can fail without
       # leaving a mess. cargo verifies the packaged tree builds before it
