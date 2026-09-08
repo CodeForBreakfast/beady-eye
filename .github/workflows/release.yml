@@ -245,6 +245,10 @@ jobs:
             dist/bdi-aarch64-apple-darwin.sha256 \
             dist/bdi-x86_64-apple-darwin \
             dist/bdi-x86_64-apple-darwin.sha256 \
+            dist/bdi-aarch64-unknown-linux-musl \
+            dist/bdi-aarch64-unknown-linux-musl.sha256 \
+            dist/bdi-x86_64-unknown-linux-musl \
+            dist/bdi-x86_64-unknown-linux-musl.sha256 \
             --clobber
         env:
           GH_TOKEN: ${{ github.token }}
