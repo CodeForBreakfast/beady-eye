@@ -1570,6 +1570,121 @@
           touch $out
         '';
 
+        # The version is written in three places and two of them are held to
+        # the crate: `flake.nix` reads it out of `Cargo.toml`, and `cargo
+        # publish --locked` refuses a `Cargo.lock` that disagrees. README's
+        # flake example is the third, and a bump that forgets it lands green —
+        # then the release ships a page telling a reader to pin the tag before
+        # the one being released.
+        #
+        # A pin is any ref written after the repository, because
+        # `github:owner/repo` alone is a reader taking whatever is on main,
+        # which is what the lines above the example tell them to do. What comes
+        # after it has to be the tag for the version the crate declares: a
+        # branch or a sha resolves and builds, so nothing else here would ever
+        # notice one.
+        readmePinsTheVersion = pkgs.writeShellScriptBin "readme-pins-the-version" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+
+          version="$(awk -F'"' '
+            /^\[/ { package = ($0 == "[package]") }
+            package && /^version *=/ { print $2; exit }
+          ' Cargo.toml)"
+
+          pins="$(grep -oE 'github:CodeForBreakfast/beady-eye/[^"[:space:]]+' README.md |
+            sed 's|^github:CodeForBreakfast/beady-eye/||' | sort -u)"
+
+          if [ -z "$pins" ]; then
+            echo "README no longer pins the flake input to a release tag."
+            echo
+            echo "The example a reader copies is the only place the page says to"
+            echo "pin one, and the versioning section under Status points back at"
+            echo "it. Put a github:CodeForBreakfast/beady-eye/v$version back."
+            exit 1
+          fi
+
+          # Whoever meets this meets it in a CI log with the guard unread, so
+          # each version is on a line naming the file it came from. A sentence
+          # holding both wraps, and then a value stands under a label that
+          # belongs to the other file.
+          wrong="$(printf '%s\n' "$pins" | grep -vxF "v$version" | sed 's/^/  /')"
+          if [ -n "$wrong" ]; then
+            echo "README pins the flake input to something the crate does not declare."
+            echo
+            echo "Cargo.toml declares $version."
+            echo "README pins:"
+            printf '%s\n' "$wrong"
+            echo
+            echo "So the example reads github:CodeForBreakfast/beady-eye/v$version."
+            exit 1
+          fi
+        '';
+
+        # The README in this tree pins the version it declares, so the check
+        # above passes whether or not it can still refuse one. This is what
+        # says it can — and that the unpinned references the page opens with
+        # are let through on purpose rather than missed.
+        readmePinsTheVersionTest = pkgs.runCommand "readme-pins-the-version-test"
+          { nativeBuildInputs = [ readmePinsTheVersion ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree"
+          printf '[package]\nname = "beady-eye"\nversion = "0.2.0"\n' > "$tree/Cargo.toml"
+
+          readme() { printf '%s\n' "$1" > "$tree/README.md"; }
+          pinned='inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.2.0";'
+          unpinned='$ nix run github:CodeForBreakfast/beady-eye'
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          accepts() {
+            output="$( readme-pins-the-version "$tree" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 0 ] || fail "$1"
+          }
+
+          refuses() {
+            output="$( readme-pins-the-version "$tree" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status: $1"
+            case "$output" in
+              *"$2"*) ;;
+              *) fail "the refusal did not say why ($2): $1" ;;
+            esac
+          }
+
+          readme "$pinned"
+          accepts "it refused a README pinning the version the crate declares:"
+
+          # The bump that forgets the README, which is the whole of this.
+          readme 'inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.1.0";'
+          refuses "it accepted a pin naming another version:" "v0.1.0"
+          readme 'inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.1.0";'
+          refuses "the refusal did not name the version the crate declares:" "0.2.0"
+
+          # A pin is a release tag rather than any ref that resolves. A branch
+          # builds, so nothing else here would notice.
+          readme 'inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/main";'
+          refuses "it accepted a pin that is not a release tag:" "main"
+
+          # The README with the example taken out of it. Every reading above
+          # passes on a page that pins nothing, so this is what holds the
+          # example in place rather than merely holding it right.
+          readme "$unpinned"
+          refuses "it accepted a README that pins nothing at all:" "no longer"
+
+          # The page opens by telling a reader to run the flake without pinning
+          # it, five times. Read as pins those would be five refusals on the
+          # tree as it stands.
+          readme "$unpinned
+$pinned"
+          accepts "an unpinned reference was read as a pin:"
+
+          touch $out
+        '';
+
+
         # The subject main carries comes from the pull request's title, because
         # this repository squash-merges — so the title is the one string worth
         # refusing, and a branch's own commit messages are squashed away.
@@ -1982,6 +2097,18 @@ and a second line"
           palette = checkOf "palette" null [ coloursComeFromThePalette ]
             "colours-come-from-the-palette";
           palette-test = coloursComeFromThePaletteTest;
+
+          # A source of its own, holding the two files this reads. It cannot be
+          # a `checkOf` entry the way the scans above are: those are built from
+          # `source`, which carries no documentation and
+          # `documentation-is-not-source` is what keeps it that way.
+          readme-pin = pkgs.runCommand "readme-pin"
+            { nativeBuildInputs = [ readmePinsTheVersion ]; } ''
+            readme-pins-the-version ${sourceOf [ ./README.md ./Cargo.toml ]}
+            touch $out
+          '';
+          readme-pin-test = readmePinsTheVersionTest;
+
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
           scope-to-the-change-test = scopeToTheChangeTest;
           name-the-runs-directory-test = nameTheRunsDirectoryTest;
