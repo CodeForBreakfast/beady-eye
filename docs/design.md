@@ -1661,6 +1661,17 @@ path comes free — closing the other `bdi` frees the channel for the next run,
 not for this one, and the notice is worded in the tense of the refusal for
 that reason.
 
+**The notice retires after a minute; the `stderr` line does not.** Nothing
+rechecks the refusal, so nothing but a clock would ever take the notice off —
+and on a machine that sets no `$XDG_RUNTIME_DIR` the refusal is true of every
+session there will ever be, so a foot that said it for the life of the run
+would spend one of its few rows describing the ordinary way `bdi` runs there.
+A minute is long enough for a reader who started `bdi` and turned to another
+window, and short enough that a session left up all day is not paying for it.
+What goes at the end of it is the sentence and not the fact: the `stderr` line
+is still on the primary screen where it was written, carrying the path and the
+remedy no phrase could.
+
 `README.md` carries the worked example: a `bd` wrapper that writes the project
 name to the socket after any command that wrote something.
 
@@ -2582,6 +2593,15 @@ A notice reaches the screen by the same road whether a collection produced it
 did, once at startup (the socket). The status bar is handed a list in the
 order it should give them up, so the next fact of this kind needs no new path
 to the screen.
+
+**How a notice leaves the foot follows from how it reached it.** One read off
+the snapshot behind each frame is gone the frame after it stops being true,
+and a config that will not reload is looked at every couple of seconds and
+comes off when the file mends. One this process handed over once, before the
+first collection, is rechecked by nothing, so a clock is the only thing that
+can take it off, and it stands for a minute. The rule is the road rather than
+a list of notices, so the next fact that arrives that way inherits the minute
+for arriving that way.
 
 ## Alternatives considered
 

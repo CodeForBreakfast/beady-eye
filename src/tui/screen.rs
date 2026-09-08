@@ -63,6 +63,57 @@ impl Drawing {
     }
 }
 
+/// How long a notice settled before the first collection is said at the foot.
+///
+/// Long enough that a reader who started `bdi` and turned to another window
+/// is still shown it when they look back, and short enough that a session
+/// left up all day is not spending a row on a fact that was settled before
+/// anything was drawn.
+const SETTLED_AT_STARTUP_STANDS_FOR: Duration = Duration::from_secs(60);
+
+/// What a run settled about itself before its first collection, and when it
+/// stops saying so.
+///
+/// Held apart from what stands by where it came from rather than by which
+/// notice it is. Nothing rechecks these: the socket is asked for once for the
+/// life of the run, so the answer holds whether or not the reader is still
+/// being told, and only a clock can take it off.
+struct Retiring {
+    notices: Vec<Notice>,
+    /// When they stop being said, or nothing where no clock will take them
+    /// off: a run that settled nothing to say, and one whose retirement is
+    /// further ahead than an instant can reach.
+    at: Option<DateTime<Utc>>,
+}
+
+impl Retiring {
+    fn settled(notices: Vec<Notice>, started: DateTime<Utc>) -> Self {
+        Self {
+            at: (!notices.is_empty())
+                .then(|| due_after(started, SETTLED_AT_STARTUP_STANDS_FOR))
+                .flatten(),
+            notices,
+        }
+    }
+
+    /// What they still say, which is nothing once they have retired.
+    fn said(&self, now: DateTime<Utc>) -> &[Notice] {
+        match self.at {
+            Some(at) if at <= now => &[],
+            _ => &self.notices,
+        }
+    }
+
+    /// How long until they retire, or nothing where the foot will not change
+    /// for them. Nothing rather than no time at all: a deadline that goes on
+    /// falling due is a loop redrawing the same frame for ever.
+    fn retires_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+        self.at
+            .and_then(|at| (at - now).to_std().ok())
+            .filter(|left| !left.is_zero())
+    }
+}
+
 /// The forest on the alternate screen and the tail beneath it.
 ///
 /// Held apart from the terminal that draws it because the terminal needs a
@@ -132,15 +183,16 @@ struct Shown {
     /// parents is drawn twice. The `Show` beside it is what puts them back
     /// on the row they followed rather than at the top of the bead.
     trail: Vec<(Place, Show)>,
-    /// What this run of `bdi` cannot do, said at the foot until it can.
+    /// What this run of `bdi` cannot do, said at the foot until it can. A
+    /// config that will not reload joins and leaves as the file breaks and
+    /// mends.
     ///
-    /// Seeded with what was settled before the first collection, which holds
-    /// for the session. A config that will not reload joins them and leaves
-    /// again, which is why these are held here rather than beside the
-    /// terminal: what the foot says is a fact about the view, and a fact
-    /// nothing without a tty could reach would be a fact no test could
-    /// either.
+    /// Held here rather than beside the terminal: what the foot says is a
+    /// fact about the view, and a fact nothing without a tty could reach
+    /// would be a fact no test could either.
     standing: Vec<Notice>,
+    /// What was settled before the first collection, said until it retires.
+    at_startup: Retiring,
 }
 
 /// Where the band under the forest is with the read it is waiting on.
@@ -168,6 +220,7 @@ impl Shown {
         clipboard: Box<dyn io::Write>,
         drawing: Drawing,
         at_startup: Vec<Notice>,
+        started: DateTime<Utc>,
     ) -> Self {
         let forest = forest::flatten(snapshot);
         let mut shown = Self {
@@ -189,7 +242,8 @@ impl Shown {
             show: Show::default(),
             viewing: None,
             trail: Vec::new(),
-            standing: at_startup,
+            standing: Vec::new(),
+            at_startup: Retiring::settled(at_startup, started),
         };
         // Asked for here rather than waited for: the first frame is drawn on
         // the answer to this arriving, not on the provider getting round to it.
@@ -212,7 +266,9 @@ impl Shown {
 
     /// How long what is drawn goes on being true with nothing happening.
     ///
-    /// The soonest deadline any project line on the screen sets. Each of them
+    /// The soonest deadline anything on the screen sets. The foot sets one
+    /// where a notice settled at startup is still being said, and the rest
+    /// are the project lines'. Each of them
     /// says two things — a mark, and how old its rows are — and a collection
     /// in flight does not silence the ages: they go on ticking under the mark
     /// that is turning, so a project read a moment ago is due a redraw well
@@ -246,7 +302,19 @@ impl Shown {
             .into_iter()
             .chain(ageing)
             .filter_map(|how_fresh| phrase::holds_for(how_fresh, now))
+            .chain(self.at_startup.retires_in(now))
             .min()
+    }
+
+    /// Everything this run has to say about itself, in the order the foot
+    /// should give it up: what was settled at startup, and then what stands.
+    fn says(&self, now: DateTime<Utc>) -> Vec<Notice> {
+        self.at_startup
+            .said(now)
+            .iter()
+            .chain(&self.standing)
+            .cloned()
+            .collect()
     }
 
     /// Put the band on whatever the selection is on now, and ask the provider for
@@ -762,13 +830,21 @@ impl Screen {
         panes: Box<dyn Panes>,
         at_startup: Vec<Notice>,
         drawing: Drawing,
+        started: DateTime<Utc>,
     ) -> anyhow::Result<Self> {
         let terminal = ratatui::try_init()?;
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
             terminal,
-            shown: Shown::of(snapshot, panes, Box::new(io::stdout()), drawing, at_startup),
+            shown: Shown::of(
+                snapshot,
+                panes,
+                Box::new(io::stdout()),
+                drawing,
+                at_startup,
+                started,
+            ),
         };
 
         // Capture costs the reader the terminal's own mouse: while `bdi` is
@@ -942,6 +1018,7 @@ impl View for Screen {
     }
 
     fn draw(&mut self, showing: Showing, now: DateTime<Utc>) -> anyhow::Result<()> {
+        let says = self.shown.says(now);
         let Shown {
             forest,
             tail,
@@ -949,7 +1026,6 @@ impl View for Screen {
             collecting,
             said,
             sought,
-            standing,
             drawing,
             ..
         } = &mut self.shown;
@@ -959,7 +1035,7 @@ impl View for Screen {
             Showing::Bead => Over::Bead(show),
         };
         let foot = draw::Foot {
-            standing,
+            standing: &says,
             said: said.as_ref(),
             prompt: sought.as_deref(),
             keys: &key_row(),
@@ -1727,6 +1803,23 @@ mod tests {
             Box::new(io::sink()),
             drawing(),
             nothing_said(),
+            an_instant(),
+        )
+    }
+
+    /// The same, over a run that settled something about itself before its
+    /// first collection, opened at the instant the caller names. Both matter
+    /// together: what a startup notice does is measured from when the run
+    /// started, so a screen whose start is not chosen cannot be asked about
+    /// it.
+    fn shown_saying(snapshot: Snapshot, at_startup: Vec<Notice>, started: DateTime<Utc>) -> Shown {
+        Shown::of(
+            snapshot,
+            Box::new(Asking::default()),
+            Box::new(io::sink()),
+            drawing(),
+            at_startup,
+            started,
         )
     }
 
@@ -1749,6 +1842,7 @@ mod tests {
                     ..drawing()
                 },
                 nothing_said(),
+                an_instant(),
             ),
             panes,
         )
@@ -3230,26 +3324,76 @@ mod tests {
         assert_eq!(shown.standing, [Notice::ConfigWouldNotReload]);
     }
 
-    /// What was settled before the first collection stands whatever the
-    /// config does: the notice that comes and goes is the only one that does.
+    /// Nothing rechecks what was settled before the first collection — the
+    /// socket is asked for once for the life of the run — so on a machine
+    /// that sets no `$XDG_RUNTIME_DIR` it is true of every session there will
+    /// ever be, and a foot that said it for ever would spend a row describing
+    /// the ordinary way `bdi` runs there.
     #[test]
-    fn a_config_notice_leaves_the_notices_settled_at_startup_alone() {
-        let mut shown = Shown::of(
-            a_staffed_grove(6),
-            Box::new(Asking::default()),
-            Box::new(io::sink()),
-            drawing(),
-            vec![Notice::NoInboundChannel],
-        );
+    fn a_notice_settled_at_startup_leaves_the_foot_after_a_minute() {
+        let started = an_instant();
+        let shown = shown_saying(a_snapshot(), vec![Notice::NoInboundChannel], started);
 
-        shown.reloaded(Reloaded::Broken, an_instant());
+        assert_eq!(shown.says(started), [Notice::NoInboundChannel]);
         assert_eq!(
-            shown.standing,
+            shown.says(started + chrono::TimeDelta::seconds(59)),
+            [Notice::NoInboundChannel],
+            "still there for a reader who has only just looked back"
+        );
+        assert_eq!(shown.says(started + chrono::TimeDelta::seconds(60)), []);
+    }
+
+    /// The retirement is a deadline the loop sleeps to, so the foot loses the
+    /// notice on a frame nothing else asked for. One lost on the reader's
+    /// next keystroke instead would stay for as long as they kept their hands
+    /// still, which on a screen nothing else is changing is the whole run.
+    #[test]
+    fn the_frame_holds_only_as_long_as_a_notice_settled_at_startup_does() {
+        let started = an_instant();
+        let shown = shown_saying(a_snapshot(), vec![Notice::NoInboundChannel], started);
+
+        assert_eq!(shown.holds_for(started), Some(Duration::from_secs(60)));
+        assert_eq!(
+            shown.holds_for(started + chrono::TimeDelta::seconds(60)),
+            None,
+            "retired on the instant, so nothing is left to falsify"
+        );
+        assert_eq!(
+            shown.holds_for(started + chrono::TimeDelta::hours(3)),
+            None,
+            "and retired long since"
+        );
+    }
+
+    /// The clock reaches what was settled before the first collection and
+    /// nothing else. A config that will not reload is looked at every couple
+    /// of seconds and comes off the foot when the file mends, so it is still
+    /// said hours after the startup notices have gone — and it joins them
+    /// underneath rather than in front, which is the order the foot gives
+    /// them up in.
+    #[test]
+    fn a_config_that_will_not_reload_outlasts_the_notices_settled_at_startup() {
+        let started = an_instant();
+        let mut shown = shown_saying(a_snapshot(), vec![Notice::NoInboundChannel], started);
+        let broke = started + chrono::TimeDelta::seconds(30);
+        let hours_later = started + chrono::TimeDelta::hours(3);
+
+        shown.reloaded(Reloaded::Broken, broke);
+        assert_eq!(
+            shown.says(broke),
             [Notice::NoInboundChannel, Notice::ConfigWouldNotReload]
         );
+        assert_eq!(shown.says(hours_later), [Notice::ConfigWouldNotReload]);
 
-        shown.reloaded(Reloaded::Fresh(&the_config_in_force()), an_instant());
-        assert_eq!(shown.standing, [Notice::NoInboundChannel]);
+        shown.reloaded(Reloaded::Fresh(&the_config_in_force()), hours_later);
+        assert_eq!(shown.says(hours_later), []);
+    }
+
+    /// A run that found everything it looked for has no retirement to wake
+    /// for, so the deadline is not a wakeup every run pays for.
+    #[test]
+    fn a_run_with_nothing_settled_at_startup_has_no_retirement_to_wake_for() {
+        assert_eq!(shown(a_snapshot()).holds_for(an_instant()), None);
     }
 
     /// The gap `tail_refresh_millis` can be given and still be waited out.
@@ -3431,6 +3575,7 @@ mod tests {
                 Box::new(clipboard.clone()),
                 drawing(),
                 nothing_said(),
+                an_instant(),
             ),
             clipboard,
         )
@@ -3762,6 +3907,7 @@ mod tests {
             Box::new(Refusing),
             drawing(),
             nothing_said(),
+            an_instant(),
         );
 
         assert!(!shown.apply(Action::CopyId));
