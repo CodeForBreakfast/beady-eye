@@ -5,9 +5,22 @@ name: Release
 on:
   # Merging the version bump is the only human act in a release. Everything
   # outward-facing from there is this workflow's.
-  push:
-    branches:
-      - main
+  #
+  # CI's verdict arrives as the trigger rather than as something a runner is
+  # paid to sit and wait for. On a push to main this used to start beside CI
+  # and then hold a runner idle for the whole of it — 6m54s of the 10m03s the
+  # 0.4.0 release took. Starting when CI concludes costs none of that.
+  #
+  # `branches` filters the triggering run's head branch, which is not on its
+  # own the guard: a fork's pull request whose branch is named `main` passes
+  # it, and a `workflow_run` job runs the default branch's copy of this file
+  # with this repository's secrets. What shuts that is the `detect` gate below
+  # reading the triggering run's *event*. This is here so an ordinary pull
+  # request does not queue a workflow run at all.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
   # Actions re-runs a job, never a step, so a run that dies after cargo publish
   # cannot simply be repeated: crates.io already holds the version and refuses
@@ -33,17 +46,42 @@ jobs:
   #
   # The version comes out of Cargo.toml. Reading it needs no nix and no
   # toolchain, so a merge that turns out not to be a release costs seconds.
+  #
+  # This is also where a triggering run that is nobody's business here stops.
+  # `workflow_run` hands the default branch's copy of this file this
+  # repository's secrets, and a fork's pull request produces a run like any
+  # other, so what may pass is stated as the three facts the payload carries:
+  # a push, on main, that concluded success. A pull request's run is not a
+  # verdict on any commit that is on main, and a cancelled run is neither
+  # green nor red, so neither reaches the gate below as an answer to argue
+  # with — they are not a release at all.
   detect:
     name: is this merge a release
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # Every line here sits at one indentation on purpose: a folded scalar
+    # keeps the newline before any line indented further than its first, and
+    # what this has to hand the expression parser is one line.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success')
     permissions:
       contents: read
     outputs:
       version: ${{ steps.decide.outputs.version }}
       release: ${{ steps.decide.outputs.release }}
+      # The commit CI tested, which every job below checks out and the tag is
+      # cut from. `GITHUB_SHA` is main's head under `workflow_run` rather than
+      # the sha of the run that concluded, and the two differ whenever another
+      # merge lands while CI is still going. A dispatch carries no triggering
+      # run and is on the ref it was dispatched for, so there it is the ref.
+      sha: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # A dispatch is a repair on a tag that already exists, so it answers yes
       # without asking either question — the push that cut that tag asked them
@@ -120,6 +158,8 @@ jobs:
             target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.detect.outputs.sha }}
 
       # The runner's own Rust rather than the flake's. What pins the toolchain
       # this code is tested with is `nix flake check` below; this job compiles
@@ -174,6 +214,8 @@ jobs:
             target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.detect.outputs.sha }}
 
       # The image carries only its own host target, so the musl standard
       # library has to be asked for.
@@ -227,11 +269,14 @@ jobs:
     env:
       VERSION: ${{ needs.detect.outputs.version }}
       TAG: v${{ needs.detect.outputs.version }}
+      SHA: ${{ needs.detect.outputs.sha }}
       TAP: CodeForBreakfast/homebrew-tap
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
       # runs with this repository's token.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.detect.outputs.sha }}
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
@@ -262,7 +307,7 @@ jobs:
             echo "::error::$TAG does not exist, so there is no release for from=announce to finish"
             exit 1
           fi
-          if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+          if [ -n "$existing" ] && [ "$existing" != "$SHA" ]; then
             echo "::error::$TAG already names $existing, not the commit this run is on"
             exit 1
           fi
@@ -335,30 +380,37 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       # crates.io cannot take a version back — a yank still serves the files —
-      # so nothing is published on a tree that has not been through the whole
-      # of `nix flake check`. This waits for that check rather than running it:
-      # the same push starts CI on this commit, CI builds every check the
-      # flake declares, and a second build of one tree cannot say anything the
-      # first did not while it can disagree with it.
+      # so nothing is published on a tree whose checks have not passed. What
+      # this requires is CI's run for this commit on a push to main, concluded
+      # success, whose job named `nix flake check` concluded success as well.
+      # The run's own conclusion does not carry that: a run concludes success
+      # when its jobs are skipped.
       #
-      # `await-ci-verdict` is what makes that safe, and the decision it makes
-      # is checked — `await-ci-verdict-test` in the flake holds every
-      # conclusion GitHub can give against the exit this wants for it. What is
-      # not checked is this step: no gate here reads a workflow file.
+      # What a green `nix flake check` guarantees is that every derivation the
+      # flake declares for this tree has a passing verdict — not that this
+      # particular run is where the building happened. ci.yml lets a run skip
+      # building derivations an earlier run has already been given a verdict
+      # on, and a derivation path is the identity of the tree it was built
+      # from, so the guarantee travels with the derivation rather than with
+      # the run that reported it.
       #
-      # The verdict it reads is a push to main's, and no other run counts. A
-      # pull request's run for the same sha builds the merge ref rather than
-      # the commit, and ci.yml lets it skip the build entirely where its
-      # derivations match main's, so a dispatch on a branch is refused rather
-      # than published on a green run that built nothing.
+      # On the ordinary path the verdict being read here is the one that
+      # started this workflow, so nothing waits for it. It is read at all
+      # because the `workflow_run` payload carries run-level facts only and
+      # says nothing about which jobs concluded what.
       #
-      # A push to main cannot have its CI run cancelled out from under this.
-      # ci.yml groups a push by sha and shares that group with nothing, so
-      # nothing supersedes it and only a person pressing cancel can end it —
-      # which stops the release rather than hanging it.
+      # `from=publish` is the fallback for a trigger that never fired, and it
+      # arrives holding a sha and nothing else. There this is the whole gate,
+      # and its refusal of every run but a push to main is what stops a
+      # dispatch on a branch publishing a tree nothing built.
+      #
+      # `await-ci-verdict` is where that decision lives, and it is checked:
+      # `await-ci-verdict-test` in the flake holds every conclusion GitHub can
+      # give against the exit this wants for it. What is not checked is this
+      # step — no gate here reads a workflow file.
       - name: CI's verdict for this commit
         if: github.event.inputs.from != 'announce'
-        run: nix run .#await-ci-verdict -- "$GITHUB_SHA"
+        run: nix run .#await-ci-verdict -- "$SHA"
         env:
           GH_TOKEN: ${{ github.token }}
 
