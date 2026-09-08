@@ -6,9 +6,8 @@ pull request that bumps the version checks it in.
 
 The [`Release` workflow](../.github/workflows/release.yml) cuts the GitHub
 Release from the file it finds. What is written here is what a reader gets,
-word for word. A version bump merged without its notes file fails the run: no
-tag is cut and nothing is published, so landing the file afterwards is the
-whole of the repair.
+word for word. A version bump merged without its notes file fails the run, so
+landing the file afterwards is the whole of the repair.
 
 ## Style
 
