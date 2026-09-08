@@ -43,9 +43,10 @@
       # tests/shims/.
       source = sourceOf [ ./Cargo.toml ./Cargo.lock ./src ./tests ];
 
-      # The crate names the version once. A release tag that disagrees with it
-      # is refused before anything is published, so a crate on crates.io always
-      # has a flake output built from the same source at the same version.
+      # The crate names the version once. The release tag is cut from it and
+      # this output is compared against it before anything is published, so a
+      # crate on crates.io always has a flake output built from the same source
+      # at the same version.
       common = {
         pname = cargoToml.package.name;
         version = cargoToml.package.version;
