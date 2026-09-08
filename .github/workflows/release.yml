@@ -297,9 +297,17 @@ jobs:
       # The tap is public, and git sends no credentials to a server that does
       # not ask for them — so cloning or listing it proves nothing about the
       # token, and a revoked one would read as a working one right up until the
-      # push. The API is asked instead, which rejects a credential it does not
-      # accept whether or not the repository is public, and answers with the
-      # access the token carries rather than the access this actor has.
+      # push. The API is asked instead, because it refuses a credential it does
+      # not accept whether or not the repository is public.
+      #
+      # What the answer proves is one direction only. A fine-grained token
+      # cannot carry more than its owner has, so `push: false` is a token that
+      # certainly cannot write; `push: true` may still be the owner's access
+      # rather than the token's contents grant, and nothing short of a write
+      # tells those apart. The push below is where that is settled, and this is
+      # what keeps the ordinary spelling of a wrong secret — unset, revoked,
+      # expired, or made for the wrong repository — out of the minutes after
+      # cargo publish.
       - name: the tap precondition
         run: |
           test -n "$GH_TOKEN" || {
