@@ -155,12 +155,21 @@ jobs:
       # declares and the version the flake output carries. It runs on a resume
       # too, where it checks that the tag being finished names the version that
       # was published.
-      - name: the tag must name the version the tree declares
+      #
+      # The notes file is checked here rather than beside the step that reads
+      # it, which runs after `cargo publish` and so after the one thing
+      # crates.io will not take back. A resume that cannot announce should not
+      # start either.
+      - name: the tag must name the version the tree declares, and its notes must be written
         run: |
           tagged="${GITHUB_REF_NAME#v}"
           declared=$(nix eval --raw .#packages.x86_64-linux.default.version)
           echo "tag $tagged, tree $declared"
           test "$tagged" = "$declared"
+          test -f "RELEASE-NOTES/$tagged.md" || {
+            echo "::error::RELEASE-NOTES/$tagged.md is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
+            exit 1
+          }
 
       # A resume skips every step guarded the way this one is. The guard reads
       # the event payload rather than the `inputs` context, which is only
@@ -228,9 +237,6 @@ jobs:
         # this costs instead is a Release briefly without its binaries during a
         # run that is going well, and the next command closes that.
         #
-        # The guard is also what keeps a repair from generating release notes
-        # over the ones somebody has already read.
-        #
         # Every asset is named rather than globbed, so an upload cannot quietly
         # leave one out: a pattern matching nothing uploads nothing and says
         # the step passed.
@@ -239,7 +245,7 @@ jobs:
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
-              --generate-notes
+              --notes-file "RELEASE-NOTES/${GITHUB_REF_NAME#v}.md"
           gh release upload "$GITHUB_REF_NAME" \
             dist/bdi-aarch64-apple-darwin \
             dist/bdi-aarch64-apple-darwin.sha256 \
