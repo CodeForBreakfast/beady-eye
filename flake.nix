@@ -2293,14 +2293,29 @@ and a second line"
 
             # The merge ref a pull request's run was given is deleted when the
             # pull request merges, so the head is what is left to compare
-            # against. Where main moved under the branch, the squash carries
-            # the base's changes too and its derivations differ from the
-            # head's, which is the build this must not skip and does not.
+            # against.
             $git fetch --quiet --no-tags origin "refs/pull/$number/head" ||
               builds "Pull request #$number's head could not be fetched, so its verdict cannot be read."
             judged=FETCH_HEAD
 
             head="$($git rev-parse FETCH_HEAD)"
+
+            # A head's green is not on its own a verdict on that head's tree:
+            # the run was given the merge of it with main as main stood at the
+            # time. Where the head contains this commit's parent it is the
+            # same tree either way — main only moves forward, so a head
+            # holding the parent holds everything main had while the run was
+            # going, and the merge the run was handed was the head's own tree.
+            #
+            # Where the head does not contain it, the branch never saw what
+            # main did and that run was given a tree this squash is not. A
+            # change on main and its revert straddling a pull request is the
+            # shape that reaches here with matching derivations and no build
+            # behind them, and this is what refuses it.
+            parent="$($git rev-parse --verify --quiet HEAD^)" ||
+              builds "This commit has no parent, so nothing here says what main held while that run was going."
+            $git merge-base --is-ancestor "$parent" "$head" ||
+              builds "Pull request #$number's head does not contain $parent, so its run was given a tree this one is not."
             runs="$($gh run list --workflow ci.yml --commit "$head" --limit 50 \
                       --json databaseId,headSha,status,conclusion,event)" ||
               builds "gh would not say what CI made of pull request #$number's head."
@@ -2489,10 +2504,15 @@ and a second line"
           #
           # A push to main's run may skip that build too, where every
           # derivation this tree declares was already judged on the pull
-          # request the squash is of. It is still a verdict on this tree: two
-          # equal drvPath sets are the same build rather than a similar one, so
-          # what a green run says is that every check the flake declares here
-          # has passed, not that this run is where the building happened.
+          # request the squash is of. It is still a verdict on this tree.
+          # `unbuilt-checks` reads the merge ref clause above as a condition
+          # rather than an objection: it takes a pull request's green only
+          # where that head contains this commit's parent, which is exactly
+          # when the merge the run was handed was the head's own tree. What is
+          # left is two equal drvPath sets, and those are the same build
+          # rather than a similar one — so a green run says every check the
+          # flake declares for this tree has passed, and not that this run is
+          # where the building happened.
           #
           # A push to main makes one run, so several is a shape ci.yml cannot
           # produce. It is not a first-element pick, because choosing between
