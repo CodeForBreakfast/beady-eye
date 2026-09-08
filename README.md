@@ -11,8 +11,9 @@ Tuesday. Something old has opened an eye over both, and it can.
 
 ![A bdi screen: the atlas project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-The atlas project is invented. `atlas-5` is the drift: claimed, with nothing
-behind the claim.
+The atlas project is made up. `atlas-5` is the Tuesday case: beads says an
+agent claimed it, herdr has no pane for that agent, and only something looking
+at both can tell you.
 
 The eye only looks. It never writes to a tracker. Changing the work is still
 `bd`'s job, and the eye finds this arrangement acceptable.
