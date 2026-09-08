@@ -53,11 +53,43 @@
         src = source;
       };
 
+      # crane strips the crate's own code out of the dependency build but hands
+      # the manifests through, so the crate's real version would reach that
+      # build in the files and key the graph on the one thing a release changes.
+      versionForDeps = "0.0.0";
+
+      # Cargo states a package's name and version on consecutive lines, in the
+      # manifest and in the lock entry alike, and that pair is the only place
+      # either file names this crate's own version. So a manifest that stops
+      # spelling it that way throws: a pin that silently matches nothing reads
+      # exactly like one that worked.
+      pinnedManifest = file:
+        let
+          text = builtins.readFile file;
+          declaration = version: builtins.concatStringsSep "\n" [
+            ''name = "${cargoToml.package.name}"''
+            ''version = "${version}"''
+          ];
+          pinned = builtins.replaceStrings
+            [ (declaration cargoToml.package.version) ]
+            [ (declaration versionForDeps) ]
+            text;
+        in
+        if pinned == text
+        then throw "${builtins.baseNameOf file} no longer states this crate's name and version on consecutive lines, so the dependency graph cannot be pinned off the version"
+        else pinned;
+
       # The dependency graph, compiled on its own and keyed on Cargo.lock rather
-      # than on the source. Nothing in this repository changes it, so the store
-      # and the shared cache can hold one across every later run and every later
-      # check — which is the whole point, because compiling it is most of what
-      # this project waits for.
+      # than on the source, so one compilation serves every later check — which
+      # is the whole point, because compiling it is most of what this project
+      # waits for. In CI the Actions cache is scoped per branch, so `main` seeds
+      # a graph every pull request restores, while a pull request seeds only
+      # itself.
+      #
+      # Naming the source tree in this derivation would put every later edit to
+      # it back into the dependency build, so it gets the manifests alone —
+      # which is what crane reduces a tree to anyway, plus dummies of the
+      # targets Cargo.toml declares.
       #
       # Two of them, because a check reuses artifacts only at the profile it was
       # built at, and the checks are not all at one profile: the package builds
@@ -65,9 +97,20 @@
       # package`'s verify build all run at dev. Building both is what leaves
       # every check's command exactly as it was.
       artifactsFor = pkgs:
-        let craneLib = crane.mkLib pkgs; in {
-          release = craneLib.buildDepsOnly common;
-          dev = craneLib.buildDepsOnly (common // {
+        let
+          craneLib = crane.mkLib pkgs;
+          depsCommon = common // {
+            version = versionForDeps;
+            src = pkgs.runCommand "beady-eye-deps-source" { } ''
+              mkdir -p $out
+              cp ${pkgs.writeText "Cargo.toml" (pinnedManifest ./Cargo.toml)} $out/Cargo.toml
+              cp ${pkgs.writeText "Cargo.lock" (pinnedManifest ./Cargo.lock)} $out/Cargo.lock
+            '';
+          };
+        in
+        {
+          release = craneLib.buildDepsOnly depsCommon;
+          dev = craneLib.buildDepsOnly (depsCommon // {
             pname = "${common.pname}-dev";
             CARGO_PROFILE = "dev";
           });
