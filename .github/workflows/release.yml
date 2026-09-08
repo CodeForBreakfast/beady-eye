@@ -294,21 +294,30 @@ jobs:
       # release has announced and the failure reads as a broken release rather
       # than a missing secret.
       #
-      # Reading the tap is not writing it, so this cannot prove the token may
-      # push. What it proves is that a token is set and GitHub still accepts
-      # it, which is what an unset, revoked or expired secret looks like.
+      # The tap is public, and git sends no credentials to a server that does
+      # not ask for them — so cloning or listing it proves nothing about the
+      # token, and a revoked one would read as a working one right up until the
+      # push. The API is asked instead, which rejects a credential it does not
+      # accept whether or not the repository is public, and answers with the
+      # access the token carries rather than the access this actor has.
       - name: the tap precondition
         run: |
-          test -n "$HOMEBREW_TAP_TOKEN" || {
+          test -n "$GH_TOKEN" || {
             echo "::error::HOMEBREW_TAP_TOKEN is not set, so this release cannot write $TAP. It is a fine-grained token with contents write on that repository; github.token will not do, because it is scoped to this one."
             exit 1
           }
-          git ls-remote "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/$TAP" HEAD > /dev/null || {
-            echo "::error::HOMEBREW_TAP_TOKEN cannot read $TAP. It needs contents write on that repository."
+
+          gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          push="$( gh api "repos/$TAP" --jq .permissions.push )" || {
+            echo "::error::GitHub would not answer for $TAP with HOMEBREW_TAP_TOKEN, so this release cannot write the tap. A revoked or expired token is what this looks like."
+            exit 1
+          }
+          [ "$push" = true ] || {
+            echo "::error::HOMEBREW_TAP_TOKEN does not carry write on $TAP; GitHub reports push access as '$push'. It is a fine-grained token with contents write on that repository."
             exit 1
           }
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       # crates.io cannot take a version back — a yank still serves the files —
       # so the tested-commit gate is re-run here rather than assumed from the
