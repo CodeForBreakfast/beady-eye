@@ -1,15 +1,13 @@
 name: Release
 
-# A tag is a candidate, not a release. This decides whether it becomes one.
+# A merge to main is a candidate, not a release. This decides whether it
+# becomes one.
 on:
-  # The tag has to be pushed with a person's credentials. GitHub suppresses
-  # workflow triggers for a ref pushed with the default GITHUB_TOKEN, so a tag
-  # push automated from a workflow here would leave no run and no error behind.
-  # workflow_dispatch is a documented exception to that suppression, so such a
-  # workflow can still reach this one by dispatching it.
+  # Merging the version bump is the only human act in a release. Everything
+  # outward-facing from there is this workflow's.
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
   # Actions re-runs a job, never a step, so a run that dies after cargo publish
   # cannot simply be repeated: crates.io already holds the version and refuses
@@ -29,16 +27,70 @@ permissions:
   contents: write
 
 jobs:
+  # Most merges to main release nothing, so this job answers the question once
+  # and every other job hangs off its answer. An ordinary merge skips the lot
+  # rather than failing.
+  #
+  # The version comes out of Cargo.toml. Reading it needs no nix and no
+  # toolchain, so a merge that turns out not to be a release costs seconds.
+  detect:
+    name: is this merge a release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # A dispatch is a repair on a tag that already exists, so it answers yes
+      # without asking either question — the push that cut that tag asked them
+      # both before anything was published.
+      #
+      # A push asks both. The existing tag is what makes every merge after the
+      # bump a no-op.
+      - name: decide
+        id: decide
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Cargo.toml declares $version"
+
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ ! -f "RELEASE-NOTES/$version.md" ]; then
+            echo "no RELEASE-NOTES/$version.md, so this merge releases nothing"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already tagged, so this merge releases nothing"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
   # A Linux runner cannot produce a Mach-O binary, so the Darwin builds are
   # their own job and the release job waits on them. They run first on purpose:
-  # a Darwin build that fails costs a deleted tag, where anything failing after
+  # a Darwin build that fails costs nothing, where anything failing after
   # `cargo publish` costs a version crates.io will not take back.
   #
   # Nothing here is guarded by the `from` input. A resume is a fresh run
   # holding no artifacts, so a job skipped on one leaves the announcement with
-  # nothing to attach and no way to finish the tag it exists to finish.
+  # nothing to attach and no way to finish the tag it exists to finish. The
+  # `if` below is the release gate rather than a stage guard, and a dispatch
+  # always passes it.
   darwin-binaries:
     name: build ${{ matrix.target }}
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     # Nothing here writes to the repository; the release job holds that.
@@ -94,6 +146,8 @@ jobs:
   # musl C toolchain is not among the things this needs.
   linux-binaries:
     name: build ${{ matrix.target }}
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     permissions:
@@ -138,11 +192,21 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # No `if` here: a skipped `needs` skips this too, so the gate is stated once
+  # on the jobs above.
   release:
-    name: publish ${{ github.ref_name }}
-    needs: [darwin-binaries, linux-binaries]
+    name: publish v${{ needs.detect.outputs.version }}
+    needs: [detect, darwin-binaries, linux-binaries]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # The tag push, the publish and the announcement are one sequence against
+    # state nothing can take back, so only one run may be inside it.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
+      TAG: v${{ needs.detect.outputs.version }}
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
       # runs with this repository's token.
@@ -150,25 +214,48 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
-      # The flake reads its version from Cargo.toml, so this one comparison
-      # covers both artefacts: a tag that passes it names the version the crate
-      # declares and the version the flake output carries. It runs on a resume
-      # too, where it checks that the tag being finished names the version that
-      # was published.
+      # The flake reads its own version from Cargo.toml through a path nothing
+      # else here exercises, and it is what `nix flake check` and every binary
+      # a consumer builds go through.
+      #
+      # The tag is what a resume checks. It exists by then, and it has to be
+      # this commit's: a dispatch on the wrong ref would otherwise finish a
+      # release for a tree that did not produce it.
       #
       # The notes file is checked here rather than beside the step that reads
       # it, which runs after `cargo publish` and so after the one thing
       # crates.io will not take back. A resume that cannot announce should not
       # start either.
-      - name: the tag must name the version the tree declares, and its notes must be written
+      - name: the version gate
         run: |
-          tagged="${GITHUB_REF_NAME#v}"
           declared=$(nix eval --raw .#packages.x86_64-linux.default.version)
-          echo "tag $tagged, tree $declared"
-          test "$tagged" = "$declared"
-          test -f "RELEASE-NOTES/$tagged.md" || {
-            echo "::error::RELEASE-NOTES/$tagged.md is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
+          echo "Cargo.toml $VERSION, flake $declared"
+          test "$VERSION" = "$declared"
+
+          existing=$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1)
+          if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::error::$TAG already names $existing, not the commit this run is on"
             exit 1
+          fi
+
+          test -f "RELEASE-NOTES/$VERSION.md" || {
+            echo "::error::RELEASE-NOTES/$VERSION.md is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
+            exit 1
+          }
+
+      # The record of which commit produced the release. It goes after the
+      # binaries and before `cargo publish`, so a build that fails costs no tag
+      # and every version crates.io takes is one a tag already names.
+      #
+      # GitHub suppresses workflow triggers for a ref pushed with the default
+      # token. Nothing triggers on this tag, so that costs nothing.
+      #
+      # A resume runs this against a tag it pushed itself, so it asks first.
+      - name: tag the commit this release is cut from
+        run: |
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null || {
+            git tag "$TAG"
+            git push origin "$TAG"
           }
 
       # A resume skips every step guarded the way this one is. The guard reads
@@ -242,11 +329,11 @@ jobs:
         # the step passed.
         run: |
           gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
-          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --notes-file "RELEASE-NOTES/${GITHUB_REF_NAME#v}.md"
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "RELEASE-NOTES/$VERSION.md"
+          gh release upload "$TAG" \
             dist/bdi-aarch64-apple-darwin \
             dist/bdi-aarch64-apple-darwin.sha256 \
             dist/bdi-x86_64-apple-darwin \
