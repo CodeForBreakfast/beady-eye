@@ -21,6 +21,16 @@ its own.
 
 ## Install
 
+With Homebrew:
+
+```console
+$ brew install codeforbreakfast/tap/bdi
+```
+
+The full name taps `codeforbreakfast/tap` and installs from it in one command.
+It downloads the released binary rather than building one, and covers macOS and
+Linux on both Intel and arm64.
+
 From crates.io:
 
 ```console
