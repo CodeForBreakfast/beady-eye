@@ -1,5 +1,7 @@
 # beady-eye
 
+![A screen-printed cosmic-horror poster: a colossal eye with a red pupil hangs in a green-black sky, tentacles trailing away behind it, while a line of small robots below hauls a chain of glowing beads under its gaze.](docs/images/beady-eye-hero.png)
+
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
 tracker you point it at. It draws each tracker's work as a tree, and beside
 every bead an agent has claimed, the live [herdr](https://herdr.dev) pane that
