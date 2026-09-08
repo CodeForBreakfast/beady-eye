@@ -21,6 +21,13 @@ Group by what a reader would notice, not by the change that delivered it.
 - Say what a reader has to do about it: a config change, a migration. Where the
   answer is nothing, say that.
 
+**One line per paragraph and per bullet.** GitHub renders a Release body with
+hard line breaks on, so every newline inside a paragraph reaches a reader as a
+`<br>` and a wrapped file shows as ragged short lines. A fenced block keeps its
+own breaks. `nix flake check` refuses a wrapped `RELEASE-NOTES/<version>.md`.
+This file is a repository document rather than a Release body, so it stays
+wrapped.
+
 ## Template
 
 ```markdown

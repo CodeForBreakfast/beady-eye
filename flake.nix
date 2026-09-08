@@ -1728,6 +1728,180 @@ $pinned"
           touch $out
         '';
 
+        # The Release body is RELEASE-NOTES/<version>.md byte for byte, and
+        # GitHub renders that body with its hard line break extension on — so a
+        # newline inside a paragraph becomes a <br> and the published page
+        # shows the file's wrap as ragged short lines. Every other document in
+        # this tree is wrapped, so a notes file written like its neighbours is
+        # the mistake.
+        #
+        # A wrap is a line whose successor continues it. Inside a fence the
+        # breaks are the content, and RELEASE-NOTES/README.md is a repository
+        # document rather than a Release body, so the glob takes the version
+        # files only.
+        releaseNotesAreUnwrapped = pkgs.writeShellScriptBin "release-notes-are-unwrapped" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+
+          files=""
+          for file in RELEASE-NOTES/[0-9]*.md; do
+            [ -e "$file" ] && files="$files $file"
+          done
+
+          if [ -z "$files" ]; then
+            echo "RELEASE-NOTES/ carries no version file."
+            echo
+            echo "Every release cuts its body from RELEASE-NOTES/<version>.md, so a"
+            echo "scan that reads nothing means the fileset or the name has moved,"
+            echo "rather than that the notes are clean."
+            exit 1
+          fi
+
+          wrapped="$(awk '
+            FNR == 1 { fence = 0; held = "" }
+
+            /^```/ { fence = !fence; held = ""; next }
+            fence  { next }
+
+            /^[[:space:]]*$/ { held = ""; next }
+
+            {
+              starts = /^#/ || /^[[:space:]]*[-*+] / ||
+                       /^[[:space:]]*[0-9]+[.)] / || /^>/ || /^\|/ ||
+                       /^(-{3,}|\*{3,}|_{3,})$/
+              if (held != "" && !starts) print "  " FILENAME ":" heldno ": " held
+              held = $0
+              heldno = FNR
+            }
+          ' $files)"
+
+          if [ -n "$wrapped" ]; then
+            echo "A release notes file is wrapped, and its Release page shows the wrap."
+            echo
+            echo "GitHub renders a Release body with hard line breaks on, so every"
+            echo "newline inside a paragraph becomes a <br>. Put each paragraph and"
+            echo "each bullet on one line; a fenced block keeps its own breaks."
+            echo
+            echo "Lines a wrap continues:"
+            printf '%s\n' "$wrapped"
+            exit 1
+          fi
+        '';
+
+        # The notes files in this tree are unwrapped, so the check above passes
+        # whether or not it can still refuse one. This is what says it can —
+        # and that a list, a fence and the wrapped README beside them are let
+        # through on purpose rather than missed.
+        releaseNotesAreUnwrappedTest = pkgs.runCommand "release-notes-are-unwrapped-test"
+          { nativeBuildInputs = [ releaseNotesAreUnwrapped ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree/RELEASE-NOTES"
+
+          notes() { cat > "$tree/RELEASE-NOTES/1.0.0.md"; }
+          readme() { cat > "$tree/RELEASE-NOTES/README.md"; }
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          accepts() {
+            output="$( release-notes-are-unwrapped "$tree" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 0 ] || fail "$1"
+          }
+
+          refuses() {
+            output="$( release-notes-are-unwrapped "$tree" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status: $1"
+            case "$output" in
+              *"$2"*) ;;
+              *) fail "the refusal did not say why ($2): $1" ;;
+            esac
+          }
+
+          # Nothing to read is not the same as clean files.
+          refuses "it accepted a RELEASE-NOTES holding no version file:" "no version file"
+
+          notes <<'EOF'
+bdi 1.0.0
+
+Major release, **0.9.0 → 1.0.0**.
+
+## Highlights
+
+**The tracker is read once per keypress.** A collection of nine trackers no longer costs nine reads to move the selection.
+
+## Maintenance
+
+- The lockfile, and the two crates behind it.
+- A shim nothing called any more.
+EOF
+          accepts "it refused a file that is already one line per paragraph:"
+
+          # The wrap this whole check exists for.
+          notes <<'EOF'
+bdi 1.0.0
+
+**The tracker is read once per keypress.** A collection of nine trackers
+no longer costs nine reads to move the selection.
+EOF
+          refuses "it accepted a wrapped paragraph:" "wrapped"
+          refuses "the refusal did not name the line the wrap continues:" "once per keypress"
+
+          # A continuation indented under a bullet is a wrap as much as a
+          # paragraph is, and it is the one a writer produces without noticing.
+          notes <<'EOF'
+## Maintenance
+
+- The lockfile, and the two crates behind it, neither of which changes
+  anything a reader would see.
+EOF
+          refuses "it accepted a wrapped bullet:" "The lockfile"
+
+          # Consecutive bullets are the false positive that would make this
+          # check unusable, because every list is a run of non-blank lines.
+          notes <<'EOF'
+## Maintenance
+
+- The lockfile, and the two crates behind it.
+- A shim nothing called any more.
+- The pty tests, which now drain across the reap.
+EOF
+          accepts "a list was read as a wrapped paragraph:"
+
+          # A nested item is indented like the continuation of a wrapped
+          # bullet, so a marker is what tells the two apart rather than the
+          # indent.
+          notes <<'EOF'
+## Maintenance
+
+- The lockfile, and the two crates behind it.
+  - One of them reached a major version.
+EOF
+          accepts "a nested list was read as a wrapped bullet:"
+
+          notes <<'EOF'
+## Taking a binary
+
+```console
+$ curl -fLO https://example.invalid/bdi
+$ chmod +x bdi
+$ ./bdi --version
+```
+EOF
+          accepts "a fenced block was read as a wrapped paragraph:"
+
+          # Reading the wrapped README beside the notes would refuse the tree
+          # as it stands.
+          readme <<'EOF'
+One file per release, `RELEASE-NOTES/<version>.md`, where `<version>` is
+the `MAJOR.MINOR.PATCH` the release bumps to.
+EOF
+          accepts "it read the wrapped README beside the notes files:"
+
+          touch $out
+        '';
+
 
         # The subject main carries comes from the pull request's title, because
         # this repository squash-merges — so the title is the one string worth
@@ -2152,6 +2326,15 @@ and a second line"
             touch $out
           '';
           readme-pin-test = readmePinsTheVersionTest;
+
+          # A source of its own for the same reason readme-pin has one: these
+          # files are documentation, and `source` carries none.
+          release-notes-wrap = pkgs.runCommand "release-notes-wrap"
+            { nativeBuildInputs = [ releaseNotesAreUnwrapped ]; } ''
+            release-notes-are-unwrapped ${sourceOf [ ./RELEASE-NOTES ]}
+            touch $out
+          '';
+          release-notes-wrap-test = releaseNotesAreUnwrappedTest;
 
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
           scope-to-the-change-test = scopeToTheChangeTest;
