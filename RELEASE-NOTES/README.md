@@ -1,0 +1,39 @@
+# Release notes
+
+One file per release, `RELEASE-NOTES/<version>.md`, where `<version>` is the
+`MAJOR.MINOR.PATCH` the release bumps to — so `RELEASE-NOTES/0.3.0.md`. The
+pull request that bumps the version checks it in.
+
+The [`Release` workflow](../.github/workflows/release.yml) refuses a version
+whose notes file is absent, before it has published anything, and cuts the
+GitHub Release from the file it finds. What is written here is what a reader
+gets, word for word.
+
+## Style
+
+User-facing and impact-classified: what changed for somebody running `bdi`.
+Group by what a reader would notice, not by the change that delivered it.
+
+- **Highlights** — the changes somebody would notice, a short paragraph each,
+  about the behaviour rather than how it was built.
+- **Maintenance** — dependency bumps and internal changes worth recording and
+  not worth headlining.
+- Say what a reader has to do about it: a config change, a migration. Where the
+  answer is nothing, say that.
+
+## Template
+
+```markdown
+bdi <version>
+
+<Major|Minor|Patch> release, **<previous> → <version>**.
+
+## Highlights
+
+**<Headline change>.** What it changes for somebody using bdi, and why that
+matters.
+
+## Maintenance
+
+- <a dependency, the lockfile, an internal change>
+```
