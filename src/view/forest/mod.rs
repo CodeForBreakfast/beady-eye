@@ -3759,22 +3759,29 @@ credential_command = "secret harbour"
     #[test]
     fn a_motion_reveals_the_selection_by_the_least_it_can() {
         let room = 4;
+        let last = an_end(Motion::LastRow);
         let mut forest = flatten(snapshot());
         forest.fit(room);
         forest.apply(Action::Move(Motion::FirstRow));
         let mut scrolled = false;
 
-        while forest.apply(Action::Move(Motion::NextRow)) {
-            let (from, at) = (forest.from(), forest.selected_line());
-            if from > 0 {
-                assert_eq!(
-                    from,
-                    at + 1 - room,
-                    "the band travelled further down than the row leaving it asked for"
-                );
-                scrolled = true;
-            }
-        }
+        walk::until(
+            &mut forest,
+            |forest| forest.selected_line() == last,
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+                let (from, at) = (forest.from(), forest.selected_line());
+                if from > 0 {
+                    assert_eq!(
+                        from,
+                        at + 1 - room,
+                        "the band travelled further down than the row leaving it asked for"
+                    );
+                    scrolled = true;
+                }
+            },
+            |forest| format!("a walk down stopped at row {}", forest.selected_line()),
+        );
 
         assert!(scrolled, "the fixture never outgrew a band of {room}");
     }
@@ -3783,25 +3790,41 @@ credential_command = "secret harbour"
     /// cannot answer for: there the band starts on the selection itself.
     #[test]
     fn a_motion_upwards_reveals_the_selection_by_the_least_it_can() {
+        let first = an_end(Motion::FirstRow);
         let mut forest = flatten(snapshot());
         forest.fit(4);
         forest.apply(Action::Move(Motion::LastRow));
         let mut was = forest.from();
         let mut scrolled = false;
 
-        while forest.apply(Action::Move(Motion::PreviousRow)) {
-            let (from, at) = (forest.from(), forest.selected_line());
-            if from != was {
-                assert_eq!(
-                    from, at,
-                    "the band travelled further up than the row leaving it asked for"
-                );
-                scrolled = true;
-            }
-            was = from;
-        }
+        walk::until(
+            &mut forest,
+            |forest| forest.selected_line() == first,
+            |forest| {
+                forest.apply(Action::Move(Motion::PreviousRow));
+                let (from, at) = (forest.from(), forest.selected_line());
+                if from != was {
+                    assert_eq!(
+                        from, at,
+                        "the band travelled further up than the row leaving it asked for"
+                    );
+                    scrolled = true;
+                }
+                was = from;
+            },
+            |forest| format!("a walk up stopped at row {}", forest.selected_line()),
+        );
 
         assert!(scrolled, "the fixture never outgrew a band of four");
+    }
+
+    /// Which line one end of the forest is, so a walk towards it knows what
+    /// it is walking to. Asked of a forest of its own, because the answer is
+    /// where the walk finishes rather than anywhere it passes through.
+    fn an_end(motion: Motion) -> usize {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::Move(motion));
+        forest.selected_line()
     }
 
     /// Every keyboard motion leaves the selection somewhere the band is
