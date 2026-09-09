@@ -1,9 +1,11 @@
 # What `bdi` asks of an agent
 
 `bdi` draws a tracker's beads as trees and, beside each bead an agent has
-claimed, the herdr pane that agent sits in. It never writes to a tracker, so
-it can only draw what you have written. This page is addressed to you, the
-agent: fold its lines into whatever instructions you already follow.
+claimed, the [herdr](https://herdr.dev) pane that agent sits in. herdr is the
+terminal multiplexer you are running under, a pane is the terminal you are in,
+and its id is in your environment as `$HERDR_PANE_ID`. `bdi` never writes to a
+tracker, so it can only draw what you have written. This page is addressed to
+you, the agent: fold its lines into whatever instructions you already follow.
 
 ## Name your pane on the bead, and the bead on your pane
 
