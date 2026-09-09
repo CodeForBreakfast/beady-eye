@@ -2472,11 +2472,11 @@ path of its own, so nothing it does can be lost where the other two are kept.
 The pointer works too. A click selects the row under it; a wheel notch moves the
 window over the forest and leaves the selection where the reader put it, even
 where that takes it off the screen. So the forest holds a viewport of its own,
-which the click asks the same question the drawing does — a click after the
-wheel selects what it lands on and not what a selection-shaped guess would put
-there. A keyboard motion is the other half of that bargain: it brings the
-selection back into view by the least scroll it can, so a reader who wheeled
-somewhere and then stepped a row keeps what they were looking at. A click on
+and the click reads it rather than guessing from the selection — a click after
+the wheel selects the row it lands on. A keyboard motion is the other half of
+that bargain: it brings the selection back into view by the least scroll it
+can, so a reader who wheeled somewhere and then stepped a row keeps what they
+were looking at. A click on
 the tail, on the key row, or on a blank row past the last line selects nothing,
 and neither does one on a row the keyboard cannot rest on — a note. Sliding to
 the neighbour would select something the reader did not point at.
