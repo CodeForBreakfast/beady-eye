@@ -2217,7 +2217,8 @@ be the one place on the screen saying something the forest row beside it and
 `bd show` both say differently. Where the bead is taller than the window,
 the title says how to see the rest, and the motion keys move the bead rather
 than the selection: `j`, `k` and the arrows a row, `^D` and `^U` half the
-window, `g` and `G` to either end, and the wheel a row a notch.
+window, `g` and `G` to either end, and the wheel `wheel_notch_lines` a notch,
+which is what it moves over the forest as well.
 
 The view is the hub. From it, `Enter` and `f` focus the bead's pane in herdr,
 `y` copies its id, and the view stays up; `Esc` goes back to the forest, and
@@ -2469,11 +2470,24 @@ itself, and differs only in naming every project rather than one. It has no
 path of its own, so nothing it does can be lost where the other two are kept.
 
 The pointer works too. A click selects the row under it; a wheel notch moves the
-selection one row, because `bdi` holds no scroll of its own and the window is
-wherever the selection puts it. A click on the tail, on the key row, or on a
-blank row past the last line selects nothing, and neither does one on a row the
-keyboard cannot rest on — a note. Sliding to the neighbour would select
-something the reader did not point at.
+window over the forest and leaves the selection where the reader put it, even
+where that takes it off the screen. So the forest holds a viewport of its own,
+and the click reads it rather than guessing from the selection — a click after
+the wheel selects the row it lands on. A keyboard motion is the other half of
+that bargain: it brings the selection back into view by the least scroll it
+can, so a reader who wheeled somewhere and then stepped a row keeps what they
+were looking at. A click on
+the tail, on the key row, or on a blank row past the last line selects nothing,
+and neither does one on a row the keyboard cannot rest on — a note. Sliding to
+the neighbour would select something the reader did not point at.
+
+**How far a notch goes is `[tui]`'s `wheel_notch_lines`, defaulting to three,
+and it has to be `bdi`'s to say.** A terminal scaling the wheel for its own
+scrollback neutralises that scaling to its sign while a program is reading
+mouse reports, so what arrives is one report per detent whatever the reader
+set. Three is the terminal convention and suits a wheel mouse; a high-precision
+trackpad reports once per cell of travel rather than per detent, and no one
+number serves both.
 
 **Capture is on for the whole session, unconditionally, and that is a decision
 with a cost.** While `bdi` is up the terminal stops getting the mouse, so

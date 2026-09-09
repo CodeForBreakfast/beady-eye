@@ -17,7 +17,7 @@ use crate::app::{Asked, Wanted};
 use crate::collect::agents::Agents;
 use crate::collect::changes::{self, Reported, Socket};
 use crate::collect::panes::{Aside, Panes};
-use crate::view::{Motion, Notice};
+use crate::view::{Notch, Notice};
 
 use super::drive::Event;
 use super::Collecting;
@@ -227,7 +227,7 @@ fn keys(to: &Sender<Event>) {
 /// left in raw mode.
 ///
 /// So of the pointer only two things are answered — a left click, which names
-/// a row, and a wheel notch, which moves the selection. A release, a drag,
+/// a row, and a wheel notch, which moves the view. A release, a drag,
 /// bare motion, the other two buttons and the horizontal wheel are each
 /// dropped: none of them names a row the reader is asking for, and
 /// right-click in a pane belongs to the terminal's own menu.
@@ -237,8 +237,8 @@ fn incoming(read: event::Event) -> Option<Event> {
         event::Event::Resize(..) => Some(Event::Resize),
         event::Event::Mouse(mouse) => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => Some(Event::Clicked(mouse.row)),
-            MouseEventKind::ScrollUp => Some(Event::Scrolled(Motion::PreviousRow)),
-            MouseEventKind::ScrollDown => Some(Event::Scrolled(Motion::NextRow)),
+            MouseEventKind::ScrollUp => Some(Event::Scrolled(Notch::Up)),
+            MouseEventKind::ScrollDown => Some(Event::Scrolled(Notch::Down)),
             _ => None,
         },
         _ => None,
@@ -384,13 +384,10 @@ mod tests {
             (MouseEventKind::Drag(MouseButton::Right), None),
             (MouseEventKind::Drag(MouseButton::Middle), None),
             (MouseEventKind::Moved, None),
-            (
-                MouseEventKind::ScrollUp,
-                Some(Event::Scrolled(Motion::PreviousRow)),
-            ),
+            (MouseEventKind::ScrollUp, Some(Event::Scrolled(Notch::Up))),
             (
                 MouseEventKind::ScrollDown,
-                Some(Event::Scrolled(Motion::NextRow)),
+                Some(Event::Scrolled(Notch::Down)),
             ),
             (MouseEventKind::ScrollLeft, None),
             (MouseEventKind::ScrollRight, None),

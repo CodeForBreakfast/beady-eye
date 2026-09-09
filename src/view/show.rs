@@ -18,7 +18,7 @@ use crate::view::markdown;
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{agent_marker, status_glyph};
-use crate::view::Motion;
+use crate::view::{Motion, Notch};
 
 /// The section names `bd show` prints, verbatim, in the order it prints
 /// them. Terminology comes from beads, and a heading is terminology.
@@ -106,6 +106,19 @@ impl Show {
             Motion::LastRow => furthest,
         }
         .min(furthest);
+        let moved = to != self.from;
+        self.from = to;
+        moved
+    }
+
+    /// Move the view one notch of the wheel, reporting whether what it shows
+    /// changed. Further than the motion the same key would make, and the same
+    /// distance the config gives a notch over the forest.
+    pub fn scrolled(&mut self, notch: Notch, lines: usize) -> bool {
+        let to = match notch {
+            Notch::Up => self.from.saturating_sub(lines),
+            Notch::Down => (self.from + lines).min(self.total.saturating_sub(self.room)),
+        };
         let moved = to != self.from;
         self.from = to;
         moved
@@ -1206,6 +1219,33 @@ mod tests {
             drawn(&a_bead(), &mut view, 44, 6)[1],
             "│  ◍ lifting the mast · working            │"
         );
+    }
+
+    /// A notch of the wheel moves the view the distance it is handed, which
+    /// is further than the row a key moves it — the same wheel over the same
+    /// gesture covers the same ground here as over the forest.
+    #[test]
+    fn a_notch_moves_the_view_as_far_as_it_is_told() {
+        let mut view = Show::default();
+        drawn(&a_bead(), &mut view, 44, 6);
+        let mut stepped = Show::default();
+        drawn(&a_bead(), &mut stepped, 44, 6);
+
+        assert!(view.scrolled(Notch::Down, 3));
+        for _ in 0..3 {
+            stepped.scroll(Motion::NextRow);
+        }
+        assert_eq!(
+            drawn(&a_bead(), &mut view, 44, 6),
+            drawn(&a_bead(), &mut stepped, 44, 6)
+        );
+
+        assert!(view.scrolled(Notch::Up, 3));
+        assert_eq!(
+            drawn(&a_bead(), &mut view, 44, 6)[1],
+            "│◐ orb-7.1  re-point the dish              │"
+        );
+        assert!(!view.scrolled(Notch::Up, 3), "already at the top");
     }
 
     /// The window follows the terminal: on a wide screen it is four fifths of

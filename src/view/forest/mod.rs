@@ -14,13 +14,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Filter, Snapshot, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
-use crate::view::{Action, Motion};
+use crate::view::{Action, Motion, Notch};
 
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
-
-/// How far a half-screen motion moves until the renderer says otherwise.
-const HALF_SCREEN: usize = 10;
 
 /// Where a search came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,7 +105,15 @@ pub struct Forest {
     facts: Facts,
     folds: Folds,
     cursor: Option<Handle>,
-    half_screen: usize,
+    /// The first line the last frame had room to draw, and how many it had
+    /// room for.
+    ///
+    /// The room is the frame's to say and a scroll reads it off the last one
+    /// drawn, exactly as the bead window's `Show` does. A frame is always
+    /// drawn before a key or a notch is answered, so the first of either
+    /// never reads a band nobody has measured.
+    from: usize,
+    room: usize,
     lines: Vec<Line>,
     selected: usize,
     /// What was last searched for, which `n` and `N` step through.
@@ -128,7 +133,8 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         snapshot,
         folds: Folds::default(),
         cursor: None,
-        half_screen: HALF_SCREEN,
+        from: 0,
+        room: 0,
         lines: Vec::new(),
         selected: 0,
         searched: None,
@@ -167,10 +173,66 @@ impl Forest {
         &self.snapshot
     }
 
-    /// How far a half-screen motion moves. The renderer is the only thing that
-    /// knows the viewport's height, so it says.
-    pub fn set_half_screen(&mut self, rows: usize) {
-        self.half_screen = rows.max(1);
+    /// The first line the viewport is showing.
+    pub fn from(&self) -> usize {
+        self.from
+    }
+
+    /// Take the measure of the band the last frame gave the forest, and come
+    /// back inside the forest where a shorter band has left the viewport past
+    /// its end. The renderer is the only thing that knows the band's height,
+    /// so it says.
+    pub fn fit(&mut self, room: usize) {
+        self.room = room;
+        self.from = self.from.min(self.furthest());
+    }
+
+    /// The furthest the viewport can be scrolled and still be full.
+    fn furthest(&self) -> usize {
+        self.lines.len().saturating_sub(self.room)
+    }
+
+    /// How far a half-screen motion moves: half the band the trees are in,
+    /// rather than half a screen the key bar and the tail also sit in. Never
+    /// nowhere, so the key does something on the shortest band there is.
+    fn half_screen(&self) -> usize {
+        (self.room / 2).max(1)
+    }
+
+    /// Move the viewport one notch of the wheel, leaving the selection where
+    /// the reader put it, and report whether it moved. How far a notch goes
+    /// is the config's, so the caller holding one says.
+    pub fn scrolled(&mut self, notch: Notch, lines: usize) -> bool {
+        let to = match notch {
+            Notch::Up => self.from.saturating_sub(lines),
+            Notch::Down => (self.from + lines).min(self.furthest()),
+        };
+        let moved = to != self.from;
+        self.from = to;
+        moved
+    }
+
+    /// Bring the selection inside the viewport, where the last frame left it
+    /// above or below what there was room for, and report whether the view
+    /// moved.
+    ///
+    /// By the least it can, rather than by putting the selection back in the
+    /// middle. A reader who has wheeled the view somewhere and then steps one
+    /// row keeps what they were looking at, and it is what the bead window
+    /// already does with a row it has to reveal.
+    ///
+    /// Reported because a keystroke that moves the view and nothing else is a
+    /// keystroke the screen has to be redrawn for: `g` on a selection the
+    /// wheel has scrolled away from moves no row and changes every one of
+    /// them.
+    fn reveal(&mut self) -> bool {
+        let was = self.from;
+        if self.selected < self.from {
+            self.from = self.selected;
+        } else if self.room > 0 && self.selected >= self.from + self.room {
+            self.from = self.selected + 1 - self.room;
+        }
+        self.from != was
     }
 
     /// Take a freshly collected snapshot, keeping the folds, the filter and
@@ -357,7 +419,8 @@ impl Forest {
             | Action::Quit => return false,
         }
         let was = self.lay_out();
-        self.selected != selected || self.lines != was
+        let revealed = self.reveal();
+        self.selected != selected || self.lines != was || revealed
     }
 
     fn toggle_filter(&mut self) {
@@ -514,18 +577,19 @@ impl Forest {
             Motion::FirstRow => self.scan(0, true),
             Motion::LastRow => self.scan(last, false),
             Motion::HalfScreenUp => {
-                let at = self.selected.saturating_sub(self.half_screen);
+                let at = self.selected.saturating_sub(self.half_screen());
                 self.scan(at, false).or_else(|| self.scan(at, true))
             }
             Motion::HalfScreenDown => {
-                let at = (self.selected + self.half_screen).min(last);
+                let at = (self.selected + self.half_screen()).min(last);
                 self.scan(at, true).or_else(|| self.scan(at, false))
             }
         };
         self.step_to(target);
     }
 
-    /// Put the selection on the line at `at`, reporting whether it moved.
+    /// Put the selection on the line at `at`, reporting whether the screen
+    /// has changed.
     ///
     /// Named rather than stepped to, and that is the whole difference from a
     /// motion: a line the selection cannot rest on keeps none, because the
@@ -533,10 +597,12 @@ impl Forest {
     /// are is the keyboard's question, asked here in the keyboard's words.
     pub fn select_line(&mut self, at: usize) -> bool {
         let was = self.selected;
+        let mut revealed = false;
         if self.lines.get(at).is_some_and(selectable) {
             self.step_to(Some(at));
+            revealed = self.reveal();
         }
-        self.selected != was
+        self.selected != was || revealed
     }
 
     /// Where the selection sits, where it sits on a bead at all.
@@ -568,6 +634,7 @@ impl Forest {
         self.open_over(place);
         self.cursor = Some(Handle::Bead(place.clone()));
         self.lay_out();
+        self.reveal();
         self.cursor.as_ref() == Some(&Handle::Bead(place.clone()))
     }
 
@@ -3584,10 +3651,13 @@ credential_command = "secret harbour"
         assert_eq!(forest.selected_line(), last);
     }
 
+    /// `^D` and `^U` move by half the band the trees are in, which the
+    /// renderer measured for the last frame — not half a screen the key bar
+    /// and the tail also sit in.
     #[test]
     fn a_half_screen_moves_as_far_as_the_renderer_says_it_should() {
         let mut forest = flatten(snapshot());
-        forest.set_half_screen(3);
+        forest.fit(6);
 
         forest.apply(Action::Move(Motion::HalfScreenDown));
 
@@ -3596,6 +3666,275 @@ credential_command = "secret harbour"
         forest.apply(Action::Move(Motion::HalfScreenUp));
 
         assert_eq!(forest.selected_line(), 1);
+    }
+
+    /// A band with no room to halve still moves the selection, so `^D` on the
+    /// shortest screen there is does something rather than nothing.
+    #[test]
+    fn a_half_screen_of_a_band_too_short_to_halve_is_one_row() {
+        let mut forest = flatten(snapshot());
+        forest.fit(1);
+        let mut stepped = flatten(snapshot());
+        stepped.fit(1);
+
+        assert!(forest.apply(Action::Move(Motion::HalfScreenDown)));
+        stepped.apply(Action::Move(Motion::NextRow));
+
+        assert_eq!(forest.selected_line(), stepped.selected_line());
+    }
+
+    // ---- the viewport ----------------------------------------------------
+
+    /// How far a notch is told to go here. The forest is told rather than
+    /// knowing, so what three means is settled in the config and its tests.
+    const A_NOTCH: usize = 3;
+
+    /// A band with room for every line has nowhere to scroll to, whichever
+    /// way the wheel turns.
+    #[test]
+    fn a_forest_the_band_has_room_for_never_scrolls() {
+        let mut forest = flatten(snapshot());
+        forest.fit(forest.lines().len());
+
+        assert!(!forest.scrolled(Notch::Down, A_NOTCH));
+        assert!(!forest.scrolled(Notch::Up, A_NOTCH));
+        assert_eq!(forest.from(), 0);
+    }
+
+    /// A notch travels the distance it is handed, and no other.
+    #[test]
+    fn a_notch_moves_the_view_as_far_as_it_is_told() {
+        let mut forest = flatten(snapshot());
+        forest.fit(2);
+
+        assert!(forest.scrolled(Notch::Down, A_NOTCH));
+        assert_eq!(forest.from(), A_NOTCH);
+
+        assert!(forest.scrolled(Notch::Down, A_NOTCH));
+        assert_eq!(forest.from(), A_NOTCH * 2);
+
+        assert!(forest.scrolled(Notch::Up, A_NOTCH));
+        assert_eq!(forest.from(), A_NOTCH);
+    }
+
+    /// Scrolling past the end would draw blank rows under the last line,
+    /// which reads as a forest that has run out rather than one that has
+    /// ended. The top is the same promise the other way up.
+    #[test]
+    fn the_wheel_stops_at_either_end_of_the_forest() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        let furthest = forest.lines().len() - 4;
+
+        for _ in 0..40 {
+            forest.scrolled(Notch::Down, A_NOTCH);
+        }
+        assert_eq!(forest.from(), furthest);
+        assert!(!forest.scrolled(Notch::Down, A_NOTCH));
+
+        for _ in 0..40 {
+            forest.scrolled(Notch::Up, A_NOTCH);
+        }
+        assert_eq!(forest.from(), 0);
+        assert!(!forest.scrolled(Notch::Up, A_NOTCH));
+    }
+
+    /// The wheel leaves the selection where the reader put it, including
+    /// where that takes it off the screen — which is the whole difference
+    /// from the motion the same direction names.
+    #[test]
+    fn the_wheel_leaves_the_selection_alone() {
+        let mut forest = flatten(snapshot());
+        forest.fit(2);
+        let was = forest.selected_line();
+
+        forest.scrolled(Notch::Down, A_NOTCH);
+
+        assert_eq!(forest.selected_line(), was);
+        assert!(
+            was < forest.from(),
+            "the selection is still inside the band, so this says nothing \
+             about one the notch took off it"
+        );
+    }
+
+    /// A motion brings the selection back into the band by the least it can,
+    /// rather than by putting it back in the middle: a reader who wheeled to
+    /// somewhere and then stepped one row keeps what they were looking at.
+    ///
+    /// Walked the whole way down rather than asserted at one place. Every
+    /// step that pushes the selection past the last row of the band leaves
+    /// the band starting exactly where that step asked and no further, and a
+    /// band that recentred instead would be wrong at the first of them.
+    #[test]
+    fn a_motion_reveals_the_selection_by_the_least_it_can() {
+        let room = 4;
+        let last = an_end(Motion::LastRow);
+        let mut forest = flatten(snapshot());
+        forest.fit(room);
+        forest.apply(Action::Move(Motion::FirstRow));
+        let mut scrolled = false;
+
+        walk::until(
+            &mut forest,
+            |forest| forest.selected_line() == last,
+            |forest| {
+                forest.apply(Action::Move(Motion::NextRow));
+                let (from, at) = (forest.from(), forest.selected_line());
+                if from > 0 {
+                    assert_eq!(
+                        from,
+                        at + 1 - room,
+                        "the band travelled further down than the row leaving it asked for"
+                    );
+                    scrolled = true;
+                }
+            },
+            |forest| format!("a walk down stopped at row {}", forest.selected_line()),
+        );
+
+        assert!(scrolled, "the fixture never outgrew a band of {room}");
+    }
+
+    /// And the same going up, which the arithmetic that reveals downwards
+    /// cannot answer for: there the band starts on the selection itself.
+    #[test]
+    fn a_motion_upwards_reveals_the_selection_by_the_least_it_can() {
+        let first = an_end(Motion::FirstRow);
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.apply(Action::Move(Motion::LastRow));
+        let mut was = forest.from();
+        let mut scrolled = false;
+
+        walk::until(
+            &mut forest,
+            |forest| forest.selected_line() == first,
+            |forest| {
+                forest.apply(Action::Move(Motion::PreviousRow));
+                let (from, at) = (forest.from(), forest.selected_line());
+                if from != was {
+                    assert_eq!(
+                        from, at,
+                        "the band travelled further up than the row leaving it asked for"
+                    );
+                    scrolled = true;
+                }
+                was = from;
+            },
+            |forest| format!("a walk up stopped at row {}", forest.selected_line()),
+        );
+
+        assert!(scrolled, "the fixture never outgrew a band of four");
+    }
+
+    /// Which line one end of the forest is, so a walk towards it knows what
+    /// it is walking to. Asked of a forest of its own, because the answer is
+    /// where the walk finishes rather than anywhere it passes through.
+    fn an_end(motion: Motion) -> usize {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::Move(motion));
+        forest.selected_line()
+    }
+
+    /// Every keyboard motion leaves the selection somewhere the band is
+    /// showing, however far the wheel had taken the view from it.
+    #[test]
+    fn every_motion_leaves_the_selection_inside_the_band() {
+        let room = 4;
+        for motion in [
+            Motion::PreviousRow,
+            Motion::NextRow,
+            Motion::HalfScreenUp,
+            Motion::HalfScreenDown,
+            Motion::FirstRow,
+            Motion::LastRow,
+        ] {
+            let mut forest = flatten(snapshot());
+            forest.fit(room);
+            forest.scrolled(Notch::Down, A_NOTCH);
+            forest.scrolled(Notch::Down, A_NOTCH);
+
+            forest.apply(Action::Move(motion));
+
+            let (from, at) = (forest.from(), forest.selected_line());
+            assert!(
+                (from..from + room).contains(&at),
+                "{motion:?} left the selection on line {at}, outside {from}..{}",
+                from + room
+            );
+        }
+    }
+
+    /// A motion that moves the band without moving the selection is still a
+    /// change. The wheel put the band somewhere the selection is not, so `g`
+    /// on a selection already on the first row brings the band back and
+    /// nothing else — and a screen not redrawn for that goes on showing the
+    /// rows the wheel left it on, under an offset the next click reads
+    /// against.
+    #[test]
+    fn a_motion_that_only_brings_the_band_back_is_a_change() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.apply(Action::Move(Motion::FirstRow));
+        let first = forest.selected_line();
+        forest.scrolled(Notch::Down, A_NOTCH);
+        assert!(forest.from() > first, "the wheel has to take the band away");
+
+        assert!(forest.apply(Action::Move(Motion::FirstRow)));
+
+        assert_eq!(
+            forest.selected_line(),
+            first,
+            "the selection was already on the first row"
+        );
+        assert_eq!(forest.from(), first);
+    }
+
+    /// A click selects a row the band is showing, so it never moves the view
+    /// — including when the wheel has taken the band away from the top.
+    #[test]
+    fn a_click_on_a_row_the_band_is_showing_leaves_the_view_where_it_is() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.scrolled(Notch::Down, A_NOTCH);
+        let scrolled = forest.from();
+
+        assert!(forest.select_line(scrolled + 1));
+        assert_eq!(forest.from(), scrolled);
+    }
+
+    /// A collection keeps the reader's scroll rather than throwing it away:
+    /// what a shorter forest costs it is the distance past its end and no
+    /// more.
+    #[test]
+    fn a_collection_keeps_the_scroll_the_reader_set() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.scrolled(Notch::Down, A_NOTCH);
+        let scrolled = forest.from();
+
+        forest.refresh(snapshot());
+        forest.fit(4);
+
+        assert_eq!(forest.from(), scrolled);
+    }
+
+    /// And a band that has shrunk under it brings the view back inside the
+    /// forest, rather than leaving it drawing blank rows past the last line.
+    #[test]
+    fn a_shorter_band_brings_the_view_back_inside_the_forest() {
+        let mut forest = flatten(snapshot());
+        let lines = forest.lines().len();
+        forest.fit(2);
+        for _ in 0..40 {
+            forest.scrolled(Notch::Down, A_NOTCH);
+        }
+        assert_eq!(forest.from(), lines - 2);
+
+        forest.fit(lines);
+
+        assert_eq!(forest.from(), 0);
     }
 
     /// A keystroke asks whether the screen moved by comparing the lines, so a

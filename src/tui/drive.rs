@@ -18,7 +18,7 @@ use crate::app::{Asked, Awaited, Wanted};
 use crate::collect::changes::Reported;
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
-use crate::view::{Action, Motion, Typing};
+use crate::view::{Action, Motion, Notch, Typing};
 
 use super::armed::{Armed, Arming};
 use super::keys::{action, typing};
@@ -33,8 +33,8 @@ pub(super) enum Event {
     Key(KeyEvent),
     /// A left click, on the row of the screen it landed on.
     Clicked(u16),
-    /// A wheel notch, as the move it asks the selection to make.
-    Scrolled(Motion),
+    /// A wheel notch, and which way it turned.
+    Scrolled(Notch),
     Resize,
     /// Work has moved on, and what has to be read to see it.
     Changed(Wanted),
@@ -204,6 +204,17 @@ pub(super) trait View {
     /// changed. The selection under it does not move: the view is what the
     /// motion is about while a bead is up, and the loop is what knows one is.
     fn scroll(&mut self, motion: Motion) -> bool;
+
+    /// Move the forest's view one notch of the wheel, reporting whether the
+    /// screen has changed. The selection does not move: a notch asks for the
+    /// window onto the trees and not for the row the reader is standing on.
+    fn scrolled(&mut self, notch: Notch) -> bool;
+
+    /// The same over the bead window, which has a view of its own. A notch
+    /// travels the same distance in either, and further than the motion the
+    /// same key would make — which is what makes this a question of its own
+    /// rather than a `scroll` the loop spells with a `Motion`.
+    fn scrolled_bead(&mut self, notch: Notch) -> bool;
 
     /// Whether the bead view is still on the bead it was opened on.
     ///
@@ -708,10 +719,12 @@ fn answered(
                 true
             }
         },
-        // A notch moves the bead, the way a key does.
-        Event::Scrolled(motion) if *showing == Showing::Bead => view.scroll(motion),
+        // A notch moves the bead, as it moves the forest, and by the same
+        // distance: a reader turning the wheel is making one gesture and it
+        // covers the same ground wherever they are looking.
+        Event::Scrolled(notch) if *showing == Showing::Bead => view.scrolled_bead(notch),
         Event::Clicked(row) => view.clicked(row),
-        Event::Scrolled(motion) => view.apply(Action::Move(motion)),
+        Event::Scrolled(notch) => view.scrolled(notch),
         Event::Resize => true,
         Event::Changed(wanted) => asked_for(view, outstanding, wanted),
         Event::Collected(snapshot) => {
@@ -1059,6 +1072,11 @@ mod tests {
         /// The motions the bead view was moved by, apart from the actions,
         /// because the whole question is which of the two a key reached.
         scrolled: Vec<Motion>,
+        /// The notches each view was turned by, kept apart from the motions
+        /// for the same reason: which of the two a wheel report reached is
+        /// the whole question, and they are different distances.
+        notched: Vec<Notch>,
+        notched_bead: Vec<Notch>,
         clicked: Vec<u16>,
         /// The keystrokes the search prompt was handed, apart from the
         /// actions, because the whole question is which of the two a key
@@ -1109,9 +1127,11 @@ mod tests {
         /// What a press reports back, for the tests about a screen that
         /// changes for the press alone.
         pressing_changes: bool,
-        /// How many actions had been applied when each press was heard, in
-        /// the order they were heard: the order the view hears things in is
-        /// the whole of what these record.
+        /// How many things the view had been asked to do when each press was
+        /// heard, in the order they were heard: the order the view hears
+        /// things in is the whole of what these record. Every kind of doing
+        /// is counted, because a click and a notch are presses that reach no
+        /// action at all.
         pressed_after: Vec<usize>,
         /// How long this view says it is from reading its pane again, for
         /// the tests about the band's own clock. Nothing, as a band with no
@@ -1218,7 +1238,8 @@ mod tests {
         }
 
         fn pressed(&mut self) -> bool {
-            self.pressed_after.push(self.applied.len());
+            self.pressed_after
+                .push(self.applied.len() + self.clicked.len() + self.notched.len());
             self.pressing_changes
         }
 
@@ -1229,6 +1250,16 @@ mod tests {
 
         fn scroll(&mut self, motion: Motion) -> bool {
             self.scrolled.push(motion);
+            true
+        }
+
+        fn scrolled(&mut self, notch: Notch) -> bool {
+            self.notched.push(notch);
+            true
+        }
+
+        fn scrolled_bead(&mut self, notch: Notch) -> bool {
+            self.notched_bead.push(notch);
             true
         }
 
@@ -2137,15 +2168,16 @@ mod tests {
         assert!(view.scrolled.is_empty(), "{:?}", view.scrolled);
     }
 
-    /// A notch over the bead view moves the bead as a key would, rather than
-    /// the selection under it.
+    /// A notch over the bead view moves the bead, rather than the selection
+    /// under it — and reaches the view as a notch rather than as the motion
+    /// the same key would make, because the two travel different distances.
     #[test]
     fn a_notch_over_the_bead_view_scrolls_it() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![
             Event::Key(key(KeyCode::Enter)),
-            Event::Scrolled(Motion::NextRow),
+            Event::Scrolled(Notch::Down),
             Event::Key(key(KeyCode::Char('q'))),
         ]);
 
@@ -2160,7 +2192,7 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(view.scrolled, [Motion::NextRow]);
+        assert_eq!(view.notched_bead, [Notch::Down]);
         assert!(
             view.applied
                 .iter()
@@ -2196,7 +2228,7 @@ mod tests {
             view.showing,
             [Showing::Forest, Showing::Bead, Showing::Bead, Showing::Bead]
         );
-        assert_eq!(view.scrolled, [Motion::NextRow], "{:?}", view.applied);
+        assert_eq!(view.notched_bead, [Notch::Down], "{:?}", view.applied);
     }
 
     /// A click on the page that went nowhere leaves the window up and the
@@ -2209,7 +2241,7 @@ mod tests {
             view.showing,
             [Showing::Forest, Showing::Bead, Showing::Bead]
         );
-        assert_eq!(view.scrolled, [Motion::NextRow], "{:?}", view.applied);
+        assert_eq!(view.notched_bead, [Notch::Down], "{:?}", view.applied);
     }
 
     /// And a click off the page takes the window away, which is what a click
@@ -2229,17 +2261,15 @@ mod tests {
                 Showing::Forest
             ]
         );
-        assert!(view.scrolled.is_empty(), "{:?}", view.scrolled);
-        assert_eq!(
-            view.applied,
-            [Action::ShowBead, Action::Move(Motion::NextRow)]
-        );
+        assert!(view.notched_bead.is_empty(), "{:?}", view.notched_bead);
+        assert_eq!(view.notched, [Notch::Down]);
+        assert_eq!(view.applied, [Action::ShowBead]);
     }
 
     /// Show a bead, click a row over it and turn the wheel, with the window
     /// answering that click the way the test says. The notch is what asks
     /// where the loop thinks it is afterwards: over a window it moves the
-    /// bead, and over the forest it moves the selection.
+    /// bead, and over the forest it moves the forest's own view.
     fn a_click_over_the_bead_view(lands_on: Landed) -> Recorder {
         let mut view = Recorder {
             lands_on: Some(lands_on),
@@ -2249,7 +2279,7 @@ mod tests {
         let events = waiting(vec![
             Event::Key(key(KeyCode::Enter)),
             Event::Clicked(3),
-            Event::Scrolled(Motion::NextRow),
+            Event::Scrolled(Notch::Down),
         ]);
 
         drive(
@@ -3696,7 +3726,7 @@ mod tests {
             &waiting(vec![
                 Event::Key(key(KeyCode::Char('y'))),
                 Event::Clicked(3),
-                Event::Scrolled(Motion::NextRow),
+                Event::Scrolled(Notch::Down),
                 Event::Key(key(KeyCode::Char('?'))),
             ]),
             &ask,
@@ -3707,14 +3737,12 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(
-            view.applied,
-            [Action::CopyId, Action::Move(Motion::NextRow)]
-        );
+        assert_eq!(view.applied, [Action::CopyId]);
         assert_eq!(view.clicked, [3]);
+        assert_eq!(view.notched, [Notch::Down]);
         assert_eq!(
             view.pressed_after,
-            [0, 1, 1, 2],
+            [0, 1, 2, 3],
             "a press is heard before the action it turns out to be"
         );
     }
@@ -3807,19 +3835,19 @@ mod tests {
         assert_eq!(view.drawn(), 1, "the first draw and no other");
     }
 
-    /// `bdi` holds no scroll of its own — the window is a pure function of
-    /// where the selection sits — so the wheel moves the selection, which is
-    /// the only thing the window follows.
+    /// The forest holds a viewport of its own, so a notch reaches it as a
+    /// notch: the loop hands it neither an action nor a row, and the
+    /// selection is not what the wheel is about.
     #[test]
-    fn a_wheel_notch_moves_the_selection_one_row() {
+    fn a_wheel_notch_moves_the_forests_view_and_not_its_selection() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
 
         drive(
             &mut view,
             &waiting(vec![
-                Event::Scrolled(Motion::PreviousRow),
-                Event::Scrolled(Motion::NextRow),
+                Event::Scrolled(Notch::Up),
+                Event::Scrolled(Notch::Down),
             ]),
             &ask,
             at_once(),
@@ -3829,13 +3857,8 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(
-            view.applied,
-            [
-                Action::Move(Motion::PreviousRow),
-                Action::Move(Motion::NextRow)
-            ]
-        );
+        assert_eq!(view.notched, [Notch::Up, Notch::Down]);
+        assert!(view.applied.is_empty(), "a wheel notch is not an action");
         assert!(view.clicked.is_empty(), "a wheel notch points at no row");
     }
 
@@ -3887,7 +3910,7 @@ mod tests {
             &mut view,
             &waiting(vec![
                 Event::Key(key(KeyCode::Char('?'))),
-                Event::Scrolled(Motion::NextRow),
+                Event::Scrolled(Notch::Down),
             ]),
             &ask,
             at_once(),
@@ -3898,6 +3921,7 @@ mod tests {
         .expect("the loop runs");
 
         assert!(view.applied.is_empty());
+        assert!(view.notched.is_empty());
         assert_eq!(
             view.showing,
             [Showing::Forest, Showing::Bindings, Showing::Forest]

@@ -5,12 +5,6 @@ use ratatui::layout::Rect;
 
 use crate::view::tail;
 
-/// How far `^D` and `^U` move the selection: half the forest's own band,
-/// rather than half a screen the key bar and the tail also sit in.
-pub fn half_screen(forest: Rect) -> usize {
-    (forest.height / 2) as usize
-}
-
 /// The three bands of the screen, top to bottom.
 ///
 /// Named rather than returned from `draw` because the tail is drawn by
@@ -53,33 +47,23 @@ pub fn regions(area: Rect) -> Regions {
     }
 }
 
-/// The first visible line, so that the selection is on screen.
-///
-/// A pure function of the selection, which is what lets the renderer hold no
-/// scroll state of its own: the selection moves, the window follows it, and
-/// there is no third thing to keep in step with the other two.
-pub(super) fn scroll_offset(selected: usize, lines: usize, height: usize) -> usize {
-    if lines <= height || height == 0 {
-        return 0;
-    }
-    selected.saturating_sub(height / 2).min(lines - height)
-}
-
 /// Which line the forest draws on one row of the screen, where it draws one.
 ///
 /// The inverse of the skip-and-take in `draw`, and here beside it rather than
 /// beside the click that asks the question: the two are one agreement about
-/// where a line goes, and the failure they can have is drifting apart.
+/// where a line goes, and the failure they can have is drifting apart. Both
+/// are handed `from` rather than working one out, so there is one viewport
+/// and not two answers about it.
 ///
 /// The column is not asked for. Every band spans the width of the screen, so
 /// a row is the whole of what a pointer names.
-pub fn line_at(forest: Rect, selected: usize, lines: usize, row: u16) -> Option<usize> {
+pub fn line_at(forest: Rect, from: usize, lines: usize, row: u16) -> Option<usize> {
     let within = row.checked_sub(forest.y)? as usize;
     if within >= forest.height as usize {
         return None;
     }
 
-    let at = scroll_offset(selected, lines, forest.height as usize) + within;
+    let at = from + within;
     (at < lines).then_some(at)
 }
 
@@ -90,7 +74,11 @@ mod tests {
 
     use crate::model::snapshot::ProviderState;
     use crate::view::draw::tests::*;
-    use crate::view::{Action, Motion};
+    use crate::view::{Action, Motion, Notch};
+
+    /// How far a notch is told to go here, which the config settles for a
+    /// reader and neither this file nor the forest decides.
+    const A_NOTCH: usize = 3;
 
     // ---- the bands of the screen -----------------------------------------
 
@@ -171,43 +159,6 @@ mod tests {
         }
     }
 
-    // ---- the scroll offset -----------------------------------------------
-
-    #[test]
-    fn a_forest_that_fits_the_viewport_never_scrolls() {
-        for selected in 0..5 {
-            assert_eq!(scroll_offset(selected, 5, 10), 0, "{selected}");
-        }
-    }
-
-    #[test]
-    fn the_selection_is_always_inside_the_viewport() {
-        let (lines, height) = (100, 10);
-        for selected in 0..lines {
-            let offset = scroll_offset(selected, lines, height);
-            assert!(
-                (offset..offset + height).contains(&selected),
-                "row {selected} fell outside {offset}..{}",
-                offset + height
-            );
-        }
-    }
-
-    /// Scrolling past the end would draw blank rows under the last one, which
-    /// reads as a forest that has run out rather than one that has ended.
-    #[test]
-    fn the_last_row_is_reachable_without_scrolling_past_the_end() {
-        assert_eq!(scroll_offset(99, 100, 10), 90);
-        assert_eq!(scroll_offset(0, 100, 10), 0);
-    }
-
-    /// A viewport with no rows in it has nowhere to scroll to, and the
-    /// arithmetic that finds the offset would run off the bottom of `usize`.
-    #[test]
-    fn a_viewport_with_no_room_asks_for_no_offset() {
-        assert_eq!(scroll_offset(40, 100, 0), 0);
-    }
-
     // ---- the line a screen row shows --------------------------------------
 
     /// The inverse held against the drawing rather than against itself. The
@@ -215,34 +166,45 @@ mod tests {
     /// is on a row says which line was drawn there, and a forest taller than
     /// its band is scrolled far enough that an off-by-one in either direction
     /// shows.
+    ///
+    /// Both ways of scrolling it, because they are what the inverse and the
+    /// drawing could disagree about: a motion moves the selection and the
+    /// view after it, and a notch moves the view alone. An inverse still
+    /// deriving the offset from the selection agrees with the drawing on the
+    /// first and is wrong by the whole scroll on the second.
     #[test]
     fn every_row_of_the_forest_names_the_line_drawn_on_it() {
-        let (width, height) = (60, 24);
-        let band = regions(Rect::new(0, 0, width, height)).forest;
-        let mut forest = opened(&snapshot(
-            vec![grove(40)],
-            Vec::new(),
-            ProviderState::Answering,
-        ));
-        forest.set_half_screen(half_screen(band));
-        forest.apply(Action::Move(Motion::HalfScreenDown));
+        for wheeled in 0..3 {
+            let (width, height) = (60, 24);
+            let band = regions(Rect::new(0, 0, width, height)).forest;
+            let mut forest = opened(&snapshot(
+                vec![grove(40)],
+                Vec::new(),
+                ProviderState::Answering,
+            ));
+            forest.fit(band.height as usize);
+            forest.apply(Action::Move(Motion::HalfScreenDown));
+            for _ in 0..wheeled {
+                forest.scrolled(Notch::Down, A_NOTCH);
+            }
 
-        let frame = frame_of(&forest, width, height).rows();
-        let selected = forest.selected_line();
-        let lines = forest.lines().len();
+            let frame = frame_of(&forest, width, height).rows();
+            let lines = forest.lines().len();
 
-        for row in band.y..band.y + band.height {
-            let at = line_at(band, selected, lines, row).expect("the band is full of lines");
-            let shown = match at {
-                0 => "summit-works".to_string(),
-                1 => "lift the ground station".to_string(),
-                at => format!("bead number {}", at - 1),
-            };
-            assert!(
-                frame[row as usize].contains(&shown),
-                "row {row} shows {:?}, not line {at}",
-                frame[row as usize]
-            );
+            for row in band.y..band.y + band.height {
+                let at =
+                    line_at(band, forest.from(), lines, row).expect("the band is full of lines");
+                let shown = match at {
+                    0 => "summit-works".to_string(),
+                    1 => "lift the ground station".to_string(),
+                    at => format!("bead number {}", at - 1),
+                };
+                assert!(
+                    frame[row as usize].contains(&shown),
+                    "after {wheeled} notches, row {row} shows {:?}, not line {at}",
+                    frame[row as usize]
+                );
+            }
         }
     }
 
@@ -263,14 +225,10 @@ mod tests {
     #[test]
     fn a_row_outside_the_forest_band_names_none() {
         let bands = regions(Rect::new(0, 0, 60, 24));
-        let (selected, lines) = (0, 100);
+        let (from, lines) = (0, 100);
 
         for row in [bands.tail.y, bands.tail.y + 3, bands.keys.y] {
-            assert_eq!(
-                line_at(bands.forest, selected, lines, row),
-                None,
-                "row {row}"
-            );
+            assert_eq!(line_at(bands.forest, from, lines, row), None, "row {row}");
         }
     }
 
@@ -288,11 +246,14 @@ mod tests {
         }
     }
 
-    /// `^D` and `^U` move by half the band the trees are in, not half a
-    /// screen the keys and the tail also sit in.
+    /// A band scrolled away from the top names the lines it is showing, and
+    /// not the ones the forest starts with.
     #[test]
-    fn a_half_screen_is_half_the_forest_and_not_half_the_frame() {
-        assert_eq!(half_screen(regions(Rect::new(0, 0, 80, 24)).forest), 8);
-        assert_eq!(half_screen(Rect::new(0, 0, 80, 1)), 0);
+    fn a_scrolled_band_names_the_lines_it_is_showing() {
+        let band = Rect::new(0, 0, 60, 8);
+
+        assert_eq!(line_at(band, 12, 100, 0), Some(12));
+        assert_eq!(line_at(band, 12, 100, 7), Some(19));
+        assert_eq!(line_at(band, 12, 100, 8), None);
     }
 }

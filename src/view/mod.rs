@@ -46,6 +46,18 @@ pub enum Motion {
     LastRow,
 }
 
+/// Which way one notch of the wheel moves what is on screen.
+///
+/// Not a `Motion`, because a notch and a keystroke ask for different things
+/// even where they point the same way: a motion moves the selection and the
+/// view follows it, and a notch moves the view and leaves the selection where
+/// the reader put it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notch {
+    Up,
+    Down,
+}
+
 /// What the user asked the view to do, in the view's own terms.
 ///
 /// The seam between the loop that reads keys and the forest that changes state:

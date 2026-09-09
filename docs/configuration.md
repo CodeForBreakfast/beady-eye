@@ -47,6 +47,7 @@ stale_claim_days = 30
 refresh_seconds = 30
 unanswered_after_seconds = 30
 tail_refresh_millis = 250
+wheel_notch_lines = 3
 
 [theme]
 background = "light"
@@ -146,6 +147,15 @@ slow tracker stretches its own gap instead of queueing reads behind itself.
 `unanswered_after_seconds` is how long a read may take before the screen says
 the tracker has stopped answering; `tail_refresh_millis` is how often the tail
 asks herdr for the selected pane.
+
+`wheel_notch_lines` is how far one notch of the wheel moves the tree, and the
+bead window over it. The default of three is the terminal convention, and it
+suits a wheel mouse, which reports one notch however far the detent turned.
+Raise or lower it for a trackpad, which reports as you travel rather than in
+detents: the same flick covers three times the ground. Your terminal's own
+scroll multiplier cannot help here — a terminal neutralises it while a program
+is reading the mouse, so `bdi` sees one report per notch whatever you set it
+to.
 
 ## `[theme]`
 
