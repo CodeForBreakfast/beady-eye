@@ -32,10 +32,9 @@ use crate::view::phrase;
 use crate::view::row::{AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
-pub use bands::{half_screen, line_at, regions};
+pub use bands::{line_at, regions};
 pub use tail::{draw_tail, Band};
 
-use bands::scroll_offset;
 use bead::{bead_line, elided_run};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
@@ -133,7 +132,7 @@ pub fn draw(
     for (row, (at, line)) in lines
         .iter()
         .enumerate()
-        .skip(scroll_offset(selected, lines.len(), height))
+        .skip(forest.from())
         .take(height)
         .enumerate()
     {

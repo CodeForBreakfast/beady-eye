@@ -318,6 +318,20 @@ pub struct Tui {
     /// a second is where a reader stops being able to tell the band from the
     /// pane it is reading.
     pub tail_refresh_millis: u64,
+
+    /// How far one notch of the wheel moves the forest, and the bead window
+    /// over it.
+    ///
+    /// Settled here rather than in code because no one number serves every
+    /// device: a wheel reports a detent, and a high-precision trackpad
+    /// reports once per cell of travel, so the same value is a nudge on one
+    /// and a leap on the other.
+    ///
+    /// The terminal's own knob cannot reach this. A terminal scaling the
+    /// wheel for its scrollback neutralises that scaling to its sign while a
+    /// program is reading mouse reports, so what arrives here is one report
+    /// per detent whatever the reader set.
+    pub wheel_notch_lines: usize,
 }
 
 /// What the reader's terminal is, in the one respect `bdi` can neither see
@@ -377,6 +391,7 @@ impl Default for Tui {
             refresh_seconds: 30,
             unanswered_after_seconds: 30,
             tail_refresh_millis: 250,
+            wheel_notch_lines: 3,
         }
     }
 }
@@ -707,6 +722,7 @@ socket = "/var/folders/T/beady-eye/changes.sock"
 refresh_seconds = 5
 unanswered_after_seconds = 90
 tail_refresh_millis = 100
+wheel_notch_lines = 1
 
 [theme]
 background = "light"
@@ -807,6 +823,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
+        assert_eq!(cfg.tui.wheel_notch_lines, 1);
         assert_eq!(cfg.theme.background, Background::Light);
     }
 
@@ -823,6 +840,10 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);
+        assert_eq!(
+            cfg.tui.wheel_notch_lines, 3,
+            "three lines a notch is the convention a reader who says nothing gets"
+        );
         assert_eq!(cfg.theme.background, Background::Dark);
     }
 

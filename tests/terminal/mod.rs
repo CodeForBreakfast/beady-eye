@@ -22,7 +22,9 @@
 //! * something outside `bdi` speaking on that socket and reading what it was
 //!   answered — [`Producer`], [`the_socket_under`];
 //! * a forest with a tracker's beads in it, opened and walked to a known
-//!   row — [`over_the_described_subtree`] and [`THE_DESCRIBED_SUBTREE`].
+//!   row — [`over_the_described_subtree`] and [`THE_DESCRIBED_SUBTREE`];
+//! * a forest with more lines than a short screen has room for, for a test
+//!   about what scrolls — [`over_the_loose_roots`] and [`THE_LOOSE_ROOTS`].
 //!
 //! The size is why this is a harness rather than a shell one-liner: `script
 //! -T` with stdout to a file gives a 0x0 pty, and ratatui then draws an empty
@@ -517,16 +519,68 @@ pub fn over_the_described_subtree(
     cols: u16,
     settled: Duration,
 ) -> (driver::Driven, shims::ShimmedTracker) {
+    over(
+        named,
+        THE_DESCRIBED_SUBTREE,
+        OPEN_THE_TREE,
+        rows,
+        cols,
+        settled,
+    )
+}
+
+/// What the same command said about a project of six loose roots and two
+/// small trees.
+///
+/// The described subtree draws seven lines however tall the screen is, and a
+/// screen short enough for seven lines to scroll by three has a forest band
+/// of four rows — so the third row of the scroll is the last one there is,
+/// and a view that moved by five would land in the same place. These roots
+/// draw enough lines for the distance to be the distance.
+pub const THE_LOOSE_ROOTS: &str = include_str!("../fixtures/bulk_loose_roots.json");
+
+/// The keys that draw every one of those roots and leave the selection on the
+/// first: every tree rather than only the staffed ones, back to the first row
+/// — both for the reasons [`OPEN_THE_TREE`] gives — and down onto the root
+/// under the project, which is a bead and so has a window to name it.
+const SHOW_EVERY_ROOT: &[u8] = b"agj";
+
+/// Where that walk leaves the selection, and the whole of the window's title
+/// over it. Whole because the id of a root is a prefix of nothing else here,
+/// but the title of the window is what says a window is over *this* bead.
+pub const THE_FIRST_ROOTS_WINDOW: &str = "orb-c3 · Esc to go back";
+
+/// A `bdi` on a pty of this size over [`THE_LOOSE_ROOTS`], with every root
+/// drawn and the selection on the first of them.
+pub fn over_the_loose_roots(
+    named: &str,
+    rows: u16,
+    cols: u16,
+    settled: Duration,
+) -> (driver::Driven, shims::ShimmedTracker) {
+    over(named, THE_LOOSE_ROOTS, SHOW_EVERY_ROOT, rows, cols, settled)
+}
+
+/// A `bdi` on a pty of this size over one capture, walked to where the tests
+/// using it start.
+fn over(
+    named: &str,
+    holds: &str,
+    walk: &[u8],
+    rows: u16,
+    cols: u16,
+    settled: Duration,
+) -> (driver::Driven, shims::ShimmedTracker) {
     let home = a_home_naming_one_project(named);
     let tracker = shims::ShimmedTracker::beside(&home);
-    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.holds(holds);
     let mut environment = tracker.environment();
     environment.push(a_socket_of_its_own(&home));
 
     let mut bdi = driver::Driven::bdi(rows, cols, home, &environment);
     bdi.read_until(ENTER_ALTERNATE_SCREEN, driver::GIVING_UP);
     bdi.settle(settled, driver::GIVING_UP);
-    bdi.send(OPEN_THE_TREE);
+    bdi.send(walk);
     bdi.settle(settled, driver::GIVING_UP);
     (bdi, tracker)
 }

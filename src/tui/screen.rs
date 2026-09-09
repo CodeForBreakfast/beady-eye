@@ -27,7 +27,7 @@ use crate::view::lines::Place;
 use crate::view::phrase;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Motion, Notice, Said, Typing};
+use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
 
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
@@ -52,6 +52,9 @@ pub(super) struct Drawing {
     /// The background the reader's terminal draws on, which decides the one
     /// treatment `bdi` composes itself.
     background: Background,
+    /// How far one notch of the wheel moves the forest, and the bead window
+    /// over it.
+    notch: usize,
 }
 
 impl Drawing {
@@ -59,6 +62,7 @@ impl Drawing {
         Self {
             tail_every: cfg.tui.tail_refresh(),
             background: cfg.theme.background,
+            notch: cfg.tui.wheel_notch_lines,
         }
     }
 }
@@ -496,12 +500,17 @@ impl Shown {
     /// click — the bands divide the screen, and the forest scrolls under its
     /// own — so the geometry is asked here, where the forest is, and the
     /// screen is all the terminal has to say about it.
+    ///
+    /// The forest is fitted to the band the click was measured against rather
+    /// than left on the last frame's, so a pointer is answered for the screen
+    /// it pointed at whatever has been drawn since.
     fn clicked(&mut self, screen: Rect, row: u16) -> bool {
         let bands = draw::regions(screen);
+        self.forest.fit(bands.forest.height as usize);
 
         match draw::line_at(
             bands.forest,
-            self.forest.selected_line(),
+            self.forest.from(),
             self.forest.lines().len(),
             row,
         ) {
@@ -677,6 +686,19 @@ impl Shown {
     /// Move the bead view, leaving the selection under it where it is.
     fn scroll(&mut self, motion: Motion) -> bool {
         self.show.scroll(motion)
+    }
+
+    /// Move the forest's view, leaving the selection where the reader put it
+    /// — off the screen where the notch has taken it there. The tail is not
+    /// asked to follow, for the same reason: nothing has moved that the tail
+    /// is an echo of.
+    fn scrolled(&mut self, notch: Notch) -> bool {
+        self.forest.scrolled(notch, self.drawing.notch)
+    }
+
+    /// And the bead view, by the same distance.
+    fn scrolled_bead(&mut self, notch: Notch) -> bool {
+        self.show.scrolled(notch, self.drawing.notch)
     }
 
     /// Whether the selection is still on the bead the view was opened on.
@@ -900,7 +922,7 @@ fn paint(
     now: DateTime<Utc>,
 ) {
     let bands = draw::regions(frame.area());
-    forest.set_half_screen(draw::half_screen(bands.forest));
+    forest.fit(bands.forest.height as usize);
     draw::draw(frame, frame.area(), forest, collecting, now, foot);
     draw::draw_tail(frame, bands.tail, tail);
     match over {
@@ -993,6 +1015,14 @@ impl View for Screen {
 
     fn scroll(&mut self, motion: Motion) -> bool {
         self.shown.scroll(motion)
+    }
+
+    fn scrolled(&mut self, notch: Notch) -> bool {
+        self.shown.scrolled(notch)
+    }
+
+    fn scrolled_bead(&mut self, notch: Notch) -> bool {
+        self.shown.scrolled_bead(notch)
     }
 
     fn bead_still_shown(&self) -> bool {
@@ -1569,8 +1599,9 @@ mod tests {
         forest.apply(Action::Move(Motion::HalfScreenDown));
         assert_eq!(
             forest.selected_line(),
-            11,
-            "the forest's own default, from the first root, until a frame has been drawn"
+            2,
+            "a forest no frame has measured has no band to halve, so it moves \
+             a row rather than nowhere"
         );
 
         let mut forest = an_open_grove(30);
@@ -1688,8 +1719,14 @@ mod tests {
     #[test]
     fn home_puts_the_selection_on_the_first_row_from_anywhere() {
         let mut shown = shown(a_grove(30));
-        to_the_last_row(&mut shown);
         let root = |band: &[String]| band.iter().any(|row| row.contains("grv-1 "));
+        assert!(
+            root(&forest_band(&mut shown, 60, 24)),
+            "the walk starts with the root on screen, and that frame is what \
+             tells the forest how tall its band is"
+        );
+
+        to_the_last_row(&mut shown);
         assert!(
             !root(&forest_band(&mut shown, 60, 24)),
             "the fixture has to scroll the root off the screen first"
@@ -1781,6 +1818,10 @@ mod tests {
     /// it hand the screen instants a chosen distance apart.
     const EVERY: Duration = Duration::from_millis(250);
 
+    /// How far a notch moves every screen here, unless its own subject is
+    /// the setting that says so.
+    const A_NOTCH: usize = 3;
+
     /// A config settling exactly what every screen here already draws to, so
     /// a test whose subject is the foot is a test about the foot alone.
     fn the_config_in_force() -> Config {
@@ -1793,6 +1834,7 @@ mod tests {
         Drawing {
             tail_every: EVERY,
             background: Background::Dark,
+            notch: A_NOTCH,
         }
     }
 
