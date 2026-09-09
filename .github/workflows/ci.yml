@@ -22,6 +22,10 @@ on:
 
 permissions:
   contents: read
+  # The step below asks what CI made of the pull request a squash is of. A
+  # fork's pull request gets a read-only token whatever is written here, and
+  # that path asks gh nothing anyway.
+  actions: read
 
 # A push to a pull request's branch supersedes the run on its old head, so
 # that run is cancelled, queued or running. A push to main is never
@@ -103,48 +107,26 @@ jobs:
           # id-token this workflow does not grant.
           use-flakehub: false
 
-      # A pull request that changes no file any check reads asks for the very
-      # derivations main has already been given a verdict on, so building them
-      # again can only arrive at that same verdict. This is what makes that
-      # cheap without a cache to substitute from: the run does not build them.
+      # A tree that changes no file any check reads asks for the very
+      # derivations something has already been given a verdict on, so building
+      # them again can only arrive at that same verdict. This is what makes
+      # that cheap without a cache to substitute from: the run does not build
+      # them. A pull request is judged against the branch it targets, and a
+      # squash against the head of the pull request it is of, whose run main's
+      # ruleset required green before the merge button would work.
       #
-      # Which changes those are is a question for the flake rather than a list
-      # of documentation paths kept here. A derivation path answers for the
-      # source, for flake.nix and for flake.lock at once, so a dependency bump
-      # or an edited check is caught by construction and there is no second
-      # list here to fall out of step with the one in flake.nix.
-      #
-      # Only a pull request may skip. A push to main is the run a bead close
-      # reads, and leaving that one unconditional means a mistake here costs a
-      # pull request its early exit and can never put an untested tree on main.
-      #
-      # A release also reads it. `await-ci-verdict` publishes on this run
-      # rather than building anything of its own, and it accepts only a push
-      # to main precisely because that one cannot have taken the exit above.
-      # Widen this to any other event and a release publishes on a run that
-      # built nothing.
-      - name: what main has not already built
+      # The decision lives in the flake, where a check reads it, the way the
+      # conventional-subject rule does. What is here is the trigger: the event,
+      # and the token gh reads a pull request's verdict with. Nothing untrusted
+      # reaches the shell — the subject is read out of the commit rather than
+      # interpolated in, and only digits are taken from it.
+      - name: what has not already had a verdict
         id: unbuilt
-        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
-          derivations() {
-            nix eval --json "$1#checks.$system" \
-              --apply 'builtins.mapAttrs (_: check: check.drvPath)'
-          }
-
-          # Unpacked rather than checked out, so what is evaluated is main's
-          # committed tree and nothing this job has since put beside it.
-          base="$RUNNER_TEMP/main"
-          mkdir -p "$base"
-          git archive origin/main | tar -x -C "$base"
-
-          if [ "$(derivations .)" = "$(derivations "path:$base")" ]; then
-            echo "Every check here is a derivation main has already had a verdict on."
-            echo "any=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "any=true" >> "$GITHUB_OUTPUT"
-          fi
+          any="$(nix run .#unbuilt-checks)"
+          echo "any=$any" >> "$GITHUB_OUTPUT"
 
       # Every check comes from the flake's `checks` output, so a check added
       # there is a check this runs. Naming one here is the drift to avoid.
@@ -152,7 +134,8 @@ jobs:
       # come from there — it reads a pull request title rather than a tree —
       # and it holds only the trigger, never the rule.
       #
-      # The step above is skipped on a push to main, which leaves its output
-      # empty rather than "false", so main always builds.
+      # `unbuilt-checks` answers "true" for anything it cannot decide, so every
+      # way this comparison fails costs a needless build rather than leaving a
+      # tree nothing has checked.
       - if: steps.unbuilt.outputs.any != 'false'
         run: nix flake check -L
