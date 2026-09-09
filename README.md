@@ -118,11 +118,9 @@ socket you can poke to say a tracker changed so the eye stops polling it.
 
 ## Being seen
 
-The eye draws only what it can find. An agent that would be found writes two
-lines as it takes a bead, the pane's id onto the bead and the bead's id onto
-the pane, and clears the first as it lets go. One that writes neither still
-toils, but toils among the unaccounted-for below the trees, and no amount of
-staring will move it up.
+The eye draws only what it can find. An agent that wants to be found tells
+the bead which pane it is in. One that does not still toils, but toils among
+the unaccounted-for below the trees, and no amount of staring will move it up.
 
 [docs/agents.md](docs/agents.md) is addressed to the agent rather than to you.
 Hand it over, and let it fold the lines into whatever it already obeys.
