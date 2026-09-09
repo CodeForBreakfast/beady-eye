@@ -1,7 +1,9 @@
 # What `bdi` asks of an agent
 
-`bdi` draws a tracker's beads as trees and, beside each bead an agent has
-claimed, the [herdr](https://herdr.dev) pane that agent sits in. herdr is the
+`bdi` draws a [beads](https://github.com/gastownhall/beads) tracker's work as
+trees and, beside each bead an agent has claimed, the
+[herdr](https://herdr.dev) pane that agent sits in. beads is the issue tracker
+the work lives in, and `bd` is its command; a bead is one issue. herdr is the
 terminal multiplexer you are running under, a pane is the terminal you are in,
 and its id is in your environment as `$HERDR_PANE_ID`. `bdi` never writes to a
 tracker, so it can only draw what you have written. This page is addressed to
@@ -28,8 +30,7 @@ fallback matches nothing.
 
 ## One pane joins one bead
 
-Where two beads name one pane, or two panes name one bead, `bdi` awards the
-key's claim to neither. The refusal is reported as a conflict, and nothing
+Where two beads name one pane, `bdi` awards the key's claim to neither. The refusal is reported as a conflict, and nothing
 errors. What the pane says about itself then stands alone: a `display_agent`
 naming exactly one of those beads keeps that bead's agent, and one naming
 nothing drops your pane among the unattributed panes below the trees, reading
