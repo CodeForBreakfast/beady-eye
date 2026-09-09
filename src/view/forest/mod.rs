@@ -213,18 +213,26 @@ impl Forest {
     }
 
     /// Bring the selection inside the viewport, where the last frame left it
-    /// above or below what there was room for.
+    /// above or below what there was room for, and report whether the view
+    /// moved.
     ///
     /// By the least it can, rather than by putting the selection back in the
     /// middle. A reader who has wheeled the view somewhere and then steps one
     /// row keeps what they were looking at, and it is what the bead window
     /// already does with a row it has to reveal.
-    fn reveal(&mut self) {
+    ///
+    /// Reported because a keystroke that moves the view and nothing else is a
+    /// keystroke the screen has to be redrawn for: `g` on a selection the
+    /// wheel has scrolled away from moves no row and changes every one of
+    /// them.
+    fn reveal(&mut self) -> bool {
+        let was = self.from;
         if self.selected < self.from {
             self.from = self.selected;
         } else if self.room > 0 && self.selected >= self.from + self.room {
             self.from = self.selected + 1 - self.room;
         }
+        self.from != was
     }
 
     /// Take a freshly collected snapshot, keeping the folds, the filter and
@@ -411,8 +419,8 @@ impl Forest {
             | Action::Quit => return false,
         }
         let was = self.lay_out();
-        self.reveal();
-        self.selected != selected || self.lines != was
+        let revealed = self.reveal();
+        self.selected != selected || self.lines != was || revealed
     }
 
     fn toggle_filter(&mut self) {
@@ -580,7 +588,8 @@ impl Forest {
         self.step_to(target);
     }
 
-    /// Put the selection on the line at `at`, reporting whether it moved.
+    /// Put the selection on the line at `at`, reporting whether the screen
+    /// has changed.
     ///
     /// Named rather than stepped to, and that is the whole difference from a
     /// motion: a line the selection cannot rest on keeps none, because the
@@ -588,11 +597,12 @@ impl Forest {
     /// are is the keyboard's question, asked here in the keyboard's words.
     pub fn select_line(&mut self, at: usize) -> bool {
         let was = self.selected;
+        let mut revealed = false;
         if self.lines.get(at).is_some_and(selectable) {
             self.step_to(Some(at));
-            self.reveal();
+            revealed = self.reveal();
         }
-        self.selected != was
+        self.selected != was || revealed
     }
 
     /// Where the selection sits, where it sits on a bead at all.
@@ -3854,6 +3864,31 @@ credential_command = "secret harbour"
                 from + room
             );
         }
+    }
+
+    /// A motion that moves the band without moving the selection is still a
+    /// change. The wheel put the band somewhere the selection is not, so `g`
+    /// on a selection already on the first row brings the band back and
+    /// nothing else — and a screen not redrawn for that goes on showing the
+    /// rows the wheel left it on, under an offset the next click reads
+    /// against.
+    #[test]
+    fn a_motion_that_only_brings_the_band_back_is_a_change() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.apply(Action::Move(Motion::FirstRow));
+        let first = forest.selected_line();
+        forest.scrolled(Notch::Down, A_NOTCH);
+        assert!(forest.from() > first, "the wheel has to take the band away");
+
+        assert!(forest.apply(Action::Move(Motion::FirstRow)));
+
+        assert_eq!(
+            forest.selected_line(),
+            first,
+            "the selection was already on the first row"
+        );
+        assert_eq!(forest.from(), first);
     }
 
     /// A click selects a row the band is showing, so it never moves the view
