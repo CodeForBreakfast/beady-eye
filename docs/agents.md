@@ -27,10 +27,12 @@ fallback matches nothing.
 ## One pane joins one bead
 
 Where two beads name one pane, or two panes name one bead, `bdi` awards the
-pane to neither. The claim is refused in both directions and reported as a
-conflict, and your pane drops among the unattributed panes below the trees,
-reading exactly like an agent that never registered. Nothing errors. Holding
-two beads, name your pane on one of them.
+key's claim to neither. The refusal is reported as a conflict, and nothing
+errors. What the pane says about itself then stands alone: a `display_agent`
+naming exactly one of those beads keeps that bead's agent, and one naming
+nothing drops your pane among the unattributed panes below the trees, reading
+exactly like an agent that never registered. Holding two beads, name your pane
+on one of them.
 
 ## Clear the key on every way out
 
@@ -42,9 +44,9 @@ bd update <id> --unset-metadata agent_pane
 ```
 
 Your pane outlives your seat and is reassigned to whoever comes next. A bead
-still naming it then shares the pane with that seat's bead, which is the
-conflict above, and it blanks the agent on both. `bd close` takes no metadata
-flags, so the unset goes on `bd update` before it.
+still naming it then contests the pane with that seat's bead: the key is
+refused on both, and the join rests on what the pane says about itself.
+`bd close` takes no metadata flags, so the unset goes on `bd update` before it.
 
 ## Leave when the bead closes
 
