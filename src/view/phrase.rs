@@ -2014,15 +2014,15 @@ mod tests {
         });
         let refused = unopenable_link("delivery_pr");
 
-        let every = [&unread, &unfilled, &unshortened, &refused];
-        for said in every {
+        let mut every = vec![&unread, &unfilled, &unshortened, &refused];
+        for said in &every {
             assert!(said.contains("delivery_pr"), "{said}");
         }
-        for (one, other) in every.iter().enumerate().flat_map(|(i, one)| {
-            every[i + 1..].iter().map(move |other| (one, other))
-        }) {
-            assert_ne!(one, other, "two of the four read alike");
-        }
+
+        let said = every.len();
+        every.sort_unstable();
+        every.dedup();
+        assert_eq!(said, every.len(), "two of the four read alike: {every:?}");
     }
 
     #[test]

@@ -120,10 +120,21 @@ placed.
 
 ## `[[badges]]`
 
-Draw a metadata key beside every bead that carries it. `render` is the text,
-with `{}` for the whole value. `match` restricts the badge to the values a
-pattern matches, and the pattern is anchored against the whole value: `human`
-draws on `human` and not on `inhumane`.
+Draw a metadata key beside every bead that carries it. An entry names one key
+and says what the row carries for it:
+
+| written | what it says | needed |
+|---|---|---|
+| `key` | the metadata key this badge is about | yes |
+| `render` | the text the row carries | yes |
+| `match` | which values this badge draws on, and how the value comes apart | no |
+| `short` | what the row carries instead where `render` will not fit | no |
+| `link` | where the badge points | no |
+| `colour` | what it is drawn in | no |
+
+`render` is the text, with `{}` for the whole value. `match` restricts the badge
+to the values a pattern matches, and the pattern is anchored against the whole
+value: `human` draws on `human` and not on `inhumane`.
 
 A capture the pattern names is `render`'s to place by that name:
 
@@ -153,6 +164,25 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 `delivery_pr` written as a bare `12` gives an optional `owner` and `repo`
 nothing, and a URL built round the parts that were never there points at
 somewhere else. The badge still draws its `render`; it just has nowhere to go.
+
+`short` is what the row carries where it has no room for the `render`, written
+as a template over those same captures. A badge with only one length is the
+first thing a narrow pane drops; one with two survives, saying less:
+
+```toml
+[[badges]]
+key    = "delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ {repo} #{number}"
+short  = "⇢ #{number}"
+```
+
+A shortened badge is one the row kept whole, so it still opens the page.
+
+**A `short` naming something this value did not supply is no short form at
+all**, by the rule `link` follows and for the same reason: `⇢ #{number}` with no
+number in it is a template on the row where a reference belongs. The badge keeps
+its one length, and a pane too narrow for that still drops it.
 
 `colour` is what the badge is drawn in. A badge that names none is drawn in the
 tone of the row it sits on.
@@ -233,7 +263,7 @@ opens a table of its own, so `name`, `path` or anything else written after it
 belongs to the badge, which refuses it:
 
 ```
-unknown field `path`, expected one of `key`, `match`, `render`, `link`, `colour`
+unknown field `path`, expected one of `key`, `match`, `render`, `short`, `link`, `colour`
 in `projects.badges`
 ```
 
@@ -241,7 +271,7 @@ in `projects.badges`
 
 `bdi` has no badge built in for any service, so every reference is one you
 write. The shapes below are what a reference in metadata usually looks like, and
-each is the same three parts: a `match` that reads the value apart, a `render`
+each is built the same way: a `match` that reads the value apart, a `render`
 that says what the row carries, and a `link` that rebuilds the address.
 
 **A badge reads a metadata key, never `external_ref`.** That field belongs to
@@ -275,11 +305,14 @@ A bead carrying `delivery_pr = "orbital/atlas#12"`:
 key    = "delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
+short  = "⇢ #{number}"
 link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 ```
 
 The row draws `⇢ atlas #12` and opens the pull request. The owner never reaches
-the row: a capture `render` leaves out is still `link`'s to use.
+the row: a capture `render` leaves out is still `link`'s to use. Narrow the pane
+and the badge drops the repository rather than the row dropping the badge, and
+`⇢ #12` opens the same page.
 
 ### A bare number, in a project with only one repository
 
@@ -330,6 +363,9 @@ anomalies:
 | a value no pattern reads | `no badge for delivery_pr: no pattern reads this value` |
 | a value that left part of the `link` unfilled | `no link for delivery_pr: this value leaves part of it unfilled` |
 | a link holding a control character | `no link for delivery_pr: it holds a control character` |
+| a value that left part of the `short` unfilled | `no short form for delivery_pr: this value leaves part of it unfilled` |
+
+The `short` row holds whether or not the badge has a `link`.
 
 ### Opening a badge
 

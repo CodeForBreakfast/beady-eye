@@ -2221,7 +2221,9 @@ metadata_keys = ["working_topic"]
     fn a_short_form_missing_one_of_its_captures_is_no_short_form_at_all() {
         let b = Badge {
             key: "delivery_pr".to_string(),
-            match_value: Some(pattern(r"(?:(?<owner>[^/]+)/)?(?<repo>[^#]+)#(?<number>[0-9]+)")),
+            match_value: Some(pattern(
+                r"(?:(?<owner>[^/]+)/)?(?<repo>[^#]+)#(?<number>[0-9]+)",
+            )),
             render: "⇢ {repo} #{number}".to_string(),
             short: Some("⇢ {owner} #{number}".to_string()),
             link: None,

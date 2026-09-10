@@ -913,7 +913,10 @@ mod tests {
             a_row_badged(shortenable(None), 24),
             a_row_badged(one_length, 24)
         );
-        assert_eq!(a_row_badged(shortenable(None), 24), "  ├── ● .20   a bead  ⇢…");
+        assert_eq!(
+            a_row_badged(shortenable(None), 24),
+            "  ├── ● .20   a bead  ⇢…"
+        );
     }
 
     /// Every symbol a row put in the buffer, escape bytes and all. `Painted`
