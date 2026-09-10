@@ -1712,7 +1712,7 @@ name to the socket after any command that wrote something.
           "started_at": "2026-08-29T10:00:00Z",
           "closed_at": null,
           "badges": [
-            { "key": "blocked_on", "text": "⏸ waiting", "link": null, "colour": null }
+            { "key": "blocked_on", "text": "⏸ waiting", "short": null, "link": null, "colour": null }
           ],
           "agent": {
             "pane": { "session": "default", "id": "wCM:p9" },

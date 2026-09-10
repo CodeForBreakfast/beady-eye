@@ -226,6 +226,18 @@ pub struct Badge {
     #[serde(rename = "match")]
     pub match_value: Option<Pattern>,
     pub render: String,
+    /// What the badge says on a row too narrow for its `render`, as a template
+    /// over the same captures.
+    ///
+    /// A template rather than a character, because a badge's length is not
+    /// `bdi`'s to choose at either end: a setup that wants a bare glyph writes
+    /// one, and one that wants a number keeps the number.
+    ///
+    /// A brace pair naming nothing the value supplied leaves the badge with no
+    /// short form, as it leaves it with no `link`: a row that fell back to a
+    /// half-substituted template would put the template in front of the reader
+    /// at exactly the widths where it had least room to explain itself.
+    pub short: Option<String>,
     /// Where the badge points, as a template over the same captures `render`
     /// reads.
     ///
@@ -920,6 +932,15 @@ impl Badge {
         Some(self.fill(&self.render, value)?.text)
     }
 
+    /// What this badge says where the row cannot afford its `render`: its
+    /// `short` filled in from the captures `render` reads, or `None` where the
+    /// config names no short form, the badge does not apply, or a brace pair
+    /// in the template named nothing the value supplied.
+    pub fn short_for(&self, value: &str) -> Option<String> {
+        let filled = self.fill(self.short.as_ref()?, value)?;
+        filled.whole.then_some(filled.text)
+    }
+
     /// Where this badge points for a metadata value: its `link` filled in
     /// from the captures `render` reads, or `None` where the config names no
     /// link, the badge does not apply, or a brace pair in the template named
@@ -1086,6 +1107,7 @@ path = "/home/user/dev/cinder"
                         match_value: None,
                         render: "⇢ beacon/{}".to_string(),
                         link: None,
+                        short: None,
                         colour: None,
                     }],
                     worktrees: Vec::new(),
@@ -1112,6 +1134,7 @@ path = "/home/user/dev/cinder"
                     match_value: None,
                     render: "⇢ {}".to_string(),
                     link: None,
+                    short: None,
                     colour: None,
                 },
                 Badge {
@@ -1119,6 +1142,7 @@ path = "/home/user/dev/cinder"
                     match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
                     link: None,
+                    short: None,
                     colour: None,
                 },
             ]
@@ -1146,6 +1170,7 @@ path = "/home/user/dev/cinder"
             match_value: None,
             render: render.to_string(),
             link: None,
+            short: None,
             colour: None,
         }
     }
@@ -1251,7 +1276,8 @@ path = "/home/user/dev/beacon"
         let said = refused.to_string();
         assert_eq!(
             said.trim_end(),
-            "unknown field `path`, expected one of `key`, `match`, `render`, `link`, `colour`\n\
+            "unknown field `path`, expected one of `key`, `match`, `render`, `short`, `link`, \
+             `colour`\n\
              in `projects.badges`"
         );
         assert!(!said.contains("missing field"), "{said}");
@@ -1975,6 +2001,7 @@ metadata_keys = ["working_topic"]
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
+            short: None,
             colour: None,
         };
         assert_eq!(b.apply("owner/repo#7"), Some("⇢ owner/repo#7".to_string()));
@@ -1987,6 +2014,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: None,
+            short: None,
             colour: None,
         };
         assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
@@ -2020,6 +2048,7 @@ metadata_keys = ["working_topic"]
                 match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
                 link: None,
+                short: None,
                 colour: None,
             };
             for candidate in values.iter().flat_map(|v| anything_near(v)) {
@@ -2039,6 +2068,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
             link: None,
+            short: None,
             colour: None,
         };
         assert_eq!(
@@ -2055,6 +2085,7 @@ metadata_keys = ["working_topic"]
             match_value: None,
             render: "{{}}".to_string(),
             link: None,
+            short: None,
             colour: None,
         };
         assert_eq!(b.apply("owner/repo#7"), Some("{owner/repo#7}".to_string()));
@@ -2069,6 +2100,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
             link: None,
+            short: None,
             colour: None,
         };
         assert_eq!(
@@ -2087,6 +2119,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
+            short: None,
             colour: None,
         };
         assert_eq!(b.apply("orbital/atlas#7"), Some("⇢ #7".to_string()));
@@ -2109,6 +2142,7 @@ metadata_keys = ["working_topic"]
             )),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
+            short: None,
             colour: None,
         };
         assert_eq!(b.apply("12"), Some("⇢ #12".to_string()));
@@ -2128,6 +2162,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{repo}/pull/{number}".to_string()),
+            short: None,
             colour: None,
         };
         assert_eq!(b.link_for("12"), None);
@@ -2140,6 +2175,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: Some("https://forge.invalid/waiting".to_string()),
+            short: None,
             colour: None,
         };
         assert_eq!(
@@ -2156,9 +2192,98 @@ metadata_keys = ["working_topic"]
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
+            short: None,
             colour: None,
         };
         assert_eq!(b.link_for("orbital/atlas#7"), None);
+    }
+
+    /// A `short` is a template over the same captures, so a badge says itself
+    /// twice at two lengths out of one reading of the value.
+    #[test]
+    fn a_short_form_is_built_from_the_captures_render_reads() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
+            render: "⇢ {repo} #{number}".to_string(),
+            short: Some("⇢ #{number}".to_string()),
+            link: None,
+            colour: None,
+        };
+        assert_eq!(b.apply("orbital/atlas#7"), Some("⇢ atlas #7".to_string()));
+        assert_eq!(b.short_for("orbital/atlas#7"), Some("⇢ #7".to_string()));
+    }
+
+    /// The same rule a `link` follows, for the same reason. `⇢ #{number}`
+    /// with no number is `⇢ #{number}` on the row, and a reader who met that
+    /// where a reference belongs has been told nothing and shown a template.
+    #[test]
+    fn a_short_form_missing_one_of_its_captures_is_no_short_form_at_all() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: Some(pattern(
+                r"(?:(?<owner>[^/]+)/)?(?<repo>[^#]+)#(?<number>[0-9]+)",
+            )),
+            render: "⇢ {repo} #{number}".to_string(),
+            short: Some("⇢ {owner} #{number}".to_string()),
+            link: None,
+            colour: None,
+        };
+        assert_eq!(b.apply("atlas#12"), Some("⇢ atlas #12".to_string()));
+        assert_eq!(b.short_for("atlas#12"), None);
+        assert_eq!(
+            b.short_for("orbital/atlas#12"),
+            Some("⇢ orbital #12".to_string())
+        );
+    }
+
+    #[test]
+    fn a_badge_whose_config_names_no_short_form_has_none() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: None,
+            render: "⇢ {}".to_string(),
+            short: None,
+            link: None,
+            colour: None,
+        };
+        assert_eq!(b.short_for("orbital/atlas#7"), None);
+    }
+
+    /// A badge that does not apply to the value says nothing at either
+    /// length: the short form is a second way to say this badge, not a badge
+    /// of its own.
+    #[test]
+    fn a_badge_that_does_not_apply_has_no_short_form_either() {
+        let b = Badge {
+            key: "blocked_on".to_string(),
+            match_value: Some(pattern("human")),
+            render: "⏸ waiting".to_string(),
+            short: Some("⏸".to_string()),
+            link: None,
+            colour: None,
+        };
+        assert_eq!(b.short_for("human"), Some("⏸".to_string()));
+        assert_eq!(b.short_for("dependency"), None);
+    }
+
+    #[test]
+    fn a_badges_short_form_is_read_out_of_the_config() {
+        let cfg = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key    = "delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ {{repo}} #{{number}}"
+short  = "⇢ #{{number}}"
+"#
+        ))
+        .expect("the config reads");
+
+        assert_eq!(
+            cfg.badges[0].short_for("orbital/atlas#7"),
+            Some("⇢ #7".to_string())
+        );
     }
 
     #[test]

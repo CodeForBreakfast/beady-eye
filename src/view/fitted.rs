@@ -172,13 +172,7 @@ impl Fitted {
     /// than cutting, so a span whose length is not this program's to choose
     /// can survive a narrow row whole instead of being cut to a head that
     /// names nothing.
-    ///
-    /// Nothing this crate draws offers a short form yet, and `dead_code` is
-    /// denied here on purpose. The expectation stands in for the caller and,
-    /// being an expectation rather than a blanket allow, fails the build on
-    /// the change that adds one.
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn shortening(mut self, shorter: Vec<Shorter>) -> Self {
         self.shorter = shorter;
         self

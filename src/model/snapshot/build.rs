@@ -476,6 +476,7 @@ mod tests {
                 key: "blocked_on".to_string(),
                 text: "⏸ waiting".to_string(),
                 link: None,
+                short: None,
                 colour: None,
             }]
         );
@@ -548,6 +549,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
                 key: "delivery_pr".to_string(),
                 text: "⇢ atlas #30".to_string(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                short: None,
                 colour: None,
             }]
         );
@@ -603,6 +605,7 @@ render = "⏸ waiting"
                 key: "blocked_on".to_string(),
                 text: "⏸ ask the ground station".to_string(),
                 link: None,
+                short: None,
                 colour: None,
             }]
         );
