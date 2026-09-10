@@ -497,6 +497,45 @@ mod tests {
         assert_eq!(drawn(row, 26), "orb-7  Enter focus   q qu…");
     }
 
+    /// A row whose state has a short form, for a state whose length is not
+    /// this program's to choose.
+    fn a_row_saying(title: &str) -> Fitted {
+        Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![Span::raw(title.to_string())],
+            vec![Span::raw("working on the parser")],
+        )
+        .briefly(vec![Span::raw("working")])
+    }
+
+    /// The long form is said only where it costs the title nothing. One column
+    /// narrower and the row says the short form whole, rather than saying the
+    /// long one over the blanks that keep the two blocks apart and off the end
+    /// of the row.
+    #[test]
+    fn a_state_with_no_room_for_its_long_form_is_said_in_its_short_one() {
+        assert_eq!(
+            drawn(a_row_saying("a title"), 37),
+            "orb-7  a title  working on the parser"
+        );
+        assert_eq!(
+            drawn(a_row_saying("a title"), 36),
+            "orb-7  a title               working"
+        );
+    }
+
+    /// The room kept back for the state is the short form's, so a title long
+    /// enough to be cut is cut to exactly what that leaves. Keep back less and
+    /// the title takes room the short form was promised, which is a row saying
+    /// nothing in part twice over.
+    #[test]
+    fn a_title_cut_for_width_leaves_the_short_form_the_room_kept_for_it() {
+        assert_eq!(
+            drawn(a_row_saying("teach the elided run to fold back open"), 40),
+            "orb-7  teach the elided run to…  working"
+        );
+    }
+
     /// A band of no rows is a band that was not asked for. Nothing on screen
     /// shows this going wrong: the row a zero-height band lands on is one the
     /// buffer is happy to be written to, so the drawing simply covers whatever
