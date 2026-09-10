@@ -3,10 +3,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::TimeDelta;
 
+use ratatui::style::Color;
 use regex_lite::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 
@@ -237,20 +239,149 @@ pub struct Badge {
     pub colour: Option<Colour>,
 }
 
-/// A colour a badge may be drawn in, named for what the row already draws in
-/// it rather than for the colour itself.
+/// A colour a badge may be drawn in: a slot of `bdi`'s own palette, or a
+/// colour the reader wrote.
 ///
-/// A slot and not a value. The theme owns the palette, so a colour written
-/// into a config is one no terminal theme can move — and a badge that names
-/// the row's own is one a reader has already learned to read.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+/// A slot is worth more, because the reader's theme resolves it and a value
+/// written here is one no theme can move. `Status` is worth more again, as the
+/// only one of the three that differs from bead to bead. But which of them a
+/// reader's badge wants is the reader's to judge, and `bdi` refuses none of
+/// them.
+///
+/// Parsed here and resolved in `view::palette`, so the name a config may write
+/// is this module's and the colour behind it is the palette's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Colour {
     /// What this bead's status is drawn in, which is what its id is drawn in
-    /// as well. The one slot that varies per bead: a badge naming it is red
-    /// on a blocked bead and orange on an in-progress one.
+    /// as well. The one colour here that varies per bead: a badge naming it is
+    /// red on a blocked bead and orange on an in-progress one, and the reader
+    /// configures nothing further to get that.
+    ///
+    /// Apart from `Slot` rather than one of them because it is not one slot.
+    /// It is five, chosen per bead, which is `view::draw::tone`'s rule and not
+    /// a value the palette holds.
     Status,
+    /// One slot of the palette, drawn in whatever that slot is drawn in and
+    /// moving with the theme as it does.
+    Slot(Slot),
+    /// A colour the reader named outright, drawn in exactly that.
+    ///
+    /// `colours-come-from-the-palette` refuses a colour named under `src/`,
+    /// and this is not one: it is data a config carried in, and the rule is
+    /// about what `bdi` chooses for itself rather than about what a reader may
+    /// choose for their own badges.
+    Absolute(Color),
 }
+
+/// Every slot of `bdi`'s own palette a badge may name, and the name a config
+/// writes for each.
+///
+/// The whole palette rather than the few slots that look useful on a badge. A
+/// reader who can see the name `bdi` gave a treatment can ask for it, and the
+/// shortlist is the thing that has to be widened later.
+///
+/// `voice` is the one treatment `palette` names that is missing here, because
+/// it is not a slot: it is a function of the reader's declared background,
+/// with no one value to draw a badge in.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Slot {
+    /// `bd`'s own colour for each status, as a fixed colour rather than this
+    /// bead's. A badge naming one of these says the same thing on every row,
+    /// where one naming `status` follows the bead.
+    StatusOpen,
+    StatusInProgress,
+    StatusBlocked,
+    StatusClosed,
+    StatusDeferred,
+    /// `bd show`'s colour for the id at the head of the page.
+    Identity,
+    /// A live agent is here.
+    Agent,
+    /// This wants looking at.
+    Attention,
+    /// The three rungs of how live a row is, as fixed treatments. A badge
+    /// naming one of these does not follow the row it sits on any more than it
+    /// follows the bead.
+    TierStaffed,
+    TierOpen,
+    TierFinished,
+    /// How the tree is shaped rather than how a bead is going.
+    Structure,
+    /// Metadata, chrome, an affordance, a rule.
+    Quiet,
+    /// Every row of the bead window.
+    Page,
+    /// `bdi`'s own sentence about a forest where nothing went wrong in it.
+    Plain,
+    /// A code span or a code block: prose's own namespace.
+    Code,
+    /// The row under the cursor.
+    Selected,
+    /// A window's own name, on its border.
+    Title,
+    /// `bd show`'s section names.
+    Section,
+    /// A heading in prose.
+    Heading,
+    /// Prose's own emphasis.
+    Emphasis,
+    Strong,
+    /// Somewhere to go. A badge with a `link` is drawn in this already, so
+    /// naming it buys one without.
+    Link,
+}
+
+/// A slot first, then a colour, and the name the reader wrote in the refusal.
+///
+/// A slot first because the two name sets are `bdi`'s and the terminal's and
+/// nothing coordinates them: were a slot name ever to become a colour name as
+/// well, a config that meant the slot would quietly start drawing the colour.
+///
+/// The refusal says what was written rather than what was expected. There are
+/// two dozen slots and every form `Color` reads, which is more than a line at
+/// the foot of the screen can hold, and the reader's own word is what they
+/// need to find the line in their file.
+impl<'de> Deserialize<'de> for Colour {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::IntoDeserializer;
+
+        let written = String::deserialize(deserializer)?;
+        if written == STATUS {
+            return Ok(Colour::Status);
+        }
+        let slot: Result<Slot, serde::de::value::Error> =
+            Slot::deserialize(written.as_str().into_deserializer());
+        if let Ok(slot) = slot {
+            return Ok(Colour::Slot(slot));
+        }
+        Color::from_str(&written)
+            .map(Colour::Absolute)
+            .map_err(|_| {
+                serde::de::Error::custom(format!(
+                    "{written:?} is neither a slot of bdi's palette nor a colour"
+                ))
+            })
+    }
+}
+
+/// Written back as the reader wrote it, because `--snapshot-json` is read by
+/// someone holding the config beside it.
+impl Serialize for Colour {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Colour::Status => serializer.serialize_str(STATUS),
+            Colour::Slot(slot) => slot.serialize(serializer),
+            // `Color`'s own `Display`, which is what its `FromStr` reads, so
+            // what comes out of here goes back in.
+            Colour::Absolute(colour) => serializer.collect_str(colour),
+        }
+    }
+}
+
+/// The one colour that is neither a slot nor a value, so the one whose name
+/// neither `Slot` nor `Color` carries.
+const STATUS: &str = "status";
 
 /// A badge's `match`: the pattern a setup wrote, and that pattern compiled.
 ///
@@ -2093,6 +2224,82 @@ colour = "status"
         .expect("the config reads");
 
         assert_eq!(cfg.badges[0].colour, Some(Colour::Status));
+    }
+
+    /// Read through the config rather than off the `Slot` variants, because
+    /// the name a reader writes is what `serde`'s renaming makes of the
+    /// variant and a test over the variants would not see that.
+    #[test]
+    fn a_badge_may_name_any_slot_of_the_palette() {
+        for (written, slot) in [
+            ("agent", Slot::Agent),
+            ("attention", Slot::Attention),
+            ("identity", Slot::Identity),
+            ("status_blocked", Slot::StatusBlocked),
+            ("tier_finished", Slot::TierFinished),
+            ("quiet", Slot::Quiet),
+            ("code", Slot::Code),
+            ("heading", Slot::Heading),
+            ("link", Slot::Link),
+        ] {
+            let cfg = Config::from_toml(&format!(
+                r#"{ONE_PROJECT}
+[[badges]]
+key    = "jira"
+render = "{{}}"
+colour = "{written}"
+"#
+            ))
+            .unwrap_or_else(|err| panic!("{written:?} is a slot of the palette: {err}"));
+
+            assert_eq!(cfg.badges[0].colour, Some(Colour::Slot(slot)));
+        }
+    }
+
+    /// Every form `Color` reads, so a reader who knows one of them is not
+    /// turned away for having picked the wrong one.
+    #[test]
+    fn a_badge_may_name_an_absolute_colour() {
+        for (written, colour) in [
+            ("#c71585", Color::Rgb(199, 21, 133)),
+            ("red", Color::Red),
+            ("light-blue", Color::LightBlue),
+            ("12", Color::Indexed(12)),
+        ] {
+            let cfg = Config::from_toml(&format!(
+                r#"{ONE_PROJECT}
+[[badges]]
+key    = "jira"
+render = "{{}}"
+colour = "{written}"
+"#
+            ))
+            .unwrap_or_else(|err| panic!("{written:?} is a colour: {err}"));
+
+            assert_eq!(cfg.badges[0].colour, Some(Colour::Absolute(colour)));
+        }
+    }
+
+    /// `--snapshot-json` is read beside the config that produced it, so a
+    /// colour leaves as the name that would bring it back. Both halves are
+    /// written by hand here, which is what makes the round trip worth
+    /// asserting.
+    #[test]
+    fn a_colour_is_written_back_as_a_name_that_reads_again() {
+        for colour in [
+            Colour::Status,
+            Colour::Slot(Slot::TierStaffed),
+            Colour::Absolute(Color::Rgb(199, 21, 133)),
+            Colour::Absolute(Color::Indexed(12)),
+            Colour::Absolute(Color::Red),
+        ] {
+            let written = serde_json::to_string(&colour).expect("a colour serialises");
+            assert_eq!(
+                serde_json::from_str::<Colour>(&written).expect("and reads again"),
+                colour,
+                "went out as {written}"
+            );
+        }
     }
 
     /// A colour the palette does not have is refused the way an unparseable

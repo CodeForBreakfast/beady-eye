@@ -12,7 +12,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::config::Background;
+use crate::config::{Background, Slot};
 
 // ---- `bd`'s own, quoted ------------------------------------------------
 
@@ -182,6 +182,52 @@ pub(crate) const STRONG: Style = Style::new().add_modifier(Modifier::BOLD);
 /// Somewhere to go: a reference in prose, and a badge whose config gave it a
 /// `link`.
 pub(crate) const LINK: Style = Style::new().add_modifier(Modifier::UNDERLINED);
+
+// ---- what a config may name --------------------------------------------
+
+/// The slot a config named, for a badge a reader asked to be drawn in one.
+///
+/// Every slot above and nothing else, so a reader who can read the palette's
+/// names can ask for any of them. A slot holding a weight rather than a colour
+/// hands the badge that weight, which is what the reader asked for: `Style` is
+/// what a slot is, and there is no slot here the palette could hand out only
+/// half of.
+pub(crate) fn slot(slot: Slot) -> Style {
+    match slot {
+        Slot::StatusOpen => STATUS_OPEN,
+        Slot::StatusInProgress => STATUS_IN_PROGRESS,
+        Slot::StatusBlocked => STATUS_BLOCKED,
+        Slot::StatusClosed => STATUS_CLOSED,
+        Slot::StatusDeferred => STATUS_DEFERRED,
+        Slot::Identity => IDENTITY,
+        Slot::Agent => AGENT,
+        Slot::Attention => ATTENTION,
+        Slot::TierStaffed => TIER_STAFFED,
+        Slot::TierOpen => TIER_OPEN,
+        Slot::TierFinished => TIER_FINISHED,
+        Slot::Structure => STRUCTURE,
+        Slot::Quiet => QUIET,
+        Slot::Page => PAGE,
+        Slot::Plain => PLAIN,
+        Slot::Code => CODE,
+        Slot::Selected => SELECTED,
+        Slot::Title => TITLE,
+        Slot::Section => SECTION,
+        Slot::Heading => HEADING,
+        Slot::Emphasis => EMPHASIS,
+        Slot::Strong => STRONG,
+        Slot::Link => LINK,
+    }
+}
+
+/// The colour a config named, for a badge a reader asked to be drawn in one.
+///
+/// The one colour this module hands out that `bdi` did not choose. It is named
+/// here rather than where it is drawn so that this stays the only place in the
+/// view a colour is spelled, whoever spelled it.
+pub(crate) fn absolute(colour: Color) -> Style {
+    Style::new().fg(colour)
+}
 
 #[cfg(test)]
 mod tests {

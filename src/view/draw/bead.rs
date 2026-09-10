@@ -86,6 +86,8 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 fn badge_style(badge: &Badged, status: &Status) -> Style {
     let coloured = match badge.colour {
         Some(Colour::Status) => status_style(status),
+        Some(Colour::Slot(slot)) => palette::slot(slot),
+        Some(Colour::Absolute(colour)) => palette::absolute(colour),
         None => Style::new(),
     };
     match &badge.link {
