@@ -386,12 +386,27 @@ fn cut_to(spans: Vec<Span<'static>>, limit: usize) -> (Vec<Span<'static>>, usize
         }
         let head = head_of(&span.content, room - used);
         if !head.is_empty() {
-            kept.push(Span::styled(head, span.style));
+            kept.push(Span::styled(head, unlinked(span.style)));
         }
         break;
     }
     kept.push(Span::raw(CUT.to_string()));
     (kept, whole)
+}
+
+/// `style` with the underline that stands for a link taken back off.
+///
+/// The other half of the rule `surviving` keeps: a span the row cut is not
+/// among the links the terminal is told about, so nothing is there to follow.
+/// Left underlined it would invite a click that cannot be honoured. Said as
+/// what `palette::LINK` adds rather than as the modifier itself, so the two
+/// cannot drift apart.
+///
+/// Asked of every span the row cuts rather than only of the ones a link
+/// names, because `cut_to` is told which columns it has and nothing about
+/// what it is cutting. A span that never carried the underline is unmoved.
+fn unlinked(style: Style) -> Style {
+    style.remove_modifier(palette::LINK.add_modifier)
 }
 
 /// As much of `text` as fits in `limit` columns, never splitting a glyph.
