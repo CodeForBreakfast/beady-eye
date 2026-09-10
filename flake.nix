@@ -1080,6 +1080,88 @@
           exit $status
         '';
 
+        # The command above bounds the run it starts and cannot reach a seat
+        # that never types its name, and the tool's own name is the one a seat
+        # reaches for first. So the shell answers that name with this instead
+        # of with cargo-mutants. `cargo mutants` arrives here too, because
+        # cargo resolves a subcommand by looking for `cargo-<name>` on PATH.
+        #
+        # It refuses rather than bounding the run and passing it on. A cap
+        # with no timeout beside it is the arrangement that records a mutant
+        # `caught` when the kernel killed the test binary, which is the
+        # finding boundTheMachine is written around; and carrying the timeout
+        # as well would make this the command above with its scoping taken
+        # out.
+        refuseTheToolsOwnName = pkgs.writeShellScriptBin "cargo-mutants" ''
+          echo "This is not cargo-mutants. An unbounded mutation run is how a"
+          echo "machine goes out of memory rather than timing out, so this"
+          echo "shell carries a refusal at that name."
+          echo
+          echo "Run mutation-test-this-change instead. It bounds the run,"
+          echo "scopes it to your diff, gives it an output directory of its"
+          echo "own, refuses one that scored nothing, and forwards every flag"
+          echo "you pass it."
+          echo
+          echo "The one run it cannot express is one that is not scoped to"
+          echo "your diff. Ask for that rather than reaching past this."
+          exit 1
+        '';
+
+        # A guard on what a shell does not carry reads the same when what
+        # replaced it is missing too, so the first assertion names the store
+        # path the refusal has to resolve to and the control at the end runs
+        # cargo-mutants itself.
+        #
+        # The PATH is built from rustTools rather than from a list retyped
+        # here. That is what makes putting the package back a red instead of a
+        # silent regression, and it is what ties this to the shell a
+        # contributor actually gets.
+        refuseTheToolsOwnNameTest =
+          pkgs.runCommand "refuse-the-tools-own-name-test" { } ''
+          set -u
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          export HOME="$TMPDIR"
+          export CARGO_HOME="$TMPDIR/cargo"
+          export PATH="${pkgs.lib.makeBinPath rustTools}"
+
+          output="$( command -v cargo-mutants || true )"
+          [ "$output" = "${refuseTheToolsOwnName}/bin/cargo-mutants" ] ||
+            fail "the shell's cargo-mutants is not the refusal:"
+
+          # What a seat types.
+          output="$( cargo-mutants 2>&1 )" &&
+            fail "the tool's own name started a run:"
+          case "$output" in
+            *mutation-test-this-change*) ;;
+            *) fail "the refusal did not name the command to run instead:" ;;
+          esac
+
+          # What a reader of the cargo book types, which is the same script
+          # reached through cargo's subcommand dispatch.
+          output="$( cargo mutants 2>&1 )" &&
+            fail "cargo's subcommand dispatch started a run:"
+          case "$output" in
+            *mutation-test-this-change*) ;;
+            *) fail "cargo mutants did not name the command to run instead:" ;;
+          esac
+
+          # The control: the same name on a PATH that carries the tool. It
+          # answers, and it says nothing about the wrapper. Without this, a
+          # refusal that was really bash finding no such command would satisfy
+          # every case above.
+          output="$( PATH="${pkgs.cargo-mutants}/bin:$PATH" cargo-mutants mutants --version 2>&1 )" ||
+            fail "the control could not run cargo-mutants itself:"
+          case "$output" in
+            *mutation-test-this-change*) fail "the control ran the refusal:" ;;
+          esac
+
+          # PATH above is the shell's own and nothing else, so the last
+          # command here has to say where it comes from.
+          ${pkgs.coreutils}/bin/touch $out
+        '';
+
         # A guard nobody has watched fire is the shape this project keeps
         # finding, and the dirty-tree refusal is the one guard here that is CI
         # correctness rather than workflow: a green check of a tree nix cannot
@@ -3155,7 +3237,7 @@ and a second line"
           pkgs.rustfmt
           pkgs.clippy
           pkgs.rust-analyzer
-          pkgs.cargo-mutants
+          refuseTheToolsOwnName
           pkgs.watchexec
           rerunBdiOnChange
           checkBeforePush
@@ -3310,6 +3392,7 @@ and a second line"
           release-notes-wrap-test = releaseNotesAreUnwrappedTest;
 
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
+          refuse-the-tools-own-name-test = refuseTheToolsOwnNameTest;
           scope-to-the-change-test = scopeToTheChangeTest;
           name-the-runs-directory-test = nameTheRunsDirectoryTest;
           bound-the-machine-test = boundTheMachineTest;

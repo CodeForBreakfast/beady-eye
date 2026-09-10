@@ -22,9 +22,9 @@ The flake supplies all of it:
 $ nix develop
 ```
 
-That gives you `cargo`, `rustc`, `rustfmt`, `clippy`, `rust-analyzer` and
-`cargo-mutants`, plus the `check-before-push` and `conventional-subject` commands
-used below. With [direnv](https://direnv.net) installed, `direnv allow` puts the
+That gives you `cargo`, `rustc`, `rustfmt`, `clippy` and `rust-analyzer`, plus
+the `mutation-test-this-change`, `check-before-push` and `conventional-subject`
+commands. With [direnv](https://direnv.net) installed, `direnv allow` puts the
 same shell on every `cd` into the tree.
 
 Inside it, `cargo build` and `cargo test` work as usual.
