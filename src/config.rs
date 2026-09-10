@@ -240,10 +240,6 @@ impl Pattern {
     fn captures<'v>(&self, value: &'v str) -> Option<Captures<'v>> {
         self.anchored.captures(value)
     }
-
-    fn capture_names(&self) -> impl Iterator<Item = &str> {
-        self.anchored.capture_names().flatten()
-    }
 }
 
 /// The compiled pattern is a function of the source text, so the source text
@@ -723,17 +719,36 @@ fn names_of(projects: &[Project]) -> Vec<&str> {
 impl Badge {
     /// Render this badge for a metadata value, or `None` if it does not apply.
     /// `{}` in `render` is replaced by the whole value, and `{name}` by what
-    /// the pattern's capture of that name took.
+    /// the pattern's capture of that name took. A brace pair naming nothing
+    /// the pattern captured is left as it was written.
+    ///
+    /// One pass, so what is placed is never read again: a value spelled like
+    /// a placeholder is a value.
     pub fn apply(&self, value: &str) -> Option<String> {
-        let whole_value = self.render.replace("{}", value);
-        let Some(pattern) = &self.match_value else {
-            return Some(whole_value);
+        let taken = match &self.match_value {
+            Some(pattern) => Some(pattern.captures(value)?),
+            None => None,
         };
-        let taken = pattern.captures(value)?;
-        let text = pattern.capture_names().fold(whole_value, |text, name| {
-            let captured = taken.name(name).map_or("", |m| m.as_str());
-            text.replace(&format!("{{{name}}}"), captured)
-        });
+
+        let mut text = String::new();
+        let mut rest = self.render.as_str();
+        while let Some(open) = rest.find('{') {
+            let Some(close) = rest[open..].find('}').map(|end| open + end) else {
+                break;
+            };
+            let name = &rest[open + 1..close];
+            let placed = match name {
+                "" => Some(value),
+                _ => taken
+                    .as_ref()
+                    .and_then(|taken| taken.name(name))
+                    .map(|capture| capture.as_str()),
+            };
+            text.push_str(&rest[..open]);
+            text.push_str(placed.unwrap_or(&rest[open..=close]));
+            rest = &rest[close + 1..];
+        }
+        text.push_str(rest);
         Some(text)
     }
 }
@@ -1670,6 +1685,21 @@ metadata_keys = ["working_topic"]
             Some("⇢ atlas #7 of owner/atlas#7".to_string())
         );
         assert_eq!(b.apply("owner/atlas"), None);
+    }
+
+    /// A value is placed, never read: what a capture took is not itself a
+    /// template, however it happens to be spelled.
+    #[test]
+    fn a_value_spelled_like_a_placeholder_is_placed_and_not_read() {
+        let b = Badge {
+            key: "working_topic".to_string(),
+            match_value: Some(matching(r"(?<channel>[^/]+)/(?<topic>.+)")),
+            render: "{channel} · {topic}".to_string(),
+        };
+        assert_eq!(
+            b.apply("{topic}/atlas"),
+            Some("{topic} · atlas".to_string())
+        );
     }
 
     /// The config is refused whole, which is what leaves the one in force
