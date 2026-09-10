@@ -11,15 +11,21 @@ landing the file afterwards is the whole of the repair.
 
 ## Style
 
-User-facing and impact-classified: what changed for somebody running `bdi`.
-Group by what a reader would notice, not by the change that delivered it.
+The audience is somebody running `bdi`, and nobody else. Group by what a reader
+would notice rather than by the change that delivered it.
 
-- **Highlights** — the changes somebody would notice, a short paragraph each,
-  about the behaviour rather than how it was built.
-- **Maintenance** — dependency bumps and internal changes worth recording and
-  not worth headlining.
-- Say what a reader has to do about it: a config change, a migration. Where the
+**Length follows impact.** A change a reader has to act on earns a short
+paragraph. A change they will simply notice earns a sentence. Everything else
+earns a share of one line. Most releases are shorter than this file.
+
+- **Highlights** — the changes somebody would notice, about the behaviour
+  rather than how it was built. Say what a reader has to do about it. Where the
   answer is nothing, say that.
+- **Maintenance** — one line for the whole of it, however many commits it
+  covers. Dependency bumps, CI, tests, refactors and docs go here unsplit,
+  named only where a reader would otherwise be surprised.
+- Leave out what a reader cannot act on or notice: why a fix works, what the
+  code used to do, which check now enforces it, which bead asked for it.
 
 **One line per paragraph and per bullet.** GitHub renders a Release body with
 hard line breaks on, so every newline inside a paragraph reaches a reader as a
@@ -37,10 +43,10 @@ bdi <version>
 
 ## Highlights
 
-**<Headline change>.** What it changes for somebody using bdi, and why that
-matters.
+**<Headline change>.** What it changes for somebody using bdi, in a sentence or
+two.
 
 ## Maintenance
 
-- <a dependency, the lockfile, an internal change>
+Dependency bumps and internal improvements.
 ```
