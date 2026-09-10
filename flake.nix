@@ -879,15 +879,17 @@
         #
         # The timeout is what produces the honest word: cargo-mutants kills the
         # test that exceeds it, records TIMEOUT, and goes on to the next
-        # mutant. The cap is what keeps the machine while that clock runs, and
-        # it cannot stand in for the timeout. Measured at 27.1.0 on a crate
-        # whose `*` -> `/` mutant loops allocating: under a memory scope alone
-        # that mutant is contained, because the kernel kills the test binary
-        # two levels below cargo-mutants and the run survives it — but the run
-        # reads `7 caught`, since `cargo test` exits 101 and nothing tells that
-        # from a test which failed honestly. A cap on its own turns the
-        # pathology into a clean sheet. The same crate under `-t 5` reads
-        # `6 caught, 1 timeouts`.
+        # mutant. The cap is what keeps the machine while that clock runs.
+        #
+        # Neither substitutes for the other, and the cap is the one whose
+        # limits are easy to miss. Scoring words_of under this bound, the
+        # kernel killed the crate's own test binary at 8G and cargo-mutants
+        # survived to finish the run — and recorded the mutant `caught`,
+        # because `cargo test` exits 101 and nothing tells that from a test
+        # which failed honestly. A cap alone turns the pathology into a clean
+        # sheet. A short timeout is what reads it as TIMEOUT instead, and on a
+        # suite whose baseline is 84 seconds no honest timeout can be short
+        # enough to beat the cap to a mutant allocating at 80 MB a second.
         #
         # 8G is an honest clean build of every test binary plus the whole suite
         # measured at 3.2G, with room over it. MemorySwapMax=0 so the bound is
