@@ -720,7 +720,8 @@ impl Badge {
     /// Render this badge for a metadata value, or `None` if it does not apply.
     /// `{}` in `render` is replaced by the whole value, and `{name}` by what
     /// the pattern's capture of that name took. A brace pair naming nothing
-    /// the pattern captured is left as it was written.
+    /// the pattern captured is left as it was written, and the pair taken is
+    /// the innermost, so `{{}}` still draws braces around the value.
     ///
     /// One pass, so what is placed is never read again: a value spelled like
     /// a placeholder is a value.
@@ -732,9 +733,11 @@ impl Badge {
 
         let mut text = String::new();
         let mut rest = self.render.as_str();
-        while let Some(open) = rest.find('{') {
-            let Some(close) = rest[open..].find('}').map(|end| open + end) else {
-                break;
+        while let Some(close) = rest.find('}') {
+            let Some(open) = rest[..close].rfind('{') else {
+                text.push_str(&rest[..=close]);
+                rest = &rest[close + 1..];
+                continue;
             };
             let name = &rest[open + 1..close];
             let placed = match name {
@@ -1685,6 +1688,16 @@ metadata_keys = ["working_topic"]
             Some("⇢ atlas #7 of owner/atlas#7".to_string())
         );
         assert_eq!(b.apply("owner/atlas"), None);
+    }
+
+    #[test]
+    fn braces_written_around_the_braces_are_drawn_around_the_value() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: None,
+            render: "{{}}".to_string(),
+        };
+        assert_eq!(b.apply("owner/repo#7"), Some("{owner/repo#7}".to_string()));
     }
 
     /// A value is placed, never read: what a capture took is not itself a
