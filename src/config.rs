@@ -215,7 +215,11 @@ pub struct Roots {
     pub explicit: BTreeMap<String, Vec<String>>,
 }
 
+/// A badge opens a table, so every key written after `[[projects.badges]]`
+/// lands in it. A badge that took a project's `path` would leave the project
+/// reporting a key the reader did in fact write as missing.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Badge {
     pub key: String,
     #[serde(rename = "match")]
@@ -1047,6 +1051,28 @@ path = "/home/user/dev/cinder"
             cfg.badges_for_project("atlas"),
             vec![badge("delivery_pr", "⇢ {}")]
         );
+    }
+
+    /// The reader is told about the key they wrote, in the place they wrote
+    /// it, rather than about the project that quietly lost it.
+    #[test]
+    fn a_project_key_written_after_its_badges_is_refused_by_the_badge() {
+        let misplaced = r#"
+[[projects]]
+name = "beacon"
+
+[[projects.badges]]
+key    = "delivery_pr"
+render = "⇢ beacon/{}"
+
+path = "/home/user/dev/beacon"
+"#;
+
+        let refused = Config::from_toml(misplaced).expect_err("a badge has no path");
+
+        let said = refused.to_string();
+        assert!(said.contains("unknown field `path`"), "{said}");
+        assert!(!said.contains("missing field"), "{said}");
     }
 
     #[test]
