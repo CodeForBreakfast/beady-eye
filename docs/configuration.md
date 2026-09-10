@@ -154,12 +154,15 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 nothing, and a URL built round the parts that were never there points at
 somewhere else. The badge still draws its `render`; it just has nowhere to go.
 
-`colour = "status"` draws the badge in the colour that bead's status is drawn
-in, which is the colour of its id on the same row. A ticket in another tracker
-then reads as red on a blocked bead and orange on an in-progress one, without
-your having to say so anywhere. It is the only colour a badge may name: the
-theme owns the palette, so a colour written here would be one no terminal theme
-could move.
+`colour` is what the badge is drawn in. A badge that names none is drawn in the
+tone of the row it sits on.
+
+**`colour = "status"` is the one worth reaching for first.** It draws the badge
+in the colour that bead's status is drawn in, which is the colour of its id on
+the same row. A ticket in another tracker then reads as red on a blocked bead
+and orange on an in-progress one, without your having to say so anywhere. It is
+the only name here that follows the bead: every other one draws the same badge
+the same way on every row.
 
 ```toml
 [[badges]]
@@ -167,6 +170,47 @@ key    = "jira"
 match  = "(?<ticket>[A-Z]+-[0-9]+)"
 render = "{ticket}"
 colour = "status"
+```
+
+**A slot of `bdi`'s own palette** draws the badge in whatever that slot is drawn
+in, and moves with your theme as that slot does. What each slot means is what it
+means everywhere else on the screen:
+
+| written | what `bdi` draws in it |
+|---|---|
+| `agent` | a live agent is here |
+| `attention` | this wants looking at |
+| `identity` | a bead's id at the head of its window |
+| `status_open` `status_in_progress` `status_blocked` `status_closed` `status_deferred` | `bd`'s own colour for each status, as a fixed colour rather than this bead's |
+| `tier_staffed` `tier_open` `tier_finished` | the three rungs of how live a row is |
+| `structure` | the box-drawing the tree is shaped from |
+| `quiet` | metadata, chrome, an affordance, a rule |
+| `page` | every row of the bead window |
+| `plain` | `bdi`'s own sentence about a forest where nothing went wrong |
+| `code` | a code span or a code block |
+| `selected` | the row under the cursor |
+| `title` | a window's own name, on its border |
+| `section` | `bd show`'s section names |
+| `heading` `emphasis` `strong` | a heading, an emphasis and a strong word in prose |
+| `link` | somewhere to go |
+
+`selected`, `title`, `section`, `heading`, `emphasis`, `strong` and `link` are a
+weight rather than a colour, so a badge naming one of them comes out bold,
+italic, underlined or reversed and takes the row's tone for its colour. A badge
+with a `link` is drawn underlined already, and `colour = "link"` is how to have
+the underline without one. `voice`, the tone the tail band speaks in, is the one
+treatment `bdi` names that a badge cannot: it is chosen from your declared
+background rather than being one colour.
+
+**A colour you write** is drawn exactly as written, and is the one kind your
+theme cannot move. Write it as `#rrggbb`, as one of the sixteen by name, or as
+an index into your terminal's palette:
+
+```toml
+[[badges]]
+key    = "design"
+render = "✎ {}"
+colour = "#c71585"
 ```
 
 `bdi` has no idea what your metadata means and draws the badge as written.

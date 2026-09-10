@@ -186,12 +186,6 @@ pub(crate) const LINK: Style = Style::new().add_modifier(Modifier::UNDERLINED);
 // ---- what a config may name --------------------------------------------
 
 /// The slot a config named, for a badge a reader asked to be drawn in one.
-///
-/// Every slot above and nothing else, so a reader who can read the palette's
-/// names can ask for any of them. A slot holding a weight rather than a colour
-/// hands the badge that weight, which is what the reader asked for: `Style` is
-/// what a slot is, and there is no slot here the palette could hand out only
-/// half of.
 pub(crate) fn slot(slot: Slot) -> Style {
     match slot {
         Slot::StatusOpen => STATUS_OPEN,

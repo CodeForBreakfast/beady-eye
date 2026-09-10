@@ -242,20 +242,13 @@ pub struct Badge {
 /// A colour a badge may be drawn in: a slot of `bdi`'s own palette, or a
 /// colour the reader wrote.
 ///
-/// A slot is worth more, because the reader's theme resolves it and a value
-/// written here is one no theme can move. `Status` is worth more again, as the
-/// only one of the three that differs from bead to bead. But which of them a
-/// reader's badge wants is the reader's to judge, and `bdi` refuses none of
-/// them.
-///
 /// Parsed here and resolved in `view::palette`, so the name a config may write
 /// is this module's and the colour behind it is the palette's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Colour {
     /// What this bead's status is drawn in, which is what its id is drawn in
     /// as well. The one colour here that varies per bead: a badge naming it is
-    /// red on a blocked bead and orange on an in-progress one, and the reader
-    /// configures nothing further to get that.
+    /// red on a blocked bead and orange on an in-progress one.
     ///
     /// Apart from `Slot` rather than one of them because it is not one slot.
     /// It is five, chosen per bead, which is `view::draw::tone`'s rule and not
@@ -266,19 +259,16 @@ pub enum Colour {
     Slot(Slot),
     /// A colour the reader named outright, drawn in exactly that.
     ///
-    /// `colours-come-from-the-palette` refuses a colour named under `src/`,
-    /// and this is not one: it is data a config carried in, and the rule is
-    /// about what `bdi` chooses for itself rather than about what a reader may
-    /// choose for their own badges.
+    /// `colours-come-from-the-palette` refuses a colour named under `src/`.
+    /// This is not one: it is data a config carried in.
     Absolute(Color),
 }
 
 /// Every slot of `bdi`'s own palette a badge may name, and the name a config
 /// writes for each.
 ///
-/// The whole palette rather than the few slots that look useful on a badge. A
-/// reader who can see the name `bdi` gave a treatment can ask for it, and the
-/// shortlist is the thing that has to be widened later.
+/// The whole palette rather than the slots that look useful on a badge, so a
+/// slot added to `palette` belongs here too.
 ///
 /// `voice` is the one treatment `palette` names that is missing here, because
 /// it is not a slot: it is a function of the reader's declared background,
@@ -287,8 +277,7 @@ pub enum Colour {
 #[serde(rename_all = "snake_case")]
 pub enum Slot {
     /// `bd`'s own colour for each status, as a fixed colour rather than this
-    /// bead's. A badge naming one of these says the same thing on every row,
-    /// where one naming `status` follows the bead.
+    /// bead's.
     StatusOpen,
     StatusInProgress,
     StatusBlocked,
@@ -300,9 +289,8 @@ pub enum Slot {
     Agent,
     /// This wants looking at.
     Attention,
-    /// The three rungs of how live a row is, as fixed treatments. A badge
-    /// naming one of these does not follow the row it sits on any more than it
-    /// follows the bead.
+    /// The three rungs of how live a row is, as fixed treatments rather than
+    /// this row's.
     TierStaffed,
     TierOpen,
     TierFinished,
@@ -327,8 +315,7 @@ pub enum Slot {
     /// Prose's own emphasis.
     Emphasis,
     Strong,
-    /// Somewhere to go. A badge with a `link` is drawn in this already, so
-    /// naming it buys one without.
+    /// Somewhere to go.
     Link,
 }
 
@@ -338,10 +325,9 @@ pub enum Slot {
 /// nothing coordinates them: were a slot name ever to become a colour name as
 /// well, a config that meant the slot would quietly start drawing the colour.
 ///
-/// The refusal says what was written rather than what was expected. There are
-/// two dozen slots and every form `Color` reads, which is more than a line at
-/// the foot of the screen can hold, and the reader's own word is what they
-/// need to find the line in their file.
+/// The refusal says what was written rather than what was expected, because
+/// what was expected is two dozen slots and every form `Color` reads — more
+/// than the line at the foot of the screen can hold.
 impl<'de> Deserialize<'de> for Colour {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::IntoDeserializer;
