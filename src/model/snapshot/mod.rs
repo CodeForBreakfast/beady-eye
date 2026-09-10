@@ -20,7 +20,7 @@ use serde::{Serialize, Serializer};
 
 use crate::config::Scope;
 use crate::model::anomaly::Anomaly;
-use crate::model::badges::Badged;
+use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link};
@@ -276,6 +276,14 @@ pub struct Node {
     pub started_at: Option<DateTime<Utc>>,
     pub closed_at: Option<DateTime<Utc>>,
     pub badges: Vec<Badged>,
+    /// The configured badges that drew less than their config asked for.
+    /// Reported beside the bead rather than dropped, because a badge naming a
+    /// `link` is a reference, and a reference silently gone is worse than one
+    /// the reader can see has gone.
+    ///
+    /// Not part of the JSON contract, which publishes what a tree draws.
+    #[serde(skip)]
+    pub undrawn: Vec<Undrawn>,
     pub agent: Option<AgentRef>,
     pub anomalies: Vec<Anomaly>,
     /// What `bd show` says of the bead beyond its row, carried so the screen

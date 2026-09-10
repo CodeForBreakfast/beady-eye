@@ -8,6 +8,7 @@ use crate::model::badges::Badged;
 use crate::model::join::AgentRef;
 use crate::model::snapshot::{Counts, Node};
 use crate::model::types::Status;
+use crate::view::fitted;
 use crate::view::phrase;
 
 /// A live agent. The mock's marker, kept in the role the mock gave it.
@@ -86,6 +87,21 @@ pub fn cells(
             .map(phrase::unfinished_beneath),
     );
     notes.extend(phrase::unrecognised_status(&node.status));
+    notes.extend(node.undrawn.iter().map(phrase::undrawn));
+    // The model reports a link its config could not build; this reports one
+    // built and then refused, which only the thing that writes the sequence
+    // is in a position to know.
+    notes.extend(
+        node.badges
+            .iter()
+            .filter(|badge| {
+                badge
+                    .link
+                    .as_deref()
+                    .is_some_and(|to| !fitted::openable(&badge.text, to))
+            })
+            .map(|badge| phrase::unopenable_link(&badge.key)),
+    );
 
     Row {
         status: node.status.clone(),
@@ -187,7 +203,7 @@ pub fn anomaly_marker(anomalies: &[Anomaly]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::badges::Badged;
+    use crate::model::badges::{Badged, Undrawn};
     use crate::model::join::JoinSource;
     use crate::model::types::testing::key;
     use crate::model::types::PaneStatus;
@@ -207,6 +223,7 @@ mod tests {
             started_at: None,
             closed_at: None,
             badges: Vec::new(),
+            undrawn: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
             description: String::new(),
@@ -374,6 +391,108 @@ mod tests {
 
         assert_eq!(row.anomalies, None);
         assert_eq!(row.agent, None);
+        assert_eq!(row.notes, Vec::<String>::new());
+    }
+
+    // ---- badges that fell short of their config -------------------------
+
+    /// An escape sequence a value would carry to the terminal if the row let
+    /// it: it ends the hyperlink early and retitles the reader's window.
+    const HOSTILE: &str = "\u{1b}]0;owned\u{7}";
+
+    fn badged(text: &str, link: Option<&str>) -> Node {
+        let mut node = node("smt-4kd3p.20", Status::Open);
+        node.badges = vec![Badged {
+            key: "delivery_pr".into(),
+            text: text.into(),
+            link: link.map(str::to_string),
+            colour: None,
+        }];
+        node
+    }
+
+    /// The model's half: a badge that drew nothing at all, because no pattern
+    /// read the value it was given.
+    #[test]
+    fn a_value_no_pattern_reads_leaves_its_key_on_the_row() {
+        let mut unread = node("smt-4kd3p.20", Status::Open);
+        unread.undrawn = vec![Undrawn::Badge {
+            key: "delivery_pr".into(),
+        }];
+
+        let row = cells(&unread, ROOT, None, None);
+
+        assert!(
+            row.notes.iter().any(|note| note.contains("delivery_pr")),
+            "{row:?}"
+        );
+    }
+
+    /// And a badge that drew, losing only the destination its config named.
+    #[test]
+    fn a_link_the_value_could_not_fill_leaves_its_key_on_the_row() {
+        let mut unfilled = node("smt-4kd3p.20", Status::Open);
+        unfilled.undrawn = vec![Undrawn::Link {
+            key: "delivery_pr".into(),
+        }];
+
+        let row = cells(&unfilled, ROOT, None, None);
+
+        assert!(
+            row.notes.iter().any(|note| note.contains("delivery_pr")),
+            "{row:?}"
+        );
+    }
+
+    /// The view's half, which the model cannot see: the link was built, and
+    /// the sequence that would carry it cannot be written.
+    #[test]
+    fn a_link_holding_a_control_character_leaves_its_key_on_the_row() {
+        let hostile = badged(
+            "⇢ #12",
+            Some(&format!("https://forge.invalid/orbital{HOSTILE}/pull/12")),
+        );
+
+        let row = cells(&hostile, ROOT, None, None);
+
+        assert!(
+            row.notes.iter().any(|note| note.contains("delivery_pr")),
+            "{row:?}"
+        );
+    }
+
+    /// The words a badge says reach the terminal on the same sequence as the
+    /// destination, so they are held to the same rule.
+    #[test]
+    fn a_badges_own_words_holding_a_control_character_lose_the_link_too() {
+        let hostile = badged(
+            &format!("⇢ #12{HOSTILE}"),
+            Some("https://forge.invalid/orbital/atlas/pull/12"),
+        );
+
+        let row = cells(&hostile, ROOT, None, None);
+
+        assert!(
+            row.notes.iter().any(|note| note.contains("delivery_pr")),
+            "{row:?}"
+        );
+    }
+
+    #[test]
+    fn a_badge_that_draws_its_link_leaves_nothing_on_the_row() {
+        let linked = badged("⇢ #12", Some("https://forge.invalid/orbital/atlas/pull/12"));
+
+        let row = cells(&linked, ROOT, None, None);
+
+        assert_eq!(row.notes, Vec::<String>::new());
+    }
+
+    /// A badge whose config named no link is a filter and has nothing to
+    /// lose, so it leaves no note however it renders.
+    #[test]
+    fn a_badge_with_no_link_leaves_nothing_on_the_row() {
+        let row = cells(&badged("⏸ waiting", None), ROOT, None, None);
+
         assert_eq!(row.notes, Vec::<String>::new());
     }
 

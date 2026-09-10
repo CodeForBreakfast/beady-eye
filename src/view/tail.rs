@@ -255,6 +255,7 @@ mod tests {
             started_at: None,
             closed_at: None,
             badges: Vec::new(),
+            undrawn: Vec::new(),
             agent,
             anomalies: Vec::new(),
             description: String::new(),
