@@ -1092,6 +1092,9 @@ path = "/home/user/dev/cinder"
 
     /// The reader is told about the key they wrote, in the place they wrote
     /// it, rather than about the project that quietly lost it.
+    ///
+    /// `docs/configuration.md` quotes this sentence, so a badge that gains a
+    /// key has to update both.
     #[test]
     fn a_project_key_written_after_its_badges_is_refused_by_the_badge() {
         let misplaced = r#"
@@ -1108,7 +1111,10 @@ path = "/home/user/dev/beacon"
         let refused = Config::from_toml(misplaced).expect_err("a badge has no path");
 
         let said = refused.to_string();
-        assert!(said.contains("unknown field `path`"), "{said}");
+        assert!(
+            said.contains("unknown field `path`, expected one of `key`, `match`, `render`, `link`"),
+            "{said}"
+        );
         assert!(!said.contains("missing field"), "{said}");
     }
 

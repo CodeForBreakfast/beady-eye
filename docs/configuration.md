@@ -171,7 +171,7 @@ opens a table of its own, so `name`, `path` or anything else written after it
 belongs to the badge, which refuses it:
 
 ```
-unknown field `path`, expected one of `key`, `match`, `render`
+unknown field `path`, expected one of `key`, `match`, `render`, `link`
 in `projects.badges`
 ```
 
