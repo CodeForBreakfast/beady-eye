@@ -122,6 +122,15 @@ pub struct Project {
     /// see. `bdi` polls until told otherwise, which is why this defaults on.
     #[serde(default = "polls")]
     pub poll: bool,
+    /// Badges this project draws in place of the ones `[[badges]]` names, for
+    /// the keys it names and no others.
+    ///
+    /// A link template on a shared badge cannot name a repository or a host,
+    /// so a fleet-wide list cannot give one project's `delivery_pr` its own
+    /// destination. This is where that project says so, while every key it
+    /// stays silent about keeps drawing what the shared list says.
+    #[serde(default)]
+    pub badges: Vec<Badge>,
     /// Where this project is worked: the place it names, in each working
     /// tree git lists for its repository. Measured rather than configured, so
     /// nothing written by hand can outrank what git says.
@@ -491,6 +500,43 @@ impl Config {
         }
     }
 
+    /// The badges this project draws: the global list, with a project's own
+    /// entries standing in for every global entry that shares a key with one
+    /// of them.
+    ///
+    /// A shadowed key's entries stand where the global list's first entry for
+    /// that key stood, so overriding one badge does not reorder the row. Keys
+    /// only the project names follow the rest.
+    pub fn badges_for_project(&self, project: &str) -> Vec<Badge> {
+        let Some(own) = self
+            .projects
+            .iter()
+            .find(|p| p.name == project)
+            .map(|p| p.badges.as_slice())
+            .filter(|own| !own.is_empty())
+        else {
+            return self.badges.clone();
+        };
+        let mut drawn: Vec<Badge> = Vec::new();
+        let mut stood_in_for: BTreeSet<&str> = BTreeSet::new();
+        for global in &self.badges {
+            match own.iter().any(|b| b.key == global.key) {
+                false => drawn.push(global.clone()),
+                true => {
+                    if stood_in_for.insert(&global.key) {
+                        drawn.extend(own.iter().filter(|b| b.key == global.key).cloned());
+                    }
+                }
+            }
+        }
+        drawn.extend(
+            own.iter()
+                .filter(|b| !stood_in_for.contains(b.key.as_str()))
+                .cloned(),
+        );
+        drawn
+    }
+
     /// The projects this run reads whose names git did not give.
     ///
     /// One call for both mouths: the snapshot the screen draws and the
@@ -772,6 +818,10 @@ name = "beacon"
 path = "/home/user/dev/beacon"
 credential_command = "cat /home/user/dev/beacon/.beads-password"
 
+[[projects.badges]]
+key    = "delivery_pr"
+render = "⇢ beacon/{}"
+
 [roots.explicit]
 atlas  = ["a-1", "a-9"]
 beacon = ["b-1"]
@@ -849,6 +899,7 @@ path = "/home/user/dev/cinder"
                     environment_command: None,
                     credential_command: Some("secret-tool lookup tracker atlas".to_string()),
                     poll: true,
+                    badges: Vec::new(),
                     worktrees: Vec::new(),
                 },
                 Project {
@@ -859,6 +910,11 @@ path = "/home/user/dev/cinder"
                         "cat /home/user/dev/beacon/.beads-password".to_string()
                     ),
                     poll: true,
+                    badges: vec![Badge {
+                        key: "delivery_pr".to_string(),
+                        match_value: None,
+                        render: "⇢ beacon/{}".to_string(),
+                    }],
                     worktrees: Vec::new(),
                 },
             ]
@@ -885,7 +941,7 @@ path = "/home/user/dev/cinder"
                 },
                 Badge {
                     key: "blocked_on".to_string(),
-                    match_value: Some(matching("human")),
+                    match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
                 },
             ]
@@ -901,6 +957,96 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
         assert_eq!(cfg.tui.wheel_notch_lines, 1);
         assert_eq!(cfg.theme.background, Background::Light);
+    }
+
+    fn pattern(source: &str) -> Pattern {
+        Pattern::new(source).expect("the pattern compiles")
+    }
+
+    fn badge(key: &str, render: &str) -> Badge {
+        Badge {
+            key: key.to_string(),
+            match_value: None,
+            render: render.to_string(),
+        }
+    }
+
+    fn matching(key: &str, value: &str, render: &str) -> Badge {
+        Badge {
+            match_value: Some(pattern(value)),
+            ..badge(key, render)
+        }
+    }
+
+    fn drawing(name: &str, badges: Vec<Badge>) -> Project {
+        Project {
+            name: name.to_string(),
+            path: PathBuf::from("/home/user").join(name),
+            environment_command: None,
+            credential_command: None,
+            poll: true,
+            badges,
+            worktrees: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_projects_badge_stands_where_the_global_one_it_shadows_stood() {
+        let cfg = Config {
+            badges: vec![
+                badge("delivery_pr", "⇢ {}"),
+                matching("blocked_on", "human", "⏸ waiting"),
+            ],
+            ..Config::naming(vec![drawing(
+                "beacon",
+                vec![badge("delivery_pr", "⇢ beacon/{}"), badge("epic", "▣ {}")],
+            )])
+        };
+
+        assert_eq!(
+            cfg.badges_for_project("beacon"),
+            vec![
+                badge("delivery_pr", "⇢ beacon/{}"),
+                matching("blocked_on", "human", "⏸ waiting"),
+                badge("epic", "▣ {}"),
+            ]
+        );
+    }
+
+    /// The global list may name one key several times, matched on a different
+    /// value each time. A project overriding that key replaces the whole group
+    /// rather than one of its entries: shadowing half a key would leave the
+    /// project drawing the shared wording for every value it did not name.
+    #[test]
+    fn a_projects_badge_shadows_every_global_entry_for_its_key() {
+        let cfg = Config {
+            badges: vec![
+                matching("blocked_on", "human", "⏸ waiting"),
+                matching("blocked_on", "dependency", "⏸ blocked"),
+            ],
+            ..Config::naming(vec![drawing(
+                "beacon",
+                vec![matching("blocked_on", "human", "⏸ ask Ada")],
+            )])
+        };
+
+        assert_eq!(
+            cfg.badges_for_project("beacon"),
+            vec![matching("blocked_on", "human", "⏸ ask Ada")]
+        );
+    }
+
+    #[test]
+    fn a_project_naming_no_badges_draws_the_global_list() {
+        let cfg = Config {
+            badges: vec![badge("delivery_pr", "⇢ {}")],
+            ..Config::naming(vec![drawing("atlas", Vec::new())])
+        };
+
+        assert_eq!(
+            cfg.badges_for_project("atlas"),
+            vec![badge("delivery_pr", "⇢ {}")]
+        );
     }
 
     #[test]
@@ -1614,10 +1760,6 @@ metadata_keys = ["working_topic"]
         assert!(err.to_string().contains("gone"), "got: {err}");
     }
 
-    fn matching(pattern: &str) -> Pattern {
-        Pattern::new(pattern).expect("the pattern compiles")
-    }
-
     #[test]
     fn badge_without_match_renders_any_value() {
         let b = Badge {
@@ -1632,7 +1774,7 @@ metadata_keys = ["working_topic"]
     fn badge_with_match_is_selective() {
         let b = Badge {
             key: "blocked_on".to_string(),
-            match_value: Some(matching("human")),
+            match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
         };
         assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
@@ -1663,7 +1805,7 @@ metadata_keys = ["working_topic"]
         for value in values {
             let badge = Badge {
                 key: "blocked_on".to_string(),
-                match_value: Some(matching(value)),
+                match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
             };
             for candidate in values.iter().flat_map(|v| anything_near(v)) {
@@ -1680,7 +1822,7 @@ metadata_keys = ["working_topic"]
     fn render_substitutes_a_capture_by_name_and_braces_by_the_whole_value() {
         let b = Badge {
             key: "delivery_pr".to_string(),
-            match_value: Some(matching(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
+            match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
         };
         assert_eq!(
@@ -1706,7 +1848,7 @@ metadata_keys = ["working_topic"]
     fn a_value_spelled_like_a_placeholder_is_placed_and_not_read() {
         let b = Badge {
             key: "working_topic".to_string(),
-            match_value: Some(matching(r"(?<channel>[^/]+)/(?<topic>.+)")),
+            match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
         };
         assert_eq!(

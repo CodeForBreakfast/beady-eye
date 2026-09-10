@@ -289,6 +289,7 @@ mod tests {
             environment_command: None,
             credential_command: None,
             poll: true,
+            badges: Vec::new(),
             worktrees: Vec::new(),
         }
     }
@@ -528,6 +529,7 @@ mod tests {
             environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
+            badges: Vec::new(),
             worktrees: Vec::new(),
         };
 
@@ -628,6 +630,7 @@ mod tests {
             environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             poll: true,
+            badges: Vec::new(),
             worktrees: Vec::new(),
         };
 
@@ -686,6 +689,7 @@ mod tests {
             environment_command: None,
             credential_command: Some(command.to_string()),
             poll: true,
+            badges: Vec::new(),
             worktrees: Vec::new(),
         }
     }

@@ -76,6 +76,7 @@ pub fn from_the_current_directory(
             environment_command: None,
             credential_command: None,
             poll: true,
+            badges: Vec::new(),
             worktrees,
         }])
     })
@@ -342,6 +343,7 @@ detached
                 environment_command: None,
                 credential_command: None,
                 poll: true,
+                badges: Vec::new(),
                 worktrees: vec![PathBuf::from("/srv/work/orbital")],
             }]
         );
@@ -1171,6 +1173,7 @@ path = "/tmp/seat-b/wt/crates/dish"
                 environment_command: None,
                 credential_command: None,
                 poll: true,
+                badges: Vec::new(),
                 worktrees: Vec::new(),
             }]
         );
