@@ -42,31 +42,31 @@ name = "bdi"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
-base64 = "0.23"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
-clap = { version = "4", features = ["derive"] }
+anyhow = "1.0.104"
+base64 = "0.23.1"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+clap = { version = "4.6.6", features = ["derive"] }
 # Which user this run is, which nothing in `std` will say and the socket's way
 # down has to be judged against. It is also the pty a test drives bdi through,
 # which is what it was here for while it was a dev-dependency. Named for the
 # same reason signal-hook is: the crate is compiled either way as signal-hook's
 # own, and one reached only through another crate's tree is not one this code
 # may `use`.
-libc = "0.2"
-pulldown-cmark = { version = "0.13", default-features = false }
-ratatui = "0.30"
+libc = "0.2.189"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+ratatui = "0.30.2"
 # A badge's `match` is a pattern out of a config file, and nothing in `std`
 # will match one. The `-lite` build is the same linear-time engine without the
 # unicode tables or the SIMD searchers, which a config file's patterns do not
 # reach for, and it costs a fraction of the build.
-regex-lite = "0.1"
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+regex-lite = "0.1.9"
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = "1.0.151"
 # Named directly, though crossterm already compiles it for its own resize
 # plumbing: a crate reached only through another crate's tree is not one
 # this code may `use`, and would go the day crossterm changed its mind.
-signal-hook = "0.4"
-toml = "0.9"
+signal-hook = "0.4.4"
+toml = "1.1.5"
 
 [features]
 # What `tests/` reaches that bdi does not. Cargo builds dev-dependencies only
@@ -77,4 +77,4 @@ testing = []
 
 [dev-dependencies]
 beady-eye = { path = ".", features = ["testing"] }
-pretty_assertions = "1"
+pretty_assertions = "1.4.1"
