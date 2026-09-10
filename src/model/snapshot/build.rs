@@ -45,6 +45,7 @@ pub fn build_tree(
     cfg: &Config,
     now: DateTime<Utc>,
 ) -> Tree {
+    let badges = cfg.badges_for_project(project);
     let beads: Vec<Node> = assembled
         .beads
         .iter()
@@ -71,7 +72,7 @@ pub fn build_tree(
                     .unwrap_or_default(),
                 started_at: bead.started_at,
                 closed_at: bead.closed_at,
-                badges: badges::badges_for(bead, &cfg.badges),
+                badges: badges::badges_for(bead, &badges),
                 anomalies: anomaly::detect(
                     bead,
                     agent.as_ref(),
@@ -475,6 +476,53 @@ mod tests {
             }]
         );
         assert!(node(&t, "orb-7").badges.is_empty());
+    }
+
+    /// A project's own entry for a key is what its beads draw, and the global
+    /// entry for that key never reaches the tree.
+    #[test]
+    fn a_projects_own_badge_reaches_its_nodes_in_place_of_the_global_one() {
+        let assembled = assembled(BEADS);
+        let panes = panes(PANES);
+        let joined = joined(&assembled.beads, &panes);
+        let relations = relations(&assembled.beads);
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+
+[[projects.badges]]
+key    = "blocked_on"
+match  = "human"
+render = "⏸ ask the ground station"
+
+[[badges]]
+key    = "blocked_on"
+match  = "human"
+render = "⏸ waiting"
+"#,
+        )
+        .expect("the config parses");
+
+        let t = build_tree(
+            "orbital",
+            &assembled,
+            &joined,
+            &readiness(),
+            &relations,
+            ProviderState::Answering,
+            &cfg,
+            now(),
+        );
+
+        assert_eq!(
+            node(&t, "orb-7.1").badges,
+            vec![Badged {
+                key: "blocked_on".to_string(),
+                text: "⏸ ask the ground station".to_string(),
+            }]
+        );
     }
 
     #[test]
