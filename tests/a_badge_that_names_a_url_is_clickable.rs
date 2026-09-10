@@ -67,8 +67,7 @@ fn a_badge_that_names_a_url_reaches_the_terminal_as_a_hyperlink() {
     bdi.settle(A_SILENCE, GIVING_UP);
     bdi.send(SHOW_EVERY_TREE);
 
-    let clickable = format!(
-        "{OSC_8}https://forge.invalid/orbital/atlas/pull/12{ST}⇢ #12{OSC_8}{ST}",
-    );
+    let clickable =
+        format!("{OSC_8}https://forge.invalid/orbital/atlas/pull/12{ST}⇢ #12{OSC_8}{ST}");
     bdi.read_until(clickable.as_bytes(), GIVING_UP);
 }

@@ -156,15 +156,16 @@ impl Widget for Fitted {
         let area = Rect { height: 1, ..area };
         let width = area.width as usize;
 
-        let wanted = self.links;
+        let links = self.links;
         let identity = columns(&self.identity);
-        let (spans, links) = if identity >= width {
+        let (spans, linked) = if identity >= width {
             (cut_to(self.identity, width).0, Vec::new())
         } else {
             let room = width - identity;
             let ((title, whole), state) = match self.briefly {
                 None => {
-                    let state = fit(self.state, room.saturating_sub(GAP), self.state_or_nothing).0;
+                    let (state, _) =
+                        fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
                     let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
                     (
                         fit(self.title, left.saturating_sub(GAP), self.title_or_nothing),
@@ -176,24 +177,24 @@ impl Widget for Fitted {
                     // `briefly`: a pane terse enough makes the long form the
                     // short one, and room kept for a form the row will not
                     // use is room taken off the title for nothing.
-                    let kept = columns(&briefly).min(columns(&self.state)) + GAP;
-                    let title = fit(
+                    let room_for_state = columns(&briefly).min(columns(&self.state)) + GAP;
+                    let (title, whole) = fit(
                         self.title,
-                        room.saturating_sub(GAP + kept),
+                        room.saturating_sub(GAP + room_for_state),
                         self.title_or_nothing,
                     );
-                    let left = room - columns(&title.0) - if title.0.is_empty() { 0 } else { GAP };
+                    let left = room - columns(&title) - if title.is_empty() { 0 } else { GAP };
                     let limit = left.saturating_sub(GAP);
                     let state = if columns(&self.state) <= limit {
                         self.state
                     } else {
                         fit(briefly, limit, self.state_or_nothing).0
                     };
-                    (title, state)
+                    ((title, whole), state)
                 }
             };
 
-            let links = surviving(&wanted, &title, whole, identity + GAP);
+            let linked = surviving(&links, &title, whole, identity + GAP);
 
             let mut spans = self.identity;
             if !title.is_empty() {
@@ -205,25 +206,25 @@ impl Widget for Fitted {
                 spans.push(Span::raw(" ".repeat(pad)));
                 spans.extend(state);
             }
-            (spans, links)
+            (spans, linked)
         };
 
         Line::from(spans).style(self.whole).render(area, buf);
-        for link in links {
-            link.written(area, buf);
+        for link in linked {
+            link.told_to(area, buf);
         }
     }
 }
 
-/// A link that survived the cut, at the column it landed on.
-struct Landed {
+/// A link the row kept whole, at the column it starts on.
+struct Kept {
     at: usize,
     width: usize,
     said: String,
     to: String,
 }
 
-impl Landed {
+impl Kept {
     /// The link, told to the terminal in the cell it starts on.
     ///
     /// Everything the link says goes in that one cell, wrapped in the escape
@@ -231,7 +232,7 @@ impl Landed {
     /// diff then skips the columns behind it, so the opening sequence and its
     /// closer are one thing to send or to leave: a redraw carries both or
     /// neither, whatever else on the row changed.
-    fn written(self, area: Rect, buf: &mut Buffer) {
+    fn told_to(self, area: Rect, buf: &mut Buffer) {
         let (Ok(at), Some(width)) = (
             u16::try_from(self.at),
             u16::try_from(self.width).ok().and_then(NonZeroU16::new),
@@ -247,11 +248,11 @@ impl Landed {
 
 /// The links whose span the title block kept whole, each at the column it
 /// starts on. A link whose span was cut or dropped is not among them.
-fn surviving(wanted: &[Link], title: &[Span<'static>], whole: usize, starts: usize) -> Vec<Landed> {
-    wanted
+fn surviving(links: &[Link], title: &[Span<'static>], whole: usize, starts: usize) -> Vec<Kept> {
+    links
         .iter()
         .filter(|link| link.at < whole)
-        .map(|link| Landed {
+        .map(|link| Kept {
             at: starts + columns(&title[..link.at]),
             width: title[link.at].width(),
             said: title[link.at].content.to_string(),
