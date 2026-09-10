@@ -474,6 +474,7 @@ mod tests {
                 key: "blocked_on".to_string(),
                 text: "⏸ waiting".to_string(),
                 link: None,
+                colour: None,
             }]
         );
         assert!(node(&t, "orb-7").badges.is_empty());
@@ -523,6 +524,7 @@ render = "⏸ waiting"
                 key: "blocked_on".to_string(),
                 text: "⏸ ask the ground station".to_string(),
                 link: None,
+                colour: None,
             }]
         );
     }
