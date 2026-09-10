@@ -517,6 +517,23 @@ mod tests {
         );
     }
 
+    /// What a link needs is its own span whole, rather than the block it sits
+    /// in. Here the row is cut after the link, and the link is still a link.
+    #[test]
+    fn a_link_the_cut_stopped_short_of_is_opened_as_it_always_was() {
+        let said = symbols(&rendered(a_linked_row(), 21));
+
+        assert!(
+            said.contains(&CUT.to_string()),
+            "the row was not cut at all, so it says nothing about a link \
+             before the cut: {said:?}"
+        );
+        assert!(
+            said.contains(&hyperlink("⇢ #12", SOMEWHERE)),
+            "a link the cut stopped short of was dropped: {said:?}"
+        );
+    }
+
     /// A link cut for width loses the link rather than its closing sequence.
     /// An opening sequence with nothing to close it makes every cell after it
     /// on the terminal part of the link.
