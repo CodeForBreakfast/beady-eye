@@ -6,7 +6,7 @@ use ratatui::text::Span;
 
 use crate::model::badges::Badged;
 use crate::model::types::Status;
-use crate::view::fitted::{Fitted, GAP};
+use crate::view::fitted::{Fitted, Link, GAP};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
@@ -48,12 +48,19 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     ];
 
     let mut title = vec![Span::raw(row.title.clone())];
+    let mut links = Vec::new();
     for badge in &row.badges {
         title.push(Span::raw(" ".repeat(GAP)));
+        if let Some(to) = &badge.link {
+            links.push(Link {
+                at: title.len(),
+                to: to.clone(),
+            });
+        }
         title.push(Span::styled(badge.text.clone(), badge_style(badge)));
     }
 
-    let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref()));
+    let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref())).linking(links);
     if let Some(briefly) = &row.agent_briefly {
         fitted = fitted.briefly(state(row, Some(briefly)));
     }
@@ -116,7 +123,12 @@ fn state(row: &Row, agent: Option<&String>) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
     use ratatui::style::{Color, Modifier};
+    use ratatui::widgets::Widget;
+
+    use crate::view::fitted::hyperlink;
 
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
@@ -559,6 +571,42 @@ mod tests {
             "the badge did not survive the row's own width: {drawn:?}"
         );
         assert_eq!(drawn, said(unlinked));
+    }
+
+    /// The badge that names a URL is the one the terminal is told about, and
+    /// it is told round the badge's own words — so the reader clicks the badge
+    /// rather than retyping what it stands for.
+    #[test]
+    fn the_badge_that_names_a_url_is_the_one_emitted_as_a_hyperlink() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let badge = |link: Option<&str>| Badged {
+            key: "delivery_pr".into(),
+            text: "⇢ #12".into(),
+            link: link.map(str::to_string),
+        };
+        let said = |badge: Badged| {
+            let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+            badged.badges = vec![badge];
+            symbols(bead_line(&row(&badged), BRANCH, 4), 100)
+        };
+
+        assert!(
+            said(badge(Some(somewhere))).contains(&hyperlink("⇢ #12", somewhere)),
+            "the badge naming a URL was not made a link"
+        );
+        assert!(
+            !said(badge(None)).contains('\u{1b}'),
+            "a badge naming no URL was made a link"
+        );
+    }
+
+    /// Every symbol a row put in the buffer, escape bytes and all. `Painted`
+    /// reports what a reader sees, and a hyperlink is not that.
+    fn symbols(row: Fitted, width: u16) -> String {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        row.render(area, &mut buf);
+        (0..width).map(|x| buf[(x, 0)].symbol()).collect()
     }
 
     /// The columns `  ├── ● .20   a bead  ⇢ #12` fills, and not one more.
