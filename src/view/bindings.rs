@@ -2,10 +2,10 @@
 
 use ratatui::layout::{Constraint, Rect};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Clear};
+use ratatui::widgets::Block;
 use ratatui::Frame;
 
-use crate::view::fitted::{columns, indent, Fitted, CUT, GAP};
+use crate::view::fitted::{columns, cover, indent, Fitted, CUT, GAP};
 use crate::view::palette;
 
 /// The first line of the key bindings view, and the way back out of it.
@@ -71,8 +71,8 @@ fn key_column(bindings: &[(String, &str)]) -> usize {
 /// Draw every binding in a window over the forest.
 ///
 /// Each pair is the keys to press, already named, and what pressing them
-/// does. `Clear` blanks the window first, which is what stops the trees
-/// showing through between the rows.
+/// does. The ground is blanked first, which is what stops the trees showing
+/// through between the rows.
 ///
 /// The way out is the border's title, so a window too short for a single
 /// binding still holds it: a reader who cannot see how to leave is stuck in a
@@ -89,7 +89,7 @@ pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) 
 
     let block = Block::bordered().title(Span::styled(CLOSE_BINDINGS, palette::TITLE));
     let inner = block.inner(window);
-    frame.render_widget(Clear, window);
+    cover(frame, window);
     frame.render_widget(block, window);
 
     let room = inner.height as usize;

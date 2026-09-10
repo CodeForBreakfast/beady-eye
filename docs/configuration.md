@@ -135,8 +135,10 @@ render = "⇢ {repo} #{number}"
 ```
 
 `link` is where the badge points, written as a template over the same captures
-`render` reads. A badge that has one is drawn underlined, which is the whole of
-what says it is a link — the URL is nowhere in the text on the row.
+`render` reads. A badge that has one is drawn underlined, and the underline is
+the whole of what a reader sees about it — the URL is nowhere in the text on the
+row. The badge is also emitted as a terminal hyperlink, so a terminal that
+supports one opens the page when the reader clicks the badge.
 
 ```toml
 [[badges]]

@@ -3,11 +3,14 @@
 //! A general widget: three blocks, one row, cut rather than wrapped, with a
 //! stated yield order. It knows nothing of what it is drawing.
 
-use ratatui::buffer::Buffer;
+use std::num::NonZeroU16;
+
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Clear, Widget};
+use ratatui::Frame;
 
 use crate::view::palette;
 
@@ -17,6 +20,58 @@ pub(crate) const CUT: char = '…';
 
 /// The blank columns that keep two blocks from reading as one.
 pub(crate) const GAP: usize = 2;
+
+/// The escape that opens an operating-system command naming a hyperlink, and
+/// the one that ends any such command. A URL between them makes what follows
+/// a link; nothing between them ends it.
+const OSC_8: &str = "\x1b]8;;";
+const ST: &str = "\x1b\\";
+
+/// `said`, wrapped so the terminal makes it a link to `to`. Nothing where
+/// either of them holds a control character.
+///
+/// Both come from a tracker rather than from this program, and what ends this
+/// sequence is itself a control character. One inside the sequence ends it
+/// early, and the rest of that value reaches the terminal as commands of its
+/// own — a row of a bead list saying whatever it likes to the terminal the
+/// reader is sitting at.
+pub(crate) fn hyperlink(said: &str, to: &str) -> Option<String> {
+    let holds_control = |text: &str| text.chars().any(char::is_control);
+    (!holds_control(said) && !holds_control(to))
+        .then(|| format!("{OSC_8}{to}{ST}{said}{OSC_8}{ST}"))
+}
+
+/// What a cell says, with any escape sequence taken out of it.
+///
+/// A hyperlink is written into the symbol because it cannot be written into a
+/// span, but it is not among the words: a reader sees where a link goes only
+/// by following it.
+pub(crate) fn words_of(symbol: &str) -> String {
+    let mut words = String::new();
+    let mut rest = symbol;
+    while let Some(open) = rest.find(ESCAPE) {
+        words.push_str(&rest[..open]);
+        rest = match rest[open..].find(ST) {
+            Some(end) => &rest[open + end + ST.len()..],
+            None => "",
+        };
+    }
+    words.push_str(rest);
+    words
+}
+
+const ESCAPE: char = '\x1b';
+
+/// A span of the title block that stands for somewhere the reader can go.
+///
+/// Named by its place rather than by what it draws: `Fitted` knows nothing of
+/// what it is drawing, and a link is one more thing it does not have to know.
+pub(crate) struct Link {
+    /// Which span of the title block it is.
+    pub(crate) at: usize,
+    /// Where it points.
+    pub(crate) to: String,
+}
 
 pub(crate) fn indent() -> String {
     " ".repeat(GAP)
@@ -36,6 +91,7 @@ pub struct Fitted {
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
     briefly: Option<Vec<Span<'static>>>,
+    links: Vec<Link>,
     whole: Style,
     title_or_nothing: bool,
     state_or_nothing: bool,
@@ -52,10 +108,21 @@ impl Fitted {
             title,
             state,
             briefly: None,
+            links: Vec::new(),
             whole: Style::new(),
             title_or_nothing: false,
             state_or_nothing: false,
         }
+    }
+
+    /// Which spans of the title block are links, and where each one points.
+    ///
+    /// A link the row had to cut is dropped: an opening sequence with nothing
+    /// to close it makes every cell after it on the terminal part of the link.
+    #[must_use]
+    pub(crate) fn linking(mut self, links: Vec<Link>) -> Self {
+        self.links = links;
+        self
     }
 
     /// A shorter form of the state, for a state holding something whose
@@ -120,14 +187,16 @@ impl Widget for Fitted {
         let area = Rect { height: 1, ..area };
         let width = area.width as usize;
 
+        let links = self.links;
         let identity = columns(&self.identity);
-        let spans = if identity >= width {
-            cut_to(self.identity, width)
+        let (spans, linked) = if identity >= width {
+            (cut_to(self.identity, width).0, Vec::new())
         } else {
             let room = width - identity;
-            let (title, state) = match self.briefly {
+            let ((title, whole), state) = match self.briefly {
                 None => {
-                    let state = fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
+                    let (state, _) =
+                        fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
                     let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
                     (
                         fit(self.title, left.saturating_sub(GAP), self.title_or_nothing),
@@ -139,10 +208,10 @@ impl Widget for Fitted {
                     // `briefly`: a pane terse enough makes the long form the
                     // short one, and room kept for a form the row will not
                     // use is room taken off the title for nothing.
-                    let kept = columns(&briefly).min(columns(&self.state)) + GAP;
-                    let title = fit(
+                    let room_for_state = columns(&briefly).min(columns(&self.state)) + GAP;
+                    let (title, whole) = fit(
                         self.title,
-                        room.saturating_sub(GAP + kept),
+                        room.saturating_sub(GAP + room_for_state),
                         self.title_or_nothing,
                     );
                     let left = room - columns(&title) - if title.is_empty() { 0 } else { GAP };
@@ -150,11 +219,13 @@ impl Widget for Fitted {
                     let state = if columns(&self.state) <= limit {
                         self.state
                     } else {
-                        fit(briefly, limit, self.state_or_nothing)
+                        fit(briefly, limit, self.state_or_nothing).0
                     };
-                    (title, state)
+                    ((title, whole), state)
                 }
             };
+
+            let linked = surviving(&links, &title, whole, identity + GAP);
 
             let mut spans = self.identity;
             if !title.is_empty() {
@@ -166,10 +237,97 @@ impl Widget for Fitted {
                 spans.push(Span::raw(" ".repeat(pad)));
                 spans.extend(state);
             }
-            spans
+            (spans, linked)
         };
 
         Line::from(spans).style(self.whole).render(area, buf);
+        for link in linked {
+            link.told_to(area, buf);
+        }
+    }
+}
+
+/// A link the row kept whole, at the column it starts on.
+struct Kept {
+    at: usize,
+    width: usize,
+    said: String,
+    to: String,
+}
+
+impl Kept {
+    /// The link, told to the terminal in the cell it starts on.
+    ///
+    /// Everything the link says goes in that one cell, wrapped in the escape
+    /// sequences, and the cell reports the width the words alone take. The
+    /// diff then skips the columns behind it, so the opening sequence and its
+    /// closer are one thing to send or to leave: a redraw carries both or
+    /// neither, whatever else on the row changed.
+    fn told_to(self, area: Rect, buf: &mut Buffer) {
+        let (Ok(at), Some(width)) = (
+            u16::try_from(self.at),
+            u16::try_from(self.width).ok().and_then(NonZeroU16::new),
+        ) else {
+            return;
+        };
+        let Some(said) = hyperlink(&self.said, &self.to) else {
+            return;
+        };
+        if let Some(cell) = buf.cell_mut((area.x + at, area.y)) {
+            cell.set_symbol(&said)
+                .set_diff_option(CellDiffOption::ForcedWidth(width));
+        }
+    }
+}
+
+/// The links whose span the title block kept whole, each at the column it
+/// starts on. A link whose span was cut or dropped is not among them.
+fn surviving(links: &[Link], title: &[Span<'static>], whole: usize, starts: usize) -> Vec<Kept> {
+    links
+        .iter()
+        .filter(|link| link.at < whole)
+        .map(|link| Kept {
+            at: starts + columns(&title[..link.at]),
+            width: title[link.at].width(),
+            said: title[link.at].content.to_string(),
+            to: link.to.clone(),
+        })
+        .collect()
+}
+
+/// Blank the ground a window is about to stand on.
+///
+/// `Clear` alone is not enough over a row carrying a link. The whole link sits
+/// in the cell it starts on, reporting the width of its words, and the diff
+/// skips the columns behind that cell whatever they now hold — so a link
+/// starting outside the window and reaching under it swallows the window's own
+/// left edge, and the border never reaches the terminal. Such a link gives the
+/// columns back and stops being a link, and its words are written again into
+/// the columns it still has. A badge under a window is a badge the reader
+/// cannot see anyway.
+pub(crate) fn cover(frame: &mut Frame, window: Rect) {
+    frame.render_widget(Clear, window);
+
+    let buf = frame.buffer_mut();
+    for y in window.top()..window.bottom() {
+        for x in buf.area.left()..window.left() {
+            let Some(cell) = buf.cell((x, y)) else {
+                continue;
+            };
+            let CellDiffOption::ForcedWidth(width) = cell.diff_option else {
+                continue;
+            };
+            if x.saturating_add(width.get()) <= window.left() {
+                continue;
+            }
+            let words = words_of(cell.symbol());
+            let style = cell.style();
+            let room = (window.left() - x) as usize;
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.reset();
+            }
+            buf.set_stringn(x, y, words, room, style);
+        }
     }
 }
 
@@ -182,29 +340,38 @@ pub(crate) fn columns(spans: &[Span<'static>]) -> usize {
 
 /// `spans` fitted into `limit` columns: cut with the cut marked, or, for a
 /// block that says nothing in part, given up whole.
-fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> Vec<Span<'static>> {
+///
+/// Alongside the spans, how many of them the block kept whole — the leading
+/// run that says everything it was written to say. Anything after that run was
+/// cut short or dropped, and what a caller holds against a span of it no
+/// longer holds.
+fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> (Vec<Span<'static>>, usize) {
     if or_nothing && columns(&spans) > limit {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     cut_to(spans, limit)
 }
 
-/// `spans`, cut down to `limit` columns with the cut marked.
-fn cut_to(spans: Vec<Span<'static>>, limit: usize) -> Vec<Span<'static>> {
+/// `spans`, cut down to `limit` columns with the cut marked, and how many of
+/// them survived whole.
+fn cut_to(spans: Vec<Span<'static>>, limit: usize) -> (Vec<Span<'static>>, usize) {
     if columns(&spans) <= limit {
-        return spans;
+        let whole = spans.len();
+        return (spans, whole);
     }
     if limit == 0 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
 
     let room = limit - columns(&[Span::raw(CUT.to_string())]);
     let mut kept: Vec<Span<'static>> = Vec::new();
+    let mut whole = 0;
     let mut used = 0;
     for span in spans {
         let width = span.width();
         if used + width <= room {
             used += width;
+            whole += 1;
             kept.push(span);
             continue;
         }
@@ -215,7 +382,7 @@ fn cut_to(spans: Vec<Span<'static>>, limit: usize) -> Vec<Span<'static>> {
         break;
     }
     kept.push(Span::raw(CUT.to_string()));
-    kept
+    (kept, whole)
 }
 
 /// As much of `text` as fits in `limit` columns, never splitting a glyph.
@@ -237,6 +404,9 @@ fn head_of(text: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::backend::TestBackend;
+    use ratatui::widgets::Block;
+    use ratatui::Terminal;
 
     use crate::view::painted::Painted;
 
@@ -355,6 +525,228 @@ mod tests {
         );
 
         assert_eq!(Painted::read(&buf).rows(), blank(20, 3));
+    }
+
+    /// The URL a reader clicks, in the vocabulary the fixtures use.
+    const SOMEWHERE: &str = "https://forge.invalid/orbital/atlas/pull/12";
+
+    /// A row whose third title span is a link, so the link is neither the
+    /// first thing on the line nor the last.
+    fn a_linked_row() -> Fitted {
+        a_row_linking("⇢ #12")
+    }
+
+    /// The same row, for a badge whose text the caller chooses.
+    fn a_row_linking(badge: &str) -> Fitted {
+        Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![
+                Span::raw("a title"),
+                Span::raw(" "),
+                Span::raw(badge.to_string()),
+                Span::raw(" done"),
+            ],
+            Vec::new(),
+        )
+        .linking(vec![Link {
+            at: 2,
+            to: SOMEWHERE.to_string(),
+        }])
+    }
+
+    /// Every symbol of a rendered row, run together.
+    fn symbols(buf: &Buffer) -> String {
+        (buf.area.left()..buf.area.right())
+            .map(|x| buf[(x, 0)].symbol())
+            .collect()
+    }
+
+    fn rendered(row: Fitted, width: u16) -> Buffer {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        row.render(area, &mut buf);
+        buf
+    }
+
+    /// The escape bytes cannot go in a span, because a span is measured by
+    /// what it shows. They go in the cell the link starts on instead, around
+    /// everything the link says.
+    #[test]
+    fn a_linked_span_is_wrapped_in_a_hyperlink_where_it_starts() {
+        let buf = rendered(a_linked_row(), 40);
+
+        assert!(
+            symbols(&buf).contains(
+                &hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
+            "the link is not on the row: {:?}",
+            symbols(&buf)
+        );
+    }
+
+    /// The cell says the width the link really takes, so the diff skips the
+    /// columns behind it rather than counting the escape bytes as glyphs.
+    #[test]
+    fn a_linked_cell_reports_the_width_the_link_takes_on_screen() {
+        let buf = rendered(a_linked_row(), 40);
+        let at = opened_at(&buf);
+
+        assert_eq!(
+            buf[(at, 0)].diff_option,
+            CellDiffOption::ForcedWidth(NonZeroU16::new(5).expect("⇢ #12 is five columns"))
+        );
+    }
+
+    /// What a link needs is its own span whole, rather than the block it sits
+    /// in. Here the row is cut after the link, and the link is still a link.
+    #[test]
+    fn a_link_the_cut_stopped_short_of_is_opened_as_it_always_was() {
+        let said = symbols(&rendered(a_linked_row(), 21));
+
+        assert!(
+            said.contains(&CUT.to_string()),
+            "the row was not cut at all, so it says nothing about a link \
+             before the cut: {said:?}"
+        );
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
+            "a link the cut stopped short of was dropped: {said:?}"
+        );
+    }
+
+    /// A URL is a tracker's to write, and what ends the sequence carrying one
+    /// is a control character. A link is worth less than a terminal a row can
+    /// say anything it likes to.
+    #[test]
+    fn a_link_carrying_a_control_character_is_not_opened() {
+        for to in [
+            format!("https://forge.invalid{ST}\x1b]52;c;cGF5bG9hZA=={ST}"),
+            "https://forge.invalid/\nfoo".to_string(),
+            "https://forge.invalid/\rfoo".to_string(),
+        ] {
+            let row = Fitted::new(
+                vec![Span::raw("orb-7")],
+                vec![Span::raw("a title"), Span::raw(" "), Span::raw("⇢ #12")],
+                Vec::new(),
+            )
+            .linking(vec![Link {
+                at: 2,
+                to: to.clone(),
+            }]);
+
+            let said = symbols(&rendered(row, 40));
+
+            assert!(
+                !said.contains(ESCAPE),
+                "a link naming {to:?} reached the terminal: {said:?}"
+            );
+            assert!(
+                said.contains("⇢ #12"),
+                "the badge stopped drawing as well as stopped linking: {said:?}"
+            );
+        }
+    }
+
+    /// A window standing on a row whose link starts outside it. The link is
+    /// holding columns the window needs, and the diff cannot reach past it, so
+    /// without the hand-back the window's own left edge is never sent and the
+    /// badge prints over it.
+    ///
+    /// Both a badge whose first glyph takes one column and one whose first
+    /// glyph takes two, because the columns the link keeps are counted rather
+    /// than assumed.
+    #[test]
+    fn a_window_over_a_link_that_started_outside_it_still_draws_its_own_edge() {
+        // A badge starts at column 15, so a window opening at 17 stands on the
+        // middle of one.
+        const STARTS: u16 = 15;
+        let window = Rect::new(17, 0, 10, 3);
+
+        for (badge, glyph) in [("⇢ #12", "⇢"), ("🔗 #12", "🔗")] {
+            let mut terminal = Terminal::new(TestBackend::new(40, 3)).expect("a test backend");
+            let mut draw_row_and = |window: Option<Rect>| {
+                terminal
+                    .draw(|frame| {
+                        a_row_linking(badge).render(Rect::new(0, 0, 40, 1), frame.buffer_mut());
+                        if let Some(window) = window {
+                            cover(frame, window);
+                            frame.render_widget(Block::bordered(), window);
+                        }
+                    })
+                    .expect("a draw into memory");
+            };
+            draw_row_and(None);
+            draw_row_and(Some(window));
+
+            let screen = terminal.backend().buffer().clone();
+            assert_eq!(
+                screen[(window.left(), 0)].symbol(),
+                "┌",
+                "the window's left edge never reached the terminal, over {badge:?}"
+            );
+            assert_eq!(
+                screen[(STARTS, 0)].symbol(),
+                glyph,
+                "the columns the link handed back say nothing the reader can see"
+            );
+        }
+    }
+
+    /// A link cut for width loses the link rather than its closing sequence.
+    /// An opening sequence with nothing to close it makes every cell after it
+    /// on the terminal part of the link.
+    #[test]
+    fn a_link_cut_for_width_is_not_opened_at_all() {
+        let said = symbols(&rendered(a_linked_row(), 20));
+
+        assert!(
+            !said.contains(OSC_8),
+            "a cut link opened a hyperlink: {said:?}"
+        );
+    }
+
+    /// The opening and the closing sequence are one cell, so a diff carries
+    /// both or neither. Here the link's first glyph changes and its last does
+    /// not, which is the shape that would send an opening sequence alone.
+    #[test]
+    fn a_partial_redraw_cannot_send_an_opening_sequence_without_its_closer() {
+        let moved = || {
+            Fitted::new(
+                vec![Span::raw("orb-7")],
+                vec![Span::raw("a title"), Span::raw(" "), Span::raw("→ #12")],
+                Vec::new(),
+            )
+            .linking(vec![Link {
+                at: 2,
+                to: SOMEWHERE.to_string(),
+            }])
+        };
+
+        let before = rendered(a_linked_row(), 40);
+        let after = rendered(moved(), 40);
+        let sent: Vec<&str> = before
+            .diff(&after)
+            .into_iter()
+            .map(|(_, _, cell)| cell.symbol())
+            .collect();
+        let opened: Vec<&&str> = sent.iter().filter(|said| said.contains(OSC_8)).collect();
+
+        assert!(!opened.is_empty(), "the moved link was not sent: {sent:?}");
+        for said in opened {
+            assert!(
+                said.ends_with(&format!("{OSC_8}{ST}")),
+                "an opening sequence went without its closer: {said:?}"
+            );
+        }
+    }
+
+    /// Where the row's one hyperlink starts.
+    fn opened_at(buf: &Buffer) -> u16 {
+        (buf.area.left()..buf.area.right())
+            .find(|&x| buf[(x, 0)].symbol().starts_with(OSC_8))
+            .expect("a cell opening a hyperlink")
     }
 
     /// One line is one row. The selection is an index into the forest's lines,
