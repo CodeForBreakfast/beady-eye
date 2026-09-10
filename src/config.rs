@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chrono::TimeDelta;
 
+use regex_lite::{Captures, Regex};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -209,8 +210,60 @@ pub struct Roots {
 pub struct Badge {
     pub key: String,
     #[serde(rename = "match")]
-    pub match_value: Option<String>,
+    pub match_value: Option<Pattern>,
     pub render: String,
+}
+
+/// A badge's `match`: the pattern a setup wrote, and that pattern compiled.
+///
+/// Anchored against the whole value. `match` was an exact-value test before
+/// it was a pattern, and anchoring is what keeps every config written then
+/// saying what it said: unanchored, `human` would begin drawing on
+/// `inhumane`.
+///
+/// Compiled here, as the config is read, because badges are applied to every
+/// bead of every collection.
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    source: String,
+    anchored: Regex,
+}
+
+impl Pattern {
+    pub fn new(source: &str) -> Result<Self, regex_lite::Error> {
+        Ok(Self {
+            source: source.to_string(),
+            anchored: Regex::new(&format!("^(?:{source})$"))?,
+        })
+    }
+
+    fn captures<'v>(&self, value: &'v str) -> Option<Captures<'v>> {
+        self.anchored.captures(value)
+    }
+
+    fn capture_names(&self) -> impl Iterator<Item = &str> {
+        self.anchored.capture_names().flatten()
+    }
+}
+
+/// The compiled pattern is a function of the source text, so the source text
+/// is the whole of what two patterns can differ by. Written out because no
+/// regex implements `PartialEq`, and this equality is load-bearing: it is how
+/// a re-read config is judged against the one in force.
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
+impl Eq for Pattern {}
+
+impl<'de> Deserialize<'de> for Pattern {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let source = String::deserialize(deserializer)?;
+        Pattern::new(&source)
+            .map_err(|e| serde::de::Error::custom(format!("{source:?} is no pattern: {e}")))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -669,14 +722,19 @@ fn names_of(projects: &[Project]) -> Vec<&str> {
 
 impl Badge {
     /// Render this badge for a metadata value, or `None` if it does not apply.
-    /// `{}` in `render` is replaced by the value.
+    /// `{}` in `render` is replaced by the whole value, and `{name}` by what
+    /// the pattern's capture of that name took.
     pub fn apply(&self, value: &str) -> Option<String> {
-        if let Some(expected) = &self.match_value {
-            if expected != value {
-                return None;
-            }
-        }
-        Some(self.render.replace("{}", value))
+        let whole_value = self.render.replace("{}", value);
+        let Some(pattern) = &self.match_value else {
+            return Some(whole_value);
+        };
+        let taken = pattern.captures(value)?;
+        let text = pattern.capture_names().fold(whole_value, |text, name| {
+            let captured = taken.name(name).map_or("", |m| m.as_str());
+            text.replace(&format!("{{{name}}}"), captured)
+        });
+        Some(text)
     }
 }
 
@@ -809,7 +867,7 @@ path = "/home/user/dev/cinder"
                 },
                 Badge {
                     key: "blocked_on".to_string(),
-                    match_value: Some("human".to_string()),
+                    match_value: Some(matching("human")),
                     render: "⏸ waiting".to_string(),
                 },
             ]
@@ -1538,6 +1596,10 @@ metadata_keys = ["working_topic"]
         assert!(err.to_string().contains("gone"), "got: {err}");
     }
 
+    fn matching(pattern: &str) -> Pattern {
+        Pattern::new(pattern).expect("the pattern compiles")
+    }
+
     #[test]
     fn badge_without_match_renders_any_value() {
         let b = Badge {
@@ -1552,11 +1614,78 @@ metadata_keys = ["working_topic"]
     fn badge_with_match_is_selective() {
         let b = Badge {
             key: "blocked_on".to_string(),
-            match_value: Some("human".to_string()),
+            match_value: Some(matching("human")),
             render: "⏸ waiting".to_string(),
         };
         assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
         assert_eq!(b.apply("dependency"), None);
+    }
+
+    /// What anchoring buys, stated over every pair a corpus makes rather
+    /// than over one example. `match` was an exact-value test before it was
+    /// a pattern, so a config written then names one value and no other:
+    /// unanchored, `human` would begin drawing on `inhumane`.
+    #[test]
+    fn a_match_written_as_a_literal_draws_on_that_value_and_no_other() {
+        let values = ["human", "dependency", "pr", "a", "owner/repo#7", "⏸"];
+        let anything_near = |v: &str| {
+            [
+                v.to_string(),
+                format!("in{v}"),
+                format!("{v}e"),
+                format!("in{v}e"),
+                format!("{v} {v}"),
+                format!(" {v}"),
+                format!("{v}\n"),
+                v.to_uppercase(),
+                String::new(),
+            ]
+        };
+
+        for value in values {
+            let badge = Badge {
+                key: "blocked_on".to_string(),
+                match_value: Some(matching(value)),
+                render: "drawn".to_string(),
+            };
+            for candidate in values.iter().flat_map(|v| anything_near(v)) {
+                assert_eq!(
+                    badge.apply(&candidate).is_some(),
+                    candidate == value,
+                    "{value:?} against {candidate:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_substitutes_a_capture_by_name_and_braces_by_the_whole_value() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: Some(matching(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
+            render: "⇢ {repo} #{number} of {}".to_string(),
+        };
+        assert_eq!(
+            b.apply("owner/atlas#7"),
+            Some("⇢ atlas #7 of owner/atlas#7".to_string())
+        );
+        assert_eq!(b.apply("owner/atlas"), None);
+    }
+
+    /// The config is refused whole, which is what leaves the one in force
+    /// standing and puts the reason at the foot of the screen.
+    #[test]
+    fn a_match_that_does_not_parse_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key    = "blocked_on"
+match  = "(unclosed"
+render = "⏸ waiting"
+"#
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("(unclosed"), "got: {err}");
     }
 
     /// The working trees a project occupies are git's answer about a

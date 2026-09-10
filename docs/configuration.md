@@ -117,8 +117,20 @@ placed.
 ## `[[badges]]`
 
 Draw a metadata key beside every bead that carries it. `render` is the text,
-with `{}` for the value; `match` restricts the badge to one value. `bdi` has no
-idea what your metadata means and draws the badge as written.
+with `{}` for the whole value. `match` restricts the badge to the values a
+pattern matches, and the pattern is anchored against the whole value: `human`
+draws on `human` and not on `inhumane`.
+
+A capture the pattern names is `render`'s to place by that name:
+
+```toml
+[[badges]]
+key    = "delivery_pr"
+match  = "[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ {repo} #{number}"
+```
+
+`bdi` has no idea what your metadata means and draws the badge as written.
 
 ## `[join]`
 

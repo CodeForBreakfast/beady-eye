@@ -55,6 +55,11 @@ clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 pulldown-cmark = { version = "0.13", default-features = false }
 ratatui = "0.30"
+# A badge's `match` is a pattern out of a config file, and nothing in `std`
+# will match one. The `-lite` build is the same linear-time engine without the
+# unicode tables or the SIMD searchers, which a config file's patterns do not
+# reach for, and it costs a fraction of the build.
+regex-lite = "0.1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 # Named directly, though crossterm already compiles it for its own resize

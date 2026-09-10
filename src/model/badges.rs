@@ -37,6 +37,12 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use pretty_assertions::assert_eq;
 
+    use crate::config::Pattern;
+
+    fn matching(pattern: &str) -> Pattern {
+        Pattern::new(pattern).expect("the pattern compiles")
+    }
+
     fn bead_with(metadata: &str) -> Bead {
         let json =
             format!(r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#);
@@ -49,12 +55,12 @@ mod tests {
         let cfg = vec![
             Badge {
                 key: "blocked_on".into(),
-                match_value: Some("human".into()),
+                match_value: Some(matching("human")),
                 render: "waiting".into(),
             },
             Badge {
                 key: "blocked_on".into(),
-                match_value: Some("dependency".into()),
+                match_value: Some(matching("dependency")),
                 render: "dep".into(),
             },
             Badge {
