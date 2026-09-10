@@ -169,10 +169,13 @@ between them. Its entries stand where the first `[[badges]]` entry for that key
 stood, so overriding one badge does not reorder the row.
 
 **A project's own keys have to come before its badges.** `[[projects.badges]]`
-opens a table of its own, and `name`, `path` or anything else written after it
-is read as part of the badge rather than the project. The error says
-``missing field `path` in `projects` `` — naming a key you did in fact write,
-and saying nothing about where it sits.
+opens a table of its own, so `name`, `path` or anything else written after it
+belongs to the badge, which refuses it:
+
+```
+unknown field `path`, expected one of `key`, `match`, `render`, `link`
+in `projects.badges`
+```
 
 ## `[join]`
 
