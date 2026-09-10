@@ -881,10 +881,10 @@
         # test that exceeds it, records TIMEOUT, and goes on to the next
         # mutant. The cap is what keeps the machine while that clock runs.
         #
-        # Neither substitutes for the other, and the cap is the one whose
-        # limits are easy to miss. Scoring words_of under this bound, the
-        # kernel killed the crate's own test binary at 8G and cargo-mutants
-        # survived to finish the run — and recorded the mutant `caught`,
+        # The cap is the one whose limit is easy to miss. Scoring words_of
+        # under this bound, the kernel killed the crate's own test binary at
+        # 8G and cargo-mutants survived to finish the run — and recorded it
+        # `caught`,
         # because `cargo test` exits 101 and nothing tells that from a test
         # which failed honestly. A cap alone turns the pathology into a clean
         # sheet. A short timeout is what reads it as TIMEOUT instead, and on a
@@ -1030,9 +1030,10 @@
         # one at five times the baseline test run, and this suite's baseline is
         # 84 seconds because the pty tests spend it waiting on a terminal
         # rather than computing — so the derived number came out at 424
-        # seconds, which is slack for a loaded machine read as a claim that a
-        # test might honestly need that long. A mutant allocating at the rate
-        # the words_of one did reaches tens of gigabytes inside it.
+        # seconds. That multiplier is slack for a loaded machine rather than a
+        # claim that a test might honestly need five times as long, and a
+        # mutant allocating at the rate the words_of one does reaches tens of
+        # gigabytes inside it.
         #
         # 180 is that 84 with room for a machine running three seats. A
         # legitimate test that times out here is a test that has got slower,
