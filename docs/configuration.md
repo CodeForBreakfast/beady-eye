@@ -22,6 +22,10 @@ name = "beacon"
 path = "/home/you/dev/beacon"
 credential_command = "secret-tool lookup tracker beacon"
 
+[[projects.badges]]
+key    = "delivery_pr"
+render = "⇢ beacon/{}"
+
 [roots.explicit]
 atlas = ["atlas-1", "atlas-10"]
 
@@ -119,6 +123,24 @@ placed.
 Draw a metadata key beside every bead that carries it. `render` is the text,
 with `{}` for the value; `match` restricts the badge to one value. `bdi` has no
 idea what your metadata means and draws the badge as written.
+
+## `[[projects.badges]]`
+
+What one project draws in place of this list, for the keys it names and no
+others. A `render` cannot name a repository or a host, so a list shared across
+projects cannot give each one's `delivery_pr` its own destination. Every key a
+project stays silent about keeps drawing what `[[badges]]` says.
+
+It shadows by key rather than by entry: a project naming `blocked_on` replaces
+*every* `[[badges]]` entry for `blocked_on`, however many values they match
+between them. Its entries stand where the first `[[badges]]` entry for that key
+stood, so overriding one badge does not reorder the row.
+
+**A project's own keys have to come before its badges.** `[[projects.badges]]`
+opens a table of its own, and `name`, `path` or anything else written after it
+is read as part of the badge rather than the project. The error says
+``missing field `path` in `projects` `` — naming a key you did in fact write,
+and saying nothing about where it sits.
 
 ## `[join]`
 

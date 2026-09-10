@@ -1114,6 +1114,7 @@ detached
             environment_command: None,
             credential_command: None,
             poll,
+            badges: Vec::new(),
             worktrees: Vec::new(),
         }
     }
