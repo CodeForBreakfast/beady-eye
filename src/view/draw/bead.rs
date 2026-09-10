@@ -592,7 +592,9 @@ mod tests {
         };
 
         assert!(
-            said(badge(Some(somewhere))).contains(&hyperlink("⇢ #12", somewhere)),
+            said(badge(Some(somewhere))).contains(
+                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
+            ),
             "the badge naming a URL was not made a link"
         );
         assert!(

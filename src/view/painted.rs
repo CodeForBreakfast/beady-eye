@@ -17,6 +17,8 @@ use ratatui::style::Style;
 use ratatui::widgets::Widget;
 use ratatui::{Frame, Terminal};
 
+use crate::view::fitted::words_of;
+
 /// A run of columns drawn in one style.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Run {
@@ -99,30 +101,6 @@ fn covered(cell: &Cell) -> u16 {
         _ => 1,
     }
 }
-
-/// What a cell says, with any escape sequence taken out of it.
-///
-/// A hyperlink is written into the symbol because it cannot be written into a
-/// span, but it is not among the words: a reader sees where the link goes
-/// only by following it.
-fn words_of(symbol: &str) -> String {
-    let mut words = String::new();
-    let mut rest = symbol;
-    while let Some(open) = rest.find(ESCAPE) {
-        words.push_str(&rest[..open]);
-        rest = match rest[open..].find(ST) {
-            Some(end) => &rest[open + end + ST.len()..],
-            None => "",
-        };
-    }
-    words.push_str(rest);
-    words
-}
-
-/// The escape that opens an operating-system command, and the one that ends
-/// it. `Fitted` writes a hyperlink between them.
-const ESCAPE: char = '\x1b';
-const ST: &str = "\x1b\\";
 
 #[cfg(test)]
 mod tests {

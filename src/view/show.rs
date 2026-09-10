@@ -4,7 +4,7 @@
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Clear};
+use ratatui::widgets::Block;
 use ratatui::Frame;
 
 use crate::model::edges::Related;
@@ -12,7 +12,7 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
 use crate::view::draw::tone::status_style;
-use crate::view::fitted::{indent, Fitted};
+use crate::view::fitted::{cover, indent, Fitted};
 use crate::view::forest::Forest;
 use crate::view::markdown;
 use crate::view::palette;
@@ -510,7 +510,7 @@ fn dimmed_if_closed(status: &Status) -> Style {
 
 /// Draw the bead in a window over the forest.
 ///
-/// `Clear` blanks the window first, which is what stops the trees showing
+/// The ground is blanked first, which is what stops the trees showing
 /// through between the rows. The way back is the border's title, so a window
 /// too short for a single row still holds it: a reader who cannot see how to
 /// leave is stuck in a view they may have opened by accident. Where the bead
@@ -548,7 +548,7 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
         phrase::way_back_from_bead(&node.id, view.scrolls(), follows),
         palette::TITLE,
     ));
-    frame.render_widget(Clear, window);
+    cover(frame, window);
     frame.render_widget(block, window);
 
     for (n, row) in page

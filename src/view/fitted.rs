@@ -9,7 +9,8 @@ use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Clear, Widget};
+use ratatui::Frame;
 
 use crate::view::palette;
 
@@ -26,10 +27,40 @@ pub(crate) const GAP: usize = 2;
 const OSC_8: &str = "\x1b]8;;";
 const ST: &str = "\x1b\\";
 
-/// `said`, wrapped so the terminal makes it a link to `to`.
-pub(crate) fn hyperlink(said: &str, to: &str) -> String {
-    format!("{OSC_8}{to}{ST}{said}{OSC_8}{ST}")
+/// `said`, wrapped so the terminal makes it a link to `to`. Nothing where
+/// either of them holds a control character.
+///
+/// Both come from a tracker rather than from this program, and what ends this
+/// sequence is itself a control character. One inside the sequence ends it
+/// early, and the rest of that value reaches the terminal as commands of its
+/// own — a row of a bead list saying whatever it likes to the terminal the
+/// reader is sitting at.
+pub(crate) fn hyperlink(said: &str, to: &str) -> Option<String> {
+    let holds_control = |text: &str| text.chars().any(char::is_control);
+    (!holds_control(said) && !holds_control(to))
+        .then(|| format!("{OSC_8}{to}{ST}{said}{OSC_8}{ST}"))
 }
+
+/// What a cell says, with any escape sequence taken out of it.
+///
+/// A hyperlink is written into the symbol because it cannot be written into a
+/// span, but it is not among the words: a reader sees where a link goes only
+/// by following it.
+pub(crate) fn words_of(symbol: &str) -> String {
+    let mut words = String::new();
+    let mut rest = symbol;
+    while let Some(open) = rest.find(ESCAPE) {
+        words.push_str(&rest[..open]);
+        rest = match rest[open..].find(ST) {
+            Some(end) => &rest[open + end + ST.len()..],
+            None => "",
+        };
+    }
+    words.push_str(rest);
+    words
+}
+
+const ESCAPE: char = '\x1b';
 
 /// A span of the title block that stands for somewhere the reader can go.
 ///
@@ -239,8 +270,11 @@ impl Kept {
         ) else {
             return;
         };
+        let Some(said) = hyperlink(&self.said, &self.to) else {
+            return;
+        };
         if let Some(cell) = buf.cell_mut((area.x + at, area.y)) {
-            cell.set_symbol(&hyperlink(&self.said, &self.to))
+            cell.set_symbol(&said)
                 .set_diff_option(CellDiffOption::ForcedWidth(width));
         }
     }
@@ -259,6 +293,39 @@ fn surviving(links: &[Link], title: &[Span<'static>], whole: usize, starts: usiz
             to: link.to.clone(),
         })
         .collect()
+}
+
+/// Blank the ground a window is about to stand on.
+///
+/// `Clear` alone is not enough over a row carrying a link. The whole link sits
+/// in the cell it starts on, reporting the width of its words, and the diff
+/// skips the columns behind that cell whatever they now hold — so a link
+/// starting outside the window and reaching under it swallows the window's own
+/// left edge, and the border never reaches the terminal. Such a link gives the
+/// columns back and stops being a link, keeping the glyph it drew in the one
+/// column it still has. A badge under a window is a badge the reader cannot
+/// see anyway.
+pub(crate) fn cover(frame: &mut Frame, window: Rect) {
+    frame.render_widget(Clear, window);
+
+    let buf = frame.buffer_mut();
+    for y in window.top()..window.bottom() {
+        for x in buf.area.left()..window.left() {
+            let Some(cell) = buf.cell((x, y)) else {
+                continue;
+            };
+            let CellDiffOption::ForcedWidth(width) = cell.diff_option else {
+                continue;
+            };
+            if x.saturating_add(width.get()) <= window.left() {
+                continue;
+            }
+            let kept = head_of(&words_of(cell.symbol()), 1);
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_symbol(&kept).set_diff_option(CellDiffOption::None);
+            }
+        }
+    }
 }
 
 /// What a run of spans takes up on screen, in columns rather than in bytes:
@@ -334,6 +401,9 @@ fn head_of(text: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use ratatui::backend::TestBackend;
+    use ratatui::widgets::Block;
+    use ratatui::Terminal;
 
     use crate::view::painted::Painted;
 
@@ -498,7 +568,9 @@ mod tests {
         let buf = rendered(a_linked_row(), 40);
 
         assert!(
-            symbols(&buf).contains(&hyperlink("⇢ #12", SOMEWHERE)),
+            symbols(&buf).contains(
+                &hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
             "the link is not on the row: {:?}",
             symbols(&buf)
         );
@@ -529,8 +601,80 @@ mod tests {
              before the cut: {said:?}"
         );
         assert!(
-            said.contains(&hyperlink("⇢ #12", SOMEWHERE)),
+            said.contains(
+                &hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
             "a link the cut stopped short of was dropped: {said:?}"
+        );
+    }
+
+    /// A URL is a tracker's to write, and what ends the sequence carrying one
+    /// is a control character. A link is worth less than a terminal a row can
+    /// say anything it likes to.
+    #[test]
+    fn a_link_carrying_a_control_character_is_not_opened() {
+        for to in [
+            format!("https://forge.invalid{ST}\x1b]52;c;cGF5bG9hZA=={ST}"),
+            "https://forge.invalid/\nfoo".to_string(),
+            "https://forge.invalid/\rfoo".to_string(),
+        ] {
+            let row = Fitted::new(
+                vec![Span::raw("orb-7")],
+                vec![Span::raw("a title"), Span::raw(" "), Span::raw("⇢ #12")],
+                Vec::new(),
+            )
+            .linking(vec![Link {
+                at: 2,
+                to: to.clone(),
+            }]);
+
+            let said = symbols(&rendered(row, 40));
+
+            assert!(
+                !said.contains(ESCAPE),
+                "a link naming {to:?} reached the terminal: {said:?}"
+            );
+            assert!(
+                said.contains("⇢ #12"),
+                "the badge stopped drawing as well as stopped linking: {said:?}"
+            );
+        }
+    }
+
+    /// A window standing on a row whose link starts outside it. The link is
+    /// holding columns the window needs, and the diff cannot reach past it, so
+    /// without the hand-back the window's own left edge is never sent and the
+    /// badge prints over it.
+    #[test]
+    fn a_window_over_a_link_that_started_outside_it_still_draws_its_own_edge() {
+        // The link says `⇢ #12` from column 15, so a window opening at 17
+        // stands on the middle of it.
+        let window = Rect::new(17, 0, 10, 3);
+        let mut terminal = Terminal::new(TestBackend::new(40, 3)).expect("a test backend");
+        let mut draw_row_and = |window: Option<Rect>| {
+            terminal
+                .draw(|frame| {
+                    a_linked_row().render(Rect::new(0, 0, 40, 1), frame.buffer_mut());
+                    if let Some(window) = window {
+                        cover(frame, window);
+                        frame.render_widget(Block::bordered(), window);
+                    }
+                })
+                .expect("a draw into memory");
+        };
+        draw_row_and(None);
+        draw_row_and(Some(window));
+
+        let screen = terminal.backend().buffer().clone();
+        assert_eq!(
+            screen[(window.left(), 0)].symbol(),
+            "┌",
+            "the window's left edge never reached the terminal"
+        );
+        assert_eq!(
+            screen[(15, 0)].symbol(),
+            "⇢",
+            "the column the link handed back says nothing the reader can see"
         );
     }
 
