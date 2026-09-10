@@ -153,6 +153,21 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 nothing, and a URL built round the parts that were never there points at
 somewhere else. The badge still draws its `render`; it just has nowhere to go.
 
+`colour = "status"` draws the badge in the colour that bead's status is drawn
+in, which is the colour of its id on the same row. A ticket in another tracker
+then reads as red on a blocked bead and orange on an in-progress one, without
+your having to say so anywhere. It is the only colour a badge may name: the
+theme owns the palette, so a colour written here would be one no terminal theme
+could move.
+
+```toml
+[[badges]]
+key    = "jira"
+match  = "(?<ticket>[A-Z]+-[0-9]+)"
+render = "{ticket}"
+colour = "status"
+```
+
 `bdi` has no idea what your metadata means and draws the badge as written.
 
 ## `[[projects.badges]]`

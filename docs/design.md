@@ -1711,7 +1711,9 @@ name to the socket after any command that wrote something.
           "blocked_by": ["smt-4kd3p.13"],
           "started_at": "2026-08-29T10:00:00Z",
           "closed_at": null,
-          "badges": [{ "key": "blocked_on", "text": "⏸ waiting", "link": null }],
+          "badges": [
+            { "key": "blocked_on", "text": "⏸ waiting", "link": null, "colour": null }
+          ],
           "agent": {
             "pane": { "session": "default", "id": "wCM:p9" },
             "pane_status": "working",
