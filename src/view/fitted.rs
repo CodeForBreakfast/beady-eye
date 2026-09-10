@@ -302,9 +302,9 @@ fn surviving(links: &[Link], title: &[Span<'static>], whole: usize, starts: usiz
 /// skips the columns behind that cell whatever they now hold — so a link
 /// starting outside the window and reaching under it swallows the window's own
 /// left edge, and the border never reaches the terminal. Such a link gives the
-/// columns back and stops being a link, keeping the glyph it drew in the one
-/// column it still has. A badge under a window is a badge the reader cannot
-/// see anyway.
+/// columns back and stops being a link, and its words are written again into
+/// the columns it still has. A badge under a window is a badge the reader
+/// cannot see anyway.
 pub(crate) fn cover(frame: &mut Frame, window: Rect) {
     frame.render_widget(Clear, window);
 
@@ -320,10 +320,13 @@ pub(crate) fn cover(frame: &mut Frame, window: Rect) {
             if x.saturating_add(width.get()) <= window.left() {
                 continue;
             }
-            let kept = head_of(&words_of(cell.symbol()), 1);
+            let words = words_of(cell.symbol());
+            let style = cell.style();
+            let room = (window.left() - x) as usize;
             if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_symbol(&kept).set_diff_option(CellDiffOption::None);
+                cell.reset();
             }
+            buf.set_stringn(x, y, words, room, style);
         }
     }
 }
@@ -530,12 +533,17 @@ mod tests {
     /// A row whose third title span is a link, so the link is neither the
     /// first thing on the line nor the last.
     fn a_linked_row() -> Fitted {
+        a_row_linking("⇢ #12")
+    }
+
+    /// The same row, for a badge whose text the caller chooses.
+    fn a_row_linking(badge: &str) -> Fitted {
         Fitted::new(
             vec![Span::raw("orb-7")],
             vec![
                 Span::raw("a title"),
                 Span::raw(" "),
-                Span::raw("⇢ #12"),
+                Span::raw(badge.to_string()),
                 Span::raw(" done"),
             ],
             Vec::new(),
@@ -645,37 +653,45 @@ mod tests {
     /// holding columns the window needs, and the diff cannot reach past it, so
     /// without the hand-back the window's own left edge is never sent and the
     /// badge prints over it.
+    ///
+    /// Both a badge whose first glyph takes one column and one whose first
+    /// glyph takes two, because the columns the link keeps are counted rather
+    /// than assumed.
     #[test]
     fn a_window_over_a_link_that_started_outside_it_still_draws_its_own_edge() {
-        // The link says `⇢ #12` from column 15, so a window opening at 17
-        // stands on the middle of it.
+        // A badge starts at column 15, so a window opening at 17 stands on the
+        // middle of one.
+        const STARTS: u16 = 15;
         let window = Rect::new(17, 0, 10, 3);
-        let mut terminal = Terminal::new(TestBackend::new(40, 3)).expect("a test backend");
-        let mut draw_row_and = |window: Option<Rect>| {
-            terminal
-                .draw(|frame| {
-                    a_linked_row().render(Rect::new(0, 0, 40, 1), frame.buffer_mut());
-                    if let Some(window) = window {
-                        cover(frame, window);
-                        frame.render_widget(Block::bordered(), window);
-                    }
-                })
-                .expect("a draw into memory");
-        };
-        draw_row_and(None);
-        draw_row_and(Some(window));
 
-        let screen = terminal.backend().buffer().clone();
-        assert_eq!(
-            screen[(window.left(), 0)].symbol(),
-            "┌",
-            "the window's left edge never reached the terminal"
-        );
-        assert_eq!(
-            screen[(15, 0)].symbol(),
-            "⇢",
-            "the column the link handed back says nothing the reader can see"
-        );
+        for (badge, glyph) in [("⇢ #12", "⇢"), ("🔗 #12", "🔗")] {
+            let mut terminal = Terminal::new(TestBackend::new(40, 3)).expect("a test backend");
+            let mut draw_row_and = |window: Option<Rect>| {
+                terminal
+                    .draw(|frame| {
+                        a_row_linking(badge).render(Rect::new(0, 0, 40, 1), frame.buffer_mut());
+                        if let Some(window) = window {
+                            cover(frame, window);
+                            frame.render_widget(Block::bordered(), window);
+                        }
+                    })
+                    .expect("a draw into memory");
+            };
+            draw_row_and(None);
+            draw_row_and(Some(window));
+
+            let screen = terminal.backend().buffer().clone();
+            assert_eq!(
+                screen[(window.left(), 0)].symbol(),
+                "┌",
+                "the window's left edge never reached the terminal, over {badge:?}"
+            );
+            assert_eq!(
+                screen[(STARTS, 0)].symbol(),
+                glyph,
+                "the columns the link handed back say nothing the reader can see"
+            );
+        }
     }
 
     /// A link cut for width loses the link rather than its closing sequence.
