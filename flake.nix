@@ -950,6 +950,13 @@
           {
             echo '#!${pkgs.bash}/bin/bash'
             echo 'printf "%s\n" "$@" > "$TMPDIR/asked"'
+            echo 'echo scope >> "$TMPDIR/scopes"'
+            # Without this the re-entry it is here to catch would spin rather
+            # than fail, and a check that hangs reports nothing to anybody.
+            echo 'if [ "$(${pkgs.coreutils}/bin/wc -l < "$TMPDIR/scopes")" -gt 1 ]; then'
+            echo '  echo "it asked for a scope from inside its own scope"'
+            echo '  exit 1'
+            echo 'fi'
             echo 'while [ "$1" != "--" ]; do shift; done'
             echo 'shift'
             echo 'exec "$@"'
