@@ -602,8 +602,9 @@ that cyan.
 **The underline is the exception, because it says the same thing on both
 surfaces.** A reference in prose and a badge carrying a `link` are both
 somewhere the reader can go, so one treatment covers them and the namespace
-rule has nothing to separate. It is also the whole of what says so: a
-destination is nowhere in what a row draws.
+rule has nothing to separate. It is also the whole of what a reader *sees*: a
+destination is nowhere in what a row draws, and a badge carrying one says where
+it goes in a hyperlink the terminal reads and the reader does not.
 
 ### 2. One palette, in one place
 

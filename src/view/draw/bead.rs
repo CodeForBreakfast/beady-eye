@@ -67,8 +67,9 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     fitted.toned(tone(row))
 }
 
-/// The underline is the whole of what says a badge is a link: its destination
-/// is nowhere in the row's text at any width.
+/// The underline is the whole of what a reader can *see* about a link: its
+/// destination is nowhere in the row's text at any width. What the terminal
+/// acts on is the hyperlink `Fitted` writes round the badge.
 fn badge_style(badge: &Badged) -> Style {
     match badge.link {
         Some(_) => palette::LINK,
