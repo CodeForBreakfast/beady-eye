@@ -1133,9 +1133,10 @@ path = "/home/user/dev/beacon"
         let refused = Config::from_toml(misplaced).expect_err("a badge has no path");
 
         let said = refused.to_string();
-        assert!(
-            said.contains("unknown field `path`, expected one of `key`, `match`, `render`, `link`"),
-            "{said}"
+        assert_eq!(
+            said.trim_end(),
+            "unknown field `path`, expected one of `key`, `match`, `render`, `link`, `colour`\n\
+             in `projects.badges`"
         );
         assert!(!said.contains("missing field"), "{said}");
     }

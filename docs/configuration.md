@@ -138,7 +138,8 @@ render = "⇢ {repo} #{number}"
 `render` reads. A badge that has one is drawn underlined, and the underline is
 the whole of what a reader sees about it — the URL is nowhere in the text on the
 row. The badge is also emitted as a terminal hyperlink, so a terminal that
-supports one opens the page when the reader clicks the badge.
+supports one opens the page when the reader clicks the badge, though some want a
+modifier held: [Opening a badge](#opening-a-badge) has that.
 
 ```toml
 [[badges]]
@@ -188,9 +189,113 @@ opens a table of its own, so `name`, `path` or anything else written after it
 belongs to the badge, which refuses it:
 
 ```
-unknown field `path`, expected one of `key`, `match`, `render`, `link`
+unknown field `path`, expected one of `key`, `match`, `render`, `link`, `colour`
 in `projects.badges`
 ```
+
+## Badging the systems you reference
+
+`bdi` has no badge built in for any service, so every reference is one you
+write. The shapes below are what a reference in metadata usually looks like, and
+each is the same three parts: a `match` that reads the value apart, a `render`
+that says what the row carries, and a `link` that rebuilds the address.
+
+**A badge reads a metadata key, never `external_ref`.** That field belongs to
+beads' sync adapters, whose `tracker.IssueTracker` contract parses and writes
+it. Metadata is the field with no owner, which is what makes it yours to write.
+A badge is that contract's `BuildExternalRef` run backwards — the key names the
+tracker, the value carries the identifier, and `link` rebuilds the URL. beads
+keeps the `bd:` prefix for itself and `_` for its internal keys, so a badge key
+avoids both.
+
+### An issue tracker key
+
+A bead carrying `jira = "HELIO-412"`:
+
+```toml
+[[badges]]
+key    = "jira"
+match  = "(?<ticket>[A-Z]+-[0-9]+)"
+render = "{ticket}"
+link   = "https://jira.invalid/browse/{ticket}"
+```
+
+The row draws `HELIO-412` underlined, and it opens the ticket.
+
+### A pull request written as an owner, a repository and a number
+
+A bead carrying `delivery_pr = "orbital/atlas#12"`:
+
+```toml
+[[badges]]
+key    = "delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ {repo} #{number}"
+link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
+```
+
+The row draws `⇢ atlas #12` and opens the pull request. The owner never reaches
+the row: a capture `render` leaves out is still `link`'s to use.
+
+### A bare number, in a project with only one repository
+
+A bead carrying `delivery_pr = "12"` has nothing in the value to build an
+address out of, and a shared list can only say what the value itself carries.
+The project's own entry supplies the rest:
+
+```toml
+[[projects]]
+name = "beacon"
+path = "/home/you/dev/beacon"
+
+[[projects.badges]]
+key    = "delivery_pr"
+match  = "(?<number>[0-9]+)"
+render = "⇢ #{number}"
+link   = "https://forge.invalid/orbital/beacon/pull/{number}"
+```
+
+This shadows `delivery_pr` for `beacon` and for nothing else, by the rule
+[`[[projects.badges]]`](#projectsbadges) gives.
+
+### A reference stored as a full URL
+
+`{}` is the whole value wherever a template takes a capture, `link` included, so
+an address needs no rebuilding. `match` still earns its place: it shortens the
+row, and it declines a value that is not an address of yours.
+
+```toml
+[[badges]]
+key    = "delivery_pr"
+match  = "https://forge.invalid/[^/]+/(?<repo>[^/]+)/pull/(?<number>[0-9]+)"
+render = "⇢ {repo} #{number}"
+link   = "{}"
+```
+
+### What a badge says when it cannot do what you asked
+
+A badge with no `link` is a filter. It is written to decline, so a value its
+pattern does not read draws nothing and reports nothing.
+
+A badge with a `link` is written to point somewhere, so a value it cannot point
+at is a reference the reader has lost. The row says so where it says its
+anomalies:
+
+| what the badge met | what the row says |
+|---|---|
+| a value no pattern reads | `no badge for delivery_pr: no pattern reads this value` |
+| a value that left part of the `link` unfilled | `no link for delivery_pr: this value leaves part of it unfilled` |
+| a link holding a control character | `no link for delivery_pr: it holds a control character` |
+
+### Opening a badge
+
+`bdi` captures the mouse at startup so the wheel can move the tree, and a
+terminal that registers its open-the-link binding for the ungrabbed case only
+will never fire it while `bdi` is up. The binding that survives a grab is the
+modified one. In kitty a plain click on a badge does nothing and ctrl+shift+click
+opens it, and in herdr a plain click opens it. Those two are what has been tried:
+where a plain click does nothing in yours, look for the modifier it wants for a
+link under mouse capture.
 
 ## `[join]`
 
