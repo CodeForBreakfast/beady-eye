@@ -730,6 +730,52 @@ mod tests {
         assert_eq!(drawn, said(unlinked));
     }
 
+    /// A badge the row cut has no link behind it — `surviving` keeps only the
+    /// spans the title block kept whole — so it is not drawn as one either.
+    ///
+    /// Read as a pair on one badge rather than as a reading at the narrow
+    /// width alone. A badge that never carried a link is not underlined at
+    /// any width, so the narrow reading on its own passes whether the
+    /// underline was taken off or was never there.
+    ///
+    /// The badge that never carried one is read at both widths, as a whole
+    /// style rather than for its underline. The underline is all the cut
+    /// takes, and a cut that reached the badge's colour would move a badge no
+    /// link was ever drawn on.
+    #[test]
+    fn a_badge_the_row_cut_is_drawn_without_the_underline_it_lost_the_link_for() {
+        let badge_at = |width: u16, to: Option<&str>| {
+            let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+            badged.badges = vec![Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #12".into(),
+                link: to.map(str::to_string),
+                colour: Some(Colour::Status),
+            }];
+            let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), width, 1);
+            run_saying(&painted, "⇢ #").style
+        };
+        let somewhere = Some("https://forge.invalid/orbital/atlas/pull/12");
+
+        assert!(
+            badge_at(EXACTLY_THE_ROW, somewhere)
+                .add_modifier
+                .contains(Modifier::UNDERLINED),
+            "the badge the row kept whole is not underlined"
+        );
+        assert!(
+            !badge_at(EXACTLY_THE_ROW - 1, somewhere)
+                .add_modifier
+                .contains(Modifier::UNDERLINED),
+            "the badge the row cut invites a click nothing is there to honour"
+        );
+        assert_eq!(
+            badge_at(EXACTLY_THE_ROW - 1, None),
+            badge_at(EXACTLY_THE_ROW, None),
+            "the cut moved a badge that never carried a link"
+        );
+    }
+
     /// The badge that names a URL is the one the terminal is told about, and
     /// it is told round the badge's own words — so the reader clicks the badge
     /// rather than retyping what it stands for.
