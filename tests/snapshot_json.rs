@@ -280,7 +280,7 @@ fn a_node_carries_every_field_the_contract_names() {
             "blocked_by": ["orb-9"],
             "started_at": "2026-08-29T10:00:00Z",
             "closed_at": null,
-            "badges": [{"key": "blocked_on", "text": "⏸ waiting"}],
+            "badges": [{"key": "blocked_on", "text": "⏸ waiting", "link": null}],
             "agent": null,
             "anomalies": [{"rule": "orphan-claim"}],
         })

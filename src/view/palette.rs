@@ -107,9 +107,10 @@ pub(crate) const QUIET: Style = Style::new().fg(Color::DarkGray);
 /// `NO_COLOR` set still has, and a light one at colour 8, where the theme's
 /// own choice of a tone between its foreground and its background carries
 /// the distinction and no arithmetic of the terminal's is involved. Not a
-/// slant: italic, underline and `CODE`'s cyan are prose's namespace and do
-/// not leak out of `markdown.rs`, and the band is `bdi` scanning its own
-/// words at the reader rather than rendered prose.
+/// slant and not an underline: italic and `CODE`'s cyan are prose's
+/// namespace, an underline says a link wherever it is drawn, and the band is
+/// `bdi` scanning its own words at the reader rather than prose to read or
+/// somewhere to go.
 ///
 /// **A light background and `NO_COLOR` together leave the band no tone**,
 /// because the one channel that survives colour being off is the one a
@@ -177,6 +178,9 @@ pub(crate) const HEADING: Style = Style::new().add_modifier(Modifier::BOLD);
 /// Prose's own emphasis, each a weight alone for the reason a heading is.
 pub(crate) const EMPHASIS: Style = Style::new().add_modifier(Modifier::ITALIC);
 pub(crate) const STRONG: Style = Style::new().add_modifier(Modifier::BOLD);
+
+/// Somewhere to go: a reference in prose, and a badge whose config gave it a
+/// `link`.
 pub(crate) const LINK: Style = Style::new().add_modifier(Modifier::UNDERLINED);
 
 #[cfg(test)]
@@ -205,20 +209,19 @@ mod tests {
         );
     }
 
-    /// Prose keeps a namespace of its own — `markdown.rs`'s cyan, its
-    /// italic and its underline are for rendered text and must not leak out
-    /// of it — and the band is the far side of that line: `bdi` scanning
-    /// its own words at the reader rather than an author's words being
-    /// read.
+    /// The band is `bdi` scanning its own words at the reader, so it takes
+    /// neither treatment that means something else: a slant is an author's
+    /// emphasis and `markdown.rs`'s cyan is code, and an underline is
+    /// somewhere to go.
     #[test]
-    fn neither_background_answers_the_band_out_of_proses_namespace() {
+    fn neither_background_answers_the_band_in_a_treatment_that_means_something_else() {
         for background in [Background::Dark, Background::Light] {
             let said = voice(background);
             assert!(
                 !said
                     .add_modifier
                     .intersects(Modifier::ITALIC | Modifier::UNDERLINED),
-                "{background:?} took a treatment that is markdown.rs's"
+                "{background:?} took a treatment that means something else"
             );
             assert_ne!(said.fg, CODE.fg, "{background:?} took prose's own colour");
         }

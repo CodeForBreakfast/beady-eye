@@ -4,6 +4,7 @@
 //! lands are the renderer's. This is what there is to say about one bead.
 
 use crate::model::anomaly::Anomaly;
+use crate::model::badges::Badged;
 use crate::model::join::AgentRef;
 use crate::model::snapshot::{Counts, Node};
 use crate::model::types::Status;
@@ -32,7 +33,9 @@ pub struct Row {
     pub glyph: char,
     pub id: String,
     pub title: String,
-    pub badges: Vec<String>,
+    /// Each badge's text, and where it points where its config gave it
+    /// somewhere. The text is drawn and fitted; the URL is neither.
+    pub badges: Vec<Badged>,
     /// How far along what hangs off this bead is, where anything does. A leaf
     /// stands for itself alone, so a fraction over it would only repeat the
     /// glyph.
@@ -89,7 +92,7 @@ pub fn cells(
         glyph: status_glyph(&node.status),
         id: abbreviate(&node.id, root).to_string(),
         title: node.title.clone(),
-        badges: node.badges.iter().map(|b| b.text.clone()).collect(),
+        badges: node.badges.clone(),
         progress,
         agent: node.agent.as_ref().map(agent_marker),
         agent_briefly: node.agent.as_ref().map(agent_briefly),
@@ -393,16 +396,52 @@ mod tests {
             Badged {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
+                link: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
+                link: None,
             },
         ];
 
+        let row = cells(&badged, ROOT, None, None);
+        let drawn: Vec<&str> = row.badges.iter().map(|b| b.text.as_str()).collect();
+
+        assert_eq!(drawn, vec!["⇢ #12", "⏸ waiting"]);
+    }
+
+    /// The row is where the URL is going, so the row has to be carrying it.
+    /// `Fitted` cuts a line by the visible width of what its spans say, and
+    /// nothing measures a badge's destination — so it travels beside the text
+    /// rather than in it, and the row is the last place it can travel to.
+    #[test]
+    fn a_badge_carries_its_link_to_the_row_beside_the_text_it_draws() {
+        let mut badged = node("smt-4kd3p.20", Status::Blocked);
+        badged.badges = vec![
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #12".into(),
+                link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+            },
+            Badged {
+                key: "blocked_on".into(),
+                text: "⏸ waiting".into(),
+                link: None,
+            },
+        ];
+
+        let row = cells(&badged, ROOT, None, None);
+
         assert_eq!(
-            cells(&badged, ROOT, None, None).badges,
-            vec!["⇢ #12", "⏸ waiting"]
+            row.badges[0].link.as_deref(),
+            Some("https://forge.invalid/orbital/atlas/pull/12")
+        );
+        assert_eq!(row.badges[1].link, None);
+        assert!(
+            !row.badges[0].text.contains("forge.invalid"),
+            "the URL is in the text the row draws: {:?}",
+            row.badges[0].text
         );
     }
 

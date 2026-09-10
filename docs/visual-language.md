@@ -559,7 +559,7 @@ says which one.
 | **weight** | *this is the thing to go to* — a row with an agent on it, a section name, a heading, the way out on a window's border | one reading per surface, and on the forest the top of the liveness scale as well |
 | **reverse** | *the cursor is here* | exactly one client, and it stays that way |
 | **italic** | emphasis, inside rendered prose | never outside `markdown.rs` |
-| **underline** | a link, inside rendered prose | never outside `markdown.rs` |
+| **underline** | *somewhere to go* — a reference in prose, and a badge whose config gave it a `link` | one meaning wherever it is drawn |
 
 `design.md:1506-1512` already argues most of this, from the other end: it says
 a row has *"exactly two colour-carrying channels — the glyph carries the
@@ -593,11 +593,17 @@ every surface.
 **`Color::Reset` stops being a rung.** See answer 3 — it is the ground the
 scale is measured against, not a value on it.
 
-**Prose keeps a namespace of its own.** `markdown.rs`'s cyan for code, its
-italic and its underline are inside rendered text, where the reader is reading
-an author's words rather than scanning `bdi`'s. They do not have to fit the
-scheme above, and they must not leak out of it: nothing outside `markdown.rs`
-draws italic, underline, or that cyan.
+**Prose keeps a namespace of its own.** `markdown.rs`'s cyan for code and its
+italic are inside rendered text, where the reader is reading an author's words
+rather than scanning `bdi`'s. They do not have to fit the scheme above, and
+they must not leak out of it: nothing outside `markdown.rs` draws italic or
+that cyan.
+
+**The underline is the exception, because it says the same thing on both
+surfaces.** A reference in prose and a badge carrying a `link` are both
+somewhere the reader can go, so one treatment covers them and the namespace
+rule has nothing to separate. It is also the whole of what says so: a
+destination is nowhere in what a row draws.
 
 ### 2. One palette, in one place
 
