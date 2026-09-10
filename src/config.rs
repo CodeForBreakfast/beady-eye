@@ -225,6 +225,13 @@ pub struct Badge {
     #[serde(rename = "match")]
     pub match_value: Option<Pattern>,
     pub render: String,
+    /// Where the badge points, as a template over the same captures `render`
+    /// reads.
+    ///
+    /// A brace pair naming nothing the value supplied leaves the badge with
+    /// no link at all: a destination built out of a part that was never
+    /// there points somewhere else.
+    pub link: Option<String>,
 }
 
 /// A badge's `match`: the pattern a setup wrote, and that pattern compiled.
@@ -776,13 +783,29 @@ impl Badge {
     /// One pass, so what is placed is never read again: a value spelled like
     /// a placeholder is a value.
     pub fn apply(&self, value: &str) -> Option<String> {
+        Some(self.fill(&self.render, value)?.text)
+    }
+
+    /// Where this badge points for a metadata value: its `link` filled in
+    /// from the captures `render` reads, or `None` where the config names no
+    /// link, the badge does not apply, or a brace pair in the template named
+    /// nothing the value supplied.
+    pub fn link_for(&self, value: &str) -> Option<String> {
+        let filled = self.fill(self.link.as_ref()?, value)?;
+        filled.whole.then_some(filled.text)
+    }
+
+    /// `template` filled in for `value`, or `None` where this badge does not
+    /// apply to the value at all.
+    fn fill(&self, template: &str, value: &str) -> Option<Filled> {
         let taken = match &self.match_value {
             Some(pattern) => Some(pattern.captures(value)?),
             None => None,
         };
 
         let mut text = String::new();
-        let mut rest = self.render.as_str();
+        let mut whole = true;
+        let mut rest = template;
         while let Some(close) = rest.find('}') {
             let Some(open) = rest[..close].rfind('{') else {
                 text.push_str(&rest[..=close]);
@@ -797,13 +820,23 @@ impl Badge {
                     .and_then(|taken| taken.name(name))
                     .map(|capture| capture.as_str()),
             };
+            whole &= placed.is_some();
             text.push_str(&rest[..open]);
             text.push_str(placed.unwrap_or(&rest[open..=close]));
             rest = &rest[close + 1..];
         }
         text.push_str(rest);
-        Some(text)
+        Some(Filled { text, whole })
     }
+}
+
+/// One template filled in for one value.
+struct Filled {
+    text: String,
+    /// Whether every brace pair in the template named something the value
+    /// supplied. `render` draws a pair that named nothing as it was written,
+    /// and a `link` carrying one is dropped, so the two need telling apart.
+    whole: bool,
 }
 
 #[cfg(test)]
@@ -918,6 +951,7 @@ path = "/home/user/dev/cinder"
                         key: "delivery_pr".to_string(),
                         match_value: None,
                         render: "⇢ beacon/{}".to_string(),
+                        link: None,
                     }],
                     worktrees: Vec::new(),
                 },
@@ -942,11 +976,13 @@ path = "/home/user/dev/cinder"
                     key: "delivery_pr".to_string(),
                     match_value: None,
                     render: "⇢ {}".to_string(),
+                    link: None,
                 },
                 Badge {
                     key: "blocked_on".to_string(),
                     match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
+                    link: None,
                 },
             ]
         );
@@ -972,6 +1008,7 @@ path = "/home/user/dev/cinder"
             key: key.to_string(),
             match_value: None,
             render: render.to_string(),
+            link: None,
         }
     }
 
@@ -1792,6 +1829,7 @@ metadata_keys = ["working_topic"]
             key: "delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
+            link: None,
         };
         assert_eq!(b.apply("owner/repo#7"), Some("⇢ owner/repo#7".to_string()));
     }
@@ -1802,6 +1840,7 @@ metadata_keys = ["working_topic"]
             key: "blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
+            link: None,
         };
         assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
         assert_eq!(b.apply("dependency"), None);
@@ -1833,6 +1872,7 @@ metadata_keys = ["working_topic"]
                 key: "blocked_on".to_string(),
                 match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
+                link: None,
             };
             for candidate in values.iter().flat_map(|v| anything_near(v)) {
                 assert_eq!(
@@ -1850,6 +1890,7 @@ metadata_keys = ["working_topic"]
             key: "delivery_pr".to_string(),
             match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
+            link: None,
         };
         assert_eq!(
             b.apply("owner/atlas#7"),
@@ -1864,6 +1905,7 @@ metadata_keys = ["working_topic"]
             key: "delivery_pr".to_string(),
             match_value: None,
             render: "{{}}".to_string(),
+            link: None,
         };
         assert_eq!(b.apply("owner/repo#7"), Some("{owner/repo#7}".to_string()));
     }
@@ -1876,10 +1918,109 @@ metadata_keys = ["working_topic"]
             key: "working_topic".to_string(),
             match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
+            link: None,
         };
         assert_eq!(
             b.apply("{topic}/atlas"),
             Some("{topic} · atlas".to_string())
+        );
+    }
+
+    /// A `link` is a template over the same captures `render` reads, which is
+    /// what lets one global list build a URL out of a reference held as
+    /// `owner/repo#number`: a `render` alone has no way to name a host.
+    #[test]
+    fn a_link_is_built_from_the_captures_render_reads() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
+            render: "⇢ #{number}".to_string(),
+            link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
+        };
+        assert_eq!(b.apply("orbital/atlas#7"), Some("⇢ #7".to_string()));
+        assert_eq!(
+            b.link_for("orbital/atlas#7"),
+            Some("https://forge.invalid/orbital/atlas/pull/7".to_string())
+        );
+    }
+
+    /// A capture the pattern names but this value never supplied leaves the
+    /// badge with no link. A `delivery_pr` is held as a bare number as well
+    /// as a qualified reference, and a URL built round an owner and a
+    /// repository that were never there points somewhere else entirely.
+    #[test]
+    fn a_link_missing_one_of_its_captures_is_no_link_at_all() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: Some(pattern(
+                r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
+            )),
+            render: "⇢ #{number}".to_string(),
+            link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
+        };
+        assert_eq!(b.apply("12"), Some("⇢ #12".to_string()));
+        assert_eq!(b.link_for("12"), None);
+        assert_eq!(
+            b.link_for("orbital/atlas#12"),
+            Some("https://forge.invalid/orbital/atlas/pull/12".to_string())
+        );
+    }
+
+    /// And a name the pattern has no capture for at all, which is the same
+    /// mistake written in the config rather than met in a value.
+    #[test]
+    fn a_link_naming_a_capture_the_pattern_never_had_is_no_link() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: Some(pattern(r"(?<number>[0-9]+)")),
+            render: "⇢ #{number}".to_string(),
+            link: Some("https://forge.invalid/{repo}/pull/{number}".to_string()),
+        };
+        assert_eq!(b.link_for("12"), None);
+    }
+
+    #[test]
+    fn a_badge_that_does_not_apply_points_nowhere() {
+        let b = Badge {
+            key: "blocked_on".to_string(),
+            match_value: Some(pattern("human")),
+            render: "⏸ waiting".to_string(),
+            link: Some("https://forge.invalid/waiting".to_string()),
+        };
+        assert_eq!(
+            b.link_for("human"),
+            Some("https://forge.invalid/waiting".to_string())
+        );
+        assert_eq!(b.link_for("dependency"), None);
+    }
+
+    #[test]
+    fn a_badge_whose_config_names_no_link_points_nowhere() {
+        let b = Badge {
+            key: "delivery_pr".to_string(),
+            match_value: None,
+            render: "⇢ {}".to_string(),
+            link: None,
+        };
+        assert_eq!(b.link_for("orbital/atlas#7"), None);
+    }
+
+    #[test]
+    fn a_badges_link_is_read_out_of_the_config() {
+        let cfg = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key    = "delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ #{{number}}"
+link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
+"#
+        ))
+        .expect("the config reads");
+
+        assert_eq!(
+            cfg.badges[0].link_for("orbital/atlas#7"),
+            Some("https://forge.invalid/orbital/atlas/pull/7".to_string())
         );
     }
 

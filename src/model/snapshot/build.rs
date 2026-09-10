@@ -473,6 +473,7 @@ mod tests {
             vec![Badged {
                 key: "blocked_on".to_string(),
                 text: "⏸ waiting".to_string(),
+                link: None,
             }]
         );
         assert!(node(&t, "orb-7").badges.is_empty());
@@ -521,6 +522,7 @@ render = "⏸ waiting"
             vec![Badged {
                 key: "blocked_on".to_string(),
                 text: "⏸ ask the ground station".to_string(),
+                link: None,
             }]
         );
     }

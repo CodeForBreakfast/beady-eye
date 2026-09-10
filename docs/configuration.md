@@ -134,14 +134,32 @@ match  = "[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 ```
 
+`link` is where the badge points, written as a template over the same captures
+`render` reads. A badge that has one is drawn underlined, which is the whole of
+what says it is a link — the URL is nowhere in the text on the row.
+
+```toml
+[[badges]]
+key    = "delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ #{number}"
+link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
+```
+
+**A `link` naming something this value did not supply is no link at all.** A
+`delivery_pr` written as a bare `12` gives an optional `owner` and `repo`
+nothing, and a URL built round the parts that were never there points at
+somewhere else. The badge still draws its `render`; it just has nowhere to go.
+
 `bdi` has no idea what your metadata means and draws the badge as written.
 
 ## `[[projects.badges]]`
 
 What one project draws in place of this list, for the keys it names and no
-others. A `render` cannot name a repository or a host, so a list shared across
-projects cannot give each one's `delivery_pr` its own destination. Every key a
-project stays silent about keeps drawing what `[[badges]]` says.
+others. A shared list can only say what the value itself carries, so a project
+whose `delivery_pr` leaves out its owner and repository needs an entry of its
+own to supply them. Every key a project stays silent about keeps drawing what
+`[[badges]]` says.
 
 It shadows by key rather than by entry: a project naming `blocked_on` replaces
 *every* `[[badges]]` entry for `blocked_on`, however many values they match
