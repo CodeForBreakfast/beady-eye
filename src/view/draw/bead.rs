@@ -4,6 +4,7 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
+use crate::model::badges::Badged;
 use crate::model::types::Status;
 use crate::view::fitted::{Fitted, GAP};
 use crate::view::palette;
@@ -49,7 +50,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     let mut title = vec![Span::raw(row.title.clone())];
     for badge in &row.badges {
         title.push(Span::raw(" ".repeat(GAP)));
-        title.push(Span::raw(badge.clone()));
+        title.push(Span::styled(badge.text.clone(), badge_style(badge)));
     }
 
     let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref()));
@@ -57,6 +58,15 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
         fitted = fitted.briefly(state(row, Some(briefly)));
     }
     fitted.toned(tone(row))
+}
+
+/// The underline is the whole of what says a badge is a link: its destination
+/// is nowhere in the row's text at any width.
+fn badge_style(badge: &Badged) -> Style {
+    match badge.link {
+        Some(_) => palette::LINK,
+        None => Style::new(),
+    }
 }
 
 /// The row's right-hand block, with the agent said in whichever of its two
@@ -106,7 +116,7 @@ fn state(row: &Row, agent: Option<&String>) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
@@ -114,6 +124,7 @@ mod tests {
     use crate::model::snapshot::Node;
     use crate::view::draw::tone::status_style;
     use crate::view::draw::{fitted, tests::*};
+    use crate::view::painted::Run;
 
     #[test]
     fn a_bead_line_says_its_glyph_its_id_and_its_title_in_that_order() {
@@ -465,10 +476,12 @@ mod tests {
             Badged {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
+                link: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
+                link: None,
             },
         ];
         let drawn = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1).rows();
@@ -476,6 +489,92 @@ mod tests {
         let second = drawn[0].find("⏸ waiting").expect("the second badge");
 
         assert!(first < second, "{drawn:?}");
+    }
+
+    /// A badge with somewhere to go is underlined, and the underline is the
+    /// only thing about it that changes: the badge beside it, whose config
+    /// named no `link`, is drawn exactly as it was before links existed.
+    #[test]
+    fn a_badge_with_a_link_is_drawn_underlined_and_one_without_is_not() {
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #12".into(),
+                link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+            },
+            Badged {
+                key: "blocked_on".into(),
+                text: "⏸ waiting".into(),
+                link: None,
+            },
+        ];
+
+        let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let linked = run_saying(&painted, "⇢ #12");
+        let plain = run_saying(&painted, "⏸ waiting");
+
+        assert!(
+            linked.style.add_modifier.contains(Modifier::UNDERLINED),
+            "the badge with a link is not underlined: {linked:?}"
+        );
+        assert!(
+            !plain.style.add_modifier.contains(Modifier::UNDERLINED),
+            "the badge with no link is underlined: {plain:?}"
+        );
+    }
+
+    /// The URL costs the row nothing. `Fitted` cuts a line by the visible
+    /// width of what its spans say, so a URL held in a span's text would be
+    /// counted in the columns the row has to spend.
+    ///
+    /// Read at the width the row's own words exactly fill, which is the
+    /// width that tells the two apart: a URL counted there takes the row
+    /// past its width and the badge is cut to nothing. Wider, nothing is cut
+    /// either way; narrower, the words alone are cut and the same cut hides
+    /// the URL behind it — a reading at either would pass whether the URL
+    /// were measured or not.
+    #[test]
+    fn a_badges_link_is_not_among_the_columns_the_row_is_cut_to() {
+        let unlinked = Badged {
+            key: "delivery_pr".into(),
+            text: "⇢ #12".into(),
+            link: None,
+        };
+        let linked = Badged {
+            link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+            ..unlinked.clone()
+        };
+
+        let said = |badge: Badged| {
+            let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+            badged.badges = vec![badge];
+            Painted::of(bead_line(&row(&badged), BRANCH, 4), EXACTLY_THE_ROW, 1).rows()
+        };
+
+        let drawn = said(linked);
+
+        assert!(
+            drawn[0].ends_with("a bead  ⇢ #12"),
+            "the badge did not survive the row's own width: {drawn:?}"
+        );
+        assert_eq!(drawn, said(unlinked));
+    }
+
+    /// The columns `  ├── ● .20   a bead  ⇢ #12` fills, and not one more.
+    const EXACTLY_THE_ROW: u16 = 27;
+
+    /// The one run of `painted`'s first line that says `words`.
+    fn run_saying(painted: &Painted, words: &str) -> Run {
+        let said: Vec<Run> = painted
+            .row(0)
+            .into_iter()
+            .filter(|run| run.said.contains(words))
+            .collect();
+        match said.as_slice() {
+            [only] => only.clone(),
+            _ => panic!("{words:?} is said by {} runs, not one", said.len()),
+        }
     }
 
     #[test]

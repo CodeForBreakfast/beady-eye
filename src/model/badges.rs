@@ -14,6 +14,13 @@ use crate::model::types::Bead;
 pub struct Badged {
     pub key: String,
     pub text: String,
+    /// Where the badge points, for one whose config names a `link`.
+    ///
+    /// Beside the text rather than inside it, and beside it the whole way to
+    /// the row: a line is fitted by the visible width of what its spans say,
+    /// so a URL held in the text would be counted in the columns the row has
+    /// to spend.
+    pub link: Option<String>,
 }
 
 /// Render the configured badges that apply to this bead.
@@ -26,6 +33,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Vec<Badged> {
             Some(Badged {
                 key: b.key.clone(),
                 text,
+                link: b.link_for(value),
             })
         })
         .collect()
@@ -57,16 +65,19 @@ mod tests {
                 key: "blocked_on".into(),
                 match_value: Some(matching("human")),
                 render: "waiting".into(),
+                link: None,
             },
             Badge {
                 key: "blocked_on".into(),
                 match_value: Some(matching("dependency")),
                 render: "dep".into(),
+                link: None,
             },
             Badge {
                 key: "absent_key".into(),
                 match_value: None,
                 render: "never".into(),
+                link: None,
             },
         ];
 
@@ -77,6 +88,7 @@ mod tests {
             vec![Badged {
                 key: "blocked_on".to_string(),
                 text: "waiting".to_string(),
+                link: None,
             }]
         );
     }
@@ -90,6 +102,7 @@ mod tests {
             key: "xyzzy".into(),
             match_value: None,
             render: "→ {}".into(),
+            link: None,
         }];
 
         let got = badges_for(&bead, &cfg);
@@ -99,6 +112,7 @@ mod tests {
             vec![Badged {
                 key: "xyzzy".to_string(),
                 text: "→ plugh".to_string(),
+                link: None,
             }]
         );
     }
