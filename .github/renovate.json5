@@ -1,0 +1,72 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // No schedule and no grouping, deliberately: a grouped pull request that
+  // goes red says nothing about which bump did it.
+
+  extends: ["config:best-practices"],
+
+  // The default a manager added later inherits.
+  rangeStrategy: "pin",
+
+  automerge: true,
+
+  // Off by default, and config:best-practices does not turn it on, so without
+  // this line flake.lock goes unmaintained while our nixpkgs input tracks a
+  // branch that moves daily.
+  //
+  // What it buys is the weekly whole-lock `nix flake update`. Per-input
+  // updates cannot reach our nixpkgs: the extractor keys each dependency on
+  // the node name in flake.lock and keeps only nodes whose name is also a root
+  // input name, so node `nixpkgs_2` — ours — is skipped while node `nixpkgs`,
+  // the one beads brings, is kept and read as ours.
+  nix: {
+    enabled: true,
+  },
+
+  packageRules: [
+    {
+      // cargo has no install-time equivalent to align with, so this rule is
+      // the whole of the supply-chain gate and a bump written by hand walks
+      // straight past it.
+      matchPackageNames: ["*"],
+      minimumReleaseAge: "7 days",
+    },
+    {
+      matchUpdateTypes: ["minor", "major"],
+      automerge: false,
+      addLabels: ["renovate/needs-review"],
+    },
+    {
+      // Lock-file maintenance deletes the lock and lets cargo and nix rebuild
+      // it, so the versions come from their own resolvers and the age gate
+      // above never sees them. It stays on because it is the only route by
+      // which a transitive crate moves at all.
+      matchUpdateTypes: ["lockFileMaintenance"],
+      automerge: false,
+      addLabels: ["renovate/needs-review"],
+    },
+    {
+      // The `conventional subject` job holds a title to 72 characters, and the
+      // default topic is the action's full name: the two DeterminateSystems
+      // actions in ci.yml overrun by seven, so every digest update would open
+      // and then fail on its own title. Dropping the owner buys nineteen.
+      matchManagers: ["github-actions"],
+      commitMessageTopic: "{{{replace '^.*/' '' depName}}}",
+    },
+    {
+      // beady-eye is published to crates.io, so its manifest declares what a
+      // consumer may resolve rather than what this build runs. Under the
+      // global `pin` a requirement becomes `=1.2.3`, which cargo cannot unify
+      // with any consumer wanting a different patch of the same crate.
+      // `update-lockfile` moves Cargo.lock instead, which is what the Nix
+      // build consumes (cargoLock.lockFile = ./Cargo.lock).
+      //
+      // Nothing excludes the MSRV floor, because nothing can reach it: the
+      // cargo manager extracts the dependency tables and never `rust-version`,
+      // so a rule naming it would match nothing and fail silently.
+      matchManagers: ["cargo"],
+      rangeStrategy: "update-lockfile",
+    },
+  ],
+}
