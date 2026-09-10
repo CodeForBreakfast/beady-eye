@@ -873,6 +873,136 @@
           touch $out
         '';
 
+        # A mutant that does not terminate ends a run in one of two ways, and
+        # only one of them leaves a verdict behind, so the timeout beside this
+        # and the cap here are both needed.
+        #
+        # The timeout is what produces the honest word: cargo-mutants kills the
+        # test that exceeds it, records TIMEOUT, and goes on to the next
+        # mutant. The cap is what keeps the machine while that clock runs, and
+        # it cannot stand in for the timeout. Measured at 27.1.0 on a crate
+        # whose `*` -> `/` mutant loops allocating: under a memory scope alone
+        # that mutant is contained, because the kernel kills the test binary
+        # two levels below cargo-mutants and the run survives it — but the run
+        # reads `7 caught`, since `cargo test` exits 101 and nothing tells that
+        # from a test which failed honestly. A cap on its own turns the
+        # pathology into a clean sheet. The same crate under `-t 5` reads
+        # `6 caught, 1 timeouts`.
+        #
+        # 8G is an honest clean build of every test binary plus the whole suite
+        # measured at 3.2G, with room over it. MemorySwapMax=0 so the bound is
+        # on memory rather than on a machine that is alive and paging.
+        # OOMPolicy=continue so the kill takes the process that asked rather
+        # than everything in the scope, which is what lets the run reach a
+        # verdict on the mutants after it.
+        #
+        # systemd-run is resolved from PATH rather than pinned, because what it
+        # talks to is the machine's own service manager and nothing in the
+        # closure. Naming pkgs.systemd would stop this flake evaluating on
+        # darwin to buy that, and a mac cannot run this command anyway.
+        boundTheMachine = ''
+          bound_the_machine() {
+            if [ -n "''${MUTATION_TEST_BOUND-}" ]; then
+              return 0
+            fi
+
+            if ! command -v systemd-run > /dev/null 2>&1; then
+              echo "There is no systemd-run here, so this run cannot be given a"
+              echo "memory bound, and an unbounded one is how mutation testing"
+              echo "takes a machine out of memory rather than timing out."
+              echo "Refusing to start."
+              echo
+              echo "A machine with no user service manager cannot run this"
+              echo "command. Score the change on one that has, rather than"
+              echo "reaching past this for cargo-mutants itself."
+              exit 1
+            fi
+
+            MUTATION_TEST_BOUND=1
+            export MUTATION_TEST_BOUND
+
+            echo "Bounding this run to ''${MUTATION_TEST_MEMORY_MAX:-8G} of memory."
+            exec systemd-run --user --scope --quiet \
+              -p MemoryMax="''${MUTATION_TEST_MEMORY_MAX:-8G}" \
+              -p MemorySwapMax=0 \
+              -p OOMPolicy=continue \
+              -- "$@"
+          }
+        '';
+
+        # Two ways this guard passes a reader while protecting nothing. It can
+        # hand a working command to a machine it cannot bound, which is the
+        # state the whole thing is here to end. Or it can re-enter itself for
+        # ever, since what it runs under the scope is the command that
+        # establishes the scope.
+        #
+        # The scope itself is not made here: a nix build has no user service
+        # manager, which is exactly the machine the refusal is about. What
+        # stands in for one is a systemd-run that records the properties it was
+        # asked for and then runs what followed the `--`, so the run reaching
+        # the body at all is the re-entry terminating.
+        boundTheMachineTest = pkgs.runCommand "bound-the-machine-test" { } ''
+          set -u
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          mkdir -p "$TMPDIR/bin"
+          {
+            echo '#!${pkgs.bash}/bin/bash'
+            echo 'printf "%s\n" "$@" > "$TMPDIR/asked"'
+            echo 'while [ "$1" != "--" ]; do shift; done'
+            echo 'shift'
+            echo 'exec "$@"'
+          } > "$TMPDIR/bin/systemd-run"
+          chmod +x "$TMPDIR/bin/systemd-run"
+
+          {
+            echo '#!${pkgs.bash}/bin/bash'
+            echo 'set -u'
+            cat ${pkgs.writeText "bound-the-machine.sh" boundTheMachine}
+            echo 'bound_the_machine "$0" "$@"'
+            echo 'echo "the body ran"'
+          } > "$TMPDIR/command"
+          chmod +x "$TMPDIR/command"
+
+          export PATH="$TMPDIR/bin:$PATH"
+          output="$( "$TMPDIR/command" 2>&1 )" ||
+            fail "it refused a machine that could bound the run:"
+
+          # Once, rather than once per scope for ever.
+          ran="$(printf '%s\n' "$output" | ${pkgs.gnugrep}/bin/grep -c "the body ran")"
+          [ "$ran" = 1 ] ||
+            fail "the body ran $ran times, so the re-entry does not stop:"
+
+          asked="$(cat "$TMPDIR/asked")"
+          for property in MemoryMax=8G MemorySwapMax=0 OOMPolicy=continue --user --scope; do
+            case "$asked" in
+              *"$property"*) ;;
+              *) output="$asked"; fail "the scope was asked for no $property:" ;;
+            esac
+          done
+
+          # The control: a machine with no user service manager. Without this,
+          # a guard that never bounded anything and simply ran the command
+          # would pass everything above.
+          rm "$TMPDIR/bin/systemd-run"
+          output="$( "$TMPDIR/command" 2>&1 )" &&
+            fail "it ran unbounded where nothing could bound it:"
+          case "$output" in
+            *"the body ran"*) fail "it refused and ran the command anyway:" ;;
+          esac
+          case "$output" in
+            *"no systemd-run"*) ;;
+            *) fail "the refusal did not say what it could not find:" ;;
+          esac
+          case "$output" in
+            *"reaching past this for cargo-mutants"*) ;;
+            *) fail "the refusal did not say what to do instead:" ;;
+          esac
+
+          touch $out
+        '';
+
         # The count above only reaches a seat that runs it, so this is the
         # command to run in place of cargo-mutants: it scopes the run to the
         # change, gives it an output directory of its own and says which
@@ -887,19 +1017,35 @@
         # the run, so this names the commit it resolved rather than insisting
         # on one.
         #
-        # The memory cap CLAUDE.local.md describes wraps this rather than
-        # living in it — `systemd-run --user --scope ...
-        # mutation-test-this-change` — because the cap is about the machine
-        # this runs on and the count is about the diff.
+        # The test timeout is fixed rather than derived. cargo-mutants derives
+        # one at five times the baseline test run, and this suite's baseline is
+        # 84 seconds because the pty tests spend it waiting on a terminal
+        # rather than computing — so the derived number came out at 424
+        # seconds, which is slack for a loaded machine read as a claim that a
+        # test might honestly need that long. A mutant allocating at the rate
+        # the words_of one did reaches tens of gigabytes inside it.
+        #
+        # 180 is that 84 with room for a machine running three seats. A
+        # legitimate test that times out here is a test that has got slower,
+        # and the answer is to find out which one rather than to raise this.
+        # MUTATION_TEST_TIMEOUT raises it for one run while you do — it is an
+        # environment variable rather than a flag because cargo-mutants
+        # refuses `--timeout` twice, so a caller's own would collide with this
+        # one rather than override it.
+        mutationTestTimeout = "180";
+
         mutationTestThisChange =
           pkgs.writeShellScriptBin "mutation-test-this-change" ''
           set -u
 
           git=${pkgs.git}/bin/git
 
+          ${boundTheMachine}
           ${refuseARunThatScoredNothing}
           ${scopeToTheChange}
           ${nameTheRunsDirectory}
+
+          bound_the_machine "$0" "$@"
 
           cd "$($git rev-parse --show-toplevel)" || exit 1
 
@@ -909,7 +1055,11 @@
           name_the_runs_directory
           scope_to_the_change origin/main "$run/change.diff"
 
+          timeout="''${MUTATION_TEST_TIMEOUT:-${mutationTestTimeout}}"
+          echo "Timing out any test that runs longer than ''${timeout}s."
+
           ${pkgs.cargo-mutants}/bin/cargo-mutants mutants \
+            --timeout "$timeout" \
             --in-diff "$run/change.diff" --output "$run" "$@"
           status=$?
 
@@ -3152,6 +3302,7 @@ and a second line"
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
           scope-to-the-change-test = scopeToTheChangeTest;
           name-the-runs-directory-test = nameTheRunsDirectoryTest;
+          bound-the-machine-test = boundTheMachineTest;
           screen-walks = checkOf "screen-walks" null [ screenWalksAreBounded ]
             "screen-walks-are-bounded";
           screen-walks-test = screenWalksAreBoundedTest;
