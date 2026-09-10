@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::TimeDelta;
 
 use regex_lite::{Captures, Regex};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Config {
@@ -232,6 +232,24 @@ pub struct Badge {
     /// no link at all: a destination built out of a part that was never
     /// there points somewhere else.
     pub link: Option<String>,
+    /// What the badge is drawn in, for one whose config names a colour. A
+    /// badge that names none is drawn in the tone of the row it sits on.
+    pub colour: Option<Colour>,
+}
+
+/// A colour a badge may be drawn in, named for what the row already draws in
+/// it rather than for the colour itself.
+///
+/// A slot and not a value. The theme owns the palette, so a colour written
+/// into a config is one no terminal theme can move — and a badge that names
+/// the row's own is one a reader has already learned to read.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Colour {
+    /// What this bead's status is drawn in, which is what its id is drawn in
+    /// as well. The one slot that varies per bead: a badge naming it is red
+    /// on a blocked bead and orange on an in-progress one.
+    Status,
 }
 
 /// A badge's `match`: the pattern a setup wrote, and that pattern compiled.
@@ -952,6 +970,7 @@ path = "/home/user/dev/cinder"
                         match_value: None,
                         render: "⇢ beacon/{}".to_string(),
                         link: None,
+                        colour: None,
                     }],
                     worktrees: Vec::new(),
                 },
@@ -977,12 +996,14 @@ path = "/home/user/dev/cinder"
                     match_value: None,
                     render: "⇢ {}".to_string(),
                     link: None,
+                    colour: None,
                 },
                 Badge {
                     key: "blocked_on".to_string(),
                     match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
                     link: None,
+                    colour: None,
                 },
             ]
         );
@@ -1009,6 +1030,7 @@ path = "/home/user/dev/cinder"
             match_value: None,
             render: render.to_string(),
             link: None,
+            colour: None,
         }
     }
 
@@ -1836,6 +1858,7 @@ metadata_keys = ["working_topic"]
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
+            colour: None,
         };
         assert_eq!(b.apply("owner/repo#7"), Some("⇢ owner/repo#7".to_string()));
     }
@@ -1847,6 +1870,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: None,
+            colour: None,
         };
         assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
         assert_eq!(b.apply("dependency"), None);
@@ -1879,6 +1903,7 @@ metadata_keys = ["working_topic"]
                 match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
                 link: None,
+                colour: None,
             };
             for candidate in values.iter().flat_map(|v| anything_near(v)) {
                 assert_eq!(
@@ -1897,6 +1922,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
             link: None,
+            colour: None,
         };
         assert_eq!(
             b.apply("owner/atlas#7"),
@@ -1912,6 +1938,7 @@ metadata_keys = ["working_topic"]
             match_value: None,
             render: "{{}}".to_string(),
             link: None,
+            colour: None,
         };
         assert_eq!(b.apply("owner/repo#7"), Some("{owner/repo#7}".to_string()));
     }
@@ -1925,6 +1952,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
             link: None,
+            colour: None,
         };
         assert_eq!(
             b.apply("{topic}/atlas"),
@@ -1942,6 +1970,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
+            colour: None,
         };
         assert_eq!(b.apply("orbital/atlas#7"), Some("⇢ #7".to_string()));
         assert_eq!(
@@ -1963,6 +1992,7 @@ metadata_keys = ["working_topic"]
             )),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
+            colour: None,
         };
         assert_eq!(b.apply("12"), Some("⇢ #12".to_string()));
         assert_eq!(b.link_for("12"), None);
@@ -1981,6 +2011,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern(r"(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{repo}/pull/{number}".to_string()),
+            colour: None,
         };
         assert_eq!(b.link_for("12"), None);
     }
@@ -1992,6 +2023,7 @@ metadata_keys = ["working_topic"]
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: Some("https://forge.invalid/waiting".to_string()),
+            colour: None,
         };
         assert_eq!(
             b.link_for("human"),
@@ -2007,6 +2039,7 @@ metadata_keys = ["working_topic"]
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
+            colour: None,
         };
         assert_eq!(b.link_for("orbital/atlas#7"), None);
     }
@@ -2044,6 +2077,39 @@ render = "⏸ waiting"
         ))
         .unwrap_err();
         assert!(err.to_string().contains("(unclosed"), "got: {err}");
+    }
+
+    #[test]
+    fn a_badge_may_name_the_colour_the_row_draws_its_status_in() {
+        let cfg = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key    = "jira"
+render = "{{}}"
+colour = "status"
+"#
+        ))
+        .expect("the config reads");
+
+        assert_eq!(cfg.badges[0].colour, Some(Colour::Status));
+    }
+
+    /// A colour the palette does not have is refused the way an unparseable
+    /// pattern is: the config is turned down whole, and the name the reader
+    /// wrote is in the reason so they can find it in their file.
+    #[test]
+    fn a_colour_the_palette_does_not_have_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key    = "jira"
+render = "{{}}"
+colour = "chartreuse"
+"#
+        ))
+        .unwrap_err();
+
+        assert!(err.to_string().contains("chartreuse"), "got: {err}");
     }
 
     /// The working trees a project occupies are git's answer about a

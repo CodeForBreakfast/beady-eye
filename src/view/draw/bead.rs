@@ -4,6 +4,7 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
+use crate::config::Colour;
 use crate::model::badges::Badged;
 use crate::model::types::Status;
 use crate::view::fitted::{openable, Fitted, Link, GAP};
@@ -57,7 +58,10 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
                 to: to.clone(),
             });
         }
-        title.push(Span::styled(badge.text.clone(), badge_style(badge)));
+        title.push(Span::styled(
+            badge.text.clone(),
+            badge_style(badge, &row.status),
+        ));
     }
 
     let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref())).linking(links);
@@ -74,10 +78,19 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 /// So the underline is drawn on the same answer the emitter gives, rather
 /// than on the config having named a link: one the emitter refuses would draw
 /// a badge that invites a click it cannot honour.
-fn badge_style(badge: &Badged) -> Style {
+///
+/// The two knobs compose because `palette::LINK` is an underline carrying no
+/// colour of its own. A badge that names neither is left with a style of
+/// nothing, which is what lets the row's own tone reach it the way it reaches
+/// the title beside it.
+fn badge_style(badge: &Badged, status: &Status) -> Style {
+    let coloured = match badge.colour {
+        Some(Colour::Status) => status_style(status),
+        None => Style::new(),
+    };
     match &badge.link {
-        Some(to) if openable(&badge.text, to) => palette::LINK,
-        _ => Style::new(),
+        Some(to) if openable(&badge.text, to) => coloured.patch(palette::LINK),
+        _ => coloured,
     }
 }
 
@@ -495,11 +508,13 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: None,
+                colour: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
                 link: None,
+                colour: None,
             },
         ];
         let drawn = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1).rows();
@@ -520,11 +535,13 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+                colour: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
                 link: None,
+                colour: None,
             },
         ];
 
@@ -539,6 +556,94 @@ mod tests {
         assert!(
             !plain.style.add_modifier.contains(Modifier::UNDERLINED),
             "the badge with no link is underlined: {plain:?}"
+        );
+    }
+
+    /// The whole of what `colour = "status"` buys: one badge, drawn on two
+    /// beads, taking the colour each of them draws its own id in. A reader
+    /// who has learned what an orange id means reads the badge beside it
+    /// without being told anything further.
+    #[test]
+    fn a_badge_coloured_by_status_is_drawn_the_colour_of_the_beads_own_id() {
+        let on = |status: Status| {
+            let mut badged = node("smt-4kd3p.20", "a bead", status);
+            badged.badges = vec![Badged {
+                key: "jira".into(),
+                text: "ATLAS-19".into(),
+                link: None,
+                colour: Some(Colour::Status),
+            }];
+            let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+            (
+                run_saying(&painted, ".20").style.fg,
+                run_saying(&painted, "ATLAS-19").style.fg,
+            )
+        };
+
+        let (blocked_id, blocked_badge) = on(Status::Blocked);
+        let (going_id, going_badge) = on(Status::InProgress);
+
+        assert_eq!(blocked_badge, blocked_id, "on a blocked bead");
+        assert_eq!(going_badge, going_id, "on an in-progress one");
+        assert_ne!(
+            blocked_badge, going_badge,
+            "and the same badge is a different colour on each"
+        );
+    }
+
+    /// A badge whose config named no colour is drawn as it was before there
+    /// was one to name: nothing of its own, so the tone of the row it sits on
+    /// reaches it the way it reaches the title beside it.
+    ///
+    /// Asked of a blocked bead, which is the row that tells the two apart: on
+    /// one whose status has no colour the badge is the row's tone either way,
+    /// and the assertion would pass whichever it took.
+    #[test]
+    fn a_badge_that_names_no_colour_is_left_the_tone_of_the_row_it_sits_on() {
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![Badged {
+            key: "jira".into(),
+            text: "ATLAS-19".into(),
+            link: None,
+            colour: None,
+        }];
+        let row = row(&badged);
+
+        let painted = Painted::of(bead_line(&row, BRANCH, 4), 100, 1);
+        let badge = run_saying(&painted, "ATLAS-19");
+
+        assert_eq!(badge.style.fg, tone(&row).fg, "{badge:?}");
+        assert_ne!(
+            badge.style.fg,
+            status_style(&Status::Blocked).fg,
+            "a badge that named no colour took one anyway: {badge:?}"
+        );
+    }
+
+    /// Neither knob has to know about the other. `palette::LINK` is an
+    /// underline carrying no colour of its own, so a badge given both is
+    /// underlined *and* coloured rather than one of them winning.
+    #[test]
+    fn a_badge_given_both_a_link_and_a_colour_is_underlined_in_that_colour() {
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![Badged {
+            key: "jira".into(),
+            text: "ATLAS-19".into(),
+            link: Some("https://forge.invalid/browse/ATLAS-19".into()),
+            colour: Some(Colour::Status),
+        }];
+
+        let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let badge = run_saying(&painted, "ATLAS-19");
+
+        assert!(
+            badge.style.add_modifier.contains(Modifier::UNDERLINED),
+            "the colour took the underline with it: {badge:?}"
+        );
+        assert_eq!(
+            badge.style.fg,
+            status_style(&Status::Blocked).fg,
+            "the underline took the colour with it: {badge:?}"
         );
     }
 
@@ -572,6 +677,7 @@ mod tests {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
             link: Some("https://forge.invalid/orbital\u{1b}]0;owned\u{7}/pull/12".into()),
+            colour: None,
         }];
 
         let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
@@ -599,9 +705,11 @@ mod tests {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
             link: None,
+            colour: None,
         };
         let linked = Badged {
             link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+            colour: None,
             ..unlinked.clone()
         };
 
@@ -630,6 +738,7 @@ mod tests {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
             link: link.map(str::to_string),
+            colour: None,
         };
         let said = |badge: Badged| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);

@@ -476,6 +476,7 @@ mod tests {
                 key: "blocked_on".to_string(),
                 text: "⏸ waiting".to_string(),
                 link: None,
+                colour: None,
             }]
         );
         assert!(node(&t, "orb-7").badges.is_empty());
@@ -547,6 +548,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
                 key: "delivery_pr".to_string(),
                 text: "⇢ atlas #30".to_string(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                colour: None,
             }]
         );
 
@@ -601,6 +603,7 @@ render = "⏸ waiting"
                 key: "blocked_on".to_string(),
                 text: "⏸ ask the ground station".to_string(),
                 link: None,
+                colour: None,
             }]
         );
     }

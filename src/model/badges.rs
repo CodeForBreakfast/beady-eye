@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::config::Badge;
+use crate::config::{Badge, Colour};
 use crate::model::types::Bead;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -21,6 +21,10 @@ pub struct Badged {
     /// so a URL held in the text would be counted in the columns the row has
     /// to spend.
     pub link: Option<String>,
+    /// What to draw it in, for one whose config named a colour. A slot the
+    /// view resolves rather than a colour, so nothing here learns what the
+    /// row is drawn in any more than it learns what the key means.
+    pub colour: Option<Colour>,
 }
 
 /// A badge whose config named a `link` and that drew less than the config
@@ -82,6 +86,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
             key: badge.key.clone(),
             text,
             link,
+            colour: badge.colour,
         });
     }
 
@@ -115,18 +120,21 @@ mod tests {
                 match_value: Some(matching("human")),
                 render: "waiting".into(),
                 link: None,
+                colour: None,
             },
             Badge {
                 key: "blocked_on".into(),
                 match_value: Some(matching("dependency")),
                 render: "dep".into(),
                 link: None,
+                colour: None,
             },
             Badge {
                 key: "absent_key".into(),
                 match_value: None,
                 render: "never".into(),
                 link: None,
+                colour: None,
             },
         ];
 
@@ -138,6 +146,7 @@ mod tests {
                 key: "blocked_on".to_string(),
                 text: "waiting".to_string(),
                 link: None,
+                colour: None,
             }]
         );
     }
@@ -152,6 +161,7 @@ mod tests {
             match_value: None,
             render: "→ {}".into(),
             link: None,
+            colour: None,
         }];
 
         let got = badges_for(&bead, &cfg);
@@ -162,6 +172,34 @@ mod tests {
                 key: "xyzzy".to_string(),
                 text: "→ plugh".to_string(),
                 link: None,
+                colour: None,
+            }]
+        );
+    }
+
+    /// The colour a badge's config named travels beside its text, because
+    /// nothing downstream of here can go back and read the config: the row
+    /// carries badges and the view draws a row.
+    #[test]
+    fn a_badges_colour_travels_with_its_text() {
+        let bead = bead_with(r#"{"jira":"ATLAS-19"}"#);
+        let cfg = vec![Badge {
+            key: "jira".into(),
+            match_value: None,
+            render: "{}".into(),
+            link: None,
+            colour: Some(Colour::Status),
+        }];
+
+        let got = badges_for(&bead, &cfg);
+
+        assert_eq!(
+            got.drawn,
+            vec![Badged {
+                key: "jira".to_string(),
+                text: "ATLAS-19".to_string(),
+                link: None,
+                colour: Some(Colour::Status),
             }]
         );
     }
@@ -186,6 +224,7 @@ mod tests {
             )),
             render: "⇢ #{number}".into(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".into()),
+            colour: None,
         }
     }
 
@@ -215,6 +254,7 @@ mod tests {
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
             link: None,
+            colour: None,
         };
 
         let got = badges_for(&bead, &[filter]);
@@ -256,6 +296,7 @@ mod tests {
                 key: "delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 link: None,
+                colour: None,
             }]
         );
         assert_eq!(
@@ -278,6 +319,7 @@ mod tests {
                 key: "delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                colour: None,
             }]
         );
         assert_eq!(got.undrawn, Vec::new());
