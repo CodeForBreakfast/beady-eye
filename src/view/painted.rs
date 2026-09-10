@@ -12,10 +12,12 @@
 //! impossible, which is why the words are never what is returned.
 
 use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, Cell, CellDiffOption};
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 use ratatui::{Frame, Terminal};
+
+use crate::view::fitted::words_of;
 
 /// A run of columns drawn in one style.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,13 +61,14 @@ impl Painted {
             (buffer.area.top()..buffer.area.bottom())
                 .map(|y| {
                     let mut runs: Vec<Run> = Vec::new();
-                    for x in buffer.area.left()..buffer.area.right() {
+                    let mut x = buffer.area.left();
+                    while x < buffer.area.right() {
                         let cell = &buffer[(x, y)];
+                        x += covered(cell);
+                        let said = words_of(cell.symbol());
                         match runs.last_mut() {
-                            Some(run) if run.style == cell.style() => {
-                                run.said.push_str(cell.symbol())
-                            }
-                            _ => runs.push(Run::new(cell.symbol(), cell.style())),
+                            Some(run) if run.style == cell.style() => run.said.push_str(&said),
+                            _ => runs.push(Run::new(&said, cell.style())),
                         }
                     }
                     runs
@@ -88,11 +91,25 @@ impl Painted {
     }
 }
 
+/// How many columns a cell answers for. A cell that reports a width its
+/// symbol does not have covers the ones behind it: the diff skips them and
+/// the terminal never hears what they hold, so reading them would say the
+/// cell's words a second time.
+fn covered(cell: &Cell) -> u16 {
+    match cell.diff_option {
+        CellDiffOption::ForcedWidth(width) => width.get(),
+        _ => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use std::num::NonZeroU16;
+
+    use ratatui::layout::Rect;
     use ratatui::style::{Color, Modifier};
     use ratatui::text::{Line, Span};
 
@@ -126,5 +143,39 @@ mod tests {
             runs[1].style.add_modifier.contains(Modifier::BOLD),
             "{runs:?}"
         );
+    }
+
+    /// A hyperlink is written into a cell's symbol because it cannot be
+    /// written into a span. The reader sees the words and clicks them; the
+    /// escape bytes are no more on screen than a colour is.
+    #[test]
+    fn a_hyperlink_is_not_among_the_words() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 5, 1));
+        buffer
+            .cell_mut((0, 0))
+            .expect("a cell to write")
+            .set_symbol("\x1b]8;;https://forge.invalid/orbital/atlas\x1b\\⇢ #12\x1b]8;;\x1b\\")
+            .set_diff_option(CellDiffOption::ForcedWidth(
+                NonZeroU16::new(5).expect("five columns"),
+            ));
+
+        assert_eq!(Painted::read(&buffer).rows(), vec!["⇢ #12"]);
+    }
+
+    /// The columns behind a forced width are the ones the diff skips, so the
+    /// terminal never hears what they hold. Reading them as well would say
+    /// the linked words twice.
+    #[test]
+    fn the_columns_a_forced_width_covers_are_not_read() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 1));
+        Line::from("beacon").render(Rect::new(0, 0, 4, 1), &mut buffer);
+        buffer
+            .cell_mut((0, 0))
+            .expect("a cell to write")
+            .set_diff_option(CellDiffOption::ForcedWidth(
+                NonZeroU16::new(3).expect("three columns"),
+            ));
+
+        assert_eq!(Painted::read(&buffer).rows(), vec!["bc"]);
     }
 }
