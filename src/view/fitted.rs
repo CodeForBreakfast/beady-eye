@@ -3,6 +3,7 @@
 //! A general widget: three blocks, one row, cut rather than wrapped, with a
 //! stated yield order. It knows nothing of what it is drawing.
 
+use std::cmp::Reverse;
 use std::num::NonZeroU16;
 
 use ratatui::buffer::{Buffer, CellDiffOption};
@@ -82,6 +83,18 @@ pub(crate) struct Link {
     pub(crate) to: String,
 }
 
+/// A span of the title block that can also say itself more shortly.
+///
+/// Named by its place, as `Link` is, and carrying words rather than a span:
+/// the row dresses the short form in the long one's own style, so a form the
+/// row falls back to is not a different-looking thing.
+pub(crate) struct Shorter {
+    /// Which span of the title block it is.
+    pub(crate) at: usize,
+    /// What it says where the row cannot afford what it usually says.
+    pub(crate) said: String,
+}
+
 pub(crate) fn indent() -> String {
     " ".repeat(GAP)
 }
@@ -100,6 +113,7 @@ pub struct Fitted {
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
     briefly: Option<Vec<Span<'static>>>,
+    shorter: Vec<Shorter>,
     links: Vec<Link>,
     whole: Style,
     title_or_nothing: bool,
@@ -117,6 +131,7 @@ impl Fitted {
             title,
             state,
             briefly: None,
+            shorter: Vec::new(),
             links: Vec::new(),
             whole: Style::new(),
             title_or_nothing: false,
@@ -146,6 +161,26 @@ impl Fitted {
     #[must_use]
     pub(crate) fn briefly(mut self, state: Vec<Span<'static>>) -> Self {
         self.briefly = Some(state);
+        self
+    }
+
+    /// Which spans of the title block can say themselves more shortly, and
+    /// what each says then.
+    ///
+    /// `briefly` swaps the whole state block; this swaps one span inside the
+    /// title. Where the title will not fit, the row says short forms rather
+    /// than cutting, so a span whose length is not this program's to choose
+    /// can survive a narrow row whole instead of being cut to a head that
+    /// names nothing.
+    ///
+    /// Nothing this crate draws offers a short form yet, and `dead_code` is
+    /// denied here on purpose. The expectation stands in for the caller and,
+    /// being an expectation rather than a blanket allow, fails the build on
+    /// the change that adds one.
+    #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn shortening(mut self, shorter: Vec<Shorter>) -> Self {
+        self.shorter = shorter;
         self
     }
 
@@ -197,6 +232,7 @@ impl Widget for Fitted {
         let width = area.width as usize;
 
         let links = self.links;
+        let shorter = self.shorter;
         let identity = columns(&self.identity);
         let (spans, linked) = if identity >= width {
             (cut_to(self.identity, width).0, Vec::new())
@@ -207,8 +243,13 @@ impl Widget for Fitted {
                     let (state, _) =
                         fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
                     let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
+                    let limit = left.saturating_sub(GAP);
                     (
-                        fit(self.title, left.saturating_sub(GAP), self.title_or_nothing),
+                        fit(
+                            shortened(self.title, &shorter, limit),
+                            limit,
+                            self.title_or_nothing,
+                        ),
                         state,
                     )
                 }
@@ -218,9 +259,10 @@ impl Widget for Fitted {
                     // short one, and room kept for a form the row will not
                     // use is room taken off the title for nothing.
                     let room_for_state = columns(&briefly).min(columns(&self.state)) + GAP;
+                    let limit = room.saturating_sub(GAP + room_for_state);
                     let (title, whole) = fit(
-                        self.title,
-                        room.saturating_sub(GAP + room_for_state),
+                        shortened(self.title, &shorter, limit),
+                        limit,
                         self.title_or_nothing,
                     );
                     let left = room - columns(&title) - if title.is_empty() { 0 } else { GAP };
@@ -359,6 +401,43 @@ fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> (Vec<Span<'
         return (Vec::new(), 0);
     }
     cut_to(spans, limit)
+}
+
+/// `spans` with short forms swapped in until the run fits in `limit`, or until
+/// every span offering one has said it.
+///
+/// Each short form is dressed in the style of the span it stands in for, so a
+/// span the row shortened is the same span saying less. It is swapped rather
+/// than cut, so `fit` counts it among the spans the block kept whole and
+/// `surviving` keeps its link.
+///
+/// The widest saving goes first, so that as few spans shorten as will make the
+/// run fit: a span shortened where a wider neighbour would have done is columns
+/// given up for nothing. Where two save the same, the one nearer the end goes
+/// first, that being the end the block gives up anyway.
+fn shortened(
+    mut spans: Vec<Span<'static>>,
+    shorter: &[Shorter],
+    limit: usize,
+) -> Vec<Span<'static>> {
+    let saving = |swap: &Shorter| {
+        spans.get(swap.at).map_or(0, |span| {
+            span.width()
+                .saturating_sub(Span::raw(swap.said.as_str()).width())
+        })
+    };
+    let mut order: Vec<&Shorter> = shorter.iter().collect();
+    order.sort_by_key(|swap| (Reverse(saving(swap)), Reverse(swap.at)));
+
+    for swap in order {
+        if columns(&spans) <= limit {
+            break;
+        }
+        if let Some(span) = spans.get_mut(swap.at) {
+            *span = Span::styled(swap.said.clone(), span.style);
+        }
+    }
+    spans
 }
 
 /// `spans`, cut down to `limit` columns with the cut marked, and how many of
@@ -548,6 +627,153 @@ mod tests {
         assert_eq!(
             drawn(a_row_saying("teach the elided run to fold back open"), 40),
             "orb-7  teach the elided run to…  working"
+        );
+    }
+
+    /// A row whose badge can also say itself as `⇢ #12`, for a badge whose
+    /// length is a tracker's to choose rather than this program's.
+    fn a_shortenable_row() -> Fitted {
+        Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![
+                Span::raw("a title"),
+                Span::raw("  "),
+                Span::raw("⇢ awaiting review"),
+            ],
+            Vec::new(),
+        )
+        .shortening(vec![Shorter {
+            at: 2,
+            said: "⇢ #12".to_string(),
+        }])
+    }
+
+    /// One column narrower than the long form needs and the row says the short
+    /// form whole, rather than a cut long one that names no pull request.
+    #[test]
+    fn a_span_with_no_room_for_its_long_form_is_said_in_its_short_one() {
+        assert_eq!(
+            drawn(a_shortenable_row(), 33),
+            "orb-7  a title  ⇢ awaiting review"
+        );
+        assert_eq!(
+            drawn(a_shortenable_row(), 32),
+            "orb-7  a title  ⇢ #12           "
+        );
+    }
+
+    /// The same row with nothing offered in its place, at the same width.
+    #[test]
+    fn a_span_offering_no_short_form_is_cut_as_it_always_was() {
+        let row = Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![
+                Span::raw("a title"),
+                Span::raw("  "),
+                Span::raw("⇢ awaiting review"),
+            ],
+            Vec::new(),
+        );
+
+        assert_eq!(drawn(row, 32), "orb-7  a title  ⇢ awaiting revi…");
+    }
+
+    /// A short form that fits is a span the row kept whole, so it keeps the
+    /// link. Lose it here and a badge stops being followable at exactly the
+    /// widths where it was shortened in order to survive.
+    #[test]
+    fn a_span_said_in_its_short_form_keeps_the_link_the_long_one_had() {
+        let row = a_shortenable_row().linking(vec![Link {
+            at: 2,
+            to: SOMEWHERE.to_string(),
+        }]);
+
+        let said = symbols(&rendered(row, 32));
+
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
+            "the short form was drawn without the link the long one had: {said:?}"
+        );
+    }
+
+    /// A row of two spans that could shorten, the second giving back more
+    /// columns than the first.
+    fn a_row_of_two_shortenable_spans() -> Fitted {
+        Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![
+                Span::raw("a title"),
+                Span::raw("  "),
+                Span::raw("awaiting review"),
+                Span::raw("  "),
+                Span::raw("blocked on the tracker"),
+            ],
+            Vec::new(),
+        )
+        .shortening(vec![
+            Shorter {
+                at: 2,
+                said: "#12".to_string(),
+            },
+            Shorter {
+                at: 4,
+                said: "blocked".to_string(),
+            },
+        ])
+    }
+
+    /// The widest saving is taken first, and taken alone where it is enough.
+    /// Sweep in span order instead and the row shortens a span that had room
+    /// to be whole, which is columns given up for nothing.
+    #[test]
+    fn no_more_spans_shorten_than_the_row_has_to_shorten_to_fit() {
+        assert_eq!(
+            drawn(a_row_of_two_shortenable_spans(), 55),
+            "orb-7  a title  awaiting review  blocked on the tracker"
+        );
+        assert_eq!(
+            drawn(a_row_of_two_shortenable_spans(), 40),
+            "orb-7  a title  awaiting review  blocked"
+        );
+        assert_eq!(
+            drawn(a_row_of_two_shortenable_spans(), 39),
+            "orb-7  a title  #12  blocked           "
+        );
+    }
+
+    /// A row with both kinds of short form, so which gives way first shows.
+    fn a_shortenable_row_saying_briefly() -> Fitted {
+        Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![
+                Span::raw("a title"),
+                Span::raw("  "),
+                Span::raw("⇢ awaiting review"),
+            ],
+            vec![Span::raw("working on the parser")],
+        )
+        .briefly(vec![Span::raw("working")])
+        .shortening(vec![Shorter {
+            at: 2,
+            said: "⇢ #12".to_string(),
+        }])
+    }
+
+    /// The state says its long form only where it costs the title nothing, and
+    /// a badge is part of the title. So the state block swaps first: both
+    /// arrangements fit at 55 columns, and the row draws the one that keeps
+    /// the title whole.
+    #[test]
+    fn a_span_keeps_its_long_form_where_the_state_block_can_swap_instead() {
+        assert_eq!(
+            drawn(a_shortenable_row_saying_briefly(), 56),
+            "orb-7  a title  ⇢ awaiting review  working on the parser"
+        );
+        assert_eq!(
+            drawn(a_shortenable_row_saying_briefly(), 55),
+            "orb-7  a title  ⇢ awaiting review               working"
         );
     }
 
