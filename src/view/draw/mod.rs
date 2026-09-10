@@ -348,6 +348,7 @@ mod tests {
             started_at: None,
             closed_at: None,
             badges: Vec::new(),
+            undrawn: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
             description: String::new(),

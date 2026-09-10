@@ -58,6 +58,7 @@ pub fn build_tree(
             let refused = joined.refused.get(&key);
             let out_of_reach = joined.out_of_reach.contains(&key);
             let tied = relations.get(&bead.id).cloned().unwrap_or_default();
+            let badged = badges::badges_for(bead, &badges);
             Node {
                 id: bead.id.clone(),
                 title: bead.title.clone(),
@@ -72,7 +73,8 @@ pub fn build_tree(
                     .unwrap_or_default(),
                 started_at: bead.started_at,
                 closed_at: bead.closed_at,
-                badges: badges::badges_for(bead, &badges),
+                badges: badged.drawn,
+                undrawn: badged.undrawn,
                 anomalies: anomaly::detect(
                     bead,
                     agent.as_ref(),
@@ -189,7 +191,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::config::Scope;
     use crate::model::anomaly::Anomaly;
-    use crate::model::badges::Badged;
+    use crate::model::badges::{Badged, Undrawn};
     use crate::model::edges::relations;
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource, Listed};
     use crate::model::snapshot::tests::*;
@@ -478,6 +480,83 @@ mod tests {
             }]
         );
         assert!(node(&t, "orb-7").badges.is_empty());
+    }
+
+    /// The two shapes a reference is held in that a pattern written for the
+    /// qualified form cannot read: a bare number with no repository to build
+    /// a URL out of, and a URL held whole where the parts were expected.
+    ///
+    /// Both used to leave the tree carrying nothing at all, which is the
+    /// silence this reports instead.
+    #[test]
+    fn a_value_the_badge_cannot_read_reaches_the_node_as_undrawn() {
+        let json = r#"[
+          {"id":"orb-8","title":"root","status":"open"},
+          {"id":"orb-8.1","title":"a bare number","status":"blocked",
+           "metadata":{"delivery_pr":"30"},
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]},
+          {"id":"orb-8.2","title":"a whole URL","status":"blocked",
+           "metadata":{"delivery_pr":"https://forge.invalid/orbital/atlas/pull/30"},
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]},
+          {"id":"orb-8.3","title":"the shape it was written for","status":"blocked",
+           "metadata":{"delivery_pr":"orbital/atlas#30"},
+           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]}
+        ]"#;
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+
+[[badges]]
+key    = "delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ {repo} #{number}"
+link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
+"#,
+        )
+        .expect("the config parses");
+        let beads = parse_beads(json).expect("the rows parse");
+
+        let t = build_tree(
+            "orbital",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &relations(&beads),
+            ProviderState::Answering,
+            &cfg,
+            now(),
+        );
+
+        let unread = Undrawn::Badge {
+            key: "delivery_pr".to_string(),
+        };
+        assert_eq!(node(&t, "orb-8.1").undrawn, vec![unread.clone()]);
+        assert!(node(&t, "orb-8.1").badges.is_empty());
+        assert_eq!(node(&t, "orb-8.2").undrawn, vec![unread]);
+        assert!(node(&t, "orb-8.2").badges.is_empty());
+
+        assert_eq!(
+            node(&t, "orb-8.3").undrawn,
+            Vec::new(),
+            "the shape the pattern was written for has nothing to report"
+        );
+        assert_eq!(
+            node(&t, "orb-8.3").badges,
+            vec![Badged {
+                key: "delivery_pr".to_string(),
+                text: "⇢ atlas #30".to_string(),
+                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                colour: None,
+            }]
+        );
+
+        assert_eq!(
+            node(&t, "orb-8").undrawn,
+            Vec::new(),
+            "a bead carrying the key at all is the only one this is about"
+        );
     }
 
     /// A project's own entry for a key is what its beads draw, and the global

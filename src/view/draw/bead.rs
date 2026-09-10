@@ -7,7 +7,7 @@ use ratatui::text::Span;
 use crate::config::Colour;
 use crate::model::badges::Badged;
 use crate::model::types::Status;
-use crate::view::fitted::{Fitted, Link, GAP};
+use crate::view::fitted::{openable, Fitted, Link, GAP};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
@@ -75,6 +75,10 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 /// destination is nowhere in the row's text at any width. What the terminal
 /// acts on is the hyperlink `Fitted` writes round the badge.
 ///
+/// So the underline is drawn on the same answer the emitter gives, rather
+/// than on the config having named a link: one the emitter refuses would draw
+/// a badge that invites a click it cannot honour.
+///
 /// The two knobs compose because `palette::LINK` is an underline carrying no
 /// colour of its own. A badge that names neither is left with a style of
 /// nothing, which is what lets the row's own tone reach it the way it reaches
@@ -84,9 +88,9 @@ fn badge_style(badge: &Badged, status: &Status) -> Style {
         Some(Colour::Status) => status_style(status),
         None => Style::new(),
     };
-    match badge.link {
-        Some(_) => coloured.patch(palette::LINK),
-        None => coloured,
+    match &badge.link {
+        Some(to) if openable(&badge.text, to) => coloured.patch(palette::LINK),
+        _ => coloured,
     }
 }
 
@@ -142,6 +146,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
     use ratatui::widgets::Widget;
 
+    use crate::model::badges::Undrawn;
     use crate::view::fitted::hyperlink;
 
     use crate::model::anomaly::Anomaly;
@@ -639,6 +644,48 @@ mod tests {
             badge.style.fg,
             status_style(&Status::Blocked).fg,
             "the underline took the colour with it: {badge:?}"
+        );
+    }
+
+    /// The whole point of the rule is that the reader sees something, so the
+    /// words have to survive the trip to the buffer rather than stopping at
+    /// the row.
+    #[test]
+    fn a_badge_that_fell_short_of_its_config_says_so_on_the_drawn_row() {
+        let mut short = row(&node("smt-4kd3p.20", "a bead", Status::Blocked));
+        short.notes = vec![
+            phrase::undrawn(&Undrawn::Badge {
+                key: "delivery_pr".into(),
+            }),
+            phrase::unopenable_link("jira"),
+        ];
+
+        let drawn = Painted::of(bead_line(&short, BRANCH, 3), 160, 1).rows();
+
+        says(&drawn[0], "delivery_pr");
+        says(&drawn[0], "jira");
+    }
+
+    /// The underline is a promise the reader can act on, so it is drawn on
+    /// the emitter's answer rather than on the config having named a link. A
+    /// destination that cannot be written would otherwise leave a badge
+    /// inviting a click nothing is there to honour.
+    #[test]
+    fn a_badge_whose_link_cannot_be_written_is_not_underlined() {
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![Badged {
+            key: "delivery_pr".into(),
+            text: "⇢ #12".into(),
+            link: Some("https://forge.invalid/orbital\u{1b}]0;owned\u{7}/pull/12".into()),
+            colour: None,
+        }];
+
+        let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let refused = run_saying(&painted, "⇢ #12");
+
+        assert!(
+            !refused.style.add_modifier.contains(Modifier::UNDERLINED),
+            "a link the emitter refuses is still drawn as one: {refused:?}"
         );
     }
 

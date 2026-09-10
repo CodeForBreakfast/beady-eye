@@ -27,21 +27,70 @@ pub struct Badged {
     pub colour: Option<Colour>,
 }
 
+/// A badge whose config named a `link` and that drew less than the config
+/// asked for.
+///
+/// A badge with no `link` is a filter: it is written to decline, so a value
+/// its pattern does not match is nothing to report and reaches none of these.
+/// A badge with a `link` is written to point somewhere, so a value it cannot
+/// point at is a reference the reader has lost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "undrawn", rename_all = "kebab-case")]
+pub enum Undrawn {
+    /// No badge at all: the pattern does not read this bead's value.
+    Badge { key: String },
+    /// A badge without its link: the template named a capture this value did
+    /// not supply, and a destination built round a part that was never there
+    /// points somewhere else.
+    Link { key: String },
+}
+
+/// What this bead's configured badges came to: the ones it draws, and the
+/// ones that fell short of what their config promised.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Badges {
+    pub drawn: Vec<Badged>,
+    pub undrawn: Vec<Undrawn>,
+}
+
 /// Render the configured badges that apply to this bead.
-pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Vec<Badged> {
-    badges
-        .iter()
-        .filter_map(|b| {
-            let value = bead.metadata.get(&b.key)?;
-            let text = b.apply(value)?;
-            Some(Badged {
-                key: b.key.clone(),
-                text,
-                link: b.link_for(value),
-                colour: b.colour,
-            })
-        })
-        .collect()
+pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
+    let mut drawn = Vec::new();
+    let mut undrawn = Vec::new();
+
+    for badge in badges {
+        let Some(value) = bead.metadata.get(&badge.key) else {
+            continue;
+        };
+        // A badge with no `link` never reports: whatever it does with this
+        // value, it did what its config asked.
+        let promised = badge.link.is_some();
+
+        let Some(text) = badge.apply(value) else {
+            if promised {
+                undrawn.push(Undrawn::Badge {
+                    key: badge.key.clone(),
+                });
+            }
+            continue;
+        };
+
+        let link = badge.link_for(value);
+        if promised && link.is_none() {
+            undrawn.push(Undrawn::Link {
+                key: badge.key.clone(),
+            });
+        }
+
+        drawn.push(Badged {
+            key: badge.key.clone(),
+            text,
+            link,
+            colour: badge.colour,
+        });
+    }
+
+    Badges { drawn, undrawn }
 }
 
 #[cfg(test)]
@@ -92,7 +141,7 @@ mod tests {
         let got = badges_for(&bead, &cfg);
 
         assert_eq!(
-            got,
+            got.drawn,
             vec![Badged {
                 key: "blocked_on".to_string(),
                 text: "waiting".to_string(),
@@ -118,7 +167,7 @@ mod tests {
         let got = badges_for(&bead, &cfg);
 
         assert_eq!(
-            got,
+            got.drawn,
             vec![Badged {
                 key: "xyzzy".to_string(),
                 text: "→ plugh".to_string(),
@@ -145,7 +194,7 @@ mod tests {
         let got = badges_for(&bead, &cfg);
 
         assert_eq!(
-            got,
+            got.drawn,
             vec![Badged {
                 key: "jira".to_string(),
                 text: "ATLAS-19".to_string(),
@@ -159,6 +208,120 @@ mod tests {
     fn a_bead_with_no_configured_badges_renders_none() {
         let bead = bead_with(r#"{"blocked_on":"human"}"#);
 
-        assert_eq!(badges_for(&bead, &[]), vec![]);
+        assert_eq!(badges_for(&bead, &[]), Badges::default());
+    }
+
+    // ---- what a badge meant to draw could not draw -----------------------
+
+    /// The pattern a global list writes for a `delivery_pr` reads the
+    /// qualified form. A tracker holding a bare number as well has beads this
+    /// pattern cannot read at all, and dropping them tells the reader nothing.
+    fn qualified_only() -> Badge {
+        Badge {
+            key: "delivery_pr".into(),
+            match_value: Some(matching(
+                r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)",
+            )),
+            render: "⇢ #{number}".into(),
+            link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".into()),
+            colour: None,
+        }
+    }
+
+    #[test]
+    fn a_badge_meant_to_draw_reports_a_value_its_pattern_cannot_read() {
+        let bead = bead_with(r#"{"delivery_pr":"30"}"#);
+
+        let got = badges_for(&bead, &[qualified_only()]);
+
+        assert_eq!(got.drawn, Vec::new());
+        assert_eq!(
+            got.undrawn,
+            vec![Undrawn::Badge {
+                key: "delivery_pr".to_string()
+            }]
+        );
+    }
+
+    /// The other half of the rule, and the half the shipped waiting badge
+    /// rests on: a config that names no `link` is a filter, and declining is
+    /// what it was written to do.
+    #[test]
+    fn a_badge_configured_to_decline_stays_silent() {
+        let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
+        let filter = Badge {
+            key: "blocked_on".into(),
+            match_value: Some(matching("human")),
+            render: "⏸ waiting".into(),
+            link: None,
+            colour: None,
+        };
+
+        let got = badges_for(&bead, &[filter]);
+
+        assert_eq!(got.drawn, Vec::new());
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// A key the bead does not carry is not a badge that fell short — it is a
+    /// badge that was never about this bead.
+    #[test]
+    fn a_badge_whose_key_the_bead_does_not_carry_reports_nothing() {
+        let bead = bead_with(r#"{"blocked_on":"human"}"#);
+
+        let got = badges_for(&bead, &[qualified_only()]);
+
+        assert_eq!(got.drawn, Vec::new());
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// The badge draws and the link does not, which is the case a reader
+    /// cannot see: an ordinary-looking badge that has quietly lost its
+    /// destination.
+    #[test]
+    fn a_badge_reports_a_link_its_value_could_not_fill() {
+        let bead = bead_with(r#"{"delivery_pr":"30"}"#);
+        let either_form = Badge {
+            match_value: Some(matching(
+                r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
+            )),
+            ..qualified_only()
+        };
+
+        let got = badges_for(&bead, &[either_form]);
+
+        assert_eq!(
+            got.drawn,
+            vec![Badged {
+                key: "delivery_pr".to_string(),
+                text: "⇢ #30".to_string(),
+                link: None,
+                colour: None,
+            }]
+        );
+        assert_eq!(
+            got.undrawn,
+            vec![Undrawn::Link {
+                key: "delivery_pr".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_badge_that_draws_its_link_reports_nothing() {
+        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+
+        let got = badges_for(&bead, &[qualified_only()]);
+
+        assert_eq!(
+            got.drawn,
+            vec![Badged {
+                key: "delivery_pr".to_string(),
+                text: "⇢ #30".to_string(),
+                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                colour: None,
+            }]
+        );
+        assert_eq!(got.undrawn, Vec::new());
     }
 }

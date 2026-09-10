@@ -27,18 +27,27 @@ pub(crate) const GAP: usize = 2;
 const OSC_8: &str = "\x1b]8;;";
 const ST: &str = "\x1b\\";
 
-/// `said`, wrapped so the terminal makes it a link to `to`. Nothing where
-/// either of them holds a control character.
+/// Whether a terminal can be told that `said` points at `to`.
 ///
 /// Both come from a tracker rather than from this program, and what ends this
 /// sequence is itself a control character. One inside the sequence ends it
 /// early, and the rest of that value reaches the terminal as commands of its
 /// own — a row of a bead list saying whatever it likes to the terminal the
 /// reader is sitting at.
-pub(crate) fn hyperlink(said: &str, to: &str) -> Option<String> {
+///
+/// Asked wherever a link is spoken about and not only where one is written:
+/// a badge styled as a link the emitter then refuses is a row that says it
+/// can be followed and cannot.
+pub(crate) fn openable(said: &str, to: &str) -> bool {
     let holds_control = |text: &str| text.chars().any(char::is_control);
-    (!holds_control(said) && !holds_control(to))
-        .then(|| format!("{OSC_8}{to}{ST}{said}{OSC_8}{ST}"))
+    !holds_control(said) && !holds_control(to)
+}
+
+/// `said`, wrapped so the terminal makes it a link to `to`. Nothing for a
+/// pair `openable` refuses, which is this program's last word before the
+/// bytes go out.
+pub(crate) fn hyperlink(said: &str, to: &str) -> Option<String> {
+    openable(said, to).then(|| format!("{OSC_8}{to}{ST}{said}{OSC_8}{ST}"))
 }
 
 /// What a cell says, with any escape sequence taken out of it.

@@ -610,6 +610,7 @@ mod tests {
             started_at: None,
             closed_at: None,
             badges: Vec::new(),
+            undrawn: Vec::new(),
             agent: Some(AgentRef {
                 pane: key("w:p1"),
                 pane_status: PaneStatus::Working,

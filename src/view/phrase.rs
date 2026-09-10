@@ -17,6 +17,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
+use crate::model::badges::Undrawn;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::types::{PaneKey, PaneStatus, Status};
@@ -696,6 +697,29 @@ pub fn unrecognised_status(status: &Status) -> Option<String> {
             quoted(status)
         )),
     }
+}
+
+/// What a badge that was meant to point somewhere could not draw.
+///
+/// Each names the key, because the key is what the reader goes and looks at:
+/// the config that wrote the badge, or the beads that hold the value.
+pub fn undrawn(undrawn: &Undrawn) -> String {
+    match undrawn {
+        Undrawn::Badge { key } => format!("no badge for {key}: no pattern reads this value"),
+        Undrawn::Link { key } => {
+            format!("no link for {key}: this value leaves part of it unfilled")
+        }
+    }
+}
+
+/// A link built and then refused at the point of writing it, because the
+/// bytes that would carry it end where a control character does and the
+/// terminal reads what follows as its own.
+///
+/// Said rather than passed over, for the same reason as the rest: a badge
+/// that has lost its link looks exactly like one that never had one.
+pub fn unopenable_link(key: &str) -> String {
+    format!("no link for {key}: it holds a control character")
 }
 
 /// bd's own word for a status, spelled as `bd list --json` writes it. One
@@ -1969,6 +1993,29 @@ mod tests {
             .expect("a status outside bd's own set is worth saying");
 
         assert!(said.contains("triage"), "{said}");
+    }
+
+    /// Each of the three names the key, because the key is the one thing that
+    /// takes the reader to the config or the beads they have to change. They
+    /// differ in what is missing, because the two have different repairs.
+    #[test]
+    fn every_word_for_a_badge_that_fell_short_names_its_key() {
+        let unread = undrawn(&Undrawn::Badge {
+            key: "delivery_pr".into(),
+        });
+        let unfilled = undrawn(&Undrawn::Link {
+            key: "delivery_pr".into(),
+        });
+        let refused = unopenable_link("delivery_pr");
+
+        for said in [&unread, &unfilled, &refused] {
+            assert!(said.contains("delivery_pr"), "{said}");
+        }
+        assert_ne!(
+            unread, unfilled,
+            "a badge that drew nothing and one that lost only its link read alike"
+        );
+        assert_ne!(unfilled, refused);
     }
 
     #[test]
