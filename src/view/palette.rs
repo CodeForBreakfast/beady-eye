@@ -10,6 +10,8 @@
 //! It replays a pane's own escapes rather than choosing anything, so the
 //! colours it names are the pane's and no palette can hold them.
 
+use std::str::FromStr;
+
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::config::{Background, Slot};
@@ -221,6 +223,17 @@ pub(crate) fn slot(slot: Slot) -> Style {
 /// view a colour is spelled, whoever spelled it.
 pub(crate) fn absolute(colour: Color) -> Style {
     Style::new().fg(colour)
+}
+
+/// A colour as a config wrote it, in any form `Color` names one by: one of the
+/// sixteen by name, `#rrggbb`, or an index into the terminal's palette.
+///
+/// Reading a colour is what this module is for, so the reading is here even
+/// though what asks for it is `config` refusing a name as it reads the file.
+/// `colours-come-from-the-palette` holds the whole of `Color`'s vocabulary to
+/// this module, and `from_str` is part of it.
+pub(crate) fn colour_named(written: &str) -> Option<Color> {
+    Color::from_str(written).ok()
 }
 
 #[cfg(test)]

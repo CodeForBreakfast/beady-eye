@@ -182,7 +182,7 @@ means everywhere else on the screen:
 | `attention` | this wants looking at |
 | `identity` | a bead's id at the head of its window |
 | `status_open` `status_in_progress` `status_blocked` `status_closed` `status_deferred` | `bd`'s own colour for each status, as a fixed colour rather than this bead's |
-| `tier_staffed` `tier_open` `tier_finished` | the three rungs of how live a row is |
+| `tier_staffed` `tier_open` `tier_finished` | the three rungs of how live a row is, as a fixed treatment rather than this row's |
 | `structure` | the box-drawing the tree is shaped from |
 | `quiet` | metadata, chrome, an affordance, a rule |
 | `page` | every row of the bead window |

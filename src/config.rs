@@ -3,7 +3,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::TimeDelta;
@@ -341,9 +340,9 @@ impl<'de> Deserialize<'de> for Colour {
         if let Ok(slot) = slot {
             return Ok(Colour::Slot(slot));
         }
-        Color::from_str(&written)
+        crate::view::palette::colour_named(&written)
             .map(Colour::Absolute)
-            .map_err(|_| {
+            .ok_or_else(|| {
                 serde::de::Error::custom(format!(
                     "{written:?} is neither a slot of bdi's palette nor a colour"
                 ))
