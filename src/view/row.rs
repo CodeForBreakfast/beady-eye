@@ -406,6 +406,7 @@ mod tests {
             key: "delivery_pr".into(),
             text: text.into(),
             link: link.map(str::to_string),
+            short: None,
             colour: None,
         }];
         node
@@ -516,12 +517,14 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
         ];
@@ -544,12 +547,14 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+                short: None,
                 colour: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
         ];

@@ -14,6 +14,12 @@ use crate::model::types::Bead;
 pub struct Badged {
     pub key: String,
     pub text: String,
+    /// What it says instead on a row too narrow for `text`, for one whose
+    /// config names a `short`.
+    ///
+    /// Both forms travel, because which of them a row can afford is the width
+    /// the row was given, and nothing here has one.
+    pub short: Option<String>,
     /// Where the badge points, for one whose config names a `link`.
     ///
     /// Beside the text rather than inside it, and beside it the whole way to
@@ -27,13 +33,12 @@ pub struct Badged {
     pub colour: Option<Colour>,
 }
 
-/// A badge whose config named a `link` and that drew less than the config
-/// asked for.
+/// A badge that drew less than its config asked for.
 ///
 /// A badge with no `link` is a filter: it is written to decline, so a value
-/// its pattern does not match is nothing to report and reaches none of these.
-/// A badge with a `link` is written to point somewhere, so a value it cannot
-/// point at is a reference the reader has lost.
+/// its pattern does not match is nothing to report and reaches neither of the
+/// first two. A badge with a `link` is written to point somewhere, so a value
+/// it cannot point at is a reference the reader has lost.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "undrawn", rename_all = "kebab-case")]
 pub enum Undrawn {
@@ -43,6 +48,15 @@ pub enum Undrawn {
     /// not supply, and a destination built round a part that was never there
     /// points somewhere else.
     Link { key: String },
+    /// A badge without its short form, for the same reason: a form built round
+    /// a part that was never there says something the value does not. The row
+    /// falls back to cutting the long form, and a narrow pane loses a badge the
+    /// config meant to keep.
+    ///
+    /// Reported for any badge naming a `short`, `link` or no `link`: naming
+    /// one is a promise about a length, made by the same config that would
+    /// otherwise have declined.
+    Short { key: String },
 }
 
 /// What this bead's configured badges came to: the ones it draws, and the
@@ -82,9 +96,17 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
             });
         }
 
+        let short = badge.short_for(value);
+        if badge.short.is_some() && short.is_none() {
+            undrawn.push(Undrawn::Short {
+                key: badge.key.clone(),
+            });
+        }
+
         drawn.push(Badged {
             key: badge.key.clone(),
             text,
+            short,
             link,
             colour: badge.colour,
         });
@@ -120,6 +142,7 @@ mod tests {
                 match_value: Some(matching("human")),
                 render: "waiting".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
             Badge {
@@ -127,6 +150,7 @@ mod tests {
                 match_value: Some(matching("dependency")),
                 render: "dep".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
             Badge {
@@ -134,6 +158,7 @@ mod tests {
                 match_value: None,
                 render: "never".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
         ];
@@ -146,6 +171,7 @@ mod tests {
                 key: "blocked_on".to_string(),
                 text: "waiting".to_string(),
                 link: None,
+                short: None,
                 colour: None,
             }]
         );
@@ -161,6 +187,7 @@ mod tests {
             match_value: None,
             render: "→ {}".into(),
             link: None,
+            short: None,
             colour: None,
         }];
 
@@ -172,6 +199,7 @@ mod tests {
                 key: "xyzzy".to_string(),
                 text: "→ plugh".to_string(),
                 link: None,
+                short: None,
                 colour: None,
             }]
         );
@@ -188,6 +216,7 @@ mod tests {
             match_value: None,
             render: "{}".into(),
             link: None,
+            short: None,
             colour: Some(Colour::Status),
         }];
 
@@ -199,6 +228,7 @@ mod tests {
                 key: "jira".to_string(),
                 text: "ATLAS-19".to_string(),
                 link: None,
+                short: None,
                 colour: Some(Colour::Status),
             }]
         );
@@ -224,6 +254,7 @@ mod tests {
             )),
             render: "⇢ #{number}".into(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".into()),
+            short: None,
             colour: None,
         }
     }
@@ -254,6 +285,7 @@ mod tests {
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
             link: None,
+            short: None,
             colour: None,
         };
 
@@ -296,6 +328,7 @@ mod tests {
                 key: "delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 link: None,
+                short: None,
                 colour: None,
             }]
         );
@@ -319,9 +352,110 @@ mod tests {
                 key: "delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                short: None,
                 colour: None,
             }]
         );
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// Both forms come off one reading of the value, and both travel to the
+    /// row: which of them a row can afford is the view's to decide and not
+    /// this module's.
+    #[test]
+    fn a_badge_carries_the_short_form_its_config_named() {
+        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+        let both_forms = Badge {
+            render: "⇢ {repo} #{number}".into(),
+            short: Some("⇢ #{number}".into()),
+            ..qualified_only()
+        };
+
+        let got = badges_for(&bead, &[both_forms]);
+
+        assert_eq!(
+            got.drawn,
+            vec![Badged {
+                key: "delivery_pr".to_string(),
+                text: "⇢ atlas #30".to_string(),
+                short: Some("⇢ #30".to_string()),
+                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                colour: None,
+            }]
+        );
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// A badge naming no short form is a badge with one length, which is
+    /// every badge written before there was a second one to name.
+    #[test]
+    fn a_badge_whose_config_names_no_short_form_carries_none() {
+        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+
+        let got = badges_for(&bead, &[qualified_only()]);
+
+        assert_eq!(got.drawn[0].short, None);
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// The `link` rule read across to the other template: a short form built
+    /// round a part that was never there says something the value does not.
+    /// It is dropped and reported, so the row falls back to cutting the long
+    /// form and the reader is told which key to go and look at.
+    ///
+    /// Reported whatever the badge's `link`, unlike the two above it. A
+    /// `link` decides whether a badge *promised* to point anywhere; naming a
+    /// short form is that same promise made about a length.
+    #[test]
+    fn a_badge_reports_a_short_form_its_value_could_not_fill() {
+        let bead = bead_with(r#"{"delivery_pr":"30"}"#);
+        let unlinked_either_form = Badge {
+            match_value: Some(matching(
+                r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
+            )),
+            render: "⇢ #{number}".into(),
+            short: Some("⇢ {repo}".into()),
+            link: None,
+            ..qualified_only()
+        };
+
+        let got = badges_for(&bead, &[unlinked_either_form]);
+
+        assert_eq!(
+            got.drawn,
+            vec![Badged {
+                key: "delivery_pr".to_string(),
+                text: "⇢ #30".to_string(),
+                short: None,
+                link: None,
+                colour: None,
+            }]
+        );
+        assert_eq!(
+            got.undrawn,
+            vec![Undrawn::Short {
+                key: "delivery_pr".to_string()
+            }]
+        );
+    }
+
+    /// A badge that declines the value says nothing at either length, so the
+    /// short form it names is nothing to report.
+    #[test]
+    fn a_badge_configured_to_decline_reports_no_short_form() {
+        let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
+        let filter = Badge {
+            key: "blocked_on".into(),
+            match_value: Some(matching("human")),
+            render: "⏸ waiting".into(),
+            short: Some("⏸".into()),
+            link: None,
+            colour: None,
+        };
+
+        let got = badges_for(&bead, &[filter]);
+
+        assert_eq!(got.drawn, Vec::new());
         assert_eq!(got.undrawn, Vec::new());
     }
 }

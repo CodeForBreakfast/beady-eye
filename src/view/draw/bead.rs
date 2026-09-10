@@ -7,7 +7,7 @@ use ratatui::text::Span;
 use crate::config::Colour;
 use crate::model::badges::Badged;
 use crate::model::types::Status;
-use crate::view::fitted::{openable, Fitted, Link, GAP};
+use crate::view::fitted::{openable, Fitted, Link, Shorter, GAP};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
@@ -50,6 +50,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
 
     let mut title = vec![Span::raw(row.title.clone())];
     let mut links = Vec::new();
+    let mut shorter = Vec::new();
     for badge in &row.badges {
         title.push(Span::raw(" ".repeat(GAP)));
         if let Some(to) = &badge.link {
@@ -58,13 +59,21 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
                 to: to.clone(),
             });
         }
+        if let Some(said) = &badge.short {
+            shorter.push(Shorter {
+                at: title.len(),
+                said: said.clone(),
+            });
+        }
         title.push(Span::styled(
             badge.text.clone(),
             badge_style(badge, &row.status),
         ));
     }
 
-    let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref())).linking(links);
+    let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref()))
+        .linking(links)
+        .shortening(shorter);
     if let Some(briefly) = &row.agent_briefly {
         fitted = fitted.briefly(state(row, Some(briefly)));
     }
@@ -510,12 +519,14 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
         ];
@@ -537,12 +548,14 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+                short: None,
                 colour: None,
             },
             Badged {
                 key: "blocked_on".into(),
                 text: "⏸ waiting".into(),
                 link: None,
+                short: None,
                 colour: None,
             },
         ];
@@ -573,6 +586,7 @@ mod tests {
                 key: "jira".into(),
                 text: "ATLAS-19".into(),
                 link: None,
+                short: None,
                 colour: Some(Colour::Status),
             }];
             let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
@@ -607,6 +621,7 @@ mod tests {
             key: "jira".into(),
             text: "ATLAS-19".into(),
             link: None,
+            short: None,
             colour: None,
         }];
         let row = row(&badged);
@@ -632,6 +647,7 @@ mod tests {
             key: "jira".into(),
             text: "ATLAS-19".into(),
             link: Some("https://forge.invalid/browse/ATLAS-19".into()),
+            short: None,
             colour: Some(Colour::Status),
         }];
 
@@ -679,6 +695,7 @@ mod tests {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
             link: Some("https://forge.invalid/orbital\u{1b}]0;owned\u{7}/pull/12".into()),
+            short: None,
             colour: None,
         }];
 
@@ -707,10 +724,12 @@ mod tests {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
             link: None,
+            short: None,
             colour: None,
         };
         let linked = Badged {
             link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+            short: None,
             colour: None,
             ..unlinked.clone()
         };
@@ -750,6 +769,7 @@ mod tests {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
                 link: to.map(str::to_string),
+                short: None,
                 colour: Some(Colour::Status),
             }];
             let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), width, 1);
@@ -786,6 +806,7 @@ mod tests {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
             link: link.map(str::to_string),
+            short: None,
             colour: None,
         };
         let said = |badge: Badged| {
@@ -804,6 +825,95 @@ mod tests {
             !said(badge(None)).contains('\u{1b}'),
             "a badge naming no URL was made a link"
         );
+    }
+
+    /// A badge saying `⇢ atlas #12`, with `⇢ #12` to fall back to. The long
+    /// form is a tracker's length to choose and the short one is the config's,
+    /// so neither is `bdi`'s and the row can only pick between them.
+    fn shortenable(to: Option<&str>) -> Badged {
+        Badged {
+            key: "delivery_pr".into(),
+            text: "⇢ atlas #12".into(),
+            short: Some("⇢ #12".into()),
+            link: to.map(str::to_string),
+            colour: None,
+        }
+    }
+
+    fn a_row_badged(badge: Badged, width: u16) -> String {
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![badge];
+        Painted::of(bead_line(&row(&badged), BRANCH, 4), width, 1).rows()[0].clone()
+    }
+
+    /// One column narrower than the long form needs and the badge says itself
+    /// shortly, whole, rather than being cut to a head that names no pull
+    /// request. This is the width a reader actually runs: a title and one
+    /// reference, in a pane that is a little too narrow for both.
+    #[test]
+    fn a_badge_too_wide_for_the_row_is_said_in_the_short_form_its_config_named() {
+        assert_eq!(
+            a_row_badged(shortenable(None), 33),
+            "  ├── ● .20   a bead  ⇢ atlas #12"
+        );
+        assert_eq!(
+            a_row_badged(shortenable(None), 32),
+            "  ├── ● .20   a bead  ⇢ #12     "
+        );
+    }
+
+    /// The same row at the same width with nothing offered in its place, which
+    /// is every badge configured before there was a short form to name.
+    #[test]
+    fn a_badge_offering_no_short_form_is_cut_as_it_always_was() {
+        let one_length = Badged {
+            short: None,
+            ..shortenable(None)
+        };
+
+        assert_eq!(
+            a_row_badged(one_length, 32),
+            "  ├── ● .20   a bead  ⇢ atlas #…"
+        );
+    }
+
+    /// A short form the row can afford is a span it kept whole, so the badge
+    /// is still followable at exactly the widths it shortened in order to
+    /// survive. Lose the link here and shortening would trade the reference
+    /// for the words that name it.
+    #[test]
+    fn a_badge_said_in_its_short_form_still_points_where_the_long_one_did() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![shortenable(Some(somewhere))];
+
+        let said = symbols(bead_line(&row(&badged), BRANCH, 4), 32);
+
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
+            ),
+            "the short form was drawn without the link the long one had: {said:?}"
+        );
+    }
+
+    /// A short form buys the badge widths, not every width. Below its own
+    /// length there is nothing left to swap in, so the row cuts it exactly as
+    /// it cuts a badge that never offered one — and the two agree cell for
+    /// cell, which is the reading that says the short form stopped mattering
+    /// rather than that it changed what a narrow row does.
+    #[test]
+    fn a_badge_too_wide_for_its_short_form_too_is_cut_as_one_offering_none_is() {
+        let one_length = Badged {
+            short: None,
+            ..shortenable(None)
+        };
+
+        assert_eq!(
+            a_row_badged(shortenable(None), 24),
+            a_row_badged(one_length, 24)
+        );
+        assert_eq!(a_row_badged(shortenable(None), 24), "  ├── ● .20   a bead  ⇢…");
     }
 
     /// Every symbol a row put in the buffer, escape bytes and all. `Painted`

@@ -699,7 +699,7 @@ pub fn unrecognised_status(status: &Status) -> Option<String> {
     }
 }
 
-/// What a badge that was meant to point somewhere could not draw.
+/// What a badge drew less of than its config asked for.
 ///
 /// Each names the key, because the key is what the reader goes and looks at:
 /// the config that wrote the badge, or the beads that hold the value.
@@ -708,6 +708,9 @@ pub fn undrawn(undrawn: &Undrawn) -> String {
         Undrawn::Badge { key } => format!("no badge for {key}: no pattern reads this value"),
         Undrawn::Link { key } => {
             format!("no link for {key}: this value leaves part of it unfilled")
+        }
+        Undrawn::Short { key } => {
+            format!("no short form for {key}: this value leaves part of it unfilled")
         }
     }
 }
@@ -1995,9 +1998,9 @@ mod tests {
         assert!(said.contains("triage"), "{said}");
     }
 
-    /// Each of the three names the key, because the key is the one thing that
+    /// Each of the four names the key, because the key is the one thing that
     /// takes the reader to the config or the beads they have to change. They
-    /// differ in what is missing, because the two have different repairs.
+    /// differ in what is missing, because each has a different repair.
     #[test]
     fn every_word_for_a_badge_that_fell_short_names_its_key() {
         let unread = undrawn(&Undrawn::Badge {
@@ -2006,16 +2009,20 @@ mod tests {
         let unfilled = undrawn(&Undrawn::Link {
             key: "delivery_pr".into(),
         });
+        let unshortened = undrawn(&Undrawn::Short {
+            key: "delivery_pr".into(),
+        });
         let refused = unopenable_link("delivery_pr");
 
-        for said in [&unread, &unfilled, &refused] {
+        let every = [&unread, &unfilled, &unshortened, &refused];
+        for said in every {
             assert!(said.contains("delivery_pr"), "{said}");
         }
-        assert_ne!(
-            unread, unfilled,
-            "a badge that drew nothing and one that lost only its link read alike"
-        );
-        assert_ne!(unfilled, refused);
+        for (one, other) in every.iter().enumerate().flat_map(|(i, one)| {
+            every[i + 1..].iter().map(move |other| (one, other))
+        }) {
+            assert_ne!(one, other, "two of the four read alike");
+        }
     }
 
     #[test]
