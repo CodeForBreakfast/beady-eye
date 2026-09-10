@@ -71,6 +71,23 @@ pub struct Row {
 /// closed line's glyph says done, and the unfinished beads it rests over are
 /// nowhere else on the screen to say otherwise — so it says how many, in
 /// words, beside the fraction saying it in arithmetic.
+/// Whether `said` leaves this badge the link its `text` is drawn as.
+///
+/// A row picks a badge's form by its width but picks its style once for both,
+/// from the long form, before anything has been fitted. So a short form the
+/// emitter answers differently about would make the row's answer depend on how
+/// wide it is: underlined and dead at one width, or openable and unmarked at
+/// another. A badge is a link or it is not, so the row keeps whichever length
+/// it can say that about and reports the form it dropped.
+///
+/// A badge whose config named no link has nothing to disagree about.
+pub fn says_the_same_about_its_link(badge: &Badged, said: &str) -> bool {
+    badge
+        .link
+        .as_deref()
+        .is_none_or(|to| fitted::openable(said, to) == fitted::openable(&badge.text, to))
+}
+
 pub fn cells(
     node: &Node,
     root: &str,
@@ -101,6 +118,20 @@ pub fn cells(
                     .is_some_and(|to| !fitted::openable(&badge.text, to))
             })
             .map(|badge| phrase::unopenable_link(&badge.key)),
+    );
+    // And a short form the row will not use for the same reason. Said here
+    // rather than left out, because a form that was never said is nowhere on
+    // the drawn row for a reader to miss.
+    notes.extend(
+        node.badges
+            .iter()
+            .filter(|badge| {
+                badge
+                    .short
+                    .as_deref()
+                    .is_some_and(|said| !says_the_same_about_its_link(badge, said))
+            })
+            .map(|badge| phrase::unopenable_short(&badge.key)),
     );
 
     Row {
@@ -400,6 +431,8 @@ mod tests {
     /// it: it ends the hyperlink early and retitles the reader's window.
     const HOSTILE: &str = "\u{1b}]0;owned\u{7}";
 
+    const SOMEWHERE: &str = "https://forge.invalid/orbital/atlas/pull/12";
+
     fn badged(text: &str, link: Option<&str>) -> Node {
         let mut node = node("smt-4kd3p.20", Status::Open);
         node.badges = vec![Badged {
@@ -479,11 +512,55 @@ mod tests {
         );
     }
 
+    /// The other half of the same rule, on the other form. A short form the
+    /// sequence cannot carry is a short form the row will not use, and a
+    /// reader who wrote one and does not get it is owed the reason: nothing
+    /// about the drawn row shows a form that was never said.
+    #[test]
+    fn a_short_form_holding_a_control_character_leaves_its_key_on_the_row() {
+        let mut hostile = badged("⇢ atlas #12", Some(SOMEWHERE));
+        hostile.badges[0].short = Some(format!("⇢ #12{HOSTILE}"));
+
+        let row = cells(&hostile, ROOT, None, None);
+
+        assert!(
+            row.notes
+                .iter()
+                .any(|note| note.contains("short form") && note.contains("delivery_pr")),
+            "{row:?}"
+        );
+    }
+
+    /// A badge with no link has nothing for a form to disagree about, so a
+    /// control character in its short form costs it nothing.
+    #[test]
+    fn a_short_form_on_a_badge_with_no_link_is_held_to_no_such_rule() {
+        let mut unlinked = badged("⏸ waiting", None);
+        unlinked.badges[0].short = Some(format!("⏸{HOSTILE}"));
+
+        let row = cells(&unlinked, ROOT, None, None);
+
+        assert_eq!(row.notes, Vec::<String>::new());
+    }
+
     #[test]
     fn a_badge_that_draws_its_link_leaves_nothing_on_the_row() {
-        let linked = badged("⇢ #12", Some("https://forge.invalid/orbital/atlas/pull/12"));
+        let linked = badged("⇢ #12", Some(SOMEWHERE));
 
         let row = cells(&linked, ROOT, None, None);
+
+        assert_eq!(row.notes, Vec::<String>::new());
+    }
+
+    /// And one that draws both its forms, which is the reading that says the
+    /// rule above fires on the control character rather than on there being a
+    /// short form at all.
+    #[test]
+    fn a_badge_that_draws_both_its_forms_leaves_nothing_on_the_row() {
+        let mut both = badged("⇢ atlas #12", Some(SOMEWHERE));
+        both.badges[0].short = Some("⇢ #12".into());
+
+        let row = cells(&both, ROOT, None, None);
 
         assert_eq!(row.notes, Vec::<String>::new());
     }

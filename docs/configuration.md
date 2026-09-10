@@ -364,8 +364,12 @@ anomalies:
 | a value that left part of the `link` unfilled | `no link for delivery_pr: this value leaves part of it unfilled` |
 | a link holding a control character | `no link for delivery_pr: it holds a control character` |
 | a value that left part of the `short` unfilled | `no short form for delivery_pr: this value leaves part of it unfilled` |
+| a `short` holding a control character, on a badge with a `link` | `no short form for delivery_pr: it holds a control character` |
 
-The `short` row holds whether or not the badge has a `link`.
+The first `short` row holds whether or not the badge has a `link`. The second is
+about the link: a badge is drawn as one at every width or at none, so a short
+form the sequence cannot carry is one the row declines rather than a badge that
+is underlined at one width and openable at another.
 
 ### Opening a badge
 

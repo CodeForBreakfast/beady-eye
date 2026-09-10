@@ -725,6 +725,12 @@ pub fn unopenable_link(key: &str) -> String {
     format!("no link for {key}: it holds a control character")
 }
 
+/// A short form the row declined for the same reason, said because the row
+/// draws no trace of a form it never said.
+pub fn unopenable_short(key: &str) -> String {
+    format!("no short form for {key}: it holds a control character")
+}
+
 /// bd's own word for a status, spelled as `bd list --json` writes it. One
 /// outside bd's set is quoted, the way every borrowed word is.
 pub fn status_word(status: &Status) -> String {
@@ -1998,7 +2004,7 @@ mod tests {
         assert!(said.contains("triage"), "{said}");
     }
 
-    /// Each of the four names the key, because the key is the one thing that
+    /// Each of the five names the key, because the key is the one thing that
     /// takes the reader to the config or the beads they have to change. They
     /// differ in what is missing, because each has a different repair.
     #[test]
@@ -2013,8 +2019,9 @@ mod tests {
             key: "delivery_pr".into(),
         });
         let refused = unopenable_link("delivery_pr");
+        let refused_short = unopenable_short("delivery_pr");
 
-        let mut every = vec![&unread, &unfilled, &unshortened, &refused];
+        let mut every = vec![&unread, &unfilled, &unshortened, &refused, &refused_short];
         for said in &every {
             assert!(said.contains("delivery_pr"), "{said}");
         }
@@ -2022,7 +2029,7 @@ mod tests {
         let said = every.len();
         every.sort_unstable();
         every.dedup();
-        assert_eq!(said, every.len(), "two of the four read alike: {every:?}");
+        assert_eq!(said, every.len(), "two of the five read alike: {every:?}");
     }
 
     #[test]

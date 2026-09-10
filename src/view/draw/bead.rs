@@ -59,10 +59,14 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
                 to: to.clone(),
             });
         }
-        if let Some(said) = &badge.short {
+        if let Some(said) = badge
+            .short
+            .as_deref()
+            .filter(|said| row::says_the_same_about_its_link(badge, said))
+        {
             shorter.push(Shorter {
                 at: title.len(),
-                said: said.clone(),
+                said: said.to_string(),
             });
         }
         title.push(Span::styled(
@@ -916,6 +920,63 @@ mod tests {
         assert_eq!(
             a_row_badged(shortenable(None), 24),
             "  ├── ● .20   a bead  ⇢…"
+        );
+    }
+
+    /// The row picks a badge's form by its width, and picks the style once for
+    /// both: `badge_style` is asked before anything has been fitted, so it can
+    /// only read the long form. Two forms that disagree about whether the link
+    /// can be written would make the row's answer depend on how wide it is —
+    /// underlined at one width and openable at another, and each without the
+    /// other. A badge is a link or it is not, so the row keeps the one length
+    /// it can say that about.
+    ///
+    /// Read both ways round, because the two disagreements are opposite
+    /// mistakes and one rule has to cover both. A short form the emitter would
+    /// refuse would be underlined and dead; a clean short form on a badge whose
+    /// long form is refused would open a page nothing marked as a link.
+    #[test]
+    fn a_badge_whose_two_forms_disagree_about_its_link_keeps_one_length() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let held = "\u{1b}]0;owned\u{7}";
+        // Read without the notes the row would carry beside them. What each
+        // badge leaves on the row is `row::cells`' to say and is read there;
+        // here the question is only which form the row drew.
+        let unremarked = |badge: Badged, width: u16| {
+            let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+            badged.badges = vec![badge];
+            let mut row = row(&badged);
+            row.notes = Vec::new();
+            Painted::of(bead_line(&row, BRANCH, 4), width, 1).rows()[0].clone()
+        };
+        let one_length = |badge: Badged| {
+            unremarked(
+                Badged {
+                    short: None,
+                    ..badge
+                },
+                32,
+            )
+        };
+
+        let refused_short = Badged {
+            short: Some(format!("⇢ #12{held}")),
+            ..shortenable(Some(somewhere))
+        };
+        assert_eq!(
+            unremarked(refused_short.clone(), 32),
+            one_length(refused_short),
+            "a short form the emitter would refuse was drawn anyway"
+        );
+
+        let refused_long = Badged {
+            text: format!("⇢ atlas #12{held}"),
+            ..shortenable(Some(somewhere))
+        };
+        assert_eq!(
+            unremarked(refused_long.clone(), 32),
+            one_length(refused_long),
+            "a badge whose link was refused was made one by shortening"
         );
     }
 
