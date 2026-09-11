@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::config::{Badge, BadgeKey, Colour};
+use crate::config::{Badge, Colour};
 use crate::model::types::Bead;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -73,7 +73,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
     let mut undrawn = Vec::new();
 
     for badge in badges {
-        let Some(value) = value_for(bead, &badge.key) else {
+        let Some(value) = bead.values.get(&badge.key).map(String::as_str) else {
             continue;
         };
         // A badge with no `link` never reports: whatever it does with this
@@ -83,7 +83,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
         let Some(text) = badge.apply(value) else {
             if promised {
                 undrawn.push(Undrawn::Badge {
-                    key: badge.key.to_string(),
+                    key: badge.key.clone(),
                 });
             }
             continue;
@@ -92,19 +92,19 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
         let link = badge.link_for(value);
         if promised && link.is_none() {
             undrawn.push(Undrawn::Link {
-                key: badge.key.to_string(),
+                key: badge.key.clone(),
             });
         }
 
         let short = badge.short_for(value);
         if badge.short.is_some() && short.is_none() {
             undrawn.push(Undrawn::Short {
-                key: badge.key.to_string(),
+                key: badge.key.clone(),
             });
         }
 
         drawn.push(Badged {
-            key: badge.key.to_string(),
+            key: badge.key.clone(),
             text,
             short,
             link,
@@ -113,20 +113,6 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
     }
 
     Badges { drawn, undrawn }
-}
-
-/// What this bead holds where the key says to read, or nothing where it holds
-/// nothing there.
-///
-/// A name neither side carries is a badge that was never about this bead: it
-/// draws nothing and reports nothing, whether the bead left the value unset or
-/// nobody ever wrote it.
-fn value_for<'b>(bead: &'b Bead, key: &BadgeKey) -> Option<&'b str> {
-    match key {
-        BadgeKey::Field(key) => bead.fields.get(key),
-        BadgeKey::Metadata(key) => bead.metadata.get(key),
-    }
-    .map(String::as_str)
 }
 
 #[cfg(test)]
@@ -141,14 +127,6 @@ mod tests {
         Pattern::new(pattern).expect("the pattern compiles")
     }
 
-    fn meta(key: &str) -> BadgeKey {
-        BadgeKey::Metadata(key.to_string())
-    }
-
-    fn field(key: &str) -> BadgeKey {
-        BadgeKey::Field(key.to_string())
-    }
-
     fn bead_with(metadata: &str) -> Bead {
         let json =
             format!(r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#);
@@ -160,7 +138,7 @@ mod tests {
         let bead = bead_with(r#"{"blocked_on":"human","delivery_pr":"owner/repo#7"}"#);
         let cfg = vec![
             Badge {
-                key: meta("blocked_on"),
+                key: "metadata.blocked_on".into(),
                 match_value: Some(matching("human")),
                 render: "waiting".into(),
                 link: None,
@@ -168,7 +146,7 @@ mod tests {
                 colour: None,
             },
             Badge {
-                key: meta("blocked_on"),
+                key: "metadata.blocked_on".into(),
                 match_value: Some(matching("dependency")),
                 render: "dep".into(),
                 link: None,
@@ -176,7 +154,7 @@ mod tests {
                 colour: None,
             },
             Badge {
-                key: meta("absent_key"),
+                key: "metadata.absent_key".into(),
                 match_value: None,
                 render: "never".into(),
                 link: None,
@@ -205,7 +183,7 @@ mod tests {
     fn badges_render_a_configured_key_without_interpreting_it() {
         let bead = bead_with(r#"{"xyzzy":"plugh"}"#);
         let cfg = vec![Badge {
-            key: meta("xyzzy"),
+            key: "metadata.xyzzy".into(),
             match_value: None,
             render: "→ {}".into(),
             link: None,
@@ -234,7 +212,7 @@ mod tests {
     fn a_badges_colour_travels_with_its_text() {
         let bead = bead_with(r#"{"jira":"ATLAS-19"}"#);
         let cfg = vec![Badge {
-            key: meta("jira"),
+            key: "metadata.jira".into(),
             match_value: None,
             render: "{}".into(),
             link: None,
@@ -281,7 +259,7 @@ mod tests {
         let bead = bead_referencing(r#""https://jira.invalid/browse/HELIO-412""#);
         let cfg = vec![
             Badge {
-                key: field("external_ref"),
+                key: "external_ref".into(),
                 match_value: Some(matching(r".*/(?<ticket>[A-Z]+-[0-9]+)")),
                 render: "{ticket}".into(),
                 link: Some("https://jira.invalid/browse/{ticket}".into()),
@@ -289,7 +267,7 @@ mod tests {
                 colour: None,
             },
             Badge {
-                key: meta("jira"),
+                key: "metadata.jira".into(),
                 match_value: None,
                 render: "{}".into(),
                 link: None,
@@ -333,8 +311,8 @@ mod tests {
     /// field.
     #[test]
     fn a_value_a_bead_does_not_hold_draws_no_badge_and_reports_nothing() {
-        let promising = |key: BadgeKey| Badge {
-            key,
+        let promising = |key: &str| Badge {
+            key: key.to_string(),
             match_value: None,
             render: "{}".into(),
             link: Some("https://jira.invalid/browse/{}".into()),
@@ -344,18 +322,15 @@ mod tests {
 
         // Every way bd spells an unset field, and the field left out entirely.
         for spelling in [r#""""#, "null"] {
-            let got = badges_for(
-                &bead_referencing(spelling),
-                &[promising(field("external_ref"))],
-            );
+            let got = badges_for(&bead_referencing(spelling), &[promising("external_ref")]);
 
             assert_eq!(got.drawn, Vec::new(), "drew on {spelling}");
             assert_eq!(got.undrawn, Vec::new(), "reported on {spelling}");
         }
 
         let carrying_neither = bead_with(r#"{"jira":"ATLAS-19"}"#);
-        for key in [field("external_ref"), meta("nobody_wrote_this")] {
-            let got = badges_for(&carrying_neither, &[promising(key.clone())]);
+        for key in ["external_ref", "metadata.nobody_wrote_this"] {
+            let got = badges_for(&carrying_neither, &[promising(key)]);
 
             assert_eq!(got.drawn, Vec::new(), "drew on {key}");
             assert_eq!(got.undrawn, Vec::new(), "reported on {key}");
@@ -369,7 +344,7 @@ mod tests {
     /// pattern cannot read at all, and dropping them tells the reader nothing.
     fn qualified_only() -> Badge {
         Badge {
-            key: meta("delivery_pr"),
+            key: "metadata.delivery_pr".into(),
             match_value: Some(matching(
                 r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)",
             )),
@@ -402,7 +377,7 @@ mod tests {
     fn a_badge_configured_to_decline_stays_silent() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
         let filter = Badge {
-            key: meta("blocked_on"),
+            key: "metadata.blocked_on".into(),
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
             link: None,
@@ -566,7 +541,7 @@ mod tests {
     fn a_badge_configured_to_decline_reports_no_short_form() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
         let filter = Badge {
-            key: meta("blocked_on"),
+            key: "metadata.blocked_on".into(),
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
             short: Some("⏸".into()),

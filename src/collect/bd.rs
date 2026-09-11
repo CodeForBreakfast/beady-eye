@@ -34,37 +34,58 @@ pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     Ok(rows
         .into_iter()
         .zip(written)
-        .map(|(row, written)| row.into_bead(text_of_each_field(&written)))
+        .map(|(row, written)| row.into_bead(values_of(&written)))
         .collect())
 }
 
-/// Every field of a row bd wrote a text for, as that text.
+/// Every value this row holds, under the key that names it: a field by its own
+/// name, and a member of a field's object by the two joined with a dot.
 ///
-/// A badge whose key names no metadata key reads here, so what a row carries
-/// is what a badge can draw — a field bd grows is drawable the day bd writes
-/// it, without `bdi` learning a thing about it.
+/// A badge reads here, so what a row holds is what a badge can draw. A field bd
+/// grows is drawable the day bd writes it, and an object-valued one is drawable
+/// a member at a time, without `bdi` learning a thing about either.
 ///
-/// A string, a number and a boolean are each one value, and each is kept as
-/// the text it prints as. A null and an empty string are both how bd spells a
-/// field nothing was written to — it writes the top of a chain as an empty
-/// parent — and an array or an object is not one value at all. Those read as
-/// the field being absent, which is where a name no row carries already lands.
+/// A string, a number and a boolean are each one value, and each is kept as the
+/// text it prints as. A null and an empty string are both how bd spells a field
+/// nothing was written to — it writes the top of a chain as an empty parent —
+/// and an array is not one value at all. Those are no key here, which is where
+/// a name no row carries already lands. So is an object, which is what keeps a
+/// key naming one on its own from drawing the whole blob onto a row.
 ///
 /// The rule is about kinds of value rather than names of fields, so nothing
 /// here moves when bd's schema does.
-fn text_of_each_field(
-    row: &serde_json::Map<String, serde_json::Value>,
-) -> BTreeMap<String, String> {
-    row.iter()
-        .filter_map(|(key, value)| {
-            let text = match value {
-                serde_json::Value::String(text) if !text.is_empty() => text.clone(),
-                serde_json::Value::Number(_) | serde_json::Value::Bool(_) => value.to_string(),
-                _ => return None,
-            };
-            Some((key.clone(), text))
-        })
-        .collect()
+fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    for (field, value) in row {
+        match object_written_either_way(value) {
+            Some(members) => values.extend(
+                text_of_each(members.into_owned())
+                    .into_iter()
+                    .filter_map(|(key, text)| Some((format!("{field}.{key}"), some(text)?))),
+            ),
+            None => {
+                if let Some(text) = text_of(value) {
+                    values.insert(field.clone(), text);
+                }
+            }
+        }
+    }
+    values
+}
+
+/// One value as the text it prints as, or nothing where it is not one value.
+fn text_of(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => some(text.clone()),
+        serde_json::Value::Number(_) | serde_json::Value::Bool(_) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+/// An empty text is a field nothing was written to, and nothing is what a
+/// badge draws for it.
+fn some(text: String) -> Option<String> {
+    Some(text).filter(|text| !text.is_empty())
 }
 
 /// One row of a bd listing, in the shape bd writes it, holding only the
@@ -124,11 +145,11 @@ struct RowDependency {
 }
 
 impl Row {
-    /// This row as a bead, beside every field of it bd wrote a text for.
-    fn into_bead(self, fields: BTreeMap<String, String>) -> Bead {
+    /// This row as a bead, beside every value a badge could name in it.
+    fn into_bead(self, values: BTreeMap<String, String>) -> Bead {
         let row = self;
         Bead {
-            fields,
+            values,
             id: row.id,
             title: row.title,
             status: row.status,
@@ -200,13 +221,27 @@ fn null_is_unrecognised<'de, D: Deserializer<'de>>(d: D) -> Result<Status, D::Er
 fn text_of_each_value<'de, D: Deserializer<'de>>(
     d: D,
 ) -> Result<BTreeMap<String, String>, D::Error> {
-    Ok(match Option::<serde_json::Value>::deserialize(d)? {
-        Some(serde_json::Value::Object(fields)) => text_of_each(fields),
-        Some(serde_json::Value::String(spelled)) => serde_json::from_str(&spelled)
-            .map(text_of_each)
-            .unwrap_or_default(),
-        _ => BTreeMap::new(),
-    })
+    Ok(Option::<serde_json::Value>::deserialize(d)?
+        .as_ref()
+        .and_then(object_written_either_way)
+        .map(|fields| text_of_each(fields.into_owned()))
+        .unwrap_or_default())
+}
+
+/// The object a value holds, for a value that is one — either written as an
+/// object, or written as a string spelling one, which is how bd wrote a bead's
+/// metadata until April 2026.
+fn object_written_either_way(
+    value: &serde_json::Value,
+) -> Option<std::borrow::Cow<'_, serde_json::Map<String, serde_json::Value>>> {
+    match value {
+        serde_json::Value::Object(fields) => Some(std::borrow::Cow::Borrowed(fields)),
+        serde_json::Value::String(spelled) => match serde_json::from_str(spelled) {
+            Ok(serde_json::Value::Object(fields)) => Some(std::borrow::Cow::Owned(fields)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn text_of_each(fields: serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
@@ -593,10 +628,11 @@ mod tests {
     fn a_rows_fields_are_carried_under_the_names_bd_spells_them() {
         let rows = r#"[
             {"id":"a","title":"t","status":"open","issue_type":"feature",
-             "external_ref":"https://jira.invalid/browse/HELIO-412"}
+             "external_ref":"https://jira.invalid/browse/HELIO-412",
+             "metadata":{"jira":"ATLAS-19","helio.ticket":"HELIO-9"}}
         ]"#;
 
-        let fields = &parse_beads(rows).expect("the row parses")[0].fields;
+        let fields = &parse_beads(rows).expect("the row parses")[0].values;
 
         assert_eq!(
             fields.get("external_ref").map(String::as_str),
@@ -606,6 +642,15 @@ mod tests {
         assert_eq!(
             fields.get("issue_type").map(String::as_str),
             Some("feature")
+        );
+        assert_eq!(
+            fields.get("metadata.jira").map(String::as_str),
+            Some("ATLAS-19")
+        );
+        assert_eq!(
+            fields.get("metadata.helio.ticket").map(String::as_str),
+            Some("HELIO-9"),
+            "a key holding a dot of its own is named by the whole of it"
         );
     }
 
@@ -623,7 +668,7 @@ mod tests {
              "metadata":{"jira":"ATLAS-19"}}
         ]"#;
 
-        let fields = &parse_beads(rows).expect("the row parses")[0].fields;
+        let fields = &parse_beads(rows).expect("the row parses")[0].values;
 
         assert_eq!(fields.get("priority").map(String::as_str), Some("1"));
         assert_eq!(fields.get("pinned").map(String::as_str), Some("true"));

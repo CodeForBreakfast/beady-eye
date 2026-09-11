@@ -125,22 +125,29 @@ says what the row carries for it:
 
 | written | what it says | needed |
 |---|---|---|
-| `key` | the value this badge is about, and where on the bead to read it | yes |
+| `key` | which value of the bead this badge draws | yes |
 | `render` | the text the row carries | yes |
 | `match` | which values this badge draws on, and how the value comes apart | no |
 | `short` | what the row carries instead where `render` will not fit | no |
 | `link` | where the badge points | no |
 | `colour` | what it is drawn in | no |
 
-`key` says where on the bead to read. `metadata.jira` reads the `jira` key of
-the bead's metadata; a bare `external_ref` reads the field of that name. Any
-field of a bead's row is readable this way, under the name `bd` spells it.
+`key` names a value of the bead. A field of the bead is its own name, so
+`external_ref` reads the external reference. A field holding an object is a
+value at a time, the two joined with a dot, so `metadata.jira` reads the `jira`
+key of the bead's metadata. Whatever `bd` puts on a row is readable this way,
+under the name `bd` spells it.
 
-`[join]`'s `pane_key` names a metadata key and takes no prefix. A pane id is
-only ever written in metadata, so there is nothing there to choose between.
+The name is split once, so a metadata key of `helio.ticket` is written
+`metadata.helio.ticket` and reads as itself.
 
-A key naming something the bead does not carry draws no badge, and neither does
-one whose value is a list or a nested object.
+A key naming a value the bead does not hold draws no badge and says nothing. So
+does one naming a whole object rather than a value inside it, and one naming a
+list.
+
+`[join]`'s `pane_key` is a metadata key on its own, with no field in front of
+it. A pane id is only ever written in metadata, so there is nowhere else it
+could be read from.
 
 `render` is the text, with `{}` for the whole value. `match` restricts the badge
 to the values a pattern matches, and the pattern is anchored against the whole
