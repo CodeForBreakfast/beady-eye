@@ -257,6 +257,13 @@ impl Forest {
         // snapshot, exactly as the folds and the cursor do.
         snapshot.refilter(self.snapshot.filter);
         self.take(snapshot);
+        // The bead leaving the collection ends the mode, and the place it
+        // stood on goes with it. Kept, it would take the next press of the
+        // key and spend it putting back a forest that is already back.
+        //
+        // Found again by the bead rather than by the way down to it, because
+        // a tracker that reparented it has moved the bead and not lost it.
+        self.focused = self.focused.take().and_then(|place| self.rerooted(&place));
         self.spend_folds(&folded_over);
         self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
         self.lay_out();
@@ -348,7 +355,15 @@ impl Forest {
             _ => return chain,
         };
         chain.extend(place.forebears().map(Handle::Bead));
-        if self.hidden(&place.tree) {
+        // A root the mode is holding back is behind the line it put it
+        // behind, and the group the filter would have put it in is not drawn
+        // at all while the forest is rooted at one bead.
+        if self.held_back(&place.tree) {
+            chain.push(Handle::Group(
+                GroupKind::HeldBack,
+                Some(place.tree.project.clone()),
+            ));
+        } else if self.hidden(&place.tree) {
             chain.push(Handle::Group(
                 GroupKind::HiddenTrees,
                 Some(place.tree.project.clone()),
@@ -356,6 +371,14 @@ impl Forest {
         }
         chain.push(Handle::Project(place.tree.project.clone()));
         chain
+    }
+
+    /// Whether the mode is holding the tree a root names back, which it is
+    /// for every root but the one the forest is rooted at.
+    fn held_back(&self, root: &BeadKey) -> bool {
+        self.focused
+            .as_ref()
+            .is_some_and(|place| place.tree != *root)
     }
 
     /// Whether the filter is holding the tree a root names back.
@@ -444,8 +467,26 @@ impl Forest {
     /// tracker refused holds a place but no node, and there is no tree to draw
     /// from a bead that is not there.
     fn focus_forest(&mut self) {
-        if self.focused.is_some() {
-            self.cursor = self.focused.take().map(Handle::Bead);
+        if let Some(place) = self.focused.take() {
+            let on = Handle::Bead(place.clone());
+            // Drawn again first, so what is shut over the bead is asked of
+            // the forest the reader is coming back to rather than of the one
+            // they are leaving. The rows it drew go back afterwards, because
+            // the press is read for whether the screen changed and these are
+            // the rows it changed from.
+            let rooted = self.lay_out();
+            let on_screen = self
+                .lines
+                .iter()
+                .any(|line| handle_of(line).as_ref() == Some(&on));
+            self.lines = rooted;
+            if !on_screen {
+                // They shut something over it from inside the mode, and a
+                // forest that comes back with the selection somewhere else
+                // has not put them back where they were.
+                self.open_over(&place);
+            }
+            self.cursor = Some(on);
             return;
         }
         let Some(Handle::Bead(place)) = self.cursor.clone() else {
@@ -454,6 +495,16 @@ impl Forest {
         if self.locate(&place).is_some() {
             self.focused = Some(place);
         }
+    }
+
+    /// Where the bead a place stood on is now, which is the place itself
+    /// while nothing has moved. Nothing at all once the collection no longer
+    /// holds that bead, which is what ends the mode.
+    fn rerooted(&self, place: &Place) -> Option<Place> {
+        if self.drawn(place) {
+            return Some(place.clone());
+        }
+        self.place_of(place.steps.last()?)
     }
 
     /// Where the forest is rooted, where the reader has rooted it at a bead
@@ -880,12 +931,21 @@ impl Forest {
     fn beads_drawn(&self) -> Vec<(BeadKey, String)> {
         let mut drawn = Vec::new();
         let mut listed = BTreeSet::new();
+        let rooted = self.rooted();
         for tree in layout::trees_drawn(&self.snapshot) {
+            // The tree the forest is rooted at a bead of is walked from that
+            // bead, because the beads above it are drawn nowhere and a search
+            // that counted one would step onto it and find nothing there.
+            let way = rooted
+                .as_ref()
+                .filter(|rooted| rooted.place.tree == root_key(tree))
+                .map_or(&[0][..], |rooted| &rooted.way);
+            let (at, above) = way.split_last().expect("a way down ends somewhere");
             step_down(
                 tree,
                 self.facts.tree(&root_key(tree)),
-                0,
-                &[],
+                *at,
+                above,
                 &mut listed,
                 &mut drawn,
             );
@@ -7151,6 +7211,145 @@ credential_command = "secret harbour"
             "every root is back: {:#?}",
             sketch(&forest)
         );
+    }
+
+    /// And the next press roots the forest at the bead the reader is on,
+    /// rather than being spent putting back a forest that is already back.
+    #[test]
+    fn the_key_roots_the_forest_afresh_once_the_focused_bead_has_gone() {
+        let mut forest = flatten(snapshot());
+        toggle_fold_of(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "orb-7.1.1");
+        let renamed = edited(ORBITAL, r#""id":"orb-7.1.1""#, r#""id":"orb-7.1.9""#);
+        forest.refresh(gather(
+            vec![
+                tree_of("orbital", &renamed),
+                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+
+        focus_on(&mut forest, "orb-7.1");
+
+        assert!(
+            !drawn_here(&forest, "fer-2"),
+            "rooted at the bead just asked for: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Going to a bead opens what is shut over it, and under this mode what is
+    /// shut over every other root is the line the mode put them behind. A
+    /// search that found a bead it cannot reach is a search that failed.
+    #[test]
+    fn going_to_a_held_back_bead_opens_the_line_holding_its_root() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        assert!(
+            forest.go_to(&key("harbour", "hbr-3")),
+            "cannot reach harbour: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    }
+
+    /// A root the filter was showing as much as one it was not. The mode holds
+    /// both back behind the one line, so that line is what is shut over either.
+    #[test]
+    fn going_to_a_bead_in_a_root_the_filter_was_showing_opens_it_as_well() {
+        let mut forest = flatten(snapshot());
+        select_hidden_tree(&mut forest);
+        assert!(forest.apply(Action::FocusForest));
+
+        assert!(
+            forest.go_to(&key("orbital", "orb-7.1")),
+            "cannot reach orbital: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+    }
+
+    /// The reader is put back on the bead they were finishing even where they
+    /// shut something over it while they were down there. A forest that comes
+    /// back with the selection somewhere else has not put them back.
+    #[test]
+    fn putting_the_forest_back_opens_what_has_been_shut_over_the_bead() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+        forest.folds.set(Handle::Project("orbital".into()), false);
+
+        assert!(forest.apply(Action::FocusForest));
+
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+    }
+
+    /// A bead that moved is still the bead. What ends the mode is the bead
+    /// going out of the collection, and a tracker that reparented it has done
+    /// nothing of the kind.
+    #[test]
+    fn a_collection_that_moved_the_focused_bead_stays_rooted_at_it() {
+        let mut forest = flatten(snapshot());
+        toggle_fold_of(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "orb-7.1.2");
+        let moved = edited(
+            ORBITAL,
+            r#""seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7.1""#,
+            r#""seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"orb-7""#,
+        );
+
+        forest.refresh(gather(
+            vec![
+                tree_of("orbital", &moved),
+                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+
+        assert!(
+            !drawn_here(&forest, "fer-2"),
+            "still rooted at one bead: {:#?}",
+            sketch(&forest)
+        );
+        assert!(drawn_here(&forest, "seal the feed horn"));
+    }
+
+    /// Pressing the key to come back out changes what is on the screen, so the
+    /// press says so. A press the loop reads as changing nothing leaves the
+    /// rooted forest drawn over a forest that has been put back.
+    #[test]
+    fn putting_the_forest_back_says_the_screen_changed() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7");
+
+        assert!(forest.apply(Action::FocusForest));
+    }
+
+    /// A search counts the matches it can take the reader to. Under this mode
+    /// the beads above the focused one are drawn nowhere, so a search that
+    /// counted them would step onto one and report it as nothing found.
+    #[test]
+    fn every_match_a_search_counts_under_the_mode_can_be_landed_on() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        let first = forest.seek("the");
+        let Landed::On { of, .. } = first else {
+            panic!("nothing matched: {first:?}")
+        };
+        for step in 1..=of {
+            let landed = forest.next_match(true);
+            assert!(
+                matches!(landed, Some(Landed::On { .. })),
+                "match {step} of {of} cannot be landed on: {landed:#?}",
+            );
+        }
     }
 
     /// A bead closing is not the bead leaving. `bdi` reads every bead a
