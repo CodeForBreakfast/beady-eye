@@ -23,18 +23,18 @@ path = "/home/you/dev/beacon"
 credential_command = "secret-tool lookup tracker beacon"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ beacon/{}"
 
 [roots.explicit]
 atlas = ["atlas-1", "atlas-10"]
 
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ {}"
 
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ waiting"
 
@@ -120,17 +120,34 @@ placed.
 
 ## `[[badges]]`
 
-Draw a metadata key beside every bead that carries it. An entry names one key
-and says what the row carries for it:
+Draw a value beside every bead that carries it. An entry names one value and
+says what the row carries for it:
 
 | written | what it says | needed |
 |---|---|---|
-| `key` | the metadata key this badge is about | yes |
+| `key` | which value of the bead this badge draws | yes |
 | `render` | the text the row carries | yes |
 | `match` | which values this badge draws on, and how the value comes apart | no |
 | `short` | what the row carries instead where `render` will not fit | no |
 | `link` | where the badge points | no |
 | `colour` | what it is drawn in | no |
+
+`key` names a value of the bead. A field of the bead is its own name, so
+`external_ref` reads the external reference. A field holding an object is a
+value at a time, the two joined with a dot, so `metadata.jira` reads the `jira`
+key of the bead's metadata. Whatever `bd` puts on a row is readable this way,
+under the name `bd` spells it.
+
+The name is split once, so a metadata key of `helio.ticket` is written
+`metadata.helio.ticket` and reads as itself.
+
+A key naming a value the bead does not hold draws no badge and says nothing. So
+does one naming a whole object rather than a value inside it, and one naming a
+list.
+
+`[join]`'s `pane_key` is a metadata key on its own, with no field in front of
+it. A pane id is only ever written in metadata, so there is nowhere else it
+could be read from.
 
 `render` is the text, with `{}` for the whole value. `match` restricts the badge
 to the values a pattern matches, and the pattern is anchored against the whole
@@ -140,7 +157,7 @@ A capture the pattern names is `render`'s to place by that name:
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 ```
@@ -154,7 +171,7 @@ modifier held: [Opening a badge](#opening-a-badge) has that.
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ #{number}"
 link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
@@ -171,7 +188,7 @@ first thing a narrow pane drops; one with two survives, saying less:
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 short  = "⇢ #{number}"
@@ -196,7 +213,7 @@ the same way on every row.
 
 ```toml
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 match  = "(?<ticket>[A-Z]+-[0-9]+)"
 render = "{ticket}"
 colour = "status"
@@ -238,7 +255,7 @@ an index into your terminal's palette:
 
 ```toml
 [[badges]]
-key    = "design"
+key    = "metadata.design"
 render = "✎ {}"
 colour = "#c71585"
 ```
@@ -270,17 +287,20 @@ in `projects.badges`
 ## Badging the systems you reference
 
 `bdi` has no badge built in for any service, so every reference is one you
-write. The shapes below are what a reference in metadata usually looks like, and
-each is built the same way: a `match` that reads the value apart, a `render`
-that says what the row carries, and a `link` that rebuilds the address.
+write. The shapes below are what a reference usually looks like, and each is
+built the same way whichever place it is read from: a `match` that reads the
+value apart, a `render` that says what the row carries, and a `link` that
+rebuilds the address.
 
-**A badge reads a metadata key, never `external_ref`.** That field belongs to
-beads' sync adapters, whose `tracker.IssueTracker` contract parses and writes
-it. Metadata is the field with no owner, which is what makes it yours to write.
-A badge is that contract's `BuildExternalRef` run backwards — the key names the
-tracker, the value carries the identifier, and `link` rebuilds the URL. beads
-keeps the `bd:` prefix for itself and `_` for its internal keys, so a badge key
-avoids both.
+**Which place you read depends on who wrote the reference.** One of beads' sync
+adapters fills `external_ref`, whose `tracker.IssueTracker` contract parses and
+writes it, so a badge on that field is `BuildExternalRef` run backwards. A
+reference you write by hand goes in metadata, under a key naming the tracker it
+points at. beads keeps the `bd:` prefix for itself and `_` for its internal
+keys, so a metadata key avoids both.
+
+A bead holds one external reference and as many metadata keys as you write, so
+a setup referencing several systems badges all but one of them from metadata.
 
 ### An issue tracker key
 
@@ -288,7 +308,7 @@ A bead carrying `jira = "HELIO-412"`:
 
 ```toml
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 match  = "(?<ticket>[A-Z]+-[0-9]+)"
 render = "{ticket}"
 link   = "https://jira.invalid/browse/{ticket}"
@@ -296,13 +316,30 @@ link   = "https://jira.invalid/browse/{ticket}"
 
 The row draws `HELIO-412` underlined, and it opens the ticket.
 
+### A reference a sync adapter wrote
+
+A bead whose `external_ref` holds `https://jira.invalid/browse/HELIO-412`. The
+adapter writes a whole URL, so the badge cuts the identifier out of it and
+rebuilds the address it already had:
+
+```toml
+[[badges]]
+key    = "external_ref"
+match  = ".*/(?<ticket>[A-Z]+-[0-9]+)"
+render = "{ticket}"
+link   = "https://jira.invalid/browse/{ticket}"
+```
+
+The row draws `HELIO-412` and opens the ticket. The URL is nowhere in the text,
+which is what lets the badge sit beside a title.
+
 ### A pull request written as an owner, a repository and a number
 
 A bead carrying `delivery_pr = "orbital/atlas#12"`:
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 short  = "⇢ #{number}"
@@ -326,7 +363,7 @@ name = "beacon"
 path = "/home/you/dev/beacon"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<number>[0-9]+)"
 render = "⇢ #{number}"
 link   = "https://forge.invalid/orbital/beacon/pull/{number}"
@@ -343,7 +380,7 @@ row, and it declines a value that is not an address of yours.
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "https://forge.invalid/[^/]+/(?<repo>[^/]+)/pull/(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 link   = "{}"

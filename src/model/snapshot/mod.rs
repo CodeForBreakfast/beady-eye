@@ -708,7 +708,7 @@ path = "/srv/work/ferry"
 credential_command = "secret ferry"
 
 [[badges]]
-key = "blocked_on"
+key = "metadata.blocked_on"
 match = "human"
 render = "⏸ waiting"
 "#,

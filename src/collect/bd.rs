@@ -26,7 +26,61 @@ use crate::model::types::{Bead, Dependency, Edge, Status};
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     let rows: Vec<Row> =
         serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
-    Ok(rows.into_iter().map(Bead::from).collect())
+    // Read for its own fields after it has parsed, so what a reader is told
+    // about an answer that would not parse still carries where in the answer
+    // it broke. Anything the typed read accepted is an array of objects here.
+    let written: Vec<serde_json::Map<String, serde_json::Value>> =
+        serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
+    Ok(rows
+        .into_iter()
+        .zip(written)
+        .map(|(row, written)| row.into_bead(values_of(&written)))
+        .collect())
+}
+
+/// Every value this row holds, under the key that names it: a field by its own
+/// name, and a member of a field's object by the two joined with a dot.
+///
+/// A badge reads here, so what a row holds is what a badge can draw. A field bd
+/// grows is drawable the day bd writes it, and an object-valued one is drawable
+/// a member at a time, without `bdi` learning a thing about either.
+///
+/// `text_of` decides what is one value, and it decides it the same way for a
+/// field and for a member. The rule is about kinds of value rather than names
+/// of fields, so nothing here moves when bd's schema does.
+fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    for (field, value) in row {
+        match object_written_either_way(value) {
+            Some(members) => values.extend(
+                members
+                    .iter()
+                    .filter_map(|(key, member)| Some((format!("{field}.{key}"), text_of(member)?))),
+            ),
+            None => {
+                if let Some(text) = text_of(value) {
+                    values.insert(field.clone(), text);
+                }
+            }
+        }
+    }
+    values
+}
+
+/// One value as the text it prints as, or nothing where it is not one value.
+///
+/// A string, a number and a boolean are each one value. A null and an empty
+/// string are both how bd spells something nothing was written to — it writes
+/// the top of a chain as an empty parent — and an array is not one value at
+/// all. Those are no key, which is where a name no row carries already lands.
+/// So is an object, which is what keeps a key naming a whole one from drawing
+/// the blob onto a row.
+fn text_of(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) if !text.is_empty() => Some(text.clone()),
+        serde_json::Value::Number(_) | serde_json::Value::Bool(_) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 /// One row of a bd listing, in the shape bd writes it, holding only the
@@ -85,9 +139,12 @@ struct RowDependency {
     edge: Edge,
 }
 
-impl From<Row> for Bead {
-    fn from(row: Row) -> Self {
+impl Row {
+    /// This row as a bead, beside every value a badge could name in it.
+    fn into_bead(self, values: BTreeMap<String, String>) -> Bead {
+        let row = self;
         Bead {
+            values,
             id: row.id,
             title: row.title,
             status: row.status,
@@ -159,13 +216,27 @@ fn null_is_unrecognised<'de, D: Deserializer<'de>>(d: D) -> Result<Status, D::Er
 fn text_of_each_value<'de, D: Deserializer<'de>>(
     d: D,
 ) -> Result<BTreeMap<String, String>, D::Error> {
-    Ok(match Option::<serde_json::Value>::deserialize(d)? {
-        Some(serde_json::Value::Object(fields)) => text_of_each(fields),
-        Some(serde_json::Value::String(spelled)) => serde_json::from_str(&spelled)
-            .map(text_of_each)
-            .unwrap_or_default(),
-        _ => BTreeMap::new(),
-    })
+    Ok(Option::<serde_json::Value>::deserialize(d)?
+        .as_ref()
+        .and_then(object_written_either_way)
+        .map(|fields| text_of_each(fields.into_owned()))
+        .unwrap_or_default())
+}
+
+/// The object a value holds, for a value that is one — either written as an
+/// object, or written as a string spelling one, which is how bd wrote a bead's
+/// metadata until April 2026.
+fn object_written_either_way(
+    value: &serde_json::Value,
+) -> Option<std::borrow::Cow<'_, serde_json::Map<String, serde_json::Value>>> {
+    match value {
+        serde_json::Value::Object(fields) => Some(std::borrow::Cow::Borrowed(fields)),
+        serde_json::Value::String(spelled) => match serde_json::from_str(spelled) {
+            Ok(serde_json::Value::Object(fields)) => Some(std::borrow::Cow::Owned(fields)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn text_of_each(fields: serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
@@ -544,6 +615,98 @@ mod tests {
         );
 
         assert!(row("bdi-2bb.3").metadata.is_empty());
+    }
+
+    /// A row's own fields travel beside its metadata, so a badge can read one
+    /// bdi holds no field of its own for.
+    #[test]
+    fn a_rows_fields_are_carried_under_the_names_bd_spells_them() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","issue_type":"feature",
+             "external_ref":"https://jira.invalid/browse/HELIO-412",
+             "metadata":{"jira":"ATLAS-19","helio.ticket":"HELIO-9"}}
+        ]"#;
+
+        let fields = &parse_beads(rows).expect("the row parses")[0].values;
+
+        assert_eq!(
+            fields.get("external_ref").map(String::as_str),
+            Some("https://jira.invalid/browse/HELIO-412")
+        );
+        assert_eq!(fields.get("id").map(String::as_str), Some("a"));
+        assert_eq!(
+            fields.get("issue_type").map(String::as_str),
+            Some("feature")
+        );
+        assert_eq!(
+            fields.get("metadata.jira").map(String::as_str),
+            Some("ATLAS-19")
+        );
+        assert_eq!(
+            fields.get("metadata.helio.ticket").map(String::as_str),
+            Some("HELIO-9"),
+            "a key holding a dot of its own is named by the whole of it"
+        );
+    }
+
+    /// A value is what a badge draws, so a row carries the three kinds that
+    /// are one. A null is the field unset and reads as the field being absent,
+    /// which is what a badge on an unset field rests on: it would otherwise
+    /// draw the four letters `null` on every bead of a tracker nothing syncs.
+    /// An array and an object are not one value at all.
+    #[test]
+    fn a_row_carries_every_value_a_badge_could_draw_and_nothing_that_is_not_one() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","priority":1,"pinned":true,
+             "external_ref":null,"parent":"",
+             "dependencies":[{"depends_on_id":"b","type":"blocks"}],
+             "metadata":{"jira":"ATLAS-19"}}
+        ]"#;
+
+        let fields = &parse_beads(rows).expect("the row parses")[0].values;
+
+        assert_eq!(fields.get("priority").map(String::as_str), Some("1"));
+        assert_eq!(fields.get("pinned").map(String::as_str), Some("true"));
+        for absent in ["external_ref", "parent", "dependencies", "metadata"] {
+            assert_eq!(fields.get(absent), None, "{absent} is no value to draw");
+        }
+    }
+
+    /// A member of a field's object is judged by what it is, exactly as the
+    /// field itself is. The metadata a bead carries is arbitrary JSON, so a
+    /// member that is a list or an object of its own is the case this meets,
+    /// and rendering one would put its braces on a row beside a title.
+    #[test]
+    fn a_member_of_an_object_is_one_value_on_the_same_terms_as_a_field() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open",
+             "metadata":{"attempts":3,"waiting":false,"phase":"vacuum-soak",
+                         "cleared":null,"note":"",
+                         "seats":["ada","grace"],"budget":{"hours":4}}}
+        ]"#;
+
+        let values = &parse_beads(rows).expect("the row parses")[0].values;
+
+        assert_eq!(
+            values.get("metadata.attempts").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            values.get("metadata.waiting").map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            values.get("metadata.phase").map(String::as_str),
+            Some("vacuum-soak")
+        );
+        for absent in [
+            "metadata.cleared",
+            "metadata.note",
+            "metadata.seats",
+            "metadata.budget",
+        ] {
+            assert_eq!(values.get(absent), None, "{absent} is no value to draw");
+        }
     }
 
     /// A tracker's metadata is arbitrary JSON, and bdi draws it as text. A

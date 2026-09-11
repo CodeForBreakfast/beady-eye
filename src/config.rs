@@ -222,6 +222,9 @@ pub struct Roots {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Badge {
+    /// Which value of the bead this badge draws, by the key that names it: a
+    /// field of the bead by its own name, and a member of a field's object by
+    /// the two joined with a dot.
     pub key: String,
     #[serde(rename = "match")]
     pub match_value: Option<Pattern>,
@@ -1011,7 +1014,7 @@ path = "/home/user/dev/beacon"
 credential_command = "cat /home/user/dev/beacon/.beads-password"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ beacon/{}"
 
 [roots.explicit]
@@ -1019,11 +1022,11 @@ atlas  = ["a-1", "a-9"]
 beacon = ["b-1"]
 
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ {}"
 
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ waiting"
 
@@ -1103,7 +1106,7 @@ path = "/home/user/dev/cinder"
                     ),
                     poll: true,
                     badges: vec![Badge {
-                        key: "delivery_pr".to_string(),
+                        key: "metadata.delivery_pr".to_string(),
                         match_value: None,
                         render: "⇢ beacon/{}".to_string(),
                         link: None,
@@ -1130,7 +1133,7 @@ path = "/home/user/dev/cinder"
             cfg.badges,
             vec![
                 Badge {
-                    key: "delivery_pr".to_string(),
+                    key: "metadata.delivery_pr".to_string(),
                     match_value: None,
                     render: "⇢ {}".to_string(),
                     link: None,
@@ -1138,7 +1141,7 @@ path = "/home/user/dev/cinder"
                     colour: None,
                 },
                 Badge {
-                    key: "blocked_on".to_string(),
+                    key: "metadata.blocked_on".to_string(),
                     match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
                     link: None,
@@ -1198,21 +1201,24 @@ path = "/home/user/dev/cinder"
     fn a_projects_badge_stands_where_the_global_one_it_shadows_stood() {
         let cfg = Config {
             badges: vec![
-                badge("delivery_pr", "⇢ {}"),
-                matching("blocked_on", "human", "⏸ waiting"),
+                badge("metadata.delivery_pr", "⇢ {}"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
             ],
             ..Config::naming(vec![drawing(
                 "beacon",
-                vec![badge("delivery_pr", "⇢ beacon/{}"), badge("epic", "▣ {}")],
+                vec![
+                    badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                    badge("metadata.epic", "▣ {}"),
+                ],
             )])
         };
 
         assert_eq!(
             cfg.badges_for_project("beacon"),
             vec![
-                badge("delivery_pr", "⇢ beacon/{}"),
-                matching("blocked_on", "human", "⏸ waiting"),
-                badge("epic", "▣ {}"),
+                badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
+                badge("metadata.epic", "▣ {}"),
             ]
         );
     }
@@ -1225,31 +1231,31 @@ path = "/home/user/dev/cinder"
     fn a_projects_badge_shadows_every_global_entry_for_its_key() {
         let cfg = Config {
             badges: vec![
-                matching("blocked_on", "human", "⏸ waiting"),
-                matching("blocked_on", "dependency", "⏸ blocked"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
+                matching("metadata.blocked_on", "dependency", "⏸ blocked"),
             ],
             ..Config::naming(vec![drawing(
                 "beacon",
-                vec![matching("blocked_on", "human", "⏸ ask Ada")],
+                vec![matching("metadata.blocked_on", "human", "⏸ ask Ada")],
             )])
         };
 
         assert_eq!(
             cfg.badges_for_project("beacon"),
-            vec![matching("blocked_on", "human", "⏸ ask Ada")]
+            vec![matching("metadata.blocked_on", "human", "⏸ ask Ada")]
         );
     }
 
     #[test]
     fn a_project_naming_no_badges_draws_the_global_list() {
         let cfg = Config {
-            badges: vec![badge("delivery_pr", "⇢ {}")],
+            badges: vec![badge("metadata.delivery_pr", "⇢ {}")],
             ..Config::naming(vec![drawing("atlas", Vec::new())])
         };
 
         assert_eq!(
             cfg.badges_for_project("atlas"),
-            vec![badge("delivery_pr", "⇢ {}")]
+            vec![badge("metadata.delivery_pr", "⇢ {}")]
         );
     }
 
@@ -1265,7 +1271,7 @@ path = "/home/user/dev/cinder"
 name = "beacon"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ beacon/{}"
 
 path = "/home/user/dev/beacon"
@@ -1997,7 +2003,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn badge_without_match_renders_any_value() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
@@ -2010,7 +2016,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn badge_with_match_is_selective() {
         let b = Badge {
-            key: "blocked_on".to_string(),
+            key: "metadata.blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: None,
@@ -2044,7 +2050,7 @@ metadata_keys = ["working_topic"]
 
         for value in values {
             let badge = Badge {
-                key: "blocked_on".to_string(),
+                key: "metadata.blocked_on".to_string(),
                 match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
                 link: None,
@@ -2064,7 +2070,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn render_substitutes_a_capture_by_name_and_braces_by_the_whole_value() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
             link: None,
@@ -2081,7 +2087,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn braces_written_around_the_braces_are_drawn_around_the_value() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "{{}}".to_string(),
             link: None,
@@ -2096,7 +2102,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_value_spelled_like_a_placeholder_is_placed_and_not_read() {
         let b = Badge {
-            key: "working_topic".to_string(),
+            key: "metadata.working_topic".to_string(),
             match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
             link: None,
@@ -2115,7 +2121,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_is_built_from_the_captures_render_reads() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
@@ -2136,7 +2142,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_missing_one_of_its_captures_is_no_link_at_all() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(
                 r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
             )),
@@ -2158,7 +2164,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_naming_a_capture_the_pattern_never_had_is_no_link() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{repo}/pull/{number}".to_string()),
@@ -2171,7 +2177,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_that_does_not_apply_points_nowhere() {
         let b = Badge {
-            key: "blocked_on".to_string(),
+            key: "metadata.blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: Some("https://forge.invalid/waiting".to_string()),
@@ -2188,7 +2194,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_whose_config_names_no_link_points_nowhere() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
@@ -2203,7 +2209,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_short_form_is_built_from_the_captures_render_reads() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number}".to_string(),
             short: Some("⇢ #{number}".to_string()),
@@ -2220,7 +2226,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_short_form_missing_one_of_its_captures_is_no_short_form_at_all() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(
                 r"(?:(?<owner>[^/]+)/)?(?<repo>[^#]+)#(?<number>[0-9]+)",
             )),
@@ -2240,7 +2246,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_whose_config_names_no_short_form_has_none() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
             short: None,
@@ -2256,7 +2262,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_that_does_not_apply_has_no_short_form_either() {
         let b = Badge {
-            key: "blocked_on".to_string(),
+            key: "metadata.blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             short: Some("⏸".to_string()),
@@ -2272,7 +2278,7 @@ metadata_keys = ["working_topic"]
         let cfg = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {{repo}} #{{number}}"
 short  = "⇢ #{{number}}"
@@ -2291,7 +2297,7 @@ short  = "⇢ #{{number}}"
         let cfg = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ #{{number}}"
 link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
@@ -2312,7 +2318,7 @@ link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
         let err = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "(unclosed"
 render = "⏸ waiting"
 "#
@@ -2326,7 +2332,7 @@ render = "⏸ waiting"
         let cfg = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "status"
 "#
@@ -2355,7 +2361,7 @@ colour = "status"
             let cfg = Config::from_toml(&format!(
                 r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "{written}"
 "#
@@ -2379,7 +2385,7 @@ colour = "{written}"
             let cfg = Config::from_toml(&format!(
                 r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "{written}"
 "#
@@ -2420,7 +2426,7 @@ colour = "{written}"
         let err = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "chartreuse"
 "#

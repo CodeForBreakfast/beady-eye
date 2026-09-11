@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(
             node(&t, "orb-7.1").badges,
             vec![Badged {
-                key: "blocked_on".to_string(),
+                key: "metadata.blocked_on".to_string(),
                 text: "⏸ waiting".to_string(),
                 link: None,
                 short: None,
@@ -510,7 +510,7 @@ name = "orbital"
 path = "/srv/work/orbital"
 
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
@@ -531,7 +531,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
         );
 
         let unread = Undrawn::Badge {
-            key: "delivery_pr".to_string(),
+            key: "metadata.delivery_pr".to_string(),
         };
         assert_eq!(node(&t, "orb-8.1").undrawn, vec![unread.clone()]);
         assert!(node(&t, "orb-8.1").badges.is_empty());
@@ -546,7 +546,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
         assert_eq!(
             node(&t, "orb-8.3").badges,
             vec![Badged {
-                key: "delivery_pr".to_string(),
+                key: "metadata.delivery_pr".to_string(),
                 text: "⇢ atlas #30".to_string(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
                 short: None,
@@ -576,12 +576,12 @@ name = "orbital"
 path = "/srv/work/orbital"
 
 [[projects.badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ ask the ground station"
 
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ waiting"
 "#,
@@ -602,7 +602,7 @@ render = "⏸ waiting"
         assert_eq!(
             node(&t, "orb-7.1").badges,
             vec![Badged {
-                key: "blocked_on".to_string(),
+                key: "metadata.blocked_on".to_string(),
                 text: "⏸ ask the ground station".to_string(),
                 link: None,
                 short: None,

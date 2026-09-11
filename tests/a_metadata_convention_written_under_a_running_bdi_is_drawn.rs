@@ -188,7 +188,10 @@ fn a_badge_the_reader_adds_is_drawn_without_a_restart() {
         bdi.timeline()
     );
 
-    settling(&home, "\n[[badges]]\nkey = \"phase\"\nrender = \"{}\"\n");
+    settling(
+        &home,
+        "\n[[badges]]\nkey = \"metadata.phase\"\nrender = \"{}\"\n",
+    );
     bdi.read_until(ITS_PHASE, A_RELOAD);
 }
 
