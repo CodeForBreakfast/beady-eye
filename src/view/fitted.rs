@@ -141,8 +141,9 @@ impl Fitted {
 
     /// Which spans of the title block are links, and where each one points.
     ///
-    /// A link the row had to cut is dropped: an opening sequence with nothing
-    /// to close it makes every cell after it on the terminal part of the link.
+    /// A link the row cut is told round the head it kept, because the cut
+    /// takes columns off what the link says and nothing off where it goes. A
+    /// link the row dropped altogether has no words left to be told round.
     #[must_use]
     pub(crate) fn linking(mut self, links: Vec<Link>) -> Self {
         self.links = links;
@@ -325,12 +326,13 @@ impl Kept {
     }
 }
 
-/// The links whose span the title block kept whole, each at the column it
-/// starts on. A link whose span was cut or dropped is not among them.
-fn surviving(links: &[Link], title: &[Span<'static>], whole: usize, starts: usize) -> Vec<Kept> {
+/// The links whose span the title block drew, each at the column it starts
+/// on and saying what that span says now. A link whose span was dropped is
+/// not among them; one whose span was cut is, round the head it kept.
+fn surviving(links: &[Link], title: &[Span<'static>], drawn: usize, starts: usize) -> Vec<Kept> {
     links
         .iter()
-        .filter(|link| link.at < whole)
+        .filter(|link| link.at < drawn)
         .map(|link| Kept {
             at: starts + columns(&title[..link.at]),
             width: title[link.at].width(),
@@ -386,10 +388,10 @@ pub(crate) fn columns(spans: &[Span<'static>]) -> usize {
 /// `spans` fitted into `limit` columns: cut with the cut marked, or, for a
 /// block that says nothing in part, given up whole.
 ///
-/// Alongside the spans, how many of them the block kept whole — the leading
-/// run that says everything it was written to say. Anything after that run was
-/// cut short or dropped, and what a caller holds against a span of it no
-/// longer holds.
+/// Alongside the spans, how many of them the block drew — the leading run
+/// still standing as itself, the last of them possibly cut short. Anything
+/// after that run is nowhere on the row, and what a caller holds against a
+/// span of it has nothing left to hold it against.
 fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> (Vec<Span<'static>>, usize) {
     if or_nothing && columns(&spans) > limit {
         return (Vec::new(), 0);
@@ -402,8 +404,8 @@ fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> (Vec<Span<'
 ///
 /// Each short form is dressed in the style of the span it stands in for, so a
 /// span the row shortened is the same span saying less. It is swapped rather
-/// than cut, so `fit` counts it among the spans the block kept whole and
-/// `surviving` keeps its link.
+/// than cut, so it says a whole reference where a cut would have left a head
+/// that names none.
 ///
 /// The widest saving goes first, so that as few spans shorten as will make the
 /// run fit: a span shortened where a wider neighbour would have done is columns
@@ -435,11 +437,15 @@ fn shortened(
 }
 
 /// `spans`, cut down to `limit` columns with the cut marked, and how many of
-/// them survived whole.
+/// them reached the row, the last of those possibly cut short.
+///
+/// A span cut short keeps its style, so it is the same span saying less. The
+/// cut is told which columns it has and nothing about what it is cutting, so
+/// a style it moved would be moved for a reason it cannot see.
 fn cut_to(spans: Vec<Span<'static>>, limit: usize) -> (Vec<Span<'static>>, usize) {
     if columns(&spans) <= limit {
-        let whole = spans.len();
-        return (spans, whole);
+        let drawn = spans.len();
+        return (spans, drawn);
     }
     if limit == 0 {
         return (Vec::new(), 0);
@@ -447,39 +453,25 @@ fn cut_to(spans: Vec<Span<'static>>, limit: usize) -> (Vec<Span<'static>>, usize
 
     let room = limit - columns(&[Span::raw(CUT.to_string())]);
     let mut kept: Vec<Span<'static>> = Vec::new();
-    let mut whole = 0;
+    let mut drawn = 0;
     let mut used = 0;
     for span in spans {
         let width = span.width();
         if used + width <= room {
             used += width;
-            whole += 1;
+            drawn += 1;
             kept.push(span);
             continue;
         }
         let head = head_of(&span.content, room - used);
         if !head.is_empty() {
-            kept.push(Span::styled(head, unlinked(span.style)));
+            drawn += 1;
+            kept.push(Span::styled(head, span.style));
         }
         break;
     }
     kept.push(Span::raw(CUT.to_string()));
-    (kept, whole)
-}
-
-/// `style` with the underline that stands for a link taken back off.
-///
-/// The other half of the rule `surviving` keeps: a span the row cut is not
-/// among the links the terminal is told about, so nothing is there to follow.
-/// Left underlined it would invite a click that cannot be honoured. Said as
-/// what `palette::LINK` adds rather than as the modifier itself, so the two
-/// cannot drift apart.
-///
-/// Asked of every span the row cuts rather than only of the ones a link
-/// names, because `cut_to` is told which columns it has and nothing about
-/// what it is cutting. A span that never carried the underline is unmoved.
-fn unlinked(style: Style) -> Style {
-    style.remove_modifier(palette::LINK.add_modifier)
+    (kept, drawn)
 }
 
 /// As much of `text` as fits in `limit` columns, never splitting a glyph.
@@ -977,16 +969,36 @@ mod tests {
         }
     }
 
-    /// A link cut for width loses the link rather than its closing sequence.
-    /// An opening sequence with nothing to close it makes every cell after it
-    /// on the terminal part of the link.
+    /// A link cut for width is opened round the head the row kept. The whole
+    /// sequence lives in the cell the link starts on, so the columns the cut
+    /// took are not columns the sequence needed.
     #[test]
-    fn a_link_cut_for_width_is_not_opened_at_all() {
+    fn a_link_cut_for_width_is_opened_round_the_head_it_kept() {
         let said = symbols(&rendered(a_linked_row(), 20));
 
         assert!(
+            said.contains(CUT),
+            "the row was not cut at all, so it says nothing about a cut \
+             link: {said:?}"
+        );
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #1", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
+            "a link the row cut was dropped: {said:?}"
+        );
+    }
+
+    /// Narrower still, and the cut leaves the link's span no columns at all.
+    /// There is nothing on the row for a sequence to be told round, and a
+    /// sequence round nothing would open a link over whatever came after it.
+    #[test]
+    fn a_link_the_cut_left_no_room_at_all_is_not_opened() {
+        let said = symbols(&rendered(a_linked_row(), 16));
+
+        assert!(
             !said.contains(OSC_8),
-            "a cut link opened a hyperlink: {said:?}"
+            "a link the row cut to nothing opened a hyperlink: {said:?}"
         );
     }
 

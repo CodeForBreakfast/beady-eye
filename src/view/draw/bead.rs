@@ -53,10 +53,10 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     let mut shorter = Vec::new();
     for badge in &row.badges {
         title.push(Span::raw(" ".repeat(GAP)));
-        if let Some(to) = &badge.link {
+        if let Some(to) = opens_at(badge) {
             links.push(Link {
                 at: title.len(),
-                to: to.clone(),
+                to: to.to_string(),
             });
         }
         if let Some(said) = badge
@@ -84,18 +84,26 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
     fitted.toned(tone(row))
 }
 
-/// The underline is the whole of what a reader can *see* about a link: its
-/// destination is nowhere in the row's text at any width. What the terminal
-/// acts on is the hyperlink `Fitted` writes round the badge.
+/// Where the badge takes a reader, where the emitter will write a sequence
+/// saying so.
 ///
-/// So the underline is drawn on the same answer the emitter gives, rather
-/// than on the config having named a link: one the emitter refuses would draw
-/// a badge that invites a click it cannot honour.
+/// Both the underline and the hyperlink are asked of this one answer. The
+/// underline is the whole of what a reader can *see* about a link, its
+/// destination being nowhere in the row's text at any width, so a badge
+/// marked as a link that does not open is a lie and one that opens unmarked
+/// is never found.
 ///
-/// The two knobs compose because `palette::LINK` is an underline carrying no
-/// colour of its own. A badge that names neither is left with a style of
-/// nothing, which is what lets the row's own tone reach it the way it reaches
-/// the title beside it.
+/// Asked of the badge's own text rather than of the words the row goes on to
+/// draw, so the answer does not turn on how wide the row is. A badge is a
+/// link or it is not.
+fn opens_at(badge: &Badged) -> Option<&str> {
+    badge.link.as_deref().filter(|to| openable(&badge.text, to))
+}
+
+/// A badge's colour and its underline compose, because `palette::LINK` is an
+/// underline carrying no colour of its own. A badge that names neither is
+/// left with a style of nothing, which is what lets the row's own tone reach
+/// it the way it reaches the title beside it.
 fn badge_style(badge: &Badged, status: &Status) -> Style {
     let coloured = match badge.colour {
         Some(Colour::Status) => status_style(status),
@@ -103,9 +111,10 @@ fn badge_style(badge: &Badged, status: &Status) -> Style {
         Some(Colour::Absolute(colour)) => palette::absolute(colour),
         None => Style::new(),
     };
-    match &badge.link {
-        Some(to) if openable(&badge.text, to) => coloured.patch(palette::LINK),
-        _ => coloured,
+    if opens_at(badge).is_some() {
+        coloured.patch(palette::LINK)
+    } else {
+        coloured
     }
 }
 
@@ -753,20 +762,20 @@ mod tests {
         assert_eq!(drawn, said(unlinked));
     }
 
-    /// A badge the row cut has no link behind it — `surviving` keeps only the
-    /// spans the title block kept whole — so it is not drawn as one either.
+    /// A badge the row cut still points where it always did, so it is still
+    /// drawn as a link. The words are clipped; the destination is not.
     ///
     /// Read as a pair on one badge rather than as a reading at the narrow
     /// width alone. A badge that never carried a link is not underlined at
     /// any width, so the narrow reading on its own passes whether the
-    /// underline was taken off or was never there.
+    /// underline survived the cut or was never there.
     ///
     /// The badge that never carried one is read at both widths, as a whole
-    /// style rather than for its underline. The underline is all the cut
-    /// takes, and a cut that reached the badge's colour would move a badge no
-    /// link was ever drawn on.
+    /// style rather than for its underline. The cut moves nothing about a
+    /// badge's style, and a cut that reached the badge's colour would move a
+    /// badge no link was ever drawn on.
     #[test]
-    fn a_badge_the_row_cut_is_drawn_without_the_underline_it_lost_the_link_for() {
+    fn a_badge_the_row_cut_is_still_drawn_as_the_link_it_still_is() {
         let badge_at = |width: u16, to: Option<&str>| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
             badged.badges = vec![Badged {
@@ -788,15 +797,44 @@ mod tests {
             "the badge the row kept whole is not underlined"
         );
         assert!(
-            !badge_at(EXACTLY_THE_ROW - 1, somewhere)
+            badge_at(EXACTLY_THE_ROW - 1, somewhere)
                 .add_modifier
                 .contains(Modifier::UNDERLINED),
-            "the badge the row cut invites a click nothing is there to honour"
+            "the cut took the underline off a badge that still opens"
         );
         assert_eq!(
             badge_at(EXACTLY_THE_ROW - 1, None),
             badge_at(EXACTLY_THE_ROW, None),
             "the cut moved a badge that never carried a link"
+        );
+    }
+
+    /// The underline is only a promise; what the reader acts on is the
+    /// hyperlink. A cut badge that kept the one without the other would
+    /// invite the click and drop it.
+    ///
+    /// Read at the head the row kept rather than at the badge's whole words,
+    /// because the sequence has to close inside the columns the row still
+    /// has.
+    #[test]
+    fn a_badge_the_row_cut_opens_where_a_badge_it_kept_whole_opens() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+        badged.badges = vec![Badged {
+            key: "delivery_pr".into(),
+            text: "⇢ #12".into(),
+            link: Some(somewhere.into()),
+            short: None,
+            colour: None,
+        }];
+
+        let said = symbols(bead_line(&row(&badged), BRANCH, 4), EXACTLY_THE_ROW - 1);
+
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #", somewhere).expect("this vocabulary holds no control character")
+            ),
+            "the badge the row cut was not made a link: {said:?}"
         );
     }
 
