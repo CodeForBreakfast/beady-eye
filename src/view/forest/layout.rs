@@ -77,8 +77,13 @@ pub(super) struct Rooted {
 
 /// Whether a group is drawn at all, which is whether the snapshot has put
 /// anything in it.
-pub(super) fn group_drawn(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> bool {
-    group_of(snapshot, kind, project).is_some()
+pub(super) fn group_drawn(
+    snapshot: &Snapshot,
+    kind: GroupKind,
+    project: Option<&str>,
+    rooted: Option<&Rooted>,
+) -> bool {
+    group_of(snapshot, kind, project, rooted).is_some()
 }
 
 /// Whether a project's line is drawn: where anything hangs under it — a tree
@@ -192,8 +197,13 @@ pub(super) fn trees_drawn(snapshot: &Snapshot) -> Vec<&Tree> {
     drawn
 }
 
-fn group_of(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Option<Group> {
-    let (count, with_findings) = match kind {
+fn group_of(
+    snapshot: &Snapshot,
+    kind: GroupKind,
+    project: Option<&str>,
+    rooted: Option<&Rooted>,
+) -> Option<Group> {
+    let (count, with_findings, held) = match kind {
         GroupKind::HiddenTrees => {
             let hidden = snapshot
                 .hidden_trees
@@ -202,16 +212,49 @@ fn group_of(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Opti
             (
                 hidden.clone().count(),
                 hidden.filter(|hidden| hidden.findings).count(),
+                None,
             )
         }
-        _ => (group_items(snapshot, kind, project).len(), 0),
+        // Counted off the whole roots, because this line draws none of them
+        // and is all a reader gets of what is behind it.
+        GroupKind::HeldBack => {
+            let held = held_back(snapshot, project, rooted);
+            let counts = Counts::over(held.iter().flat_map(|tree| &tree.beads));
+            (held.len(), 0, Some(counts))
+        }
+        _ => (group_items(snapshot, kind, project).len(), 0, None),
     };
     (count > 0).then_some(Group {
         kind,
         project: project.map(str::to_string),
         count,
         with_findings,
+        held,
     })
+}
+
+/// The roots one project is holding back because the forest is rooted at one
+/// bead: every root it collected but the one that bead is drawn under. None at
+/// all where the forest is rooted at no bead.
+///
+/// Shown and hidden alike. The mode holds back what the filter was showing as
+/// well as what it was not, and one line standing for both sets is the only
+/// line that adds up.
+fn held_back<'a>(
+    snapshot: &'a Snapshot,
+    project: Option<&str>,
+    rooted: Option<&Rooted>,
+) -> Vec<&'a Tree> {
+    let Some(rooted) = rooted else {
+        return Vec::new();
+    };
+    snapshot
+        .collected
+        .iter()
+        .map(Arc::as_ref)
+        .filter(|tree| Some(tree.project.as_str()) == project)
+        .filter(|tree| root_key(tree) != rooted.place.tree)
+        .collect()
 }
 
 /// Every group the snapshot could draw, in the order it draws them: each
@@ -341,7 +384,7 @@ impl Layout<'_> {
             // and one bead is the only root there is while the forest is
             // rooted at one.
             .filter(|kind| self.rooted.is_none() || *kind != GroupKind::HiddenTrees)
-            .filter_map(|kind| group_of(self.snapshot, kind, Some(&project)))
+            .filter_map(|kind| group_of(self.snapshot, kind, Some(&project), self.rooted))
             .collect();
         let mut entries = trees.len() + groups.len();
         let mut trunk = Vec::new();
@@ -397,10 +440,10 @@ impl Layout<'_> {
             trunk.push(!last);
         }
         match kind {
-            GroupKind::HiddenTrees => {
-                let hidden = self.hidden_trees(project.as_deref());
-                let count = hidden.len();
-                for (n, tree) in hidden.into_iter().enumerate() {
+            GroupKind::HiddenTrees | GroupKind::HeldBack => {
+                let roots = self.roots_in(kind, project.as_deref());
+                let count = roots.len();
+                for (n, tree) in roots.into_iter().enumerate() {
                     TreeLayout {
                         folds: self.folds,
                         tree,
@@ -422,10 +465,13 @@ impl Layout<'_> {
         }
     }
 
-    /// The trees the filter hid from one project, which the snapshot still
-    /// holds.
-    fn hidden_trees(&self, project: Option<&str>) -> Vec<&Tree> {
-        hidden_trees(self.snapshot, project)
+    /// The roots one of the two groups that stand over whole roots is standing
+    /// over, for the project it is one of.
+    fn roots_in(&self, kind: GroupKind, project: Option<&str>) -> Vec<&Tree> {
+        match kind {
+            GroupKind::HeldBack => held_back(self.snapshot, project, self.rooted),
+            _ => hidden_trees(self.snapshot, project),
+        }
     }
 
     fn draw_items(&self, items: Vec<Item>, trunk: &[bool], lines: &mut Vec<Line>) {
@@ -445,7 +491,7 @@ impl Layout<'_> {
     /// The groups below the trees: what has no project line to hang under.
     fn draw_groups(&self, lines: &mut Vec<Line>) {
         for kind in GroupKind::BELOW_THE_TREES {
-            let Some(group) = group_of(self.snapshot, kind, None) else {
+            let Some(group) = group_of(self.snapshot, kind, None, self.rooted) else {
                 continue;
             };
             self.draw_group(group, &mut Vec::new(), true, lines);
@@ -666,8 +712,9 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> V
             .cloned()
             .map(Item::Conflict)
             .collect(),
-        // Hidden trees are drawn as trees rather than as things in a group.
-        GroupKind::HiddenTrees => Vec::new(),
+        // These two hold whole roots, drawn as trees rather than as things in
+        // a group.
+        GroupKind::HiddenTrees | GroupKind::HeldBack => Vec::new(),
         GroupKind::Unattributed => snapshot
             .unattributed
             .iter()

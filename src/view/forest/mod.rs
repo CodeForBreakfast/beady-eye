@@ -1075,8 +1075,11 @@ impl Forest {
         if let Some(tree) = self.snapshot.trees.first() {
             return Some(Handle::Bead(Place::root(root_key(tree))));
         }
+        let rooted = self.rooted();
         layout::every_group(&self.snapshot)
-            .find(|(kind, project)| layout::group_drawn(&self.snapshot, *kind, project.as_deref()))
+            .find(|(kind, project)| {
+                layout::group_drawn(&self.snapshot, *kind, project.as_deref(), rooted.as_ref())
+            })
             .map(|(kind, project)| Handle::Group(kind, project))
     }
 
@@ -1084,9 +1087,12 @@ impl Forest {
     fn present(&self, handle: &Handle) -> bool {
         match handle {
             Handle::Bead(place) | Handle::Elided(place) => self.drawn(place),
-            Handle::Group(kind, project) => {
-                layout::group_drawn(&self.snapshot, *kind, project.as_deref())
-            }
+            Handle::Group(kind, project) => layout::group_drawn(
+                &self.snapshot,
+                *kind,
+                project.as_deref(),
+                self.rooted().as_ref(),
+            ),
             Handle::Item(key) => layout::group_holding(&self.snapshot, key).is_some(),
             Handle::Project(project) => layout::project_drawn(&self.snapshot, project),
         }
@@ -1182,6 +1188,7 @@ mod tests {
     use crate::config::{Config, Scope};
     use crate::model::join::{self, Joined, Listed, ProjectRows};
     use crate::model::snapshot;
+    use crate::model::snapshot::Counts;
     use crate::model::snapshot::{
         a_provider, build_tree, Collected, FailedProject, ProviderState, Readiness, TrackerFailure,
         TrackerState, A_PROVIDER,
@@ -5141,7 +5148,9 @@ credential_command = "secret harbour"
         ];
         handles.extend(
             layout::every_group(&snapshot)
-                .filter(|(kind, project)| layout::group_drawn(&snapshot, *kind, project.as_deref()))
+                .filter(|(kind, project)| {
+                    layout::group_drawn(&snapshot, *kind, project.as_deref(), None)
+                })
                 .map(|(kind, project)| Handle::Group(kind, project)),
         );
         assert_eq!(handles.len(), 9, "{handles:#?}");
@@ -5220,7 +5229,10 @@ credential_command = "secret harbour"
                     GroupKind::FailedProjects => found.failed_projects += count,
                     GroupKind::Unattributed => found.loose_panes += count,
                     GroupKind::Unconfigured => found.unconfigured_panes += count,
-                    GroupKind::HiddenTrees => {}
+                    // Neither holds a finding of its own: each stands over
+                    // whole roots, and what is wrong inside one of those is
+                    // the root's to report when the group is opened.
+                    GroupKind::HiddenTrees | GroupKind::HeldBack => {}
                 },
                 _ => {}
             }
@@ -6949,13 +6961,113 @@ credential_command = "secret harbour"
                 "  │   └─▸ … 3 more",
                 "  └── [Unattributed orbital] 2",
                 "▾ ferry",
+                "  ├─▸ [HeldBack ferry] 1",
                 "  └── [Unattributed ferry] 1",
                 "▾ harbour",
+                "  └─▸ [HeldBack harbour] 1",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
                 "▾ [Conflicts] 1",
             ]
         );
+    }
+
+    /// Every other root is one line away rather than gone, under the project
+    /// it belongs to. Orbital has no other root, so it has no such line: the
+    /// beads the mode stopped drawing there are above the focused bead rather
+    /// than held back from it.
+    #[test]
+    fn the_roots_the_mode_stops_drawing_go_behind_one_line_per_project() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        assert_eq!(
+            sketch(&forest)
+                .into_iter()
+                .filter(|row| !row.contains("── - "))
+                .collect::<Vec<String>>(),
+            vec![
+                "▾ orbital",
+                "  ├─▸ ○ .1 re-point the dish",
+                "  │   └── ! Dangling(1)",
+                "  └── [Unattributed orbital] 2",
+                "▾ ferry",
+                "  ├─▸ [HeldBack ferry] 1",
+                "  └── [Unattributed ferry] 1",
+                "▾ harbour",
+                "  └─▸ [HeldBack harbour] 1",
+                "▸ [FailedProjects] 1",
+                "▾ [Unconfigured] 1",
+                "▾ [Conflicts] 1",
+            ]
+        );
+    }
+
+    /// One line away means the line opens onto them. They rest shut inside it,
+    /// as the trees the filter is holding back do.
+    ///
+    /// Ferry's root was on the screen and harbour's was behind the filter, and
+    /// the line opens onto either, because one line stands for both sets.
+    #[test]
+    fn opening_the_line_over_the_held_back_roots_draws_them() {
+        for (project, root) in [
+            ("ferry", "fer-2 unread"),
+            ("harbour", "hbr-3 dredge the channel"),
+        ] {
+            let mut forest = flatten(snapshot());
+            focus_on(&mut forest, "orb-7.1");
+            let at = forest
+                .lines()
+                .iter()
+                .position(|line| {
+                    matches!(&line.content, Content::Group(group)
+                    if group.kind == GroupKind::HeldBack
+                        && group.project.as_deref() == Some(project))
+                })
+                .unwrap_or_else(|| panic!("no line holds {project} back: {:#?}", sketch(&forest)));
+            step_onto(&mut forest, at);
+
+            assert!(forest.apply(Action::ExpandOrChild));
+
+            assert!(drawn_here(&forest, root), "{:#?}", sketch(&forest));
+        }
+    }
+
+    /// The line stands over open work with seats and anomalies on it, which is
+    /// the whole reason the reader pressed the key, so it counts them rather
+    /// than saying a number of roots and leaving them unsaid.
+    #[test]
+    fn the_line_over_the_held_back_roots_counts_the_seats_and_anomalies_in_them() {
+        let mut forest = flatten(snapshot());
+        select_hidden_tree(&mut forest);
+        assert!(forest.apply(Action::FocusForest));
+
+        let held = forest
+            .lines()
+            .iter()
+            .find_map(|line| match &line.content {
+                Content::Group(group)
+                    if group.kind == GroupKind::HeldBack
+                        && group.project.as_deref() == Some("orbital") =>
+                {
+                    group.held.clone()
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no counts on orbital's line: {:#?}", sketch(&forest)));
+
+        assert_eq!(held, counts_of(&forest, "orbital", "orb-7"));
+        assert!(held.live_agents > 0, "orbital is where the agents are");
+    }
+
+    /// What one of a project's trees adds up to, by its root.
+    fn counts_of(forest: &Forest, project: &str, root: &str) -> Counts {
+        forest
+            .snapshot()
+            .tree(&key(project, root))
+            .unwrap_or_else(|| panic!("{project} has no tree at {root}"))
+            .counts
+            .clone()
     }
 
     /// The reader asked to finish the bead they pressed the key on, so that is

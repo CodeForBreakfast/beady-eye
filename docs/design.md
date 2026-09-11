@@ -951,7 +951,15 @@ was rooted at. The bead leaving the collection is the one thing that ends the
 mode on its own; a bead that closes is still in the collection, so closing the
 focused bead does not. Every root and project the mode holds back goes behind
 one collapsed line per project rather than off the screen, which is *degrade,
-never disappear* binding here as everywhere.
+never disappear* binding here as everywhere. That line stands over open work
+with seats on it, which the filter's own line never does, so it says how many
+seats and how many beads want looking at and never claims there are none. Its
+own project's line keeps it, so a reader opens the project where it already
+was. It is a group like the others: it rests shut, the keys that open a group
+open it, and the roots inside it rest shut as the filter's do. It names the key
+that brings them back, because it is the line a reader is looking at when they
+want them back, and a row with no room for that hint gives it up whole rather
+than cutting it to a key nobody can press.
 
 **A finished branch draws as one line and rests shut.** Its glyph, its
 fraction and its fold marker already say *finished, and holds more*; opening it
@@ -2306,10 +2314,10 @@ holds, so a group over live panes — unconfigured, conflicts, unattributed —
 rests open; a group that reports on the reading rather than on work in flight —
 failed projects, hidden trees — rests shut, and hidden trees in particular
 holds trees hidden *because* nothing live is in them, so opening it would
-contradict the rule it exists to serve. Hidden trees is the one group nothing
-went wrong in — the filter put them there and a key takes them back out — so it
-is the only one drawn without a warning, and the only line on the screen that
-names a key: *a to show all*. A group that said only how many trees it hides
+contradict the rule it exists to serve. Hidden trees is a group nothing went
+wrong in — the filter put them there and a key takes them back out — so it is
+drawn without a warning and it names that key: *a to show all*. The roots
+`Shift+F` holds back are the other group read that way. A group that said only how many trees it hides
 would read as "nothing to see here" while hiding broken ones, so it also says
 how many of them carry findings: *4 trees with no live agent · 1 with
 findings*. The findings stay hidden — the reader asked for that — but the group
