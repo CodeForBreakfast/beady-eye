@@ -838,6 +838,49 @@ mod tests {
         );
     }
 
+    /// A badge whose words the emitter refuses is not opened at any width,
+    /// including the widths that cut those words back to a head it would
+    /// accept. The row would otherwise open a link it drew no underline on,
+    /// which is the opposite mistake to the one the cut used to make and just
+    /// as much of a lie.
+    ///
+    /// Swept over every width rather than read at the one that cuts, because
+    /// which width that is falls out of a control character's own zero
+    /// columns. The clean badge is swept alongside it, so a sweep that opened
+    /// nothing anywhere cannot pass as a sweep that refused.
+    ///
+    /// Read without the note the refused badge earns the row, which would
+    /// otherwise take the columns the sweep is spending on the badge. What
+    /// the note says is `row::cells`' to say and is read there.
+    #[test]
+    fn a_badge_the_emitter_refuses_is_not_opened_at_the_widths_that_cut_it() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let held = "\u{1b}]0;owned\u{7}";
+        let opened_at = |text: String, width: u16| {
+            let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
+            badged.badges = vec![Badged {
+                key: "delivery_pr".into(),
+                text,
+                link: Some(somewhere.into()),
+                short: None,
+                colour: None,
+            }];
+            let mut unremarked = row(&badged);
+            unremarked.notes = Vec::new();
+            symbols(bead_line(&unremarked, BRANCH, 4), width).contains(somewhere)
+        };
+        let every_width = || 1..=60;
+
+        assert!(
+            every_width().any(|width| opened_at("⇢ #12".into(), width)),
+            "the sweep opened no link at any width, so it refuses nothing"
+        );
+        assert!(
+            !every_width().any(|width| opened_at(format!("⇢ #12{held}"), width)),
+            "a badge the emitter refuses whole was opened by a cut"
+        );
+    }
+
     /// The badge that names a URL is the one the terminal is told about, and
     /// it is told round the badge's own words — so the reader clicks the badge
     /// rather than retyping what it stands for.

@@ -972,9 +972,14 @@ mod tests {
     /// A link cut for width is opened round the head the row kept. The whole
     /// sequence lives in the cell the link starts on, so the columns the cut
     /// took are not columns the sequence needed.
+    ///
+    /// The width the cell reports is the head's rather than the badge's, so
+    /// the columns the diff skips behind it are the columns the link holds.
+    /// One column too many and a redraw leaves whatever stood in the next one.
     #[test]
     fn a_link_cut_for_width_is_opened_round_the_head_it_kept() {
-        let said = symbols(&rendered(a_linked_row(), 20));
+        let buf = rendered(a_linked_row(), 20);
+        let said = symbols(&buf);
 
         assert!(
             said.contains(CUT),
@@ -986,6 +991,10 @@ mod tests {
                 &hyperlink("⇢ #1", SOMEWHERE).expect("this vocabulary holds no control character")
             ),
             "a link the row cut was dropped: {said:?}"
+        );
+        assert_eq!(
+            buf[(opened_at(&buf), 0)].diff_option,
+            CellDiffOption::ForcedWidth(NonZeroU16::new(4).expect("⇢ #1 is four columns"))
         );
     }
 
