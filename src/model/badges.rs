@@ -320,10 +320,16 @@ mod tests {
     /// The field is empty on every bead of a tracker no sync adapter fills, so
     /// this is the case the badge meets most often. It is not a badge that fell
     /// short: it is a badge that was never about this bead.
+    ///
+    /// A field the bead leaves unset and a metadata key it never wrote are two
+    /// paths to the same silence, and a badge promising a `link` and a `short`
+    /// is the one with most to report if either path takes it. Asserted
+    /// together because only one of them existed before a key could name a
+    /// field.
     #[test]
-    fn a_bead_holding_no_external_reference_draws_no_badge_and_reports_nothing() {
-        let promising = Badge {
-            key: BadgeKey::ExternalRef,
+    fn a_value_a_bead_does_not_hold_draws_no_badge_and_reports_nothing() {
+        let promising = |key: BadgeKey| Badge {
+            key,
             match_value: None,
             render: "{}".into(),
             link: Some("https://jira.invalid/browse/{}".into()),
@@ -331,18 +337,24 @@ mod tests {
             colour: None,
         };
 
+        // Every way bd spells an unset field, and the field left out entirely.
         for spelling in [r#""""#, "null"] {
-            let got = badges_for(&bead_referencing(spelling), std::slice::from_ref(&promising));
+            let got = badges_for(
+                &bead_referencing(spelling),
+                &[promising(BadgeKey::ExternalRef)],
+            );
 
             assert_eq!(got.drawn, Vec::new(), "drew on {spelling}");
             assert_eq!(got.undrawn, Vec::new(), "reported on {spelling}");
         }
 
-        let absent = bead_with(r#"{"jira":"ATLAS-19"}"#);
-        let got = badges_for(&absent, &[promising]);
+        let carrying_neither = bead_with(r#"{"jira":"ATLAS-19"}"#);
+        for key in [BadgeKey::ExternalRef, meta("nobody_wrote_this")] {
+            let got = badges_for(&carrying_neither, &[promising(key.clone())]);
 
-        assert_eq!(got.drawn, Vec::new());
-        assert_eq!(got.undrawn, Vec::new());
+            assert_eq!(got.drawn, Vec::new(), "drew on {key}");
+            assert_eq!(got.undrawn, Vec::new(), "reported on {key}");
+        }
     }
 
     // ---- what a badge meant to draw could not draw -----------------------

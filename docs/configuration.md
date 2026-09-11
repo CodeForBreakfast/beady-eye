@@ -120,17 +120,29 @@ placed.
 
 ## `[[badges]]`
 
-Draw a metadata key beside every bead that carries it. An entry names one key
-and says what the row carries for it:
+Draw a value beside every bead that carries it. An entry names one value and
+says what the row carries for it:
 
 | written | what it says | needed |
 |---|---|---|
-| `key` | the metadata key this badge is about | yes |
+| `key` | the value this badge is about, and where on the bead to read it | yes |
 | `render` | the text the row carries | yes |
 | `match` | which values this badge draws on, and how the value comes apart | no |
 | `short` | what the row carries instead where `render` will not fit | no |
 | `link` | where the badge points | no |
 | `colour` | what it is drawn in | no |
+
+**A `key` says where on the bead to read, because there are two places.**
+`metadata.jira` reads the `jira` key of the bead's metadata, and a bare
+`external_ref` reads the bead's own external-reference field. The prefix is the
+one namespace a field can never occupy, so nothing is ambiguous and no metadata
+key is out of reach. A bare name that is no field of a bead is refused, naming
+the key you wrote and the key you meant, rather than read as metadata: a badge
+that quietly draws nothing looks exactly like a bead that carries nothing.
+
+`external_ref` is the only field a badge reads. `[join]`'s `pane_key` takes a
+bare name and no prefix, because a pane id is only ever written in metadata and
+there is nothing there to choose between.
 
 `render` is the text, with `{}` for the whole value. `match` restricts the badge
 to the values a pattern matches, and the pattern is anchored against the whole
@@ -270,17 +282,22 @@ in `projects.badges`
 ## Badging the systems you reference
 
 `bdi` has no badge built in for any service, so every reference is one you
-write. The shapes below are what a reference in metadata usually looks like, and
-each is built the same way: a `match` that reads the value apart, a `render`
-that says what the row carries, and a `link` that rebuilds the address.
+write. The shapes below are what a reference usually looks like, and each is
+built the same way whichever place it is read from: a `match` that reads the
+value apart, a `render` that says what the row carries, and a `link` that
+rebuilds the address.
 
-**A badge reads a metadata key, never `external_ref`.** That field belongs to
-beads' sync adapters, whose `tracker.IssueTracker` contract parses and writes
-it. Metadata is the field with no owner, which is what makes it yours to write.
-A badge is that contract's `BuildExternalRef` run backwards — the key names the
-tracker, the value carries the identifier, and `link` rebuilds the URL. beads
-keeps the `bd:` prefix for itself and `_` for its internal keys, so a badge key
-avoids both.
+**Which of the two places you read depends on who wrote the reference.** A
+tracker running one of beads' sync adapters has the adapter fill `external_ref`,
+whose `tracker.IssueTracker` contract parses and writes it, so a badge on that
+field is the contract's `BuildExternalRef` run backwards. A reference you wrote
+by hand goes in metadata, the field with no owner, and the key names the tracker
+it points at. beads keeps the `bd:` prefix for itself and `_` for its internal
+keys, so a metadata key avoids both.
+
+A tracker holds one external reference, so a badge on it draws whatever it
+holds. Metadata takes as many keys as you write, so a setup referencing several
+systems badges each under its own.
 
 ### An issue tracker key
 
@@ -295,6 +312,24 @@ link   = "https://jira.invalid/browse/{ticket}"
 ```
 
 The row draws `HELIO-412` underlined, and it opens the ticket.
+
+### A reference a sync adapter wrote
+
+A bead whose `external_ref` holds `https://jira.invalid/browse/HELIO-412`. The
+adapter writes a whole URL, so the badge cuts the identifier out of it and
+rebuilds the address it already had:
+
+```toml
+[[badges]]
+key    = "external_ref"
+match  = ".*/(?<ticket>[A-Z]+-[0-9]+)"
+render = "{ticket}"
+link   = "https://jira.invalid/browse/{ticket}"
+```
+
+The row draws `HELIO-412` rather than the URL, which is the only form narrow
+enough to sit beside a title. A bead whose field is empty draws no badge and
+says nothing, which is every bead of a tracker no adapter syncs.
 
 ### A pull request written as an owner, a repository and a number
 
