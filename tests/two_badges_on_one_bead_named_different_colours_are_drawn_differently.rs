@@ -44,13 +44,13 @@ const THE_TRACKER: &str = r#"[
 /// which no theme can move.
 const A_SLOT_AND_A_COLOUR: &str = concat!(
     "\n[[badges]]\n",
-    "key    = \"jira\"\n",
+    "key    = \"metadata.jira\"\n",
     "match  = \"(?<ticket>[A-Z]+-[0-9]+)\"\n",
     "render = \"{ticket}\"\n",
     "link   = \"https://jira.invalid/browse/{ticket}\"\n",
     "colour = \"agent\"\n",
     "\n[[badges]]\n",
-    "key    = \"design\"\n",
+    "key    = \"metadata.design\"\n",
     "match  = \"(?<sheet>[A-Z]+-[0-9]+)\"\n",
     "render = \"{sheet}\"\n",
     "link   = \"https://design.invalid/{sheet}\"\n",

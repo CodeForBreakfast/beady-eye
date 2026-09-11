@@ -36,7 +36,7 @@ const THE_TRACKER: &str = include_str!("fixtures/bd_before_the_metadata_cutover.
 const EVERY_BEAD: [&str; 6] = ["orb-v1", "orb-v2", "orb-v3", "orb-v4", "orb-v5", "orb-v6"];
 
 /// A badge on the key one row's metadata spells from inside a string.
-const A_BADGE_ON_PHASE: &str = "\n[[badges]]\nkey = \"phase\"\nrender = \"{}\"\n";
+const A_BADGE_ON_PHASE: &str = "\n[[badges]]\nkey = \"metadata.phase\"\nrender = \"{}\"\n";
 
 /// What that row holds under `phase`. Nothing else on the screen says it, and
 /// nothing says it at all unless the string was read as the object it spells

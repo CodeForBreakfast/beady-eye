@@ -447,11 +447,11 @@ of them. Its config names which keys to notice:
 orbital = ["orb-7"]
 
 [[badges]]                              # rendered as a marker on the row
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ {}"
 
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ waiting"
 ```

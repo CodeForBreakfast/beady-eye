@@ -72,7 +72,7 @@ name = "orbital"
 path = "/srv/work/orbital"
 
 [[badges]]
-key = "blocked_on"
+key = "metadata.blocked_on"
 match = "human"
 render = "⏸ waiting"
 
@@ -281,7 +281,7 @@ fn a_node_carries_every_field_the_contract_names() {
             "started_at": "2026-08-29T10:00:00Z",
             "closed_at": null,
             "badges": [{
-                "key": "blocked_on",
+                "key": "metadata.blocked_on",
                 "text": "⏸ waiting",
                 "short": null,
                 "link": null,
@@ -740,7 +740,7 @@ name = "harbour"
 path = "/srv/work/harbour"
 
 [[badges]]
-key = "blocked_on"
+key = "metadata.blocked_on"
 match = "human"
 render = "⏸ waiting"
 

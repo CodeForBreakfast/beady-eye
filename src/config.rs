@@ -2,6 +2,7 @@
 //! means, and what `bdi` refuses to read.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -222,7 +223,7 @@ pub struct Roots {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Badge {
-    pub key: String,
+    pub key: BadgeKey,
     #[serde(rename = "match")]
     pub match_value: Option<Pattern>,
     pub render: String,
@@ -248,6 +249,62 @@ pub struct Badge {
     /// What the badge is drawn in, for one whose config names a colour. A
     /// badge that names none is drawn in the tone of the row it sits on.
     pub colour: Option<Colour>,
+}
+
+/// Where a badge reads its value.
+///
+/// A bead holds two sorts of value a badge could draw, and a name alone does
+/// not say which is meant: `external_ref` is a field of every bead and is also
+/// a metadata key some project may genuinely write. So the key carries its
+/// source. A bare name is one of the bead's own fields, and a metadata key is
+/// written under `metadata.`, which is the one namespace a bead field can
+/// never occupy.
+///
+/// The external reference is the only field wired up. A name that is no field
+/// is refused rather than read as metadata, because the reader who meant
+/// metadata and left the prefix off gets a badge that silently draws nothing.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BadgeKey {
+    /// The bead's own external reference, which is where a tracker running a
+    /// sync adapter puts the reference this badge is written to draw.
+    ExternalRef,
+    /// One key of the bead's metadata, named after the prefix.
+    Metadata(String),
+}
+
+/// A badge reports itself by the key its reader wrote, so the written spelling
+/// is what a parsed key says back.
+impl fmt::Display for BadgeKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BadgeKey::ExternalRef => f.write_str(EXTERNAL_REF),
+            BadgeKey::Metadata(key) => write!(f, "{METADATA_PREFIX}{key}"),
+        }
+    }
+}
+
+const EXTERNAL_REF: &str = "external_ref";
+const METADATA_PREFIX: &str = "metadata.";
+
+impl BadgeKey {
+    fn parse(written: &str) -> Result<Self, String> {
+        match written.strip_prefix(METADATA_PREFIX) {
+            Some("") => Err(format!("`{METADATA_PREFIX}` names no metadata key")),
+            Some(key) => Ok(BadgeKey::Metadata(key.to_string())),
+            None if written == EXTERNAL_REF => Ok(BadgeKey::ExternalRef),
+            None => Err(format!(
+                "`{written}` is no field of a bead: a metadata key is written \
+                 `{METADATA_PREFIX}{written}`"
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BadgeKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let written = String::deserialize(deserializer)?;
+        BadgeKey::parse(&written).map_err(serde::de::Error::custom)
+    }
 }
 
 /// A colour a badge may be drawn in: a slot of `bdi`'s own palette, or a
@@ -675,7 +732,7 @@ impl Config {
             return self.badges.clone();
         };
         let mut drawn: Vec<Badge> = Vec::new();
-        let mut stood_in_for: BTreeSet<&str> = BTreeSet::new();
+        let mut stood_in_for: BTreeSet<&BadgeKey> = BTreeSet::new();
         for global in &self.badges {
             match own.iter().any(|b| b.key == global.key) {
                 false => drawn.push(global.clone()),
@@ -688,7 +745,7 @@ impl Config {
         }
         drawn.extend(
             own.iter()
-                .filter(|b| !stood_in_for.contains(b.key.as_str()))
+                .filter(|b| !stood_in_for.contains(&b.key))
                 .cloned(),
         );
         drawn
@@ -1011,7 +1068,7 @@ path = "/home/user/dev/beacon"
 credential_command = "cat /home/user/dev/beacon/.beads-password"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ beacon/{}"
 
 [roots.explicit]
@@ -1019,11 +1076,11 @@ atlas  = ["a-1", "a-9"]
 beacon = ["b-1"]
 
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ {}"
 
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ waiting"
 
@@ -1103,7 +1160,7 @@ path = "/home/user/dev/cinder"
                     ),
                     poll: true,
                     badges: vec![Badge {
-                        key: "delivery_pr".to_string(),
+                        key: BadgeKey::Metadata("delivery_pr".to_string()),
                         match_value: None,
                         render: "⇢ beacon/{}".to_string(),
                         link: None,
@@ -1130,7 +1187,7 @@ path = "/home/user/dev/cinder"
             cfg.badges,
             vec![
                 Badge {
-                    key: "delivery_pr".to_string(),
+                    key: BadgeKey::Metadata("delivery_pr".to_string()),
                     match_value: None,
                     render: "⇢ {}".to_string(),
                     link: None,
@@ -1138,7 +1195,7 @@ path = "/home/user/dev/cinder"
                     colour: None,
                 },
                 Badge {
-                    key: "blocked_on".to_string(),
+                    key: BadgeKey::Metadata("blocked_on".to_string()),
                     match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
                     link: None,
@@ -1166,7 +1223,7 @@ path = "/home/user/dev/cinder"
 
     fn badge(key: &str, render: &str) -> Badge {
         Badge {
-            key: key.to_string(),
+            key: BadgeKey::parse(key).expect("the key names a source"),
             match_value: None,
             render: render.to_string(),
             link: None,
@@ -1198,21 +1255,21 @@ path = "/home/user/dev/cinder"
     fn a_projects_badge_stands_where_the_global_one_it_shadows_stood() {
         let cfg = Config {
             badges: vec![
-                badge("delivery_pr", "⇢ {}"),
-                matching("blocked_on", "human", "⏸ waiting"),
+                badge("metadata.delivery_pr", "⇢ {}"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
             ],
             ..Config::naming(vec![drawing(
                 "beacon",
-                vec![badge("delivery_pr", "⇢ beacon/{}"), badge("epic", "▣ {}")],
+                vec![badge("metadata.delivery_pr", "⇢ beacon/{}"), badge("metadata.epic", "▣ {}")],
             )])
         };
 
         assert_eq!(
             cfg.badges_for_project("beacon"),
             vec![
-                badge("delivery_pr", "⇢ beacon/{}"),
-                matching("blocked_on", "human", "⏸ waiting"),
-                badge("epic", "▣ {}"),
+                badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
+                badge("metadata.epic", "▣ {}"),
             ]
         );
     }
@@ -1225,31 +1282,31 @@ path = "/home/user/dev/cinder"
     fn a_projects_badge_shadows_every_global_entry_for_its_key() {
         let cfg = Config {
             badges: vec![
-                matching("blocked_on", "human", "⏸ waiting"),
-                matching("blocked_on", "dependency", "⏸ blocked"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
+                matching("metadata.blocked_on", "dependency", "⏸ blocked"),
             ],
             ..Config::naming(vec![drawing(
                 "beacon",
-                vec![matching("blocked_on", "human", "⏸ ask Ada")],
+                vec![matching("metadata.blocked_on", "human", "⏸ ask Ada")],
             )])
         };
 
         assert_eq!(
             cfg.badges_for_project("beacon"),
-            vec![matching("blocked_on", "human", "⏸ ask Ada")]
+            vec![matching("metadata.blocked_on", "human", "⏸ ask Ada")]
         );
     }
 
     #[test]
     fn a_project_naming_no_badges_draws_the_global_list() {
         let cfg = Config {
-            badges: vec![badge("delivery_pr", "⇢ {}")],
+            badges: vec![badge("metadata.delivery_pr", "⇢ {}")],
             ..Config::naming(vec![drawing("atlas", Vec::new())])
         };
 
         assert_eq!(
             cfg.badges_for_project("atlas"),
-            vec![badge("delivery_pr", "⇢ {}")]
+            vec![badge("metadata.delivery_pr", "⇢ {}")]
         );
     }
 
@@ -1265,7 +1322,7 @@ path = "/home/user/dev/cinder"
 name = "beacon"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ beacon/{}"
 
 path = "/home/user/dev/beacon"
@@ -1281,6 +1338,114 @@ path = "/home/user/dev/beacon"
              in `projects.badges`"
         );
         assert!(!said.contains("missing field"), "{said}");
+    }
+
+    /// Every key says where it reads from, so nothing has to be guessed at
+    /// from the name alone.
+    #[test]
+    fn a_badge_key_names_either_a_metadata_key_or_a_bead_field() {
+        let both = r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+
+[[badges]]
+key    = "metadata.jira"
+render = "{}"
+
+[[badges]]
+key    = "external_ref"
+render = "{}"
+"#;
+
+        let cfg = Config::from_toml(both).expect("both forms parse");
+
+        assert_eq!(
+            cfg.badges.iter().map(|b| &b.key).collect::<Vec<_>>(),
+            vec![
+                &BadgeKey::Metadata("jira".to_string()),
+                &BadgeKey::ExternalRef,
+            ]
+        );
+    }
+
+    /// The reader is told the key they wrote and the key they meant, because a
+    /// bare name silently read as metadata is what the prefix exists to stop.
+    #[test]
+    fn a_bare_name_that_is_no_bead_field_is_refused_and_told_what_it_should_say() {
+        let bare = r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+
+[[badges]]
+key    = "jira"
+render = "{}"
+"#;
+
+        let refused = Config::from_toml(bare).expect_err("a bare name is no bead field");
+
+        assert!(
+            refused.to_string().contains(
+                "`jira` is no field of a bead: a metadata key is written `metadata.jira`"
+            ),
+            "{refused}"
+        );
+    }
+
+    /// `metadata.` on its own names nothing, and a badge reading every bead's
+    /// empty-string key is not what anyone wrote it for.
+    #[test]
+    fn a_metadata_prefix_naming_no_key_is_refused() {
+        let empty = r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+
+[[badges]]
+key    = "metadata."
+render = "{}"
+"#;
+
+        let refused = Config::from_toml(empty).expect_err("`metadata.` names no key");
+
+        assert!(
+            refused.to_string().contains("`metadata.` names no metadata key"),
+            "{refused}"
+        );
+    }
+
+    /// A metadata key holding a dot keeps it: only the first one is the
+    /// prefix's, so the key is whatever follows it.
+    #[test]
+    fn a_metadata_key_of_its_own_keeps_every_dot_after_the_first() {
+        let dotted = r#"
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+
+[[badges]]
+key    = "metadata.helio.ticket"
+render = "{}"
+"#;
+
+        let cfg = Config::from_toml(dotted).expect("a dotted metadata key parses");
+
+        assert_eq!(
+            cfg.badges[0].key,
+            BadgeKey::Metadata("helio.ticket".to_string())
+        );
+    }
+
+    /// What a badge reports is the key its reader wrote, so the spelling has
+    /// to survive the parse.
+    #[test]
+    fn a_badge_key_says_back_what_was_written() {
+        assert_eq!(
+            BadgeKey::Metadata("jira".to_string()).to_string(),
+            "metadata.jira"
+        );
+        assert_eq!(BadgeKey::ExternalRef.to_string(), "external_ref");
     }
 
     #[test]
@@ -1997,7 +2162,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn badge_without_match_renders_any_value() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
@@ -2010,7 +2175,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn badge_with_match_is_selective() {
         let b = Badge {
-            key: "blocked_on".to_string(),
+            key: BadgeKey::Metadata("blocked_on".to_string()),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: None,
@@ -2044,7 +2209,7 @@ metadata_keys = ["working_topic"]
 
         for value in values {
             let badge = Badge {
-                key: "blocked_on".to_string(),
+                key: BadgeKey::Metadata("blocked_on".to_string()),
                 match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
                 link: None,
@@ -2064,7 +2229,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn render_substitutes_a_capture_by_name_and_braces_by_the_whole_value() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
             link: None,
@@ -2081,7 +2246,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn braces_written_around_the_braces_are_drawn_around_the_value() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: None,
             render: "{{}}".to_string(),
             link: None,
@@ -2096,7 +2261,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_value_spelled_like_a_placeholder_is_placed_and_not_read() {
         let b = Badge {
-            key: "working_topic".to_string(),
+            key: BadgeKey::Metadata("working_topic".to_string()),
             match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
             link: None,
@@ -2115,7 +2280,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_is_built_from_the_captures_render_reads() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
@@ -2136,7 +2301,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_missing_one_of_its_captures_is_no_link_at_all() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: Some(pattern(
                 r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
             )),
@@ -2158,7 +2323,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_naming_a_capture_the_pattern_never_had_is_no_link() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: Some(pattern(r"(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
             link: Some("https://forge.invalid/{repo}/pull/{number}".to_string()),
@@ -2171,7 +2336,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_that_does_not_apply_points_nowhere() {
         let b = Badge {
-            key: "blocked_on".to_string(),
+            key: BadgeKey::Metadata("blocked_on".to_string()),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             link: Some("https://forge.invalid/waiting".to_string()),
@@ -2188,7 +2353,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_whose_config_names_no_link_points_nowhere() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: None,
             render: "⇢ {}".to_string(),
             link: None,
@@ -2203,7 +2368,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_short_form_is_built_from_the_captures_render_reads() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number}".to_string(),
             short: Some("⇢ #{number}".to_string()),
@@ -2220,7 +2385,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_short_form_missing_one_of_its_captures_is_no_short_form_at_all() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: Some(pattern(
                 r"(?:(?<owner>[^/]+)/)?(?<repo>[^#]+)#(?<number>[0-9]+)",
             )),
@@ -2240,7 +2405,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_whose_config_names_no_short_form_has_none() {
         let b = Badge {
-            key: "delivery_pr".to_string(),
+            key: BadgeKey::Metadata("delivery_pr".to_string()),
             match_value: None,
             render: "⇢ {}".to_string(),
             short: None,
@@ -2256,7 +2421,7 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_that_does_not_apply_has_no_short_form_either() {
         let b = Badge {
-            key: "blocked_on".to_string(),
+            key: BadgeKey::Metadata("blocked_on".to_string()),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
             short: Some("⏸".to_string()),
@@ -2272,7 +2437,7 @@ metadata_keys = ["working_topic"]
         let cfg = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {{repo}} #{{number}}"
 short  = "⇢ #{{number}}"
@@ -2291,7 +2456,7 @@ short  = "⇢ #{{number}}"
         let cfg = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ #{{number}}"
 link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
@@ -2312,7 +2477,7 @@ link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
         let err = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "(unclosed"
 render = "⏸ waiting"
 "#
@@ -2326,7 +2491,7 @@ render = "⏸ waiting"
         let cfg = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "status"
 "#
@@ -2355,7 +2520,7 @@ colour = "status"
             let cfg = Config::from_toml(&format!(
                 r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "{written}"
 "#
@@ -2379,7 +2544,7 @@ colour = "{written}"
             let cfg = Config::from_toml(&format!(
                 r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "{written}"
 "#
@@ -2420,7 +2585,7 @@ colour = "{written}"
         let err = Config::from_toml(&format!(
             r#"{ONE_PROJECT}
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 render = "{{}}"
 colour = "chartreuse"
 "#

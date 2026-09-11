@@ -39,7 +39,7 @@ const THE_TRACKER: &str = r#"[
 /// reference stands for.
 const A_BADGE_POINTING_SOMEWHERE: &str = concat!(
     "\n[[badges]]\n",
-    "key    = \"delivery_pr\"\n",
+    "key    = \"metadata.delivery_pr\"\n",
     "match  = \"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)\"\n",
     "render = \"⇢ #{number}\"\n",
     "link   = \"https://forge.invalid/{owner}/{repo}/pull/{number}\"\n",

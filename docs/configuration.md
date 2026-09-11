@@ -23,18 +23,18 @@ path = "/home/you/dev/beacon"
 credential_command = "secret-tool lookup tracker beacon"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ beacon/{}"
 
 [roots.explicit]
 atlas = ["atlas-1", "atlas-10"]
 
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 render = "⇢ {}"
 
 [[badges]]
-key    = "blocked_on"
+key    = "metadata.blocked_on"
 match  = "human"
 render = "⏸ waiting"
 
@@ -140,7 +140,7 @@ A capture the pattern names is `render`'s to place by that name:
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 ```
@@ -154,7 +154,7 @@ modifier held: [Opening a badge](#opening-a-badge) has that.
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ #{number}"
 link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
@@ -171,7 +171,7 @@ first thing a narrow pane drops; one with two survives, saying less:
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 short  = "⇢ #{number}"
@@ -196,7 +196,7 @@ the same way on every row.
 
 ```toml
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 match  = "(?<ticket>[A-Z]+-[0-9]+)"
 render = "{ticket}"
 colour = "status"
@@ -238,7 +238,7 @@ an index into your terminal's palette:
 
 ```toml
 [[badges]]
-key    = "design"
+key    = "metadata.design"
 render = "✎ {}"
 colour = "#c71585"
 ```
@@ -288,7 +288,7 @@ A bead carrying `jira = "HELIO-412"`:
 
 ```toml
 [[badges]]
-key    = "jira"
+key    = "metadata.jira"
 match  = "(?<ticket>[A-Z]+-[0-9]+)"
 render = "{ticket}"
 link   = "https://jira.invalid/browse/{ticket}"
@@ -302,7 +302,7 @@ A bead carrying `delivery_pr = "orbital/atlas#12"`:
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 short  = "⇢ #{number}"
@@ -326,7 +326,7 @@ name = "beacon"
 path = "/home/you/dev/beacon"
 
 [[projects.badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "(?<number>[0-9]+)"
 render = "⇢ #{number}"
 link   = "https://forge.invalid/orbital/beacon/pull/{number}"
@@ -343,7 +343,7 @@ row, and it declines a value that is not an address of yours.
 
 ```toml
 [[badges]]
-key    = "delivery_pr"
+key    = "metadata.delivery_pr"
 match  = "https://forge.invalid/[^/]+/(?<repo>[^/]+)/pull/(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 link   = "{}"

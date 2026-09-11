@@ -1,4 +1,4 @@
-//! The short text a row carries beside its title, for a metadata key a setup
+//! The short text a row carries beside its title, for a value a setup
 //! asked `bdi` to show.
 //!
 //! Nothing here learns what a key means. Which keys are worth drawing, and
@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::config::{Badge, Colour};
+use crate::config::{Badge, BadgeKey, Colour};
 use crate::model::types::Bead;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -73,7 +73,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
     let mut undrawn = Vec::new();
 
     for badge in badges {
-        let Some(value) = bead.metadata.get(&badge.key) else {
+        let Some(value) = value_for(bead, &badge.key) else {
             continue;
         };
         // A badge with no `link` never reports: whatever it does with this
@@ -83,7 +83,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
         let Some(text) = badge.apply(value) else {
             if promised {
                 undrawn.push(Undrawn::Badge {
-                    key: badge.key.clone(),
+                    key: badge.key.to_string(),
                 });
             }
             continue;
@@ -92,19 +92,19 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
         let link = badge.link_for(value);
         if promised && link.is_none() {
             undrawn.push(Undrawn::Link {
-                key: badge.key.clone(),
+                key: badge.key.to_string(),
             });
         }
 
         let short = badge.short_for(value);
         if badge.short.is_some() && short.is_none() {
             undrawn.push(Undrawn::Short {
-                key: badge.key.clone(),
+                key: badge.key.to_string(),
             });
         }
 
         drawn.push(Badged {
-            key: badge.key.clone(),
+            key: badge.key.to_string(),
             text,
             short,
             link,
@@ -113,6 +113,19 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
     }
 
     Badges { drawn, undrawn }
+}
+
+/// What this bead holds where the key says to read, or nothing where it holds
+/// nothing there.
+///
+/// A bead with no external reference is a bead with nothing at that key, which
+/// is the same silence as a metadata key it never wrote: the badge does not
+/// draw, and there is nothing to report.
+fn value_for<'b>(bead: &'b Bead, key: &BadgeKey) -> Option<&'b str> {
+    match key {
+        BadgeKey::ExternalRef => bead.external_ref.as_deref(),
+        BadgeKey::Metadata(key) => bead.metadata.get(key).map(String::as_str),
+    }
 }
 
 #[cfg(test)]
@@ -127,6 +140,10 @@ mod tests {
         Pattern::new(pattern).expect("the pattern compiles")
     }
 
+    fn meta(key: &str) -> BadgeKey {
+        BadgeKey::Metadata(key.to_string())
+    }
+
     fn bead_with(metadata: &str) -> Bead {
         let json =
             format!(r#"[{{"id":"p-1","title":"root","status":"open","metadata":{metadata}}}]"#);
@@ -138,7 +155,7 @@ mod tests {
         let bead = bead_with(r#"{"blocked_on":"human","delivery_pr":"owner/repo#7"}"#);
         let cfg = vec![
             Badge {
-                key: "blocked_on".into(),
+                key: meta("blocked_on"),
                 match_value: Some(matching("human")),
                 render: "waiting".into(),
                 link: None,
@@ -146,7 +163,7 @@ mod tests {
                 colour: None,
             },
             Badge {
-                key: "blocked_on".into(),
+                key: meta("blocked_on"),
                 match_value: Some(matching("dependency")),
                 render: "dep".into(),
                 link: None,
@@ -154,7 +171,7 @@ mod tests {
                 colour: None,
             },
             Badge {
-                key: "absent_key".into(),
+                key: meta("absent_key"),
                 match_value: None,
                 render: "never".into(),
                 link: None,
@@ -168,7 +185,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "blocked_on".to_string(),
+                key: "metadata.blocked_on".to_string(),
                 text: "waiting".to_string(),
                 link: None,
                 short: None,
@@ -183,7 +200,7 @@ mod tests {
     fn badges_render_a_configured_key_without_interpreting_it() {
         let bead = bead_with(r#"{"xyzzy":"plugh"}"#);
         let cfg = vec![Badge {
-            key: "xyzzy".into(),
+            key: meta("xyzzy"),
             match_value: None,
             render: "→ {}".into(),
             link: None,
@@ -196,7 +213,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "xyzzy".to_string(),
+                key: "metadata.xyzzy".to_string(),
                 text: "→ plugh".to_string(),
                 link: None,
                 short: None,
@@ -212,7 +229,7 @@ mod tests {
     fn a_badges_colour_travels_with_its_text() {
         let bead = bead_with(r#"{"jira":"ATLAS-19"}"#);
         let cfg = vec![Badge {
-            key: "jira".into(),
+            key: meta("jira"),
             match_value: None,
             render: "{}".into(),
             link: None,
@@ -225,7 +242,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "jira".to_string(),
+                key: "metadata.jira".to_string(),
                 text: "ATLAS-19".to_string(),
                 link: None,
                 short: None,
@@ -241,6 +258,93 @@ mod tests {
         assert_eq!(badges_for(&bead, &[]), Badges::default());
     }
 
+    // ---- the bead's own external reference -------------------------------
+
+    fn bead_referencing(external_ref: &str) -> Bead {
+        let json = format!(
+            r#"[{{"id":"p-1","title":"root","status":"open",
+                  "external_ref":{external_ref},"metadata":{{"jira":"ATLAS-19"}}}}]"#
+        );
+        parse_beads(&json).expect("the bead parses").remove(0)
+    }
+
+    /// A tracker running a sync adapter holds its reference in the field
+    /// rather than in metadata, and a badge reading the field draws it exactly
+    /// as a badge reading metadata draws that.
+    #[test]
+    fn a_badge_on_the_external_reference_draws_it_as_it_draws_metadata() {
+        let bead = bead_referencing(r#""https://jira.invalid/browse/HELIO-412""#);
+        let cfg = vec![
+            Badge {
+                key: BadgeKey::ExternalRef,
+                match_value: Some(matching(r".*/(?<ticket>[A-Z]+-[0-9]+)")),
+                render: "{ticket}".into(),
+                link: Some("https://jira.invalid/browse/{ticket}".into()),
+                short: None,
+                colour: None,
+            },
+            Badge {
+                key: meta("jira"),
+                match_value: None,
+                render: "{}".into(),
+                link: None,
+                short: None,
+                colour: None,
+            },
+        ];
+
+        let got = badges_for(&bead, &cfg);
+
+        assert_eq!(
+            got.drawn,
+            vec![
+                Badged {
+                    key: "external_ref".to_string(),
+                    text: "HELIO-412".to_string(),
+                    link: Some("https://jira.invalid/browse/HELIO-412".to_string()),
+                    short: None,
+                    colour: None,
+                },
+                Badged {
+                    key: "metadata.jira".to_string(),
+                    text: "ATLAS-19".to_string(),
+                    link: None,
+                    short: None,
+                    colour: None,
+                },
+            ]
+        );
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// The field is empty on every bead of a tracker no sync adapter fills, so
+    /// this is the case the badge meets most often. It is not a badge that fell
+    /// short: it is a badge that was never about this bead.
+    #[test]
+    fn a_bead_holding_no_external_reference_draws_no_badge_and_reports_nothing() {
+        let promising = Badge {
+            key: BadgeKey::ExternalRef,
+            match_value: None,
+            render: "{}".into(),
+            link: Some("https://jira.invalid/browse/{}".into()),
+            short: Some("{}".into()),
+            colour: None,
+        };
+
+        for spelling in [r#""""#, "null"] {
+            let got = badges_for(&bead_referencing(spelling), std::slice::from_ref(&promising));
+
+            assert_eq!(got.drawn, Vec::new(), "drew on {spelling}");
+            assert_eq!(got.undrawn, Vec::new(), "reported on {spelling}");
+        }
+
+        let absent = bead_with(r#"{"jira":"ATLAS-19"}"#);
+        let got = badges_for(&absent, &[promising]);
+
+        assert_eq!(got.drawn, Vec::new());
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
     // ---- what a badge meant to draw could not draw -----------------------
 
     /// The pattern a global list writes for a `delivery_pr` reads the
@@ -248,7 +352,7 @@ mod tests {
     /// pattern cannot read at all, and dropping them tells the reader nothing.
     fn qualified_only() -> Badge {
         Badge {
-            key: "delivery_pr".into(),
+            key: meta("delivery_pr"),
             match_value: Some(matching(
                 r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)",
             )),
@@ -269,7 +373,7 @@ mod tests {
         assert_eq!(
             got.undrawn,
             vec![Undrawn::Badge {
-                key: "delivery_pr".to_string()
+                key: "metadata.delivery_pr".to_string()
             }]
         );
     }
@@ -281,7 +385,7 @@ mod tests {
     fn a_badge_configured_to_decline_stays_silent() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
         let filter = Badge {
-            key: "blocked_on".into(),
+            key: meta("blocked_on"),
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
             link: None,
@@ -325,7 +429,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "delivery_pr".to_string(),
+                key: "metadata.delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 link: None,
                 short: None,
@@ -335,7 +439,7 @@ mod tests {
         assert_eq!(
             got.undrawn,
             vec![Undrawn::Link {
-                key: "delivery_pr".to_string()
+                key: "metadata.delivery_pr".to_string()
             }]
         );
     }
@@ -349,7 +453,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "delivery_pr".to_string(),
+                key: "metadata.delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
                 short: None,
@@ -376,7 +480,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "delivery_pr".to_string(),
+                key: "metadata.delivery_pr".to_string(),
                 text: "⇢ atlas #30".to_string(),
                 short: Some("⇢ #30".to_string()),
                 link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
@@ -424,7 +528,7 @@ mod tests {
         assert_eq!(
             got.drawn,
             vec![Badged {
-                key: "delivery_pr".to_string(),
+                key: "metadata.delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 short: None,
                 link: None,
@@ -434,7 +538,7 @@ mod tests {
         assert_eq!(
             got.undrawn,
             vec![Undrawn::Short {
-                key: "delivery_pr".to_string()
+                key: "metadata.delivery_pr".to_string()
             }]
         );
     }
@@ -445,7 +549,7 @@ mod tests {
     fn a_badge_configured_to_decline_reports_no_short_form() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
         let filter = Badge {
-            key: "blocked_on".into(),
+            key: meta("blocked_on"),
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
             short: Some("⏸".into()),

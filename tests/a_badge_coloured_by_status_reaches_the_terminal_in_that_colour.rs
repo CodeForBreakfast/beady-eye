@@ -46,7 +46,7 @@ const THE_TRACKER: &str = r#"[
 /// its page and drawn in the colour of the bead it sits on.
 const A_TICKET_TRACKING_THE_BEAD: &str = concat!(
     "\n[[badges]]\n",
-    "key    = \"jira\"\n",
+    "key    = \"metadata.jira\"\n",
     "match  = \"(?<ticket>[A-Z]+-[0-9]+)\"\n",
     "render = \"{ticket}\"\n",
     "link   = \"https://jira.invalid/browse/{ticket}\"\n",
