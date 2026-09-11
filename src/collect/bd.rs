@@ -45,23 +45,17 @@ pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
 /// grows is drawable the day bd writes it, and an object-valued one is drawable
 /// a member at a time, without `bdi` learning a thing about either.
 ///
-/// A string, a number and a boolean are each one value, and each is kept as the
-/// text it prints as. A null and an empty string are both how bd spells a field
-/// nothing was written to — it writes the top of a chain as an empty parent —
-/// and an array is not one value at all. Those are no key here, which is where
-/// a name no row carries already lands. So is an object, which is what keeps a
-/// key naming one on its own from drawing the whole blob onto a row.
-///
-/// The rule is about kinds of value rather than names of fields, so nothing
-/// here moves when bd's schema does.
+/// `text_of` decides what is one value, and it decides it the same way for a
+/// field and for a member. The rule is about kinds of value rather than names
+/// of fields, so nothing here moves when bd's schema does.
 fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
     for (field, value) in row {
         match object_written_either_way(value) {
             Some(members) => values.extend(
-                text_of_each(members.into_owned())
-                    .into_iter()
-                    .filter_map(|(key, text)| Some((format!("{field}.{key}"), some(text)?))),
+                members
+                    .iter()
+                    .filter_map(|(key, member)| Some((format!("{field}.{key}"), text_of(member)?))),
             ),
             None => {
                 if let Some(text) = text_of(value) {
@@ -74,18 +68,19 @@ fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<Strin
 }
 
 /// One value as the text it prints as, or nothing where it is not one value.
+///
+/// A string, a number and a boolean are each one value. A null and an empty
+/// string are both how bd spells something nothing was written to — it writes
+/// the top of a chain as an empty parent — and an array is not one value at
+/// all. Those are no key, which is where a name no row carries already lands.
+/// So is an object, which is what keeps a key naming a whole one from drawing
+/// the blob onto a row.
 fn text_of(value: &serde_json::Value) -> Option<String> {
     match value {
-        serde_json::Value::String(text) => some(text.clone()),
+        serde_json::Value::String(text) if !text.is_empty() => Some(text.clone()),
         serde_json::Value::Number(_) | serde_json::Value::Bool(_) => Some(value.to_string()),
         _ => None,
     }
-}
-
-/// An empty text is a field nothing was written to, and nothing is what a
-/// badge draws for it.
-fn some(text: String) -> Option<String> {
-    Some(text).filter(|text| !text.is_empty())
 }
 
 /// One row of a bd listing, in the shape bd writes it, holding only the
@@ -674,6 +669,43 @@ mod tests {
         assert_eq!(fields.get("pinned").map(String::as_str), Some("true"));
         for absent in ["external_ref", "parent", "dependencies", "metadata"] {
             assert_eq!(fields.get(absent), None, "{absent} is no value to draw");
+        }
+    }
+
+    /// A member of a field's object is judged by what it is, exactly as the
+    /// field itself is. The metadata a bead carries is arbitrary JSON, so a
+    /// member that is a list or an object of its own is the case this meets,
+    /// and rendering one would put its braces on a row beside a title.
+    #[test]
+    fn a_member_of_an_object_is_one_value_on_the_same_terms_as_a_field() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open",
+             "metadata":{"attempts":3,"waiting":false,"phase":"vacuum-soak",
+                         "cleared":null,"note":"",
+                         "seats":["ada","grace"],"budget":{"hours":4}}}
+        ]"#;
+
+        let values = &parse_beads(rows).expect("the row parses")[0].values;
+
+        assert_eq!(
+            values.get("metadata.attempts").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            values.get("metadata.waiting").map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            values.get("metadata.phase").map(String::as_str),
+            Some("vacuum-soak")
+        );
+        for absent in [
+            "metadata.cleared",
+            "metadata.note",
+            "metadata.seats",
+            "metadata.budget",
+        ] {
+            assert_eq!(values.get(absent), None, "{absent} is no value to draw");
         }
     }
 
