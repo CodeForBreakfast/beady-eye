@@ -49,13 +49,30 @@ fn shut_over(beneath: Counts, first: bool, folded: Option<bool>) -> Option<Count
 
 /// Every line the snapshot draws, in render order. `facts` is what the
 /// snapshot answered when the forest took it.
-pub(super) fn draw(snapshot: &Snapshot, facts: &Facts, folds: &Folds) -> Vec<Line> {
+pub(super) fn draw(
+    snapshot: &Snapshot,
+    facts: &Facts,
+    folds: &Folds,
+    rooted: Option<&Rooted>,
+) -> Vec<Line> {
     Layout {
         snapshot,
         facts,
         folds,
+        rooted,
     }
     .draw()
+}
+
+/// The one bead the forest is rooted at, where the reader has asked for that:
+/// the line they asked on, and the nodes the way down to it steps through.
+///
+/// Both, because the place says which line and the way says which nodes, and
+/// resolving one into the other needs the snapshot the line was drawn from.
+pub(super) struct Rooted {
+    pub(super) place: Place,
+    /// The way down from the tree's root to the focused bead, that bead last.
+    pub(super) way: Vec<usize>,
 }
 
 /// Whether a group is drawn at all, which is whether the snapshot has put
@@ -234,6 +251,9 @@ struct Layout<'a> {
     snapshot: &'a Snapshot,
     facts: &'a Facts,
     folds: &'a Folds,
+    /// The bead the forest is rooted at, where the reader has rooted it at
+    /// one. Nothing is drawn outside what hangs beneath it.
+    rooted: Option<&'a Rooted>,
 }
 
 impl Layout<'_> {
@@ -297,15 +317,30 @@ impl Layout<'_> {
         if !open {
             return;
         }
-        let trees: Vec<&Tree> = self
-            .snapshot
-            .trees
-            .iter()
-            .filter(|tree| tree.project == project)
-            .map(Arc::as_ref)
-            .collect();
+        let trees: Vec<&Tree> = match self.rooted {
+            // Rooted at one bead, the forest draws the one tree holding it,
+            // and draws that tree from the bead rather than from its root.
+            // Taken from what was collected rather than from what the filter
+            // shows, so a reader who rooted the forest at a bead in a tree the
+            // filter is holding back keeps the tree they asked for.
+            Some(rooted) if rooted.place.tree.project == project => {
+                self.snapshot.tree(&rooted.place.tree).into_iter().collect()
+            }
+            Some(_) => Vec::new(),
+            None => self
+                .snapshot
+                .trees
+                .iter()
+                .filter(|tree| tree.project == project)
+                .map(Arc::as_ref)
+                .collect(),
+        };
         let groups: Vec<Group> = GroupKind::UNDER_A_PROJECT
             .into_iter()
+            // The group of trees the filter is holding back draws whole trees,
+            // and one bead is the only root there is while the forest is
+            // rooted at one.
+            .filter(|kind| self.rooted.is_none() || *kind != GroupKind::HiddenTrees)
             .filter_map(|kind| group_of(self.snapshot, kind, Some(&project)))
             .collect();
         let mut entries = trees.len() + groups.len();
@@ -317,6 +352,7 @@ impl Layout<'_> {
                 tree,
                 facts: self.facts.tree(&root_key(tree)),
                 rests_shut: false,
+                rooted: self.rooted,
             }
             .draw(&mut trunk, entries == 0, lines);
         }
@@ -370,6 +406,7 @@ impl Layout<'_> {
                         tree,
                         facts: self.facts.tree(&root_key(tree)),
                         rests_shut: true,
+                        rooted: None,
                     }
                     .draw(trunk, n + 1 == count, lines);
                 }
@@ -425,15 +462,27 @@ struct TreeLayout<'a> {
     tree: &'a Tree,
     facts: &'a TreeFacts,
     rests_shut: bool,
+    /// The bead to draw this tree from, where the reader has rooted the forest
+    /// at one. Its own root otherwise.
+    rooted: Option<&'a Rooted>,
 }
 
 impl TreeLayout<'_> {
     /// `trunk` is the way down to whatever this tree hangs under, as the
     /// box-drawing says it: empty for a root directly under its project.
     fn draw(&self, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
-        let root = Place::root(root_key(self.tree));
+        // Where the walk starts. The bead the reader rooted the forest at is
+        // drawn where its tree's root would be, and keeps the place it has
+        // everywhere else, so a fold set on it survives the key that rooted
+        // the forest there and the key that puts the forest back.
+        let (root, way) = match self.rooted {
+            Some(rooted) => (rooted.place.clone(), rooted.way.clone()),
+            None => (Place::root(root_key(self.tree)), vec![0]),
+        };
+        let (at, above) = way.split_last().expect("a way down ends somewhere");
+        let at = *at;
         let depth = trunk.len() as u16 + 1;
-        let Some(node) = self.tree.beads.first() else {
+        let Some(node) = self.tree.beads.get(at) else {
             // No nodes, so no row: the root is named on a line of its own
             // rather than left out, because a root that would not read is the
             // one a reader most needs to see is there.
@@ -452,8 +501,8 @@ impl TreeLayout<'_> {
         // A tree opens because of what is in it, not because the selection
         // is in it: the first screen is meant to be the answer to what is
         // being worked and what could be started.
-        let kids = self.children_entries(0, &[]);
-        let bead = self.facts.bead(self.tree, 0, &[]);
+        let kids = self.children_entries(at, above);
+        let bead = self.facts.bead(self.tree, at, above);
         let open = !kids.is_empty()
             && self.folds.expanded(
                 &Handle::Bead(root.clone()),
@@ -470,7 +519,7 @@ impl TreeLayout<'_> {
                 node,
                 &self.tree.root,
                 bead.progress,
-                shut_over(bead.beneath, first_copy(self.tree, 0, &[]), folded),
+                shut_over(bead.beneath, first_copy(self.tree, at, above), folded),
             )),
         });
 
@@ -479,7 +528,7 @@ impl TreeLayout<'_> {
             entries.extend(kids);
         }
         trunk.push(!last);
-        self.draw_children(entries, &root, &[0], trunk, lines);
+        self.draw_children(entries, &root, &way, trunk, lines);
         trunk.pop();
     }
 

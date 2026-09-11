@@ -934,6 +934,25 @@ which stops being true the moment something new is under it. Only hand-folds
 are stored; the default is derived, which is what makes "back to the default"
 a single key.
 
+**`Shift+F` roots the forest at one bead, and that is the other place a reader
+asks by name.** The key draws the selected bead where a root is drawn, what the
+forest draws beneath that bead anywhere else, and nothing else: no other root
+and no other project's tree. It is for finishing one bead, so what it takes
+away is everything a reader does not have to do in order to close the one they
+are on. Everything beneath that bead is already in the tree it is drawn in, so
+this is a change to what the layout walks rather than to what was collected,
+and the bead keeps the place it has everywhere else — which is what lets a fold
+set on it survive the key both ways. The default above rejects
+collapsed-except-selected and the rejection stands: the selection has no
+bearing on what is open, and it has none here either, because the mode stands
+on the bead named at the keystroke and moving about under it moves nothing.
+Pressing the key again puts the forest back, with the selection on the bead it
+was rooted at. The bead leaving the collection is the one thing that ends the
+mode on its own; a bead that closes is still in the collection, so closing the
+focused bead does not. Every root and project the mode holds back goes behind
+one collapsed line per project rather than off the screen, which is *degrade,
+never disappear* binding here as everywhere.
+
 **A finished branch draws as one line and rests shut.** Its glyph, its
 fraction and its fold marker already say *finished, and holds more*; opening it
 is the ordinary fold. A closed bead standing over unfinished work is the
@@ -2364,6 +2383,7 @@ The bindings are vim-like, with the arrows as aliases:
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
+| `F` | draw the selected bead as the only root, or put the forest back |
 | `/` | find part of a bead's id or title, wherever the forest draws it |
 | `n` | go to the next bead matching the search |
 | `N` | go to the one before it |

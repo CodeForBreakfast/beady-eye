@@ -18,6 +18,7 @@ use crate::view::{Action, Motion, Notch};
 
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
+use layout::Rooted;
 
 /// Where a search came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +117,13 @@ pub struct Forest {
     room: usize,
     lines: Vec<Line>,
     selected: usize,
+    /// The bead the forest is rooted at, where the reader has asked for one.
+    ///
+    /// The line they asked on rather than the bead standing on it, so a bead
+    /// drawn more than once roots the forest at the copy they were on. Held
+    /// rather than derived, because the selection moves afterwards and the
+    /// mode does not move with it.
+    focused: Option<Place>,
     /// What was last searched for, which `n` and `N` step through.
     ///
     /// The text and not the matches it found. A match set held between
@@ -137,6 +145,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         room: 0,
         lines: Vec::new(),
         selected: 0,
+        focused: None,
         searched: None,
     };
     forest.lay_out();
@@ -406,6 +415,7 @@ impl Forest {
             Action::CollapseSubtree => self.fold_subtree(false),
             Action::RestoreDefault => self.folds.clear(),
             Action::ToggleFilter => self.toggle_filter(),
+            Action::FocusForest => self.focus_forest(),
             Action::Focus
             | Action::ShowBead
             | Action::NextRelated
@@ -421,6 +431,44 @@ impl Forest {
         let was = self.lay_out();
         let revealed = self.reveal();
         self.selected != selected || self.lines != was || revealed
+    }
+
+    /// Root the forest at the selected bead, or put it back where it is
+    /// already rooted at one.
+    ///
+    /// Putting it back leaves the selection on the bead the reader rooted it
+    /// at, wherever they had walked to under the mode: they asked to finish
+    /// that bead, and the forest they came back to is the one they left.
+    ///
+    /// A line carrying no bead roots the forest at nothing. A root whose
+    /// tracker refused holds a place but no node, and there is no tree to draw
+    /// from a bead that is not there.
+    fn focus_forest(&mut self) {
+        if self.focused.is_some() {
+            self.cursor = self.focused.take().map(Handle::Bead);
+            return;
+        }
+        let Some(Handle::Bead(place)) = self.cursor.clone() else {
+            return;
+        };
+        if self.locate(&place).is_some() {
+            self.focused = Some(place);
+        }
+    }
+
+    /// Where the forest is rooted, where the reader has rooted it at a bead
+    /// the snapshot in hand still draws.
+    ///
+    /// Resolved against that snapshot on every layout rather than kept, so a
+    /// collection that moved the bead is followed and one that dropped it
+    /// ends the mode.
+    fn rooted(&self) -> Option<Rooted> {
+        let place = self.focused.as_ref()?;
+        let (_, way) = self.locate(place)?;
+        Some(Rooted {
+            place: place.clone(),
+            way,
+        })
     }
 
     fn toggle_filter(&mut self) {
@@ -529,7 +577,8 @@ impl Forest {
     /// Point every fold drawn in `scope`'s subtree at `open`, reporting
     /// whether any of them was pointing the other way.
     fn point_every_drawn_fold(&mut self, scope: &Handle, open: bool) -> bool {
-        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds);
+        let rooted = self.rooted();
+        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds, rooted.as_ref());
         let pointed: Vec<Handle> = subtree_of(&drawn, scope)
             .iter()
             .filter(|line| line.folded == Some(!open))
@@ -960,7 +1009,8 @@ impl Forest {
     /// without duplicating either.
     fn lay_out(&mut self) -> Vec<Line> {
         self.settle_cursor();
-        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds);
+        let rooted = self.rooted();
+        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds, rooted.as_ref());
         let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
@@ -6861,5 +6911,208 @@ credential_command = "secret harbour"
 
     fn drawn_here(forest: &Forest, said: &str) -> bool {
         sketch(forest).iter().any(|row| row.contains(said))
+    }
+
+    /// Put the selection on a bead and focus the forest there, the way a
+    /// reader would with the keys they have.
+    fn focus_on(forest: &mut Forest, id: &str) {
+        select_bead(forest, id);
+        assert!(
+            forest.apply(Action::FocusForest),
+            "focusing {id} changed nothing: {:#?}",
+            sketch(forest)
+        );
+    }
+
+    /// Every root but the one focused goes, and so does every other project's
+    /// tree. The project lines stay, because what is holding their roots back
+    /// hangs under them.
+    #[test]
+    fn focusing_a_root_leaves_it_the_only_one_drawn() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7");
+
+        assert_eq!(
+            // Without the things in the groups, which say nothing about where
+            // the trees went and are long enough to bury the rows that do.
+            sketch(&forest)
+                .into_iter()
+                .filter(|row| !row.contains("── - "))
+                .collect::<Vec<String>>(),
+            vec![
+                "▾ orbital",
+                "  ├── ◐ orb-7 lift the ground station",
+                "  │   ├── ! Dangling(1)",
+                "  │   ├─▸ ○ .1 re-point the dish",
+                "  │   ├── ○ .7 log the survey marks",
+                "  │   ├── ✓ .4 clear the access road",
+                "  │   └─▸ … 3 more",
+                "  └── [Unattributed orbital] 2",
+                "▾ ferry",
+                "  └── [Unattributed ferry] 1",
+                "▾ harbour",
+                "▸ [FailedProjects] 1",
+                "▾ [Unconfigured] 1",
+                "▾ [Conflicts] 1",
+            ]
+        );
+    }
+
+    /// The reader asked to finish the bead they pressed the key on, so that is
+    /// the bead the forest they come back to is standing on, wherever they had
+    /// walked to underneath it.
+    #[test]
+    fn putting_the_forest_back_leaves_the_selection_on_the_bead_it_was_rooted_at() {
+        let mut forest = flatten(snapshot());
+        let was = sketch(&forest);
+        focus_on(&mut forest, "orb-7.1");
+        forest.apply(Action::Move(Motion::LastRow));
+
+        assert!(forest.apply(Action::FocusForest));
+
+        assert_eq!(sketch(&forest), was);
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+    }
+
+    /// `bdi` runs on the live-agent filter unless told otherwise, and the
+    /// group of trees it is holding back is where a reader meets a quiet one.
+    /// Rooting the forest at a bead in one of those draws it like any other,
+    /// rather than finding no tree to root at.
+    #[test]
+    fn rooting_the_forest_at_a_bead_the_filter_holds_back_draws_its_tree() {
+        let mut forest = flatten(snapshot());
+        select_hidden_tree(&mut forest);
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+
+        assert!(forest.apply(Action::FocusForest));
+
+        let hbr = forest
+            .lines()
+            .iter()
+            .find(|line| line.bead().is_some_and(|bead| bead.id == "hbr-3"))
+            .unwrap_or_else(|| panic!("hbr-3 is not drawn: {:#?}", sketch(&forest)));
+        assert_eq!(hbr.depth, 1, "drawn where a root is drawn");
+        assert!(
+            !drawn_here(&forest, "HiddenTrees"),
+            "the group draws whole trees: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The mode stands on the bead named at the keystroke, so walking about
+    /// under it does not move it.
+    #[test]
+    fn moving_the_selection_leaves_the_forest_rooted_where_it_was() {
+        let mut forest = flatten(snapshot());
+        toggle_fold_of(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "orb-7.1");
+        let rooted = sketch(&forest);
+
+        forest.apply(Action::Move(Motion::LastRow));
+        forest.apply(Action::Move(Motion::FirstRow));
+
+        assert_eq!(sketch(&forest), rooted);
+    }
+
+    /// The bead going out of the collection is the one thing that ends the
+    /// mode on its own: there is nothing left to root the forest at.
+    #[test]
+    fn a_collection_that_has_lost_the_focused_bead_puts_the_forest_back() {
+        let mut forest = flatten(snapshot());
+        toggle_fold_of(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "orb-7.1.1");
+        assert!(!drawn_here(&forest, "fer-2"), "rooted at one bead");
+
+        let renamed = edited(ORBITAL, r#""id":"orb-7.1.1""#, r#""id":"orb-7.1.9""#);
+        forest.refresh(gather(
+            vec![
+                tree_of("orbital", &renamed),
+                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+
+        assert!(
+            drawn_here(&forest, "fer-2"),
+            "every root is back: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A bead closing is not the bead leaving. `bdi` reads every bead a
+    /// tracker holds, so a closed one stays in the collection and the forest
+    /// stays rooted at it.
+    #[test]
+    fn the_focused_bead_closing_leaves_the_forest_rooted_at_it() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        let closed = edited(
+            ORBITAL,
+            r#"{"id":"orb-7.1","title":"re-point the dish","status":"open"#,
+            r#"{"id":"orb-7.1","title":"re-point the dish","status":"closed"#,
+        );
+        forest.refresh(gather(
+            vec![
+                tree_of("orbital", &closed),
+                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+
+        assert!(
+            !drawn_here(&forest, "fer-2"),
+            "still rooted at one bead: {:#?}",
+            sketch(&forest)
+        );
+        assert!(drawn_here(&forest, "re-point the dish"));
+    }
+
+    /// A project, a line standing over a stretch of finished beads, and a root
+    /// whose tracker refused are all lines a reader can sit on and none of
+    /// them is a bead with a tree under it.
+    #[test]
+    fn asking_to_root_the_forest_at_a_line_that_is_not_a_bead_does_nothing() {
+        let mut forest = flatten(snapshot());
+        let was = sketch(&forest);
+
+        select_project(&mut forest, "orbital");
+        assert!(!forest.apply(Action::FocusForest));
+        assert_eq!(sketch(&forest), was);
+
+        select_run(&mut forest);
+        assert!(!forest.apply(Action::FocusForest));
+        assert_eq!(sketch(&forest), was);
+
+        select_bead(&mut forest, "fer-2");
+        assert!(!forest.apply(Action::FocusForest));
+        assert_eq!(sketch(&forest), was);
+    }
+
+    /// A bead deep in a tree is drawn where a root is drawn, and what hangs
+    /// under it is what hangs under it anywhere else.
+    #[test]
+    fn focusing_a_bead_under_a_root_draws_it_where_that_root_was() {
+        let mut forest = flatten(snapshot());
+        toggle_fold_of(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "orb-7.1");
+
+        assert_eq!(
+            sketch(&forest)
+                .into_iter()
+                .take_while(|row| !row.contains("Unattributed"))
+                .collect::<Vec<String>>(),
+            vec![
+                "▾ orbital",
+                "  ├── ○ .1 re-point the dish",
+                "  │   ├── ! Dangling(1)",
+                "  │   ├── ○ .1.1 true the mount",
+                "  │   └── ○ .1.2 seal the feed horn",
+            ]
+        );
     }
 }
