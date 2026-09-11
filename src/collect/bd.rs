@@ -56,6 +56,11 @@ struct Row {
     dependencies: Vec<RowDependency>,
     #[serde(default, deserialize_with = "text_of_each_value")]
     metadata: BTreeMap<String, String>,
+    /// bd spells an absent external reference the three ways it spells an
+    /// absent parent, and a sync adapter that has never run leaves every bead
+    /// in a tracker on one of them.
+    #[serde(default, deserialize_with = "empty_is_none")]
+    external_ref: Option<String>,
     #[serde(default)]
     owner: Option<String>,
     #[serde(default)]
@@ -103,6 +108,7 @@ impl From<Row> for Bead {
                 })
                 .collect(),
             metadata: row.metadata,
+            external_ref: row.external_ref,
             owner: row.owner,
             assignee: row.assignee,
             description: row.description,
@@ -544,6 +550,33 @@ mod tests {
         );
 
         assert!(row("bdi-2bb.3").metadata.is_empty());
+    }
+
+    /// A tracker whose beads are synced puts its reference in `external_ref`
+    /// rather than in metadata, so the field is carried as its own text.
+    #[test]
+    fn an_external_reference_is_carried_and_its_three_absent_spellings_are_none() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open",
+             "external_ref":"https://jira.invalid/browse/HELIO-412"},
+            {"id":"b","title":"t","status":"open","external_ref":""},
+            {"id":"c","title":"t","status":"open","external_ref":null},
+            {"id":"d","title":"t","status":"open"}
+        ]"#;
+
+        let beads = parse_beads(rows).expect("an external reference parses");
+
+        assert_eq!(
+            beads[0].external_ref.as_deref(),
+            Some("https://jira.invalid/browse/HELIO-412")
+        );
+        for bead in &beads[1..] {
+            assert_eq!(
+                bead.external_ref, None,
+                "{} claims a reference it does not carry",
+                bead.id
+            );
+        }
     }
 
     /// A tracker's metadata is arbitrary JSON, and bdi draws it as text. A

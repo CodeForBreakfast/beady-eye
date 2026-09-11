@@ -84,6 +84,10 @@ pub struct Bead {
     /// Whatever was written into the bead's metadata, each value as the
     /// text it prints as.
     pub metadata: BTreeMap<String, String>,
+    /// Where this bead is tracked outside the tracker holding it, for a
+    /// tracker whose sync adapter fills the field. A reference beads itself
+    /// parses and writes, rather than one its reader wrote by hand.
+    pub external_ref: Option<String>,
     pub owner: Option<String>,
     pub assignee: Option<String>,
     /// The bead's own account of itself, where it has one.
