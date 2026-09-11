@@ -1260,7 +1260,10 @@ path = "/home/user/dev/cinder"
             ],
             ..Config::naming(vec![drawing(
                 "beacon",
-                vec![badge("metadata.delivery_pr", "⇢ beacon/{}"), badge("metadata.epic", "▣ {}")],
+                vec![
+                    badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                    badge("metadata.epic", "▣ {}"),
+                ],
             )])
         };
 
@@ -1410,7 +1413,9 @@ render = "{}"
         let refused = Config::from_toml(empty).expect_err("`metadata.` names no key");
 
         assert!(
-            refused.to_string().contains("`metadata.` names no metadata key"),
+            refused
+                .to_string()
+                .contains("`metadata.` names no metadata key"),
             "{refused}"
         );
     }
