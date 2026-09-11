@@ -132,17 +132,15 @@ says what the row carries for it:
 | `link` | where the badge points | no |
 | `colour` | what it is drawn in | no |
 
-**A `key` says where on the bead to read, because there are two places.**
-`metadata.jira` reads the `jira` key of the bead's metadata, and a bare
-`external_ref` reads the bead's own external-reference field. The prefix is the
-one namespace a field can never occupy, so nothing is ambiguous and no metadata
-key is out of reach. A bare name that is no field of a bead is refused, naming
-the key you wrote and the key you meant, rather than read as metadata: a badge
-that quietly draws nothing looks exactly like a bead that carries nothing.
+`key` says where on the bead to read. `metadata.jira` reads the `jira` key of
+the bead's metadata; a bare `external_ref` reads the field of that name. Any
+field of a bead's row is readable this way, under the name `bd` spells it.
 
-`external_ref` is the only field a badge reads. `[join]`'s `pane_key` takes a
-bare name and no prefix, because a pane id is only ever written in metadata and
-there is nothing there to choose between.
+`[join]`'s `pane_key` names a metadata key and takes no prefix. A pane id is
+only ever written in metadata, so there is nothing there to choose between.
+
+A key naming something the bead does not carry draws no badge, and neither does
+one whose value is a list or a nested object.
 
 `render` is the text, with `{}` for the whole value. `match` restricts the badge
 to the values a pattern matches, and the pattern is anchored against the whole
@@ -287,17 +285,15 @@ built the same way whichever place it is read from: a `match` that reads the
 value apart, a `render` that says what the row carries, and a `link` that
 rebuilds the address.
 
-**Which of the two places you read depends on who wrote the reference.** A
-tracker running one of beads' sync adapters has the adapter fill `external_ref`,
-whose `tracker.IssueTracker` contract parses and writes it, so a badge on that
-field is the contract's `BuildExternalRef` run backwards. A reference you wrote
-by hand goes in metadata, the field with no owner, and the key names the tracker
-it points at. beads keeps the `bd:` prefix for itself and `_` for its internal
+**Which place you read depends on who wrote the reference.** One of beads' sync
+adapters fills `external_ref`, whose `tracker.IssueTracker` contract parses and
+writes it, so a badge on that field is `BuildExternalRef` run backwards. A
+reference you write by hand goes in metadata, under a key naming the tracker it
+points at. beads keeps the `bd:` prefix for itself and `_` for its internal
 keys, so a metadata key avoids both.
 
-A tracker holds one external reference, so a badge on it draws whatever it
-holds. Metadata takes as many keys as you write, so a setup referencing several
-systems badges each under its own.
+A bead holds one external reference and as many metadata keys as you write, so
+a setup referencing several systems badges all but one of them from metadata.
 
 ### An issue tracker key
 
@@ -327,9 +323,8 @@ render = "{ticket}"
 link   = "https://jira.invalid/browse/{ticket}"
 ```
 
-The row draws `HELIO-412` rather than the URL, which is the only form narrow
-enough to sit beside a title. A bead whose field is empty draws no badge and
-says nothing, which is every bead of a tracker no adapter syncs.
+The row draws `HELIO-412` and opens the ticket. The URL is nowhere in the text,
+which is what lets the badge sit beside a title.
 
 ### A pull request written as an owner, a repository and a number
 

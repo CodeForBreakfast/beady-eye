@@ -26,7 +26,45 @@ use crate::model::types::{Bead, Dependency, Edge, Status};
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     let rows: Vec<Row> =
         serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
-    Ok(rows.into_iter().map(Bead::from).collect())
+    // Read for its own fields after it has parsed, so what a reader is told
+    // about an answer that would not parse still carries where in the answer
+    // it broke. Anything the typed read accepted is an array of objects here.
+    let written: Vec<serde_json::Map<String, serde_json::Value>> =
+        serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
+    Ok(rows
+        .into_iter()
+        .zip(written)
+        .map(|(row, written)| row.into_bead(text_of_each_field(&written)))
+        .collect())
+}
+
+/// Every field of a row bd wrote a text for, as that text.
+///
+/// A badge whose key names no metadata key reads here, so what a row carries
+/// is what a badge can draw — a field bd grows is drawable the day bd writes
+/// it, without `bdi` learning a thing about it.
+///
+/// A string, a number and a boolean are each one value, and each is kept as
+/// the text it prints as. A null and an empty string are both how bd spells a
+/// field nothing was written to — it writes the top of a chain as an empty
+/// parent — and an array or an object is not one value at all. Those read as
+/// the field being absent, which is where a name no row carries already lands.
+///
+/// The rule is about kinds of value rather than names of fields, so nothing
+/// here moves when bd's schema does.
+fn text_of_each_field(
+    row: &serde_json::Map<String, serde_json::Value>,
+) -> BTreeMap<String, String> {
+    row.iter()
+        .filter_map(|(key, value)| {
+            let text = match value {
+                serde_json::Value::String(text) if !text.is_empty() => text.clone(),
+                serde_json::Value::Number(_) | serde_json::Value::Bool(_) => value.to_string(),
+                _ => return None,
+            };
+            Some((key.clone(), text))
+        })
+        .collect()
 }
 
 /// One row of a bd listing, in the shape bd writes it, holding only the
@@ -56,11 +94,6 @@ struct Row {
     dependencies: Vec<RowDependency>,
     #[serde(default, deserialize_with = "text_of_each_value")]
     metadata: BTreeMap<String, String>,
-    /// bd spells an absent external reference the three ways it spells an
-    /// absent parent, and a sync adapter that has never run leaves every bead
-    /// in a tracker on one of them.
-    #[serde(default, deserialize_with = "empty_is_none")]
-    external_ref: Option<String>,
     #[serde(default)]
     owner: Option<String>,
     #[serde(default)]
@@ -90,9 +123,12 @@ struct RowDependency {
     edge: Edge,
 }
 
-impl From<Row> for Bead {
-    fn from(row: Row) -> Self {
+impl Row {
+    /// This row as a bead, beside every field of it bd wrote a text for.
+    fn into_bead(self, fields: BTreeMap<String, String>) -> Bead {
+        let row = self;
         Bead {
+            fields,
             id: row.id,
             title: row.title,
             status: row.status,
@@ -108,7 +144,6 @@ impl From<Row> for Bead {
                 })
                 .collect(),
             metadata: row.metadata,
-            external_ref: row.external_ref,
             owner: row.owner,
             assignee: row.assignee,
             description: row.description,
@@ -552,30 +587,48 @@ mod tests {
         assert!(row("bdi-2bb.3").metadata.is_empty());
     }
 
-    /// A tracker whose beads are synced puts its reference in `external_ref`
-    /// rather than in metadata, so the field is carried as its own text.
+    /// A row's own fields travel beside its metadata, so a badge can read one
+    /// bdi holds no field of its own for.
     #[test]
-    fn an_external_reference_is_carried_and_its_three_absent_spellings_are_none() {
+    fn a_rows_fields_are_carried_under_the_names_bd_spells_them() {
         let rows = r#"[
-            {"id":"a","title":"t","status":"open",
-             "external_ref":"https://jira.invalid/browse/HELIO-412"},
-            {"id":"b","title":"t","status":"open","external_ref":""},
-            {"id":"c","title":"t","status":"open","external_ref":null},
-            {"id":"d","title":"t","status":"open"}
+            {"id":"a","title":"t","status":"open","issue_type":"feature",
+             "external_ref":"https://jira.invalid/browse/HELIO-412"}
         ]"#;
 
-        let beads = parse_beads(rows).expect("an external reference parses");
+        let fields = &parse_beads(rows).expect("the row parses")[0].fields;
 
         assert_eq!(
-            beads[0].external_ref.as_deref(),
+            fields.get("external_ref").map(String::as_str),
             Some("https://jira.invalid/browse/HELIO-412")
         );
-        for bead in &beads[1..] {
-            assert_eq!(
-                bead.external_ref, None,
-                "{} claims a reference it does not carry",
-                bead.id
-            );
+        assert_eq!(fields.get("id").map(String::as_str), Some("a"));
+        assert_eq!(
+            fields.get("issue_type").map(String::as_str),
+            Some("feature")
+        );
+    }
+
+    /// A value is what a badge draws, so a row carries the three kinds that
+    /// are one. A null is the field unset and reads as the field being absent,
+    /// which is what a badge on an unset field rests on: it would otherwise
+    /// draw the four letters `null` on every bead of a tracker nothing syncs.
+    /// An array and an object are not one value at all.
+    #[test]
+    fn a_row_carries_every_value_a_badge_could_draw_and_nothing_that_is_not_one() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","priority":1,"pinned":true,
+             "external_ref":null,"parent":"",
+             "dependencies":[{"depends_on_id":"b","type":"blocks"}],
+             "metadata":{"jira":"ATLAS-19"}}
+        ]"#;
+
+        let fields = &parse_beads(rows).expect("the row parses")[0].fields;
+
+        assert_eq!(fields.get("priority").map(String::as_str), Some("1"));
+        assert_eq!(fields.get("pinned").map(String::as_str), Some("true"));
+        for absent in ["external_ref", "parent", "dependencies", "metadata"] {
+            assert_eq!(fields.get(absent), None, "{absent} is no value to draw");
         }
     }
 

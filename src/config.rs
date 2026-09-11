@@ -260,14 +260,14 @@ pub struct Badge {
 /// written under `metadata.`, which is the one namespace a bead field can
 /// never occupy.
 ///
-/// The external reference is the only field wired up. A name that is no field
-/// is refused rather than read as metadata, because the reader who meant
-/// metadata and left the prefix off gets a badge that silently draws nothing.
+/// Neither side names anything `bdi` knows. A field is looked up by the name
+/// `bd` spells it, so a field `bd` grows is drawable the day it writes it, and
+/// a name no row carries draws nothing — which is what a metadata key nobody
+/// wrote already does.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BadgeKey {
-    /// The bead's own external reference, which is where a tracker running a
-    /// sync adapter puts the reference this badge is written to draw.
-    ExternalRef,
+    /// One field of the bead's own row, by the name `bd` spells it.
+    Field(String),
     /// One key of the bead's metadata, named after the prefix.
     Metadata(String),
 }
@@ -277,33 +277,26 @@ pub enum BadgeKey {
 impl fmt::Display for BadgeKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BadgeKey::ExternalRef => f.write_str(EXTERNAL_REF),
+            BadgeKey::Field(key) => f.write_str(key),
             BadgeKey::Metadata(key) => write!(f, "{METADATA_PREFIX}{key}"),
         }
     }
 }
 
-const EXTERNAL_REF: &str = "external_ref";
 const METADATA_PREFIX: &str = "metadata.";
 
-impl BadgeKey {
-    fn parse(written: &str) -> Result<Self, String> {
+impl From<&str> for BadgeKey {
+    fn from(written: &str) -> Self {
         match written.strip_prefix(METADATA_PREFIX) {
-            Some("") => Err(format!("`{METADATA_PREFIX}` names no metadata key")),
-            Some(key) => Ok(BadgeKey::Metadata(key.to_string())),
-            None if written == EXTERNAL_REF => Ok(BadgeKey::ExternalRef),
-            None => Err(format!(
-                "`{written}` is no field of a bead: a metadata key is written \
-                 `{METADATA_PREFIX}{written}`"
-            )),
+            Some(key) => BadgeKey::Metadata(key.to_string()),
+            None => BadgeKey::Field(written.to_string()),
         }
     }
 }
 
 impl<'de> Deserialize<'de> for BadgeKey {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let written = String::deserialize(deserializer)?;
-        BadgeKey::parse(&written).map_err(serde::de::Error::custom)
+        Ok(BadgeKey::from(String::deserialize(deserializer)?.as_str()))
     }
 }
 
@@ -1223,7 +1216,7 @@ path = "/home/user/dev/cinder"
 
     fn badge(key: &str, render: &str) -> Badge {
         Badge {
-            key: BadgeKey::parse(key).expect("the key names a source"),
+            key: BadgeKey::from(key),
             match_value: None,
             render: render.to_string(),
             link: None,
@@ -1367,56 +1360,8 @@ render = "{}"
             cfg.badges.iter().map(|b| &b.key).collect::<Vec<_>>(),
             vec![
                 &BadgeKey::Metadata("jira".to_string()),
-                &BadgeKey::ExternalRef,
+                &BadgeKey::Field("external_ref".to_string()),
             ]
-        );
-    }
-
-    /// The reader is told the key they wrote and the key they meant, because a
-    /// bare name silently read as metadata is what the prefix exists to stop.
-    #[test]
-    fn a_bare_name_that_is_no_bead_field_is_refused_and_told_what_it_should_say() {
-        let bare = r#"
-[[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-
-[[badges]]
-key    = "jira"
-render = "{}"
-"#;
-
-        let refused = Config::from_toml(bare).expect_err("a bare name is no bead field");
-
-        assert!(
-            refused.to_string().contains(
-                "`jira` is no field of a bead: a metadata key is written `metadata.jira`"
-            ),
-            "{refused}"
-        );
-    }
-
-    /// `metadata.` on its own names nothing, and a badge reading every bead's
-    /// empty-string key is not what anyone wrote it for.
-    #[test]
-    fn a_metadata_prefix_naming_no_key_is_refused() {
-        let empty = r#"
-[[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-
-[[badges]]
-key    = "metadata."
-render = "{}"
-"#;
-
-        let refused = Config::from_toml(empty).expect_err("`metadata.` names no key");
-
-        assert!(
-            refused
-                .to_string()
-                .contains("`metadata.` names no metadata key"),
-            "{refused}"
         );
     }
 
@@ -1450,7 +1395,10 @@ render = "{}"
             BadgeKey::Metadata("jira".to_string()).to_string(),
             "metadata.jira"
         );
-        assert_eq!(BadgeKey::ExternalRef.to_string(), "external_ref");
+        assert_eq!(
+            BadgeKey::Field("external_ref".to_string()).to_string(),
+            "external_ref"
+        );
     }
 
     #[test]

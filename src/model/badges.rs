@@ -118,14 +118,15 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
 /// What this bead holds where the key says to read, or nothing where it holds
 /// nothing there.
 ///
-/// A bead with no external reference is a bead with nothing at that key, which
-/// is the same silence as a metadata key it never wrote: the badge does not
-/// draw, and there is nothing to report.
+/// A name neither side carries is a badge that was never about this bead: it
+/// draws nothing and reports nothing, whether the bead left the value unset or
+/// nobody ever wrote it.
 fn value_for<'b>(bead: &'b Bead, key: &BadgeKey) -> Option<&'b str> {
     match key {
-        BadgeKey::ExternalRef => bead.external_ref.as_deref(),
-        BadgeKey::Metadata(key) => bead.metadata.get(key).map(String::as_str),
+        BadgeKey::Field(key) => bead.fields.get(key),
+        BadgeKey::Metadata(key) => bead.metadata.get(key),
     }
+    .map(String::as_str)
 }
 
 #[cfg(test)]
@@ -142,6 +143,10 @@ mod tests {
 
     fn meta(key: &str) -> BadgeKey {
         BadgeKey::Metadata(key.to_string())
+    }
+
+    fn field(key: &str) -> BadgeKey {
+        BadgeKey::Field(key.to_string())
     }
 
     fn bead_with(metadata: &str) -> Bead {
@@ -276,7 +281,7 @@ mod tests {
         let bead = bead_referencing(r#""https://jira.invalid/browse/HELIO-412""#);
         let cfg = vec![
             Badge {
-                key: BadgeKey::ExternalRef,
+                key: field("external_ref"),
                 match_value: Some(matching(r".*/(?<ticket>[A-Z]+-[0-9]+)")),
                 render: "{ticket}".into(),
                 link: Some("https://jira.invalid/browse/{ticket}".into()),
@@ -341,7 +346,7 @@ mod tests {
         for spelling in [r#""""#, "null"] {
             let got = badges_for(
                 &bead_referencing(spelling),
-                &[promising(BadgeKey::ExternalRef)],
+                &[promising(field("external_ref"))],
             );
 
             assert_eq!(got.drawn, Vec::new(), "drew on {spelling}");
@@ -349,7 +354,7 @@ mod tests {
         }
 
         let carrying_neither = bead_with(r#"{"jira":"ATLAS-19"}"#);
-        for key in [BadgeKey::ExternalRef, meta("nobody_wrote_this")] {
+        for key in [field("external_ref"), meta("nobody_wrote_this")] {
             let got = badges_for(&carrying_neither, &[promising(key.clone())]);
 
             assert_eq!(got.drawn, Vec::new(), "drew on {key}");
