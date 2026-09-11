@@ -1,6 +1,6 @@
 [package]
 name = "beady-eye"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.88"
 description = "A tree of work in flight: bead graphs annotated with the live agents working them"

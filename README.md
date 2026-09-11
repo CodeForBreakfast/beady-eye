@@ -44,7 +44,7 @@ $ nix run github:CodeForBreakfast/beady-eye
 From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.6.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.7.0";
 
 beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
@@ -113,8 +113,8 @@ yourself. An `.envrc` and direnv need nothing said. Anything else, say it with
 `environment_command`.
 
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
-bead metadata, credentials, extra roots, intervals, the light theme, and the
-socket you can poke to say a tracker changed so the eye stops polling it.
+what a bead carries, credentials, extra roots, intervals, the light theme, and
+the socket you can poke to say a tracker changed so the eye stops polling it.
 
 ## Being seen
 
