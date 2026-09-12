@@ -44,7 +44,7 @@ $ nix run github:CodeForBreakfast/beady-eye
 From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.7.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.8.0";
 
 beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
@@ -79,6 +79,7 @@ Keys to start with. `?` lists the lot.
 | `Enter` | open the bead, and from there, focus its pane |
 | `f` | focus the selected bead's pane |
 | `a` | every tree, not only the ones with a live agent |
+| `F` | only the selected bead and the work beneath it; again for the whole forest |
 | `/` `n` `N` | search ids and titles |
 | `y` | copy the bead id (OSC 52, so it survives ssh and a multiplexer) |
 | `^R` | read the trackers again now |
