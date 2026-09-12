@@ -191,7 +191,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::config::Scope;
     use crate::model::anomaly::Anomaly;
-    use crate::model::badges::{Badged, Undrawn};
+    use crate::model::badges::Badged;
     use crate::model::edges::relations;
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource, Listed};
     use crate::model::snapshot::tests::*;
@@ -487,10 +487,11 @@ mod tests {
     /// qualified form cannot read: a bare number with no repository to build
     /// a URL out of, and a URL held whole where the parts were expected.
     ///
-    /// Both used to leave the tree carrying nothing at all, which is the
-    /// silence this reports instead.
+    /// The config asked for the qualified form and got its answer, so the two
+    /// it declined are silent the whole way through the build rather than only
+    /// at the badge. A reader wanting them writes a second entry for the key.
     #[test]
-    fn a_value_the_badge_cannot_read_reaches_the_node_as_undrawn() {
+    fn a_value_no_badge_on_its_key_reads_reaches_the_node_drawing_nothing() {
         let json = r#"[
           {"id":"orb-8","title":"root","status":"open"},
           {"id":"orb-8.1","title":"a bare number","status":"blocked",
@@ -530,13 +531,10 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
             now(),
         );
 
-        let unread = Undrawn::Badge {
-            key: "metadata.delivery_pr".to_string(),
-        };
-        assert_eq!(node(&t, "orb-8.1").undrawn, vec![unread.clone()]);
-        assert!(node(&t, "orb-8.1").badges.is_empty());
-        assert_eq!(node(&t, "orb-8.2").undrawn, vec![unread]);
-        assert!(node(&t, "orb-8.2").badges.is_empty());
+        for unread in ["orb-8.1", "orb-8.2"] {
+            assert!(node(&t, unread).badges.is_empty(), "drew on {unread}");
+            assert_eq!(node(&t, unread).undrawn, Vec::new(), "reported on {unread}");
+        }
 
         assert_eq!(
             node(&t, "orb-8.3").undrawn,
@@ -561,10 +559,14 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
         );
     }
 
-    /// A project's own entry for a key is what its beads draw, and the global
-    /// entry for that key never reaches the tree.
+    /// A project's own entry for a key is tried before the shared entries for
+    /// it, so a value both read draws the project's words.
+    ///
+    /// Where the two rules meet: the shared entry is still in the list and
+    /// still reads this value, and what keeps it off the row is only that the
+    /// project's entry was tried first and stopped the chain.
     #[test]
-    fn a_projects_own_badge_reaches_its_nodes_in_place_of_the_global_one() {
+    fn a_projects_own_badge_draws_the_value_a_global_one_would_have() {
         let assembled = assembled(BEADS);
         let panes = panes(PANES);
         let joined = joined(&assembled.beads, &panes);
@@ -608,6 +610,80 @@ render = "⏸ waiting"
                 short: None,
                 colour: None,
             }]
+        );
+    }
+
+    /// The bare-number case `docs/configuration.md` works through, and what
+    /// precedence buys over replacing the shared entries: the project supplies
+    /// the shape its own tracker writes, and a bead written in the shared shape
+    /// is still read by the shared entry underneath it.
+    ///
+    /// Neither pattern reads the other's value, so each bead names which entry
+    /// drew it. A project that replaced the shared entry rather than going in
+    /// front of it would leave the second bead with no badge at all.
+    #[test]
+    fn a_value_a_projects_badge_does_not_read_falls_through_to_the_shared_one() {
+        let json = r#"[
+          {"id":"orb-9","title":"root","status":"open"},
+          {"id":"orb-9.1","title":"a bare number","status":"blocked",
+           "metadata":{"delivery_pr":"12"},
+           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}]},
+          {"id":"orb-9.2","title":"the shape the shared list reads","status":"blocked",
+           "metadata":{"delivery_pr":"orbital/atlas#30"},
+           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}]}
+        ]"#;
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "orbital"
+path = "/srv/work/orbital"
+
+[[projects.badges]]
+key    = "metadata.delivery_pr"
+match  = "(?<number>[0-9]+)"
+render = "⇢ #{number}"
+
+[[badges]]
+key    = "metadata.delivery_pr"
+match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
+render = "⇢ {repo} #{number}"
+"#,
+        )
+        .expect("the config parses");
+        let beads = parse_beads(json).expect("the rows parse");
+
+        let t = build_tree(
+            "orbital",
+            &assembled(json),
+            &Joined::default(),
+            &Readiness::default(),
+            &relations(&beads),
+            ProviderState::Answering,
+            &cfg,
+            now(),
+        );
+
+        assert_eq!(
+            node(&t, "orb-9.1").badges,
+            vec![Badged {
+                key: "metadata.delivery_pr".to_string(),
+                text: "⇢ #12".to_string(),
+                link: None,
+                short: None,
+                colour: None,
+            }],
+            "the project's own entry is the one that reads a bare number"
+        );
+        assert_eq!(
+            node(&t, "orb-9.2").badges,
+            vec![Badged {
+                key: "metadata.delivery_pr".to_string(),
+                text: "⇢ atlas #30".to_string(),
+                link: None,
+                short: None,
+                colour: None,
+            }],
+            "the shared entry still reads the shape the project said nothing about"
         );
     }
 

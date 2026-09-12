@@ -5,6 +5,8 @@
 //! what to say for a value, are both config's to state; this renders what it
 //! is given and knows no more about `blocked_on` than about any other key.
 
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 
 use crate::config::{Badge, Colour};
@@ -35,15 +37,13 @@ pub struct Badged {
 
 /// A badge that drew less than its config asked for.
 ///
-/// A badge with no `link` is a filter: it is written to decline, so a value
-/// its pattern does not match is nothing to report and reaches neither of the
-/// first two. A badge with a `link` is written to point somewhere, so a value
-/// it cannot point at is a reference the reader has lost.
+/// Every badge here read the value and then could not keep a promise its
+/// config made about the badge it drew. A pattern that does not read the value
+/// is a filter declining, which is what patterns are for, so it is nowhere
+/// here however many of them decline in a row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "undrawn", rename_all = "kebab-case")]
 pub enum Undrawn {
-    /// No badge at all: the pattern does not read this bead's value.
-    Badge { key: String },
     /// A badge without its link: the template named a capture this value did
     /// not supply, and a destination built round a part that was never there
     /// points somewhere else.
@@ -71,26 +71,27 @@ pub struct Badges {
 pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
     let mut drawn = Vec::new();
     let mut undrawn = Vec::new();
+    let mut read: BTreeSet<&str> = BTreeSet::new();
 
     for badge in badges {
         let Some(value) = bead.values.get(&badge.key).map(String::as_str) else {
             continue;
         };
-        // A badge with no `link` never reports: whatever it does with this
-        // value, it did what its config asked.
-        let promised = badge.link.is_some();
+        // Badges on one key are a chain read in config order, so the entries
+        // below the one that read this value are what the reader wrote for the
+        // values it does not read. They are not tried at all, and neither is
+        // what their config promised about a value they were never given.
+        if read.contains(badge.key.as_str()) {
+            continue;
+        }
 
         let Some(text) = badge.apply(value) else {
-            if promised {
-                undrawn.push(Undrawn::Badge {
-                    key: badge.key.clone(),
-                });
-            }
             continue;
         };
+        read.insert(badge.key.as_str());
 
         let link = badge.link_for(value);
-        if promised && link.is_none() {
+        if badge.link.is_some() && link.is_none() {
             undrawn.push(Undrawn::Link {
                 key: badge.key.clone(),
             });
@@ -337,11 +338,67 @@ mod tests {
         }
     }
 
+    // ---- several badges on one key ---------------------------------------
+
+    /// Ordering is what a list of badges on one key says: each is tried until
+    /// one reads the value, so the qualified form above a permissive entry
+    /// draws the qualified form and the entry below it stands in for nothing.
+    ///
+    /// The permissive entry names a `short` its own pattern cannot fill, which
+    /// is something running it would have had to report. Its silence is how
+    /// this asserts it never ran at all.
+    #[test]
+    fn two_badges_on_one_key_that_both_read_a_value_draw_the_first_alone() {
+        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+        let permissive = Badge {
+            match_value: Some(matching(".*")),
+            render: "⇢ {}".into(),
+            short: Some("⇢ {repo}".into()),
+            link: None,
+            ..qualified_only()
+        };
+
+        let got = badges_for(&bead, &[qualified_only(), permissive]);
+
+        assert_eq!(
+            got.drawn,
+            vec![Badged {
+                key: "metadata.delivery_pr".to_string(),
+                text: "⇢ #30".to_string(),
+                short: None,
+                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                colour: None,
+            }]
+        );
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
+    /// A value every badge on its key declined is a value nothing was written
+    /// to read, and that is the reader's list saying what it wanted rather than
+    /// anything falling short. A `link` on the badges that declined is a
+    /// promise about where a badge points and not about which values reach one.
+    #[test]
+    fn a_value_no_badge_on_its_key_reads_draws_nothing_and_reports_nothing() {
+        let bead = bead_with(r#"{"delivery_pr":"30"}"#);
+        let url_only = Badge {
+            match_value: Some(matching(
+                r"https://forge\.invalid/[^/]+/(?<repo>[^/]+)/pull/(?<number>[0-9]+)",
+            )),
+            ..qualified_only()
+        };
+
+        let got = badges_for(&bead, &[qualified_only(), url_only]);
+
+        assert_eq!(got.drawn, Vec::new());
+        assert_eq!(got.undrawn, Vec::new());
+    }
+
     // ---- what a badge meant to draw could not draw -----------------------
 
     /// The pattern a global list writes for a `delivery_pr` reads the
     /// qualified form. A tracker holding a bare number as well has beads this
-    /// pattern cannot read at all, and dropping them tells the reader nothing.
+    /// pattern cannot read at all, and a permissive entry below it is how a
+    /// reader asks to see them.
     fn qualified_only() -> Badge {
         Badge {
             key: "metadata.delivery_pr".into(),
@@ -355,24 +412,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_badge_meant_to_draw_reports_a_value_its_pattern_cannot_read() {
-        let bead = bead_with(r#"{"delivery_pr":"30"}"#);
-
-        let got = badges_for(&bead, &[qualified_only()]);
-
-        assert_eq!(got.drawn, Vec::new());
-        assert_eq!(
-            got.undrawn,
-            vec![Undrawn::Badge {
-                key: "metadata.delivery_pr".to_string()
-            }]
-        );
-    }
-
-    /// The other half of the rule, and the half the shipped waiting badge
-    /// rests on: a config that names no `link` is a filter, and declining is
-    /// what it was written to do.
+    /// The same silence read off the badge the shipped waiting badge is written
+    /// as, where the one above is read off a pair that name a `link`: a pattern
+    /// is how a config says which values it wants, and declining is what every
+    /// pattern is there to do.
     #[test]
     fn a_badge_configured_to_decline_stays_silent() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);

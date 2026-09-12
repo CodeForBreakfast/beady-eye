@@ -445,24 +445,8 @@ mod tests {
         node
     }
 
-    /// The model's half: a badge that drew nothing at all, because no pattern
-    /// read the value it was given.
-    #[test]
-    fn a_value_no_pattern_reads_leaves_its_key_on_the_row() {
-        let mut unread = node("smt-4kd3p.20", Status::Open);
-        unread.undrawn = vec![Undrawn::Badge {
-            key: "delivery_pr".into(),
-        }];
-
-        let row = cells(&unread, ROOT, None, None);
-
-        assert!(
-            row.notes.iter().any(|note| note.contains("delivery_pr")),
-            "{row:?}"
-        );
-    }
-
-    /// And a badge that drew, losing only the destination its config named.
+    /// The model's half: a badge that drew, losing only the destination its
+    /// config named.
     #[test]
     fn a_link_the_value_could_not_fill_leaves_its_key_on_the_row() {
         let mut unfilled = node("smt-4kd3p.20", Status::Open);
