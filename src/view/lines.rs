@@ -216,8 +216,8 @@ pub struct Group {
     /// known by, so a fold on one project's group is not a fold on another's.
     pub project: Option<String>,
     pub count: usize,
-    /// What the roots this group is holding back add up to, for the group that
-    /// holds whole roots back because the forest is rooted at one bead.
+    /// What the roots behind this group's line add up to, for the group that
+    /// holds whole roots because the forest is rooted at one bead.
     ///
     /// Nothing for the groups that hold things rather than roots: a pane, a
     /// failed project and a conflict are each drawn whole when the group opens,
@@ -242,8 +242,8 @@ pub enum GroupKind {
     Unconfigured,
     Conflicts,
     /// The roots the forest is not drawing because the reader rooted it at one
-    /// bead. *coined*
-    HeldBack,
+    /// bead.
+    OutOfTheWay,
     HiddenTrees,
     Unattributed,
 }
@@ -264,7 +264,7 @@ impl GroupKind {
     /// its paths that no bead claims. Everything beneath a project is under
     /// its one line, so a reader has one place to look.
     pub const UNDER_A_PROJECT: [GroupKind; 3] = [
-        GroupKind::HeldBack,
+        GroupKind::OutOfTheWay,
         GroupKind::HiddenTrees,
         GroupKind::Unattributed,
     ];
@@ -277,7 +277,7 @@ impl GroupKind {
     pub(crate) fn live(self) -> bool {
         match self {
             GroupKind::Unconfigured | GroupKind::Conflicts | GroupKind::Unattributed => true,
-            GroupKind::FailedProjects | GroupKind::HiddenTrees | GroupKind::HeldBack => false,
+            GroupKind::FailedProjects | GroupKind::HiddenTrees | GroupKind::OutOfTheWay => false,
         }
     }
 }
