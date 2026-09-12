@@ -508,8 +508,12 @@ impl Forest {
     /// A place with no steps stands on the root of its tree, and a root filed
     /// under another root has moved as much as any other bead: it is looked
     /// for by the same name, which for that place is the tree's own.
+    ///
+    /// Asked for the bead rather than for the row: a root whose tracker has
+    /// since refused keeps a row saying so, and there is no tree to draw from
+    /// a bead that is not there.
     fn rerooted(&self, place: &Place) -> Option<Place> {
-        if self.drawn(place) {
+        if self.locate(place).is_some() {
             return Some(place.clone());
         }
         self.place_of(place.steps.last().unwrap_or(&place.tree))
@@ -7305,6 +7309,38 @@ credential_command = "secret harbour"
 
         assert!(
             !drawn_here(&forest, "fer-2"),
+            "rooted at the bead just asked for: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A tracker that stops answering for the focused root has taken that bead
+    /// out of the collection as surely as one that dropped it, so the mode
+    /// ends. The root keeps a row saying it would not read, and a mode reading
+    /// that row as the bead still being there would spend the next press
+    /// putting back a forest that is already back.
+    #[test]
+    fn the_key_roots_the_forest_afresh_once_the_focused_root_stopped_reading() {
+        let mut forest = flatten(built(Filter::All));
+        focus_on(&mut forest, "orb-7");
+        forest.refresh(gather(
+            vec![
+                Tree::tracker_unreachable("orbital", "orb-7", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::All,
+        ));
+        assert!(
+            drawn_here(&forest, "hbr-3 dredge the channel"),
+            "every root is back: {:#?}",
+            sketch(&forest)
+        );
+
+        focus_on(&mut forest, "hbr-3");
+
+        assert!(
+            !drawn_here(&forest, "⚠ orb-7 unread"),
             "rooted at the bead just asked for: {:#?}",
             sketch(&forest)
         );
