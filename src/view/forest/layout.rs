@@ -157,19 +157,21 @@ pub(super) fn first_bead_of(
     project: Option<&str>,
     rooted: Option<&Rooted>,
 ) -> Option<BeadKey> {
-    let tree = match kind {
-        GroupKind::HiddenTrees => hidden_trees(snapshot, project).into_iter().next()?,
-        GroupKind::HeldBack => {
-            held_back(snapshot, project, rooted)
-                .into_iter()
-                .next()?
-                .tree
-        }
+    let roots = match kind {
+        GroupKind::HiddenTrees => hidden_trees(snapshot, project),
+        GroupKind::HeldBack => held_back(snapshot, project, rooted)
+            .into_iter()
+            .map(|root| root.tree)
+            .collect(),
         _ => return None,
     };
-    Some(BeadKey {
-        project: tree.project.clone(),
-        id: tree.beads.first()?.id.clone(),
+    // A root whose tracker refused has a row and no bead, and it leads its
+    // project, so the first root here is the one most likely to hold nothing.
+    roots.into_iter().find_map(|tree| {
+        Some(BeadKey {
+            project: tree.project.clone(),
+            id: tree.beads.first()?.id.clone(),
+        })
     })
 }
 
@@ -680,7 +682,7 @@ impl TreeLayout<'_> {
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
                 node,
-                &self.tree.root,
+                self.shortened_against(),
                 bead.progress,
                 shut_over(bead.beneath, first_copy(self.tree, at, above), folded),
             )),
@@ -767,7 +769,7 @@ impl TreeLayout<'_> {
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
-                            &self.tree.root,
+                            self.shortened_against(),
                             bead.progress,
                             shut_over(bead.beneath, first, folded),
                         )),
@@ -801,6 +803,18 @@ impl TreeLayout<'_> {
 
     fn draws(&self, link: &Link) -> bool {
         Some(link.bead) != self.without
+    }
+
+    /// The id every row here is shortened against: the bead this drawing
+    /// starts at. A reader reads a column of suffixes by putting the drawn
+    /// root in front of each one, so the bead the forest is rooted at reads
+    /// whole and what hangs under it reads against that. The root it came out
+    /// of is behind the line, shortening what is drawn there.
+    fn shortened_against(&self) -> &str {
+        match self.rooted {
+            Some(rooted) => &rooted.place.steps.last().unwrap_or(&rooted.place.tree).id,
+            None => &self.tree.root,
+        }
     }
 
     /// What a run stands for: its members and everything beneath them. Walked

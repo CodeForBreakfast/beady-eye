@@ -967,7 +967,10 @@ them is reached by the keys that reach any bead, the line opening to let the
 selection in, so looking a bead up in another root is not paid for with the
 put-back key. A search offers what it can take the reader to, which under this
 mode is every bead the forest holds: the ones beneath the focused bead, and the
-ones behind the line, which it opens on the way. It names the key
+ones behind the line, which it opens on the way. The bead the forest is rooted
+at reads its whole id where a root would, and the beads under it read as its
+children: a column of shortened ids is read by putting the drawn root in front
+of each one, and the root this branch came out of is behind the line. It names the key
 that brings them back, because it is the line a reader is looking at when they
 want them back, and a row with no room for that hint gives it up whole rather
 than cutting it to a key nobody can press.

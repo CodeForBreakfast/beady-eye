@@ -7102,7 +7102,7 @@ credential_command = "secret harbour"
                 .collect::<Vec<String>>(),
             vec![
                 "▾ orbital",
-                "  ├─▸ ○ .1 re-point the dish",
+                "  ├─▸ ○ orb-7.1 re-point the dish",
                 "  │   └── ! Dangling(1)",
                 "  ├─▸ [HeldBack orbital] 1",
                 "  └── [Unattributed orbital] 2",
@@ -7476,6 +7476,11 @@ credential_command = "secret harbour"
 
     /// A bead deep in a tree is drawn where a root is drawn, and what hangs
     /// under it is what hangs under it anywhere else.
+    ///
+    /// It reads whole the way a root does, and the beads under it read against
+    /// it. A column of ids is read by putting the drawn root in front of each
+    /// one, so a suffix cut against a root that is behind the line names a
+    /// bead that is not there.
     #[test]
     fn focusing_a_bead_under_a_root_draws_it_where_that_root_was() {
         let mut forest = flatten(snapshot());
@@ -7489,10 +7494,10 @@ credential_command = "secret harbour"
                 .collect::<Vec<String>>(),
             vec![
                 "▾ orbital",
-                "  ├── ○ .1 re-point the dish",
+                "  ├── ○ orb-7.1 re-point the dish",
                 "  │   ├── ! Dangling(1)",
-                "  │   ├── ○ .1.1 true the mount",
-                "  │   └── ○ .1.2 seal the feed horn",
+                "  │   ├── ○ .1 true the mount",
+                "  │   └── ○ .2 seal the feed horn",
                 "  ├─▸ [HeldBack orbital] 1",
             ]
         );
@@ -7516,12 +7521,30 @@ credential_command = "secret harbour"
                 .collect::<Vec<String>>(),
             vec![
                 "▾ orbital",
-                "  ├─▸ ○ .1 re-point the dish",
+                "  ├─▸ ○ orb-7.1 re-point the dish",
                 "  │   └── ! Dangling(1)",
                 "  ├── [HeldBack orbital] 1",
                 "  │   └─▸ ◐ orb-7 lift the ground station",
                 "  │       └── ! Dangling(1)",
             ]
+        );
+    }
+
+    /// What is behind the line reads against the root it is drawn under, as it
+    /// does with the mode off. Only the drawing rooted at one bead shortens
+    /// against that bead, and the roots behind the line are not that drawing.
+    #[test]
+    fn a_bead_behind_the_line_reads_against_the_root_it_hangs_under() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+        open_the_line_holding_roots_back(&mut forest, "orbital");
+
+        toggle_fold_of(&mut forest, "orb-7");
+
+        assert!(
+            drawn_here(&forest, "○ .7 log the survey marks"),
+            "{:#?}",
+            sketch(&forest)
         );
     }
 
@@ -7737,6 +7760,34 @@ credential_command = "secret harbour"
             Some(false),
             "the line rests shut"
         );
+
+        let landed = forest.next_match(true);
+
+        let Some(Landed::On { key: found, .. }) = landed else {
+            panic!("nothing matched: {landed:?}")
+        };
+        assert_eq!(found, key("orbital", "orb-7"));
+    }
+
+    /// A root whose tracker refused leads its project whatever the filter
+    /// says, and it holds no bead. The line has to look past it for the bead
+    /// it stands on, or a reader stepping off it walks past everything it
+    /// holds and wraps round to the top of the screen.
+    #[test]
+    fn stepping_from_the_shut_line_reaches_past_a_root_holding_no_bead() {
+        let mut forest = flatten(gather(
+            vec![
+                tree_of("orbital", ORBITAL),
+                Tree::tracker_unreachable("orbital", "orb-0", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+        focus_on(&mut forest, "orb-7.1");
+        forest.seek("the");
+        let at = the_line_holding_roots_back(&forest, "orbital");
+        step_onto(&mut forest, at);
 
         let landed = forest.next_match(true);
 
