@@ -469,19 +469,21 @@ pub fn conflicts(count: usize) -> String {
     format!("{count} {conflict} nothing could settle")
 }
 
-/// The roots the forest is not drawing because the reader rooted it at one
+/// The beads the forest is not drawing because the reader rooted it at one
 /// bead.
 ///
-/// *Held back* rather than hidden: a key put them behind this line and the
-/// same key brings them back, so nothing here has gone wrong and nothing here
-/// is the tracker's doing.
+/// *Beads* rather than roots, which is the word a reader has for them. Each
+/// one counted here is a root of the forest, and the bead the mode stands on
+/// is not among them — the root it stands in is, for the part of it the mode
+/// stopped drawing, and that root is a bead other than the focused one like
+/// any of the rest.
 ///
-/// Not *other*, either. The root the focused bead stands in is behind this
-/// line as well, for the part of it the mode stopped drawing, and every root
-/// counted here has its own row nowhere but behind this line.
-pub fn held_back(count: usize) -> String {
-    let root = if count == 1 { "root" } else { "roots" };
-    format!("{count} {root} held back")
+/// Nothing here says why they are behind the line. Why the reader asked for
+/// one bead is theirs, and a line guessing at it would be a claim this
+/// program cannot make.
+pub fn other_beads(count: usize) -> String {
+    let bead = if count == 1 { "bead" } else { "beads" };
+    format!("{count} other {bead}")
 }
 
 /// Trees the live-agent filter is holding back, and how many of those carry

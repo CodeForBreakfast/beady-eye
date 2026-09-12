@@ -2331,7 +2331,7 @@ holds trees hidden *because* nothing live is in them, so opening it would
 contradict the rule it exists to serve. Hidden trees is a group nothing went
 wrong in — the filter put them there and a key takes them back out — so it is
 drawn without a warning and it names that key: *a to show all*. The roots
-`Shift+F` holds back are the other group read that way. A group that said only how many trees it hides
+`Shift+F` puts out of the way are the other group read that way. A group that said only how many trees it hides
 would read as "nothing to see here" while hiding broken ones, so it also says
 how many of them carry findings: *4 trees with no live agent · 1 with
 findings*. The findings stay hidden — the reader asked for that — but the group

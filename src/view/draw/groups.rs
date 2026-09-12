@@ -9,7 +9,7 @@ use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{AGENT, WARNING};
 
-use super::{pane_marker, sentence};
+use super::{beside, pane_marker, sentence};
 
 /// What lifts the live-agent filter, said beside the trees it is holding back.
 const SHOW_ALL: &str = "a to show all";
@@ -26,7 +26,7 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
         GroupKind::Conflicts => (phrase::conflicts(group.count), false),
         GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
-        GroupKind::HeldBack => (phrase::held_back(group.count), true),
+        GroupKind::OutOfTheWay => (phrase::other_beads(group.count), true),
         GroupKind::Unattributed => (phrase::unattributed(group.count), false),
         GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
     };
@@ -38,7 +38,7 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
     };
     let state = match group.kind {
         GroupKind::HiddenTrees => vec![Span::styled(SHOW_ALL, palette::QUIET)],
-        GroupKind::HeldBack => held_back_state(group),
+        GroupKind::OutOfTheWay => out_of_the_way_state(group),
         _ => Vec::new(),
     };
 
@@ -48,21 +48,21 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         state,
     );
     match group.kind {
-        GroupKind::HeldBack => line.briefly(held_back_counts(group)),
+        GroupKind::OutOfTheWay => line.briefly(out_of_the_way_counts(group)),
         _ => line,
     }
 }
 
-/// What a line standing over the roots the mode is holding back says beside
-/// itself: the seats in there, the beads wanting looking at, and the key that
-/// brings them back.
+/// What a line standing over the beads the mode put out of the way says
+/// beside itself: the seats in there, the beads wanting looking at, and the
+/// key that brings them back.
 ///
-/// The reader asked for one bead, so the roots go; what they did not ask for
+/// The reader asked for one bead, so the rest go; what they did not ask for
 /// was to be told there is nobody on them. Said in the words a line resting
 /// shut over the same things already uses.
-fn held_back_state(group: &Group) -> Vec<Span<'static>> {
-    let mut said = held_back_counts(group);
-    said.push(Span::styled(WHOLE_FOREST, palette::QUIET));
+fn out_of_the_way_state(group: &Group) -> Vec<Span<'static>> {
+    let mut said = out_of_the_way_counts(group);
+    beside(&mut said, Span::styled(WHOLE_FOREST, palette::QUIET));
     said
 }
 
@@ -70,22 +70,28 @@ fn held_back_state(group: &Group) -> Vec<Span<'static>> {
 ///
 /// The hint goes first and goes whole, because `F for th…` names no key while
 /// the counts are the part of this line a reader can read nowhere else.
-fn held_back_counts(group: &Group) -> Vec<Span<'static>> {
+fn out_of_the_way_counts(group: &Group) -> Vec<Span<'static>> {
     let mut said = Vec::new();
     let Some(counts) = &group.held else {
         return said;
     };
     if counts.live_agents > 0 {
-        said.push(Span::styled(
-            format!("{AGENT} {}", phrase::agents_beneath(counts.live_agents)),
-            palette::AGENT,
-        ));
+        beside(
+            &mut said,
+            Span::styled(
+                format!("{AGENT} {}", phrase::agents_beneath(counts.live_agents)),
+                palette::AGENT,
+            ),
+        );
     }
     if counts.anomalies > 0 {
-        said.push(Span::styled(
-            format!("{WARNING} {}", phrase::anomalies_beneath(counts.anomalies)),
-            palette::ATTENTION,
-        ));
+        beside(
+            &mut said,
+            Span::styled(
+                format!("{WARNING} {}", phrase::anomalies_beneath(counts.anomalies)),
+                palette::ATTENTION,
+            ),
+        );
     }
     said
 }
@@ -283,10 +289,14 @@ mod tests {
     /// behind this line, open work and the seats on it included. So the line
     /// says how many, rather than leaving a reader to read one number as the
     /// whole truth about what is back there.
+    ///
+    /// Asserted as one string rather than cell by cell, because two cells
+    /// that abut read as one that names neither, and a `contains` on each of
+    /// them alone passes either way.
     #[test]
-    fn a_line_over_held_back_roots_says_its_seats_and_what_wants_looking_at() {
+    fn a_line_over_the_beads_put_out_of_the_way_says_its_seats_and_what_wants_looking_at() {
         let group = Group {
-            kind: GroupKind::HeldBack,
+            kind: GroupKind::OutOfTheWay,
             project: Some("summit-works".into()),
             count: 3,
             with_findings: 0,
@@ -300,10 +310,11 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("3 roots held back"), "{drawn:?}");
-        assert!(drawn[0].contains("2 agents beneath"), "{drawn:?}");
-        assert!(drawn[0].contains("1 bead beneath"), "{drawn:?}");
-        assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
+        assert!(drawn[0].contains("3 other beads"), "{drawn:?}");
+        assert!(
+            drawn[0].contains("2 agents beneath  ⚠ 1 bead beneath  F for the whole forest"),
+            "{drawn:?}"
+        );
     }
 
     /// A row with no room for the way out says the counts without it. The
@@ -312,7 +323,7 @@ mod tests {
     #[test]
     fn a_row_too_narrow_for_the_way_out_still_says_what_is_back_there() {
         let group = Group {
-            kind: GroupKind::HeldBack,
+            kind: GroupKind::OutOfTheWay,
             project: Some("summit-works".into()),
             count: 3,
             with_findings: 0,
@@ -326,9 +337,11 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 64, 1).rows();
 
-        assert!(drawn[0].contains("3 roots held back"), "{drawn:?}");
-        assert!(drawn[0].contains("2 agents beneath"), "{drawn:?}");
-        assert!(drawn[0].contains("1 bead beneath"), "{drawn:?}");
+        assert!(drawn[0].contains("3 other beads"), "{drawn:?}");
+        assert!(
+            drawn[0].contains("2 agents beneath  ⚠ 1 bead beneath"),
+            "{drawn:?}"
+        );
         assert!(!drawn[0].contains("F for"), "{drawn:?}");
         assert!(!drawn[0].contains(CUT), "{drawn:?}");
     }
@@ -336,9 +349,9 @@ mod tests {
     /// And says neither where there is neither. A nought said is a column
     /// spent telling a reader about nothing.
     #[test]
-    fn a_line_over_quiet_held_back_roots_says_nothing_of_seats_at_all() {
+    fn a_line_over_one_quiet_bead_put_out_of_the_way_says_nothing_of_seats_at_all() {
         let group = Group {
-            kind: GroupKind::HeldBack,
+            kind: GroupKind::OutOfTheWay,
             project: Some("summit-works".into()),
             count: 1,
             with_findings: 0,
@@ -352,7 +365,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("1 root held back"), "{drawn:?}");
+        assert!(drawn[0].contains("1 other bead"), "{drawn:?}");
         assert!(!drawn[0].contains("beneath"), "{drawn:?}");
         assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
     }
@@ -376,7 +389,7 @@ mod tests {
 
             assert_eq!(
                 marked,
-                !matches!(kind, GroupKind::HiddenTrees | GroupKind::HeldBack),
+                !matches!(kind, GroupKind::HiddenTrees | GroupKind::OutOfTheWay),
                 "{kind:?}: {drawn:?}"
             );
         }

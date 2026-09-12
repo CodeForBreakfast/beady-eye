@@ -360,7 +360,7 @@ impl Forest {
         // drawn at all while the forest is rooted at one bead.
         if self.held_back(place) {
             chain.push(Handle::Group(
-                GroupKind::HeldBack,
+                GroupKind::OutOfTheWay,
                 Some(place.tree.project.clone()),
             ));
         } else if self.hidden(&place.tree) {
@@ -5351,7 +5351,7 @@ credential_command = "secret harbour"
                     // Neither holds a finding of its own: each stands over
                     // whole roots, and what is wrong inside one of those is
                     // the root's to report when the group is opened.
-                    GroupKind::HiddenTrees | GroupKind::HeldBack => {}
+                    GroupKind::HiddenTrees | GroupKind::OutOfTheWay => {}
                 },
                 _ => {}
             }
@@ -7080,10 +7080,10 @@ credential_command = "secret harbour"
                 "  │   └─▸ … 3 more",
                 "  └── [Unattributed orbital] 2",
                 "▾ ferry",
-                "  ├─▸ [HeldBack ferry] 1",
+                "  ├─▸ [OutOfTheWay ferry] 1",
                 "  └── [Unattributed ferry] 1",
                 "▾ harbour",
-                "  └─▸ [HeldBack harbour] 1",
+                "  └─▸ [OutOfTheWay harbour] 1",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
                 "▾ [Conflicts] 1",
@@ -7108,13 +7108,13 @@ credential_command = "secret harbour"
                 "▾ orbital",
                 "  ├─▸ ○ orb-7.1 re-point the dish",
                 "  │   └── ! Dangling(1)",
-                "  ├─▸ [HeldBack orbital] 1",
+                "  ├─▸ [OutOfTheWay orbital] 1",
                 "  └── [Unattributed orbital] 2",
                 "▾ ferry",
-                "  ├─▸ [HeldBack ferry] 1",
+                "  ├─▸ [OutOfTheWay ferry] 1",
                 "  └── [Unattributed ferry] 1",
                 "▾ harbour",
-                "  └─▸ [HeldBack harbour] 1",
+                "  └─▸ [OutOfTheWay harbour] 1",
                 "▸ [FailedProjects] 1",
                 "▾ [Unconfigured] 1",
                 "▾ [Conflicts] 1",
@@ -7149,7 +7149,7 @@ credential_command = "secret harbour"
             .iter()
             .position(|line| {
                 matches!(&line.content, Content::Group(group)
-                if group.kind == GroupKind::HeldBack
+                if group.kind == GroupKind::OutOfTheWay
                     && group.project.as_deref() == Some(project))
             })
             .unwrap_or_else(|| panic!("no line holds {project} back: {:#?}", sketch(forest)))
@@ -7169,7 +7169,7 @@ credential_command = "secret harbour"
             .iter()
             .find_map(|line| match &line.content {
                 Content::Group(group)
-                    if group.kind == GroupKind::HeldBack
+                    if group.kind == GroupKind::OutOfTheWay
                         && group.project.as_deref() == Some(project) =>
                 {
                     group.held.clone()
@@ -7534,7 +7534,7 @@ credential_command = "secret harbour"
                 "  │   ├── ! Dangling(1)",
                 "  │   ├── ○ .1 true the mount",
                 "  │   └── ○ .2 seal the feed horn",
-                "  ├─▸ [HeldBack orbital] 1",
+                "  ├─▸ [OutOfTheWay orbital] 1",
             ]
         );
     }
@@ -7559,7 +7559,7 @@ credential_command = "secret harbour"
                 "▾ orbital",
                 "  ├─▸ ○ orb-7.1 re-point the dish",
                 "  │   └── ! Dangling(1)",
-                "  ├── [HeldBack orbital] 1",
+                "  ├── [OutOfTheWay orbital] 1",
                 "  │   └─▸ ◐ orb-7 lift the ground station",
                 "  │       └── ! Dangling(1)",
             ]
@@ -7753,7 +7753,7 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
         assert!(
-            drawn_here(&forest, "[HeldBack orbital]"),
+            drawn_here(&forest, "[OutOfTheWay orbital]"),
             "still rooted at one bead: {:#?}",
             sketch(&forest)
         );
