@@ -685,7 +685,7 @@ mod tests {
     fn a_badge_that_fell_short_of_its_config_says_so_on_the_drawn_row() {
         let mut short = row(&node("smt-4kd3p.20", "a bead", Status::Blocked));
         short.notes = vec![
-            phrase::undrawn(&Undrawn::Badge {
+            phrase::undrawn(&Undrawn::Link {
                 key: "delivery_pr".into(),
             }),
             phrase::unopenable_link("jira"),

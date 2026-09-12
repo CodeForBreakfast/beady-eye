@@ -705,7 +705,6 @@ pub fn unrecognised_status(status: &Status) -> Option<String> {
 /// the config that wrote the badge, or the beads that hold the value.
 pub fn undrawn(undrawn: &Undrawn) -> String {
     match undrawn {
-        Undrawn::Badge { key } => format!("no badge for {key}: no pattern reads this value"),
         Undrawn::Link { key } => {
             format!("no link for {key}: this value leaves part of it unfilled")
         }
@@ -2004,14 +2003,11 @@ mod tests {
         assert!(said.contains("triage"), "{said}");
     }
 
-    /// Each of the five names the key, because the key is the one thing that
+    /// Each of the four names the key, because the key is the one thing that
     /// takes the reader to the config or the beads they have to change. They
     /// differ in what is missing, because each has a different repair.
     #[test]
     fn every_word_for_a_badge_that_fell_short_names_its_key() {
-        let unread = undrawn(&Undrawn::Badge {
-            key: "delivery_pr".into(),
-        });
         let unfilled = undrawn(&Undrawn::Link {
             key: "delivery_pr".into(),
         });
@@ -2021,7 +2017,7 @@ mod tests {
         let refused = unopenable_link("delivery_pr");
         let refused_short = unopenable_short("delivery_pr");
 
-        let mut every = vec![&unread, &unfilled, &unshortened, &refused, &refused_short];
+        let mut every = vec![&unfilled, &unshortened, &refused, &refused_short];
         for said in &every {
             assert!(said.contains("delivery_pr"), "{said}");
         }
@@ -2029,7 +2025,7 @@ mod tests {
         let said = every.len();
         every.sort_unstable();
         every.dedup();
-        assert_eq!(said, every.len(), "two of the five read alike: {every:?}");
+        assert_eq!(said, every.len(), "two of the four read alike: {every:?}");
     }
 
     #[test]

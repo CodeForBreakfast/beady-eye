@@ -191,7 +191,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::config::Scope;
     use crate::model::anomaly::Anomaly;
-    use crate::model::badges::{Badged, Undrawn};
+    use crate::model::badges::Badged;
     use crate::model::edges::relations;
     use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource, Listed};
     use crate::model::snapshot::tests::*;
@@ -487,10 +487,11 @@ mod tests {
     /// qualified form cannot read: a bare number with no repository to build
     /// a URL out of, and a URL held whole where the parts were expected.
     ///
-    /// Both used to leave the tree carrying nothing at all, which is the
-    /// silence this reports instead.
+    /// The config asked for the qualified form and got its answer, so the two
+    /// it declined are silent the whole way through the build rather than only
+    /// at the badge. A reader wanting them writes a second entry for the key.
     #[test]
-    fn a_value_the_badge_cannot_read_reaches_the_node_as_undrawn() {
+    fn a_value_no_badge_on_its_key_reads_reaches_the_node_drawing_nothing() {
         let json = r#"[
           {"id":"orb-8","title":"root","status":"open"},
           {"id":"orb-8.1","title":"a bare number","status":"blocked",
@@ -530,13 +531,10 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
             now(),
         );
 
-        let unread = Undrawn::Badge {
-            key: "metadata.delivery_pr".to_string(),
-        };
-        assert_eq!(node(&t, "orb-8.1").undrawn, vec![unread.clone()]);
-        assert!(node(&t, "orb-8.1").badges.is_empty());
-        assert_eq!(node(&t, "orb-8.2").undrawn, vec![unread]);
-        assert!(node(&t, "orb-8.2").badges.is_empty());
+        for unread in ["orb-8.1", "orb-8.2"] {
+            assert!(node(&t, unread).badges.is_empty(), "drew on {unread}");
+            assert_eq!(node(&t, unread).undrawn, Vec::new(), "reported on {unread}");
+        }
 
         assert_eq!(
             node(&t, "orb-8.3").undrawn,

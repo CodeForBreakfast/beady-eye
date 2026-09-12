@@ -153,6 +153,13 @@ could be read from.
 to the values a pattern matches, and the pattern is anchored against the whole
 value: `human` draws on `human` and not on `inhumane`.
 
+**Several entries may name one key, and they are tried in the order you wrote
+them.** The first whose `match` reads the value is the badge the row draws, and
+the ones below it are never tried. So a key goes from the shape you expect down
+to the shapes you will settle for, and a value none of them reads draws nothing:
+[What a badge says when it cannot do what you asked](#what-a-badge-says-when-it-cannot-do-what-you-asked)
+has that case.
+
 A capture the pattern names is `render`'s to place by that name:
 
 ```toml
@@ -271,9 +278,14 @@ own to supply them. Every key a project stays silent about keeps drawing what
 `[[badges]]` says.
 
 It shadows by key rather than by entry: a project naming `blocked_on` replaces
-*every* `[[badges]]` entry for `blocked_on`, however many values they match
-between them. Its entries stand where the first `[[badges]]` entry for that key
-stood, so overriding one badge does not reorder the row.
+*every* `[[badges]]` entry for `blocked_on`, however many of them there are. Its
+entries stand where the first `[[badges]]` entry for that key stood, so
+overriding one badge does not reorder the row.
+
+Its entries are then the whole of what that key falls through, so a value none
+of them reads draws nothing on this project's beads even where a shadowed
+`[[badges]]` entry would have read it. A project overriding a key writes out the
+shapes it wants, including the permissive one if it wants that.
 
 **A project's own keys have to come before its badges.** `[[projects.badges]]`
 opens a table of its own, so `name`, `path` or anything else written after it
@@ -388,16 +400,21 @@ link   = "{}"
 
 ### What a badge says when it cannot do what you asked
 
-A badge with no `link` is a filter. It is written to decline, so a value its
-pattern does not read draws nothing and reports nothing.
+`match` is how you say which values you want, so a badge whose pattern does not
+read the value draws nothing and reports nothing. The next entry for that key is
+tried instead, and a value no entry for the key reads is silent — the list said
+what it wanted and got its answer. Where you would rather see every value of a
+key, write a last entry with a permissive pattern and it draws whatever the ones
+above it declined.
 
-A badge with a `link` is written to point somewhere, so a value it cannot point
-at is a reference the reader has lost. The row says so where it says its
-anomalies:
+A badge that read the value and then could not keep one of the other promises its
+config made is the case worth saying, because the row looks ordinary and is not.
+A `link` was written to point somewhere and a `short` to survive a narrow pane,
+so a value that defeats either leaves the reader something they cannot see they
+have lost. The row says so where it says its anomalies:
 
 | what the badge met | what the row says |
 |---|---|
-| a value no pattern reads | `no badge for delivery_pr: no pattern reads this value` |
 | a value that left part of the `link` unfilled | `no link for delivery_pr: this value leaves part of it unfilled` |
 | a link holding a control character | `no link for delivery_pr: it holds a control character` |
 | a value that left part of the `short` unfilled | `no short form for delivery_pr: this value leaves part of it unfilled` |
