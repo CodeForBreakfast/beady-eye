@@ -950,19 +950,24 @@ Pressing the key again puts the forest back, with the selection on the bead it
 was rooted at, opening whatever has been shut over that bead in the meantime. The bead leaving the collection is the one thing that ends the
 mode on its own; a bead that closes is still in the collection, so closing the
 focused bead does not, and a bead the tracker has moved is followed to where it
-moved to. Every root and project the mode holds back goes behind
+moved to. Everything the mode stops drawing goes behind
 one collapsed line per project rather than off the screen, which is *degrade,
-never disappear* binding here as everywhere. That line stands over open work
+never disappear* binding here as everywhere: every other root and every other
+project's, and the focused bead's own root for the part of it that is left —
+the beads above that bead and every branch off them, with the bead itself left
+to the root of the forest rather than drawn a second time. That line stands over open work
 with seats on it, which the filter's own line never does, so it says how many
-seats and how many beads want looking at and never claims there are none. Its
+seats and how many beads want looking at and never claims there are none. It
+counts the beads it is standing over rather than the roots they came from,
+because the beads on the screen are not behind it. Its
 own project's line keeps it, so a reader opens the project where it already
 was. It is a group like the others: it rests shut, the keys that open a group
 open it, and the roots inside it rest shut as the filter's do. A bead in one of
 them is reached by the keys that reach any bead, the line opening to let the
 selection in, so looking a bead up in another root is not paid for with the
-put-back key. A search offers what it can take the reader to, so it counts the
-beads under the focused one and the beads in the roots behind the line, and a
-bead the mode draws nowhere is no more a match than one no tracker holds. It names the key
+put-back key. A search offers what it can take the reader to, which under this
+mode is every bead the forest holds: the ones beneath the focused bead, and the
+ones behind the line, which it opens on the way. It names the key
 that brings them back, because it is the line a reader is looking at when they
 want them back, and a row with no room for that hint gives it up whole rather
 than cutting it to a key nobody can press.

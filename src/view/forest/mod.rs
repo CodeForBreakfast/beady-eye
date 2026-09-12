@@ -355,10 +355,10 @@ impl Forest {
             _ => return chain,
         };
         chain.extend(place.forebears().map(Handle::Bead));
-        // A root the mode is holding back is behind the line it put it
-        // behind, and the group the filter would have put it in is not drawn
-        // at all while the forest is rooted at one bead.
-        if self.held_back(&place.tree) {
+        // A line the mode is holding back is behind the line it put it
+        // behind, and the group the filter would have put its tree in is not
+        // drawn at all while the forest is rooted at one bead.
+        if self.held_back(place) {
             chain.push(Handle::Group(
                 GroupKind::HeldBack,
                 Some(place.tree.project.clone()),
@@ -373,12 +373,16 @@ impl Forest {
         chain
     }
 
-    /// Whether the mode is holding the tree a root names back, which it is
-    /// for every root but the one the forest is rooted at.
-    fn held_back(&self, root: &BeadKey) -> bool {
-        self.focused
-            .as_ref()
-            .is_some_and(|place| place.tree != *root)
+    /// Whether the mode is holding a line back, which it is for every line but
+    /// the bead the forest is rooted at and the ones beneath it.
+    ///
+    /// The rest of that bead's own root is held back as much as another root
+    /// is: the mode draws the bead where a root is drawn and stops there, so
+    /// the beads above it are behind the line the other roots are behind.
+    fn held_back(&self, place: &Place) -> bool {
+        self.focused.as_ref().is_some_and(|focused| {
+            focused.tree != place.tree || !place.steps.starts_with(&focused.steps)
+        })
     }
 
     /// Whether the filter is holding the tree a root names back.
@@ -500,11 +504,15 @@ impl Forest {
     /// Where the bead a place stood on is now, which is the place itself
     /// while nothing has moved. Nothing at all once the collection no longer
     /// holds that bead, which is what ends the mode.
+    ///
+    /// A place with no steps stands on the root of its tree, and a root filed
+    /// under another root has moved as much as any other bead: it is looked
+    /// for by the same name, which for that place is the tree's own.
     fn rerooted(&self, place: &Place) -> Option<Place> {
         if self.drawn(place) {
             return Some(place.clone());
         }
-        self.place_of(place.steps.last()?)
+        self.place_of(place.steps.last().unwrap_or(&place.tree))
     }
 
     /// Where the forest is rooted, where the reader has rooted it at a bead
@@ -872,9 +880,12 @@ impl Forest {
     fn first_bead_under(&self) -> Option<BeadKey> {
         let resting_on = self.lines.get(self.selected)?;
         let shut_over = match &resting_on.content {
-            Content::Group(group) if resting_on.folded == Some(false) => {
-                layout::first_bead_of(&self.snapshot, group.kind, group.project.as_deref())
-            }
+            Content::Group(group) if resting_on.folded == Some(false) => layout::first_bead_of(
+                &self.snapshot,
+                group.kind,
+                group.project.as_deref(),
+                self.rooted().as_ref(),
+            ),
             _ => None,
         };
         shut_over.or_else(|| {
@@ -931,15 +942,7 @@ impl Forest {
     fn beads_drawn(&self) -> Vec<(BeadKey, String)> {
         let mut drawn = Vec::new();
         let mut listed = BTreeSet::new();
-        let rooted = self.rooted();
-        for tree in layout::trees_drawn(&self.snapshot) {
-            // The tree the forest is rooted at a bead of is walked from that
-            // bead, because the beads above it are drawn nowhere and a search
-            // that counted one would step onto it and find nothing there.
-            let way = rooted
-                .as_ref()
-                .filter(|rooted| rooted.place.tree == root_key(tree))
-                .map_or(&[0][..], |rooted| &rooted.way);
+        for (tree, way) in layout::walked(&self.snapshot, self.rooted().as_ref()) {
             let (at, above) = way.split_last().expect("a way down ends somewhere");
             step_down(
                 tree,
@@ -973,13 +976,46 @@ impl Forest {
     /// its children in an order their sort does not give. `way_to` is handed
     /// the tree's facts for that reason, and it is the same order the search
     /// enumerates in, so the copy a count named is the copy landed on.
+    ///
+    /// What the forest is rooted at is asked first, because a way down the
+    /// tree answers with can be a row the mode draws nowhere.
     fn place_of(&self, key: &BeadKey) -> Option<Place> {
-        self.snapshot
-            .trees
-            .iter()
-            .chain(&self.snapshot.collected)
-            .filter(|tree| tree.project == key.project)
-            .find_map(|tree| way_to(tree, self.facts.tree(&root_key(tree)), &key.id))
+        self.drawn_at_the_root(key).or_else(|| {
+            self.snapshot
+                .trees
+                .iter()
+                .chain(&self.snapshot.collected)
+                .filter(|tree| tree.project == key.project)
+                .find_map(|tree| way_to(tree, self.facts.tree(&root_key(tree)), &key.id))
+        })
+    }
+
+    /// Where the forest draws a bead at the bead it is rooted at or beneath
+    /// it, which is where a reader comes to it first: those rows are drawn
+    /// above every root the mode is holding back.
+    ///
+    /// A bead its own tree reaches twice is drawn at the copy the reader
+    /// pressed the key on, and every copy of it is left out of the root behind
+    /// the line — so the first way down to that bead, and to everything only
+    /// it reaches, is a way down to a row nothing draws.
+    fn drawn_at_the_root(&self, key: &BeadKey) -> Option<Place> {
+        let focused = self.focused.as_ref()?;
+        if focused.steps.last().unwrap_or(&focused.tree) == key {
+            return Some(focused.clone());
+        }
+        if focused.tree.project != key.project {
+            return None;
+        }
+        let (tree, way) = self.locate(focused)?;
+        let (at, above) = way.split_last()?;
+        stepped_to(
+            tree,
+            self.facts.tree(&root_key(tree)),
+            &key.id,
+            *at,
+            above,
+            focused,
+        )
     }
 
     /// Open everything shut over a line: everything the line hangs under, and
@@ -1316,6 +1352,25 @@ mod tests {
     /// A second root, nobody working in it either, holding a bead that waits
     /// on a row the tracker never returned. Whichever project files it, the
     /// tree is hidden with a finding still in it.
+    /// The harbour and the slipway as one tree, which is what the tracker
+    /// answers once somebody files the second root as a child of the first.
+    /// Two roots become one, and the bead a reader was finishing is where it
+    /// always was in their head and somewhere else in the answer.
+    const SLIPWAY_UNDER_HARBOUR: &str = r#"[
+      {"id":"hbr-3","title":"dredge the channel","status":"open",
+       "priority":2,"issue_type":"epic"},
+      {"id":"hbr-3.1","title":"survey the silt","status":"open",
+       "dependencies":[{"depends_on_id":"hbr-3","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"hbr-9","title":"re-deck the slipway","status":"open",
+       "dependencies":[{"depends_on_id":"hbr-3","type":"parent-child"}],
+       "priority":2,"issue_type":"epic"},
+      {"id":"hbr-9.1","title":"strip the planking","status":"open",
+       "dependencies":[{"depends_on_id":"hbr-9","type":"parent-child"},
+                       {"depends_on_id":"hbr-4","type":"blocks"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     const SLIPWAY: &str = r#"[
       {"id":"hbr-9","title":"re-deck the slipway","status":"open",
        "priority":2,"issue_type":"epic"},
@@ -7033,9 +7088,8 @@ credential_command = "secret harbour"
     }
 
     /// Every other root is one line away rather than gone, under the project
-    /// it belongs to. Orbital has no other root, so it has no such line: the
-    /// beads the mode stopped drawing there are above the focused bead rather
-    /// than held back from it.
+    /// it belongs to. Orbital's own root is behind that line too, for the part
+    /// of it the mode stopped drawing: the beads above the focused bead.
     #[test]
     fn the_roots_the_mode_stops_drawing_go_behind_one_line_per_project() {
         let mut forest = flatten(snapshot());
@@ -7050,6 +7104,7 @@ credential_command = "secret harbour"
                 "▾ orbital",
                 "  ├─▸ ○ .1 re-point the dish",
                 "  │   └── ! Dangling(1)",
+                "  ├─▸ [HeldBack orbital] 1",
                 "  └── [Unattributed orbital] 2",
                 "▾ ferry",
                 "  ├─▸ [HeldBack ferry] 1",
@@ -7076,21 +7131,48 @@ credential_command = "secret harbour"
         ] {
             let mut forest = flatten(snapshot());
             focus_on(&mut forest, "orb-7.1");
-            let at = forest
-                .lines()
-                .iter()
-                .position(|line| {
-                    matches!(&line.content, Content::Group(group)
-                    if group.kind == GroupKind::HeldBack
-                        && group.project.as_deref() == Some(project))
-                })
-                .unwrap_or_else(|| panic!("no line holds {project} back: {:#?}", sketch(&forest)));
-            step_onto(&mut forest, at);
 
-            assert!(forest.apply(Action::ExpandOrChild));
+            open_the_line_holding_roots_back(&mut forest, project);
 
             assert!(drawn_here(&forest, root), "{:#?}", sketch(&forest));
         }
+    }
+
+    /// Which row one project's held-back roots are behind.
+    fn the_line_holding_roots_back(forest: &Forest, project: &str) -> usize {
+        forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group)
+                if group.kind == GroupKind::HeldBack
+                    && group.project.as_deref() == Some(project))
+            })
+            .unwrap_or_else(|| panic!("no line holds {project} back: {:#?}", sketch(forest)))
+    }
+
+    /// Step onto that line and open it, with the keys a reader has.
+    fn open_the_line_holding_roots_back(forest: &mut Forest, project: &str) {
+        let at = the_line_holding_roots_back(forest, project);
+        step_onto(forest, at);
+        assert!(forest.apply(Action::ExpandOrChild));
+    }
+
+    /// What the line holding one project's roots back says it stands over.
+    fn held_by_the_line(forest: &Forest, project: &str) -> Counts {
+        forest
+            .lines()
+            .iter()
+            .find_map(|line| match &line.content {
+                Content::Group(group)
+                    if group.kind == GroupKind::HeldBack
+                        && group.project.as_deref() == Some(project) =>
+                {
+                    group.held.clone()
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no counts on {project}'s line: {:#?}", sketch(forest)))
     }
 
     /// The line stands over open work with seats and anomalies on it, which is
@@ -7102,19 +7184,7 @@ credential_command = "secret harbour"
         select_hidden_tree(&mut forest);
         assert!(forest.apply(Action::FocusForest));
 
-        let held = forest
-            .lines()
-            .iter()
-            .find_map(|line| match &line.content {
-                Content::Group(group)
-                    if group.kind == GroupKind::HeldBack
-                        && group.project.as_deref() == Some("orbital") =>
-                {
-                    group.held.clone()
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no counts on orbital's line: {:#?}", sketch(&forest)));
+        let held = held_by_the_line(&forest, "orbital");
 
         assert_eq!(held, counts_of(&forest, "orbital", "orb-7"));
         assert!(held.live_agents > 0, "orbital is where the agents are");
@@ -7423,7 +7493,334 @@ credential_command = "secret harbour"
                 "  │   ├── ! Dangling(1)",
                 "  │   ├── ○ .1.1 true the mount",
                 "  │   └── ○ .1.2 seal the feed horn",
+                "  ├─▸ [HeldBack orbital] 1",
             ]
         );
+    }
+
+    /// The mode stops drawing the beads above the focused one, and *degrade,
+    /// never disappear* binds over them as it does over a whole root: they go
+    /// behind the same line, under the project they are in, and the root they
+    /// hang from rests shut there as a held-back root does.
+    #[test]
+    fn the_beads_above_the_focused_bead_go_behind_the_line_as_a_root_does() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        open_the_line_holding_roots_back(&mut forest, "orbital");
+
+        assert_eq!(
+            sketch(&forest)
+                .into_iter()
+                .take_while(|row| !row.contains("Unattributed"))
+                .collect::<Vec<String>>(),
+            vec![
+                "▾ orbital",
+                "  ├─▸ ○ .1 re-point the dish",
+                "  │   └── ! Dangling(1)",
+                "  ├── [HeldBack orbital] 1",
+                "  │   └─▸ ◐ orb-7 lift the ground station",
+                "  │       └── ! Dangling(1)",
+            ]
+        );
+    }
+
+    /// The focused bead is drawn where a root is drawn, so the line the rest
+    /// of its root is behind leaves it there rather than drawing it twice.
+    #[test]
+    fn the_line_leaves_the_focused_bead_to_the_root_of_the_forest() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        open_the_line_holding_roots_back(&mut forest, "orbital");
+
+        assert_eq!(
+            sketch(&forest)
+                .iter()
+                .filter(|row| row.contains("re-point the dish"))
+                .count(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A seat on a bead above the focused one is a seat nothing else on the
+    /// screen says is there, so the line standing over that bead counts it.
+    #[test]
+    fn the_line_counts_the_seats_above_the_focused_bead() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        let held = held_by_the_line(&forest, "orbital");
+
+        assert_eq!(
+            held.live_agents,
+            counts_of(&forest, "orbital", "orb-7").live_agents,
+            "every seat in orbital is on a bead the mode stopped drawing"
+        );
+        assert!(held.live_agents > 0, "orbital is where the agents are");
+    }
+
+    /// It counts what it is standing over rather than the whole root the beads
+    /// came from. The focused bead and what hangs beneath it are on the screen,
+    /// and a line counting those sends a reader looking for rows they are
+    /// already reading.
+    #[test]
+    fn the_line_counts_only_the_beads_the_mode_stopped_drawing() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        let held = held_by_the_line(&forest, "orbital");
+
+        assert_eq!(
+            held.total,
+            counts_of(&forest, "orbital", "orb-7").total - 3,
+            "orb-7.1 and the two beads beneath it are drawn at the root"
+        );
+    }
+
+    /// Going to a bead opens what is shut over it, and what is shut over a
+    /// bead above the focused one is the line the rest of its root is behind.
+    #[test]
+    fn going_to_a_bead_above_the_focused_one_opens_the_line_it_is_behind() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        assert!(
+            forest.go_to(&key("orbital", "orb-7")),
+            "cannot reach the bead above: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
+    }
+
+    /// A run says what opening it would draw. Where the bead the forest is
+    /// rooted at came out of one, the run behind the line stands for the
+    /// siblings it left there rather than counting a bead drawn at the root of
+    /// the forest.
+    #[test]
+    fn a_run_behind_the_line_leaves_the_focused_bead_out_of_its_count() {
+        let mut forest = flatten(snapshot());
+        assert!(forest.go_to(&key("orbital", "orb-7.2")), "no such bead");
+        assert!(forest.apply(Action::FocusForest));
+
+        assert!(
+            forest.go_to(&key("orbital", "orb-7.3")),
+            "cannot reach a bead in the run: {:#?}",
+            sketch(&forest)
+        );
+
+        assert!(
+            drawn_here(&forest, "… 2 more"),
+            "the run stands for the siblings left in it: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// And a run with the focused bead somewhere beneath one of its members
+    /// stands for one bead fewer for the same reason, rather than for what the
+    /// whole tree would have put behind it.
+    #[test]
+    fn a_run_behind_the_line_leaves_out_a_focused_bead_beneath_a_member() {
+        let mut forest = flatten(depot());
+        assert!(forest.go_to(&key("orbital", "dep-1.2.1")), "no such bead");
+        assert!(forest.apply(Action::FocusForest));
+
+        assert!(
+            forest.go_to(&key("orbital", "dep-1.3")),
+            "cannot reach the run: {:#?}",
+            sketch(&forest)
+        );
+
+        assert!(drawn_here(&forest, "… 5 more"), "{:#?}", sketch(&forest));
+    }
+
+    /// A bead reachable more than once is drawn once for every way down to it,
+    /// and the key roots the forest at the copy the reader pressed it on. The
+    /// mode draws none of the others, so going to that bead goes to the copy
+    /// it is drawn at rather than to the first way down to it.
+    #[test]
+    fn going_to_the_focused_bead_reaches_the_copy_it_is_rooted_at() {
+        let mut forest = flatten(drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "orb-9");
+        step_onto(&mut forest, lower);
+        assert!(forest.apply(Action::FocusForest));
+
+        assert!(
+            forest.go_to(&key("orbital", "orb-9")),
+            "cannot reach the bead the forest is rooted at: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// And everything only that copy reaches. The first way down to one of
+    /// those beads goes through the copy the mode draws nowhere, so a search
+    /// answering with it would count a bead it could not land on.
+    #[test]
+    fn going_to_a_bead_under_the_focused_copy_reaches_it() {
+        let mut forest = flatten(drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "orb-9");
+        step_onto(&mut forest, lower);
+        assert!(forest.apply(Action::FocusForest));
+
+        assert!(
+            forest.go_to(&key("orbital", "orb-9.1")),
+            "cannot reach the bead beneath it: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-9.1")));
+    }
+
+    /// A root the tracker files under another root is still the bead the
+    /// reader was finishing. Its place stops being a root's, so the mode goes
+    /// looking for the bead, exactly as it does for a bead moved further down.
+    #[test]
+    fn a_collection_that_filed_the_focused_root_under_another_stays_rooted_at_it() {
+        let staffed = panes_on(&["hbr-9.1"]);
+        let mut forest = flatten(together("orbital", &[HARBOUR, SLIPWAY], &staffed));
+        focus_on(&mut forest, "hbr-9");
+        assert!(
+            !drawn_here(&forest, "dredge the channel"),
+            "rooted at one bead: {:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(together("orbital", &[SLIPWAY_UNDER_HARBOUR], &staffed));
+
+        assert!(
+            drawn_here(&forest, "re-deck the slipway"),
+            "the bead is still where a root is drawn: {:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            drawn_here(&forest, "[HeldBack orbital]"),
+            "still rooted at one bead: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A search counts in the order the rows are drawn, and the bead the
+    /// forest is rooted at is the first row on the screen however its tree
+    /// came in its project's own order.
+    #[test]
+    fn a_search_counts_from_the_bead_the_forest_is_rooted_at() {
+        let mut forest = flatten(together(
+            "orbital",
+            &[HARBOUR, SLIPWAY],
+            &panes_on(&["hbr-9.1"]),
+        ));
+        assert!(forest.go_to(&key("orbital", "hbr-3.1")), "no such bead");
+        assert!(forest.apply(Action::FocusForest));
+
+        let landed = forest.seek("the");
+
+        let Landed::On { key: found, at, .. } = landed else {
+            panic!("nothing matched: {landed:?}")
+        };
+        assert_eq!((found, at), (key("orbital", "hbr-3.1"), 1));
+    }
+
+    /// Stepping through matches from a row that is not a bead carries on from
+    /// where the reader is standing, and a shut line is asked what it holds
+    /// rather than read past. This line holds beads exactly as the filter's
+    /// does, so a reader standing on it steps into what is behind it.
+    #[test]
+    fn stepping_from_the_shut_line_carries_on_into_the_roots_behind_it() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+        forest.seek("the");
+        let at = the_line_holding_roots_back(&forest, "orbital");
+        step_onto(&mut forest, at);
+        assert_eq!(
+            forest.lines()[at].folded,
+            Some(false),
+            "the line rests shut"
+        );
+
+        let landed = forest.next_match(true);
+
+        let Some(Landed::On { key: found, .. }) = landed else {
+            panic!("nothing matched: {landed:?}")
+        };
+        assert_eq!(found, key("orbital", "orb-7"));
+    }
+
+    /// Open every fold on the screen, with the keys a reader has, until the
+    /// rows are the whole of what the forest holds.
+    ///
+    /// Counted out before it starts like any other walk here. Each press opens
+    /// one fold and draws what it was over, so a screen with a fold left shut
+    /// after a press per row it started with is one the walk says it never
+    /// got to the end of.
+    fn open_everything(forest: &mut Forest) {
+        walk::until(
+            forest,
+            |forest| shut_fold(forest).is_none(),
+            |forest| {
+                let at = shut_fold(forest).expect("a fold to open");
+                forest.select_line(at);
+                forest.apply(Action::ExpandOrChild);
+            },
+            |forest| format!("a fold would not open: {:#?}", sketch(forest)),
+        );
+    }
+
+    /// The first row on the screen resting shut over something.
+    fn shut_fold(forest: &Forest) -> Option<usize> {
+        forest
+            .lines()
+            .iter()
+            .position(|line| line.folded == Some(false))
+    }
+
+    /// The order a search counts in and the order the rows come out are the
+    /// same order, and both are the drawing's answer rather than two accounts
+    /// of it that agree because they were written to. Under the mode as
+    /// without it, because the mode is what moves the rows.
+    #[test]
+    fn a_search_enumerates_the_beads_in_the_order_the_rows_draw_them() {
+        for rooted in [None, Some("orb-7.1")] {
+            let mut forest = flatten(snapshot());
+            if let Some(bead) = rooted {
+                focus_on(&mut forest, bead);
+            }
+            open_everything(&mut forest);
+            let mut met = BTreeSet::new();
+            // A root whose tracker refused has a row and no bead on it, and a
+            // search offers beads. It is named on its line rather than left
+            // out, which is the one row here that stands for no bead.
+            let on_screen: Vec<BeadKey> = forest
+                .lines()
+                .iter()
+                .filter(|line| matches!(line.content, Content::Bead(_)))
+                .filter_map(Line::bead)
+                .filter(|key| met.insert((*key).clone()))
+                .cloned()
+                .collect();
+
+            let counted: Vec<BeadKey> = forest
+                .beads_drawn()
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect();
+
+            assert_eq!(counted, on_screen, "rooted at {rooted:?}");
+        }
+    }
+
+    /// A search counts the matches it can take the reader to, and a line it
+    /// can open is a match it can take them to.
+    #[test]
+    fn a_search_counts_a_bead_above_the_focused_one() {
+        let mut forest = flatten(snapshot());
+        focus_on(&mut forest, "orb-7.1");
+
+        let landed = forest.seek("lift the ground station");
+
+        let Landed::On { key: found, .. } = landed else {
+            panic!("nothing matched: {landed:?}")
+        };
+        assert_eq!(found, key("orbital", "orb-7"));
     }
 }

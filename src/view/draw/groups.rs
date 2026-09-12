@@ -300,7 +300,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("3 other roots"), "{drawn:?}");
+        assert!(drawn[0].contains("3 roots held back"), "{drawn:?}");
         assert!(drawn[0].contains("2 agents beneath"), "{drawn:?}");
         assert!(drawn[0].contains("1 bead beneath"), "{drawn:?}");
         assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
@@ -326,7 +326,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 64, 1).rows();
 
-        assert!(drawn[0].contains("3 other roots"), "{drawn:?}");
+        assert!(drawn[0].contains("3 roots held back"), "{drawn:?}");
         assert!(drawn[0].contains("2 agents beneath"), "{drawn:?}");
         assert!(drawn[0].contains("1 bead beneath"), "{drawn:?}");
         assert!(!drawn[0].contains("F for"), "{drawn:?}");
@@ -352,7 +352,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("1 other root"), "{drawn:?}");
+        assert!(drawn[0].contains("1 root held back"), "{drawn:?}");
         assert!(!drawn[0].contains("beneath"), "{drawn:?}");
         assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
     }
