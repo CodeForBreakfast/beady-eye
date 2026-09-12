@@ -682,7 +682,7 @@ impl TreeLayout<'_> {
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
                 node,
-                self.shortened_against(),
+                None,
                 bead.progress,
                 shut_over(bead.beneath, first_copy(self.tree, at, above), folded),
             )),
@@ -769,7 +769,7 @@ impl TreeLayout<'_> {
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
-                            self.shortened_against(),
+                            Some(&parent.key().id),
                             bead.progress,
                             shut_over(bead.beneath, first, folded),
                         )),
@@ -803,18 +803,6 @@ impl TreeLayout<'_> {
 
     fn draws(&self, link: &Link) -> bool {
         Some(link.bead) != self.without
-    }
-
-    /// The id every row here is shortened against: the bead this drawing
-    /// starts at. A reader reads a column of suffixes by putting the drawn
-    /// root in front of each one, so the bead the forest is rooted at reads
-    /// whole and what hangs under it reads against that. The root it came out
-    /// of is behind the line, shortening what is drawn there.
-    fn shortened_against(&self) -> &str {
-        match self.rooted {
-            Some(rooted) => &rooted.place.steps.last().unwrap_or(&rooted.place.tree).id,
-            None => &self.tree.root,
-        }
     }
 
     /// What a run stands for: its members and everything beneath them. Walked

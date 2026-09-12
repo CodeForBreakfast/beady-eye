@@ -2581,8 +2581,8 @@ credential_command = "secret harbour"
             "▾ orbital",
             "  └── ○ tow-1 raise the tower",
             "      ├── ○ .1 stand the mast",
-            "      │   └── ○ .1.1 bolt the sections",
-            "      │       └── ○ .1.1.1 dress the cables",
+            "      │   └── ○ .1 bolt the sections",
+            "      │       └── ○ .1 dress the cables",
             "      └─▸ ○ .2 pour the base",
         ];
 
@@ -2625,8 +2625,8 @@ credential_command = "secret harbour"
                 "▾ orbital",
                 "  └── ○ tow-1 raise the tower",
                 "      ├── ○ .1 stand the mast",
-                "      │   └── ○ .1.1 bolt the sections",
-                "      │       └── ◐ .1.1.1 dress the cables",
+                "      │   └── ○ .1 bolt the sections",
+                "      │       └── ◐ .1 dress the cables",
                 "      └─▸ ○ .2 pour the base",
             ]
         );
@@ -2696,7 +2696,7 @@ credential_command = "secret harbour"
         assert!(
             sketch(&forest)
                 .iter()
-                .any(|line| line.contains(".1.1.1 dress the cables")),
+                .any(|line| line.contains(".1 dress the cables")),
             "{:#?}",
             sketch(&forest)
         );
@@ -3204,10 +3204,10 @@ credential_command = "secret harbour"
                 "  └── ◐ rly-2 re-site the relay",
                 "      ├── ○ .1 trench the run",
                 "      ├── ✓ .2 strike the old mast",
-                "      │   └── ✓ .2.1 drop the guys",
-                "      │       └── ◐ .2.1.1 cut the stays",
+                "      │   └── ✓ .1 drop the guys",
+                "      │       └── ◐ .1 cut the stays",
                 "      ├── ✓ .4 lift the feeder",
-                "      │   └── ✓ .4.1 coil the heliax",
+                "      │   └── ✓ .1 coil the heliax",
                 "      └─▸ … 4 more",
             ]
         );
@@ -3608,9 +3608,9 @@ credential_command = "secret harbour"
                 "  └── ◐ sdg-4 re-point the crossover",
                 "      ├─▸ ◐ .3 re-signal the box",
                 "      ├── ✓ .1 slew the up line",
-                "      │   ├── ○ .1.2 weld the closure rail",
-                "      │   ├─▸ ✓ .1.1 key the switch",
-                "      │   └── ✓ .1.3 lift the old chairs",
+                "      │   ├── ○ .2 weld the closure rail",
+                "      │   ├─▸ ✓ .1 key the switch",
+                "      │   └── ✓ .3 lift the old chairs",
                 "      └─▸ ✓ .2 clip the down line",
             ]
         );
@@ -5447,7 +5447,7 @@ credential_command = "secret harbour"
                 "  └── ◐ slu-1 rehang the sluice",
                 "      ├─▸ ◐ .1 forge the new pintles",
                 "      └── ○ .2 hang the gate",
-                "          └┄▸ ◐ .1 forge the new pintles",
+                "          └┄▸ ◐ slu-1.1 forge the new pintles",
             ]
         );
 
@@ -5459,12 +5459,51 @@ credential_command = "secret harbour"
                 "▾ orbital",
                 "  └── ◐ slu-1 rehang the sluice",
                 "      ├── ◐ .1 forge the new pintles",
-                "      │   └── ○ .1.1 cast the pintle blanks",
+                "      │   └── ○ .1 cast the pintle blanks",
                 "      └── ○ .2 hang the gate",
-                "          └┄┄ ◐ .1 forge the new pintles",
-                "              └── ○ .1.1 cast the pintle blanks",
+                "          └┄┄ ◐ slu-1.1 forge the new pintles",
+                "              └── ○ .1 cast the pintle blanks",
             ]
         );
+    }
+
+    /// A column of short ids is only readable if a reader can rebuild the
+    /// whole one from it: they put what the row above says in front of what
+    /// this row says, and stop at a row that reads whole because there is
+    /// nothing left to put in front of it. Over every bead these fixtures
+    /// draw, that walk gives back the id `bd` holds it under.
+    #[test]
+    fn walking_up_the_rows_and_joining_the_ids_gives_a_beads_whole_id_back() {
+        let fixtures = [
+            flatten(snapshot()),
+            flatten(tower_staffed(&["tow-1.1.1.1"])),
+            flatten(alone("orbital", SLUICE, &panes_on(&["slu-1.1"]))),
+            flatten(alone("orbital", RELAY, &two_panes())),
+            flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3"]))),
+        ];
+
+        let mut shortened = 0;
+        for mut forest in fixtures {
+            forest.apply(Action::ExpandSubtree);
+            let mut above: Vec<String> = Vec::new();
+            for line in forest.lines() {
+                let (Some(place), Content::Bead(row)) = (&line.place, &line.content) else {
+                    continue;
+                };
+                above.truncate(place.steps.len());
+                let rebuilt = match above.last() {
+                    Some(parent) if row.id.starts_with('.') => format!("{parent}{}", row.id),
+                    _ => row.id.clone(),
+                };
+
+                assert_eq!(rebuilt, place.key().id, "{:#?}", sketch(&forest));
+
+                shortened += usize::from(row.id.starts_with('.'));
+                above.push(rebuilt);
+            }
+        }
+
+        assert!(shortened > 0, "no row was drawn short to walk up from");
     }
 
     /// Four columns a level, every line in a forest with trees in it,
@@ -6556,13 +6595,18 @@ credential_command = "secret harbour"
 
     /// The forest row is the one place `bdi` ever prints a shortened id —
     /// `row::abbreviate` has no other caller — so on a long screen the short
-    /// id is the only spelling the reader has been shown. A substring is what
-    /// reaches it: `.1.1` is a prefix of nothing.
+    /// id is the only spelling the reader has been shown, and what they type
+    /// has to reach the bead they read it off. The query is taken from the row
+    /// rather than written out here, because a search matches on the whole id
+    /// and a query spelled by hand would pass on that alone.
+    ///
+    /// A substring is what reaches it: the drawn form is a prefix of nothing.
     #[test]
     fn a_search_matches_the_shortened_id_the_row_draws() {
         let mut forest = flatten(snapshot());
+        let drawn = row_of(&forest, "orb-7.1").id.clone();
 
-        assert_eq!(forest.seek(".1.1"), went_to("orbital", "orb-7.1.1", 1, 1));
+        assert_eq!(forest.seek(&drawn), went_to("orbital", "orb-7.1", 1, 4));
     }
 
     #[test]
