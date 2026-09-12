@@ -153,6 +153,13 @@ could be read from.
 to the values a pattern matches, and the pattern is anchored against the whole
 value: `human` draws on `human` and not on `inhumane`.
 
+**Several entries may name one key, and they are tried in the order you wrote
+them.** The first whose `match` reads the value is the badge the row draws, and
+the ones below it are never tried. So write the shape you expect first and the
+shapes you will settle for under it. A value none of them reads draws nothing,
+and [What a badge says when it cannot do what you asked](#what-a-badge-says-when-it-cannot-do-what-you-asked)
+has that case.
+
 A capture the pattern names is `render`'s to place by that name:
 
 ```toml
@@ -264,16 +271,28 @@ colour = "#c71585"
 
 ## `[[projects.badges]]`
 
-What one project draws in place of this list, for the keys it names and no
-others. A shared list can only say what the value itself carries, so a project
-whose `delivery_pr` leaves out its owner and repository needs an entry of its
-own to supply them. Every key a project stays silent about keeps drawing what
+What one project draws ahead of this list, for the keys it names and no others.
+A shared list can only say what the value itself carries, so a project whose
+`delivery_pr` leaves out its owner and repository needs an entry of its own to
+supply them. Every key a project stays silent about keeps drawing what
 `[[badges]]` says.
 
-It shadows by key rather than by entry: a project naming `blocked_on` replaces
-*every* `[[badges]]` entry for `blocked_on`, however many values they match
-between them. Its entries stand where the first `[[badges]]` entry for that key
-stood, so overriding one badge does not reorder the row.
+**A project's entries for a key are tried before the `[[badges]]` entries for
+that key, and replace none of them.** They sit where the first `[[badges]]` entry
+for the key sat, so naming a key does not move the row's other badges. The shared
+entries for that key follow, in the order they were written. Keys only the
+project names come last.
+
+So a project wins a value by being tried first, not by taking anything away. A
+value its own entries do not read falls through to the `[[badges]]` entries
+underneath them, and draws whatever it would have drawn had the project named
+nothing.
+
+That is why one entry is usually all a project needs. It names the shape its own
+tracker writes, and every other shape keeps being read by the shared list.
+
+A project cannot silence a `[[badges]]` entry. Naming a key puts your own entries
+first; it does not take the shared ones away.
 
 **A project's own keys have to come before its badges.** `[[projects.badges]]`
 opens a table of its own, so `name`, `path` or anything else written after it
@@ -355,7 +374,7 @@ and the badge drops the repository rather than the row dropping the badge, and
 
 A bead carrying `delivery_pr = "12"` has nothing in the value to build an
 address out of, and a shared list can only say what the value itself carries.
-The project's own entry supplies the rest:
+The project's own entry supplies the rest, and is tried before the shared one:
 
 ```toml
 [[projects]]
@@ -369,8 +388,10 @@ render = "⇢ #{number}"
 link   = "https://forge.invalid/orbital/beacon/pull/{number}"
 ```
 
-This shadows `delivery_pr` for `beacon` and for nothing else, by the rule
-[`[[projects.badges]]`](#projectsbadges) gives.
+This is tried first on `beacon`'s beads, and on no other project's, by the rule
+[`[[projects.badges]]`](#projectsbadges) gives. The `[[badges]]` entry is still
+there underneath it, so a `beacon` bead that does carry an owner and repository
+is read by that one as before.
 
 ### A reference stored as a full URL
 
@@ -388,16 +409,21 @@ link   = "{}"
 
 ### What a badge says when it cannot do what you asked
 
-A badge with no `link` is a filter. It is written to decline, so a value its
-pattern does not read draws nothing and reports nothing.
+`match` is how you say which values you want, so a badge whose pattern does not
+read the value draws nothing and reports nothing. The next entry for that key is
+tried instead. A value no entry for the key reads stays silent: you said which
+shapes you wanted, and none of them was this one. Where you would rather see
+every value of a key, write a last entry with a permissive pattern, and it draws
+whatever the ones above it declined.
 
-A badge with a `link` is written to point somewhere, so a value it cannot point
-at is a reference the reader has lost. The row says so where it says its
-anomalies:
+What is worth saying is a badge that read the value and then could not keep one
+of the other promises its config made. A `link` was written to point somewhere
+and a `short` to survive a narrow pane, and a value that defeats either takes
+that away while leaving the badge looking ordinary. So the row says so where it
+says its anomalies:
 
 | what the badge met | what the row says |
 |---|---|
-| a value no pattern reads | `no badge for delivery_pr: no pattern reads this value` |
 | a value that left part of the `link` unfilled | `no link for delivery_pr: this value leaves part of it unfilled` |
 | a link holding a control character | `no link for delivery_pr: it holds a control character` |
 | a value that left part of the `short` unfilled | `no short form for delivery_pr: this value leaves part of it unfilled` |
