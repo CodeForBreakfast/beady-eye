@@ -6595,13 +6595,18 @@ credential_command = "secret harbour"
 
     /// The forest row is the one place `bdi` ever prints a shortened id —
     /// `row::abbreviate` has no other caller — so on a long screen the short
-    /// id is the only spelling the reader has been shown. A substring is what
-    /// reaches it: `.1` is a prefix of nothing.
+    /// id is the only spelling the reader has been shown, and what they type
+    /// has to reach the bead they read it off. The query is taken from the row
+    /// rather than written out here, because a search matches on the whole id
+    /// and a query spelled by hand would pass on that alone.
+    ///
+    /// A substring is what reaches it: the drawn form is a prefix of nothing.
     #[test]
     fn a_search_matches_the_shortened_id_the_row_draws() {
         let mut forest = flatten(snapshot());
+        let drawn = row_of(&forest, "orb-7.1").id.clone();
 
-        assert_eq!(forest.seek(".1"), went_to("orbital", "orb-7.1", 1, 4));
+        assert_eq!(forest.seek(&drawn), went_to("orbital", "orb-7.1", 1, 4));
     }
 
     #[test]
