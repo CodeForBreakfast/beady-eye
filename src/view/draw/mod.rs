@@ -373,7 +373,7 @@ mod tests {
     }
 
     pub(super) fn row(node: &Node) -> Row {
-        row::cells(node, "smt-4kd3p", None, None)
+        row::cells(node, Some("smt-4kd3p"), None, None)
     }
 
     /// A project whose roots all read, so its line is its name and its counts.

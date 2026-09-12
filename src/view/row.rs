@@ -90,7 +90,7 @@ pub fn says_the_same_about_its_link(badge: &Badged, said: &str) -> bool {
 
 pub fn cells(
     node: &Node,
-    root: &str,
+    above: Option<&str>,
     progress: Option<Progress>,
     shut_over: Option<Counts>,
 ) -> Row {
@@ -137,7 +137,7 @@ pub fn cells(
     Row {
         status: node.status.clone(),
         glyph: status_glyph(&node.status),
-        id: abbreviate(&node.id, root).to_string(),
+        id: abbreviate(&node.id, above).to_string(),
         title: node.title.clone(),
         badges: node.badges.clone(),
         progress,
@@ -176,12 +176,17 @@ pub fn status_glyph(status: &Status) -> char {
     }
 }
 
-/// A node's id with its root's prefix dropped, which is what makes a column of
-/// ids readable. A node that does not carry the root's prefix keeps its whole
-/// id: a bare suffix would place it under a root it does not belong to, and
-/// the dangling and re-parented nodes are exactly the ones that would lie.
-pub fn abbreviate<'a>(id: &'a str, root: &str) -> &'a str {
-    id.strip_prefix(root)
+/// A node's id with the part the id above it already spells dropped, which is
+/// what makes a column of ids readable: walking up the rows and joining what
+/// they say gives the whole id back. A node whose parent's id is not the front
+/// of its own keeps its whole id, because a bare suffix would place it under a
+/// parent it does not belong to, and the dangling and re-parented nodes are
+/// exactly the ones that would lie. A node with nothing above it — a tree's
+/// root, or the bead a rooted forest starts at — has nothing to measure
+/// against and is drawn whole.
+pub fn abbreviate<'a>(id: &'a str, above: Option<&str>) -> &'a str {
+    above
+        .and_then(|above| id.strip_prefix(above))
         .filter(|rest| rest.starts_with('.'))
         .unwrap_or(id)
 }
@@ -322,28 +327,34 @@ mod tests {
         staffed.agent = Some(agent(JoinSource::AgentPane));
 
         assert_eq!(
-            cells(&staffed, ROOT, None, None).glyph,
-            cells(&node("smt-4kd3p.20", Status::InProgress), ROOT, None, None).glyph
+            cells(&staffed, Some(ROOT), None, None).glyph,
+            cells(
+                &node("smt-4kd3p.20", Status::InProgress),
+                Some(ROOT),
+                None,
+                None
+            )
+            .glyph
         );
     }
 
     #[test]
-    fn a_node_under_the_root_shows_only_what_it_adds_to_it() {
-        assert_eq!(abbreviate("smt-4kd3p.20", ROOT), ".20");
-        assert_eq!(abbreviate("smt-4kd3p.1.4", ROOT), ".1.4");
+    fn a_node_shows_only_what_it_adds_to_the_id_above_it() {
+        assert_eq!(abbreviate("smt-4kd3p.20", Some(ROOT)), ".20");
+        assert_eq!(abbreviate("smt-4kd3p.1.4", Some("smt-4kd3p.1")), ".4");
     }
 
-    /// A dangling or re-parented node is drawn under a root it does not
-    /// descend from, and a bare suffix there would say it does.
+    /// A dangling or re-parented node is drawn under a bead it does not descend
+    /// from, and a bare suffix there would say it does.
     #[test]
-    fn a_node_that_does_not_descend_from_the_root_keeps_its_whole_id() {
-        assert_eq!(abbreviate("mdw-6qzt4.3", ROOT), "mdw-6qzt4.3");
-        assert_eq!(abbreviate("smt-4kd3pX.3", ROOT), "smt-4kd3pX.3");
+    fn a_node_that_does_not_descend_from_the_id_above_it_keeps_its_whole_id() {
+        assert_eq!(abbreviate("mdw-6qzt4.3", Some(ROOT)), "mdw-6qzt4.3");
+        assert_eq!(abbreviate("smt-4kd3pX.3", Some(ROOT)), "smt-4kd3pX.3");
     }
 
     #[test]
-    fn the_root_keeps_its_whole_id() {
-        assert_eq!(abbreviate(ROOT, ROOT), ROOT);
+    fn a_node_with_nothing_above_it_keeps_its_whole_id() {
+        assert_eq!(abbreviate(ROOT, None), ROOT);
     }
 
     #[test]
@@ -418,7 +429,7 @@ mod tests {
 
     #[test]
     fn a_bead_with_nothing_wrong_carries_no_marker_at_all() {
-        let row = cells(&node("smt-4kd3p.20", Status::Open), ROOT, None, None);
+        let row = cells(&node("smt-4kd3p.20", Status::Open), Some(ROOT), None, None);
 
         assert_eq!(row.anomalies, None);
         assert_eq!(row.agent, None);
@@ -454,7 +465,7 @@ mod tests {
             key: "delivery_pr".into(),
         }];
 
-        let row = cells(&unfilled, ROOT, None, None);
+        let row = cells(&unfilled, Some(ROOT), None, None);
 
         assert!(
             row.notes.iter().any(|note| note.contains("delivery_pr")),
@@ -471,7 +482,7 @@ mod tests {
             Some(&format!("https://forge.invalid/orbital{HOSTILE}/pull/12")),
         );
 
-        let row = cells(&hostile, ROOT, None, None);
+        let row = cells(&hostile, Some(ROOT), None, None);
 
         assert!(
             row.notes.iter().any(|note| note.contains("delivery_pr")),
@@ -488,7 +499,7 @@ mod tests {
             Some("https://forge.invalid/orbital/atlas/pull/12"),
         );
 
-        let row = cells(&hostile, ROOT, None, None);
+        let row = cells(&hostile, Some(ROOT), None, None);
 
         assert!(
             row.notes.iter().any(|note| note.contains("delivery_pr")),
@@ -505,7 +516,7 @@ mod tests {
         let mut hostile = badged("⇢ atlas #12", Some(SOMEWHERE));
         hostile.badges[0].short = Some(format!("⇢ #12{HOSTILE}"));
 
-        let row = cells(&hostile, ROOT, None, None);
+        let row = cells(&hostile, Some(ROOT), None, None);
 
         assert!(
             row.notes
@@ -522,7 +533,7 @@ mod tests {
         let mut unlinked = badged("⏸ waiting", None);
         unlinked.badges[0].short = Some(format!("⏸{HOSTILE}"));
 
-        let row = cells(&unlinked, ROOT, None, None);
+        let row = cells(&unlinked, Some(ROOT), None, None);
 
         assert_eq!(row.notes, Vec::<String>::new());
     }
@@ -531,7 +542,7 @@ mod tests {
     fn a_badge_that_draws_its_link_leaves_nothing_on_the_row() {
         let linked = badged("⇢ #12", Some(SOMEWHERE));
 
-        let row = cells(&linked, ROOT, None, None);
+        let row = cells(&linked, Some(ROOT), None, None);
 
         assert_eq!(row.notes, Vec::<String>::new());
     }
@@ -544,7 +555,7 @@ mod tests {
         let mut both = badged("⇢ atlas #12", Some(SOMEWHERE));
         both.badges[0].short = Some("⇢ #12".into());
 
-        let row = cells(&both, ROOT, None, None);
+        let row = cells(&both, Some(ROOT), None, None);
 
         assert_eq!(row.notes, Vec::<String>::new());
     }
@@ -553,7 +564,7 @@ mod tests {
     /// lose, so it leaves no note however it renders.
     #[test]
     fn a_badge_with_no_link_leaves_nothing_on_the_row() {
-        let row = cells(&badged("⏸ waiting", None), ROOT, None, None);
+        let row = cells(&badged("⏸ waiting", None), Some(ROOT), None, None);
 
         assert_eq!(row.notes, Vec::<String>::new());
     }
@@ -561,7 +572,7 @@ mod tests {
     #[test]
     fn a_status_outside_bds_own_set_leaves_the_word_bd_used_on_the_row() {
         let odd = node("smt-4kd3p.20", Status::Other("triage".into()));
-        let row = cells(&odd, ROOT, None, None);
+        let row = cells(&odd, Some(ROOT), None, None);
 
         assert_eq!(row.glyph, '?');
         assert!(
@@ -590,7 +601,7 @@ mod tests {
             },
         ];
 
-        let row = cells(&badged, ROOT, None, None);
+        let row = cells(&badged, Some(ROOT), None, None);
         let drawn: Vec<&str> = row.badges.iter().map(|b| b.text.as_str()).collect();
 
         assert_eq!(drawn, vec!["⇢ #12", "⏸ waiting"]);
@@ -620,7 +631,7 @@ mod tests {
             },
         ];
 
-        let row = cells(&badged, ROOT, None, None);
+        let row = cells(&badged, Some(ROOT), None, None);
 
         assert_eq!(
             row.badges[0].link.as_deref(),
@@ -636,7 +647,12 @@ mod tests {
 
     #[test]
     fn a_row_says_what_the_bead_says() {
-        let row = cells(&node("smt-4kd3p.20", Status::Blocked), ROOT, None, None);
+        let row = cells(
+            &node("smt-4kd3p.20", Status::Blocked),
+            Some(ROOT),
+            None,
+            None,
+        );
 
         assert_eq!(row.status, Status::Blocked);
         assert_eq!(row.glyph, '●');

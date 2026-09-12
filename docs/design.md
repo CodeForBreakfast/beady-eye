@@ -967,10 +967,7 @@ them is reached by the keys that reach any bead, the line opening to let the
 selection in, so looking a bead up in another root is not paid for with the
 put-back key. A search offers what it can take the reader to, which under this
 mode is every bead the forest holds: the ones beneath the focused bead, and the
-ones behind the line, which it opens on the way. The bead the forest is rooted
-at reads its whole id where a root would, and the beads under it read as its
-children: a column of shortened ids is read by putting the drawn root in front
-of each one, and the root this branch came out of is behind the line. It names the key
+ones behind the line, which it opens on the way. It names the key
 that brings them back, because it is the line a reader is looking at when they
 want them back, and a row with no room for that hint gives it up whole rather
 than cutting it to a key nobody can press.
@@ -1985,13 +1982,16 @@ glyph, literal because `bd`'s are and do not move with the terminal's theme
 escape for it and inheriting is what lets a row's own brightness reach its
 glyph.
 
-**An id is shown as what it adds to its root's**, `.20` for `smt-4kd3p.20`,
-and kept whole where it does not carry that prefix followed by a dot — the
-dangling and re-parented nodes, and the root itself — because a bare suffix
-would place it under a root it does not belong to. **It is drawn in the colour
-of the glyph beside it**, so a status arrives as a block a reader finds rather
-than as the one column a glyph occupies; an open bead's id goes without a
-colour for the same reason its glyph does.
+**An id is shown as what it adds to the id above it**, `.20` for
+`smt-4kd3p.20` drawn under `smt-4kd3p`, and kept whole where the row above it
+does not carry its id followed by a dot — the dangling and re-parented nodes,
+and a row with nothing above it — because a bare suffix would place it under a
+parent it does not belong to. The rule holds at every depth, so walking up the
+rows and joining what each says gives the whole id back, which is what makes a
+column of them readable. **It is drawn in the colour of the glyph beside it**,
+so a status arrives as a block a reader finds rather than as the one column a
+glyph occupies; an open bead's id goes without a colour for the same reason its
+glyph does.
 
 **A ground and two tiers say how live a row is**, which is the one thing
 about a bead `bd list` has no way to know and so the one thing this scale is
