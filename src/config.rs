@@ -661,12 +661,13 @@ impl Config {
     }
 
     /// The badges this project draws: the global list, with a project's own
-    /// entries standing in for every global entry that shares a key with one
-    /// of them.
+    /// entries for a key ahead of the global entries for that same key.
     ///
-    /// A shadowed key's entries stand where the global list's first entry for
-    /// that key stood, so overriding one badge does not reorder the row. Keys
-    /// only the project names follow the rest.
+    /// A project wins a value by being tried first rather than by replacing
+    /// anything, so a value its own entries do not read falls through to the
+    /// shared shapes. Its entries stand where the global list's first entry for
+    /// that key stood, so naming a key does not reorder the row. Keys only the
+    /// project names follow the rest.
     pub fn badges_for_project(&self, project: &str) -> Vec<Badge> {
         let Some(own) = self
             .projects
@@ -678,20 +679,16 @@ impl Config {
             return self.badges.clone();
         };
         let mut drawn: Vec<Badge> = Vec::new();
-        let mut stood_in_for: BTreeSet<&str> = BTreeSet::new();
+        let mut went_ahead_of: BTreeSet<&str> = BTreeSet::new();
         for global in &self.badges {
-            match own.iter().any(|b| b.key == global.key) {
-                false => drawn.push(global.clone()),
-                true => {
-                    if stood_in_for.insert(&global.key) {
-                        drawn.extend(own.iter().filter(|b| b.key == global.key).cloned());
-                    }
-                }
+            if own.iter().any(|b| b.key == global.key) && went_ahead_of.insert(&global.key) {
+                drawn.extend(own.iter().filter(|b| b.key == global.key).cloned());
             }
+            drawn.push(global.clone());
         }
         drawn.extend(
             own.iter()
-                .filter(|b| !stood_in_for.contains(b.key.as_str()))
+                .filter(|b| !went_ahead_of.contains(b.key.as_str()))
                 .cloned(),
         );
         drawn
@@ -1198,7 +1195,7 @@ path = "/home/user/dev/cinder"
     }
 
     #[test]
-    fn a_projects_badge_stands_where_the_global_one_it_shadows_stood() {
+    fn a_projects_badge_stands_where_the_first_global_one_for_its_key_stood() {
         let cfg = Config {
             badges: vec![
                 badge("metadata.delivery_pr", "⇢ {}"),
@@ -1217,6 +1214,7 @@ path = "/home/user/dev/cinder"
             cfg.badges_for_project("beacon"),
             vec![
                 badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                badge("metadata.delivery_pr", "⇢ {}"),
                 matching("metadata.blocked_on", "human", "⏸ waiting"),
                 badge("metadata.epic", "▣ {}"),
             ]
@@ -1224,11 +1222,15 @@ path = "/home/user/dev/cinder"
     }
 
     /// The global list may name one key several times, matched on a different
-    /// value each time. A project overriding that key replaces the whole group
-    /// rather than one of its entries: shadowing half a key would leave the
-    /// project drawing the shared wording for every value it did not name.
+    /// value each time. A project naming that key is tried ahead of the whole
+    /// group and replaces none of it, so the project says what it wants for the
+    /// values it names and keeps the shared wording for the rest.
+    ///
+    /// One entry ahead of two is what makes the precedence visible: the project
+    /// draws its own words for `human`, and `dependency` still reaches the
+    /// shared entry that reads it.
     #[test]
-    fn a_projects_badge_shadows_every_global_entry_for_its_key() {
+    fn a_projects_badge_is_tried_ahead_of_every_global_entry_for_its_key() {
         let cfg = Config {
             badges: vec![
                 matching("metadata.blocked_on", "human", "⏸ waiting"),
@@ -1242,7 +1244,11 @@ path = "/home/user/dev/cinder"
 
         assert_eq!(
             cfg.badges_for_project("beacon"),
-            vec![matching("metadata.blocked_on", "human", "⏸ ask Ada")]
+            vec![
+                matching("metadata.blocked_on", "human", "⏸ ask Ada"),
+                matching("metadata.blocked_on", "human", "⏸ waiting"),
+                matching("metadata.blocked_on", "dependency", "⏸ blocked"),
+            ]
         );
     }
 
