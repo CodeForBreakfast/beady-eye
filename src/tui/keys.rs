@@ -91,6 +91,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: Some("keys"),
     },
     Binding {
+        keys: &[alone(KeyCode::Char('F'), "F")],
+        action: Action::FocusForest,
+        does: "draw the selected bead as the only root, or put the forest back",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Char('/'), "/")],
         action: Action::Search,
         does: "find part of a bead's id or title, wherever the forest draws it",
@@ -338,6 +344,7 @@ pub(super) mod tests {
             Action::RestoreDefault,
             Action::ToggleFilter,
             Action::Focus,
+            Action::FocusForest,
             Action::ShowBead,
             Action::NextRelated,
             Action::Back,
@@ -368,6 +375,7 @@ pub(super) mod tests {
                 | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::Focus
+                | Action::FocusForest
                 | Action::ShowBead
                 | Action::NextRelated
                 | Action::Back

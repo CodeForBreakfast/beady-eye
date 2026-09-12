@@ -1195,7 +1195,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 19 more bindings · no room on a screen this short",
+                "  … 20 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1302,6 +1302,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
+                "  F         draw the selected bead as the only root, or put the forest back",
                 "  /         find part of a bead's id or title, wherever the forest draws it",
                 "  n         go to the next bead matching the search",
                 "  N         go to the one before it",
@@ -1344,13 +1345,25 @@ mod tests {
 
         let drawn = window_inner(40, tall);
 
-        assert_eq!(drawn[8], "  q, ^C     quit");
+        assert_eq!(row_naming(&drawn, "q, ^C"), "  q, ^C     quit");
         assert_eq!(
             drawn[0], "  Enter     show the selected bead, o…",
             "a line too long for forty columns, cut with the cut marked"
         );
-        assert_eq!(drawn[18], "  Right, l  expand, or move to the fi…");
+        assert_eq!(
+            row_naming(&drawn, "Right, l"),
+            "  Right, l  expand, or move to the fi…"
+        );
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
+    }
+
+    /// The one drawn row whose keys are the ones named, whichever row that
+    /// turns out to be.
+    fn row_naming<'a>(drawn: &'a [String], keys: &str) -> &'a str {
+        drawn
+            .iter()
+            .find(|row| row.trim_start().starts_with(keys))
+            .unwrap_or_else(|| panic!("no row names {keys}: {drawn:#?}"))
     }
 
     /// The row is cut from its own end, so one that outgrew the narrowest

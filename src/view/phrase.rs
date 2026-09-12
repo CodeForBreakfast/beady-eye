@@ -469,6 +469,21 @@ pub fn conflicts(count: usize) -> String {
     format!("{count} {conflict} nothing could settle")
 }
 
+/// The roots the forest is not drawing because the reader rooted it at one
+/// bead.
+///
+/// *Held back* rather than hidden: a key put them behind this line and the
+/// same key brings them back, so nothing here has gone wrong and nothing here
+/// is the tracker's doing.
+///
+/// Not *other*, either. The root the focused bead stands in is behind this
+/// line as well, for the part of it the mode stopped drawing, and every root
+/// counted here has its own row nowhere but behind this line.
+pub fn held_back(count: usize) -> String {
+    let root = if count == 1 { "root" } else { "roots" };
+    format!("{count} {root} held back")
+}
+
 /// Trees the live-agent filter is holding back, and how many of those carry
 /// findings that are therefore not on screen.
 ///

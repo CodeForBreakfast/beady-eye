@@ -216,6 +216,13 @@ pub struct Group {
     /// known by, so a fold on one project's group is not a fold on another's.
     pub project: Option<String>,
     pub count: usize,
+    /// What the roots this group is holding back add up to, for the group that
+    /// holds whole roots back because the forest is rooted at one bead.
+    ///
+    /// Nothing for the groups that hold things rather than roots: a pane, a
+    /// failed project and a conflict are each drawn whole when the group opens,
+    /// and none of them is a set of beads to count.
+    pub held: Option<Counts>,
     /// How many of the things this group holds carry findings the screen is
     /// not drawing, because the group holds them rather than showing them.
     ///
@@ -234,6 +241,9 @@ pub enum GroupKind {
     FailedProjects,
     Unconfigured,
     Conflicts,
+    /// The roots the forest is not drawing because the reader rooted it at one
+    /// bead. *coined*
+    HeldBack,
     HiddenTrees,
     Unattributed,
 }
@@ -253,7 +263,11 @@ impl GroupKind {
     /// order: the trees the filter is holding back, then the panes working in
     /// its paths that no bead claims. Everything beneath a project is under
     /// its one line, so a reader has one place to look.
-    pub const UNDER_A_PROJECT: [GroupKind; 2] = [GroupKind::HiddenTrees, GroupKind::Unattributed];
+    pub const UNDER_A_PROJECT: [GroupKind; 3] = [
+        GroupKind::HeldBack,
+        GroupKind::HiddenTrees,
+        GroupKind::Unattributed,
+    ];
 
     /// Whether what a group holds is live, which is what rests it open. A
     /// count is not a view: a shut group over live panes says they exist and
@@ -263,7 +277,7 @@ impl GroupKind {
     pub(crate) fn live(self) -> bool {
         match self {
             GroupKind::Unconfigured | GroupKind::Conflicts | GroupKind::Unattributed => true,
-            GroupKind::FailedProjects | GroupKind::HiddenTrees => false,
+            GroupKind::FailedProjects | GroupKind::HiddenTrees | GroupKind::HeldBack => false,
         }
     }
 }

@@ -629,6 +629,7 @@ fn answered(
                 | Action::CollapseSubtree
                 | Action::RestoreDefault
                 | Action::ToggleFilter
+                | Action::FocusForest
                 | Action::Search
                 | Action::NextMatch
                 | Action::PreviousMatch,

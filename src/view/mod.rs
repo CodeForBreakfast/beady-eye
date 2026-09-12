@@ -83,6 +83,9 @@ pub enum Action {
     ToggleFilter,
     /// Focus the selected bead's pane in herdr.
     Focus,
+    /// Draw the selected bead as the only root, with everything beneath it and
+    /// nothing else, or put the forest back where it already stands that way.
+    FocusForest,
     /// Show the selected bead whole, as `bd show` would.
     ShowBead,
     /// Move the bead view to the next bead the bead it is showing names.

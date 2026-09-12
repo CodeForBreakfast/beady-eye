@@ -5,15 +5,16 @@
 //! nothing here moves a fold: it asks which way one points and draws what
 //! that says.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::config::Scope;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Counts, Snapshot, Tree};
+use crate::model::snapshot::{Counts, Node, Snapshot, Tree};
 use crate::model::tree::Link;
 use crate::view::lines::{
-    first_copy, marker, notes_of, prefix, root_key, way_below, Content, Group, GroupKind, Item,
-    Line, Note, Place, ProjectLine, Unread, INDENT,
+    first_copy, marker, notes_of, prefix, root_key, run_size, way_below, Content, Group, GroupKind,
+    Item, Line, Note, Place, ProjectLine, Unread, INDENT,
 };
 use crate::view::row;
 
@@ -43,25 +44,52 @@ enum Child<'a> {
 /// Asked at every depth. A root is a bead row like any other, and the one
 /// question a fold raises — what did that just take off the screen — has one
 /// answer wherever it is asked.
+///
+/// The same reading answers a root drawn behind the line the mode holding
+/// roots back puts them behind: the bead the forest is rooted at is beneath
+/// that root and drawn at the top of the screen, and this count holds it, for
+/// the same reason two copies of a bead do not add up.
 fn shut_over(beneath: Counts, first: bool, folded: Option<bool>) -> Option<Counts> {
     (folded == Some(false) && first).then_some(beneath)
 }
 
 /// Every line the snapshot draws, in render order. `facts` is what the
 /// snapshot answered when the forest took it.
-pub(super) fn draw(snapshot: &Snapshot, facts: &Facts, folds: &Folds) -> Vec<Line> {
+pub(super) fn draw(
+    snapshot: &Snapshot,
+    facts: &Facts,
+    folds: &Folds,
+    rooted: Option<&Rooted>,
+) -> Vec<Line> {
     Layout {
         snapshot,
         facts,
         folds,
+        rooted,
     }
     .draw()
 }
 
+/// The one bead the forest is rooted at, where the reader has asked for that:
+/// the line they asked on, and the nodes the way down to it steps through.
+///
+/// Both, because the place says which line and the way says which nodes, and
+/// resolving one into the other needs the snapshot the line was drawn from.
+pub(super) struct Rooted {
+    pub(super) place: Place,
+    /// The way down from the tree's root to the focused bead, that bead last.
+    pub(super) way: Vec<usize>,
+}
+
 /// Whether a group is drawn at all, which is whether the snapshot has put
 /// anything in it.
-pub(super) fn group_drawn(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> bool {
-    group_of(snapshot, kind, project).is_some()
+pub(super) fn group_drawn(
+    snapshot: &Snapshot,
+    kind: GroupKind,
+    project: Option<&str>,
+    rooted: Option<&Rooted>,
+) -> bool {
+    group_of(snapshot, kind, project, rooted).is_some()
 }
 
 /// Whether a project's line is drawn: where anything hangs under it — a tree
@@ -117,33 +145,44 @@ fn hidden_trees<'a>(snapshot: &'a Snapshot, project: Option<&str>) -> Vec<&'a Tr
 ///
 /// A group resting shut draws none of its contents, so a reader standing on
 /// its line has nothing below it saying where they are among the beads. This
-/// is read from `hidden_trees`, which is the source `trees_drawn` reads, so
-/// the anchor and the order it points into cannot disagree.
+/// is read from the same two answers `walked` reads, so the anchor and the
+/// order it points into cannot disagree.
 ///
-/// Only the hidden trees hold beads. The panes, failed projects and conflicts
-/// the other groups hold are in no ordering of beads and have nothing here to
-/// answer with.
+/// Only the two groups over roots hold beads. The panes, failed projects and
+/// conflicts the other groups hold are in no ordering of beads and have
+/// nothing here to answer with.
 pub(super) fn first_bead_of(
     snapshot: &Snapshot,
     kind: GroupKind,
     project: Option<&str>,
+    rooted: Option<&Rooted>,
 ) -> Option<BeadKey> {
-    match kind {
-        GroupKind::HiddenTrees => {
-            let tree = hidden_trees(snapshot, project).into_iter().next()?;
-            Some(BeadKey {
-                project: tree.project.clone(),
-                id: tree.beads.first()?.id.clone(),
-            })
-        }
-        _ => None,
-    }
+    let roots = match kind {
+        GroupKind::HiddenTrees => hidden_trees(snapshot, project),
+        GroupKind::HeldBack => held_back(snapshot, project, rooted)
+            .into_iter()
+            .map(|root| root.tree)
+            .collect(),
+        _ => return None,
+    };
+    // A root whose tracker refused has a row and no bead, and it leads its
+    // project, so the first root here is the one most likely to hold nothing.
+    roots.into_iter().find_map(|tree| {
+        Some(BeadKey {
+            project: tree.project.clone(),
+            id: tree.beads.first()?.id.clone(),
+        })
+    })
 }
 
-/// Every tree the forest draws, in the order it draws them: project by
-/// project as the config names them, and within a project the trees the
-/// filter shows before the ones it hid, which is where `draw_project` puts
-/// the hidden-trees group.
+/// Every tree the forest draws and the way down it starts drawing from, in
+/// the order the rows come out: project by project as the config names them,
+/// and within a project the trees in the order `draw_project` puts them.
+///
+/// Rooted at one bead, that is the bead's own tree walked from the bead, and
+/// then every root behind the line in the order the line opens onto them —
+/// the bead's own tree among them, walked from its root for the part of it
+/// the mode stopped drawing.
 ///
 /// `snapshot.trees` cannot answer this. It is in the order the projects were
 /// read, which is why `snapshot.projects` exists at all — a project drawn
@@ -157,26 +196,53 @@ pub(super) fn first_bead_of(
 /// in that chain, so going to a bead opens the project over it exactly as it
 /// opens the folds. An order that left those trees out would be an order a
 /// search could not use.
-pub(super) fn trees_drawn(snapshot: &Snapshot) -> Vec<&Tree> {
+pub(super) fn walked<'a>(
+    snapshot: &'a Snapshot,
+    rooted: Option<&Rooted>,
+) -> Vec<(&'a Tree, Vec<usize>)> {
     let mut drawn = Vec::new();
     for project in &snapshot.projects {
         if !project_drawn(snapshot, project) {
             continue;
         }
+        let Some(rooted) = rooted else {
+            drawn.extend(
+                snapshot
+                    .trees
+                    .iter()
+                    .filter(|tree| tree.project == *project)
+                    .map(|tree| (Arc::as_ref(tree), vec![0])),
+            );
+            drawn.extend(
+                hidden_trees(snapshot, Some(project))
+                    .into_iter()
+                    .map(|tree| (tree, vec![0])),
+            );
+            continue;
+        };
+        if rooted.place.tree.project == *project {
+            drawn.extend(
+                snapshot
+                    .tree(&rooted.place.tree)
+                    .map(|tree| (tree, rooted.way.clone())),
+            );
+        }
         drawn.extend(
-            snapshot
-                .trees
-                .iter()
-                .filter(|tree| tree.project == *project)
-                .map(Arc::as_ref),
+            held_back(snapshot, Some(project), Some(rooted))
+                .into_iter()
+                .map(|root| (root.tree, vec![0])),
         );
-        drawn.extend(hidden_trees(snapshot, Some(project)));
     }
     drawn
 }
 
-fn group_of(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Option<Group> {
-    let (count, with_findings) = match kind {
+fn group_of(
+    snapshot: &Snapshot,
+    kind: GroupKind,
+    project: Option<&str>,
+    rooted: Option<&Rooted>,
+) -> Option<Group> {
+    let (count, with_findings, held) = match kind {
         GroupKind::HiddenTrees => {
             let hidden = snapshot
                 .hidden_trees
@@ -185,16 +251,117 @@ fn group_of(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> Opti
             (
                 hidden.clone().count(),
                 hidden.filter(|hidden| hidden.findings).count(),
+                None,
             )
         }
-        _ => (group_items(snapshot, kind, project).len(), 0),
+        // Counted off the beads behind the line rather than off the roots they
+        // came from: this line is all a reader gets of what is behind it, and
+        // the bead the forest is rooted at is on the screen already.
+        GroupKind::HeldBack => {
+            let held = held_back(snapshot, project, rooted);
+            let counts = Counts::over(held.iter().flat_map(Behind::beads));
+            (held.len(), 0, Some(counts))
+        }
+        _ => (group_items(snapshot, kind, project).len(), 0, None),
     };
     (count > 0).then_some(Group {
         kind,
         project: project.map(str::to_string),
         count,
         with_findings,
+        held,
     })
+}
+
+/// One root drawn behind a group's line, and the bead of it the forest is
+/// drawing somewhere else.
+///
+/// Only the root the focused bead stands in has such a bead. The mode draws
+/// that bead where a root is drawn, so what is left behind the line is the
+/// beads above it and every branch off them.
+struct Behind<'a> {
+    tree: &'a Tree,
+    /// The bead drawn elsewhere, by its place among the tree's beads.
+    without: Option<usize>,
+}
+
+impl<'a> Behind<'a> {
+    /// The beads this root leaves behind the line: every one it reaches
+    /// without stepping onto the bead drawn elsewhere, which is where the
+    /// drawing stops as well.
+    fn beads(&self) -> Vec<&'a Node> {
+        reached(self.tree, [0], self.without)
+            .into_iter()
+            .filter_map(|at| self.tree.beads.get(at))
+            .collect()
+    }
+}
+
+/// Every bead a walk from `from` reaches, `from` included, without stepping
+/// onto the bead the forest is drawing somewhere else.
+///
+/// Which is what a count of what a line stands over has to be walked with: the
+/// drawing stops at that bead, so a count that went past it names work the
+/// reader is already looking at.
+fn reached(
+    tree: &Tree,
+    from: impl IntoIterator<Item = usize>,
+    without: Option<usize>,
+) -> BTreeSet<usize> {
+    let mut walked = BTreeSet::new();
+    let mut left: Vec<usize> = from.into_iter().collect();
+    while let Some(at) = left.pop() {
+        if Some(at) == without || !walked.insert(at) {
+            continue;
+        }
+        left.extend(
+            tree.children
+                .get(at)
+                .into_iter()
+                .flatten()
+                .map(|link| link.bead),
+        );
+    }
+    walked
+}
+
+/// What one project is holding back because the forest is rooted at one bead:
+/// every root it collected but the one that bead stands in, and that one for
+/// the part of it the mode stopped drawing. None at all where the forest is
+/// rooted at no bead.
+///
+/// Shown and hidden alike. The mode holds back what the filter was showing as
+/// well as what it was not, and one line standing for both sets is the only
+/// line that adds up.
+fn held_back<'a>(
+    snapshot: &'a Snapshot,
+    project: Option<&str>,
+    rooted: Option<&Rooted>,
+) -> Vec<Behind<'a>> {
+    let Some(rooted) = rooted else {
+        return Vec::new();
+    };
+    let (focused, above) = rooted.way.split_last().expect("a way down ends somewhere");
+    snapshot
+        .collected
+        .iter()
+        .map(Arc::as_ref)
+        .filter(|tree| Some(tree.project.as_str()) == project)
+        .filter_map(|tree| {
+            if root_key(tree) != rooted.place.tree {
+                return Some(Behind {
+                    tree,
+                    without: None,
+                });
+            }
+            // The root that bead is itself leaves nothing here: the whole tree
+            // hangs beneath it, so the mode stopped drawing none of it.
+            (!above.is_empty()).then_some(Behind {
+                tree,
+                without: Some(*focused),
+            })
+        })
+        .collect()
 }
 
 /// Every group the snapshot could draw, in the order it draws them: each
@@ -234,9 +401,12 @@ struct Layout<'a> {
     snapshot: &'a Snapshot,
     facts: &'a Facts,
     folds: &'a Folds,
+    /// The bead the forest is rooted at, where the reader has rooted it at
+    /// one. Nothing is drawn outside what hangs beneath it.
+    rooted: Option<&'a Rooted>,
 }
 
-impl Layout<'_> {
+impl<'a> Layout<'a> {
     fn draw(&self) -> Vec<Line> {
         let mut lines = Vec::new();
         // Every project the config names, in that order — the ones with rows
@@ -297,16 +467,31 @@ impl Layout<'_> {
         if !open {
             return;
         }
-        let trees: Vec<&Tree> = self
-            .snapshot
-            .trees
-            .iter()
-            .filter(|tree| tree.project == project)
-            .map(Arc::as_ref)
-            .collect();
+        let trees: Vec<&Tree> = match self.rooted {
+            // Rooted at one bead, the forest draws the one tree holding it,
+            // and draws that tree from the bead rather than from its root.
+            // Taken from what was collected rather than from what the filter
+            // shows, so a reader who rooted the forest at a bead in a tree the
+            // filter is holding back keeps the tree they asked for.
+            Some(rooted) if rooted.place.tree.project == project => {
+                self.snapshot.tree(&rooted.place.tree).into_iter().collect()
+            }
+            Some(_) => Vec::new(),
+            None => self
+                .snapshot
+                .trees
+                .iter()
+                .filter(|tree| tree.project == project)
+                .map(Arc::as_ref)
+                .collect(),
+        };
         let groups: Vec<Group> = GroupKind::UNDER_A_PROJECT
             .into_iter()
-            .filter_map(|kind| group_of(self.snapshot, kind, Some(&project)))
+            // The group of trees the filter is holding back draws whole trees,
+            // and one bead is the only root there is while the forest is
+            // rooted at one.
+            .filter(|kind| self.rooted.is_none() || *kind != GroupKind::HiddenTrees)
+            .filter_map(|kind| group_of(self.snapshot, kind, Some(&project), self.rooted))
             .collect();
         let mut entries = trees.len() + groups.len();
         let mut trunk = Vec::new();
@@ -317,6 +502,8 @@ impl Layout<'_> {
                 tree,
                 facts: self.facts.tree(&root_key(tree)),
                 rests_shut: false,
+                rooted: self.rooted,
+                without: None,
             }
             .draw(&mut trunk, entries == 0, lines);
         }
@@ -361,15 +548,17 @@ impl Layout<'_> {
             trunk.push(!last);
         }
         match kind {
-            GroupKind::HiddenTrees => {
-                let hidden = self.hidden_trees(project.as_deref());
-                let count = hidden.len();
-                for (n, tree) in hidden.into_iter().enumerate() {
+            GroupKind::HiddenTrees | GroupKind::HeldBack => {
+                let roots = self.roots_in(kind, project.as_deref());
+                let count = roots.len();
+                for (n, root) in roots.into_iter().enumerate() {
                     TreeLayout {
                         folds: self.folds,
-                        tree,
-                        facts: self.facts.tree(&root_key(tree)),
+                        tree: root.tree,
+                        facts: self.facts.tree(&root_key(root.tree)),
                         rests_shut: true,
+                        rooted: None,
+                        without: root.without,
                     }
                     .draw(trunk, n + 1 == count, lines);
                 }
@@ -385,10 +574,19 @@ impl Layout<'_> {
         }
     }
 
-    /// The trees the filter hid from one project, which the snapshot still
-    /// holds.
-    fn hidden_trees(&self, project: Option<&str>) -> Vec<&Tree> {
-        hidden_trees(self.snapshot, project)
+    /// The roots one of the two groups that stand over roots is standing over,
+    /// for the project it is one of.
+    fn roots_in(&self, kind: GroupKind, project: Option<&str>) -> Vec<Behind<'a>> {
+        match kind {
+            GroupKind::HeldBack => held_back(self.snapshot, project, self.rooted),
+            _ => hidden_trees(self.snapshot, project)
+                .into_iter()
+                .map(|tree| Behind {
+                    tree,
+                    without: None,
+                })
+                .collect(),
+        }
     }
 
     fn draw_items(&self, items: Vec<Item>, trunk: &[bool], lines: &mut Vec<Line>) {
@@ -408,7 +606,7 @@ impl Layout<'_> {
     /// The groups below the trees: what has no project line to hang under.
     fn draw_groups(&self, lines: &mut Vec<Line>) {
         for kind in GroupKind::BELOW_THE_TREES {
-            let Some(group) = group_of(self.snapshot, kind, None) else {
+            let Some(group) = group_of(self.snapshot, kind, None, self.rooted) else {
                 continue;
             };
             self.draw_group(group, &mut Vec::new(), true, lines);
@@ -425,15 +623,31 @@ struct TreeLayout<'a> {
     tree: &'a Tree,
     facts: &'a TreeFacts,
     rests_shut: bool,
+    /// The bead to draw this tree from, where the reader has rooted the forest
+    /// at one. Its own root otherwise.
+    rooted: Option<&'a Rooted>,
+    /// The bead to leave out, because the forest is drawing it somewhere
+    /// else. Only the root the focused bead stands in, drawn behind the line
+    /// the mode holds it back with, has one.
+    without: Option<usize>,
 }
 
 impl TreeLayout<'_> {
     /// `trunk` is the way down to whatever this tree hangs under, as the
     /// box-drawing says it: empty for a root directly under its project.
     fn draw(&self, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
-        let root = Place::root(root_key(self.tree));
+        // Where the walk starts. The bead the reader rooted the forest at is
+        // drawn where its tree's root would be, and keeps the place it has
+        // everywhere else, so a fold set on it survives the key that rooted
+        // the forest there and the key that puts the forest back.
+        let (root, way) = match self.rooted {
+            Some(rooted) => (rooted.place.clone(), rooted.way.clone()),
+            None => (Place::root(root_key(self.tree)), vec![0]),
+        };
+        let (at, above) = way.split_last().expect("a way down ends somewhere");
+        let at = *at;
         let depth = trunk.len() as u16 + 1;
-        let Some(node) = self.tree.beads.first() else {
+        let Some(node) = self.tree.beads.get(at) else {
             // No nodes, so no row: the root is named on a line of its own
             // rather than left out, because a root that would not read is the
             // one a reader most needs to see is there.
@@ -452,8 +666,8 @@ impl TreeLayout<'_> {
         // A tree opens because of what is in it, not because the selection
         // is in it: the first screen is meant to be the answer to what is
         // being worked and what could be started.
-        let kids = self.children_entries(0, &[]);
-        let bead = self.facts.bead(self.tree, 0, &[]);
+        let kids = self.children_entries(at, above);
+        let bead = self.facts.bead(self.tree, at, above);
         let open = !kids.is_empty()
             && self.folds.expanded(
                 &Handle::Bead(root.clone()),
@@ -468,9 +682,9 @@ impl TreeLayout<'_> {
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
                 node,
-                &self.tree.root,
+                self.shortened_against(),
                 bead.progress,
-                shut_over(bead.beneath, first_copy(self.tree, 0, &[]), folded),
+                shut_over(bead.beneath, first_copy(self.tree, at, above), folded),
             )),
         });
 
@@ -479,7 +693,7 @@ impl TreeLayout<'_> {
             entries.extend(kids);
         }
         trunk.push(!last);
-        self.draw_children(entries, &root, &[0], trunk, lines);
+        self.draw_children(entries, &root, &way, trunk, lines);
         trunk.pop();
     }
 
@@ -514,7 +728,7 @@ impl TreeLayout<'_> {
                         folded: Some(open),
                         place: None,
                         content: Content::Elided {
-                            count: self.facts.run_size(self.tree, &members, above),
+                            count: self.run_size(&members, above),
                             under: parent.clone(),
                         },
                     });
@@ -555,7 +769,7 @@ impl TreeLayout<'_> {
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
-                            &self.tree.root,
+                            self.shortened_against(),
                             bead.progress,
                             shut_over(bead.beneath, first, folded),
                         )),
@@ -575,11 +789,51 @@ impl TreeLayout<'_> {
     /// one line for the run that is not.
     fn children_entries<'a>(&'a self, at: usize, above: &[usize]) -> Vec<Child<'a>> {
         let (drawn, elided) = self.facts.split(self.tree, at, above);
-        let mut entries: Vec<Child> = drawn.into_iter().map(Child::Node).collect();
+        let mut entries: Vec<Child> = drawn
+            .into_iter()
+            .filter(|link| self.draws(link))
+            .map(Child::Node)
+            .collect();
+        let elided: Vec<&Link> = elided.into_iter().filter(|link| self.draws(link)).collect();
         if !elided.is_empty() {
             entries.push(Child::Elided(elided));
         }
         entries
+    }
+
+    fn draws(&self, link: &Link) -> bool {
+        Some(link.bead) != self.without
+    }
+
+    /// The id every row here is shortened against: the bead this drawing
+    /// starts at. A reader reads a column of suffixes by putting the drawn
+    /// root in front of each one, so the bead the forest is rooted at reads
+    /// whole and what hangs under it reads against that. The root it came out
+    /// of is behind the line, shortening what is drawn there.
+    fn shortened_against(&self) -> &str {
+        match self.rooted {
+            Some(rooted) => &rooted.place.steps.last().unwrap_or(&rooted.place.tree).id,
+            None => &self.tree.root,
+        }
+    }
+
+    /// What a run stands for: its members and everything beneath them. Walked
+    /// again where a bead is being left out, because the tree's own answer was
+    /// worked out over a run this drawing is not making and reaches beads it
+    /// is not drawing.
+    ///
+    /// The bead left out is put among the beads the way down came through,
+    /// which is where the count already stops: a way back to one of those is
+    /// a loop the drawing cuts, and the bead drawn elsewhere is cut for the
+    /// same reason its rows are.
+    fn run_size(&self, members: &[&Link], above: &[usize]) -> usize {
+        match self.without {
+            Some(elsewhere) => {
+                let above: Vec<usize> = above.iter().copied().chain([elsewhere]).collect();
+                run_size(self.tree, members, &above)
+            }
+            None => self.facts.run_size(self.tree, members, above),
+        }
     }
 }
 
@@ -617,8 +871,9 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> V
             .cloned()
             .map(Item::Conflict)
             .collect(),
-        // Hidden trees are drawn as trees rather than as things in a group.
-        GroupKind::HiddenTrees => Vec::new(),
+        // These two hold whole roots, drawn as trees rather than as things in
+        // a group.
+        GroupKind::HiddenTrees | GroupKind::HeldBack => Vec::new(),
         GroupKind::Unattributed => snapshot
             .unattributed
             .iter()

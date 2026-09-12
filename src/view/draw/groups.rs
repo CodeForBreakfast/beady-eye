@@ -7,21 +7,26 @@ use crate::view::fitted::{Fitted, GAP};
 use crate::view::lines::{Group, GroupKind, Item};
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::WARNING;
+use crate::view::row::{AGENT, WARNING};
 
 use super::{pane_marker, sentence};
 
 /// What lifts the live-agent filter, said beside the trees it is holding back.
 const SHOW_ALL: &str = "a to show all";
 
-/// The line a group is drawn as. The hidden trees are the only group nothing
-/// went wrong in — the filter put them there and a key takes them back out —
-/// so they are the only one drawn without a warning.
+/// What brings back the roots that rooting the forest at one bead put behind
+/// a line.
+const WHOLE_FOREST: &str = "F for the whole forest";
+
+/// The line a group is drawn as. Two of them hold roots nothing went wrong in
+/// — a key put them there and a key takes them back out — so those two are
+/// the ones drawn without a warning.
 pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
     let (said, hidden) = match group.kind {
         GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
         GroupKind::Conflicts => (phrase::conflicts(group.count), false),
         GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
+        GroupKind::HeldBack => (phrase::held_back(group.count), true),
         GroupKind::Unattributed => (phrase::unattributed(group.count), false),
         GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
     };
@@ -31,17 +36,58 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
     } else {
         (format!("{WARNING} {said}"), palette::ATTENTION)
     };
-    let state = if hidden {
-        vec![Span::styled(SHOW_ALL, palette::QUIET)]
-    } else {
-        Vec::new()
+    let state = match group.kind {
+        GroupKind::HiddenTrees => vec![Span::styled(SHOW_ALL, palette::QUIET)],
+        GroupKind::HeldBack => held_back_state(group),
+        _ => Vec::new(),
     };
 
-    Fitted::new(
+    let line = Fitted::new(
         vec![Span::raw(prefix.to_string()), Span::styled(said, style)],
         Vec::new(),
         state,
-    )
+    );
+    match group.kind {
+        GroupKind::HeldBack => line.briefly(held_back_counts(group)),
+        _ => line,
+    }
+}
+
+/// What a line standing over the roots the mode is holding back says beside
+/// itself: the seats in there, the beads wanting looking at, and the key that
+/// brings them back.
+///
+/// The reader asked for one bead, so the roots go; what they did not ask for
+/// was to be told there is nobody on them. Said in the words a line resting
+/// shut over the same things already uses.
+fn held_back_state(group: &Group) -> Vec<Span<'static>> {
+    let mut said = held_back_counts(group);
+    said.push(Span::styled(WHOLE_FOREST, palette::QUIET));
+    said
+}
+
+/// The same, where the row cannot afford the key as well.
+///
+/// The hint goes first and goes whole, because `F for th…` names no key while
+/// the counts are the part of this line a reader can read nowhere else.
+fn held_back_counts(group: &Group) -> Vec<Span<'static>> {
+    let mut said = Vec::new();
+    let Some(counts) = &group.held else {
+        return said;
+    };
+    if counts.live_agents > 0 {
+        said.push(Span::styled(
+            format!("{AGENT} {}", phrase::agents_beneath(counts.live_agents)),
+            palette::AGENT,
+        ));
+    }
+    if counts.anomalies > 0 {
+        said.push(Span::styled(
+            format!("{WARNING} {}", phrase::anomalies_beneath(counts.anomalies)),
+            palette::ATTENTION,
+        ));
+    }
+    said
 }
 
 /// The scope, where the directory chose it. Nothing went wrong, so it is
@@ -140,6 +186,7 @@ mod tests {
     use crate::model::snapshot::{a_provider, build, Collected, LoosePane, UnconfiguredPane};
     use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::PaneStatus;
+    use crate::view::fitted::CUT;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
@@ -170,6 +217,7 @@ mod tests {
             project: Some("summit-works".into()),
             count: 4,
             with_findings: 0,
+            held: None,
         };
         let broken = Group {
             with_findings: 2,
@@ -231,23 +279,104 @@ mod tests {
         );
     }
 
-    /// Every other group is something that went wrong, and is marked as such.
-    /// The hidden trees are not: the user asked for them to be hidden.
+    /// The reader rooted the forest at one bead and everything else went
+    /// behind this line, open work and the seats on it included. So the line
+    /// says how many, rather than leaving a reader to read one number as the
+    /// whole truth about what is back there.
     #[test]
-    fn only_the_group_nothing_went_wrong_in_is_drawn_without_a_warning() {
+    fn a_line_over_held_back_roots_says_its_seats_and_what_wants_looking_at() {
+        let group = Group {
+            kind: GroupKind::HeldBack,
+            project: Some("summit-works".into()),
+            count: 3,
+            with_findings: 0,
+            held: Some(Counts {
+                total: 12,
+                closed: 4,
+                live_agents: 2,
+                anomalies: 1,
+            }),
+        };
+
+        let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
+
+        assert!(drawn[0].contains("3 roots held back"), "{drawn:?}");
+        assert!(drawn[0].contains("2 agents beneath"), "{drawn:?}");
+        assert!(drawn[0].contains("1 bead beneath"), "{drawn:?}");
+        assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
+    }
+
+    /// A row with no room for the way out says the counts without it. The
+    /// counts are what a reader can read nowhere else on the screen, and a
+    /// key named in part is a key they cannot press.
+    #[test]
+    fn a_row_too_narrow_for_the_way_out_still_says_what_is_back_there() {
+        let group = Group {
+            kind: GroupKind::HeldBack,
+            project: Some("summit-works".into()),
+            count: 3,
+            with_findings: 0,
+            held: Some(Counts {
+                total: 12,
+                closed: 4,
+                live_agents: 2,
+                anomalies: 1,
+            }),
+        };
+
+        let drawn = Painted::of(group_line(SHUT, &group), 64, 1).rows();
+
+        assert!(drawn[0].contains("3 roots held back"), "{drawn:?}");
+        assert!(drawn[0].contains("2 agents beneath"), "{drawn:?}");
+        assert!(drawn[0].contains("1 bead beneath"), "{drawn:?}");
+        assert!(!drawn[0].contains("F for"), "{drawn:?}");
+        assert!(!drawn[0].contains(CUT), "{drawn:?}");
+    }
+
+    /// And says neither where there is neither. A nought said is a column
+    /// spent telling a reader about nothing.
+    #[test]
+    fn a_line_over_quiet_held_back_roots_says_nothing_of_seats_at_all() {
+        let group = Group {
+            kind: GroupKind::HeldBack,
+            project: Some("summit-works".into()),
+            count: 1,
+            with_findings: 0,
+            held: Some(Counts {
+                total: 9,
+                closed: 9,
+                live_agents: 0,
+                anomalies: 0,
+            }),
+        };
+
+        let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
+
+        assert!(drawn[0].contains("1 root held back"), "{drawn:?}");
+        assert!(!drawn[0].contains("beneath"), "{drawn:?}");
+        assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
+    }
+
+    /// A group holding something that went wrong is marked as such. The two
+    /// that hold whole roots are not: the reader asked for those roots to be
+    /// out of the way, one with the filter and one with the key that roots the
+    /// forest at a bead.
+    #[test]
+    fn only_a_group_holding_roots_the_reader_put_away_is_drawn_without_a_warning() {
         for kind in every_kind() {
             let group = Group {
                 kind,
                 project: None,
                 count: 2,
                 with_findings: 0,
+                held: None,
             };
             let drawn = Painted::of(group_line(SHUT, &group), 80, 1).rows();
             let marked = drawn[0].contains(WARNING);
 
             assert_eq!(
                 marked,
-                kind != GroupKind::HiddenTrees,
+                !matches!(kind, GroupKind::HiddenTrees | GroupKind::HeldBack),
                 "{kind:?}: {drawn:?}"
             );
         }
@@ -279,6 +408,7 @@ mod tests {
                 project: None,
                 count: 2,
                 with_findings: 0,
+                held: None,
             };
             let painted = Painted::of(group_line(SHUT, &group), 80, 1).row(0);
 

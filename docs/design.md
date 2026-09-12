@@ -934,6 +934,47 @@ which stops being true the moment something new is under it. Only hand-folds
 are stored; the default is derived, which is what makes "back to the default"
 a single key.
 
+**`Shift+F` roots the forest at one bead, and that is the other place a reader
+asks by name.** The key draws the selected bead where a root is drawn, what the
+forest draws beneath that bead anywhere else, and nothing else: no other root
+and no other project's tree. It is for finishing one bead, so what it takes
+away is everything a reader does not have to do in order to close the one they
+are on. Everything beneath that bead is already in the tree it is drawn in, so
+this is a change to what the layout walks rather than to what was collected,
+and the bead keeps the place it has everywhere else — which is what lets a fold
+set on it survive the key both ways. The default above rejects
+collapsed-except-selected and the rejection stands: the selection has no
+bearing on what is open, and it has none here either, because the mode stands
+on the bead named at the keystroke and moving about under it moves nothing.
+Pressing the key again puts the forest back, with the selection on the bead it
+was rooted at, opening whatever has been shut over that bead in the meantime. The bead leaving the collection is the one thing that ends the
+mode on its own; a bead that closes is still in the collection, so closing the
+focused bead does not, and a bead the tracker has moved is followed to where it
+moved to. Everything the mode stops drawing goes behind
+one collapsed line per project rather than off the screen, which is *degrade,
+never disappear* binding here as everywhere: every other root and every other
+project's, and the focused bead's own root for the part of it that is left —
+the beads above that bead and every branch off them, with the bead itself left
+to the root of the forest rather than drawn a second time. That line stands over open work
+with seats on it, which the filter's own line never does, so it says how many
+seats and how many beads want looking at and never claims there are none. It
+counts the beads it is standing over rather than the roots they came from,
+because the beads on the screen are not behind it. Its
+own project's line keeps it, so a reader opens the project where it already
+was. It is a group like the others: it rests shut, the keys that open a group
+open it, and the roots inside it rest shut as the filter's do. A bead in one of
+them is reached by the keys that reach any bead, the line opening to let the
+selection in, so looking a bead up in another root is not paid for with the
+put-back key. A search offers what it can take the reader to, which under this
+mode is every bead the forest holds: the ones beneath the focused bead, and the
+ones behind the line, which it opens on the way. The bead the forest is rooted
+at reads its whole id where a root would, and the beads under it read as its
+children: a column of shortened ids is read by putting the drawn root in front
+of each one, and the root this branch came out of is behind the line. It names the key
+that brings them back, because it is the line a reader is looking at when they
+want them back, and a row with no room for that hint gives it up whole rather
+than cutting it to a key nobody can press.
+
 **A finished branch draws as one line and rests shut.** Its glyph, its
 fraction and its fold marker already say *finished, and holds more*; opening it
 is the ordinary fold. A closed bead standing over unfinished work is the
@@ -2287,10 +2328,10 @@ holds, so a group over live panes — unconfigured, conflicts, unattributed —
 rests open; a group that reports on the reading rather than on work in flight —
 failed projects, hidden trees — rests shut, and hidden trees in particular
 holds trees hidden *because* nothing live is in them, so opening it would
-contradict the rule it exists to serve. Hidden trees is the one group nothing
-went wrong in — the filter put them there and a key takes them back out — so it
-is the only one drawn without a warning, and the only line on the screen that
-names a key: *a to show all*. A group that said only how many trees it hides
+contradict the rule it exists to serve. Hidden trees is a group nothing went
+wrong in — the filter put them there and a key takes them back out — so it is
+drawn without a warning and it names that key: *a to show all*. The roots
+`Shift+F` holds back are the other group read that way. A group that said only how many trees it hides
 would read as "nothing to see here" while hiding broken ones, so it also says
 how many of them carry findings: *4 trees with no live agent · 1 with
 findings*. The findings stay hidden — the reader asked for that — but the group
@@ -2364,6 +2405,7 @@ The bindings are vim-like, with the arrows as aliases:
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
+| `F` | draw the selected bead as the only root, or put the forest back |
 | `/` | find part of a bead's id or title, wherever the forest draws it |
 | `n` | go to the next bead matching the search |
 | `N` | go to the one before it |
