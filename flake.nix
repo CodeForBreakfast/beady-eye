@@ -134,65 +134,12 @@
         # The package is named for the crate, the binary for the command.
         meta.mainProgram = "bdi";
       });
-
-      # The Release binary for the host, installed rather than built. Nothing
-      # caches the source build, so a consumer recompiles the dependency tree
-      # on every nixpkgs bump for a tool that has not changed.
-      #
-      # The version is release-assets.json's rather than Cargo.toml's, because
-      # a flake at tag vX cannot carry vX's hashes: the tag is cut from the
-      # squash that bumps the version and the assets are built after it. The
-      # url is in the file rather than derived from its version so that
-      # whoever writes the file writes what it fetched; release-assets-agree
-      # holds the two together.
-      releaseAssets = builtins.fromJSON (builtins.readFile ./release-assets.json);
-      assetTargetOf = {
-        x86_64-linux = "x86_64-unknown-linux-musl";
-        aarch64-linux = "aarch64-unknown-linux-musl";
-        x86_64-darwin = "x86_64-apple-darwin";
-        aarch64-darwin = "aarch64-apple-darwin";
-      };
-      beadyEyeBinFor = pkgs:
-        let
-          system = pkgs.stdenv.hostPlatform.system;
-          asset = releaseAssets.assets.${assetTargetOf.${system}
-            or (throw "beady-eye-bin: no Release asset is built for ${system}.")};
-        in
-        pkgs.stdenvNoCC.mkDerivation {
-          pname = "beady-eye-bin";
-          version = releaseAssets.version;
-          src = pkgs.fetchurl { inherit (asset) url sha256; };
-
-          dontUnpack = true;
-          # What a consumer runs is the asset whose hash was published, byte
-          # for byte. The Linux ones are static and nothing here can improve a
-          # Mach-O.
-          dontFixup = true;
-          installPhase = ''
-            install -Dm755 "$src" "$out/bin/bdi"
-          '';
-
-          # A hash names one file, so the download is the right bytes or no
-          # download. What it cannot say is that those bytes are the version
-          # the file claims, so the binary is asked.
-          doInstallCheck = true;
-          installCheckPhase = ''
-            reported="$("$out/bin/bdi" --version)"
-            if [ "$reported" != "bdi ${releaseAssets.version}" ]; then
-              echo "release-assets.json claims ${releaseAssets.version} and the asset says '$reported'."
-              exit 1
-            fi
-          '';
-
-          meta.mainProgram = "bdi";
-        };
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
         beady-eye = beadyEyeFor pkgs;
-        beady-eye-bin = beadyEyeBinFor pkgs;
         artifacts = artifactsFor pkgs;
 
         # What `cargo package` is handed. It builds the tarball Cargo.toml's
@@ -2023,65 +1970,6 @@ $pinned"
           touch $out
         '';
 
-        # release-assets.json names a version and, under each target, the url
-        # the hash is of. A hash that does not match its url fails the
-        # download, so those two hold each other. Nothing holds the url to the
-        # version: a file claiming 0.9.0 over 0.8.0's urls installs 0.8.0
-        # under the wrong name, and the version is the whole of what a
-        # consumer reads from the file.
-        releaseAssetsAgree = pkgs.writeShellScriptBin "release-assets-agree" ''
-          set -u
-
-          jq=${pkgs.jq}/bin/jq
-          file="''${1:-release-assets.json}"
-
-          version="$($jq -r .version "$file")" || exit 1
-          wrong="$($jq -r --arg tag "/v$version/" '
-            .assets | to_entries[] | select(.value.url | contains($tag) | not)
-            | "  \(.key): \(.value.url)"' "$file")"
-
-          if [ -n "$wrong" ]; then
-            echo "$file claims $version and names assets of another release."
-            echo
-            printf '%s\n' "$wrong"
-            echo
-            echo "Every url has to be under releases/download/v$version/."
-            exit 1
-          fi
-        '';
-
-        # The file in this tree agrees with itself, so the check above passes
-        # whether or not it can still refuse one.
-        releaseAssetsAgreeTest = pkgs.runCommand "release-assets-agree-test"
-          { nativeBuildInputs = [ releaseAssetsAgree ]; } ''
-          set -u
-
-          file="$TMPDIR/release-assets.json"
-          assets() {
-            printf '{"version":"%s","assets":{"x86_64-unknown-linux-musl":{"url":"https://github.com/CodeForBreakfast/beady-eye/releases/download/v%s/bdi-x86_64-unknown-linux-musl","sha256":"0"},"aarch64-unknown-linux-musl":{"url":"https://github.com/CodeForBreakfast/beady-eye/releases/download/v%s/bdi-aarch64-unknown-linux-musl","sha256":"0"}}}' "$1" "$2" "$3" > "$file"
-          }
-
-          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
-
-          assets 0.2.0 0.2.0 0.2.0
-          output="$( release-assets-agree "$file" 2>&1 )" ||
-            fail "it refused a file whose every url is under its own version:"
-
-          # One asset of the release before, left behind by a partial rewrite.
-          assets 0.2.0 0.2.0 0.1.0
-          output="$( release-assets-agree "$file" 2>&1 )" && status=0 || status=$?
-          [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status:"
-          case "$output" in
-            *"aarch64-unknown-linux-musl"*) ;;
-            *) fail "the refusal did not name the asset that disagrees:" ;;
-          esac
-          case "$output" in
-            *"x86_64-unknown-linux-musl"*) fail "the refusal named an asset that agrees:" ;;
-          esac
-
-          touch $out
-        '';
-
         # The Release body is RELEASE-NOTES/<version>.md byte for byte, and
         # GitHub renders that body with its hard line break extension on — so a
         # newline inside a paragraph becomes a <br> and the published page
@@ -3453,7 +3341,6 @@ and a second line"
 
         packages.default = beady-eye;
         packages.beady-eye = beady-eye;
-        packages.beady-eye-bin = beady-eye-bin;
         packages.await-ci-verdict = awaitCiVerdict;
         packages.conventional-subject = conventionalSubject;
         packages.tap-formula = tapFormula;
@@ -3495,17 +3382,6 @@ and a second line"
           '';
           readme-pin-test = readmePinsTheVersionTest;
 
-          # The binary package, the way build-and-test is the source one. A
-          # wrong hash or url fails the download, and the install check asks
-          # the binary its version.
-          release-binary = beady-eye-bin;
-          release-assets-agree = pkgs.runCommand "release-assets-agree"
-            { nativeBuildInputs = [ releaseAssetsAgree ]; } ''
-            release-assets-agree ${./release-assets.json}
-            touch $out
-          '';
-          release-assets-agree-test = releaseAssetsAgreeTest;
-
           # A source of its own for the same reason readme-pin has one: these
           # files are documentation, and `source` carries none.
           release-notes-wrap = pkgs.runCommand "release-notes-wrap"
@@ -3545,8 +3421,7 @@ and a second line"
       }
     ) // {
       # Overlays carry no system, so this sits outside eachDefaultSystem. A
-      # consumer adds it to nixpkgs.overlays and reaches pkgs.beady-eye, or
-      # pkgs.beady-eye-bin for the Release binary.
+      # consumer adds it to nixpkgs.overlays and reaches pkgs.beady-eye.
       #
       # pkgs.beady-eye is the package above, built against this flake's own
       # nixpkgs rather than the consumer's, because that is the derivation CI
@@ -3558,7 +3433,6 @@ and a second line"
       overlays.default = final: _prev: {
         beady-eye = self.packages.${final.stdenv.hostPlatform.system}.beady-eye;
         beady-eye-rebuilt = beadyEyeFor final;
-        beady-eye-bin = beadyEyeBinFor final;
       };
     };
 }
