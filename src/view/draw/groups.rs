@@ -26,7 +26,7 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
         GroupKind::Conflicts => (phrase::conflicts(group.count), false),
         GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
-        GroupKind::OutOfTheWay => (phrase::other_beads(group.count), true),
+        GroupKind::OutOfTheWay => (phrase::other_trees(group.count), true),
         GroupKind::Unattributed => (phrase::unattributed(group.count), false),
         GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
     };
@@ -310,7 +310,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("3 other beads"), "{drawn:?}");
+        assert!(drawn[0].contains("3 other trees"), "{drawn:?}");
         assert!(
             drawn[0].contains("2 agents beneath  ⚠ 1 bead beneath  F for the whole forest"),
             "{drawn:?}"
@@ -337,7 +337,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 64, 1).rows();
 
-        assert!(drawn[0].contains("3 other beads"), "{drawn:?}");
+        assert!(drawn[0].contains("3 other trees"), "{drawn:?}");
         assert!(
             drawn[0].contains("2 agents beneath  ⚠ 1 bead beneath"),
             "{drawn:?}"
@@ -365,7 +365,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("1 other bead"), "{drawn:?}");
+        assert!(drawn[0].contains("1 other tree"), "{drawn:?}");
         assert!(!drawn[0].contains("beneath"), "{drawn:?}");
         assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
     }
