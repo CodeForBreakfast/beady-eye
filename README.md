@@ -61,12 +61,6 @@ Both are built against this flake's own nixpkgs, which is what the cache
 holds. `pkgs.beady-eye-rebuilt` through the overlay builds bdi against your
 nixpkgs instead, and compiles.
 
-`packages.${system}.beady-eye-bin`, and `pkgs.beady-eye-bin` through the
-overlay, install the Release binary for your platform instead, checked
-against its published hash. A tag is cut before its binaries are built, so
-the flake at a tag carries the release before it, and `release-assets.json`
-at the ref you pin says which one you get.
-
 Or take a binary from the [latest release](https://github.com/CodeForBreakfast/beady-eye/releases/latest).
 There is one per platform with a `.sha256` beside it, and the Linux ones are
 static. Rename it `bdi` and put it on your `PATH`. Apple has not been asked to
