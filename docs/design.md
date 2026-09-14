@@ -955,10 +955,12 @@ one collapsed line per project rather than off the screen, which is *degrade,
 never disappear* binding here as everywhere: every other root and every other
 project's, and the focused bead's own root for the part of it that is left —
 the beads above that bead and every branch off them, with the bead itself left
-to the root of the forest rather than drawn a second time. That line stands over open work
-with seats on it, which the filter's own line never does, so it says how many
-seats and how many beads want looking at and never claims there are none. It
-counts the beads it is standing over rather than the roots they came from,
+to the root of the forest rather than drawn a second time. That line says how
+many trees it stands over, in the noun the filter's line uses, because a root
+whose tracker refused holds no beads and is still a tree. It stands over open work
+with seats on it, which the filter's own line never does, so it also says how many
+seats and how many beads want looking at and never claims there are none. Those
+it counts off the beads it is standing over rather than off the roots they came from,
 because the beads on the screen are not behind it. Its
 own project's line keeps it, so a reader opens the project where it already
 was. It is a group like the others: it rests shut, the keys that open a group
