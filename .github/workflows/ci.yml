@@ -139,3 +139,23 @@ jobs:
       # tree nothing has checked.
       - if: steps.unbuilt.outputs.any != 'false'
         run: nix flake check -L
+
+      # What lands on main is what a consumer's flake input resolves to, so
+      # the package is pushed to the cache from here and from nowhere else: a
+      # pull request's build is a tree main may never carry, and its run has
+      # no token anyway.
+      #
+      # The build substitutes from main's slice of the Actions cache when the
+      # check above ran or an earlier push built the same tree, and `cachix
+      # push` skips what the cache already holds, so a tree that changes
+      # nothing the binary is built from costs one round of queries.
+      #
+      # cachix comes from this flake's locked nixpkgs rather than from an
+      # action, so the only code that sees the token is cachix itself.
+      - name: push the Linux build to Cachix
+        if: github.event_name == 'push'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          nix run --inputs-from . nixpkgs#cachix -- push codeforbreakfast \
+            "$(nix build --no-link --print-out-paths .#beady-eye)"

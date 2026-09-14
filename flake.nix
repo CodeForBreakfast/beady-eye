@@ -3547,8 +3547,17 @@ and a second line"
       # Overlays carry no system, so this sits outside eachDefaultSystem. A
       # consumer adds it to nixpkgs.overlays and reaches pkgs.beady-eye, or
       # pkgs.beady-eye-bin for the Release binary.
+      #
+      # pkgs.beady-eye is the package above, built against this flake's own
+      # nixpkgs rather than the consumer's, because that is the derivation CI
+      # pushed to the cache: built against `final` it is a derivation nothing
+      # has built, and every nixpkgs bump on the consumer's side recompiles the
+      # dependency tree for a tool that has not changed. pkgs.beady-eye-rebuilt
+      # is that build, for a consumer who wants bdi linked against their own
+      # nixpkgs and will pay for it.
       overlays.default = final: _prev: {
-        beady-eye = beadyEyeFor final;
+        beady-eye = self.packages.${final.stdenv.hostPlatform.system}.beady-eye;
+        beady-eye-rebuilt = beadyEyeFor final;
         beady-eye-bin = beadyEyeBinFor final;
       };
     };
