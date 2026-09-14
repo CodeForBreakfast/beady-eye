@@ -2415,9 +2415,12 @@ The bindings are vim-like, with the arrows as aliases:
 | `Esc` | go back to the forest from the bead view |
 | `Tab` | move to the next bead the shown bead names; Enter follows it |
 | `^R` | collect from the trackers again now |
-| `E` | expand the selected node and everything under it |
-| `C` | collapse the selected node and everything under it |
-| `D` | restore the default view |
+| `e` | expand the selected node and everything under it |
+| `E` | expand the whole forest |
+| `c` | collapse the selected node and everything under it |
+| `C` | collapse the whole forest |
+| `d` | restore the default folds under the selected node |
+| `D` | restore the default folds across the whole forest |
 | `y` | copy the selected bead's id to the clipboard |
 | `Down`, `j` | move down one row |
 | `Up`, `k` | move up one row |
@@ -2445,13 +2448,18 @@ how to leave is stuck in a view they may have opened by accident.
 `h` and `l` carry two meanings each because that is what a tree makes natural
 and what every vim-flavoured file tree does; `h` always meaning "parent" would
 strand a reader on a collapsed node with no way to open it from the home row.
-`E`, `C` and `D` are single keys rather than vim's `zR`, `zM` and `zx`: a
+The fold keys are single keys rather than vim's `zR`, `zM` and `zx`: a
 prefix is a mode, and `bdi` has nowhere to say it is in one — vim puts the
 pending command in its last line, and `bdi`'s equivalent is the keys row,
-which has no spare column. `C` is the one place a reader may knowingly fold
-over a live agent, and `D` brings it back: restoring the default recomputes
+which has no spare column. Case says the scope instead: `e`, `c` and `d` act
+on the selected node and everything under it, and `E`, `C` and `D` on the
+whole forest. `c` and `C` are the one place a reader may knowingly fold over
+a live agent, and `d` and `D` bring it back: restoring the default recomputes
 the spine to live work from the snapshot in hand rather than replaying a
 stored fold set, so it stays right after a refresh has changed who is working.
+`d` spends only the hand folds on the selected node and its descendants, so a
+reader who has opened and shut their way through one branch can put it back
+without giving up their folds in every other tree.
 
 ### Searching
 

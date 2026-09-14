@@ -1195,7 +1195,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 20 more bindings · no room on a screen this short",
+                "  … 23 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1310,9 +1310,12 @@ mod tests {
                 "  Esc       go back to the forest from the bead view",
                 "  Tab       move to the next bead the shown bead names; Enter follows it",
                 "  ^R        collect from the trackers again now",
-                "  E         expand the selected node and everything under it",
-                "  C         collapse the selected node and everything under it",
-                "  D         restore the default view",
+                "  e         expand the selected node and everything under it",
+                "  E         expand the whole forest",
+                "  c         collapse the selected node and everything under it",
+                "  C         collapse the whole forest",
+                "  d         restore the default folds under the selected node",
+                "  D         restore the default folds across the whole forest",
                 "  y         copy the selected bead's id to the clipboard",
                 "  Down, j   move down one row",
                 "  Up, k     move up one row",

@@ -76,6 +76,14 @@ pub enum Action {
     ExpandSubtree,
     /// Collapse the selected node and everything under it, at every depth.
     CollapseSubtree,
+    /// Let go of every fold set by hand on the selected node and everything
+    /// under it, so that subtree rests as `bdi` would have drawn it and the
+    /// rest of the forest keeps what the reader set.
+    RestoreSubtree,
+    /// Expand every fold in the forest, at every depth.
+    ExpandForest,
+    /// Collapse every fold in the forest, at every depth.
+    CollapseForest,
     /// Let go of every fold set by hand, so the forest rests as `bdi` would
     /// have drawn it for the snapshot it is holding now.
     RestoreDefault,

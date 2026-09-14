@@ -32,10 +32,10 @@ const COLS: u16 = 160;
 /// A gap this long between bytes means the frame is drawn.
 const A_SILENCE: Duration = Duration::from_millis(300);
 
-/// `C`, which shuts the selected node and everything under it. The walk
+/// `c`, which shuts the selected node and everything under it. The walk
 /// leaves the selection on the tree's header, so this puts every bead in the
 /// tree behind a fold and leaves the search something to open.
-const SHUT_THE_TREE: &[u8] = b"C";
+const SHUT_THE_TREE: &[u8] = b"c";
 
 /// `/` and the id of a bead in that tree, without the Enter that asks for it.
 const TYPE_AN_ID: &[u8] = b"/orb-0tp.7";

@@ -11,9 +11,10 @@ use crate::view::{Action, Motion, Typing};
 
 /// One key a reader can press, and the word for it they can read.
 ///
-/// `control` is a requirement and not an exclusion: a key that does not ask
-/// for it answers whatever modifiers are held, which is what the arrows and
-/// the letters have always done.
+/// `control` is matched exactly: `c` and `^C` are two keys, and a letter
+/// bound on its own does not answer for the control key over it. Any other
+/// modifier held is ignored, which is what the arrows and the letters have
+/// always done.
 pub(super) struct Key {
     pub(super) code: KeyCode,
     pub(super) control: bool,
@@ -142,21 +143,39 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
-        keys: &[alone(KeyCode::Char('E'), "E")],
+        keys: &[alone(KeyCode::Char('e'), "e")],
         action: Action::ExpandSubtree,
         does: "expand the selected node and everything under it",
         hint: None,
     },
     Binding {
-        keys: &[alone(KeyCode::Char('C'), "C")],
+        keys: &[alone(KeyCode::Char('E'), "E")],
+        action: Action::ExpandForest,
+        does: "expand the whole forest",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('c'), "c")],
         action: Action::CollapseSubtree,
         does: "collapse the selected node and everything under it",
         hint: None,
     },
     Binding {
+        keys: &[alone(KeyCode::Char('C'), "C")],
+        action: Action::CollapseForest,
+        does: "collapse the whole forest",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('d'), "d")],
+        action: Action::RestoreSubtree,
+        does: "restore the default folds under the selected node",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Char('D'), "D")],
         action: Action::RestoreDefault,
-        does: "restore the default view",
+        does: "restore the default folds across the whole forest",
         hint: None,
     },
     Binding {
@@ -228,7 +247,7 @@ pub(super) fn action(key: KeyEvent) -> Option<Action> {
             binding
                 .keys
                 .iter()
-                .any(|bound| bound.code == key.code && (control || !bound.control))
+                .any(|bound| bound.code == key.code && bound.control == control)
         })
         .map(|binding| binding.action)
 }
@@ -341,6 +360,9 @@ pub(super) mod tests {
             Action::ToggleFold,
             Action::ExpandSubtree,
             Action::CollapseSubtree,
+            Action::RestoreSubtree,
+            Action::ExpandForest,
+            Action::CollapseForest,
             Action::RestoreDefault,
             Action::ToggleFilter,
             Action::Focus,
@@ -372,6 +394,9 @@ pub(super) mod tests {
                 | Action::ToggleFold
                 | Action::ExpandSubtree
                 | Action::CollapseSubtree
+                | Action::RestoreSubtree
+                | Action::ExpandForest
+                | Action::CollapseForest
                 | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::Focus
@@ -470,7 +495,7 @@ pub(super) mod tests {
             let control = pressed.modifiers.contains(KeyModifiers::CONTROL);
             let expected = named
                 .iter()
-                .any(|bound| bound.code == pressed.code && (control || !bound.control));
+                .any(|bound| bound.code == pressed.code && bound.control == control);
             assert_eq!(
                 action(pressed).is_some(),
                 expected,
@@ -516,6 +541,12 @@ pub(super) mod tests {
             // or it is pinned nowhere.
             (key(KeyCode::Char('N')), Action::PreviousMatch),
             (key(KeyCode::Char('?')), Action::ShowBindings),
+            (key(KeyCode::Char('e')), Action::ExpandSubtree),
+            (key(KeyCode::Char('E')), Action::ExpandForest),
+            (key(KeyCode::Char('c')), Action::CollapseSubtree),
+            (key(KeyCode::Char('C')), Action::CollapseForest),
+            (key(KeyCode::Char('d')), Action::RestoreSubtree),
+            (key(KeyCode::Char('D')), Action::RestoreDefault),
             (key(KeyCode::Char('q')), Action::Quit),
             (control('c'), Action::Quit),
         ];
@@ -558,13 +589,19 @@ pub(super) mod tests {
     #[test]
     fn a_key_bound_to_nothing_asks_for_nothing() {
         for pressed in [
-            key(KeyCode::Char('d')),
             key(KeyCode::Char('u')),
             key(KeyCode::Char('r')),
-            key(KeyCode::Char('c')),
             key(KeyCode::Char('z')),
         ] {
             assert_eq!(action(pressed), None, "for {pressed:?}");
         }
+    }
+
+    /// A letter bound on its own and under control is two keys, and the
+    /// control one does not answer for the letter.
+    #[test]
+    fn a_control_key_does_not_answer_for_the_letter_under_it() {
+        assert_ne!(action(control('c')), action(key(KeyCode::Char('c'))));
+        assert_ne!(action(control('d')), action(key(KeyCode::Char('d'))));
     }
 }
