@@ -37,9 +37,7 @@ enum Child<'a> {
 /// that its fold keeps off the screen, counted once each.
 ///
 /// Nothing where the line is open or has nothing under it, because what it
-/// stands over is then drawn on rows of its own. Nothing either on a later
-/// copy of a bead, whose first line is already saying it — a reader adding up
-/// what two copies hide is adding the ways down rather than the work.
+/// stands over is then drawn on rows of its own.
 ///
 /// Asked at every depth. A root is a bead row like any other, and the one
 /// question a fold raises — what did that just take off the screen — has one
@@ -47,10 +45,9 @@ enum Child<'a> {
 ///
 /// The same reading answers a root drawn behind the line the mode puts the
 /// rest of the forest behind: the bead the forest is rooted at is beneath
-/// that root and drawn at the top of the screen, and this count holds it, for
-/// the same reason two copies of a bead do not add up.
-fn shut_over(beneath: Counts, first: bool, folded: Option<bool>) -> Option<Counts> {
-    (folded == Some(false) && first).then_some(beneath)
+/// that root and drawn at the top of the screen, and this count holds it.
+fn shut_over(beneath: Counts, folded: Option<bool>) -> Option<Counts> {
+    (folded == Some(false)).then_some(beneath)
 }
 
 /// Every line the snapshot draws, in render order. `facts` is what the
@@ -684,7 +681,7 @@ impl TreeLayout<'_> {
                 node,
                 None,
                 bead.progress,
-                shut_over(bead.beneath, first_copy(self.tree, at, above), folded),
+                shut_over(bead.beneath, folded),
             )),
         });
 
@@ -771,7 +768,7 @@ impl TreeLayout<'_> {
                             node,
                             Some(&parent.key().id),
                             bead.progress,
-                            shut_over(bead.beneath, first, folded),
+                            shut_over(bead.beneath, folded),
                         )),
                     });
                     if open {
