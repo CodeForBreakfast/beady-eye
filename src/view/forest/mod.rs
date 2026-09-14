@@ -2144,19 +2144,20 @@ credential_command = "secret harbour"
         );
     }
 
-    /// A shut closed line says what unfinished work it is shut over, because
-    /// those beads are then nowhere else on the screen. On a later line of the
-    /// same bead they are somewhere else on the screen — on the first line —
-    /// so it says nothing, and the count a reader reads is the work rather
-    /// than the ways down to it.
+    /// A shut line says what it is shut over on every copy of its bead. The
+    /// copy a reader is looking at is often not the one the walk reached first,
+    /// and a shut line saying nothing reads as a fold hiding nothing.
     #[test]
-    fn only_the_first_line_of_a_bead_drawn_twice_says_what_it_is_shut_over() {
+    fn every_line_of_a_bead_drawn_twice_says_what_it_is_shut_over() {
         let forest = flatten(closed_bead_drawn_twice_in_one_tree());
         let [upper, lower] = copies_of(&forest, "orb-4");
 
         assert_eq!(
             (notes_at(&forest, upper), notes_at(&forest, lower)),
-            (vec![phrase::unfinished_beneath(1)], Vec::new()),
+            (
+                vec![phrase::unfinished_beneath(1)],
+                vec![phrase::unfinished_beneath(1)]
+            ),
             "{:#?}",
             sketch(&forest)
         );
