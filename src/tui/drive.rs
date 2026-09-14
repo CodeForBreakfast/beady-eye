@@ -627,6 +627,9 @@ fn answered(
                 | Action::ToggleFold
                 | Action::ExpandSubtree
                 | Action::CollapseSubtree
+                | Action::RestoreSubtree
+                | Action::ExpandForest
+                | Action::CollapseForest
                 | Action::RestoreDefault
                 | Action::ToggleFilter
                 | Action::FocusForest
