@@ -285,22 +285,63 @@ impl Forest {
     /// they folded away stays folded for as long as it lives, work that dies
     /// down re-opens nothing, and an agent arriving on a bead they never saw
     /// hands the node back to the default.
+    ///
+    /// A scope that shut is spent along the way down to what arrived and no
+    /// further: the folds beside that way were folded away too, and nothing
+    /// new is under them. The way down is read off the forest drawn as it
+    /// stands unrooted, because the mode draws the bead it is rooted at
+    /// apart from the line the scope was set on, and the way down to what
+    /// arrived under that bead runs through both.
     fn spend_folds(&mut self, folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>) {
-        let spent: Vec<Handle> = folded_over
+        let spent: Vec<(Handle, BTreeSet<BeadKey>)> = folded_over
             .iter()
-            .filter(|(handle, over)| !self.live_under(handle).is_subset(over))
-            .map(|(handle, _)| handle.clone())
+            .filter_map(|(handle, over)| {
+                let arrived = &self.live_under(handle) - over;
+                (!arrived.is_empty()).then(|| (handle.clone(), arrived))
+            })
             .collect();
-        self.folds.spend(&spent);
+        if spent.is_empty() {
+            return;
+        }
+        let drawn = layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None);
+        for (handle, arrived) in spent {
+            let path = way_down_to(subtree_of(&drawn, &handle), &arrived);
+            self.folds.spend(&handle, path);
+        }
     }
 
-    /// The beads beneath `handle` carrying live work. Empty for anything but
-    /// a bead: a run holds only finished branches, and a group's items are
-    /// not beads at all.
+    /// The beads beneath `handle` carrying live work. Every bead in a
+    /// project's trees for the project, and for the groups of its own that
+    /// hold trees — wider than the group, and a group over trees rests shut
+    /// whatever arrives, so spending it early changes nothing on screen.
+    /// Empty for a run, which holds only finished branches, and for a group
+    /// whose things are not beads at all.
     fn live_under(&self, handle: &Handle) -> BTreeSet<BeadKey> {
-        let Handle::Bead(place) = handle else {
-            return BTreeSet::new();
+        let project = match handle {
+            Handle::Bead(place) => return self.live_beneath(place),
+            Handle::Project(project) => project,
+            Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, Some(project)) => {
+                project
+            }
+            _ => return BTreeSet::new(),
         };
+        self.snapshot
+            .collected
+            .iter()
+            .filter(|tree| &tree.project == project)
+            .flat_map(|tree| {
+                tree.beads
+                    .iter()
+                    .filter(|bead| !quiet(bead))
+                    .map(|bead| BeadKey {
+                        project: tree.project.clone(),
+                        id: bead.id.clone(),
+                    })
+            })
+            .collect()
+    }
+
+    fn live_beneath(&self, place: &Place) -> BTreeSet<BeadKey> {
         let Some((tree, way)) = self.locate(place) else {
             return BTreeSet::new();
         };
@@ -385,7 +426,6 @@ impl Forest {
         })
     }
 
-    /// Whether the filter is holding the tree a root names back.
     fn hidden(&self, root: &BeadKey) -> bool {
         self.snapshot
             .hidden_trees
@@ -624,11 +664,16 @@ impl Forest {
         let Some(scope) = self.handle_at(self.selected) else {
             return;
         };
-        let spent: Vec<Handle> = subtree_of(&self.drawn_beneath_every_fold(), &scope)
-            .iter()
-            .filter_map(handle_of)
-            .collect();
-        self.folds.spend(&spent);
+        let drawn = self.drawn_beneath_every_fold();
+        let within = subtree_of(&drawn, &scope);
+        if self.points_by_the_line(&scope) {
+            for handle in within.iter().filter_map(handle_of) {
+                self.folds.put_back(handle);
+            }
+            return;
+        }
+        let beneath = handles_beneath(within);
+        self.folds.let_go(scope, &beneath);
     }
 
     /// Point every fold in `scope`'s subtree, or in the whole forest where
@@ -640,17 +685,53 @@ impl Forest {
     /// on following the default. Shutting points every fold: one left open
     /// under a shut parent would spring its subtree back the moment that
     /// parent was opened again.
+    ///
+    /// The whole forest is every line at the top of it, each taken as a
+    /// scope of its own.
     fn fold_in(&mut self, scope: Option<&Handle>, open: bool) {
         let drawn = self.drawn_beneath_every_fold();
-        let within = scope.map_or(&drawn[..], |scope| subtree_of(&drawn, scope));
-        let pointed: Vec<Handle> = within
-            .iter()
-            .filter(|line| line.folded.is_some_and(|was| !open || !was))
-            .filter_map(handle_of)
-            .collect();
-        for handle in pointed {
-            self.folds.set(handle, open);
+        let scopes: Vec<Handle> = match scope {
+            Some(scope) => vec![scope.clone()],
+            None => drawn
+                .iter()
+                .filter(|line| line.depth == 0)
+                .filter_map(handle_of)
+                .collect(),
+        };
+        for scope in scopes {
+            let within = subtree_of(&drawn, &scope);
+            if within.first().is_none_or(|line| line.folded.is_none()) {
+                continue;
+            }
+            if self.points_by_the_line(&scope) {
+                let pointed: Vec<Handle> = within
+                    .iter()
+                    .filter(|line| line.folded.is_some_and(|was| !open || !was))
+                    .filter_map(handle_of)
+                    .collect();
+                for handle in pointed {
+                    self.folds.set(handle, open);
+                }
+                continue;
+            }
+            let resting: BTreeSet<Handle> = within
+                .iter()
+                .filter(|line| open && line.folded == Some(true) && !line.pointed)
+                .filter_map(handle_of)
+                .collect();
+            let beneath = handles_beneath(within);
+            self.folds.set_over(scope, open, resting, &beneath);
         }
+    }
+
+    /// Whether a key that points a subtree from `scope` points each fold
+    /// beneath it by itself, as every line did once, rather than writing
+    /// one entry that everything beneath answers from. It does where the
+    /// line is passing, and where the mode is holding the line back: the
+    /// bead the forest is rooted at is drawn apart from the root above it,
+    /// so a scope set on that root would reach the bead the key never drew.
+    fn points_by_the_line(&self, scope: &Handle) -> bool {
+        passing(scope) || matches!(scope, Handle::Bead(place) if self.held_back(place))
     }
 
     /// The lines with every fold opened over, each fold still saying which
@@ -1296,9 +1377,61 @@ fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
     &drawn[at..end]
 }
 
+/// Whether a line stands over what is beneath it only for now: a run of
+/// quiet children, which goes when its siblings drop below three, or a
+/// group of trees the filter or the mode holds back, which goes when the
+/// trees are shown or the forest is put back. A scope set on one would go
+/// with it and leave what it pointed resting, so a key pressed on one
+/// points each fold beneath it by itself, as every line did once.
+fn passing(handle: &Handle) -> bool {
+    matches!(
+        handle,
+        Handle::Elided(_) | Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
+    )
+}
+
+/// Every line under the first line of `within`, that line itself left out.
+/// A line with no fold today is here too: one it had, and a fold set on it
+/// while it did, stand until a key on a line above says otherwise.
+fn handles_beneath(within: &[Line]) -> Vec<Handle> {
+    within.iter().skip(1).filter_map(handle_of).collect()
+}
+
+/// The shut folds on the way down from the first line of `within` to every
+/// line standing on one of `arrived`, the first line's own left out. A fold
+/// open on the way holds nothing back, so nothing arriving spends it.
+///
+/// Read off the lines by depth, the way `subtree_of` reads what is beneath
+/// a line, so the way down is the one that was drawn — through the run a
+/// bead hangs in, and by whichever fold the drawing gave each line.
+fn way_down_to(within: &[Line], arrived: &BTreeSet<BeadKey>) -> BTreeSet<Handle> {
+    let mut above: Vec<&Line> = Vec::new();
+    let mut path = BTreeSet::new();
+    for line in within.iter().skip(1) {
+        while above.last().is_some_and(|over| over.depth >= line.depth) {
+            above.pop();
+        }
+        if line
+            .place
+            .as_ref()
+            .is_some_and(|place| arrived.contains(place.key()))
+        {
+            path.extend(
+                above
+                    .iter()
+                    .filter(|over| over.folded == Some(false))
+                    .filter_map(|over| handle_of(over)),
+            );
+        }
+        above.push(line);
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::facts::TreeFacts;
+    use super::handle::Fold;
     use super::*;
     use crate::collect::bd::parse_beads;
     use crate::collect::herdr::parse_agent_list;
@@ -6146,6 +6279,569 @@ credential_command = "secret harbour"
         assert_eq!(
             drawn_beads(&forest),
             ["tow-1", "tow-1.1", "tow-1.2", "tow-1.2.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The place a bead is drawn on, taken off the screen so the test does
+    /// not spell the way down to it by hand.
+    fn place_of_line(forest: &Forest, id: &str) -> Place {
+        line_of(forest, id)
+            .place
+            .clone()
+            .expect("a bead line stands on a place")
+    }
+
+    /// `e` writes one entry, on the line it was pressed on, saying everything
+    /// beneath it opens, and names in it the folds it found resting open so
+    /// they go on following the default. Nothing is written per line: the
+    /// spine to `tow-1.1.1.1` rests open and is named, `tow-1.2` rested shut
+    /// and is what the scope opens.
+    #[test]
+    fn expanding_a_subtree_holds_one_entry_naming_what_it_left_resting() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        forest.apply(Action::ExpandSubtree);
+
+        let root = Handle::Bead(place_of_line(&forest, "tow-1"));
+        let resting = BTreeSet::from([
+            root.clone(),
+            Handle::Bead(place_of_line(&forest, "tow-1.1")),
+            Handle::Bead(place_of_line(&forest, "tow-1.1.1")),
+        ]);
+        assert_eq!(
+            forest.folds.entries().collect::<Vec<_>>(),
+            [(
+                &root,
+                &Fold {
+                    line: None,
+                    scope: Some(handle::Scope::Points {
+                        open: true,
+                        resting
+                    }),
+                }
+            )],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `E` writes one entry per line at the top of the forest — a project or
+    /// a group below the trees — and nothing under any of them, so the map
+    /// is the width of the forest and not the number of lines it opened.
+    #[test]
+    fn expanding_the_forest_holds_one_entry_per_line_at_the_top() {
+        let mut forest = flatten(built(Filter::All));
+
+        forest.apply(Action::ExpandForest);
+
+        let top: BTreeSet<Handle> = forest
+            .lines()
+            .iter()
+            .filter(|line| line.depth == 0 && line.folded.is_some())
+            .filter_map(handle_of)
+            .collect();
+        assert!(top.len() < forest.lines().len(), "{:#?}", sketch(&forest));
+        assert_eq!(
+            forest
+                .folds
+                .entries()
+                .map(|(handle, _)| handle.clone())
+                .collect::<BTreeSet<_>>(),
+            top,
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A shut scope spent by live work arriving beneath it lets go of the way
+    /// down to that work and nothing else: `tow-1.2` was folded away and
+    /// nothing new is under it, so it stays shut while `tow-1.1` opens onto
+    /// the agent that arrived on `tow-1.1.1`. `tow-1.1.1` itself has nothing
+    /// new beneath it and stays shut over `tow-1.1.1.1`.
+    #[test]
+    fn a_shut_scope_is_spent_only_along_the_way_down_to_what_arrived() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `d` under a scope puts the node and everything beneath it back to
+    /// resting, and leaves the scope standing over its siblings: `tow-1.2`
+    /// stays shut by the `c` on the root, while `tow-1.1` rests open onto
+    /// the agent under it.
+    #[test]
+    fn restoring_the_default_under_a_scope_leaves_the_scope_over_the_siblings() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        select_bead(&mut forest, "tow-1.1");
+        forest.apply(Action::RestoreSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A scope that shut is still spent by what arrives under it when the
+    /// reader has opened the line it was set on by hand: the line stays as
+    /// they opened it, the way down to the agent that arrived on `tow-1.1.1`
+    /// opens, and `tow-1.2` stays shut beside it.
+    #[test]
+    fn a_shut_scope_under_a_line_opened_by_hand_is_still_spent_beneath_it() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A fold the scope pointed open and the reader then shut by hand, once
+    /// spent, follows the default rather than the scope: `tow-1.2` opens
+    /// onto the agent that arrives on `tow-1.2.1` and shuts again once that
+    /// agent has gone, as a fold the reader never touched would.
+    #[test]
+    fn a_fold_shut_by_hand_under_an_open_scope_rests_once_it_is_spent() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        forest.apply(Action::ExpandSubtree);
+        toggle_fold_of(&mut forest, "tow-1.2");
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        assert_eq!(
+            drawn_beads(&forest),
+            [
+                "tow-1",
+                "tow-1.1",
+                "tow-1.1.1",
+                "tow-1.1.1.1",
+                "tow-1.2",
+                "tow-1.2.1"
+            ],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A run is the one line whose scope reaches beads its handle does not
+    /// name the way down to, so `d` inside it is where a scope set on it
+    /// could be missed: `dep-1.2` was opened by `e` on the run and rests
+    /// shut again when `d` is pressed on it, while the run stays open.
+    #[test]
+    fn restoring_the_default_inside_an_expanded_run_shuts_the_branch_again() {
+        let mut forest = flatten(depot());
+        select_run(&mut forest);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        select_bead(&mut forest, "dep-1.2");
+        forest.apply(Action::RestoreSubtree);
+
+        let drawn = drawn_beads(&forest);
+        assert!(
+            drawn.contains(&"dep-1.2".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            !drawn.contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A fixture with one bead taken out of it.
+    fn without(json: &str, id: &str) -> String {
+        let beads: Vec<serde_json::Value> = serde_json::from_str(json).expect("fixture is json");
+        let kept: Vec<serde_json::Value> =
+            beads.into_iter().filter(|bead| bead["id"] != id).collect();
+        serde_json::Value::Array(kept).to_string()
+    }
+
+    /// Tower with `tow-1.1.1.1` gone, so `tow-1.1.1` is a leaf with no fold.
+    fn tower_without_cables() -> Snapshot {
+        alone("orbital", &without(TOWER, "tow-1.1.1.1"), &[])
+    }
+
+    /// A run goes when its finished siblings drop below three, and what `e`
+    /// on it opened stays open outside it: `dep-1.2` was opened by `e` on
+    /// the run and is still open onto `dep-1.2.1` once `dep-1.4` has gone
+    /// and the run with it.
+    #[test]
+    fn a_branch_expanded_from_a_run_stays_open_once_the_run_has_gone() {
+        let mut forest = flatten(depot());
+        select_run(&mut forest);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(alone(
+            "orbital",
+            &without(DEPOT, "dep-1.4"),
+            &panes_on(&["dep-1.1"]),
+        ));
+
+        let under_the_root = place_of_line(&forest, "dep-1");
+        assert!(
+            !forest.lines().iter().any(
+                |line| matches!(&line.content, Content::Elided { under, .. } if *under == under_the_root)
+            ),
+            "the run has gone: {:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A fold set on a line whose children have since gone is still a fold,
+    /// so `e` on a line above it takes it with everything else beneath: when
+    /// the children come back, the line answers from the scope and not from
+    /// the fold the reader shut before they went.
+    #[test]
+    fn expanding_takes_a_fold_whose_line_has_no_children_today() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        toggle_fold_of(&mut forest, "tow-1.1.1");
+        forest.refresh(tower_without_cables());
+        assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
+
+        select_bead(&mut forest, "tow-1");
+        forest.apply(Action::ExpandSubtree);
+        forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
+
+        assert!(
+            drawn_beads(&forest).contains(&"tow-1.1.1.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A scope that shut is spent along the way down to what arrived while
+    /// the forest is rooted at a bead beneath it, when the mode draws the
+    /// scope's own line behind the rest, shut in the group of roots it is
+    /// holding back, and the rooted bead's branch apart from it: `tow-1.1` opens onto the agent that arrived on `tow-1.1.1`,
+    /// rooted and put back alike, and `tow-1.2` stays shut.
+    #[test]
+    fn a_shut_scope_is_spent_beneath_the_bead_the_forest_is_rooted_at() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        focus_on(&mut forest, "tow-1.1");
+        assert_eq!(drawn_beads(&forest), ["tow-1.1"], "{:#?}", sketch(&forest));
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.1", "tow-1.1.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.apply(Action::FocusForest);
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// What `e` on a run opened stays open when the forest is rooted at a
+    /// bead inside that run: `dep-1.2` was opened by `e` on the run it hangs
+    /// in, and stays open onto `dep-1.2.1` when the forest is rooted at it.
+    #[test]
+    fn rooting_the_forest_inside_an_expanded_run_keeps_it_open() {
+        let mut forest = flatten(depot());
+        select_run(&mut forest);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        focus_on(&mut forest, "dep-1.2");
+
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Spending a scope that shut lets go of the shut folds on the way down
+    /// to what arrived, and a fold a nearer scope opened is not one of them:
+    /// it holds nothing back. `tow-1.1` and `tow-1.1.1` were opened by `e`
+    /// under the `c` on the root, and stay open after an agent has come and
+    /// gone beneath them.
+    #[test]
+    fn spending_a_shut_scope_leaves_a_fold_a_nearer_scope_opened_open() {
+        let mut forest = flatten(tower_staffed(&["tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        select_bead(&mut forest, "tow-1.1");
+        forest.apply(Action::ExpandSubtree);
+        let expanded = drawn_beads(&forest);
+        assert_eq!(
+            expanded,
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.refresh(tower_staffed(&["tow-1.2.1"]));
+
+        assert_eq!(drawn_beads(&forest), expanded, "{:#?}", sketch(&forest));
+    }
+
+    /// Put the selection on the line over the roots the mode is holding back.
+    fn select_out_of_the_way(forest: &mut Forest) {
+        let at = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::OutOfTheWay)
+            })
+            .unwrap_or_else(|| panic!("no roots are held back: {:#?}", sketch(forest)));
+        step_onto(forest, at);
+    }
+
+    /// The line over the roots the mode is holding back is drawn only while
+    /// the forest is rooted, and `c` on it shuts folds that are spent by what
+    /// arrives under them as any other is: `tow-1.1` opens onto the agent
+    /// that arrived on `tow-1.1.1`, under the root the reader opened again.
+    #[test]
+    fn a_fold_shut_from_the_held_back_roots_line_is_spent_by_what_arrives_under_it() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        focus_on(&mut forest, "tow-1.2");
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        toggle_fold_of(&mut forest, "tow-1");
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1.2.1", "tow-1", "tow-1.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1.2.1", "tow-1", "tow-1.1", "tow-1.1.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Nothing stands under the line over the held-back roots once the
+    /// forest is put back, so what `c` on it shut has to be held by the
+    /// folds themselves: `tow-1.1` stays shut over the agent beneath it.
+    /// `tow-1` is opened by the key that puts the forest back, which leaves
+    /// the selection on the bead it was rooted at.
+    #[test]
+    fn a_fold_shut_from_the_held_back_roots_line_outlives_putting_the_forest_back() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        focus_on(&mut forest, "tow-1.2");
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::CollapseSubtree);
+
+        forest.apply(Action::FocusForest);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2", "tow-1.2.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The bead the forest is rooted at is drawn apart from the root the
+    /// mode holds back, so `c` on that root reaches what is drawn beneath
+    /// it there and not the rooted bead: `tow-1.2` stays open onto
+    /// `tow-1.2.1` after `c` on `tow-1` behind the held-back roots line.
+    #[test]
+    fn shutting_a_held_back_root_leaves_the_bead_the_forest_is_rooted_at_open() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        focus_on(&mut forest, "tow-1.2");
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::ToggleFold);
+        select_bead(&mut forest, "tow-1");
+        forest.apply(Action::CollapseSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1.2.1", "tow-1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `d` on that root puts back what is drawn beneath it there and no
+    /// more: `tow-1.2`, shut by `c` on `tow-1` before the forest was rooted
+    /// at it, stays shut after `d` on `tow-1` behind the held-back roots
+    /// line, where `tow-1` itself rests shut as every root there does.
+    #[test]
+    fn restoring_a_held_back_root_leaves_the_bead_the_forest_is_rooted_at_as_it_was() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        focus_on(&mut forest, "tow-1.2");
+        assert_eq!(drawn_beads(&forest), ["tow-1.2"], "{:#?}", sketch(&forest));
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::ToggleFold);
+        select_bead(&mut forest, "tow-1");
+        forest.apply(Action::RestoreSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Rooting the forest at a bead in a tree the filter is holding back
+    /// draws that tree under its project, where its group would have been,
+    /// and what `e` on the group opened stays open there: `hbr-3` stays
+    /// open onto `hbr-3.1` when the forest is rooted at it.
+    #[test]
+    fn rooting_the_forest_in_an_expanded_hidden_tree_keeps_it_open() {
+        let mut forest = flatten(snapshot());
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid a tree");
+        step_onto(&mut forest, group);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        focus_on(&mut forest, "hbr-3");
+
+        assert!(
+            drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Showing every tree takes the trees the filter was holding back out
+    /// of their group and draws them under the project, and what `e` on the
+    /// group opened stays open there: `hbr-3` is still open onto `hbr-3.1`.
+    #[test]
+    fn showing_every_tree_keeps_what_was_expanded_from_the_hidden_trees_group_open() {
+        let mut forest = flatten(snapshot());
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid a tree");
+        step_onto(&mut forest, group);
+        forest.apply(Action::ExpandSubtree);
+
+        forest.apply(Action::ToggleFilter);
+
+        assert!(
+            drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `d` on the group of trees the filter is holding back puts every fold
+    /// beneath it back, and they stay put back once the filter shows every
+    /// tree: `hbr-3`, opened by `E`, rests shut under its project after `d`
+    /// on the group and `a`.
+    #[test]
+    fn showing_every_tree_keeps_what_was_restored_from_the_hidden_trees_group_resting() {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::ToggleFilter);
+        assert!(
+            !drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "hbr-3 rests shut under its project: {:#?}",
+            sketch(&forest)
+        );
+        forest.apply(Action::ToggleFilter);
+
+        forest.apply(Action::ExpandForest);
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid a tree");
+        step_onto(&mut forest, group);
+        forest.apply(Action::RestoreSubtree);
+        forest.apply(Action::ToggleFilter);
+
+        assert!(
+            !drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
             "{:#?}",
             sketch(&forest)
         );

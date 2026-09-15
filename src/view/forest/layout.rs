@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::config::Scope;
+use crate::config;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Node, Snapshot, Tree};
 use crate::model::tree::Link;
@@ -19,7 +19,7 @@ use crate::view::lines::{
 use crate::view::row;
 
 use super::facts::{Facts, TreeFacts};
-use super::handle::{item_key, Folds, Handle, ItemKey};
+use super::handle::{item_key, Folds, Handle, ItemKey, Scope};
 
 /// One entry in a parent's sequence of children, before it becomes a line.
 /// Notes and beads share the sequence because they share the box-drawing, and
@@ -484,14 +484,18 @@ impl<'a> Layout<'a> {
     /// is still being read finds it shut when its rows land.
     fn draw_project(&self, project: &str, lines: &mut Vec<Line>) {
         let project = project.to_string();
+        let handle = Handle::Project(project.clone());
         // A project rests open: the forest is what is being worked, and a
         // project shut over it says only that it exists.
-        let open = self.folds.expanded(&Handle::Project(project.clone()), true);
+        let pointed = self.folds.pointed(&handle, None);
+        let open = pointed.unwrap_or(true);
+        let over = self.folds.beneath(&handle, None);
 
         lines.push(Line {
             prefix: marker(open).to_string(),
             depth: 0,
             folded: Some(open),
+            pointed: pointed.is_some(),
             place: None,
             content: Content::Project(ProjectLine {
                 every_root_read: self.snapshot.every_root_read(&project),
@@ -535,6 +539,7 @@ impl<'a> Layout<'a> {
             entries -= 1;
             TreeLayout {
                 folds: self.folds,
+                over,
                 tree,
                 facts: self.facts.tree(&root_key(tree)),
                 rests_shut: false,
@@ -546,7 +551,7 @@ impl<'a> Layout<'a> {
         }
         for group in groups {
             entries -= 1;
-            self.draw_group(group, &mut trunk, entries == 0, lines);
+            self.draw_group(group, over, &mut trunk, entries == 0, lines);
         }
     }
 
@@ -558,11 +563,18 @@ impl<'a> Layout<'a> {
     /// one thing that differs is where it rests — shut, whatever is beneath
     /// it, because the reader asked for trees with nobody on them to be out
     /// of the way and an open one is not.
-    fn draw_group(&self, group: Group, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
-        let open = self.folds.expanded(
-            &Handle::Group(group.kind, group.project.clone()),
-            group.kind.live(),
-        );
+    fn draw_group(
+        &self,
+        group: Group,
+        over: Option<&Scope>,
+        trunk: &mut Vec<bool>,
+        last: bool,
+        lines: &mut Vec<Line>,
+    ) {
+        let handle = Handle::Group(group.kind, group.project.clone());
+        let pointed = self.folds.pointed(&handle, over);
+        let open = pointed.unwrap_or(group.kind.live());
+        let over = self.folds.beneath(&handle, over);
         let prefix = if trunk.is_empty() && group.project.is_none() {
             marker(open).to_string()
         } else {
@@ -575,6 +587,7 @@ impl<'a> Layout<'a> {
             prefix,
             depth,
             folded: Some(open),
+            pointed: pointed.is_some(),
             place: None,
             content: Content::Group(group),
         });
@@ -591,6 +604,7 @@ impl<'a> Layout<'a> {
                 for (n, root) in roots.into_iter().enumerate() {
                     TreeLayout {
                         folds: self.folds,
+                        over,
                         tree: root.tree,
                         facts: self.facts.tree(&root_key(root.tree)),
                         rests_shut: true,
@@ -635,6 +649,7 @@ impl<'a> Layout<'a> {
                 prefix: prefix(trunk, n + 1 == count, false, None),
                 depth,
                 folded: None,
+                pointed: false,
                 place: None,
                 content: Content::Item(item),
             });
@@ -647,7 +662,7 @@ impl<'a> Layout<'a> {
             let Some(group) = group_of(self.snapshot, kind, None, self.rooted) else {
                 continue;
             };
-            self.draw_group(group, &mut Vec::new(), true, lines);
+            self.draw_group(group, None, &mut Vec::new(), true, lines);
         }
     }
 }
@@ -658,6 +673,8 @@ impl<'a> Layout<'a> {
 /// other.
 struct TreeLayout<'a> {
     folds: &'a Folds,
+    /// The scope over the tree, from the lines it hangs under.
+    over: Option<&'a Scope>,
     tree: &'a Tree,
     facts: &'a TreeFacts,
     rests_shut: bool,
@@ -672,7 +689,7 @@ struct TreeLayout<'a> {
     beneath_shut: bool,
 }
 
-impl TreeLayout<'_> {
+impl<'a> TreeLayout<'a> {
     /// `trunk` is the way down to whatever this tree hangs under, as the
     /// box-drawing says it: empty for a root directly under its project.
     fn draw(&self, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
@@ -680,9 +697,13 @@ impl TreeLayout<'_> {
         // drawn where its tree's root would be, and keeps the place it has
         // everywhere else, so a fold set on it survives the key that rooted
         // the forest there and the key that puts the forest back.
-        let (root, way) = match self.rooted {
-            Some(rooted) => (rooted.place.clone(), rooted.way.clone()),
-            None => (Place::root(root_key(self.tree)), vec![0]),
+        let (root, way, over) = match self.rooted {
+            Some(rooted) => (
+                rooted.place.clone(),
+                rooted.way.clone(),
+                self.scope_over_rooted(rooted),
+            ),
+            None => (Place::root(root_key(self.tree)), vec![0], self.over),
         };
         let (at, above) = way.split_last().expect("a way down ends somewhere");
         let at = *at;
@@ -695,6 +716,7 @@ impl TreeLayout<'_> {
                 prefix: prefix(trunk, last, false, None),
                 depth,
                 folded: None,
+                pointed: false,
                 place: Some(root),
                 content: Content::Unread(Unread {
                     root: self.tree.root.clone(),
@@ -708,17 +730,17 @@ impl TreeLayout<'_> {
         // being worked and what could be started.
         let kids = self.children_entries(at, above);
         let bead = self.facts.bead(self.tree, at, above);
-        let open = !kids.is_empty()
-            && self.folds.expanded(
-                &Handle::Bead(root.clone()),
-                !self.rests_shut && bead.opens_a_fold,
-            );
+        let handle = Handle::Bead(root.clone());
+        let pointed = self.folds.pointed(&handle, over);
+        let open = !kids.is_empty() && pointed.unwrap_or(!self.rests_shut && bead.opens_a_fold);
+        let below = self.folds.beneath(&handle, over);
 
         let folded = (!kids.is_empty()).then_some(open);
         lines.push(Line {
             prefix: prefix(trunk, last, !kids.is_empty() && !open, None),
             depth,
             folded,
+            pointed: folded.is_some() && pointed.is_some(),
             place: Some(root.clone()),
             content: Content::Bead(row::cells(
                 node,
@@ -733,17 +755,37 @@ impl TreeLayout<'_> {
             entries.extend(kids);
         }
         trunk.push(!last);
-        self.draw_children(entries, &root, &way, trunk, lines);
+        self.draw_children(entries, &root, &way, below, trunk, lines);
         trunk.pop();
     }
 
+    /// The scope over the bead the forest is rooted at. The beads above it
+    /// are drawn behind the line the mode holds the rest back with, and a
+    /// scope set on one of them still stands over it — so they are read on
+    /// the way down to it, as the walk that drew them would have read them.
+    fn scope_over_rooted(&self, rooted: &Rooted) -> Option<&'a Scope> {
+        let folds: &'a Folds = self.folds;
+        let mut over = self.over;
+        let mut place = Place::root(root_key(self.tree));
+        for step in &rooted.way[1..] {
+            over = folds.beneath(&Handle::Bead(place.clone()), over);
+            place = place.step_to(BeadKey {
+                project: self.tree.project.clone(),
+                id: self.tree.beads[*step].id.clone(),
+            });
+        }
+        over
+    }
+
     /// `above` is the way down to `parent`, the parent itself included: the
-    /// way down to every entry drawn here.
+    /// way down to every entry drawn here. `over` is the scope they are
+    /// under.
     fn draw_children(
         &self,
         entries: Vec<Child>,
         parent: &Place,
         above: &[usize],
+        over: Option<&Scope>,
         trunk: &mut Vec<bool>,
         lines: &mut Vec<Line>,
     ) {
@@ -756,16 +798,21 @@ impl TreeLayout<'_> {
                     prefix: prefix(trunk, last, false, None),
                     depth,
                     folded: None,
+                    pointed: false,
                     place: None,
                     content: Content::Note(note),
                 }),
                 Child::Elided(members) => {
+                    let handle = Handle::Elided(parent.clone());
                     // A run rests as the count it was drawn to be.
-                    let open = self.folds.expanded(&Handle::Elided(parent.clone()), false);
+                    let pointed = self.folds.pointed(&handle, over);
+                    let open = pointed.unwrap_or(false);
+                    let below = self.folds.beneath(&handle, over);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !open, None),
                         depth,
                         folded: Some(open),
+                        pointed: pointed.is_some(),
                         place: None,
                         content: Content::Elided {
                             count: self.run_size(&members, above),
@@ -780,7 +827,7 @@ impl TreeLayout<'_> {
                         // said it was the last.
                         trunk.push(!last);
                         let entries = members.into_iter().map(Child::Node).collect();
-                        self.draw_children(entries, parent, above, trunk, lines);
+                        self.draw_children(entries, parent, above, below, trunk, lines);
                         trunk.pop();
                     }
                 }
@@ -794,18 +841,19 @@ impl TreeLayout<'_> {
                     let kids = self.children_entries(at, above);
                     let bead = self.facts.bead(self.tree, at, above);
                     let first = first_copy(self.tree, at, above);
+                    let handle = Handle::Bead(place.clone());
                     // Open the spine to the work a reader needs next and
                     // nothing else. A branch with none rests as one line, its
                     // glyph, its fraction and its marker saying what it holds.
-                    let open = !kids.is_empty()
-                        && self
-                            .folds
-                            .expanded(&Handle::Bead(place.clone()), first && bead.opens_a_fold);
+                    let pointed = self.folds.pointed(&handle, over);
+                    let open = !kids.is_empty() && pointed.unwrap_or(first && bead.opens_a_fold);
+                    let below = self.folds.beneath(&handle, over);
                     let folded = (!kids.is_empty()).then_some(open);
                     lines.push(Line {
                         prefix: prefix(trunk, last, !kids.is_empty() && !open, Some(&link.edge)),
                         depth,
                         folded,
+                        pointed: folded.is_some() && pointed.is_some(),
                         place: Some(place.clone()),
                         content: Content::Bead(row::cells(
                             node,
@@ -816,8 +864,8 @@ impl TreeLayout<'_> {
                     });
                     if open || self.beneath_shut {
                         trunk.push(!last);
-                        let below = way_below(above, at);
-                        self.draw_children(kids, &place, &below, trunk, lines);
+                        let way = way_below(above, at);
+                        self.draw_children(kids, &place, &way, below, trunk, lines);
                         trunk.pop();
                     }
                 }
@@ -827,7 +875,7 @@ impl TreeLayout<'_> {
 
     /// A node's children as they are drawn: the ones worth a line each, then
     /// one line for the run that is not.
-    fn children_entries<'a>(&'a self, at: usize, above: &[usize]) -> Vec<Child<'a>> {
+    fn children_entries<'b>(&'b self, at: usize, above: &[usize]) -> Vec<Child<'b>> {
         let (drawn, elided) = self.facts.split(self.tree, at, above);
         let mut entries: Vec<Child> = drawn
             .into_iter()
@@ -869,11 +917,12 @@ impl Layout<'_> {
     /// The scope, where the directory chose it. A scope the reader typed is
     /// silent, and a run reading everything has nothing to say.
     fn say_what_the_directory_chose(&self, lines: &mut Vec<Line>) {
-        if let Scope::Directory { project, .. } = &self.snapshot.scope {
+        if let config::Scope::Directory { project, .. } = &self.snapshot.scope {
             lines.push(Line {
                 prefix: INDENT.to_string(),
                 depth: 0,
                 folded: None,
+                pointed: false,
                 place: None,
                 content: Content::Scoped {
                     project: project.clone(),
@@ -925,6 +974,7 @@ fn nothing_to_draw() -> Line {
         prefix: String::new(),
         depth: 0,
         folded: None,
+        pointed: false,
         place: None,
         content: Content::Note(Note::NoRoots),
     }

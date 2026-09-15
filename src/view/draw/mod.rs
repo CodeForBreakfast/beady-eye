@@ -303,6 +303,7 @@ mod tests {
             prefix: prefix.into(),
             depth: 1,
             folded: None,
+            pointed: false,
             place: None,
             content,
         }
