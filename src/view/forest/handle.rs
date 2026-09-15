@@ -237,6 +237,28 @@ impl Folds {
         self.0.clear();
     }
 
+    /// Every line the folds name: the ones with an entry, and the ones a
+    /// scope leaves resting. A line named nowhere here answers from the
+    /// scope over it alone, and so does everything beneath it.
+    pub(super) fn mentioned(&self) -> impl Iterator<Item = &Handle> {
+        self.0.iter().flat_map(|(handle, fold)| {
+            let resting = match &fold.scope {
+                Some(Scope::Points { resting, .. }) => Some(resting.iter()),
+                _ => None,
+            };
+            std::iter::once(handle).chain(resting.into_iter().flatten())
+        })
+    }
+
+    /// Which way every fold under a scope answers, where nothing nearer
+    /// names it: pointed as the scope points, or left to rest.
+    pub(super) fn forced(over: Option<&Scope>) -> Option<bool> {
+        match over {
+            Some(Scope::Points { open, .. }) => Some(*open),
+            Some(Scope::Rests) | None => None,
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn entries(&self) -> impl Iterator<Item = (&Handle, &Fold)> {
         self.0.iter()
@@ -261,4 +283,21 @@ pub(super) fn handle_of(line: &Line) -> Option<Handle> {
 
 pub(super) fn selectable(line: &Line) -> bool {
     handle_of(line).is_some()
+}
+
+/// Whether a line is the one a handle names, asked without spelling the
+/// line's own handle out.
+pub(super) fn names(line: &Line, handle: &Handle) -> bool {
+    match (handle, &line.content) {
+        (Handle::Bead(place), Content::Bead(_) | Content::Unread(_)) => {
+            line.place.as_ref() == Some(place)
+        }
+        (Handle::Project(project), Content::Project(line)) => line.project == *project,
+        (Handle::Elided(place), Content::Elided { under, .. }) => under == place,
+        (Handle::Group(kind, project), Content::Group(group)) => {
+            group.kind == *kind && group.project == *project
+        }
+        (Handle::Item(key), Content::Item(item)) => item_key(item).as_ref() == Some(key),
+        _ => false,
+    }
 }

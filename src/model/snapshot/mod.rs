@@ -599,10 +599,15 @@ impl Snapshot {
     /// over what was collected, so what it hid is still in hand and still
     /// answers for itself.
     pub fn tree(&self, root: &BeadKey) -> Option<&Tree> {
+        self.shared_tree(root).map(Arc::as_ref)
+    }
+
+    /// The same tree, as the snapshot shares it, for a holder that outlives
+    /// the snapshot's own view of it.
+    pub fn shared_tree(&self, root: &BeadKey) -> Option<&Arc<Tree>> {
         self.collected
             .iter()
             .find(|tree| tree.project == root.project && tree.root == root.id)
-            .map(Arc::as_ref)
     }
 
     /// Where a key sits: the tree holding it, shown or hidden, and its place

@@ -21,6 +21,7 @@ use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFact
 /// A hidden tree is a tree, and the filter only decides where it is drawn,
 /// so it is answered as the shown ones are rather than when a reader opens
 /// the group holding it.
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct Facts {
     trees: BTreeMap<BeadKey, TreeFacts>,
     projects: BTreeMap<String, Counts>,
@@ -68,12 +69,14 @@ impl Facts {
 /// way down changes nothing. A tree with a loop cut in it is asked by the way
 /// down, as ever, because two copies of a bead on either side of the cut
 /// stand over different things.
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct TreeFacts {
     beads: Option<Vec<Answered>>,
 }
 
 /// What one bead answers, and what the run its finished children make
 /// stands for — nothing where they make none.
+#[derive(Debug, PartialEq, Eq)]
 struct Answered {
     facts: BeadFacts,
     run: usize,
@@ -99,6 +102,12 @@ impl TreeFacts {
             })
             .collect();
         TreeFacts { beads: Some(beads) }
+    }
+
+    /// The answers a bead has one of, whichever way down reaches it: every
+    /// bead's, in a tree with no loop in it, and none in a tree with one.
+    pub(super) fn uniform(&self) -> Option<Uniform<'_>> {
+        self.beads.as_deref().map(Uniform)
     }
 
     /// What the line at `at` says of the tree beneath it.
@@ -133,5 +142,27 @@ impl TreeFacts {
             }
             None => run_size(tree, members, above),
         }
+    }
+}
+
+/// One tree's answers where every bead has one answer, asked by the bead
+/// alone.
+#[derive(Clone, Copy)]
+pub(super) struct Uniform<'a>(&'a [Answered]);
+
+impl Uniform<'_> {
+    pub(super) fn bead(&self, at: usize) -> &BeadFacts {
+        &self.0[at].facts
+    }
+
+    /// The children of `at` split into the ones drawn and the run that is
+    /// not. No way down is needed to cut a loop, because there is none.
+    pub(super) fn split<'a>(&self, tree: &'a Tree, at: usize) -> (Vec<&'a Link>, Vec<&'a Link>) {
+        split_by(tree, at, &[], |bead| self.0[bead].facts.finished)
+    }
+
+    /// What the run under `at` stands for.
+    pub(super) fn run(&self, at: usize) -> usize {
+        self.0[at].run
     }
 }
