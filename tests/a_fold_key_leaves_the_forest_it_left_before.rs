@@ -85,6 +85,11 @@ const THE_TRACKER_WITH_NEW_WORK: &str =
     include_str!("fixtures/bd_every_fold_kind_and_new_work.json");
 const THE_NEW_PANE: &str = "wT:p3";
 
+/// The same tracker after the seat on `atl-1.1.1` has finished it and gone,
+/// which leaves nothing under `atl-1.1` to rest it open.
+const THE_TRACKER_WITH_FINISHED_WORK: &str =
+    include_str!("fixtures/bd_every_fold_kind_and_finished_work.json");
+
 const EXPAND_THE_FOREST: &[u8] = b"E";
 const COLLAPSE_THE_FOREST: &[u8] = b"C";
 const RESTORE_THE_FOREST: &[u8] = b"D";
@@ -106,6 +111,7 @@ const SHOW_IT: &[u8] = b"\r";
 const BACK: &[u8] = b"\x1b";
 
 /// Rows of the first screen, counted from the top, that the tests select.
+const RAISE_THE_BEACON: u16 = 1;
 const GLAZE_THE_LANTERN: u16 = 4;
 const THE_COPY_UNDER_IT: u16 = 5;
 const MOUNT_THE_LENS: u16 = 6;
@@ -379,6 +385,64 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
             "  └─▸ 1 tree with no live agent  a to show all",
+        ]
+    );
+}
+
+/// `e` holds every fold under it open as the key set it, the ones it found
+/// resting open included. `cast the bracket` rested open onto the seat on
+/// `pour the iron`; once that bead is finished and the seat gone, the fold
+/// would rest shut, and stays open under the `e` instead. Every tree is
+/// shown first, so that the tree is still drawn once nobody is on it.
+#[test]
+fn a_refresh_keeps_a_fold_e_found_resting_open_open_when_the_work_under_it_finishes() {
+    let (mut bdi, fixture) = over_every_fold_kind("finished-work", &TALL);
+    bdi.send(SHOW_EVERY_TREE);
+    bdi.send(&clicked_on(RAISE_THE_BEACON));
+    bdi.send(EXPAND_THE_SUBTREE);
+    assert_eq!(
+        forest(&mut bdi, &TALL),
+        &[
+            "▾ atlas  ✓ <age> ago  3/10  1 agent",
+            "  ├── ○ atl-1  raise the beacon  3/8",
+            "  │   ├── ○ .1  cast the bracket  0/2",
+            "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
+            "  │   ├── ○ .2  glaze the lantern  0/3",
+            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+            "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
+            "  │   ├── ○ .3  mount the lens  0/3",
+            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+            "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
+            "  │   └── ✓ 3 more beads · closed, and nobody on them",
+            "  │       ├── ✓ .4  survey the headland",
+            "  │       ├── ✓ .5  draw up the plans",
+            "  │       └── ✓ .6  clear the site",
+            "  └─▸ ○ atl-2  dredge the harbour  0/2",
+        ]
+    );
+
+    fixture.tracker.holds(THE_TRACKER_WITH_FINISHED_WORK);
+    fixture.herdr.lists(&fixture.panes(&[]));
+    bdi.send(REFRESH);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    assert_eq!(
+        forest(&mut bdi, &TALL),
+        &[
+            "▾ atlas  ✓ <age> ago  4/10",
+            "  ├── ○ atl-1  raise the beacon  4/8",
+            "  │   ├── ○ .1  cast the bracket  1/2",
+            "  │   │   └── ✓ .1  pour the iron",
+            "  │   ├── ○ .2  glaze the lantern  1/3",
+            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  1/2",
+            "  │   │       └── ✓ .1  pour the iron",
+            "  │   ├── ○ .3  mount the lens  1/3",
+            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  1/2",
+            "  │   │       └── ✓ .1  pour the iron",
+            "  │   └── ✓ 3 more beads · closed, and nobody on them",
+            "  │       ├── ✓ .4  survey the headland",
+            "  │       ├── ✓ .5  draw up the plans",
+            "  │       └── ✓ .6  clear the site",
+            "  └─▸ ○ atl-2  dredge the harbour  0/2",
         ]
     );
 }
