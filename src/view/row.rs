@@ -78,6 +78,9 @@ pub enum Cell {
     Progress,
     Agent,
     Anomalies,
+    /// Only a config naming one badge on its own builds this, and nothing
+    /// reads such a config yet.
+    #[allow(dead_code)]
     Badge(String),
 }
 
