@@ -691,11 +691,12 @@ impl Forest {
     /// there is no scope, at `open`.
     ///
     /// A fold the reader cannot see is still a fold, so the lines are drawn
-    /// beneath every fold and the walk reads that one draw. Opening points
-    /// the folds found shut and leaves one resting open to rest, so it goes
-    /// on following the default. Shutting points every fold: one left open
-    /// under a shut parent would spring its subtree back the moment that
-    /// parent was opened again.
+    /// beneath every fold and the walk reads that one draw. Every fold
+    /// beneath is pointed, the ones resting that way already included, so
+    /// what the key set holds across a refresh: one left open under a shut
+    /// parent would spring its subtree back the moment that parent was
+    /// opened again, and one left resting open would shut when what held
+    /// it open moved on.
     ///
     /// The whole forest is every line at the top of it, each taken as a
     /// scope of its own.
@@ -729,26 +730,8 @@ impl Forest {
                 }
                 continue;
             }
-            // A line resting open is under no scope and is its bead's first
-            // copy, and so is every line above it, so nothing beneath any
-            // other kind of undrawn line can rest open.
-            let mut resting = BTreeSet::new();
-            let mut beneath = Vec::new();
-            drawn.visit(within, &mut |node| {
-                if open && node.line.folded == Some(true) && !node.line.pointed {
-                    resting.extend(handle_of(&node.line));
-                }
-                if !std::ptr::eq(node, within) {
-                    beneath.extend(handle_of(&node.line));
-                }
-                match &node.beneath {
-                    Beneath::Nothing => true,
-                    Beneath::Bead(undrawn) | Beneath::Run(undrawn) => {
-                        open && undrawn.counted.forced.is_none() && undrawn.counted.first
-                    }
-                }
-            });
-            self.folds.set_over(scope, open, resting, &beneath);
+            let beneath = named_beneath(&drawn, within);
+            self.folds.set_over(scope, open, &beneath);
         }
     }
 
@@ -6408,13 +6391,13 @@ credential_command = "secret harbour"
         );
     }
 
-    /// `e` points the folds it found shut and leaves the rest to rest, so a
-    /// fold that was open because of the agent beneath it follows the
-    /// default when that agent moves. The spine to `tow-1.1.1.1` rests open
-    /// while the agent is there and shut once it has moved to `tow-1.2.1`;
-    /// `tow-1.2` rested shut, and is the one fold `e` set.
+    /// `e` holds every fold beneath it open as the key set it, the ones it
+    /// found resting open included, so a fold that was open because of the
+    /// agent beneath it stays open when that agent moves. The spine to
+    /// `tow-1.1.1.1` rested open while the agent was there, and is still
+    /// open once it has moved to `tow-1.2.1`.
     #[test]
-    fn expanding_leaves_a_fold_resting_open_to_follow_the_default() {
+    fn expanding_holds_a_fold_it_found_resting_open_across_a_refresh() {
         let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         forest.apply(Action::ExpandSubtree);
 
@@ -6422,7 +6405,14 @@ credential_command = "secret harbour"
 
         assert_eq!(
             drawn_beads(&forest),
-            ["tow-1", "tow-1.1", "tow-1.2", "tow-1.2.1"],
+            [
+                "tow-1",
+                "tow-1.1",
+                "tow-1.1.1",
+                "tow-1.1.1.1",
+                "tow-1.2",
+                "tow-1.2.1"
+            ],
             "{:#?}",
             sketch(&forest)
         );
@@ -6438,31 +6428,22 @@ credential_command = "secret harbour"
     }
 
     /// `e` writes one entry, on the line it was pressed on, saying everything
-    /// beneath it opens, and names in it the folds it found resting open so
-    /// they go on following the default. Nothing is written per line: the
-    /// spine to `tow-1.1.1.1` rests open and is named, `tow-1.2` rested shut
-    /// and is what the scope opens.
+    /// beneath it opens. Nothing is written per line: the spine to
+    /// `tow-1.1.1.1` rests open and `tow-1.2` rested shut, and neither is
+    /// named.
     #[test]
-    fn expanding_a_subtree_holds_one_entry_naming_what_it_left_resting() {
+    fn expanding_a_subtree_holds_one_entry() {
         let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         forest.apply(Action::ExpandSubtree);
 
         let root = Handle::Bead(place_of_line(&forest, "tow-1"));
-        let resting = BTreeSet::from([
-            root.clone(),
-            Handle::Bead(place_of_line(&forest, "tow-1.1")),
-            Handle::Bead(place_of_line(&forest, "tow-1.1.1")),
-        ]);
         assert_eq!(
             forest.folds.entries().collect::<Vec<_>>(),
             [(
                 &root,
                 &Fold {
                     line: None,
-                    scope: Some(handle::Scope::Points {
-                        open: true,
-                        resting
-                    }),
+                    scope: Some(handle::Scope::Points { open: true }),
                 }
             )],
             "{:#?}",
