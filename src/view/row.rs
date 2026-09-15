@@ -74,10 +74,7 @@ pub struct Row {
 /// `Badges` stands for every badge the row's layout does not name on its
 /// own, in config order, so naming one badge takes it out of `Badges` and
 /// adding a badge to the config does not mean editing the row.
-///
-/// A config writes each by the name `Display` gives it, and `badge.<key>` for
-/// one badge; a word that is neither is refused with that word in the reason.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Cell {
     Glyph,
     Id,
@@ -145,9 +142,6 @@ impl<'de> Deserialize<'de> for Cell {
 /// Notes and the fold's counts are not cells: they are the row's reports
 /// about itself and trail the state whatever the layout says. The
 /// box-drawing prefix is a fixed head in front of the identity, not a cell.
-///
-/// Read from a config's `[row]` table list by list, so a list left out is
-/// the default's and one written is read as written, empty included.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Layout {

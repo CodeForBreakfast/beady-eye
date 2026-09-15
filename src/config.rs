@@ -1,7 +1,7 @@
 //! What a setup tells `bdi`: the shape of the config file, what each setting
 //! means, and what `bdi` refuses to read.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -31,8 +31,6 @@ pub struct Config {
     pub tui: Tui,
     #[serde(default)]
     pub theme: Theme,
-    /// Which cells a bead's row draws in each of its blocks, and in what
-    /// order.
     #[serde(default)]
     pub row: Layout,
     /// Which of `projects` this run reads, and what chose them. The rest stay
@@ -759,7 +757,7 @@ impl Config {
                 );
             }
         }
-        let mut named: BTreeSet<&Cell> = BTreeSet::new();
+        let mut named: HashSet<&Cell> = HashSet::new();
         if let Some(twice) = cfg.row.cells().find(|cell| !named.insert(cell)) {
             anyhow::bail!(
                 "[row] names {twice} twice; a cell is drawn in one place, so name it in one list"
