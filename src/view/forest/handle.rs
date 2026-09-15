@@ -5,7 +5,7 @@
 //! a fold, laying out asks which way one points, and neither reaches past the
 //! other to do it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::Conflict;
 use crate::model::types::PaneKey;
@@ -66,45 +66,180 @@ pub(super) fn item_key(item: &Item) -> Option<ItemKey> {
 /// selection. Keeping the two apart is what lets a fold outlive moving
 /// away from it without freezing every other root at whatever it was.
 ///
+/// A key that points one fold writes that fold. A key that points a subtree
+/// writes one entry, on the line it was pressed on, and every fold beneath
+/// answers from it unless a nearer entry says otherwise — so the map is the
+/// size of what the reader pressed, not of what those presses opened.
+///
 /// The map itself never leaves: a fold is asked which way it points, pointed,
 /// or let go of, and nothing else.
 #[derive(Default)]
-pub(super) struct Folds(BTreeMap<Handle, bool>);
+pub(super) struct Folds(BTreeMap<Handle, Fold>);
+
+/// What the reader set on one line.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct Fold {
+    /// Which way the line's own fold points, where a key that points one
+    /// fold set it. Wins over any scope.
+    pub(super) line: Option<bool>,
+    /// What the line and everything beneath it answer from, where a key that
+    /// points a subtree set it.
+    pub(super) scope: Option<Scope>,
+}
+
+/// What every fold under one line answers from, unless a nearer entry says
+/// otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Scope {
+    /// Every fold points this way, but for the ones named as resting, which
+    /// go on following the default: the folds `e` found resting open, and
+    /// the way down to work that arrived under a scope that shut.
+    Points {
+        open: bool,
+        resting: BTreeSet<Handle>,
+    },
+    /// Every fold rests, whatever a scope above says.
+    Rests,
+}
+
+impl Fold {
+    fn holds_shut(&self) -> bool {
+        self.line == Some(false) || matches!(self.scope, Some(Scope::Points { open: false, .. }))
+    }
+
+    fn leave_resting(&mut self, handle: Handle) {
+        if let Some(Scope::Points { resting, .. }) = &mut self.scope {
+            resting.insert(handle);
+        }
+    }
+}
 
 impl Folds {
-    /// Whether a fold is open: what the user set it to, or how it rests when
-    /// they have not touched it. Only the caller knows the tree a line came
-    /// from, so it says where the line rests rather than being asked to
-    /// re-derive it here.
-    pub(super) fn expanded(&self, handle: &Handle, resting: bool) -> bool {
-        self.0.get(handle).copied().unwrap_or(resting)
+    /// Which way the reader has pointed a fold, from the nearest entry on the
+    /// way down to it: the line's own fold, the scope set on the line, or the
+    /// scope `over` it. Nothing where the fold is left to rest, which only
+    /// the caller knows the tree well enough to say the way of.
+    pub(super) fn pointed(&self, handle: &Handle, over: Option<&Scope>) -> Option<bool> {
+        if let Some(open) = self.0.get(handle).and_then(|fold| fold.line) {
+            return Some(open);
+        }
+        match self.beneath(handle, over) {
+            Some(Scope::Points { open, resting }) if !resting.contains(handle) => Some(*open),
+            _ => None,
+        }
+    }
+
+    /// The scope everything under a line answers from: the one set on the
+    /// line where a key set one there, and the one `over` the line otherwise.
+    pub(super) fn beneath<'a>(
+        &'a self,
+        handle: &Handle,
+        over: Option<&'a Scope>,
+    ) -> Option<&'a Scope> {
+        self.0
+            .get(handle)
+            .and_then(|fold| fold.scope.as_ref())
+            .or(over)
     }
 
     /// Point one fold the way the user asked.
     pub(super) fn set(&mut self, handle: Handle, open: bool) {
-        self.0.insert(handle, open);
+        self.0.entry(handle).or_default().line = Some(open);
+    }
+
+    /// Point a line and every fold beneath it one way, but for `resting`,
+    /// which are left to follow the default. Whatever the reader had set
+    /// beneath it goes: the scope is what they are asking for now.
+    pub(super) fn set_over(
+        &mut self,
+        handle: Handle,
+        open: bool,
+        resting: BTreeSet<Handle>,
+        beneath: &[Handle],
+    ) {
+        for under in beneath {
+            self.0.remove(under);
+        }
+        let scope = Some(Scope::Points { open, resting });
+        self.0.insert(handle, Fold { line: None, scope });
+    }
+
+    /// Hand a line and everything beneath it back to the default, and hold
+    /// it there against the scope on `over` where one is standing over it.
+    pub(super) fn let_go(&mut self, handle: Handle, beneath: &[Handle], over: Option<&Handle>) {
+        for under in beneath {
+            self.0.remove(under);
+        }
+        self.0.remove(&handle);
+        if over.is_some_and(|over| self.points_at(over)) {
+            let scope = Some(Scope::Rests);
+            self.0.insert(handle, Fold { line: None, scope });
+        }
+    }
+
+    fn points_at(&self, handle: &Handle) -> bool {
+        matches!(
+            self.0.get(handle),
+            Some(Fold {
+                scope: Some(Scope::Points { .. }),
+                ..
+            })
+        )
+    }
+
+    /// Whether a key that points a subtree has set a scope on this line.
+    pub(super) fn scopes(&self, handle: &Handle) -> bool {
+        self.0.get(handle).is_some_and(|fold| fold.scope.is_some())
     }
 
     /// The folds the user has shut, which are the only ones that can be
-    /// spent: a fold left open holds nothing back.
+    /// spent: a fold left open holds nothing back. A scope that shut is one
+    /// of them, on the line it was set on.
     pub(super) fn shut(&self) -> impl Iterator<Item = &Handle> {
         self.0
             .iter()
-            .filter(|(_, open)| !**open)
+            .filter(|(_, fold)| fold.holds_shut())
             .map(|(handle, _)| handle)
     }
 
-    /// Let go of the folds named, handing each back to the default it rests
-    /// at.
-    pub(super) fn spend(&mut self, spent: &[Handle]) {
-        for handle in spent {
+    /// Let go of the shut fold at `handle`, handing it back to the default
+    /// under whatever scope stands `over` it. Where the fold is itself a
+    /// scope that shut, `path` — the way down to what arrived beneath — is
+    /// let go of with it, and the scope goes on standing over the rest.
+    pub(super) fn spend(
+        &mut self,
+        handle: &Handle,
+        over: Option<&Handle>,
+        path: impl IntoIterator<Item = Handle>,
+    ) {
+        let Some(fold) = self.0.get_mut(handle) else {
+            return;
+        };
+        if fold.line == Some(false) {
+            fold.line = None;
+        }
+        fold.leave_resting(handle.clone());
+        if matches!(fold.scope, Some(Scope::Points { open: false, .. })) {
+            for under in path {
+                fold.leave_resting(under);
+            }
+        }
+        if *fold == Fold::default() {
             self.0.remove(handle);
+        }
+        if let Some(over) = over.and_then(|over| self.0.get_mut(over)) {
+            over.leave_resting(handle.clone());
         }
     }
 
     /// Let go of every fold at once.
     pub(super) fn clear(&mut self) {
         self.0.clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn entries(&self) -> impl Iterator<Item = (&Handle, &Fold)> {
+        self.0.iter()
     }
 }
 
