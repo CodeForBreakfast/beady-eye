@@ -58,27 +58,48 @@ pub(super) fn draw(
     folds: &Folds,
     rooted: Option<&Rooted>,
 ) -> Vec<Line> {
-    #[cfg(test)]
-    DRAWS.with(|draws| draws.set(draws.get() + 1));
     Layout {
         snapshot,
         facts,
         folds,
         rooted,
+        beneath_shut: false,
+    }
+    .draw()
+}
+
+/// Every line the snapshot draws and every line a shut fold hides, each fold
+/// still saying which way it points.
+///
+/// What a key that points every fold under a line reads: a fold beneath a
+/// shut fold is on no line the screen draws, and pointing only what was
+/// drawn cost a draw per level to reach it.
+pub(super) fn draw_beneath_every_fold(
+    snapshot: &Snapshot,
+    facts: &Facts,
+    folds: &Folds,
+    rooted: Option<&Rooted>,
+) -> Vec<Line> {
+    Layout {
+        snapshot,
+        facts,
+        folds,
+        rooted,
+        beneath_shut: true,
     }
     .draw()
 }
 
 #[cfg(test)]
 thread_local! {
+    /// How many times this thread has laid the forest out, for a test to
+    /// say what a key cost.
     static DRAWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// How many times this thread has drawn a forest, so a test can say what a
-/// keystroke costs.
 #[cfg(test)]
-pub(super) fn draws_on_this_thread() -> usize {
-    DRAWS.with(std::cell::Cell::get)
+pub(super) fn draws_so_far() -> usize {
+    DRAWS.with(|draws| draws.get())
 }
 
 /// The one bead the forest is rooted at, where the reader has asked for that:
@@ -415,10 +436,14 @@ struct Layout<'a> {
     /// The bead the forest is rooted at, where the reader has rooted it at
     /// one. Nothing is drawn outside what hangs beneath it.
     rooted: Option<&'a Rooted>,
+    /// Whether to draw what a shut fold hides as well.
+    beneath_shut: bool,
 }
 
 impl<'a> Layout<'a> {
     fn draw(&self) -> Vec<Line> {
+        #[cfg(test)]
+        DRAWS.with(|draws| draws.set(draws.get() + 1));
         let mut lines = Vec::new();
         // Every project the config names, in that order — the ones with rows
         // and the ones no collection has reached, which is every project on
@@ -475,7 +500,7 @@ impl<'a> Layout<'a> {
             }),
         });
 
-        if !open {
+        if !open && !self.beneath_shut {
             return;
         }
         let trees: Vec<&Tree> = match self.rooted {
@@ -515,6 +540,7 @@ impl<'a> Layout<'a> {
                 rests_shut: false,
                 rooted: self.rooted,
                 without: None,
+                beneath_shut: self.beneath_shut,
             }
             .draw(&mut trunk, entries == 0, lines);
         }
@@ -552,7 +578,7 @@ impl<'a> Layout<'a> {
             place: None,
             content: Content::Group(group),
         });
-        if !open {
+        if !open && !self.beneath_shut {
             return;
         }
         if project.is_some() {
@@ -570,6 +596,7 @@ impl<'a> Layout<'a> {
                         rests_shut: true,
                         rooted: None,
                         without: root.without,
+                        beneath_shut: self.beneath_shut,
                     }
                     .draw(trunk, n + 1 == count, lines);
                 }
@@ -641,6 +668,8 @@ struct TreeLayout<'a> {
     /// else. Only the root the focused bead stands in, drawn behind the line
     /// the mode holds it back with, has one.
     without: Option<usize>,
+    /// Whether to draw what a shut fold hides as well.
+    beneath_shut: bool,
 }
 
 impl TreeLayout<'_> {
@@ -700,7 +729,7 @@ impl TreeLayout<'_> {
         });
 
         let mut entries: Vec<Child> = notes_of(self.tree).into_iter().map(Child::Note).collect();
-        if open {
+        if open || self.beneath_shut {
             entries.extend(kids);
         }
         trunk.push(!last);
@@ -743,7 +772,7 @@ impl TreeLayout<'_> {
                             under: parent.clone(),
                         },
                     });
-                    if open {
+                    if open || self.beneath_shut {
                         // A run is always the last of its parent's entries, so
                         // its beads hang under it rather than beside the
                         // siblings they belong to: anything drawn after it at
@@ -785,7 +814,7 @@ impl TreeLayout<'_> {
                             shut_over(bead.beneath, folded),
                         )),
                     });
-                    if open {
+                    if open || self.beneath_shut {
                         trunk.push(!last);
                         let below = way_below(above, at);
                         self.draw_children(kids, &place, &below, trunk, lines);
