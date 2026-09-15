@@ -1,0 +1,156 @@
+[
+  {
+    "id": "atl-1",
+    "title": "raise the beacon",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "atl-1.1",
+    "title": "cast the bracket",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "parent": "atl-1",
+    "dependencies": [
+      {
+        "issue_id": "atl-1.1",
+        "depends_on_id": "atl-1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "atl-1.1.1",
+    "title": "pour the iron",
+    "status": "in_progress",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-1.1",
+    "metadata": {
+      "agent_pane": "wT:p2"
+    },
+    "dependencies": [
+      {
+        "issue_id": "atl-1.1.1",
+        "depends_on_id": "atl-1.1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "atl-1.2",
+    "title": "glaze the lantern",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-1",
+    "dependencies": [
+      {
+        "issue_id": "atl-1.2",
+        "depends_on_id": "atl-1",
+        "type": "parent-child"
+      },
+      {
+        "issue_id": "atl-1.2",
+        "depends_on_id": "atl-1.1",
+        "type": "blocks"
+      }
+    ]
+  },
+  {
+    "id": "atl-1.3",
+    "title": "mount the lens",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-1",
+    "dependencies": [
+      {
+        "issue_id": "atl-1.3",
+        "depends_on_id": "atl-1",
+        "type": "parent-child"
+      },
+      {
+        "issue_id": "atl-1.3",
+        "depends_on_id": "atl-1.1",
+        "type": "blocks"
+      }
+    ]
+  },
+  {
+    "id": "atl-1.4",
+    "title": "survey the headland",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-1",
+    "closed_at": "2026-08-28T09:00:00Z",
+    "dependencies": [
+      {
+        "issue_id": "atl-1.4",
+        "depends_on_id": "atl-1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "atl-1.5",
+    "title": "draw up the plans",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-1",
+    "closed_at": "2026-08-28T09:00:00Z",
+    "dependencies": [
+      {
+        "issue_id": "atl-1.5",
+        "depends_on_id": "atl-1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "atl-1.6",
+    "title": "clear the site",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-1",
+    "closed_at": "2026-08-28T09:00:00Z",
+    "dependencies": [
+      {
+        "issue_id": "atl-1.6",
+        "depends_on_id": "atl-1",
+        "type": "parent-child"
+      }
+    ]
+  },
+  {
+    "id": "atl-2",
+    "title": "dredge the harbour",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "epic",
+    "parent": "",
+    "dependencies": []
+  },
+  {
+    "id": "atl-2.1",
+    "title": "survey the silt",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "parent": "atl-2",
+    "dependencies": [
+      {
+        "issue_id": "atl-2.1",
+        "depends_on_id": "atl-2",
+        "type": "parent-child"
+      }
+    ]
+  }
+]

@@ -24,7 +24,10 @@
 //! * a forest with a tracker's beads in it, opened and walked to a known
 //!   row — [`over_the_described_subtree`] and [`THE_DESCRIBED_SUBTREE`];
 //! * a forest with more lines than a short screen has room for, for a test
-//!   about what scrolls — [`over_the_loose_roots`] and [`THE_LOOSE_ROOTS`].
+//!   about what scrolls — [`over_the_loose_roots`] and [`THE_LOOSE_ROOTS`];
+//! * the screen put back together from what reached the wire, as the row a
+//!   word is on or as every row's text — [`row_of`], [`rows_of`],
+//!   [`rows_drawn`].
 //!
 //! The size is why this is a harness rather than a shell one-liner: `script
 //! -T` with stdout to a file gives a 0x0 pty, and ratatui then draws an empty
@@ -328,6 +331,25 @@ pub fn rows_of(screen: &[u8], needle: &[u8]) -> Vec<u16> {
     drawn_rows(screen)
         .into_iter()
         .flat_map(|(row, said)| said.matches(needle).map(|_| row).collect::<Vec<_>>())
+        .collect()
+}
+
+/// Every row of the screen as the text on it, top row first, with the cells
+/// nothing was written to left blank and each row's trailing blanks dropped —
+/// for a test whose assertion is the frame rather than one word of it.
+///
+/// Read a frame `bdi` was made to repaint whole, for the reason `row_of`
+/// gives: one drawn as a difference from the frame before holds only the
+/// cells that moved.
+pub fn rows_drawn(screen: &[u8]) -> Vec<String> {
+    let drawn = drawn_rows(screen);
+    let rows = drawn.keys().last().map_or(0, |last| usize::from(*last) + 1);
+    (0..rows)
+        .map(|row| {
+            drawn
+                .get(&(row as u16))
+                .map_or_else(String::new, |said| said.trim_end().to_string())
+        })
         .collect()
 }
 
