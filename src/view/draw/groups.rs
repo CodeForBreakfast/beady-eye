@@ -48,7 +48,9 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         state,
     );
     match group.kind {
-        GroupKind::OutOfTheWay => line.briefly(out_of_the_way_counts(group)),
+        GroupKind::OutOfTheWay => {
+            line.briefly(out_of_the_way_counts(group), Vec::new(), Vec::new())
+        }
         _ => line,
     }
 }

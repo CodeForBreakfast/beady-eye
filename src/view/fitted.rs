@@ -107,6 +107,14 @@ pub(crate) struct Shorter {
     pub(crate) said: String,
 }
 
+/// The state block a row falls back to, with what is a link in it and what
+/// says itself more shortly.
+struct Briefly {
+    spans: Vec<Span<'static>>,
+    links: Vec<Link>,
+    shorter: Vec<Shorter>,
+}
+
 pub(crate) fn indent() -> String {
     " ".repeat(GAP)
 }
@@ -124,7 +132,7 @@ pub struct Fitted {
     identity: Vec<Span<'static>>,
     title: Vec<Span<'static>>,
     state: Vec<Span<'static>>,
-    briefly: Option<Vec<Span<'static>>>,
+    briefly: Option<Briefly>,
     shorter: Vec<Shorter>,
     links: Vec<Link>,
     whole: Style,
@@ -171,9 +179,22 @@ impl Fitted {
     /// room for the short form, gives the title the rest, and says the long
     /// form only where it costs the title nothing — so a caption that could
     /// be any length cannot eat the row it is drawn on.
+    ///
+    /// It is a state block of its own, so its links and short forms are its
+    /// own too: `linking` and `shortening` name spans of the long form, and
+    /// the short form's spans are numbered from the start again.
     #[must_use]
-    pub(crate) fn briefly(mut self, state: Vec<Span<'static>>) -> Self {
-        self.briefly = Some(state);
+    pub(crate) fn briefly(
+        mut self,
+        state: Vec<Span<'static>>,
+        links: Vec<Link>,
+        shorter: Vec<Shorter>,
+    ) -> Self {
+        self.briefly = Some(Briefly {
+            spans: state,
+            links,
+            shorter,
+        });
         self
     }
 
@@ -247,7 +268,13 @@ impl Widget for Fitted {
             (identity, linked)
         } else {
             let room = width - columns(&identity);
-            let ((title, title_drawn), (state, state_drawn)) = match self.briefly {
+            // Settled inside the match rather than after it, because which
+            // list the state's links come from is settled there: the row's
+            // own, or the short form's.
+            let state_links = |state: &[Span<'static>], drawn: usize, links: &[Link]| {
+                surviving(links, Block::State, state, drawn, width - columns(state))
+            };
+            let ((title, title_drawn), (state, state_linked)) = match self.briefly {
                 None => {
                     let limit = room.saturating_sub(GAP);
                     let (state, state_drawn) = fit(
@@ -257,13 +284,14 @@ impl Widget for Fitted {
                     );
                     let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
                     let limit = left.saturating_sub(GAP);
+                    let linked = state_links(&state, state_drawn, &links);
                     (
                         fit(
                             shortened(self.title, &shorter, Block::Title, limit),
                             limit,
                             self.title_or_nothing,
                         ),
-                        (state, state_drawn),
+                        (state, linked),
                     )
                 }
                 Some(briefly) => {
@@ -272,7 +300,9 @@ impl Widget for Fitted {
                     // short one, and room kept for a form the row will not
                     // use is room taken off the title for nothing.
                     let shortest = shortened(self.state.clone(), &shorter, Block::State, 0);
-                    let room_for_state = columns(&briefly).min(columns(&shortest)) + GAP;
+                    let briefest =
+                        shortened(briefly.spans.clone(), &briefly.shorter, Block::State, 0);
+                    let room_for_state = columns(&briefest).min(columns(&shortest)) + GAP;
                     let limit = room.saturating_sub(GAP + room_for_state);
                     let (title, title_drawn) = fit(
                         shortened(self.title, &shorter, Block::Title, limit),
@@ -283,12 +313,16 @@ impl Widget for Fitted {
                     let limit = left.saturating_sub(GAP);
                     let state = shortened(self.state, &shorter, Block::State, limit);
                     let state = if columns(&state) <= limit {
-                        let drawn = state.len();
-                        (state, drawn)
+                        let linked = state_links(&state, state.len(), &links);
+                        (state, linked)
                     } else {
-                        // A link names a span of the state, and `briefly`
-                        // draws none of them.
-                        (fit(briefly, limit, self.state_or_nothing).0, 0)
+                        let (state, drawn) = fit(
+                            shortened(briefly.spans, &briefly.shorter, Block::State, limit),
+                            limit,
+                            self.state_or_nothing,
+                        );
+                        let linked = state_links(&state, drawn, &briefly.links);
+                        (state, linked)
                     };
                     ((title, title_drawn), state)
                 }
@@ -302,13 +336,7 @@ impl Widget for Fitted {
                 title_drawn,
                 columns(&identity) + GAP,
             ));
-            linked.extend(surviving(
-                &links,
-                Block::State,
-                &state,
-                state_drawn,
-                width - columns(&state),
-            ));
+            linked.extend(state_linked);
 
             let mut spans = identity;
             if !title.is_empty() {
@@ -631,7 +659,7 @@ mod tests {
             vec![Span::raw(title.to_string())],
             vec![Span::raw("working on the parser")],
         )
-        .briefly(vec![Span::raw("working")])
+        .briefly(vec![Span::raw("working")], Vec::new(), Vec::new())
     }
 
     /// The long form is said only where it costs the title nothing. One column
@@ -790,7 +818,7 @@ mod tests {
             ],
             vec![Span::raw("working on the parser")],
         )
-        .briefly(vec![Span::raw("working")])
+        .briefly(vec![Span::raw("working")], Vec::new(), Vec::new())
         .shortening(vec![Shorter {
             block: Block::Title,
             at: 2,
