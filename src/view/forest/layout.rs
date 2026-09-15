@@ -761,23 +761,17 @@ impl<'a> TreeLayout<'a> {
 
     /// The scope over the bead the forest is rooted at. The beads above it
     /// are drawn behind the line the mode holds the rest back with, and a
-    /// scope set on one of them, or on the run one of them holds the next in,
-    /// still stands over it — so they are read on the way down to it, as the
-    /// walk that drew them would have read them.
+    /// scope set on one of them still stands over it — so they are read on
+    /// the way down to it, as the walk that drew them would have read them.
     fn scope_over_rooted(&self, rooted: &Rooted) -> Option<&'a Scope> {
         let folds: &'a Folds = self.folds;
         let mut over = self.over;
         let mut place = Place::root(root_key(self.tree));
-        for (depth, step) in rooted.way.windows(2).enumerate() {
-            let (at, next) = (step[0], step[1]);
+        for step in &rooted.way[1..] {
             over = folds.beneath(&Handle::Bead(place.clone()), over);
-            let (_, elided) = self.facts.split(self.tree, at, &rooted.way[..depth]);
-            if elided.iter().any(|link| link.bead == next) {
-                over = folds.beneath(&Handle::Elided(place.clone()), over);
-            }
             place = place.step_to(BeadKey {
                 project: self.tree.project.clone(),
-                id: self.tree.beads[next].id.clone(),
+                id: self.tree.beads[*step].id.clone(),
             });
         }
         over

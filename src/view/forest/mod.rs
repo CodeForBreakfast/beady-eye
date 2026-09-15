@@ -666,7 +666,7 @@ impl Forest {
         };
         let drawn = self.drawn_beneath_every_fold();
         let within = subtree_of(&drawn, &scope);
-        if holds_back(&scope) {
+        if passing(&scope) {
             for handle in within.iter().filter_map(handle_of) {
                 self.folds.let_go(handle, &[]);
             }
@@ -703,7 +703,7 @@ impl Forest {
             if within.first().is_none_or(|line| line.folded.is_none()) {
                 continue;
             }
-            if holds_back(&scope) {
+            if passing(&scope) {
                 let pointed: Vec<Handle> = within
                     .iter()
                     .filter(|line| line.folded.is_some_and(|was| !open || !was))
@@ -1367,15 +1367,16 @@ fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
     &drawn[at..end]
 }
 
-/// Whether a line is one of the two that hold trees back for the filter or
-/// the mode. Each stands over nothing once the trees are shown or the
-/// forest is put back, so a scope set on one would go with it and leave
-/// what it pointed resting: a key pressed on one points each fold beneath
-/// it by itself, as every line did once.
-fn holds_back(handle: &Handle) -> bool {
+/// Whether a line stands over what is beneath it only for now: a run of
+/// quiet children, which goes when its siblings drop below three, or a
+/// group of trees the filter or the mode holds back, which goes when the
+/// trees are shown or the forest is put back. A scope set on one would go
+/// with it and leave what it pointed resting, so a key pressed on one
+/// points each fold beneath it by itself, as every line did once.
+fn passing(handle: &Handle) -> bool {
     matches!(
         handle,
-        Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
+        Handle::Elided(_) | Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
     )
 }
 
@@ -6488,14 +6489,53 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A fixture with one bead taken out of it.
+    fn without(json: &str, id: &str) -> String {
+        let beads: Vec<serde_json::Value> = serde_json::from_str(json).expect("fixture is json");
+        let kept: Vec<serde_json::Value> =
+            beads.into_iter().filter(|bead| bead["id"] != id).collect();
+        serde_json::Value::Array(kept).to_string()
+    }
+
     /// Tower with `tow-1.1.1.1` gone, so `tow-1.1.1` is a leaf with no fold.
     fn tower_without_cables() -> Snapshot {
-        let beads: Vec<serde_json::Value> = serde_json::from_str(TOWER).expect("tower is json");
-        let kept: Vec<serde_json::Value> = beads
-            .into_iter()
-            .filter(|bead| bead["id"] != "tow-1.1.1.1")
-            .collect();
-        alone("orbital", &serde_json::Value::Array(kept).to_string(), &[])
+        alone("orbital", &without(TOWER, "tow-1.1.1.1"), &[])
+    }
+
+    /// A run goes when its finished siblings drop below three, and what `e`
+    /// on it opened stays open outside it: `dep-1.2` was opened by `e` on
+    /// the run and is still open onto `dep-1.2.1` once `dep-1.4` has gone
+    /// and the run with it.
+    #[test]
+    fn a_branch_expanded_from_a_run_stays_open_once_the_run_has_gone() {
+        let mut forest = flatten(depot());
+        select_run(&mut forest);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(alone(
+            "orbital",
+            &without(DEPOT, "dep-1.4"),
+            &panes_on(&["dep-1.1"]),
+        ));
+
+        let under_the_root = place_of_line(&forest, "dep-1");
+        assert!(
+            !forest.lines().iter().any(
+                |line| matches!(&line.content, Content::Elided { under, .. } if *under == under_the_root)
+            ),
+            "the run has gone: {:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 
     /// A fold set on a line whose children have since gone is still a fold,
@@ -6550,12 +6590,11 @@ credential_command = "secret harbour"
         );
     }
 
-    /// A scope set on a run stands over a bead the forest is then rooted at
-    /// from inside that run, as a scope on a bead does: `dep-1.2` was opened
-    /// by `e` on the run it hangs in, and stays open onto `dep-1.2.1` when the
-    /// forest is rooted at it.
+    /// What `e` on a run opened stays open when the forest is rooted at a
+    /// bead inside that run: `dep-1.2` was opened by `e` on the run it hangs
+    /// in, and stays open onto `dep-1.2.1` when the forest is rooted at it.
     #[test]
-    fn rooting_the_forest_inside_an_expanded_run_keeps_the_runs_scope_over_it() {
+    fn rooting_the_forest_inside_an_expanded_run_keeps_it_open() {
         let mut forest = flatten(depot());
         select_run(&mut forest);
         forest.apply(Action::ExpandSubtree);
