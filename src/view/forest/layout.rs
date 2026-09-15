@@ -615,7 +615,6 @@ impl<'a> Layout<'a> {
             prefix: marker(open).to_string(),
             depth: 0,
             folded: Some(open),
-            pointed: pointed.is_some(),
             place: None,
             content: Content::Project(ProjectLine {
                 every_root_read: self.snapshot.every_root_read(&project),
@@ -702,7 +701,6 @@ impl<'a> Layout<'a> {
             prefix,
             depth,
             folded: Some(open),
-            pointed: pointed.is_some(),
             place: None,
             content: Content::Group(group),
         };
@@ -760,7 +758,6 @@ impl<'a> Layout<'a> {
                         prefix: prefix(trunk, n + 1 == count, false, None),
                         depth,
                         folded: None,
-                        pointed: false,
                         place: None,
                         content: Content::Item(item),
                     },
@@ -850,7 +847,6 @@ impl<'a> TreeLayout<'a> {
                     prefix: prefix(trunk, last, false, None),
                     depth,
                     folded: None,
-                    pointed: false,
                     place: Some(root),
                     content: Content::Unread(Unread {
                         root: self.tree.root.clone(),
@@ -881,7 +877,6 @@ impl<'a> TreeLayout<'a> {
             depth,
             None,
             folded,
-            folded.is_some() && pointed.is_some(),
             &bead,
         );
 
@@ -948,7 +943,6 @@ impl<'a> TreeLayout<'a> {
                         prefix: prefix(trunk, last, false, None),
                         depth,
                         folded: None,
-                        pointed: false,
                         place: None,
                         content: Content::Note(note),
                     },
@@ -967,7 +961,6 @@ impl<'a> TreeLayout<'a> {
                         last,
                         depth,
                         open,
-                        pointed.is_some(),
                     );
                     let mut children = Vec::new();
                     if open || self.layout.beneath_shut {
@@ -1043,7 +1036,6 @@ impl<'a> TreeLayout<'a> {
             trunk.len() as u16 + 1,
             Some(&link.edge),
             folded,
-            folded.is_some() && pointed.is_some(),
             &bead,
         );
         let mut children = Vec::new();
@@ -1143,14 +1135,12 @@ fn bead_line(
     depth: u16,
     edge: Option<&Edge>,
     folded: Option<bool>,
-    pointed: bool,
     bead: &BeadFacts,
 ) -> Line {
     Line {
         prefix: prefix(trunk, last, folded == Some(false), edge),
         depth,
         folded,
-        pointed,
         place: Some(place),
         content: Content::Bead(row::cells(
             node,
@@ -1169,13 +1159,11 @@ fn run_line(
     last: bool,
     depth: u16,
     open: bool,
-    pointed: bool,
 ) -> Line {
     Line {
         prefix: prefix(trunk, last, !open, None),
         depth,
         folded: Some(open),
-        pointed,
         place: None,
         content: Content::Elided {
             count,
@@ -1362,7 +1350,6 @@ fn undrawn_node(
         depth,
         Some(&link.edge),
         folded,
-        folded.is_some() && counted.forced.is_some(),
         bead,
     );
     let beneath = if open || beneath_shut {
@@ -1427,7 +1414,6 @@ pub(super) fn beneath_bead(ground: &Ground, node: &Node, undrawn: &Undrawn) -> V
             true,
             depth,
             open,
-            counted.forced.is_some(),
         );
         let beneath = if open || ground.beneath_shut {
             Beneath::Run(Undrawn {
@@ -1518,7 +1504,6 @@ impl Layout<'_> {
                     prefix: INDENT.to_string(),
                     depth: 0,
                     folded: None,
-                    pointed: false,
                     place: None,
                     content: Content::Scoped {
                         project: project.clone(),
@@ -1572,7 +1557,6 @@ fn nothing_to_draw() -> Line {
         prefix: String::new(),
         depth: 0,
         folded: None,
-        pointed: false,
         place: None,
         content: Content::Note(Note::NoRoots),
     }

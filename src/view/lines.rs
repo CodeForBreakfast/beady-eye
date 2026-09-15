@@ -109,10 +109,6 @@ pub struct Line {
     pub depth: u16,
     /// Whether this line's fold is open, where it has one at all.
     pub folded: Option<bool>,
-    /// Whether the reader pointed that fold, by a key on the line or a scope
-    /// over it, rather than it resting where the default puts it. What a key
-    /// that points a subtree reads to leave a resting fold resting.
-    pub pointed: bool,
     /// Where this line was drawn, where it stands for a bead at all: a bead's
     /// own row, and a tree header's root. One field rather than a key beside
     /// a position, so the two can never disagree about which copy this is.
