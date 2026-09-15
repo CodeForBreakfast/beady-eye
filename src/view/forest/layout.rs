@@ -22,13 +22,14 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Node as Bead, Snapshot, Tree};
 use crate::model::tree::Link;
 use crate::model::types::Edge;
+use crate::view::draw::identity_widths;
 use crate::view::lines::{
     first_copy, links_below, marker, notes_of, prefix, root_key, run_size, way_below, BeadFacts,
     Content, Group, GroupKind, Item, Line, Note, Place, ProjectLine, Unread, INDENT,
 };
-use crate::view::row::{self, abbreviate};
+use crate::view::row::{self, Widths};
 
-use super::drawn::{id_width_drawn, Beneath, Count, Counted, Drawn, Ground, Node, Undrawn};
+use super::drawn::{Beneath, Count, Counted, Drawn, Ground, Node, Undrawn};
 use super::facts::{Facts, TreeFacts, Uniform};
 use super::handle::{item_key, Folds, Handle, ItemKey, Scope};
 
@@ -62,14 +63,16 @@ fn shut_over(beneath: Counts, folded: Option<bool>) -> Option<Counts> {
 }
 
 /// Every line the snapshot draws, in render order. `facts` is what the
-/// snapshot answered when the forest took it.
+/// snapshot answered when the forest took it, and `row` is what each bead's
+/// row is drawn by.
 pub(super) fn lay_out(
     snapshot: &Snapshot,
     facts: &Arc<Facts>,
     folds: &Folds,
     rooted: Option<&Rooted>,
+    row: &row::Layout,
 ) -> Drawn {
-    Layout::new(snapshot, facts, folds, rooted, false, &[]).draw()
+    Layout::new(snapshot, facts, folds, rooted, false, &[], row).draw()
 }
 
 /// Every line the snapshot draws as one `Vec`, for a test to read whole.
@@ -80,7 +83,7 @@ pub(super) fn draw(
     folds: &Folds,
     rooted: Option<&Rooted>,
 ) -> Vec<Line> {
-    lay_out(snapshot, facts, folds, rooted)
+    lay_out(snapshot, facts, folds, rooted, &row::Layout::default())
         .iter()
         .cloned()
         .collect()
@@ -99,8 +102,9 @@ pub(super) fn draw_beneath_every_fold(
     folds: &Folds,
     rooted: Option<&Rooted>,
     also: &[Handle],
+    row: &row::Layout,
 ) -> Drawn {
-    Layout::new(snapshot, facts, folds, rooted, true, also).draw()
+    Layout::new(snapshot, facts, folds, rooted, true, also, row).draw()
 }
 
 #[cfg(test)]
@@ -488,11 +492,15 @@ struct Layout<'a> {
     rooted: Option<&'a Rooted>,
     /// Whether to draw what a shut fold hides as well.
     beneath_shut: bool,
+    /// What each bead's row is drawn by, which says which cells a subtree
+    /// left undrawn is measured over.
+    row: &'a row::Layout,
     named: Named,
     kept: RefCell<Kept>,
 }
 
 impl<'a> Layout<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         snapshot: &'a Snapshot,
         facts: &'a Arc<Facts>,
@@ -500,6 +508,7 @@ impl<'a> Layout<'a> {
         rooted: Option<&'a Rooted>,
         beneath_shut: bool,
         also: &[Handle],
+        row: &'a row::Layout,
     ) -> Self {
         Layout {
             snapshot,
@@ -507,6 +516,7 @@ impl<'a> Layout<'a> {
             folds,
             rooted,
             beneath_shut,
+            row,
             named: Named::of(folds.mentioned().chain(also)),
             kept: RefCell::default(),
         }
@@ -542,6 +552,7 @@ impl<'a> Layout<'a> {
                 runs: kept.runs,
                 beneath_shut: self.beneath_shut,
             }),
+            self.row,
         )
     }
 
@@ -781,7 +792,14 @@ impl<'a> Layout<'a> {
     /// per bead and kept for the lines that are drawn from it later.
     fn count(&self, tree: &Tree, answers: Uniform, counted: Counted) -> Count {
         let mut kept = self.kept.borrow_mut();
-        count(&mut kept, tree, answers, self.beneath_shut, counted)
+        count(
+            &mut kept,
+            tree,
+            answers,
+            self.beneath_shut,
+            self.row,
+            counted,
+        )
     }
 }
 
@@ -1202,18 +1220,19 @@ fn run_size_undrawn(
     }
 }
 
-/// The rows and the widest id a subtree nothing draws adds up to, from the
-/// tree alone: which way every fold in it goes is the scope's, or the
-/// default's, and neither needs the line.
+/// The rows and the identity's widths a subtree nothing draws adds up to,
+/// from the tree alone: which way every fold in it goes is the scope's, or
+/// the default's, and neither needs the line.
 fn count(
     kept: &mut Kept,
     tree: &Tree,
     answers: Uniform,
     beneath_shut: bool,
+    row: &row::Layout,
     counted: Counted,
 ) -> Count {
     if let Some(count) = kept.beads.get(&counted) {
-        return *count;
+        return count.clone();
     }
     let Counted {
         at,
@@ -1227,7 +1246,7 @@ fn count(
     let open = kids && forced.unwrap_or(first && answers.bead(at).opens_a_fold);
     let mut total = Count {
         rows: 1,
-        id_width: 0,
+        widths: Widths::default(),
     };
     if open || beneath_shut {
         for link in &drawn {
@@ -1236,6 +1255,7 @@ fn count(
                 tree,
                 answers,
                 beneath_shut,
+                row,
                 counted,
                 link,
             ));
@@ -1246,12 +1266,13 @@ fn count(
                 tree,
                 answers,
                 beneath_shut,
+                row,
                 counted,
                 &elided,
             ));
         }
     }
-    kept.beads.insert(counted, total);
+    kept.beads.insert(counted, total.clone());
     total
 }
 
@@ -1261,33 +1282,46 @@ fn count_run(
     tree: &Tree,
     answers: Uniform,
     beneath_shut: bool,
+    row: &row::Layout,
     under: Counted,
     members: &[&Link],
 ) -> Count {
     if let Some(count) = kept.runs.get(&under) {
-        return *count;
+        return count.clone();
     }
     let open = under.forced.unwrap_or(false);
     let mut total = Count {
         rows: 1,
-        id_width: 0,
+        widths: Widths::default(),
     };
     if open || beneath_shut {
         for link in members {
-            total.add(count_child(kept, tree, answers, beneath_shut, under, link));
+            total.add(count_child(
+                kept,
+                tree,
+                answers,
+                beneath_shut,
+                row,
+                under,
+                link,
+            ));
         }
     }
-    kept.runs.insert(under, total);
+    kept.runs.insert(under, total.clone());
     total
 }
 
-/// What one child of a counted bead adds up to, its own id's width among
+/// What one child of a counted bead adds up to, its own line's widths among
 /// the widths beneath its parent.
+///
+/// The line is made to be measured, as it would be to be drawn: what is
+/// shut over it is not, because nothing in the identity says so.
 fn count_child(
     kept: &mut Kept,
     tree: &Tree,
     answers: Uniform,
     beneath_shut: bool,
+    row: &row::Layout,
     parent: Counted,
     link: &Link,
 ) -> Count {
@@ -1296,21 +1330,21 @@ fn count_child(
         first: parent.first && link.first,
         ..parent
     };
-    let beneath = count(kept, tree, answers, beneath_shut, child);
-    let own = id_width_drawn(abbreviate(
-        &tree.beads[link.bead].id,
+    let mut count = count(kept, tree, answers, beneath_shut, row, child);
+    let own = row::cells(
+        &tree.beads[link.bead],
         Some(&tree.beads[parent.at].id),
-    ));
-    Count {
-        rows: beneath.rows,
-        id_width: beneath.id_width.max(own),
-    }
+        answers.bead(link.bead).progress,
+        None,
+    );
+    count.widths.merge(&identity_widths(&own, row));
+    count
 }
 
 impl Count {
     fn add(&mut self, beneath: Count) {
         self.rows += beneath.rows;
-        self.id_width = self.id_width.max(beneath.id_width);
+        self.widths.merge(&beneath.widths);
     }
 }
 

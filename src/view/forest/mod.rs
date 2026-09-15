@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Filter, Snapshot, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
+use crate::view::row;
 use crate::view::{Action, Motion, Notch};
 
 pub use drawn::Drawn;
@@ -136,6 +137,9 @@ pub struct Forest {
     /// still true after both, and the matches are worked out again from where
     /// the selection has actually got to.
     searched: Option<String>,
+    /// Which cells a bead's row draws, and in what order: what the lines'
+    /// identity widths are measured over.
+    layout: row::Layout,
 }
 
 /// Flatten a snapshot into its lines.
@@ -151,6 +155,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         selected: 0,
         focused: None,
         searched: None,
+        layout: row::Layout::default(),
     };
     forest.lay_out();
     forest.select_first_root();
@@ -307,8 +312,14 @@ impl Forest {
         if spent.is_empty() {
             return;
         }
-        let drawn =
-            layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None, &[]);
+        let drawn = layout::draw_beneath_every_fold(
+            &self.snapshot,
+            &self.facts,
+            &self.folds,
+            None,
+            &[],
+            &self.layout,
+        );
         let anywhere = arrived_anywhere(&spent);
         let mut reaching = Reaching::new(&anywhere);
         for (handle, arrived) in spent {
@@ -756,6 +767,7 @@ impl Forest {
             &self.folds,
             rooted.as_ref(),
             also,
+            &self.layout,
         )
     }
 
@@ -1218,7 +1230,13 @@ impl Forest {
     fn lay_out(&mut self) -> Drawn {
         self.settle_cursor();
         let rooted = self.rooted();
-        let drawn = layout::lay_out(&self.snapshot, &self.facts, &self.folds, rooted.as_ref());
+        let drawn = layout::lay_out(
+            &self.snapshot,
+            &self.facts,
+            &self.folds,
+            rooted.as_ref(),
+            &self.layout,
+        );
         let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
@@ -1543,12 +1561,13 @@ mod tests {
     use crate::model::tree::{self, Assembled, Nesting};
     use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::{Bead, Pane};
+    use crate::view::draw::identity_widths;
     use crate::view::lines::{
         counts_beneath, facts_of, links_below, marker, prefix, progress_of, run_size, split,
         walks_on_this_thread, way_below, Group, Item, Note, ProjectLine, OPEN, SHUT,
     };
     use crate::view::phrase;
-    use crate::view::row::{Progress, Row};
+    use crate::view::row::{Cell, Progress, Row, Widths};
     use crate::view::walk::{self, Rows};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -1723,6 +1742,19 @@ mod tests {
        "priority":2,"issue_type":"task"},
       {"id":"tow-1.2.1","title":"tie the rebar","status":"open",
        "dependencies":[{"depends_on_id":"tow-1.2","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A tree whose widest id is two levels down, where nothing the folds
+    /// name reaches: what an expanded forest counts rather than draws.
+    const WIDE_BELOW: &str = r#"[
+      {"id":"tow-1","title":"raise the tower","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"tow-1.1","title":"stand the mast","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"tow-1.1.1000000","title":"bolt the sections","status":"open",
+       "dependencies":[{"depends_on_id":"tow-1.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -3180,6 +3212,44 @@ credential_command = "secret harbour"
         assert!(counted > 0, "{:#?}", sketch(&forest));
         assert_eq!(lines, drawn.len());
         assert_eq!(drawn.iter().count(), drawn.len());
+    }
+
+    /// The width table covers the lines a reader has not looked at yet: a
+    /// subtree counted rather than drawn is measured into the same table, so
+    /// the id column does not shift when a scroll first draws it. Once every
+    /// line is drawn, the lines measure the table they were given.
+    #[test]
+    fn the_widths_measure_the_lines_a_counted_subtree_has_not_drawn() {
+        let mut forest = flatten(alone("orbital", WIDE_BELOW, &[]));
+        forest.apply(Action::ExpandForest);
+        let drawn = forest.lines();
+        let widths_of = |lines: &mut dyn Iterator<Item = &Line>| {
+            let mut widths = Widths::default();
+            for line in lines {
+                if let Content::Bead(row) = &line.content {
+                    widths.merge(&identity_widths(row, &forest.layout));
+                }
+            }
+            widths
+        };
+
+        let mut so_far = Vec::new();
+        for top in drawn.top() {
+            drawn.visit(top, &mut |node| {
+                so_far.push(&node.line);
+                matches!(node.beneath, Beneath::Nothing)
+            });
+        }
+        let before = widths_of(&mut so_far.into_iter());
+        assert!(
+            before.of(&Cell::Id) < ".1000000".len(),
+            "the widest id is drawn before anything reaches it: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(drawn.widths().of(&Cell::Id), ".1000000".len());
+
+        let every = widths_of(&mut drawn.iter());
+        assert_eq!(drawn.widths(), &every);
     }
 
     /// The lines a forest draws depend on its folds, its root and its

@@ -91,8 +91,12 @@ mod tests {
     fn no_status_is_told_apart_by_colour_alone() {
         for status in every_status() {
             let node = node("smt-4kd3p.1", "a bead", status.clone());
-            let drawn =
-                Painted::of(bead_line(&row(&node), BRANCH, 3, &Layout::default()), 40, 1).rows();
+            let drawn = Painted::of(
+                bead_line(&row(&node), BRANCH, &ids(3), &Layout::default()),
+                40,
+                1,
+            )
+            .rows();
 
             assert!(
                 drawn[0].contains(row::status_glyph(&status)),
@@ -141,8 +145,12 @@ mod tests {
 
         for (status, colour) in bds {
             let bead = node("smt-4kd3p.1", "a bead", status.clone());
-            let painted =
-                Painted::of(bead_line(&row(&bead), BRANCH, 3, &Layout::default()), 60, 1).row(0);
+            let painted = Painted::of(
+                bead_line(&row(&bead), BRANCH, &ids(3), &Layout::default()),
+                60,
+                1,
+            )
+            .row(0);
 
             assert!(
                 painted[1].said.starts_with(row::status_glyph(&status)),
@@ -166,7 +174,7 @@ mod tests {
         staffed.agent = Some(a_pane());
 
         let painted = Painted::of(
-            bead_line(&row(&staffed), BRANCH, 3, &Layout::default()),
+            bead_line(&row(&staffed), BRANCH, &ids(3), &Layout::default()),
             90,
             1,
         )
@@ -199,7 +207,7 @@ mod tests {
         staffed.agent = Some(a_pane());
 
         let bright = Painted::of(
-            bead_line(&row(&staffed), BRANCH, 3, &Layout::default()),
+            bead_line(&row(&staffed), BRANCH, &ids(3), &Layout::default()),
             90,
             1,
         )
@@ -208,7 +216,7 @@ mod tests {
             bead_line(
                 &row(&node("smt-4kd3p.1", "a bead", Status::Open)),
                 BRANCH,
-                3,
+                &ids(3),
                 &Layout::default(),
             ),
             90,
@@ -259,7 +267,7 @@ mod tests {
             bead_line(
                 &row(&node("smt-4kd3p.1", "a bead", Status::Closed)),
                 BRANCH,
-                3,
+                &ids(3),
                 &Layout::default(),
             ),
             60,
@@ -284,7 +292,7 @@ mod tests {
         alive.anomalies = vec![Anomaly::StalePane];
 
         let painted = Painted::of(
-            bead_line(&row(&alive), BRANCH, 3, &Layout::default()),
+            bead_line(&row(&alive), BRANCH, &ids(3), &Layout::default()),
             110,
             1,
         )
@@ -306,8 +314,12 @@ mod tests {
         let mut odd = node("smt-4kd3p.1", "a bead", Status::Closed);
         odd.anomalies = vec![Anomaly::StalePane];
 
-        let painted =
-            Painted::of(bead_line(&row(&odd), BRANCH, 3, &Layout::default()), 110, 1).row(0);
+        let painted = Painted::of(
+            bead_line(&row(&odd), BRANCH, &ids(3), &Layout::default()),
+            110,
+            1,
+        )
+        .row(0);
 
         assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
         assert_eq!(
@@ -421,7 +433,7 @@ mod tests {
 
         for row in every_liveness_row() {
             let tone = tone(&row);
-            let words = Painted::of(bead_line(&row, BRANCH, 3, &Layout::default()), 200, 1)
+            let words = Painted::of(bead_line(&row, BRANCH, &ids(3), &Layout::default()), 200, 1)
                 .rows()
                 .swap_remove(0);
 
@@ -458,8 +470,12 @@ mod tests {
         let finished = node("smt-4kd3p.1", "a bead", Status::Closed);
 
         for bead in [staffed, unworked, finished] {
-            let painted =
-                Painted::of(bead_line(&row(&bead), BRANCH, 3, &Layout::default()), 90, 1).row(0);
+            let painted = Painted::of(
+                bead_line(&row(&bead), BRANCH, &ids(3), &Layout::default()),
+                90,
+                1,
+            )
+            .row(0);
 
             assert!(painted[0].said.starts_with(BRANCH), "{painted:?}");
             assert_eq!(painted[0].style.fg, Some(Color::Reset), "{painted:?}");
@@ -480,7 +496,7 @@ mod tests {
             bead_line(
                 &row(&node("smt-4kd3p.1", "a bead", Status::Closed)),
                 BRANCH,
-                3,
+                &ids(3),
                 &Layout::default(),
             ),
             60,
@@ -523,7 +539,7 @@ mod tests {
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
 
         let painted = Painted::of(
-            bead_line(&row(&staffed), BRANCH, 3, &Layout::default()),
+            bead_line(&row(&staffed), BRANCH, &ids(3), &Layout::default()),
             120,
             1,
         )
@@ -549,8 +565,12 @@ mod tests {
     fn a_status_bd_never_had_is_painted_the_colour_of_the_note_beside_it() {
         let odd = node("smt-4kd3p.1", "a bead", Status::Other("triage".into()));
 
-        let painted =
-            Painted::of(bead_line(&row(&odd), BRANCH, 3, &Layout::default()), 120, 1).row(0);
+        let painted = Painted::of(
+            bead_line(&row(&odd), BRANCH, &ids(3), &Layout::default()),
+            120,
+            1,
+        )
+        .row(0);
 
         assert!(painted[1].said.starts_with('?'), "{painted:?}");
         assert_eq!(painted[1].style.fg, palette::ATTENTION.fg, "{painted:?}");

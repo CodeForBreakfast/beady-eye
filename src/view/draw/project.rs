@@ -727,8 +727,18 @@ mod tests {
         ));
         let root = &forest.lines()[1];
 
-        let painted = Painted::of(fitted(root, 12, &Layout::default(), &at_rest()), 60, 1).row(0);
-        let drawn = Painted::of(fitted(root, 12, &Layout::default(), &at_rest()), 60, 1).rows();
+        let painted = Painted::of(
+            fitted(root, &ids(12), &Layout::default(), &at_rest()),
+            60,
+            1,
+        )
+        .row(0);
+        let drawn = Painted::of(
+            fitted(root, &ids(12), &Layout::default(), &at_rest()),
+            60,
+            1,
+        )
+        .rows();
 
         assert!(
             drawn[0].contains(&format!(

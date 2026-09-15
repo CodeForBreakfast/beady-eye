@@ -2,9 +2,9 @@
 //!
 //! Every reader of the forest asks one of a few things of its lines: how many
 //! there are, which line is on a row, which row a handle is on, the rows a
-//! band has room for, and how wide the widest id is. They ask here rather
-//! than of a slice, so that what stands behind the questions can change
-//! without the questions moving.
+//! band has room for, and how wide each identity cell draws. They ask here
+//! rather than of a slice, so that what stands behind the questions can
+//! change without the questions moving.
 //!
 //! What stands behind them is a tree of the lines, expanded only as far as a
 //! reader has looked. A line whose subtree no fold names is drawn from the
@@ -16,11 +16,10 @@ use std::collections::HashMap;
 use std::ops::Index;
 use std::sync::{Arc, OnceLock};
 
-use ratatui::text::Span;
-
 use crate::model::snapshot::Tree;
-use crate::view::fitted::columns;
+use crate::view::draw::identity_widths;
 use crate::view::lines::{Content, Line};
+use crate::view::row::{self, Widths};
 
 use super::facts::Facts;
 use super::handle::{names, Handle};
@@ -31,7 +30,7 @@ use super::layout;
 pub struct Drawn {
     top: Vec<Node>,
     rows: usize,
-    id_width: usize,
+    widths: Widths,
     /// What a subtree left undrawn is drawn from. Nothing where every line
     /// was handed over drawn.
     ground: Option<Arc<Ground>>,
@@ -62,12 +61,12 @@ pub(super) struct Counted {
     pub(super) without: Option<usize>,
 }
 
-/// What a subtree adds up to: its rows, and the widest id drawn strictly
-/// beneath its own line.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// What a subtree adds up to: its rows, and how wide each identity cell
+/// draws on the lines strictly beneath its own.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Count {
     pub(super) rows: usize,
-    pub(super) id_width: usize,
+    pub(super) widths: Widths,
 }
 
 /// One line, and everything drawn beneath it.
@@ -188,18 +187,20 @@ impl Drawn {
                 None => top.push(node),
             }
         }
-        Self::over(top, None)
+        Self::over(top, None, &row::Layout::default())
     }
 
-    pub(super) fn over(top: Vec<Node>, ground: Option<Ground>) -> Self {
+    /// `layout` is what each bead's row is drawn by, and says which cells
+    /// the identity's widths are measured over.
+    pub(super) fn over(top: Vec<Node>, ground: Option<Ground>, layout: &row::Layout) -> Self {
         let rows = top.iter().map(|node| node.rows).sum();
         let mut drawn = Drawn {
             top,
             rows,
-            id_width: 0,
+            widths: Widths::default(),
             ground: ground.map(Arc::new),
         };
-        drawn.id_width = drawn.widest_id();
+        drawn.widths = drawn.widest(layout);
         drawn
     }
 
@@ -266,22 +267,25 @@ impl Drawn {
         rows
     }
 
-    /// The widest abbreviated id drawn, so every title starts in the same
-    /// column and a reader's eye runs down one edge rather than a ragged one.
-    pub fn id_width(&self) -> usize {
-        self.id_width
+    /// How wide each identity cell draws on the widest line of the forest,
+    /// so every title starts in the same column and a reader's eye runs down
+    /// one edge rather than a ragged one.
+    pub fn widths(&self) -> &Widths {
+        &self.widths
     }
 
-    fn widest_id(&self) -> usize {
-        let mut widest = 0;
+    fn widest(&self, layout: &row::Layout) -> Widths {
+        let mut widest = Widths::default();
         let mut left: Vec<&Node> = self.top.iter().collect();
         while let Some(node) = left.pop() {
-            widest = widest.max(id_width_of(&node.line));
+            if let Content::Bead(row) = &node.line.content {
+                widest.merge(&identity_widths(row, layout));
+            }
             match &node.beneath {
                 Beneath::Nothing => left.extend(node.children(self.ground())),
                 beneath => {
                     if let Some(count) = self.count_of(beneath) {
-                        widest = widest.max(count.id_width);
+                        widest.merge(&count.widths);
                     }
                 }
             }
@@ -341,32 +345,18 @@ impl Drawn {
     }
 
     /// The count a subtree left undrawn was given.
-    pub(super) fn count_of(&self, beneath: &Beneath) -> Option<Count> {
+    pub(super) fn count_of(&self, beneath: &Beneath) -> Option<&Count> {
         let ground = self.ground()?;
         match beneath {
             Beneath::Nothing => None,
-            Beneath::Bead(undrawn) => ground.beads.get(&undrawn.counted).copied(),
-            Beneath::Run(undrawn) => ground.runs.get(&undrawn.counted).copied(),
+            Beneath::Bead(undrawn) => ground.beads.get(&undrawn.counted),
+            Beneath::Run(undrawn) => ground.runs.get(&undrawn.counted),
         }
     }
 
     pub(super) fn tree(&self, index: usize) -> Option<&Arc<Tree>> {
         self.ground().and_then(|ground| ground.trees.get(index))
     }
-}
-
-/// How wide a line's id is drawn, for the lines that draw one.
-fn id_width_of(line: &Line) -> usize {
-    match &line.content {
-        Content::Bead(row) => columns(&[Span::raw(row.id.clone())]),
-        _ => 0,
-    }
-}
-
-/// The width the memo counts for a bead's abbreviated id, which is the width
-/// `id_width_of` reads off its drawn line.
-pub(super) fn id_width_drawn(id: &str) -> usize {
-    columns(&[Span::raw(id.to_string())])
 }
 
 /// The rows of a forest from one row on, in render order, each with its row.

@@ -29,10 +29,11 @@ use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine};
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::{Layout, AGENT, WARNING};
+use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
 pub use bands::{line_at, regions};
+pub(crate) use bead::identity_widths;
 pub use tail::{draw_tail, Band};
 
 use bead::{bead_line, elided_run};
@@ -127,11 +128,11 @@ pub fn draw(
     let lines = forest.lines();
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;
-    let ids = lines.id_width();
+    let widths = lines.widths();
     let reads = Reads::new(&forest.snapshot().read_at, collecting, now);
 
     for (row, (at, line)) in lines.viewport(forest.from(), height).enumerate() {
-        let drawn = fitted(line, ids, layout, &reads);
+        let drawn = fitted(line, widths, layout, &reads);
         let drawn = if at == selected {
             drawn.selected()
         } else {
@@ -162,7 +163,7 @@ pub fn draw(
 /// One line of the forest, whatever kind it is.
 pub(super) fn fitted(
     line: &lines::Line,
-    id_width: usize,
+    widths: &Widths,
     layout: &Layout,
     reads: &Reads,
 ) -> Fitted {
@@ -170,8 +171,8 @@ pub(super) fn fitted(
         Content::Project(project) => {
             project_line(project, &line.prefix, reads.of(project), reads.now)
         }
-        Content::Unread(unread) => unread_line(unread, &line.prefix, id_width),
-        Content::Bead(row) => bead_line(row, &line.prefix, id_width, layout),
+        Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
+        Content::Bead(row) => bead_line(row, &line.prefix, widths, layout),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Note(note) => {
             let (said, style) = finding(*note);
@@ -363,6 +364,12 @@ mod tests {
         row::cells(node, Some("smt-4kd3p"), None, None)
     }
 
+    /// A width table padding the id alone, as the default layout's forest
+    /// answers.
+    pub(super) fn ids(width: usize) -> Widths {
+        Widths::from([(Cell::Id, width)])
+    }
+
     /// A project whose roots all read, so its line is its name and its counts.
     pub(super) fn project(name: &str, counts: Counts) -> ProjectLine {
         ProjectLine {
@@ -391,7 +398,7 @@ mod tests {
         let painted = Painted::of(
             fitted(
                 &under(LAST, Content::Note(Note::Dangling(2))),
-                0,
+                &ids(0),
                 &Layout::default(),
                 &at_rest(),
             ),
@@ -413,7 +420,7 @@ mod tests {
         let painted = Painted::of(
             fitted(
                 &under("", Content::Note(Note::NoRoots)),
-                0,
+                &ids(0),
                 &Layout::default(),
                 &at_rest(),
             ),
@@ -799,6 +806,30 @@ mod tests {
                 "  ├── ⚠ smt-4kd3p  the tracker did not answer                                ",
                 "  └── ⚠ 1 unattributed pane                                                  ",
                 "      └── ◍ wCM:p9 working  /tmp/bdi-ground/summit-works                     ",
+            ]
+        );
+    }
+
+    /// An unread root has no row of its own to measure, so its id is padded to
+    /// the id column the bead rows settled between them: the reason beside it
+    /// starts where their titles do.
+    #[test]
+    fn an_unread_roots_reason_starts_where_the_bead_rows_titles_do() {
+        let unreadable =
+            Tree::tracker_unreachable("summit-works", "smt-7", TrackerFailure::Unavailable);
+        let forest = opened(&snapshot(
+            vec![grove(1), unreadable],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
+        let frame = frame_of(&forest, 70, 7).rows();
+
+        assert_eq!(
+            frame[1..4],
+            [
+                "  ├── ◐ smt-4kd3p  lift the ground station                         0/2",
+                "  │   └── ○ .1         bead number 1                                  ",
+                "  └── ⚠ smt-7      the tracker did not answer                         ",
             ]
         );
     }
