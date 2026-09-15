@@ -27,6 +27,12 @@ earns a share of one line. Most releases are shorter than this file.
 - Leave out what a reader cannot act on or notice: why a fix works, what the
   code used to do, which check now enforces it, which bead asked for it.
 
+**A speed-up is a feeling, not a figure.** Say that something is faster, or
+that it no longer freezes, in the terms a reader would use at the keyboard. No
+measurements and no mechanism: what was laid out, cached or counted belongs in
+the pull request. A word that exists only in the source is the tell that a
+line is about the build.
+
 **One line per paragraph and per bullet.** GitHub renders a Release body with
 hard line breaks on, so every newline inside a paragraph reaches a reader as a
 `<br>` and a wrapped file shows as ragged short lines. A fenced block keeps its
