@@ -367,8 +367,7 @@ impl Kept {
 /// saying what that span says now. A link whose span was dropped is not
 /// among them; one whose span was cut is, round the head it kept.
 ///
-/// `starts` is the column the block was drawn from, which for the state is
-/// where the right edge put it rather than where the blocks before it end.
+/// `starts` is the column the block was drawn from.
 fn surviving(
     links: &[Link],
     block: Block,
