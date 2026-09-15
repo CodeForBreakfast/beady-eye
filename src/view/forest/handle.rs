@@ -5,7 +5,7 @@
 //! a fold, laying out asks which way one points, and neither reaches past the
 //! other to do it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::model::join::Conflict;
 use crate::model::types::PaneKey;
@@ -102,20 +102,15 @@ pub(super) enum Way {
 /// otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Scope {
-    /// Every fold points this way, but for the ones named as resting — the
-    /// folds `e` found resting open — which go on following the default.
-    Points {
-        open: bool,
-        resting: BTreeSet<Handle>,
-    },
+    /// Every fold points this way.
+    Points { open: bool },
     /// Every fold rests, whatever a scope above says.
     Rests,
 }
 
 impl Fold {
     fn holds_shut(&self) -> bool {
-        self.line == Some(Way::Shut)
-            || matches!(self.scope, Some(Scope::Points { open: false, .. }))
+        self.line == Some(Way::Shut) || matches!(self.scope, Some(Scope::Points { open: false }))
     }
 }
 
@@ -132,10 +127,7 @@ impl Folds {
             Some(Way::Rests) => return None,
             None => {}
         }
-        match self.beneath(handle, over) {
-            Some(Scope::Points { open, resting }) if !resting.contains(handle) => Some(*open),
-            _ => None,
-        }
+        Folds::forced(self.beneath(handle, over))
     }
 
     /// The scope everything under a line answers from: the one set on the
@@ -157,20 +149,13 @@ impl Folds {
         self.0.entry(handle).or_default().line = Some(way);
     }
 
-    /// Point a line and every fold beneath it one way, but for `resting`,
-    /// which are left to follow the default. Whatever the reader had set
-    /// beneath it goes: the scope is what they are asking for now.
-    pub(super) fn set_over(
-        &mut self,
-        handle: Handle,
-        open: bool,
-        resting: BTreeSet<Handle>,
-        beneath: &[Handle],
-    ) {
+    /// Point a line and every fold beneath it one way. Whatever the reader
+    /// had set beneath it goes: the scope is what they are asking for now.
+    pub(super) fn set_over(&mut self, handle: Handle, open: bool, beneath: &[Handle]) {
         for under in beneath {
             self.0.remove(under);
         }
-        let scope = Some(Scope::Points { open, resting });
+        let scope = Some(Scope::Points { open });
         self.0.insert(handle, Fold { line: None, scope });
     }
 
@@ -210,7 +195,7 @@ impl Folds {
         let scope_shut = matches!(
             self.0.get(handle),
             Some(Fold {
-                scope: Some(Scope::Points { open: false, .. }),
+                scope: Some(Scope::Points { open: false }),
                 ..
             })
         );
@@ -237,17 +222,11 @@ impl Folds {
         self.0.clear();
     }
 
-    /// Every line the folds name: the ones with an entry, and the ones a
-    /// scope leaves resting. A line named nowhere here answers from the
-    /// scope over it alone, and so does everything beneath it.
+    /// Every line the folds name: the ones with an entry. A line named
+    /// nowhere here answers from the scope over it alone, and so does
+    /// everything beneath it.
     pub(super) fn mentioned(&self) -> impl Iterator<Item = &Handle> {
-        self.0.iter().flat_map(|(handle, fold)| {
-            let resting = match &fold.scope {
-                Some(Scope::Points { resting, .. }) => Some(resting.iter()),
-                _ => None,
-            };
-            std::iter::once(handle).chain(resting.into_iter().flatten())
-        })
+        self.0.keys()
     }
 
     /// Which way every fold under a scope answers, where nothing nearer
