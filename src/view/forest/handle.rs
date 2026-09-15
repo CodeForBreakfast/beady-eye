@@ -117,8 +117,9 @@ impl Fold {
 impl Folds {
     /// Which way the reader has pointed a fold, from the nearest entry on the
     /// way down to it: the line's own fold, the scope set on the line, or the
-    /// scope `over` it. Nothing where the fold is left to rest, which only
-    /// the caller knows the tree well enough to say the way of.
+    /// scope `over` it. Nothing where the fold is left to rest: only the
+    /// caller knows the tree a line came from, so it says where the line
+    /// rests rather than being asked to re-derive it here.
     pub(super) fn pointed(&self, handle: &Handle, over: Option<&Scope>) -> Option<bool> {
         if let Some(open) = self.0.get(handle).and_then(|fold| fold.line) {
             return Some(open);

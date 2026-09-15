@@ -309,9 +309,11 @@ impl Forest {
     }
 
     /// The beads beneath `handle` carrying live work. Every bead in a
-    /// project's trees for the project and for the groups of its own that
-    /// hold trees. Empty for a run, which holds only finished branches, and
-    /// for a group whose things are not beads at all.
+    /// project's trees for the project, and for the groups of its own that
+    /// hold trees — wider than the group, and a group over trees rests shut
+    /// whatever arrives, so spending it early changes nothing on screen.
+    /// Empty for a run, which holds only finished branches, and for a group
+    /// whose things are not beads at all.
     fn live_under(&self, handle: &Handle) -> BTreeSet<BeadKey> {
         let project = match handle {
             Handle::Bead(place) => return self.live_beneath(place),
