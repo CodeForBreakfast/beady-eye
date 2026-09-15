@@ -67,7 +67,8 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize, layout: &Layou
         .shortening(shorter);
     if layout.state.contains(&Cell::Agent) {
         if let Some(briefly) = &row.agent_briefly {
-            fitted = fitted.briefly(walk.block(Block::State, Vec::new(), Some(briefly)).spans);
+            let short = walk.block(Block::State, Vec::new(), Some(briefly));
+            fitted = fitted.briefly(short.spans, short.links, short.shorter);
         }
     }
     fitted.toned(tone(row))
@@ -610,6 +611,57 @@ mod tests {
         assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
         assert!(drawn[0].contains("wCM:p9 · working"), "{drawn:?}");
         assert!(!drawn[0].contains("elided run"), "{drawn:?}");
+    }
+
+    /// A badge the layout puts in the state beside the agent is still a link
+    /// on the row that says the agent briefly. The short form is a state
+    /// block of its own, and the badge is in it with everywhere it points.
+    #[test]
+    fn a_badge_in_the_state_still_opens_where_the_caption_gave_way() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let mut staffed = captioned("teach the elided run to fold back open on a keypress");
+        staffed.badges = vec![Badged {
+            key: "delivery_pr".into(),
+            text: "⇢ #12".into(),
+            link: Some(somewhere.into()),
+            short: None,
+            colour: None,
+        }];
+        let layout = Layout {
+            state: vec![Cell::Badge("delivery_pr".into()), Cell::Agent],
+            ..Layout::default()
+        };
+
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4, &layout), 80, 1).rows();
+        let said = symbols(bead_line(&row(&staffed), LAST, 4, &layout), 80);
+
+        assert!(drawn[0].contains("⇢ #12  ◍ wCM:p9 · working"), "{drawn:?}");
+        assert!(!drawn[0].contains("elided run"), "{drawn:?}");
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
+            ),
+            "the badge lost its link when the agent was said briefly: {said:?}"
+        );
+    }
+
+    /// And it still shortens there. 70 columns is a width the short form of
+    /// the state fits at with its badge said shortly, and not with the badge
+    /// said in full.
+    #[test]
+    fn a_badge_in_the_state_still_shortens_where_the_caption_gave_way() {
+        let mut staffed = captioned("teach the elided run to fold back open on a keypress");
+        staffed.badges = vec![shortenable(None)];
+        let layout = Layout {
+            state: vec![Cell::Badge("delivery_pr".into()), Cell::Agent],
+            ..Layout::default()
+        };
+
+        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4, &layout), 70, 1).rows();
+
+        assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
+        assert!(drawn[0].contains("⇢ #12  ◍ wCM:p9 · working"), "{drawn:?}");
+        assert!(!drawn[0].contains("atlas"), "{drawn:?}");
     }
 
     /// And it gives way only where it costs the title something. A row wide
