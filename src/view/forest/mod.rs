@@ -291,7 +291,9 @@ impl Forest {
     /// new is under them. The way down is read off the forest drawn as it
     /// stands unrooted, because the mode draws the bead it is rooted at
     /// apart from the line the scope was set on, and the way down to what
-    /// arrived under that bead runs through both.
+    /// arrived under that bead runs through both. The line over the roots
+    /// the mode is holding back is the one line drawn only while rooted, so
+    /// a scope set on it is read off the forest as the mode draws it.
     fn spend_folds(&mut self, folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>) {
         let spent: Vec<(Handle, BTreeSet<BeadKey>)> = folded_over
             .iter()
@@ -303,9 +305,18 @@ impl Forest {
         if spent.is_empty() {
             return;
         }
-        let drawn = layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None);
+        let unrooted =
+            layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None);
+        let mut as_rooted: Option<Vec<Line>> = None;
         for (handle, arrived) in spent {
-            let path = way_down_to(subtree_of(&drawn, &handle), &arrived);
+            let within = match handle {
+                Handle::Group(GroupKind::OutOfTheWay, _) => {
+                    let drawn = as_rooted.get_or_insert_with(|| self.drawn_beneath_every_fold());
+                    subtree_of(drawn, &handle)
+                }
+                _ => subtree_of(&unrooted, &handle),
+            };
+            let path = way_down_to(within, &arrived);
             self.folds.spend(&handle, path);
         }
     }
@@ -1357,18 +1368,35 @@ fn handles_beneath(within: &[Line]) -> Vec<Handle> {
     within.iter().skip(1).filter_map(handle_of).collect()
 }
 
-/// The folds on the way down from the first line of `within` to every line
-/// standing on one of `arrived`, the first line's own left out.
+/// The shut folds on the way down from the first line of `within` to every
+/// line standing on one of `arrived`, the first line's own left out. A fold
+/// open on the way holds nothing back, so nothing arriving spends it.
+///
+/// Read off the lines by depth, the way `subtree_of` reads what is beneath
+/// a line, so the way down is the one that was drawn — through the run a
+/// bead hangs in, and by whichever fold the drawing gave each line.
 fn way_down_to(within: &[Line], arrived: &BTreeSet<BeadKey>) -> BTreeSet<Handle> {
-    let top = within.first().and_then(|line| line.place.as_ref());
-    within
-        .iter()
-        .filter_map(|line| line.place.as_ref())
-        .filter(|place| arrived.contains(place.key()))
-        .flat_map(Place::forebears)
-        .filter(|above| top.is_none_or(|top| above.steps.len() > top.steps.len()))
-        .map(Handle::Bead)
-        .collect()
+    let mut above: Vec<&Line> = Vec::new();
+    let mut path = BTreeSet::new();
+    for line in within.iter().skip(1) {
+        while above.last().is_some_and(|over| over.depth >= line.depth) {
+            above.pop();
+        }
+        if line
+            .place
+            .as_ref()
+            .is_some_and(|place| arrived.contains(place.key()))
+        {
+            path.extend(
+                above
+                    .iter()
+                    .filter(|over| over.folded == Some(false))
+                    .filter_map(|over| handle_of(over)),
+            );
+        }
+        above.push(line);
+    }
+    path
 }
 
 #[cfg(test)]
@@ -6523,6 +6551,73 @@ credential_command = "secret harbour"
 
         assert!(
             drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Spending a scope that shut lets go of the shut folds on the way down
+    /// to what arrived, and a fold a nearer scope opened is not one of them:
+    /// it holds nothing back. `tow-1.1` and `tow-1.1.1` were opened by `e`
+    /// under the `c` on the root, and stay open after an agent has come and
+    /// gone beneath them.
+    #[test]
+    fn spending_a_shut_scope_leaves_a_fold_a_nearer_scope_opened_open() {
+        let mut forest = flatten(tower_staffed(&["tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        select_bead(&mut forest, "tow-1.1");
+        forest.apply(Action::ExpandSubtree);
+        let expanded = drawn_beads(&forest);
+        assert_eq!(
+            expanded,
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.refresh(tower_staffed(&["tow-1.2.1"]));
+
+        assert_eq!(drawn_beads(&forest), expanded, "{:#?}", sketch(&forest));
+    }
+
+    /// Put the selection on the line over the roots the mode is holding back.
+    fn select_out_of_the_way(forest: &mut Forest) {
+        let at = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::OutOfTheWay)
+            })
+            .unwrap_or_else(|| panic!("no roots are held back: {:#?}", sketch(forest)));
+        step_onto(forest, at);
+    }
+
+    /// The group of roots the mode is holding back is drawn only while the
+    /// forest is rooted, so a scope that shut on it is spent by what arrives
+    /// under those roots as any other is: `tow-1.1` opens onto the agent
+    /// that arrived on `tow-1.1.1`, under the root the reader opened again.
+    #[test]
+    fn a_shut_scope_on_the_held_back_roots_is_spent_by_what_arrives_under_them() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        focus_on(&mut forest, "tow-1.2");
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        toggle_fold_of(&mut forest, "tow-1");
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1.2.1", "tow-1", "tow-1.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1.2.1", "tow-1", "tow-1.1", "tow-1.1.1"],
             "{:#?}",
             sketch(&forest)
         );
