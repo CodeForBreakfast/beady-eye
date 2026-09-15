@@ -10,7 +10,7 @@ use crate::model::types::Status;
 use crate::view::fitted::{openable, Block, Fitted, Link, Shorter, GAP};
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::{self, Row, AGENT, WARNING};
+use crate::view::row::{self, Cell, Layout, Row, AGENT, WARNING};
 
 use super::tone::{status_style, tone};
 use super::{beside, done, structure};
@@ -41,22 +41,200 @@ pub(super) fn elided_run(prefix: &str, count: usize) -> Fitted {
 ///
 /// `id_width` is the widest abbreviated id in the tree, so a column of ids
 /// lines up under one another and the titles start together.
-pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
-    let identity = vec![
-        structure(prefix),
-        Span::styled(row.glyph.to_string(), status_style(&row.status)),
-        Span::styled(format!(" {:id_width$}", row.id), status_style(&row.status)),
-    ];
+pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize, layout: &Layout) -> Fitted {
+    let walk = Walk {
+        row,
+        layout,
+        id_width,
+    };
+    let identity = walk.block(
+        Block::Identity,
+        vec![structure(prefix)],
+        row.agent.as_deref(),
+    );
+    let title = walk.block(Block::Title, Vec::new(), row.agent.as_deref());
+    let state = walk.block(Block::State, Vec::new(), row.agent.as_deref());
 
-    let mut title = vec![Span::raw(row.title.clone())];
-    let mut links = Vec::new();
-    let mut shorter = Vec::new();
-    for badge in &row.badges {
-        title.push(Span::raw(" ".repeat(GAP)));
+    let mut links = identity.links;
+    links.extend(title.links);
+    links.extend(state.links);
+    let mut shorter = identity.shorter;
+    shorter.extend(title.shorter);
+    shorter.extend(state.shorter);
+
+    let mut fitted = Fitted::new(identity.spans, title.spans, state.spans)
+        .linking(links)
+        .shortening(shorter);
+    if layout.state.contains(&Cell::Agent) {
+        if let Some(briefly) = &row.agent_briefly {
+            fitted = fitted.briefly(walk.block(Block::State, Vec::new(), Some(briefly)).spans);
+        }
+    }
+    fitted.toned(tone(row))
+}
+
+/// One row's cells, drawn into whichever block the layout puts each in.
+struct Walk<'a> {
+    row: &'a Row,
+    layout: &'a Layout,
+    id_width: usize,
+}
+
+/// One block of a row as the walk filled it: its spans, and which of them
+/// are links or have short forms.
+struct Walked {
+    block: Block,
+    /// The columns between one cell and the next: one in the identity, `GAP`
+    /// in the other two blocks.
+    apart: usize,
+    spans: Vec<Span<'static>>,
+    /// How many cells the block holds, which is not how many spans: the
+    /// separators are spans, and the identity opens on a head that is not a
+    /// cell.
+    cells: usize,
+    links: Vec<Link>,
+    shorter: Vec<Shorter>,
+}
+
+impl Walk<'_> {
+    /// `block` as the layout names it, on the `head` it opens with, with the
+    /// agent said as `agent` where the block names one.
+    fn block(&self, block: Block, head: Vec<Span<'static>>, agent: Option<&str>) -> Walked {
+        let mut walked = Walked {
+            block,
+            apart: if block == Block::Identity { 1 } else { GAP },
+            spans: head,
+            cells: 0,
+            links: Vec::new(),
+            shorter: Vec::new(),
+        };
+        for cell in self.layout.block(block) {
+            self.cell(&mut walked, cell, agent);
+        }
+        if block == Block::State {
+            self.trailing(&mut walked.spans);
+        }
+        walked
+    }
+
+    fn cell(&self, walked: &mut Walked, cell: &Cell, agent: Option<&str>) {
+        let row = self.row;
+        match cell {
+            Cell::Glyph => {
+                walked.cell(Span::styled(
+                    row.glyph.to_string(),
+                    status_style(&row.status),
+                ));
+            }
+            Cell::Id => {
+                walked.cell(Span::styled(
+                    format!("{:width$}", row.id, width = self.id_width),
+                    status_style(&row.status),
+                ));
+            }
+            Cell::Title => {
+                walked.cell(Span::raw(row.title.clone()));
+            }
+            Cell::Badges => {
+                for badge in row
+                    .badges
+                    .iter()
+                    .filter(|badge| !self.layout.names(&badge.key))
+                {
+                    walked.badge(badge, &row.status);
+                }
+            }
+            Cell::Badge(key) => {
+                if let Some(badge) = row.badges.iter().find(|badge| badge.key == *key) {
+                    walked.badge(badge, &row.status);
+                }
+            }
+            Cell::Progress => {
+                if let Some(progress) = row.progress {
+                    walked.cell(Span::raw(done(progress.closed, progress.total)));
+                }
+            }
+            Cell::Agent => {
+                if let Some(agent) = agent {
+                    let at = walked.cell(Span::styled(agent.to_string(), palette::AGENT));
+                    // In the state the short form is the whole block's
+                    // `briefly`; anywhere else it is this span's own.
+                    if walked.block != Block::State {
+                        if let Some(said) = &row.agent_briefly {
+                            walked.shorter.push(Shorter {
+                                block: walked.block,
+                                at,
+                                said: said.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            Cell::Anomalies => {
+                if let Some(anomalies) = &row.anomalies {
+                    walked.cell(Span::styled(anomalies.clone(), palette::ATTENTION));
+                }
+            }
+        }
+    }
+
+    /// What the row reports about itself, after whatever the layout put in
+    /// the state: the fold's counts, then the notes.
+    ///
+    /// After the row's own cells, because those name one bead and the counts
+    /// count several: a number met before the name it belongs beside reads
+    /// as the total the name is an example of.
+    fn trailing(&self, state: &mut Vec<Span<'static>>) {
+        let row = self.row;
+        if let Some(shut_over) = &row.shut_over {
+            if shut_over.live_agents > 0 {
+                beside(
+                    state,
+                    Span::styled(
+                        format!("{AGENT} {}", phrase::agents_beneath(shut_over.live_agents)),
+                        palette::AGENT,
+                    ),
+                );
+            }
+            if shut_over.anomalies > 0 {
+                beside(
+                    state,
+                    Span::styled(
+                        format!(
+                            "{WARNING} {}",
+                            phrase::anomalies_beneath(shut_over.anomalies)
+                        ),
+                        palette::ATTENTION,
+                    ),
+                );
+            }
+        }
+        for note in &row.notes {
+            beside(state, Span::styled(note.clone(), palette::ATTENTION));
+        }
+    }
+}
+
+impl Walked {
+    /// One more cell, `apart` columns after the one before it, and which
+    /// span of the block it is.
+    fn cell(&mut self, span: Span<'static>) -> usize {
+        if self.cells > 0 {
+            self.spans.push(Span::raw(" ".repeat(self.apart)));
+        }
+        self.spans.push(span);
+        self.cells += 1;
+        self.spans.len() - 1
+    }
+
+    /// A badge is a cell that is a link where its config gave it somewhere
+    /// and has a short form where its config named one.
+    fn badge(&mut self, badge: &Badged, status: &Status) {
+        let at = self.cell(Span::styled(badge.text.clone(), badge_style(badge, status)));
         if let Some(to) = opens_at(badge) {
-            links.push(Link {
-                block: Block::Title,
-                at: title.len(),
+            self.links.push(Link {
+                block: self.block,
+                at,
                 to: to.to_string(),
             });
         }
@@ -65,25 +243,13 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
             .as_deref()
             .filter(|said| row::says_the_same_about_its_link(badge, said))
         {
-            shorter.push(Shorter {
-                block: Block::Title,
-                at: title.len(),
+            self.shorter.push(Shorter {
+                block: self.block,
+                at,
                 said: said.to_string(),
             });
         }
-        title.push(Span::styled(
-            badge.text.clone(),
-            badge_style(badge, &row.status),
-        ));
     }
-
-    let mut fitted = Fitted::new(identity, title, state(row, row.agent.as_ref()))
-        .linking(links)
-        .shortening(shorter);
-    if let Some(briefly) = &row.agent_briefly {
-        fitted = fitted.briefly(state(row, Some(briefly)));
-    }
-    fitted.toned(tone(row))
 }
 
 /// Where the badge takes a reader, where the emitter will write a sequence
@@ -120,49 +286,6 @@ fn badge_style(badge: &Badged, status: &Status) -> Style {
     }
 }
 
-/// The row's right-hand block, with the agent said in whichever of its two
-/// forms it was given. Everything else on the block is a cell this program
-/// wrote and knows the length of.
-fn state(row: &Row, agent: Option<&String>) -> Vec<Span<'static>> {
-    let mut state: Vec<Span<'static>> = Vec::new();
-    let mut say = |text: &str, style: Style| {
-        beside(&mut state, Span::styled(text.to_string(), style));
-    };
-    if let Some(progress) = row.progress {
-        say(&done(progress.closed, progress.total), Style::new());
-    }
-    if let Some(agent) = agent {
-        say(agent, palette::AGENT);
-    }
-    if let Some(anomalies) = &row.anomalies {
-        say(anomalies, palette::ATTENTION);
-    }
-    // After the row's own two, because those name one bead and these count
-    // several: a number met before the name it belongs beside reads as the
-    // total the name is an example of.
-    if let Some(shut_over) = &row.shut_over {
-        if shut_over.live_agents > 0 {
-            say(
-                &format!("{AGENT} {}", phrase::agents_beneath(shut_over.live_agents)),
-                palette::AGENT,
-            );
-        }
-        if shut_over.anomalies > 0 {
-            say(
-                &format!(
-                    "{WARNING} {}",
-                    phrase::anomalies_beneath(shut_over.anomalies)
-                ),
-                palette::ATTENTION,
-            );
-        }
-    }
-    for note in &row.notes {
-        say(note, palette::ATTENTION);
-    }
-    state
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,7 +311,7 @@ mod tests {
         let node = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Blocked);
 
         assert_eq!(
-            Painted::of(bead_line(&row(&node), BRANCH, 4), 46, 1).rows(),
+            Painted::of(bead_line(&row(&node), BRANCH, 4, &Layout::default()), 46, 1).rows(),
             vec!["  ├── ● .20   wallpaper timer calls dms       "]
         );
     }
@@ -209,7 +332,7 @@ mod tests {
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
 
-        let drawn = Painted::of(bead_line(&epic, BRANCH, 3), 60, 1).rows();
+        let drawn = Painted::of(bead_line(&epic, BRANCH, 3, &Layout::default()), 60, 1).rows();
 
         let count = drawn[0].find("3/8").expect("the count is drawn");
         let agent = drawn[0].find("wCM:p9").expect("the agent is drawn");
@@ -239,7 +362,7 @@ mod tests {
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
 
-        let drawn = Painted::of(bead_line(&epic, BRANCH, 3), 60, 1).rows();
+        let drawn = Painted::of(bead_line(&epic, BRANCH, 3, &Layout::default()), 60, 1).rows();
 
         assert!(drawn[0].ends_with("3/8  ◍ wCM:p9 · working"), "{drawn:?}");
     }
@@ -258,7 +381,7 @@ mod tests {
         shut.agent = Some(row::agent_marker(&a_pane()));
         shut.shut_over = Some(counts(1, 5, 3, 0));
 
-        let drawn = Painted::of(bead_line(&shut, BRANCH, 3), 110, 1).rows();
+        let drawn = Painted::of(bead_line(&shut, BRANCH, 3, &Layout::default()), 110, 1).rows();
 
         let own = drawn[0].find("wCM:p9").expect("its own agent is drawn");
         let beneath = drawn[0]
@@ -279,7 +402,7 @@ mod tests {
         ));
         shut.shut_over = Some(counts(1, 5, 0, 2));
 
-        let drawn = Painted::of(bead_line(&shut, BRANCH, 3), 110, 1).rows();
+        let drawn = Painted::of(bead_line(&shut, BRANCH, 3, &Layout::default()), 110, 1).rows();
 
         says(&drawn[0], "2 beads beneath");
     }
@@ -296,7 +419,7 @@ mod tests {
         ));
         shut.shut_over = Some(counts(4, 5, 0, 0));
 
-        let drawn = Painted::of(bead_line(&shut, BRANCH, 3), 110, 1).rows();
+        let drawn = Painted::of(bead_line(&shut, BRANCH, 3, &Layout::default()), 110, 1).rows();
 
         does_not_say(&drawn[0], "beneath");
     }
@@ -312,7 +435,7 @@ mod tests {
         ));
         shut.shut_over = Some(counts(1, 5, 3, 2));
 
-        let painted = Painted::of(bead_line(&shut, BRANCH, 3), 120, 1).row(0);
+        let painted = Painted::of(bead_line(&shut, BRANCH, 3, &Layout::default()), 120, 1).row(0);
         let colour_of = |words: &str| {
             painted
                 .iter()
@@ -363,8 +486,8 @@ mod tests {
         shut.shut_over = Some(counts(1, 22, 4, 0));
         shut.notes = vec![phrase::unfinished_beneath(21)];
 
-        let wide = Painted::of(bead_line(&shut, BRANCH, 3), 120, 1).rows();
-        let narrow = Painted::of(bead_line(&shut, BRANCH, 3), 68, 1).rows();
+        let wide = Painted::of(bead_line(&shut, BRANCH, 3, &Layout::default()), 120, 1).rows();
+        let narrow = Painted::of(bead_line(&shut, BRANCH, 3, &Layout::default()), 68, 1).rows();
 
         says(&wide[0], "◍ 4 agents beneath");
         says(&wide[0], "21 unfinished beads beneath this");
@@ -385,7 +508,7 @@ mod tests {
             Status::Open,
         ));
 
-        let drawn = Painted::of(bead_line(&leaf, BRANCH, 4), 60, 1).rows();
+        let drawn = Painted::of(bead_line(&leaf, BRANCH, 4, &Layout::default()), 60, 1).rows();
 
         assert!(!drawn[0].contains('/'), "{drawn:?}");
     }
@@ -397,8 +520,13 @@ mod tests {
         let short = node("smt-4kd3p.1", "wire the niri theme include", Status::Open);
         let long = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Open);
 
-        let short = Painted::of(bead_line(&row(&short), BRANCH, 4), 60, 1).rows();
-        let long = Painted::of(bead_line(&row(&long), BRANCH, 4), 60, 1).rows();
+        let short = Painted::of(
+            bead_line(&row(&short), BRANCH, 4, &Layout::default()),
+            60,
+            1,
+        )
+        .rows();
+        let long = Painted::of(bead_line(&row(&long), BRANCH, 4, &Layout::default()), 60, 1).rows();
 
         assert_eq!(
             short[0].find("wire the"),
@@ -416,7 +544,12 @@ mod tests {
         );
         staffed.agent = Some(a_pane());
         staffed.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 100, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            100,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].contains("◍ wCM:p9 · working"), "{drawn:?}");
         assert!(drawn[0].contains("58"), "{drawn:?}");
@@ -444,7 +577,12 @@ mod tests {
     fn a_caption_too_long_for_the_row_costs_the_row_none_of_its_width() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 50, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            50,
+            1,
+        )
+        .rows();
 
         assert_eq!(drawn[0].chars().count(), 50, "{drawn:?}");
         assert!(!drawn[0].contains("keypress"), "{drawn:?}");
@@ -462,7 +600,12 @@ mod tests {
     fn a_caption_gives_its_columns_back_to_the_beads_own_title() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 80, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            80,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
         assert!(drawn[0].contains("wCM:p9 · working"), "{drawn:?}");
@@ -476,7 +619,12 @@ mod tests {
     fn a_caption_the_title_does_not_need_the_room_for_is_said_in_full() {
         let staffed = captioned("teach the elided run to fold back open");
 
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 120, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            120,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
         assert!(
@@ -497,7 +645,12 @@ mod tests {
     fn a_caption_shorter_than_the_pane_it_names_keeps_back_none_of_its_room() {
         let staffed = captioned("dish");
 
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 57, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            57,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
         assert!(drawn[0].contains("◍ dish · working"), "{drawn:?}");
@@ -509,7 +662,12 @@ mod tests {
     fn nothing_on_the_row_can_crowd_out_the_beads_own_id() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 30, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            30,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].contains(".20"), "{drawn:?}");
     }
@@ -520,7 +678,12 @@ mod tests {
     fn a_caption_with_no_room_left_takes_the_whole_agent_cell_with_it() {
         let staffed = captioned("teach the elided run to fold back open on a keypress");
 
-        let drawn = Painted::of(bead_line(&row(&staffed), LAST, 4), 14, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&staffed), LAST, 4, &Layout::default()),
+            14,
+            1,
+        )
+        .rows();
 
         assert!(!drawn[0].contains(row::AGENT), "{drawn:?}");
         assert!(drawn[0].contains(".20"), "{drawn:?}");
@@ -545,11 +708,70 @@ mod tests {
                 colour: None,
             },
         ];
-        let drawn = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+            100,
+            1,
+        )
+        .rows();
         let first = drawn[0].find("⇢ #12").expect("the first badge");
         let second = drawn[0].find("⏸ waiting").expect("the second badge");
 
         assert!(first < second, "{drawn:?}");
+    }
+
+    /// The layout says where every cell goes, and the walk draws what it
+    /// says: a badge named into the identity sits one column off the id and
+    /// leaves the badges after the title; the agent named ahead of the
+    /// fraction leads the state. The badge is still the link it was after
+    /// the title, because a link belongs to its span and not to a block.
+    #[test]
+    fn a_row_is_drawn_in_whatever_order_its_layout_names() {
+        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let mut badged = node("smt-4kd3p.2", "the noctalia widget", Status::InProgress);
+        badged.badges = vec![
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #12".into(),
+                link: Some(somewhere.into()),
+                short: None,
+                colour: None,
+            },
+            Badged {
+                key: "jira".into(),
+                text: "ATLAS-19".into(),
+                link: None,
+                short: None,
+                colour: None,
+            },
+        ];
+        let mut epic = row(&badged);
+        epic.progress = Some(row::Progress {
+            closed: 3,
+            total: 8,
+        });
+        epic.agent = Some(row::agent_marker(&a_pane()));
+        let layout = Layout {
+            identity: vec![Cell::Glyph, Cell::Badge("delivery_pr".into()), Cell::Id],
+            title: vec![Cell::Title, Cell::Badges],
+            state: vec![Cell::Agent, Cell::Progress, Cell::Anomalies],
+        };
+
+        let drawn = Painted::of(bead_line(&epic, BRANCH, 3, &layout), 80, 1).rows();
+        let said = symbols(bead_line(&epic, BRANCH, 3, &layout), 80);
+
+        assert_eq!(
+            drawn,
+            vec![
+                "  ├── ◐ ⇢ #12 .2   the noctalia widget  ATLAS-19         ◍ wCM:p9 · working  3/8"
+            ]
+        );
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
+            ),
+            "the badge in the identity was drawn without its link: {said:?}"
+        );
     }
 
     /// A badge with somewhere to go is underlined, and the underline is the
@@ -575,7 +797,11 @@ mod tests {
             },
         ];
 
-        let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let painted = Painted::of(
+            bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+            100,
+            1,
+        );
         let linked = run_saying(&painted, "⇢ #12");
         let plain = run_saying(&painted, "⏸ waiting");
 
@@ -604,7 +830,11 @@ mod tests {
                 short: None,
                 colour: Some(Colour::Status),
             }];
-            let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+            let painted = Painted::of(
+                bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+                100,
+                1,
+            );
             (
                 run_saying(&painted, ".20").style.fg,
                 run_saying(&painted, "ATLAS-19").style.fg,
@@ -641,7 +871,7 @@ mod tests {
         }];
         let row = row(&badged);
 
-        let painted = Painted::of(bead_line(&row, BRANCH, 4), 100, 1);
+        let painted = Painted::of(bead_line(&row, BRANCH, 4, &Layout::default()), 100, 1);
         let badge = run_saying(&painted, "ATLAS-19");
 
         assert_eq!(badge.style.fg, tone(&row).fg, "{badge:?}");
@@ -666,7 +896,11 @@ mod tests {
             colour: Some(Colour::Status),
         }];
 
-        let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let painted = Painted::of(
+            bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+            100,
+            1,
+        );
         let badge = run_saying(&painted, "ATLAS-19");
 
         assert!(
@@ -693,7 +927,7 @@ mod tests {
             phrase::unopenable_link("jira"),
         ];
 
-        let drawn = Painted::of(bead_line(&short, BRANCH, 3), 160, 1).rows();
+        let drawn = Painted::of(bead_line(&short, BRANCH, 3, &Layout::default()), 160, 1).rows();
 
         says(&drawn[0], "delivery_pr");
         says(&drawn[0], "jira");
@@ -714,7 +948,11 @@ mod tests {
             colour: None,
         }];
 
-        let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), 100, 1);
+        let painted = Painted::of(
+            bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+            100,
+            1,
+        );
         let refused = run_saying(&painted, "⇢ #12");
 
         assert!(
@@ -752,7 +990,12 @@ mod tests {
         let said = |badge: Badged| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
             badged.badges = vec![badge];
-            Painted::of(bead_line(&row(&badged), BRANCH, 4), EXACTLY_THE_ROW, 1).rows()
+            Painted::of(
+                bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+                EXACTLY_THE_ROW,
+                1,
+            )
+            .rows()
         };
 
         let drawn = said(linked);
@@ -787,7 +1030,11 @@ mod tests {
                 short: None,
                 colour: Some(Colour::Status),
             }];
-            let painted = Painted::of(bead_line(&row(&badged), BRANCH, 4), width, 1);
+            let painted = Painted::of(
+                bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+                width,
+                1,
+            );
             run_saying(&painted, "⇢ #").style
         };
         let somewhere = Some("https://forge.invalid/orbital/atlas/pull/12");
@@ -830,7 +1077,10 @@ mod tests {
             colour: None,
         }];
 
-        let said = symbols(bead_line(&row(&badged), BRANCH, 4), EXACTLY_THE_ROW - 1);
+        let said = symbols(
+            bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+            EXACTLY_THE_ROW - 1,
+        );
 
         assert!(
             said.contains(
@@ -869,7 +1119,8 @@ mod tests {
             }];
             let mut unremarked = row(&badged);
             unremarked.notes = Vec::new();
-            symbols(bead_line(&unremarked, BRANCH, 4), width).contains(somewhere)
+            symbols(bead_line(&unremarked, BRANCH, 4, &Layout::default()), width)
+                .contains(somewhere)
         };
         let every_width = || 1..=60;
 
@@ -899,7 +1150,7 @@ mod tests {
         let said = |badge: Badged| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
             badged.badges = vec![badge];
-            symbols(bead_line(&row(&badged), BRANCH, 4), 100)
+            symbols(bead_line(&row(&badged), BRANCH, 4, &Layout::default()), 100)
         };
 
         assert!(
@@ -930,7 +1181,13 @@ mod tests {
     fn a_row_badged(badge: Badged, width: u16) -> String {
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![badge];
-        Painted::of(bead_line(&row(&badged), BRANCH, 4), width, 1).rows()[0].clone()
+        Painted::of(
+            bead_line(&row(&badged), BRANCH, 4, &Layout::default()),
+            width,
+            1,
+        )
+        .rows()[0]
+            .clone()
     }
 
     /// One column narrower than the long form needs and the badge says itself
@@ -974,7 +1231,7 @@ mod tests {
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![shortenable(Some(somewhere))];
 
-        let said = symbols(bead_line(&row(&badged), BRANCH, 4), 32);
+        let said = symbols(bead_line(&row(&badged), BRANCH, 4, &Layout::default()), 32);
 
         assert!(
             said.contains(
@@ -1030,7 +1287,7 @@ mod tests {
             badged.badges = vec![badge];
             let mut row = row(&badged);
             row.notes = Vec::new();
-            Painted::of(bead_line(&row, BRANCH, 4), width, 1).rows()[0].clone()
+            Painted::of(bead_line(&row, BRANCH, 4, &Layout::default()), width, 1).rows()[0].clone()
         };
         let one_length = |badge: Badged| {
             unremarked(
@@ -1091,7 +1348,8 @@ mod tests {
     #[test]
     fn a_bead_line_too_long_for_the_width_is_cut_rather_than_wrapped() {
         let long = node("smt-4kd3p.20", &"wallpaper ".repeat(20), Status::Open);
-        let drawn = Painted::of(bead_line(&row(&long), BRANCH, 4), 40, 3).rows();
+        let drawn =
+            Painted::of(bead_line(&row(&long), BRANCH, 4, &Layout::default()), 40, 3).rows();
 
         assert_eq!(drawn[0], "  ├── ○ .20   wallpaper wallpaper wallp…");
         assert_eq!(drawn[1].trim(), "");
@@ -1105,7 +1363,17 @@ mod tests {
     /// and the beads it stands for cannot drift apart.
     #[test]
     fn an_elided_run_carries_the_closed_glyph_each_bead_it_stands_for_would() {
-        let painted = Painted::of(fitted(&under(BRANCH, elided(15)), 0, &at_rest()), 72, 1).row(0);
+        let painted = Painted::of(
+            fitted(
+                &under(BRANCH, elided(15)),
+                0,
+                &Layout::default(),
+                &at_rest(),
+            ),
+            72,
+            1,
+        )
+        .row(0);
 
         assert_eq!(
             painted[1].said,
@@ -1120,7 +1388,12 @@ mod tests {
     /// the words beside it are coloured.
     #[test]
     fn an_elided_run_leaves_its_box_drawing_in_the_terminals_own_colour() {
-        let painted = Painted::of(fitted(&under(BRANCH, elided(3)), 0, &at_rest()), 72, 1).row(0);
+        let painted = Painted::of(
+            fitted(&under(BRANCH, elided(3)), 0, &Layout::default(), &at_rest()),
+            72,
+            1,
+        )
+        .row(0);
 
         assert_eq!(painted[0].said, BRANCH);
         assert_eq!(painted[0].style.fg, Some(Color::Reset));
@@ -1138,6 +1411,7 @@ mod tests {
                 &row(&node("smt-4kd3p.2", "a bead", status.clone())),
                 BRANCH,
                 3,
+                &Layout::default(),
             );
             let painted = Painted::of(drawn, 60, 1).row(0);
 
@@ -1145,11 +1419,12 @@ mod tests {
                 .iter()
                 .find(|run| run.said.contains(".2"))
                 .expect("the id is drawn");
+            let glyph = painted
+                .iter()
+                .find(|run| run.said.starts_with(row::status_glyph(&status)))
+                .expect("the glyph is drawn");
             assert_eq!(id.style.fg, status_style(&status).fg, "{painted:?}");
-            assert!(
-                id.said.starts_with(row::status_glyph(&status)),
-                "the glyph is in the same run, so it is in the same colour: {painted:?}"
-            );
+            assert_eq!(glyph.style.fg, id.style.fg, "{painted:?}");
         }
     }
 
@@ -1159,7 +1434,8 @@ mod tests {
     fn an_open_beads_id_is_left_in_the_colour_the_rest_of_its_row_is_in() {
         let node = node("smt-4kd3p.2", "a bead", Status::Open);
 
-        let painted = Painted::of(bead_line(&row(&node), BRANCH, 3), 60, 1).row(0);
+        let painted =
+            Painted::of(bead_line(&row(&node), BRANCH, 3, &Layout::default()), 60, 1).row(0);
 
         let id = painted
             .iter()

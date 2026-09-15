@@ -63,6 +63,66 @@ pub struct Row {
     pub notes: Vec<String>,
 }
 
+/// One cell of a bead's row, named rather than drawn: a built-in, or one
+/// badge by its key.
+///
+/// `Badges` stands for every badge the row's layout does not name on its
+/// own, in config order, so naming one badge takes it out of `Badges` and
+/// adding a badge to the config does not mean editing the row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cell {
+    Glyph,
+    Id,
+    Title,
+    Badges,
+    Progress,
+    Agent,
+    Anomalies,
+    Badge(String),
+}
+
+/// Which cells a bead's row draws in each of its three blocks, and in what
+/// order.
+///
+/// Notes and the fold's counts are not cells: they are the row's reports
+/// about itself and trail the state whatever the layout says. The
+/// box-drawing prefix is a fixed head in front of the identity, not a cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    pub identity: Vec<Cell>,
+    pub title: Vec<Cell>,
+    pub state: Vec<Cell>,
+}
+
+impl Default for Layout {
+    /// The row as it has always been drawn.
+    fn default() -> Self {
+        Self {
+            identity: vec![Cell::Glyph, Cell::Id],
+            title: vec![Cell::Title, Cell::Badges],
+            state: vec![Cell::Progress, Cell::Agent, Cell::Anomalies],
+        }
+    }
+}
+
+impl Layout {
+    pub(crate) fn block(&self, block: fitted::Block) -> &[Cell] {
+        match block {
+            fitted::Block::Identity => &self.identity,
+            fitted::Block::Title => &self.title,
+            fitted::Block::State => &self.state,
+        }
+    }
+
+    /// Whether some block names the badge on `key` as a cell of its own.
+    pub fn names(&self, key: &str) -> bool {
+        [&self.identity, &self.title, &self.state]
+            .into_iter()
+            .flatten()
+            .any(|cell| matches!(cell, Cell::Badge(named) if named == key))
+    }
+}
+
 /// `shut_over` is what this line's fold hides, where it hides anything. The
 /// caller knows the branch and the fold; the bead's own fields say nothing
 /// about either.

@@ -29,7 +29,7 @@ use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine};
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::{AGENT, WARNING};
+use crate::view::row::{Layout, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
 pub use bands::{line_at, regions};
@@ -118,6 +118,7 @@ pub fn draw(
     frame: &mut Frame,
     area: Rect,
     forest: &Forest,
+    layout: &Layout,
     collecting: &[Awaited],
     now: DateTime<Utc>,
     foot: Foot,
@@ -130,7 +131,7 @@ pub fn draw(
     let reads = Reads::new(&forest.snapshot().read_at, collecting, now);
 
     for (row, (at, line)) in lines.viewport(forest.from(), height).enumerate() {
-        let drawn = fitted(line, ids, &reads);
+        let drawn = fitted(line, ids, layout, &reads);
         let drawn = if at == selected {
             drawn.selected()
         } else {
@@ -159,13 +160,18 @@ pub fn draw(
 }
 
 /// One line of the forest, whatever kind it is.
-pub(super) fn fitted(line: &lines::Line, id_width: usize, reads: &Reads) -> Fitted {
+pub(super) fn fitted(
+    line: &lines::Line,
+    id_width: usize,
+    layout: &Layout,
+    reads: &Reads,
+) -> Fitted {
     match &line.content {
         Content::Project(project) => {
             project_line(project, &line.prefix, reads.of(project), reads.now)
         }
         Content::Unread(unread) => unread_line(unread, &line.prefix, id_width),
-        Content::Bead(row) => bead_line(row, &line.prefix, id_width),
+        Content::Bead(row) => bead_line(row, &line.prefix, id_width, layout),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Note(note) => {
             let (said, style) = finding(*note);
@@ -386,6 +392,7 @@ mod tests {
             fitted(
                 &under(LAST, Content::Note(Note::Dangling(2))),
                 0,
+                &Layout::default(),
                 &at_rest(),
             ),
             96,
@@ -404,7 +411,12 @@ mod tests {
     #[test]
     fn the_line_for_an_empty_forest_is_drawn_in_the_terminals_own_colour() {
         let painted = Painted::of(
-            fitted(&under("", Content::Note(Note::NoRoots)), 0, &at_rest()),
+            fitted(
+                &under("", Content::Note(Note::NoRoots)),
+                0,
+                &Layout::default(),
+                &at_rest(),
+            ),
             96,
             1,
         )
@@ -567,6 +579,7 @@ mod tests {
                 frame,
                 frame.area(),
                 forest,
+                &Layout::default(),
                 collecting,
                 drawn_at(),
                 Foot {

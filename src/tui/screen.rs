@@ -25,6 +25,7 @@ use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::lines::Place;
 use crate::view::phrase;
+use crate::view::row::Layout;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
 use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
@@ -44,7 +45,7 @@ use super::reload::Reloaded;
 /// `[tui]` or `[theme]` is read here or it is not read: the seam that carries
 /// a reload hands over a `Config`, this is what the screen makes of one, and
 /// the same call makes it at startup and after every edit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Drawing {
     /// How long after the provider answers the pane on the band is asked for
     /// again.
@@ -55,6 +56,8 @@ pub(super) struct Drawing {
     /// How far one notch of the wheel moves the forest, and the bead window
     /// over it.
     notch: usize,
+    /// Which cells a bead's row draws, and in what order.
+    layout: Layout,
 }
 
 impl Drawing {
@@ -63,6 +66,7 @@ impl Drawing {
             tail_every: cfg.tui.tail_refresh(),
             background: cfg.theme.background,
             notch: cfg.tui.wheel_notch_lines,
+            layout: Layout::default(),
         }
     }
 }
@@ -912,9 +916,11 @@ fn said_of(landed: forest::Landed) -> Said {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint(
     frame: &mut Frame,
     forest: &mut Forest,
+    layout: &Layout,
     tail: draw::Band<'_>,
     over: Over<'_>,
     foot: draw::Foot,
@@ -923,7 +929,7 @@ fn paint(
 ) {
     let bands = draw::regions(frame.area());
     forest.fit(bands.forest.height as usize);
-    draw::draw(frame, frame.area(), forest, collecting, now, foot);
+    draw::draw(frame, frame.area(), forest, layout, collecting, now, foot);
     draw::draw_tail(frame, bands.tail, tail);
     match over {
         Over::Nothing => {}
@@ -1074,8 +1080,18 @@ impl View for Screen {
             tail,
             background: drawing.background,
         };
-        self.terminal
-            .draw(|frame| paint(frame, forest, band, over, foot, collecting, now))?;
+        self.terminal.draw(|frame| {
+            paint(
+                frame,
+                forest,
+                &drawing.layout,
+                band,
+                over,
+                foot,
+                collecting,
+                now,
+            )
+        })?;
         Ok(())
     }
 }
@@ -1515,6 +1531,7 @@ mod tests {
             paint(
                 frame,
                 forest,
+                &Layout::default(),
                 draw::Band {
                     tail,
                     background: Background::Dark,
@@ -1852,6 +1869,7 @@ mod tests {
             tail_every: EVERY,
             background: Background::Dark,
             notch: A_NOTCH,
+            layout: Layout::default(),
         }
     }
 
