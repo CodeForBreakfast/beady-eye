@@ -689,7 +689,7 @@ struct TreeLayout<'a> {
     beneath_shut: bool,
 }
 
-impl TreeLayout<'_> {
+impl<'a> TreeLayout<'a> {
     /// `trunk` is the way down to whatever this tree hangs under, as the
     /// box-drawing says it: empty for a root directly under its project.
     fn draw(&self, trunk: &mut Vec<bool>, last: bool, lines: &mut Vec<Line>) {
@@ -697,20 +697,14 @@ impl TreeLayout<'_> {
         // drawn where its tree's root would be, and keeps the place it has
         // everywhere else, so a fold set on it survives the key that rooted
         // the forest there and the key that puts the forest back.
-        let (root, way) = match self.rooted {
-            Some(rooted) => (rooted.place.clone(), rooted.way.clone()),
-            None => (Place::root(root_key(self.tree)), vec![0]),
+        let (root, way, over) = match self.rooted {
+            Some(rooted) => (
+                rooted.place.clone(),
+                rooted.way.clone(),
+                self.scope_over_rooted(rooted),
+            ),
+            None => (Place::root(root_key(self.tree)), vec![0], self.over),
         };
-        // The scopes on the beads the mode is not drawing above the rooted
-        // bead still stand over it, so they are read on the way down to it.
-        let over = root
-            .forebears()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .fold(self.over, |over, above| {
-                self.folds.beneath(&Handle::Bead(above), over)
-            });
         let (at, above) = way.split_last().expect("a way down ends somewhere");
         let at = *at;
         let depth = trunk.len() as u16 + 1;
@@ -763,6 +757,30 @@ impl TreeLayout<'_> {
         trunk.push(!last);
         self.draw_children(entries, &root, &way, below, trunk, lines);
         trunk.pop();
+    }
+
+    /// The scope over the bead the forest is rooted at. The beads above it
+    /// are drawn behind the line the mode holds the rest back with, and a
+    /// scope set on one of them, or on the run one of them holds the next in,
+    /// still stands over it — so they are read on the way down to it, as the
+    /// walk that drew them would have read them.
+    fn scope_over_rooted(&self, rooted: &Rooted) -> Option<&'a Scope> {
+        let folds: &'a Folds = self.folds;
+        let mut over = self.over;
+        let mut place = Place::root(root_key(self.tree));
+        for (depth, step) in rooted.way.windows(2).enumerate() {
+            let (at, next) = (step[0], step[1]);
+            over = folds.beneath(&Handle::Bead(place.clone()), over);
+            let (_, elided) = self.facts.split(self.tree, at, &rooted.way[..depth]);
+            if elided.iter().any(|link| link.bead == next) {
+                over = folds.beneath(&Handle::Elided(place.clone()), over);
+            }
+            place = place.step_to(BeadKey {
+                project: self.tree.project.clone(),
+                id: self.tree.beads[next].id.clone(),
+            });
+        }
+        over
     }
 
     /// `above` is the way down to `parent`, the parent itself included: the
@@ -863,7 +881,7 @@ impl TreeLayout<'_> {
 
     /// A node's children as they are drawn: the ones worth a line each, then
     /// one line for the run that is not.
-    fn children_entries<'a>(&'a self, at: usize, above: &[usize]) -> Vec<Child<'a>> {
+    fn children_entries<'b>(&'b self, at: usize, above: &[usize]) -> Vec<Child<'b>> {
         let (drawn, elided) = self.facts.split(self.tree, at, above);
         let mut entries: Vec<Child> = drawn
             .into_iter()

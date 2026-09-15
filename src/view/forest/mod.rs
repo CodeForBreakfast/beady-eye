@@ -6504,6 +6504,30 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A scope set on a run stands over a bead the forest is then rooted at
+    /// from inside that run, as a scope on a bead does: `dep-1.2` was opened
+    /// by `e` on the run it hangs in, and stays open onto `dep-1.2.1` when the
+    /// forest is rooted at it.
+    #[test]
+    fn rooting_the_forest_inside_an_expanded_run_keeps_the_runs_scope_over_it() {
+        let mut forest = flatten(depot());
+        select_run(&mut forest);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        focus_on(&mut forest, "dep-1.2");
+
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
     /// The lines the selection stands over, and itself: everything from it to
     /// the first line drawn at its own depth or shallower.
     ///
