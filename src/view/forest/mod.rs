@@ -253,6 +253,16 @@ impl Forest {
         self.from != was
     }
 
+    /// Measure the identity widths over these cells from now on, laying the
+    /// forest out again where they are not the cells it was laid out to.
+    pub fn laid_out_to(&mut self, layout: row::Layout) {
+        if self.layout == layout {
+            return;
+        }
+        self.layout = layout;
+        self.lay_out();
+    }
+
     /// Take a freshly collected snapshot, keeping the folds, the filter and
     /// the selection.
     pub fn refresh(&mut self, mut snapshot: Snapshot) {

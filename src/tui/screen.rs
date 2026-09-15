@@ -66,7 +66,7 @@ impl Drawing {
             tail_every: cfg.tui.tail_refresh(),
             background: cfg.theme.background,
             notch: cfg.tui.wheel_notch_lines,
-            layout: Layout::default(),
+            layout: cfg.row.clone(),
         }
     }
 }
@@ -230,7 +230,8 @@ impl Shown {
         at_startup: Vec<Notice>,
         started: DateTime<Utc>,
     ) -> Self {
-        let forest = forest::flatten(snapshot);
+        let mut forest = forest::flatten(snapshot);
+        forest.laid_out_to(drawing.layout.clone());
         let mut shown = Self {
             tail: tail::tail(&forest),
             tailing: tail::target(&forest).pane().cloned(),
@@ -438,6 +439,7 @@ impl Shown {
             return false;
         }
         self.drawing = drawing;
+        self.forest.laid_out_to(self.drawing.layout.clone());
         if self.due.is_some() {
             self.due = due_after(now, self.drawing.tail_every);
         }
@@ -1116,6 +1118,7 @@ mod tests {
     use crate::view::bindings::bindings_window;
     use crate::view::lines::{Content, GroupKind};
     use crate::view::painted::{Painted, Run};
+    use crate::view::row::Cell;
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
     use base64::prelude::{Engine as _, BASE64_STANDARD};
@@ -3365,6 +3368,30 @@ mod tests {
             "the foot has changed"
         );
         assert_eq!(shown.standing, []);
+    }
+
+    /// A `[row]` edit is read where a `[theme]` edit is, and reaches both
+    /// holders of the layout: the drawer's, through `Drawing`, and the
+    /// forest's, which measures its identity widths over it. A forest left
+    /// laid out to the old row would size a column of cells the row no
+    /// longer draws.
+    #[test]
+    fn a_row_edit_lays_the_forest_out_again_to_the_new_cells() {
+        let mut shown = shown(a_grove(6));
+        assert!(shown.forest.lines().widths().of(&Cell::Id) > 0);
+        let mut written = the_config_in_force();
+        written.row = Layout {
+            identity: vec![Cell::Glyph],
+            ..Layout::default()
+        };
+
+        assert!(
+            shown.reloaded(Reloaded::Fresh(&written), an_instant()),
+            "the screen has changed"
+        );
+
+        assert_eq!(shown.drawing.layout, written.row);
+        assert_eq!(shown.forest.lines().widths().of(&Cell::Id), 0);
     }
 
     /// A check that read nothing says nothing, which is what leaves the

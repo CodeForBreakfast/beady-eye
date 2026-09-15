@@ -4,6 +4,9 @@
 //! lands are the renderer's. This is what there is to say about one bead.
 
 use std::collections::HashMap;
+use std::fmt;
+
+use serde::Deserialize;
 
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
@@ -71,7 +74,10 @@ pub struct Row {
 /// `Badges` stands for every badge the row's layout does not name on its
 /// own, in config order, so naming one badge takes it out of `Badges` and
 /// adding a badge to the config does not mean editing the row.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// A config writes each by the name `Display` gives it, and `badge.<key>` for
+/// one badge; a word that is neither is refused with that word in the reason.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Cell {
     Glyph,
     Id,
@@ -80,10 +86,57 @@ pub enum Cell {
     Progress,
     Agent,
     Anomalies,
-    /// Only a config naming one badge on its own builds this, and nothing
-    /// reads such a config yet.
-    #[allow(dead_code)]
     Badge(String),
+}
+
+const BUILT_IN: [(&str, Cell); 7] = [
+    ("glyph", Cell::Glyph),
+    ("id", Cell::Id),
+    ("title", Cell::Title),
+    ("badges", Cell::Badges),
+    ("progress", Cell::Progress),
+    ("agent", Cell::Agent),
+    ("anomalies", Cell::Anomalies),
+];
+
+const ONE_BADGE: &str = "badge.";
+
+impl fmt::Display for Cell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cell::Badge(key) => write!(f, "{ONE_BADGE}{key}"),
+            built_in => {
+                let (name, _) = BUILT_IN
+                    .iter()
+                    .find(|(_, cell)| cell == built_in)
+                    .expect("every built-in cell has a name a config writes");
+                f.write_str(name)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Cell {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let written = String::deserialize(deserializer)?;
+        if let Some((_, cell)) = BUILT_IN.iter().find(|(name, _)| *name == written) {
+            return Ok(cell.clone());
+        }
+        match written
+            .strip_prefix(ONE_BADGE)
+            .filter(|key| !key.is_empty())
+        {
+            Some(key) => Ok(Cell::Badge(key.to_string())),
+            None => Err(serde::de::Error::custom(format!(
+                "{written:?} is no cell of a row; bdi draws {}, or one badge as {ONE_BADGE}<key>",
+                BUILT_IN
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))),
+        }
+    }
 }
 
 /// Which cells a bead's row draws in each of its three blocks, and in what
@@ -92,7 +145,11 @@ pub enum Cell {
 /// Notes and the fold's counts are not cells: they are the row's reports
 /// about itself and trail the state whatever the layout says. The
 /// box-drawing prefix is a fixed head in front of the identity, not a cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Read from a config's `[row]` table list by list, so a list left out is
+/// the default's and one written is read as written, empty included.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
 pub struct Layout {
     pub identity: Vec<Cell>,
     pub title: Vec<Cell>,
@@ -164,10 +221,15 @@ impl Layout {
 
     /// Whether some block names the badge on `key` as a cell of its own.
     pub fn names(&self, key: &str) -> bool {
+        self.cells()
+            .any(|cell| matches!(cell, Cell::Badge(named) if named == key))
+    }
+
+    /// Every cell of every block, in the order the row draws them.
+    pub fn cells(&self) -> impl Iterator<Item = &Cell> {
         [&self.identity, &self.title, &self.state]
             .into_iter()
             .flatten()
-            .any(|cell| matches!(cell, Cell::Badge(named) if named == key))
     }
 }
 
