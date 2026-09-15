@@ -288,7 +288,10 @@ impl Forest {
     ///
     /// A scope that shut is spent along the way down to what arrived and no
     /// further: the folds beside that way were folded away too, and nothing
-    /// new is under them.
+    /// new is under them. The way down is read off the forest drawn as it
+    /// stands unrooted, because the mode draws the bead it is rooted at
+    /// apart from the line the scope was set on, and the way down to what
+    /// arrived under that bead runs through both.
     fn spend_folds(&mut self, folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>) {
         let spent: Vec<(Handle, BTreeSet<BeadKey>)> = folded_over
             .iter()
@@ -300,7 +303,7 @@ impl Forest {
         if spent.is_empty() {
             return;
         }
-        let drawn = self.drawn_beneath_every_fold();
+        let drawn = layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None);
         for (handle, arrived) in spent {
             let path = way_down_to(subtree_of(&drawn, &handle), &arrived);
             self.folds.spend(&handle, path);
@@ -6466,6 +6469,36 @@ credential_command = "secret harbour"
 
         assert!(
             drawn_beads(&forest).contains(&"tow-1.1.1.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A scope that shut is spent along the way down to what arrived while
+    /// the forest is rooted at a bead beneath it, when the mode draws the
+    /// scope's own line behind the rest, shut in the group of roots it is
+    /// holding back, and the rooted bead's branch apart from it: `tow-1.1` opens onto the agent that arrived on `tow-1.1.1`,
+    /// rooted and put back alike, and `tow-1.2` stays shut.
+    #[test]
+    fn a_shut_scope_is_spent_beneath_the_bead_the_forest_is_rooted_at() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        focus_on(&mut forest, "tow-1.1");
+        assert_eq!(drawn_beads(&forest), ["tow-1.1"], "{:#?}", sketch(&forest));
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.1", "tow-1.1.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.apply(Action::FocusForest);
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.2"],
             "{:#?}",
             sketch(&forest)
         );
