@@ -666,7 +666,7 @@ impl Forest {
         };
         let drawn = self.drawn_beneath_every_fold();
         let within = subtree_of(&drawn, &scope);
-        if passing(&scope) {
+        if self.points_by_the_line(&scope) {
             for handle in within.iter().filter_map(handle_of) {
                 self.folds.let_go(handle, &[]);
             }
@@ -703,7 +703,7 @@ impl Forest {
             if within.first().is_none_or(|line| line.folded.is_none()) {
                 continue;
             }
-            if passing(&scope) {
+            if self.points_by_the_line(&scope) {
                 let pointed: Vec<Handle> = within
                     .iter()
                     .filter(|line| line.folded.is_some_and(|was| !open || !was))
@@ -722,6 +722,16 @@ impl Forest {
             let beneath = handles_beneath(within);
             self.folds.set_over(scope, open, resting, &beneath);
         }
+    }
+
+    /// Whether a key that points a subtree from `scope` points each fold
+    /// beneath it by itself, as every line did once, rather than writing
+    /// one entry that everything beneath answers from. It does where the
+    /// line is passing, and where the mode is holding the line back: the
+    /// bead the forest is rooted at is drawn apart from the root above it,
+    /// so a scope set on that root would reach the bead the key never drew.
+    fn points_by_the_line(&self, scope: &Handle) -> bool {
+        passing(scope) || matches!(scope, Handle::Bead(place) if self.held_back(place))
     }
 
     /// The lines with every fold opened over, each fold still saying which
@@ -6697,6 +6707,27 @@ credential_command = "secret harbour"
         assert_eq!(
             drawn_beads(&forest),
             ["tow-1", "tow-1.1", "tow-1.2", "tow-1.2.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The bead the forest is rooted at is drawn apart from the root the
+    /// mode holds back, so `c` on that root reaches what is drawn beneath
+    /// it there and not the rooted bead: `tow-1.2` stays open onto
+    /// `tow-1.2.1` after `c` on `tow-1` behind the held-back roots line.
+    #[test]
+    fn shutting_a_held_back_root_leaves_the_bead_the_forest_is_rooted_at_open() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        focus_on(&mut forest, "tow-1.2");
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::ToggleFold);
+        select_bead(&mut forest, "tow-1");
+        forest.apply(Action::CollapseSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1.2.1", "tow-1"],
             "{:#?}",
             sketch(&forest)
         );
