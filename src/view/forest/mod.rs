@@ -10,7 +10,8 @@ mod facts;
 mod handle;
 mod layout;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Filter, Snapshot, Tree};
@@ -18,6 +19,7 @@ use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKi
 use crate::view::{Action, Motion, Notch};
 
 pub use drawn::Drawn;
+use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
 use layout::Rooted;
@@ -105,7 +107,7 @@ fn step_down(
 pub struct Forest {
     snapshot: Snapshot,
     /// What layout reads of the snapshot, answered when it was taken.
-    facts: Facts,
+    facts: Arc<Facts>,
     folds: Folds,
     cursor: Option<Handle>,
     /// The first line the last frame had room to draw, and how many it had
@@ -139,7 +141,7 @@ pub struct Forest {
 /// Flatten a snapshot into its lines.
 pub fn flatten(snapshot: Snapshot) -> Forest {
     let mut forest = Forest {
-        facts: Facts::of(&snapshot),
+        facts: Arc::new(Facts::of(&snapshot)),
         snapshot,
         folds: Folds::default(),
         cursor: None,
@@ -305,9 +307,12 @@ impl Forest {
         if spent.is_empty() {
             return;
         }
-        let drawn = layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None);
+        let drawn =
+            layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, None, &[]);
+        let anywhere = arrived_anywhere(&spent);
+        let mut reaching = Reaching::new(&anywhere);
         for (handle, arrived) in spent {
-            let path = way_down_to(subtree_of(&drawn, &handle), &arrived);
+            let path = way_down_to(&drawn, &handle, &arrived, &mut reaching);
             self.folds.spend(&handle, path);
         }
     }
@@ -634,7 +639,7 @@ impl Forest {
     /// Answer what layout reads of the snapshot in hand, here and not per
     /// keystroke.
     fn answer(&mut self) {
-        self.facts = Facts::of(&self.snapshot);
+        self.facts = Arc::new(Facts::of(&self.snapshot));
     }
 
     /// `e` and `c`: point every fold in the selected node's subtree, at every
@@ -663,15 +668,22 @@ impl Forest {
         let Some(scope) = self.handle_at(self.selected) else {
             return;
         };
-        let drawn = self.drawn_beneath_every_fold();
-        let within = subtree_of(&drawn, &scope);
+        let drawn = self.drawn_beneath_every_fold(std::slice::from_ref(&scope));
+        let Some(within) = drawn.node_of(&scope) else {
+            return;
+        };
         if self.points_by_the_line(&scope) {
-            for handle in within.iter().filter_map(handle_of) {
+            let mut lines = Vec::new();
+            drawn.visit(within, &mut |node| {
+                lines.extend(handle_of(&node.line));
+                true
+            });
+            for handle in lines {
                 self.folds.put_back(handle);
             }
             return;
         }
-        let beneath = handles_beneath(within);
+        let beneath = named_beneath(&drawn, within);
         self.folds.let_go(scope, &beneath);
     }
 
@@ -688,37 +700,54 @@ impl Forest {
     /// The whole forest is every line at the top of it, each taken as a
     /// scope of its own.
     fn fold_in(&mut self, scope: Option<&Handle>, open: bool) {
-        let drawn = self.drawn_beneath_every_fold();
+        let drawn = self.drawn_beneath_every_fold(scope.cloned().as_slice());
         let scopes: Vec<Handle> = match scope {
             Some(scope) => vec![scope.clone()],
             None => drawn
+                .top()
                 .iter()
-                .filter(|line| line.depth == 0)
-                .filter_map(handle_of)
+                .filter_map(|node| handle_of(&node.line))
                 .collect(),
         };
         for scope in scopes {
-            let within = subtree_of(&drawn, &scope);
-            if within.first().is_none_or(|line| line.folded.is_none()) {
+            let Some(within) = drawn.node_of(&scope) else {
+                continue;
+            };
+            if within.line.folded.is_none() {
                 continue;
             }
             if self.points_by_the_line(&scope) {
-                let pointed: Vec<Handle> = within
-                    .iter()
-                    .filter(|line| line.folded.is_some_and(|was| !open || !was))
-                    .filter_map(handle_of)
-                    .collect();
+                let mut pointed = Vec::new();
+                drawn.visit(within, &mut |node| {
+                    if node.line.folded.is_some_and(|was| !open || !was) {
+                        pointed.extend(handle_of(&node.line));
+                    }
+                    true
+                });
                 for handle in pointed {
                     self.folds.set(handle, open);
                 }
                 continue;
             }
-            let resting: BTreeSet<Handle> = within
-                .iter()
-                .filter(|line| open && line.folded == Some(true) && !line.pointed)
-                .filter_map(handle_of)
-                .collect();
-            let beneath = handles_beneath(within);
+            // A line resting open is under no scope and is its bead's first
+            // copy, and so is every line above it, so nothing beneath any
+            // other kind of undrawn line can rest open.
+            let mut resting = BTreeSet::new();
+            let mut beneath = Vec::new();
+            drawn.visit(within, &mut |node| {
+                if open && node.line.folded == Some(true) && !node.line.pointed {
+                    resting.extend(handle_of(&node.line));
+                }
+                if !std::ptr::eq(node, within) {
+                    beneath.extend(handle_of(&node.line));
+                }
+                match &node.beneath {
+                    Beneath::Nothing => true,
+                    Beneath::Bead(undrawn) | Beneath::Run(undrawn) => {
+                        open && undrawn.counted.forced.is_none() && undrawn.counted.first
+                    }
+                }
+            });
             self.folds.set_over(scope, open, resting, &beneath);
         }
     }
@@ -734,10 +763,17 @@ impl Forest {
     }
 
     /// The lines with every fold opened over, each fold still saying which
-    /// way it points.
-    fn drawn_beneath_every_fold(&self) -> Vec<Line> {
+    /// way it points, and the lines `also` names drawn as the folds' own
+    /// are, so a key pressed on one finds it however the folds stand.
+    fn drawn_beneath_every_fold(&self, also: &[Handle]) -> Drawn {
         let rooted = self.rooted();
-        layout::draw_beneath_every_fold(&self.snapshot, &self.facts, &self.folds, rooted.as_ref())
+        layout::draw_beneath_every_fold(
+            &self.snapshot,
+            &self.facts,
+            &self.folds,
+            rooted.as_ref(),
+            also,
+        )
     }
 
     fn toggle_fold(&mut self) {
@@ -1149,14 +1185,13 @@ impl Forest {
 
     /// The first line at or beyond `from` that the selection can sit on.
     fn scan(&self, from: usize, forward: bool) -> Option<usize> {
-        let range: Vec<usize> = if forward {
-            (from..self.lines.len()).collect()
+        if forward {
+            (from..self.lines.len()).find(|i| selectable(&self.lines[*i]))
         } else {
             (0..=from.min(self.lines.len().checked_sub(1)?))
                 .rev()
-                .collect()
-        };
-        range.into_iter().find(|i| selectable(&self.lines[*i]))
+                .find(|i| selectable(&self.lines[*i]))
+        }
     }
 
     /// The next line the selection can sit on, past `from`.
@@ -1168,14 +1203,10 @@ impl Forest {
         }
     }
 
+    /// The line the one at `at` hangs under. Every line with lines under it
+    /// is one the selection can sit on.
     fn parent_of(&self, at: usize) -> Option<usize> {
-        let depth = self.lines.get(at)?.depth;
-        if depth == 0 {
-            return None;
-        }
-        (0..at)
-            .rev()
-            .find(|row| self.lines[*row].depth < depth && selectable(&self.lines[*row]))
+        self.lines.parent_of(at)
     }
 
     fn first_child_of(&self, at: usize) -> Option<usize> {
@@ -1204,8 +1235,8 @@ impl Forest {
     fn lay_out(&mut self) -> Drawn {
         self.settle_cursor();
         let rooted = self.rooted();
-        let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds, rooted.as_ref());
-        let was = std::mem::replace(&mut self.lines, Drawn::new(drawn));
+        let drawn = layout::lay_out(&self.snapshot, &self.facts, &self.folds, rooted.as_ref());
+        let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
             // over it, or the tracker stopped reporting it. Take the nearest
@@ -1344,15 +1375,14 @@ fn stepped_to(
     })
 }
 
-/// The line `scope` names, and everything drawn beneath it.
+/// The line `scope` names, and everything drawn beneath it, read off lines
+/// a test has drawn whole.
 ///
 /// Beneath is depth: the lines after it, up to the first one standing at its
 /// own depth or shallower. A project is depth zero, the roots under it are
 /// one, and a group's things are one under a group that is also zero, so the
 /// scope of a project stops at the next project or the first group.
-///
-/// Nothing at all where `scope` is not drawn, which leaves the walk with no
-/// fold to point.
+#[cfg(test)]
 fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
     let Some(at) = drawn
         .iter()
@@ -1381,24 +1411,116 @@ fn passing(handle: &Handle) -> bool {
     )
 }
 
-/// Every line under the first line of `within`, that line itself left out.
-/// A line with no fold today is here too: one it had, and a fold set on it
-/// while it did, stand until a key on a line above says otherwise.
-fn handles_beneath(within: &[Line]) -> Vec<Handle> {
-    within.iter().skip(1).filter_map(handle_of).collect()
+/// Every line the folds could name under `within`, that line itself left
+/// out: the lines drawn because the folds name something at or beneath
+/// them. Nothing beneath any other line has an entry, so this is every entry
+/// under `within` that a key over it lets go of.
+fn named_beneath(drawn: &Drawn, within: &Node) -> Vec<Handle> {
+    let mut beneath = Vec::new();
+    drawn.visit(within, &mut |node| {
+        if !std::ptr::eq(node, within) {
+            beneath.extend(handle_of(&node.line));
+        }
+        matches!(node.beneath, Beneath::Nothing)
+    });
+    beneath
 }
 
-/// The shut folds on the way down from the first line of `within` to every
-/// line standing on one of `arrived`, the first line's own left out. A fold
-/// open on the way holds nothing back, so nothing arriving spends it.
+/// Every bead that arrived under any spent fold, which is what the walk to
+/// each fold's own arrivals is cut short by.
+fn arrived_anywhere(spent: &[(Handle, BTreeSet<BeadKey>)]) -> BTreeSet<BeadKey> {
+    spent
+        .iter()
+        .flat_map(|(_, arrived)| arrived.iter().cloned())
+        .collect()
+}
+
+/// Whether a bead reaches one that arrived, answered once per bead of each
+/// tree the walk steps into. Read of the tree rather than of the lines, so a
+/// subtree with no arrival beneath it is stepped over rather than drawn.
+struct Reaching<'a> {
+    arrived: &'a BTreeSet<BeadKey>,
+    trees: HashMap<usize, Vec<bool>>,
+}
+
+impl<'a> Reaching<'a> {
+    fn new(arrived: &'a BTreeSet<BeadKey>) -> Self {
+        Reaching {
+            arrived,
+            trees: HashMap::new(),
+        }
+    }
+
+    /// Whether the subtree a line was counted rather than drawn from holds
+    /// a line standing on an arrival.
+    fn beneath(&mut self, drawn: &Drawn, beneath: &Beneath) -> bool {
+        let (Beneath::Bead(undrawn) | Beneath::Run(undrawn)) = beneath else {
+            return true;
+        };
+        let Some(tree) = drawn.tree(undrawn.counted.tree) else {
+            return true;
+        };
+        let reaches = self
+            .trees
+            .entry(undrawn.counted.tree)
+            .or_insert_with(|| reaching(tree, self.arrived));
+        reaches[undrawn.counted.at]
+    }
+}
+
+/// Which beads of a tree with no loop in it reach one of `arrived`, each
+/// bead counting itself.
+fn reaching(tree: &Tree, arrived: &BTreeSet<BeadKey>) -> Vec<bool> {
+    fn walk(tree: &Tree, at: usize, reaches: &mut [Option<bool>]) -> bool {
+        if let Some(known) = reaches[at] {
+            return known;
+        }
+        let found = tree.children[at]
+            .iter()
+            .any(|link| link.bead != at && walk(tree, link.bead, reaches));
+        reaches[at] = Some(found);
+        found
+    }
+    let mut reaches: Vec<Option<bool>> = tree
+        .beads
+        .iter()
+        .map(|bead| {
+            arrived
+                .contains(&BeadKey {
+                    project: tree.project.clone(),
+                    id: bead.id.clone(),
+                })
+                .then_some(true)
+        })
+        .collect();
+    (0..tree.beads.len())
+        .map(|at| walk(tree, at, &mut reaches))
+        .collect()
+}
+
+/// The shut folds on the way down from the line `scope` names to every line
+/// standing on one of `arrived`, the scope's own left out. A fold open on
+/// the way holds nothing back, so nothing arriving spends it.
 ///
-/// Read off the lines by depth, the way `subtree_of` reads what is beneath
-/// a line, so the way down is the one that was drawn — through the run a
-/// bead hangs in, and by whichever fold the drawing gave each line.
-fn way_down_to(within: &[Line], arrived: &BTreeSet<BeadKey>) -> BTreeSet<Handle> {
+/// Read off the lines by depth, the way the lines beneath a line are read,
+/// so the way down is the one that was drawn — through the run a bead hangs
+/// in, and by whichever fold the drawing gave each line.
+fn way_down_to(
+    drawn: &Drawn,
+    scope: &Handle,
+    arrived: &BTreeSet<BeadKey>,
+    reaching: &mut Reaching,
+) -> BTreeSet<Handle> {
+    let Some(within) = drawn.node_of(scope) else {
+        return BTreeSet::new();
+    };
     let mut above: Vec<&Line> = Vec::new();
     let mut path = BTreeSet::new();
-    for line in within.iter().skip(1) {
+    drawn.visit(within, &mut |node| {
+        if std::ptr::eq(node, within) {
+            return true;
+        }
+        let line = &node.line;
         while above.last().is_some_and(|over| over.depth >= line.depth) {
             above.pop();
         }
@@ -1415,7 +1537,8 @@ fn way_down_to(within: &[Line], arrived: &BTreeSet<BeadKey>) -> BTreeSet<Handle>
             );
         }
         above.push(line);
-    }
+        reaching.beneath(drawn, &node.beneath)
+    });
     path
 }
 
@@ -2171,8 +2294,8 @@ credential_command = "secret harbour"
             assert!(Arc::ptr_eq(held, was), "{} was copied", was.root);
             assert_eq!(
                 Arc::strong_count(was),
-                3,
-                "{} is held by collected, trees and this test, and nothing else",
+                4,
+                "{} is held by collected, trees, the lines drawn from it and this test, and nothing else",
                 was.root
             );
         }
@@ -3051,11 +3174,37 @@ credential_command = "secret harbour"
         assert_eq!(walks_on_this_thread() - before, 0);
     }
 
+    /// A subtree the folds name nothing at or beneath is counted from its
+    /// tree rather than drawn, and drawn from it only where a reader reaches
+    /// in. So a key that lays the forest out again costs the count and the
+    /// lines the folds name, which on a large forest fully opened is a few
+    /// thousand lines of hundreds of thousands. What is drawn on reaching in
+    /// is exactly what was counted.
+    #[test]
+    fn a_subtree_the_folds_do_not_name_is_counted_rather_than_drawn() {
+        let mut forest = flatten(built(Filter::All));
+        forest.apply(Action::ExpandForest);
+        let drawn = forest.lines();
+        let mut lines = 0;
+        let mut counted = 0;
+        for top in drawn.top() {
+            drawn.visit(top, &mut |node| {
+                lines += 1;
+                counted += usize::from(!matches!(node.beneath, Beneath::Nothing));
+                true
+            });
+        }
+        assert!(counted > 0, "{:#?}", sketch(&forest));
+        assert_eq!(lines, drawn.len());
+        assert_eq!(drawn.iter().count(), drawn.len());
+    }
+
     /// The lines a forest draws depend on its folds, its root and its
     /// filter, and a key that moves only the selection changes none of
     /// them. So the lines it held are the lines it would draw, and a motion
-    /// draws nothing — on the Defra forest, fully opened, a draw is some
-    /// 290,000 lines and a keystroke that made one did not answer at once.
+    /// draws nothing — on a large forest fully opened, a draw is hundreds of
+    /// thousands of lines and a keystroke that made one did not answer at
+    /// once.
     ///
     /// `h` and `l` stepping out of and into a node move only the selection
     /// too. A fold is the control: it changes what is drawn and draws once.
