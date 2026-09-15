@@ -79,21 +79,30 @@ pub(super) struct Folds(BTreeMap<Handle, Fold>);
 /// What the reader set on one line.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct Fold {
-    /// Which way the line's own fold points, where a key that points one
-    /// fold set it. Wins over any scope.
-    pub(super) line: Option<bool>,
+    /// The line's own fold, where a key that points one fold set it or a
+    /// refresh spent it. Wins over any scope.
+    pub(super) line: Option<Way>,
     /// What the line and everything beneath it answer from, where a key that
     /// points a subtree set it.
     pub(super) scope: Option<Scope>,
+}
+
+/// Which way one line's own fold goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Way {
+    Open,
+    Shut,
+    /// As the default puts it, whatever a scope over the line says: a fold
+    /// the reader shut and live work has since arrived under.
+    Rests,
 }
 
 /// What every fold under one line answers from, unless a nearer entry says
 /// otherwise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Scope {
-    /// Every fold points this way, but for the ones named as resting, which
-    /// go on following the default: the folds `e` found resting open, and
-    /// the way down to work that arrived under a scope that shut.
+    /// Every fold points this way, but for the ones named as resting — the
+    /// folds `e` found resting open — which go on following the default.
     Points {
         open: bool,
         resting: BTreeSet<Handle>,
@@ -104,13 +113,8 @@ pub(super) enum Scope {
 
 impl Fold {
     fn holds_shut(&self) -> bool {
-        self.line == Some(false) || matches!(self.scope, Some(Scope::Points { open: false, .. }))
-    }
-
-    fn leave_resting(&mut self, handle: Handle) {
-        if let Some(Scope::Points { resting, .. }) = &mut self.scope {
-            resting.insert(handle);
-        }
+        self.line == Some(Way::Shut)
+            || matches!(self.scope, Some(Scope::Points { open: false, .. }))
     }
 }
 
@@ -121,8 +125,11 @@ impl Folds {
     /// caller knows the tree a line came from, so it says where the line
     /// rests rather than being asked to re-derive it here.
     pub(super) fn pointed(&self, handle: &Handle, over: Option<&Scope>) -> Option<bool> {
-        if let Some(open) = self.0.get(handle).and_then(|fold| fold.line) {
-            return Some(open);
+        match self.0.get(handle).and_then(|fold| fold.line) {
+            Some(Way::Open) => return Some(true),
+            Some(Way::Shut) => return Some(false),
+            Some(Way::Rests) => return None,
+            None => {}
         }
         match self.beneath(handle, over) {
             Some(Scope::Points { open, resting }) if !resting.contains(handle) => Some(*open),
@@ -145,7 +152,8 @@ impl Folds {
 
     /// Point one fold the way the user asked.
     pub(super) fn set(&mut self, handle: Handle, open: bool) {
-        self.0.entry(handle).or_default().line = Some(open);
+        let way = if open { Way::Open } else { Way::Shut };
+        self.0.entry(handle).or_default().line = Some(way);
     }
 
     /// Point a line and every fold beneath it one way, but for `resting`,
@@ -166,31 +174,13 @@ impl Folds {
     }
 
     /// Hand a line and everything beneath it back to the default, and hold
-    /// it there against the scope on `over` where one is standing over it.
-    pub(super) fn let_go(&mut self, handle: Handle, beneath: &[Handle], over: Option<&Handle>) {
+    /// it there against whatever scope stands over it.
+    pub(super) fn let_go(&mut self, handle: Handle, beneath: &[Handle]) {
         for under in beneath {
             self.0.remove(under);
         }
-        self.0.remove(&handle);
-        if over.is_some_and(|over| self.points_at(over)) {
-            let scope = Some(Scope::Rests);
-            self.0.insert(handle, Fold { line: None, scope });
-        }
-    }
-
-    fn points_at(&self, handle: &Handle) -> bool {
-        matches!(
-            self.0.get(handle),
-            Some(Fold {
-                scope: Some(Scope::Points { .. }),
-                ..
-            })
-        )
-    }
-
-    /// Whether a key that points a subtree has set a scope on this line.
-    pub(super) fn scopes(&self, handle: &Handle) -> bool {
-        self.0.get(handle).is_some_and(|fold| fold.scope.is_some())
+        let scope = Some(Scope::Rests);
+        self.0.insert(handle, Fold { line: None, scope });
     }
 
     /// The folds the user has shut, which are the only ones that can be
@@ -204,32 +194,32 @@ impl Folds {
     }
 
     /// Let go of the shut fold at `handle`, handing it back to the default
-    /// under whatever scope stands `over` it. Where the fold is itself a
-    /// scope that shut, `path` — the way down to what arrived beneath — is
-    /// let go of with it, and the scope goes on standing over the rest.
-    pub(super) fn spend(
-        &mut self,
-        handle: &Handle,
-        over: Option<&Handle>,
-        path: impl IntoIterator<Item = Handle>,
-    ) {
-        let Some(fold) = self.0.get_mut(handle) else {
-            return;
-        };
-        if fold.line == Some(false) {
-            fold.line = None;
-        }
-        fold.leave_resting(handle.clone());
-        if matches!(fold.scope, Some(Scope::Points { open: false, .. })) {
+    /// whatever scope stands over it. Where the fold is itself a scope that
+    /// shut, `path` — the way down to what arrived beneath — is let go of
+    /// with it, and the scope goes on standing over the rest.
+    pub(super) fn spend(&mut self, handle: &Handle, path: impl IntoIterator<Item = Handle>) {
+        let scope_shut = matches!(
+            self.0.get(handle),
+            Some(Fold {
+                scope: Some(Scope::Points { open: false, .. }),
+                ..
+            })
+        );
+        self.rest(handle.clone());
+        if scope_shut {
             for under in path {
-                fold.leave_resting(under);
+                self.rest(under);
             }
         }
-        if *fold == Fold::default() {
-            self.0.remove(handle);
-        }
-        if let Some(over) = over.and_then(|over| self.0.get_mut(over)) {
-            over.leave_resting(handle.clone());
+    }
+
+    /// Hand one line's own fold back to the default. A fold the reader
+    /// opened by hand stays as they opened it: it holds nothing back, so
+    /// nothing arriving beneath it spends it.
+    fn rest(&mut self, handle: Handle) {
+        let fold = self.0.entry(handle).or_default();
+        if fold.line != Some(Way::Open) {
+            fold.line = Some(Way::Rests);
         }
     }
 

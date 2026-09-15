@@ -303,8 +303,7 @@ impl Forest {
         let drawn = self.drawn_beneath_every_fold();
         for (handle, arrived) in spent {
             let path = way_down_to(subtree_of(&drawn, &handle), &arrived);
-            let over = self.scoped_by(&handle);
-            self.folds.spend(&handle, over.as_ref(), path);
+            self.folds.spend(&handle, path);
         }
     }
 
@@ -352,15 +351,6 @@ impl Forest {
                 id: tree.beads[node].id.clone(),
             })
             .collect()
-    }
-
-    /// The line whose scope everything at `handle` answers from, where one of
-    /// the lines above it carries a scope: the nearest that does.
-    fn scoped_by(&self, handle: &Handle) -> Option<Handle> {
-        self.ancestry_of(Some(handle))
-            .into_iter()
-            .skip(1)
-            .find(|above| self.folds.scopes(above))
     }
 
     /// What the cursor is on, then everything above it, nearest first: the
@@ -673,9 +663,8 @@ impl Forest {
             return;
         };
         let drawn = self.drawn_beneath_every_fold();
-        let beneath = folds_beneath(subtree_of(&drawn, &scope));
-        let over = self.scoped_by(&scope);
-        self.folds.let_go(scope, &beneath, over.as_ref());
+        let beneath = handles_beneath(subtree_of(&drawn, &scope));
+        self.folds.let_go(scope, &beneath);
     }
 
     /// Point every fold in `scope`'s subtree, or in the whole forest where
@@ -710,7 +699,7 @@ impl Forest {
                 .filter(|line| open && line.folded == Some(true) && !line.pointed)
                 .filter_map(handle_of)
                 .collect();
-            let beneath = folds_beneath(within);
+            let beneath = handles_beneath(within);
             self.folds.set_over(scope, open, resting, &beneath);
         }
     }
@@ -1358,14 +1347,11 @@ fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
     &drawn[at..end]
 }
 
-/// The folds under the first line of `within`, that line's own left out.
-fn folds_beneath(within: &[Line]) -> Vec<Handle> {
-    within
-        .iter()
-        .skip(1)
-        .filter(|line| line.folded.is_some())
-        .filter_map(handle_of)
-        .collect()
+/// Every line under the first line of `within`, that line itself left out.
+/// A line with no fold today is here too: one it had, and a fold set on it
+/// while it did, stand until a key on a line above says otherwise.
+fn handles_beneath(within: &[Line]) -> Vec<Handle> {
+    within.iter().skip(1).filter_map(handle_of).collect()
 }
 
 /// The folds on the way down from the first line of `within` to every line
@@ -6417,6 +6403,69 @@ credential_command = "secret harbour"
         assert_eq!(
             drawn_beads(&forest),
             ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A run is the one line whose scope reaches beads its handle does not
+    /// name the way down to, so `d` inside it is where a scope set on it
+    /// could be missed: `dep-1.2` was opened by `e` on the run and rests
+    /// shut again when `d` is pressed on it, while the run stays open.
+    #[test]
+    fn restoring_the_default_inside_an_expanded_run_shuts_the_branch_again() {
+        let mut forest = flatten(depot());
+        select_run(&mut forest);
+        forest.apply(Action::ExpandSubtree);
+        assert!(
+            drawn_beads(&forest).contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        select_bead(&mut forest, "dep-1.2");
+        forest.apply(Action::RestoreSubtree);
+
+        let drawn = drawn_beads(&forest);
+        assert!(
+            drawn.contains(&"dep-1.2".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            !drawn.contains(&"dep-1.2.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Tower with `tow-1.1.1.1` gone, so `tow-1.1.1` is a leaf with no fold.
+    fn tower_without_cables() -> Snapshot {
+        let beads: Vec<serde_json::Value> = serde_json::from_str(TOWER).expect("tower is json");
+        let kept: Vec<serde_json::Value> = beads
+            .into_iter()
+            .filter(|bead| bead["id"] != "tow-1.1.1.1")
+            .collect();
+        alone("orbital", &serde_json::Value::Array(kept).to_string(), &[])
+    }
+
+    /// A fold set on a line whose children have since gone is still a fold,
+    /// so `e` on a line above it takes it with everything else beneath: when
+    /// the children come back, the line answers from the scope and not from
+    /// the fold the reader shut before they went.
+    #[test]
+    fn expanding_takes_a_fold_whose_line_has_no_children_today() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        toggle_fold_of(&mut forest, "tow-1.1.1");
+        forest.refresh(tower_without_cables());
+        assert_eq!(drawn_beads(&forest), ["tow-1"], "{:#?}", sketch(&forest));
+
+        select_bead(&mut forest, "tow-1");
+        forest.apply(Action::ExpandSubtree);
+        forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
+
+        assert!(
+            drawn_beads(&forest).contains(&"tow-1.1.1.1".to_string()),
             "{:#?}",
             sketch(&forest)
         );
