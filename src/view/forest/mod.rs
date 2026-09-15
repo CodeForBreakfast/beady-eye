@@ -665,7 +665,14 @@ impl Forest {
             return;
         };
         let drawn = self.drawn_beneath_every_fold();
-        let beneath = handles_beneath(subtree_of(&drawn, &scope));
+        let within = subtree_of(&drawn, &scope);
+        if holds_back(&scope) {
+            for handle in within.iter().filter_map(handle_of) {
+                self.folds.let_go(handle, &[]);
+            }
+            return;
+        }
+        let beneath = handles_beneath(within);
         self.folds.let_go(scope, &beneath);
     }
 
@@ -681,12 +688,6 @@ impl Forest {
     ///
     /// The whole forest is every line at the top of it, each taken as a
     /// scope of its own.
-    ///
-    /// The lines over what the filter and the mode are holding back stand
-    /// over nothing once the trees are shown or the forest is put back, so a
-    /// scope set on one would go with it and leave what it shut resting.
-    /// Those point each fold beneath them by themselves, as every line did
-    /// once.
     fn fold_in(&mut self, scope: Option<&Handle>, open: bool) {
         let drawn = self.drawn_beneath_every_fold();
         let scopes: Vec<Handle> = match scope {
@@ -702,10 +703,7 @@ impl Forest {
             if within.first().is_none_or(|line| line.folded.is_none()) {
                 continue;
             }
-            if matches!(
-                scope,
-                Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
-            ) {
+            if holds_back(&scope) {
                 let pointed: Vec<Handle> = within
                     .iter()
                     .filter(|line| line.folded.is_some_and(|was| !open || !was))
@@ -1367,6 +1365,18 @@ fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
         .position(|line| line.depth <= depth)
         .map_or(drawn.len(), |past| at + 1 + past);
     &drawn[at..end]
+}
+
+/// Whether a line is one of the two that hold trees back for the filter or
+/// the mode. Each stands over nothing once the trees are shown or the
+/// forest is put back, so a scope set on one would go with it and leave
+/// what it pointed resting: a key pressed on one points each fold beneath
+/// it by itself, as every line did once.
+fn holds_back(handle: &Handle) -> bool {
+    matches!(
+        handle,
+        Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
+    )
 }
 
 /// Every line under the first line of `within`, that line itself left out.
@@ -6704,6 +6714,40 @@ credential_command = "secret harbour"
 
         assert!(
             drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `d` on the group of trees the filter is holding back puts every fold
+    /// beneath it back, and they stay put back once the filter shows every
+    /// tree: `hbr-3`, opened by `E`, rests shut under its project after `d`
+    /// on the group and `a`.
+    #[test]
+    fn showing_every_tree_keeps_what_was_restored_from_the_hidden_trees_group_resting() {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::ToggleFilter);
+        assert!(
+            !drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "hbr-3 rests shut under its project: {:#?}",
+            sketch(&forest)
+        );
+        forest.apply(Action::ToggleFilter);
+
+        forest.apply(Action::ExpandForest);
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid a tree");
+        step_onto(&mut forest, group);
+        forest.apply(Action::RestoreSubtree);
+        forest.apply(Action::ToggleFilter);
+
+        assert!(
+            !drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
             "{:#?}",
             sketch(&forest)
         );
