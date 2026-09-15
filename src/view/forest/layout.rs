@@ -22,11 +22,11 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Node as Bead, Snapshot, Tree};
 use crate::model::tree::Link;
 use crate::model::types::Edge;
+use crate::view::draw::identity_widths;
 use crate::view::lines::{
     first_copy, links_below, marker, notes_of, prefix, root_key, run_size, way_below, BeadFacts,
     Content, Group, GroupKind, Item, Line, Note, Place, ProjectLine, Unread, INDENT,
 };
-use crate::view::draw::identity_widths;
 use crate::view::row::{self, Widths};
 
 use super::drawn::{Beneath, Count, Counted, Drawn, Ground, Node, Undrawn};
@@ -792,7 +792,14 @@ impl<'a> Layout<'a> {
     /// per bead and kept for the lines that are drawn from it later.
     fn count(&self, tree: &Tree, answers: Uniform, counted: Counted) -> Count {
         let mut kept = self.kept.borrow_mut();
-        count(&mut kept, tree, answers, self.beneath_shut, self.row, counted)
+        count(
+            &mut kept,
+            tree,
+            answers,
+            self.beneath_shut,
+            self.row,
+            counted,
+        )
     }
 }
 

@@ -33,8 +33,8 @@ use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
 pub use bands::{line_at, regions};
-pub use tail::{draw_tail, Band};
 pub(crate) use bead::identity_widths;
+pub use tail::{draw_tail, Band};
 
 use bead::{bead_line, elided_run};
 use foot::{notices, status_bar};
@@ -815,7 +815,8 @@ mod tests {
     /// starts where their titles do.
     #[test]
     fn an_unread_roots_reason_starts_where_the_bead_rows_titles_do() {
-        let unreadable = Tree::tracker_unreachable("summit-works", "smt-7", TrackerFailure::Unavailable);
+        let unreadable =
+            Tree::tracker_unreachable("summit-works", "smt-7", TrackerFailure::Unavailable);
         let forest = opened(&snapshot(
             vec![grove(1), unreadable],
             Vec::new(),

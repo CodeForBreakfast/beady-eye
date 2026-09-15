@@ -312,15 +312,14 @@ impl Forest {
         if spent.is_empty() {
             return;
         }
-        let drawn =
-            layout::draw_beneath_every_fold(
-                &self.snapshot,
-                &self.facts,
-                &self.folds,
-                None,
-                &[],
-                &self.layout,
-            );
+        let drawn = layout::draw_beneath_every_fold(
+            &self.snapshot,
+            &self.facts,
+            &self.folds,
+            None,
+            &[],
+            &self.layout,
+        );
         let anywhere = arrived_anywhere(&spent);
         let mut reaching = Reaching::new(&anywhere);
         for (handle, arrived) in spent {
@@ -1562,12 +1561,12 @@ mod tests {
     use crate::model::tree::{self, Assembled, Nesting};
     use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::{Bead, Pane};
+    use crate::view::draw::identity_widths;
     use crate::view::lines::{
         counts_beneath, facts_of, links_below, marker, prefix, progress_of, run_size, split,
         walks_on_this_thread, way_below, Group, Item, Note, ProjectLine, OPEN, SHUT,
     };
     use crate::view::phrase;
-    use crate::view::draw::identity_widths;
     use crate::view::row::{Cell, Progress, Row, Widths};
     use crate::view::walk::{self, Rows};
     use chrono::{DateTime, Utc};

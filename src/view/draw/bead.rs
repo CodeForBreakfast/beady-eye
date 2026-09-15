@@ -361,7 +361,12 @@ mod tests {
         let node = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Blocked);
 
         assert_eq!(
-            Painted::of(bead_line(&row(&node), BRANCH, &ids(4), &Layout::default()), 46, 1).rows(),
+            Painted::of(
+                bead_line(&row(&node), BRANCH, &ids(4), &Layout::default()),
+                46,
+                1
+            )
+            .rows(),
             vec!["  ├── ● .20   wallpaper timer calls dms       "]
         );
     }
@@ -382,7 +387,8 @@ mod tests {
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
 
-        let drawn = Painted::of(bead_line(&epic, BRANCH, &ids(3), &Layout::default()), 60, 1).rows();
+        let drawn =
+            Painted::of(bead_line(&epic, BRANCH, &ids(3), &Layout::default()), 60, 1).rows();
 
         let count = drawn[0].find("3/8").expect("the count is drawn");
         let agent = drawn[0].find("wCM:p9").expect("the agent is drawn");
@@ -412,7 +418,8 @@ mod tests {
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
 
-        let drawn = Painted::of(bead_line(&epic, BRANCH, &ids(3), &Layout::default()), 60, 1).rows();
+        let drawn =
+            Painted::of(bead_line(&epic, BRANCH, &ids(3), &Layout::default()), 60, 1).rows();
 
         assert!(drawn[0].ends_with("3/8  ◍ wCM:p9 · working"), "{drawn:?}");
     }
@@ -431,7 +438,12 @@ mod tests {
         shut.agent = Some(row::agent_marker(&a_pane()));
         shut.shut_over = Some(counts(1, 5, 3, 0));
 
-        let drawn = Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 110, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&shut, BRANCH, &ids(3), &Layout::default()),
+            110,
+            1,
+        )
+        .rows();
 
         let own = drawn[0].find("wCM:p9").expect("its own agent is drawn");
         let beneath = drawn[0]
@@ -452,7 +464,12 @@ mod tests {
         ));
         shut.shut_over = Some(counts(1, 5, 0, 2));
 
-        let drawn = Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 110, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&shut, BRANCH, &ids(3), &Layout::default()),
+            110,
+            1,
+        )
+        .rows();
 
         says(&drawn[0], "2 beads beneath");
     }
@@ -469,7 +486,12 @@ mod tests {
         ));
         shut.shut_over = Some(counts(4, 5, 0, 0));
 
-        let drawn = Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 110, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&shut, BRANCH, &ids(3), &Layout::default()),
+            110,
+            1,
+        )
+        .rows();
 
         does_not_say(&drawn[0], "beneath");
     }
@@ -485,7 +507,12 @@ mod tests {
         ));
         shut.shut_over = Some(counts(1, 5, 3, 2));
 
-        let painted = Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 120, 1).row(0);
+        let painted = Painted::of(
+            bead_line(&shut, BRANCH, &ids(3), &Layout::default()),
+            120,
+            1,
+        )
+        .row(0);
         let colour_of = |words: &str| {
             painted
                 .iter()
@@ -536,8 +563,14 @@ mod tests {
         shut.shut_over = Some(counts(1, 22, 4, 0));
         shut.notes = vec![phrase::unfinished_beneath(21)];
 
-        let wide = Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 120, 1).rows();
-        let narrow = Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 68, 1).rows();
+        let wide = Painted::of(
+            bead_line(&shut, BRANCH, &ids(3), &Layout::default()),
+            120,
+            1,
+        )
+        .rows();
+        let narrow =
+            Painted::of(bead_line(&shut, BRANCH, &ids(3), &Layout::default()), 68, 1).rows();
 
         says(&wide[0], "◍ 4 agents beneath");
         says(&wide[0], "21 unfinished beads beneath this");
@@ -558,7 +591,8 @@ mod tests {
             Status::Open,
         ));
 
-        let drawn = Painted::of(bead_line(&leaf, BRANCH, &ids(4), &Layout::default()), 60, 1).rows();
+        let drawn =
+            Painted::of(bead_line(&leaf, BRANCH, &ids(4), &Layout::default()), 60, 1).rows();
 
         assert!(!drawn[0].contains('/'), "{drawn:?}");
     }
@@ -576,7 +610,12 @@ mod tests {
             1,
         )
         .rows();
-        let long = Painted::of(bead_line(&row(&long), BRANCH, &ids(4), &Layout::default()), 60, 1).rows();
+        let long = Painted::of(
+            bead_line(&row(&long), BRANCH, &ids(4), &Layout::default()),
+            60,
+            1,
+        )
+        .rows();
 
         assert_eq!(
             short[0].find("wire the"),
@@ -897,8 +936,10 @@ mod tests {
         let widths = Widths::from([(Cell::Badge("delivery_pr".into()), 5), (Cell::Id, 3)]);
 
         let drawn = vec![
-            Painted::of(bead_line(&row(&badged), BRANCH, &widths, &layout), 60, 1).rows()[0].clone(),
-            Painted::of(bead_line(&row(&unbadged), LAST, &widths, &layout), 60, 1).rows()[0].clone(),
+            Painted::of(bead_line(&row(&badged), BRANCH, &widths, &layout), 60, 1).rows()[0]
+                .clone(),
+            Painted::of(bead_line(&row(&unbadged), LAST, &widths, &layout), 60, 1).rows()[0]
+                .clone(),
         ];
 
         assert_eq!(
@@ -1091,7 +1132,12 @@ mod tests {
             phrase::unopenable_link("jira"),
         ];
 
-        let drawn = Painted::of(bead_line(&short, BRANCH, &ids(3), &Layout::default()), 160, 1).rows();
+        let drawn = Painted::of(
+            bead_line(&short, BRANCH, &ids(3), &Layout::default()),
+            160,
+            1,
+        )
+        .rows();
 
         says(&drawn[0], "delivery_pr");
         says(&drawn[0], "jira");
@@ -1283,8 +1329,11 @@ mod tests {
             }];
             let mut unremarked = row(&badged);
             unremarked.notes = Vec::new();
-            symbols(bead_line(&unremarked, BRANCH, &ids(4), &Layout::default()), width)
-                .contains(somewhere)
+            symbols(
+                bead_line(&unremarked, BRANCH, &ids(4), &Layout::default()),
+                width,
+            )
+            .contains(somewhere)
         };
         let every_width = || 1..=60;
 
@@ -1314,7 +1363,10 @@ mod tests {
         let said = |badge: Badged| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
             badged.badges = vec![badge];
-            symbols(bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()), 100)
+            symbols(
+                bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
+                100,
+            )
         };
 
         assert!(
@@ -1395,7 +1447,10 @@ mod tests {
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![shortenable(Some(somewhere))];
 
-        let said = symbols(bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()), 32);
+        let said = symbols(
+            bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
+            32,
+        );
 
         assert!(
             said.contains(
@@ -1451,7 +1506,13 @@ mod tests {
             badged.badges = vec![badge];
             let mut row = row(&badged);
             row.notes = Vec::new();
-            Painted::of(bead_line(&row, BRANCH, &ids(4), &Layout::default()), width, 1).rows()[0].clone()
+            Painted::of(
+                bead_line(&row, BRANCH, &ids(4), &Layout::default()),
+                width,
+                1,
+            )
+            .rows()[0]
+                .clone()
         };
         let one_length = |badge: Badged| {
             unremarked(
@@ -1512,8 +1573,12 @@ mod tests {
     #[test]
     fn a_bead_line_too_long_for_the_width_is_cut_rather_than_wrapped() {
         let long = node("smt-4kd3p.20", &"wallpaper ".repeat(20), Status::Open);
-        let drawn =
-            Painted::of(bead_line(&row(&long), BRANCH, &ids(4), &Layout::default()), 40, 3).rows();
+        let drawn = Painted::of(
+            bead_line(&row(&long), BRANCH, &ids(4), &Layout::default()),
+            40,
+            3,
+        )
+        .rows();
 
         assert_eq!(drawn[0], "  ├── ○ .20   wallpaper wallpaper wallp…");
         assert_eq!(drawn[1].trim(), "");
@@ -1553,7 +1618,12 @@ mod tests {
     #[test]
     fn an_elided_run_leaves_its_box_drawing_in_the_terminals_own_colour() {
         let painted = Painted::of(
-            fitted(&under(BRANCH, elided(3)), &ids(0), &Layout::default(), &at_rest()),
+            fitted(
+                &under(BRANCH, elided(3)),
+                &ids(0),
+                &Layout::default(),
+                &at_rest(),
+            ),
             72,
             1,
         )
@@ -1598,8 +1668,12 @@ mod tests {
     fn an_open_beads_id_is_left_in_the_colour_the_rest_of_its_row_is_in() {
         let node = node("smt-4kd3p.2", "a bead", Status::Open);
 
-        let painted =
-            Painted::of(bead_line(&row(&node), BRANCH, &ids(3), &Layout::default()), 60, 1).row(0);
+        let painted = Painted::of(
+            bead_line(&row(&node), BRANCH, &ids(3), &Layout::default()),
+            60,
+            1,
+        )
+        .row(0);
 
         let id = painted
             .iter()
