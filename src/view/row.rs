@@ -3,6 +3,8 @@
 //! Indentation, the box-drawing prefix, width, colour and where each cell
 //! lands are the renderer's. This is what there is to say about one bead.
 
+use std::collections::HashMap;
+
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
 use crate::model::join::AgentRef;
@@ -69,7 +71,7 @@ pub struct Row {
 /// `Badges` stands for every badge the row's layout does not name on its
 /// own, in config order, so naming one badge takes it out of `Badges` and
 /// adding a badge to the config does not mean editing the row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Cell {
     Glyph,
     Id,
@@ -105,6 +107,49 @@ impl Default for Layout {
             title: vec![Cell::Title, Cell::Badges],
             state: vec![Cell::Progress, Cell::Agent, Cell::Anomalies],
         }
+    }
+}
+
+/// How many columns each cell of the identity is drawn through: the widest
+/// that cell draws on any line of the forest, so a column of them lines up
+/// under one another and the titles start together.
+///
+/// A cell no line draws has no entry, and reads as nought.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Widths(HashMap<Cell, usize>);
+
+impl Widths {
+    pub fn of(&self, cell: &Cell) -> usize {
+        self.0.get(cell).copied().unwrap_or(0)
+    }
+
+    /// Take the wider of this table's entry and `width`.
+    pub fn widen(&mut self, cell: &Cell, width: usize) {
+        let entry = self.0.entry(cell.clone()).or_default();
+        *entry = (*entry).max(width);
+    }
+
+    /// Take the wider of the two tables' entries, cell by cell.
+    pub fn merge(&mut self, other: &Widths) {
+        for (cell, width) in &other.0 {
+            self.widen(cell, *width);
+        }
+    }
+}
+
+impl FromIterator<(Cell, usize)> for Widths {
+    fn from_iter<I: IntoIterator<Item = (Cell, usize)>>(cells: I) -> Self {
+        let mut widths = Widths::default();
+        for (cell, width) in cells {
+            widths.widen(&cell, width);
+        }
+        widths
+    }
+}
+
+impl<const N: usize> From<[(Cell, usize); N]> for Widths {
+    fn from(cells: [(Cell, usize); N]) -> Self {
+        cells.into_iter().collect()
     }
 }
 
