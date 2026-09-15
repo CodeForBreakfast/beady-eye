@@ -158,14 +158,6 @@ pub(super) fn project_drawn(snapshot: &Snapshot, project: &str) -> bool {
 /// dangling and looping counts and its anomalies off the screen with it,
 /// and a group that said only how many trees it hides would read as
 /// "nothing to see" when some of them are broken.
-/// Whether the filter is holding the tree a root names back.
-pub(super) fn hidden(snapshot: &Snapshot, root: &BeadKey) -> bool {
-    snapshot
-        .hidden_trees
-        .iter()
-        .any(|hidden| hidden.project == root.project && hidden.root == root.id)
-}
-
 /// The trees a project is holding back, in the order its group lists them.
 fn hidden_trees<'a>(snapshot: &'a Snapshot, project: Option<&str>) -> Vec<&'a Tree> {
     snapshot
@@ -545,15 +537,6 @@ impl<'a> Layout<'a> {
         let mut trunk = Vec::new();
         for tree in trees {
             entries -= 1;
-            // A tree the filter is holding back is drawn here only while the
-            // forest is rooted in it, in place of the group that would have
-            // held it — and a scope set on that group still stands over it.
-            let over = if hidden(self.snapshot, &root_key(tree)) {
-                let group = Handle::Group(GroupKind::HiddenTrees, Some(project.clone()));
-                self.folds.beneath(&group, over)
-            } else {
-                over
-            };
             TreeLayout {
                 folds: self.folds,
                 over,

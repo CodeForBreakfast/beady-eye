@@ -427,7 +427,10 @@ impl Forest {
     }
 
     fn hidden(&self, root: &BeadKey) -> bool {
-        layout::hidden(&self.snapshot, root)
+        self.snapshot
+            .hidden_trees
+            .iter()
+            .any(|hidden| hidden.project == root.project && hidden.root == root.id)
     }
 
     /// The tree a place was drawn in and the way down it, as the beads
@@ -679,10 +682,10 @@ impl Forest {
     /// The whole forest is every line at the top of it, each taken as a
     /// scope of its own.
     ///
-    /// The line over the roots the mode is holding back is the one line
-    /// that stands over nothing once the forest is put back, so a scope set
-    /// on it would go with the mode and leave the roots it shut resting.
-    /// That one points each fold beneath it by itself, as every line did
+    /// The lines over what the filter and the mode are holding back stand
+    /// over nothing once the trees are shown or the forest is put back, so a
+    /// scope set on one would go with it and leave what it shut resting.
+    /// Those point each fold beneath them by themselves, as every line did
     /// once.
     fn fold_in(&mut self, scope: Option<&Handle>, open: bool) {
         let drawn = self.drawn_beneath_every_fold();
@@ -699,7 +702,10 @@ impl Forest {
             if within.first().is_none_or(|line| line.folded.is_none()) {
                 continue;
             }
-            if matches!(scope, Handle::Group(GroupKind::OutOfTheWay, _)) {
+            if matches!(
+                scope,
+                Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
+            ) {
                 let pointed: Vec<Handle> = within
                     .iter()
                     .filter(|line| line.folded.is_some_and(|was| !open || !was))
@@ -6649,11 +6655,10 @@ credential_command = "secret harbour"
 
     /// Rooting the forest at a bead in a tree the filter is holding back
     /// draws that tree under its project, where its group would have been,
-    /// and a scope set on the group still stands over it: `hbr-3` was
-    /// opened by `e` on the group and stays open onto `hbr-3.1` when the
-    /// forest is rooted at it.
+    /// and what `e` on the group opened stays open there: `hbr-3` stays
+    /// open onto `hbr-3.1` when the forest is rooted at it.
     #[test]
-    fn rooting_the_forest_in_an_expanded_hidden_trees_group_keeps_its_scope_over_the_tree() {
+    fn rooting_the_forest_in_an_expanded_hidden_tree_keeps_it_open() {
         let mut forest = flatten(snapshot());
         let group = forest
             .lines()
@@ -6671,6 +6676,31 @@ credential_command = "secret harbour"
         );
 
         focus_on(&mut forest, "hbr-3");
+
+        assert!(
+            drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Showing every tree takes the trees the filter was holding back out
+    /// of their group and draws them under the project, and what `e` on the
+    /// group opened stays open there: `hbr-3` is still open onto `hbr-3.1`.
+    #[test]
+    fn showing_every_tree_keeps_what_was_expanded_from_the_hidden_trees_group_open() {
+        let mut forest = flatten(snapshot());
+        let group = forest
+            .lines()
+            .iter()
+            .position(|line| {
+                matches!(&line.content, Content::Group(group) if group.kind == GroupKind::HiddenTrees)
+            })
+            .expect("the filter hid a tree");
+        step_onto(&mut forest, group);
+        forest.apply(Action::ExpandSubtree);
+
+        forest.apply(Action::ToggleFilter);
 
         assert!(
             drawn_beads(&forest).contains(&"hbr-3.1".to_string()),
