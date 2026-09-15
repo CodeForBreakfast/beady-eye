@@ -72,24 +72,36 @@ pub(crate) fn words_of(symbol: &str) -> String {
 
 const ESCAPE: char = '\x1b';
 
-/// A span of the title block that stands for somewhere the reader can go.
+/// One of the three blocks a row is made of, named by its place on the row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Block {
+    Identity,
+    Title,
+    State,
+}
+
+/// A span of any block that stands for somewhere the reader can go.
 ///
 /// Named by its place rather than by what it draws: `Fitted` knows nothing of
 /// what it is drawing, and a link is one more thing it does not have to know.
 pub(crate) struct Link {
-    /// Which span of the title block it is.
+    /// Which block it is in.
+    pub(crate) block: Block,
+    /// Which span of that block it is.
     pub(crate) at: usize,
     /// Where it points.
     pub(crate) to: String,
 }
 
-/// A span of the title block that can also say itself more shortly.
+/// A span of any block that can also say itself more shortly.
 ///
 /// Named by its place, as `Link` is, and carrying words rather than a span:
 /// the row dresses the short form in the long one's own style, so a form the
 /// row falls back to is not a different-looking thing.
 pub(crate) struct Shorter {
-    /// Which span of the title block it is.
+    /// Which block it is in.
+    pub(crate) block: Block,
+    /// Which span of that block it is.
     pub(crate) at: usize,
     /// What it says where the row cannot afford what it usually says.
     pub(crate) said: String,
@@ -139,7 +151,7 @@ impl Fitted {
         }
     }
 
-    /// Which spans of the title block are links, and where each one points.
+    /// Which spans of the row are links, and where each one points.
     ///
     /// A link the row cut is told round the head it kept, because the cut
     /// takes columns off what the link says and nothing off where it goes. A
@@ -165,11 +177,11 @@ impl Fitted {
         self
     }
 
-    /// Which spans of the title block can say themselves more shortly, and
+    /// Which spans of the row can say themselves more shortly, and
     /// what each says then.
     ///
-    /// `briefly` swaps the whole state block; this swaps one span inside the
-    /// title. Where the title will not fit, the row says short forms rather
+    /// `briefly` swaps the whole state block; this swaps one span inside any
+    /// block. Where a block will not fit, the row says short forms rather
     /// than cutting, so a span whose length is not this program's to choose
     /// can survive a narrow row whole instead of being cut to a head that
     /// names nothing.
@@ -228,24 +240,30 @@ impl Widget for Fitted {
 
         let links = self.links;
         let shorter = self.shorter;
-        let identity = columns(&self.identity);
-        let (spans, linked) = if identity >= width {
-            (cut_to(self.identity, width).0, Vec::new())
+        let identity = shortened(self.identity, &shorter, Block::Identity, width);
+        let (spans, linked) = if columns(&identity) >= width {
+            let (identity, drawn) = cut_to(identity, width);
+            let linked = surviving(&links, Block::Identity, &identity, drawn, 0);
+            (identity, linked)
         } else {
-            let room = width - identity;
-            let ((title, whole), state) = match self.briefly {
+            let room = width - columns(&identity);
+            let ((title, title_drawn), (state, state_drawn)) = match self.briefly {
                 None => {
-                    let (state, _) =
-                        fit(self.state, room.saturating_sub(GAP), self.state_or_nothing);
+                    let limit = room.saturating_sub(GAP);
+                    let (state, state_drawn) = fit(
+                        shortened(self.state, &shorter, Block::State, limit),
+                        limit,
+                        self.state_or_nothing,
+                    );
                     let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
                     let limit = left.saturating_sub(GAP);
                     (
                         fit(
-                            shortened(self.title, &shorter, limit),
+                            shortened(self.title, &shorter, Block::Title, limit),
                             limit,
                             self.title_or_nothing,
                         ),
-                        state,
+                        (state, state_drawn),
                     )
                 }
                 Some(briefly) => {
@@ -253,27 +271,46 @@ impl Widget for Fitted {
                     // `briefly`: a pane terse enough makes the long form the
                     // short one, and room kept for a form the row will not
                     // use is room taken off the title for nothing.
-                    let room_for_state = columns(&briefly).min(columns(&self.state)) + GAP;
+                    let shortest = shortened(self.state.clone(), &shorter, Block::State, 0);
+                    let room_for_state = columns(&briefly).min(columns(&shortest)) + GAP;
                     let limit = room.saturating_sub(GAP + room_for_state);
-                    let (title, whole) = fit(
-                        shortened(self.title, &shorter, limit),
+                    let (title, title_drawn) = fit(
+                        shortened(self.title, &shorter, Block::Title, limit),
                         limit,
                         self.title_or_nothing,
                     );
                     let left = room - columns(&title) - if title.is_empty() { 0 } else { GAP };
                     let limit = left.saturating_sub(GAP);
-                    let state = if columns(&self.state) <= limit {
-                        self.state
+                    let state = shortened(self.state, &shorter, Block::State, limit);
+                    let state = if columns(&state) <= limit {
+                        let drawn = state.len();
+                        (state, drawn)
                     } else {
-                        fit(briefly, limit, self.state_or_nothing).0
+                        // A link names a span of the state, and `briefly`
+                        // draws none of them.
+                        (fit(briefly, limit, self.state_or_nothing).0, 0)
                     };
-                    ((title, whole), state)
+                    ((title, title_drawn), state)
                 }
             };
 
-            let linked = surviving(&links, &title, whole, identity + GAP);
+            let mut linked = surviving(&links, Block::Identity, &identity, identity.len(), 0);
+            linked.extend(surviving(
+                &links,
+                Block::Title,
+                &title,
+                title_drawn,
+                columns(&identity) + GAP,
+            ));
+            linked.extend(surviving(
+                &links,
+                Block::State,
+                &state,
+                state_drawn,
+                width - columns(&state),
+            ));
 
-            let mut spans = self.identity;
+            let mut spans = identity;
             if !title.is_empty() {
                 spans.push(Span::raw(" ".repeat(GAP)));
                 spans.extend(title);
@@ -326,17 +363,25 @@ impl Kept {
     }
 }
 
-/// The links whose span the title block drew, each at the column it starts
-/// on and saying what that span says now. A link whose span was dropped is
-/// not among them; one whose span was cut is, round the head it kept.
-fn surviving(links: &[Link], title: &[Span<'static>], drawn: usize, starts: usize) -> Vec<Kept> {
+/// The links whose span `block` drew, each at the column it starts on and
+/// saying what that span says now. A link whose span was dropped is not
+/// among them; one whose span was cut is, round the head it kept.
+///
+/// `starts` is the column the block was drawn from.
+fn surviving(
+    links: &[Link],
+    block: Block,
+    spans: &[Span<'static>],
+    drawn: usize,
+    starts: usize,
+) -> Vec<Kept> {
     links
         .iter()
-        .filter(|link| link.at < drawn)
+        .filter(|link| link.block == block && link.at < drawn)
         .map(|link| Kept {
-            at: starts + columns(&title[..link.at]),
-            width: title[link.at].width(),
-            said: title[link.at].content.to_string(),
+            at: starts + columns(&spans[..link.at]),
+            width: spans[link.at].width(),
+            said: spans[link.at].content.to_string(),
             to: link.to.clone(),
         })
         .collect()
@@ -399,8 +444,8 @@ fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> (Vec<Span<'
     cut_to(spans, limit)
 }
 
-/// `spans` with short forms swapped in until the run fits in `limit`, or until
-/// every span offering one has said it.
+/// `spans`, the spans of `block`, with short forms swapped in until the run
+/// fits in `limit`, or until every span offering one has said it.
 ///
 /// Each short form is dressed in the style of the span it stands in for, so a
 /// span the row shortened is the same span saying less. It is swapped rather
@@ -414,6 +459,7 @@ fn fit(spans: Vec<Span<'static>>, limit: usize, or_nothing: bool) -> (Vec<Span<'
 fn shortened(
     mut spans: Vec<Span<'static>>,
     shorter: &[Shorter],
+    block: Block,
     limit: usize,
 ) -> Vec<Span<'static>> {
     let saving = |swap: &Shorter| {
@@ -422,7 +468,7 @@ fn shortened(
                 .saturating_sub(Span::raw(swap.said.as_str()).width())
         })
     };
-    let mut order: Vec<&Shorter> = shorter.iter().collect();
+    let mut order: Vec<&Shorter> = shorter.iter().filter(|swap| swap.block == block).collect();
     order.sort_by_key(|swap| (Reverse(saving(swap)), Reverse(swap.at)));
 
     for swap in order {
@@ -494,7 +540,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use ratatui::backend::TestBackend;
-    use ratatui::widgets::Block;
+    use ratatui::widgets::Block as Bordered;
     use ratatui::Terminal;
 
     use crate::view::painted::Painted;
@@ -629,6 +675,7 @@ mod tests {
             Vec::new(),
         )
         .shortening(vec![Shorter {
+            block: Block::Title,
             at: 2,
             said: "⇢ #12".to_string(),
         }])
@@ -670,6 +717,7 @@ mod tests {
     #[test]
     fn a_span_said_in_its_short_form_keeps_the_link_the_long_one_had() {
         let row = a_shortenable_row().linking(vec![Link {
+            block: Block::Title,
             at: 2,
             to: SOMEWHERE.to_string(),
         }]);
@@ -700,10 +748,12 @@ mod tests {
         )
         .shortening(vec![
             Shorter {
+                block: Block::Title,
                 at: 2,
                 said: "#12".to_string(),
             },
             Shorter {
+                block: Block::Title,
                 at: 4,
                 said: "blocked".to_string(),
             },
@@ -742,6 +792,7 @@ mod tests {
         )
         .briefly(vec![Span::raw("working")])
         .shortening(vec![Shorter {
+            block: Block::Title,
             at: 2,
             said: "⇢ #12".to_string(),
         }])
@@ -824,6 +875,7 @@ mod tests {
             Vec::new(),
         )
         .linking(vec![Link {
+            block: Block::Title,
             at: 2,
             to: SOMEWHERE.to_string(),
         }])
@@ -907,6 +959,7 @@ mod tests {
                 Vec::new(),
             )
             .linking(vec![Link {
+                block: Block::Title,
                 at: 2,
                 to: to.clone(),
             }]);
@@ -947,7 +1000,7 @@ mod tests {
                         a_row_linking(badge).render(Rect::new(0, 0, 40, 1), frame.buffer_mut());
                         if let Some(window) = window {
                             cover(frame, window);
-                            frame.render_widget(Block::bordered(), window);
+                            frame.render_widget(Bordered::bordered(), window);
                         }
                     })
                     .expect("a draw into memory");
@@ -1023,6 +1076,7 @@ mod tests {
                 Vec::new(),
             )
             .linking(vec![Link {
+                block: Block::Title,
                 at: 2,
                 to: SOMEWHERE.to_string(),
             }])
@@ -1044,6 +1098,105 @@ mod tests {
                 "an opening sequence went without its closer: {said:?}"
             );
         }
+    }
+
+    /// A link is told at the column its span was drawn on, whichever block
+    /// holds it. The identity starts the row, so a link there starts at the
+    /// columns the spans before it take and nothing more.
+    #[test]
+    fn a_link_in_the_identity_is_opened_at_the_column_it_starts_on() {
+        let row = Fitted::new(
+            vec![Span::raw("orb-7"), Span::raw(" "), Span::raw("⇢ #12")],
+            vec![Span::raw("a title")],
+            Vec::new(),
+        )
+        .linking(vec![Link {
+            block: Block::Identity,
+            at: 2,
+            to: SOMEWHERE.to_string(),
+        }]);
+
+        let buf = rendered(row, 40);
+
+        assert_eq!(drawn_of(&buf), "orb-7 ⇢ #12  a title                    ");
+        assert_eq!(opened_at(&buf), 6);
+    }
+
+    /// The state is pushed to the right edge, so where a link in it starts
+    /// depends on the row's width and not on the spans before it alone.
+    #[test]
+    fn a_link_in_a_right_justified_state_is_opened_where_it_was_drawn() {
+        let row = Fitted::new(
+            vec![Span::raw("orb-7")],
+            vec![Span::raw("a title")],
+            vec![Span::raw("open"), Span::raw(" "), Span::raw("⇢ #12")],
+        )
+        .linking(vec![Link {
+            block: Block::State,
+            at: 2,
+            to: SOMEWHERE.to_string(),
+        }]);
+
+        let buf = rendered(row, 40);
+
+        assert_eq!(drawn_of(&buf), "orb-7  a title                open ⇢ #12");
+        assert_eq!(opened_at(&buf), 35);
+    }
+
+    /// A short form in the identity is said where the identity will not fit
+    /// the row, and the columns it gives back go to the title.
+    #[test]
+    fn a_span_in_the_identity_with_no_room_for_its_long_form_is_said_in_its_short_one() {
+        let row = || {
+            Fitted::new(
+                vec![
+                    Span::raw("orb-7"),
+                    Span::raw(" "),
+                    Span::raw("⇢ awaiting review"),
+                ],
+                vec![Span::raw("a title")],
+                Vec::new(),
+            )
+            .shortening(vec![Shorter {
+                block: Block::Identity,
+                at: 2,
+                said: "⇢ #12".to_string(),
+            }])
+        };
+
+        assert_eq!(drawn(row(), 23), "orb-7 ⇢ awaiting review");
+        assert_eq!(drawn(row(), 22), "orb-7 ⇢ #12  a title  ");
+    }
+
+    /// A short form in the state is said where the state will not fit the
+    /// room the identity leaves, and the columns it gives back go to the
+    /// title.
+    #[test]
+    fn a_span_in_the_state_with_no_room_for_its_long_form_is_said_in_its_short_one() {
+        let row = || {
+            Fitted::new(
+                vec![Span::raw("orb-7")],
+                vec![Span::raw("a title")],
+                vec![
+                    Span::raw("open"),
+                    Span::raw(" "),
+                    Span::raw("⇢ awaiting review"),
+                ],
+            )
+            .shortening(vec![Shorter {
+                block: Block::State,
+                at: 2,
+                said: "⇢ #12".to_string(),
+            }])
+        };
+
+        assert_eq!(drawn(row(), 29), "orb-7  open ⇢ awaiting review");
+        assert_eq!(drawn(row(), 28), "orb-7  a title    open ⇢ #12");
+    }
+
+    /// The words of a rendered row, with any link's escape bytes taken out.
+    fn drawn_of(buf: &Buffer) -> String {
+        Painted::read(buf).rows().remove(0)
     }
 
     /// Where the row's one hyperlink starts.
