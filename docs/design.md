@@ -1964,6 +1964,14 @@ example; a screen with a herdr session carries no such notice.)
 
 ### Every line, and its columns
 
+**The cells of a bead's row, and their order, are the reader's**, written as
+three lists in `[row]` — the identity, the title and the state, which are the
+row's three blocks. The default is the row as it has always been drawn:
+`glyph` and `id`; `title` and `badges`; `progress`, `agent` and `anomalies`.
+One badge is named on its own as `badge.<key>` and goes where it is written,
+and `badges` is every badge the row does not name. A cell `bdi` cannot draw is
+refused at read rather than drawn blank.
+
 **The prefix is two columns, then four a level of depth**, and a line resting
 shut says so inside its own elbow — `├─▸ `, `└─▸ `, or `├┄▸ ` for a blocker —
 so the fold state costs no width and every line at a depth starts in the same
@@ -2034,12 +2042,14 @@ one composes with a weight in the other where a colour replaces it. Colour is
 never the only channel: the glyph says the status and the words say the rest,
 so a terminal with no colour loses nothing.
 
-**Priority and issue type are not drawn**, and not for want of columns. A row
+**Priority and issue type are a badge's to draw, and never a hue.** A row
 has exactly two colour-carrying channels — the glyph carries the status,
 matching `bd`, and the row's own text carries how live it is — and priority as
 a hue wants the second one. The two cannot share it: a P1 bead with an agent on
 it would be either `bd`'s orange or the terminal's default, and whichever won,
-the other fact would be gone. Liveness is the one only `bdi` can draw.
+the other fact would be gone. Liveness is the one only `bdi` can draw. So a
+setup that wants either on the row writes a `[[badges]]` entry over `priority`
+or `issue_type`, and `[row]` says where it goes.
 
 **The state block, right-aligned, in this order:** the fraction where the line
 stands for more than itself; the agent; the anomalies; then, on a line shut

@@ -55,6 +55,11 @@ wheel_notch_lines = 3
 
 [theme]
 background = "light"
+
+[row]
+identity = ["glyph", "id"]
+title    = ["title", "badges"]
+state    = ["progress", "agent", "anomalies"]
 ```
 
 ## Which projects a run reads
@@ -486,6 +491,45 @@ to.
 `background` is `dark` or `light`. `bdi` cannot see your terminal's background
 and assumes `dark`; on a light one the tail band becomes hard to read until you
 say so.
+
+## `[row]`
+
+Which cells a bead's row draws, and in what order. A row is three blocks: the
+`identity` at the left, the `title` filling the middle, and the `state` at the
+right. Each is a list of cells, drawn in the order written, and the default is
+the row as it has always been drawn:
+
+```toml
+[row]
+identity = ["glyph", "id"]
+title    = ["title", "badges"]
+state    = ["progress", "agent", "anomalies"]
+```
+
+A list left out is the default's. A list written is read as written, so
+`title = []` is a row with nothing in its middle block.
+
+| cell | what it draws |
+|---|---|
+| `glyph` | the bead's status, as `bd list`'s legend draws it |
+| `id` | the bead's id, as what it adds to the id above it |
+| `title` | the bead's title |
+| `badges` | every badge the row does not name on its own, in config order |
+| `progress` | the fraction, on a line that stands for more than itself |
+| `agent` | the live agent on the bead |
+| `anomalies` | what the join found wrong |
+| `badge.<key>` | one badge, by the `key` its `[[badges]]` entry names |
+
+`badge.<key>` takes that badge out of `badges` and puts it where you wrote it,
+so a badge can sit beside the id while the rest stay after the title. Adding
+a badge to the config needs no edit here: `badges` draws it.
+
+The file is refused for a cell `bdi` cannot draw: a name that is none of the
+above, a `badge.<key>` whose key no `[[badges]]` or `[[projects.badges]]`
+entry configures, and a cell named twice, in one list or across two.
+
+Notes and the counts on a shut line are not cells: they trail the state
+whatever the row says.
 
 ## Telling `bdi` a project changed
 

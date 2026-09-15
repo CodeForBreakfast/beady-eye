@@ -1,7 +1,7 @@
 //! What a setup tells `bdi`: the shape of the config file, what each setting
 //! means, and what `bdi` refuses to read.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -10,6 +10,8 @@ use chrono::TimeDelta;
 use ratatui::style::Color;
 use regex_lite::{Captures, Regex};
 use serde::{Deserialize, Serialize};
+
+use crate::view::row::{Cell, Layout};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Config {
@@ -29,6 +31,8 @@ pub struct Config {
     pub tui: Tui,
     #[serde(default)]
     pub theme: Theme,
+    #[serde(default)]
+    pub row: Layout,
     /// Which of `projects` this run reads, and what chose them. The rest stay
     /// here rather than being dropped: a pane is placed by which configured
     /// project holds its directory, whether or not that project is read.
@@ -655,6 +659,7 @@ impl Config {
             changes: Changes::default(),
             tui: Tui::default(),
             theme: Theme::default(),
+            row: Layout::default(),
             scope: Scope::default(),
             named_without_git: false,
         }
@@ -751,6 +756,28 @@ impl Config {
                     names_of(&cfg.projects).join(", ")
                 );
             }
+        }
+        let mut named: HashSet<&Cell> = HashSet::new();
+        if let Some(twice) = cfg.row.cells().find(|cell| !named.insert(cell)) {
+            anyhow::bail!(
+                "[row] names {twice} twice; a cell is drawn in one place, so name it in one list"
+            );
+        }
+        let configured: BTreeSet<String> = cfg
+            .projects
+            .iter()
+            .flat_map(|project| cfg.badges_for_project(&project.name))
+            .map(|badge| badge.key)
+            .collect();
+        if let Some(unconfigured) = cfg
+            .row
+            .cells()
+            .find(|cell| matches!(cell, Cell::Badge(key) if !configured.contains(key)))
+        {
+            anyhow::bail!(
+                "[row] names {unconfigured}, which no [[badges]] or [[projects.badges]] entry \
+                 configures, so it would draw nothing on any row"
+            );
         }
         Ok(cfg)
     }
@@ -997,6 +1024,7 @@ struct Filled {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::row::{Cell, Layout};
     use std::path::Path;
 
     const EVERY_SECTION: &str = r#"
@@ -1044,6 +1072,10 @@ wheel_notch_lines = 1
 
 [theme]
 background = "light"
+
+[row]
+identity = ["glyph", "id", "badge.metadata.blocked_on"]
+state    = ["agent", "anomalies", "progress"]
 "#;
 
     const ONE_PROJECT: &str = r#"
@@ -1158,6 +1190,130 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
         assert_eq!(cfg.tui.wheel_notch_lines, 1);
         assert_eq!(cfg.theme.background, Background::Light);
+        assert_eq!(
+            cfg.row,
+            Layout {
+                identity: vec![
+                    Cell::Glyph,
+                    Cell::Id,
+                    Cell::Badge("metadata.blocked_on".to_string())
+                ],
+                title: vec![Cell::Title, Cell::Badges],
+                state: vec![Cell::Agent, Cell::Anomalies, Cell::Progress],
+            },
+            "a list left out is the default's, and one written is read as written"
+        );
+    }
+
+    /// A row written without `title` is read as written: a block a reader
+    /// emptied is empty, not put back.
+    #[test]
+    fn a_row_without_title_is_read_as_written() {
+        let cfg =
+            Config::from_toml(&format!("{ONE_PROJECT}\n[row]\ntitle = []\n")).expect("parses");
+
+        assert_eq!(cfg.row.title, Vec::<Cell>::new());
+        assert_eq!(cfg.row.identity, Layout::default().identity);
+    }
+
+    #[test]
+    fn a_row_nobody_wrote_is_the_default() {
+        assert_eq!(
+            Config::from_toml(ONE_PROJECT).expect("parses").row,
+            Layout::default()
+        );
+    }
+
+    /// A cell the drawer has no rendering for is refused rather than dropped,
+    /// with the word the reader wrote in the reason so they can find it.
+    #[test]
+    fn a_cell_bdi_cannot_draw_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            "{ONE_PROJECT}\n[row]\nstate = [\"progress\", \"priority\"]\n"
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("priority"), "got: {err}");
+    }
+
+    /// A badge no entry configures would draw nothing on any row of any
+    /// project, so naming it as a cell is a blank column and is refused.
+    #[test]
+    fn a_badge_no_entry_configures_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key    = "metadata.delivery_pr"
+render = "⇢ {{}}"
+
+[row]
+identity = ["glyph", "id", "badge.metadata.jira"]
+"#
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("badge.metadata.jira"), "got: {err}");
+    }
+
+    /// The check sees every project's badges, so a badge only one project's
+    /// own entries configure is a badge some row draws.
+    #[test]
+    fn a_badge_only_one_project_configures_is_a_cell_every_row_may_name() {
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "atlas"
+path = "/home/user/atlas"
+
+[[projects]]
+name = "beacon"
+path = "/home/user/dev/beacon"
+
+[[projects.badges]]
+key    = "metadata.jira"
+render = "{}"
+
+[row]
+title = ["title", "badge.metadata.jira", "badges"]
+"#,
+        )
+        .expect("parses");
+
+        assert_eq!(
+            cfg.row.title,
+            vec![
+                Cell::Title,
+                Cell::Badge("metadata.jira".to_string()),
+                Cell::Badges
+            ]
+        );
+    }
+
+    /// A cell drawn twice would say one thing in two places, so a name
+    /// written in two lists, or twice in one, is refused by name.
+    #[test]
+    fn a_cell_named_twice_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            "{ONE_PROJECT}\n[row]\nidentity = [\"glyph\", \"id\"]\nstate = [\"id\", \"agent\"]\n"
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("id"), "got: {err}");
+        assert!(err.contains("twice"), "got: {err}");
+    }
+
+    /// A key the table does not have is refused rather than dropped, as a
+    /// project's unknown key is.
+    #[test]
+    fn a_row_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("{ONE_PROJECT}\n[row]\nfooter = [\"agent\"]\n"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("footer"), "got: {err}");
     }
 
     fn pattern(source: &str) -> Pattern {
