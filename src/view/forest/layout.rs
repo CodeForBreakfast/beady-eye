@@ -58,6 +58,8 @@ pub(super) fn draw(
     folds: &Folds,
     rooted: Option<&Rooted>,
 ) -> Vec<Line> {
+    #[cfg(test)]
+    DRAWS.with(|draws| draws.set(draws.get() + 1));
     Layout {
         snapshot,
         facts,
@@ -65,6 +67,18 @@ pub(super) fn draw(
         rooted,
     }
     .draw()
+}
+
+#[cfg(test)]
+thread_local! {
+    static DRAWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has drawn a forest, so a test can say what a
+/// keystroke costs.
+#[cfg(test)]
+pub(super) fn draws_on_this_thread() -> usize {
+    DRAWS.with(std::cell::Cell::get)
 }
 
 /// The one bead the forest is rooted at, where the reader has asked for that:

@@ -431,21 +431,56 @@ impl Forest {
     /// Focusing a pane, copying a bead's id, showing a bead or the key
     /// bindings and going back from them, re-collecting and quitting are the
     /// loop's to do, and none of them changes what is on screen here.
+    ///
+    /// The lines are drawn from the folds, the root and the filter, so an
+    /// action that touched none of them would draw the lines it already
+    /// holds, and the draw is skipped: a key that moves only the selection
+    /// answers at once on a forest of any size.
     pub fn apply(&mut self, action: Action) -> bool {
         let selected = self.selected;
-        match action {
-            Action::Move(motion) => self.move_to(motion),
+        let redraw = match action {
+            Action::Move(motion) => {
+                self.move_to(motion);
+                false
+            }
             Action::CollapseOrParent => self.collapse_or_parent(),
             Action::ExpandOrChild => self.expand_or_child(),
-            Action::ToggleFold => self.toggle_fold(),
-            Action::ExpandSubtree => self.fold_subtree(true),
-            Action::CollapseSubtree => self.fold_subtree(false),
-            Action::RestoreSubtree => self.restore_subtree(),
-            Action::ExpandForest => self.fold_in(None, self.rounds_to_settle(), true),
-            Action::CollapseForest => self.fold_in(None, self.rounds_to_settle(), false),
-            Action::RestoreDefault => self.folds.clear(),
-            Action::ToggleFilter => self.toggle_filter(),
-            Action::FocusForest => self.focus_forest(),
+            Action::ToggleFold => {
+                self.toggle_fold();
+                true
+            }
+            Action::ExpandSubtree => {
+                self.fold_subtree(true);
+                true
+            }
+            Action::CollapseSubtree => {
+                self.fold_subtree(false);
+                true
+            }
+            Action::RestoreSubtree => {
+                self.restore_subtree();
+                true
+            }
+            Action::ExpandForest => {
+                self.fold_in(None, self.rounds_to_settle(), true);
+                true
+            }
+            Action::CollapseForest => {
+                self.fold_in(None, self.rounds_to_settle(), false);
+                true
+            }
+            Action::RestoreDefault => {
+                self.folds.clear();
+                true
+            }
+            Action::ToggleFilter => {
+                self.toggle_filter();
+                true
+            }
+            Action::FocusForest => {
+                self.focus_forest();
+                true
+            }
             Action::Focus
             | Action::ShowBead
             | Action::NextRelated
@@ -457,10 +492,15 @@ impl Forest {
             | Action::PreviousMatch
             | Action::Refresh
             | Action::Quit => return false,
-        }
-        let was = self.lay_out();
+        };
+        let redrawn = if redraw {
+            let was = self.lay_out();
+            self.lines != was
+        } else {
+            false
+        };
         let revealed = self.reveal();
-        self.selected != selected || self.lines != was || revealed
+        self.selected != selected || redrawn || revealed
     }
 
     /// Root the forest at the selected bead, or put it back where it is
@@ -681,23 +721,33 @@ impl Forest {
         }
     }
 
-    /// `h`: shut an open node, and step out of one already shut.
-    fn collapse_or_parent(&mut self) {
+    /// `h`: shut an open node, and step out of one already shut. Reports
+    /// whether it shut one.
+    fn collapse_or_parent(&mut self) -> bool {
         match (self.fold_at(self.selected), self.handle_at(self.selected)) {
             (Some(true), Some(handle)) => {
                 self.folds.set(handle, false);
+                true
             }
-            _ => self.step_to(self.parent_of(self.selected)),
+            _ => {
+                self.step_to(self.parent_of(self.selected));
+                false
+            }
         }
     }
 
-    /// `l`: open a shut node, and step into one already open.
-    fn expand_or_child(&mut self) {
+    /// `l`: open a shut node, and step into one already open. Reports
+    /// whether it opened one.
+    fn expand_or_child(&mut self) -> bool {
         match (self.fold_at(self.selected), self.handle_at(self.selected)) {
             (Some(false), Some(handle)) => {
                 self.folds.set(handle, true);
+                true
             }
-            _ => self.step_to(self.first_child_of(self.selected)),
+            _ => {
+                self.step_to(self.first_child_of(self.selected));
+                false
+            }
         }
     }
 
@@ -2928,6 +2978,93 @@ credential_command = "secret harbour"
         forest.apply(Action::Move(Motion::NextRow));
 
         assert_eq!(walks_on_this_thread() - before, 0);
+    }
+
+    /// The lines a forest draws depend on its folds, its root and its
+    /// filter, and a key that moves only the selection changes none of
+    /// them. So the lines it held are the lines it would draw, and a motion
+    /// draws nothing — on the Defra forest, fully opened, a draw is some
+    /// 290,000 lines and a keystroke that made one did not answer at once.
+    ///
+    /// `h` and `l` stepping out of and into a node move only the selection
+    /// too. A fold is the control: it changes what is drawn and draws once.
+    #[test]
+    fn a_key_that_moves_only_the_selection_draws_nothing() {
+        let mut forest = flatten(built(Filter::All));
+        let before = layout::draws_on_this_thread();
+
+        forest.apply(Action::Move(Motion::NextRow));
+        forest.apply(Action::Move(Motion::HalfScreenDown));
+        forest.apply(Action::Move(Motion::LastRow));
+        forest.apply(Action::Move(Motion::FirstRow));
+        // A leaf has no fold for `h` to shut, so it steps out to the parent,
+        // which is open because the leaf is drawn, so `l` steps back in.
+        let leaf = forest
+            .lines()
+            .iter()
+            .position(|line| line.folded.is_none() && selectable(line))
+            .expect("the fixture draws a leaf");
+        forest.select_line(leaf);
+        forest.apply(Action::CollapseOrParent);
+        forest.apply(Action::ExpandOrChild);
+        assert_eq!(layout::draws_on_this_thread() - before, 0);
+
+        forest.apply(Action::ToggleFold);
+        assert_eq!(layout::draws_on_this_thread() - before, 1);
+    }
+
+    /// What a key reports is what the loop redraws on, and every key
+    /// reports the same thing: the selection moved, a line changed, or the
+    /// view scrolled. Each is asked on a fresh forest and again with the
+    /// first root shut by hand, so each key changes something at least
+    /// once, and a key reporting a change it did not make, or none it did,
+    /// says so. So does a key that left the screen behind what it changed,
+    /// since a stale screen changes nothing and a skipped draw is only
+    /// right where there was nothing to draw.
+    #[test]
+    fn every_key_reports_exactly_what_it_changed() {
+        let keys = [
+            Action::Move(Motion::NextRow),
+            Action::CollapseOrParent,
+            Action::ExpandOrChild,
+            Action::ToggleFold,
+            Action::ExpandSubtree,
+            Action::CollapseSubtree,
+            Action::RestoreSubtree,
+            Action::ExpandForest,
+            Action::CollapseForest,
+            Action::RestoreDefault,
+            Action::ToggleFilter,
+            Action::FocusForest,
+        ];
+        for key in keys {
+            let mut changed_once = false;
+            for shut_by_hand in [false, true] {
+                let mut forest = flatten(built(Filter::All));
+                forest.fit(4);
+                if shut_by_hand {
+                    forest.apply(Action::CollapseSubtree);
+                }
+                let (selected, from) = (forest.selected_line(), forest.from());
+                let lines = forest.lines().to_vec();
+
+                let reported = forest.apply(key);
+
+                let drawn = layout::draw(
+                    &forest.snapshot,
+                    &forest.facts,
+                    &forest.folds,
+                    forest.rooted().as_ref(),
+                );
+                assert_eq!(forest.lines(), &drawn[..], "{key:?} left the screen stale");
+                let changed = forest.selected_line() != selected
+                    || forest.from() != from
+                    || forest.lines() != lines;
+                assert_eq!(reported, changed, "{key:?}, shut by hand: {shut_by_hand}");
+                changed_once |= changed;
+            }
+            assert!(changed_once, "{key:?} changed nothing either way");
+        }
     }
 
     /// `cyc-1.1` hangs under `cyc-1` and is blocked by it, so the walk comes
