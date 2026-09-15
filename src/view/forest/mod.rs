@@ -6217,6 +6217,72 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A scope that shut is still spent by what arrives under it when the
+    /// reader has opened the line it was set on by hand: the line stays as
+    /// they opened it, the way down to the agent that arrived on `tow-1.1.1`
+    /// opens, and `tow-1.2` stays shut beside it.
+    #[test]
+    fn a_shut_scope_under_a_line_opened_by_hand_is_still_spent_beneath_it() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1", "tow-1.1.1.1", "tow-1.2.1"]));
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A fold the scope pointed open and the reader then shut by hand, once
+    /// spent, follows the default rather than the scope: `tow-1.2` opens
+    /// onto the agent that arrives on `tow-1.2.1` and shuts again once that
+    /// agent has gone, as a fold the reader never touched would.
+    #[test]
+    fn a_fold_shut_by_hand_under_an_open_scope_rests_once_it_is_spent() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        forest.apply(Action::ExpandSubtree);
+        toggle_fold_of(&mut forest, "tow-1.2");
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        assert_eq!(
+            drawn_beads(&forest),
+            [
+                "tow-1",
+                "tow-1.1",
+                "tow-1.1.1",
+                "tow-1.1.1.1",
+                "tow-1.2",
+                "tow-1.2.1"
+            ],
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1", "tow-1.1", "tow-1.1.1", "tow-1.1.1.1", "tow-1.2"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
     /// The lines the selection stands over, and itself: everything from it to
     /// the first line drawn at its own depth or shallower.
     ///
