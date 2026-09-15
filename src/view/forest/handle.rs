@@ -93,7 +93,8 @@ pub(super) enum Way {
     Open,
     Shut,
     /// As the default puts it, whatever a scope over the line says: a fold
-    /// the reader shut and live work has since arrived under.
+    /// the reader shut and live work has since arrived under, or one `d`
+    /// put back by the line.
     Rests,
 }
 
@@ -181,6 +182,14 @@ impl Folds {
         }
         let scope = Some(Scope::Rests);
         self.0.insert(handle, Fold { line: None, scope });
+    }
+
+    /// Hand one line's own fold back to the default, and hold it there
+    /// against whatever scope stands over it. A scope set on the line
+    /// stays: `d` by the line puts back each line it drew and no more, and
+    /// the lines it did not draw go on answering from that scope.
+    pub(super) fn put_back(&mut self, handle: Handle) {
+        self.0.entry(handle).or_default().line = Some(Way::Rests);
     }
 
     /// The folds the user has shut, which are the only ones that can be

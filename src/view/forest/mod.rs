@@ -668,7 +668,7 @@ impl Forest {
         let within = subtree_of(&drawn, &scope);
         if self.points_by_the_line(&scope) {
             for handle in within.iter().filter_map(handle_of) {
-                self.folds.let_go(handle, &[]);
+                self.folds.put_back(handle);
             }
             return;
         }
@@ -6728,6 +6728,30 @@ credential_command = "secret harbour"
         assert_eq!(
             drawn_beads(&forest),
             ["tow-1.2", "tow-1.2.1", "tow-1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `d` on that root puts back what is drawn beneath it there and no
+    /// more: `tow-1.2`, shut by `c` on `tow-1` before the forest was rooted
+    /// at it, stays shut after `d` on `tow-1` behind the held-back roots
+    /// line, where `tow-1` itself rests shut as every root there does.
+    #[test]
+    fn restoring_a_held_back_root_leaves_the_bead_the_forest_is_rooted_at_as_it_was() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1", "tow-1.2.1"]));
+        forest.apply(Action::CollapseSubtree);
+        forest.apply(Action::ToggleFold);
+        focus_on(&mut forest, "tow-1.2");
+        assert_eq!(drawn_beads(&forest), ["tow-1.2"], "{:#?}", sketch(&forest));
+        select_out_of_the_way(&mut forest);
+        forest.apply(Action::ToggleFold);
+        select_bead(&mut forest, "tow-1");
+        forest.apply(Action::RestoreSubtree);
+
+        assert_eq!(
+            drawn_beads(&forest),
+            ["tow-1.2", "tow-1"],
             "{:#?}",
             sketch(&forest)
         );
