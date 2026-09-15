@@ -7,7 +7,7 @@ use ratatui::text::Span;
 use crate::config::Colour;
 use crate::model::badges::Badged;
 use crate::model::types::Status;
-use crate::view::fitted::{openable, Fitted, Link, Shorter, GAP};
+use crate::view::fitted::{openable, Block, Fitted, Link, Shorter, GAP};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Row, AGENT, WARNING};
@@ -55,6 +55,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
         title.push(Span::raw(" ".repeat(GAP)));
         if let Some(to) = opens_at(badge) {
             links.push(Link {
+                block: Block::Title,
                 at: title.len(),
                 to: to.to_string(),
             });
@@ -65,6 +66,7 @@ pub(super) fn bead_line(row: &Row, prefix: &str, id_width: usize) -> Fitted {
             .filter(|said| row::says_the_same_about_its_link(badge, said))
         {
             shorter.push(Shorter {
+                block: Block::Title,
                 at: title.len(),
                 said: said.to_string(),
             });
