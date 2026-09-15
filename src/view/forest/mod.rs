@@ -5,6 +5,7 @@
 //! here is the forest itself: the folds the user has set, and where the
 //! selection sits.
 
+mod drawn;
 mod facts;
 mod handle;
 mod layout;
@@ -16,6 +17,7 @@ use crate::model::snapshot::{Filter, Snapshot, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::{Action, Motion, Notch};
 
+pub use drawn::Drawn;
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
 use layout::Rooted;
@@ -115,7 +117,7 @@ pub struct Forest {
     /// never reads a band nobody has measured.
     from: usize,
     room: usize,
-    lines: Vec<Line>,
+    lines: Drawn,
     selected: usize,
     /// The bead the forest is rooted at, where the reader has asked for one.
     ///
@@ -143,7 +145,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         cursor: None,
         from: 0,
         room: 0,
-        lines: Vec::new(),
+        lines: Drawn::default(),
         selected: 0,
         focused: None,
         searched: None,
@@ -155,7 +157,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
 
 impl Forest {
     /// The visible lines, in render order.
-    pub fn lines(&self) -> &[Line] {
+    pub fn lines(&self) -> &Drawn {
         &self.lines
     }
 
@@ -562,10 +564,7 @@ impl Forest {
             // the press is read for whether the screen changed and these are
             // the rows it changed from.
             let rooted = self.lay_out();
-            let on_screen = self
-                .lines
-                .iter()
-                .any(|line| handle_of(line).as_ref() == Some(&on));
+            let on_screen = self.lines.row_of(&on).is_some();
             self.lines = rooted;
             if !on_screen {
                 // They shut something over it from inside the mode, and a
@@ -991,9 +990,8 @@ impl Forest {
             _ => None,
         };
         shut_over.or_else(|| {
-            self.lines[self.selected..]
-                .iter()
-                .find_map(Line::bead)
+            (self.selected..self.lines.len())
+                .find_map(|row| self.lines[row].bead())
                 .cloned()
         })
     }
@@ -1175,17 +1173,15 @@ impl Forest {
         if depth == 0 {
             return None;
         }
-        self.lines[..at]
-            .iter()
-            .rposition(|line| line.depth < depth && selectable(line))
+        (0..at)
+            .rev()
+            .find(|row| self.lines[*row].depth < depth && selectable(&self.lines[*row]))
     }
 
     fn first_child_of(&self, at: usize) -> Option<usize> {
         let depth = self.lines.get(at)?.depth;
-        self.lines
-            .iter()
-            .enumerate()
-            .skip(at + 1)
+        (at + 1..self.lines.len())
+            .map(|row| (row, &self.lines[row]))
             .take_while(|(_, line)| line.depth > depth)
             .find(|(_, line)| line.depth == depth + 1 && selectable(line))
             .map(|(at, _)| at)
@@ -1205,11 +1201,11 @@ impl Forest {
     /// They are moved out rather than copied. This runs on every keystroke,
     /// and a caller asking whether the screen moved can compare the two sets
     /// without duplicating either.
-    fn lay_out(&mut self) -> Vec<Line> {
+    fn lay_out(&mut self) -> Drawn {
         self.settle_cursor();
         let rooted = self.rooted();
         let drawn = layout::draw(&self.snapshot, &self.facts, &self.folds, rooted.as_ref());
-        let was = std::mem::replace(&mut self.lines, drawn);
+        let was = std::mem::replace(&mut self.lines, Drawn::new(drawn));
         if self.find_cursor().is_none() {
             // The line the cursor named is not drawn — an ancestor is folded
             // over it, or the tracker stopped reporting it. Take the nearest
@@ -1246,12 +1242,7 @@ impl Forest {
         self.ancestry()
             .into_iter()
             .skip(1)
-            .find(|forebear| self.line_holding(forebear).is_some())
-    }
-
-    /// Which line carries a handle, where one does.
-    fn line_holding(&self, handle: &Handle) -> Option<usize> {
-        (0..self.lines.len()).find(|at| self.handle_at(*at).as_ref() == Some(handle))
+            .find(|forebear| self.lines.row_of(forebear).is_some())
     }
 
     fn settle_cursor(&mut self) {
@@ -1266,7 +1257,7 @@ impl Forest {
     /// one line carries it — which is what lets a step onto the lower copy
     /// survive the redraw that follows it.
     fn find_cursor(&self) -> Option<usize> {
-        self.line_holding(self.cursor.as_ref()?)
+        self.lines.row_of(self.cursor.as_ref()?)
     }
 
     fn first_handle(&self) -> Option<Handle> {
@@ -3126,7 +3117,7 @@ credential_command = "secret harbour"
                     forest.apply(Action::CollapseSubtree);
                 }
                 let (selected, from) = (forest.selected_line(), forest.from());
-                let lines = forest.lines().to_vec();
+                let lines = forest.lines().clone();
 
                 let reported = forest.apply(key);
 
@@ -3136,10 +3127,14 @@ credential_command = "secret harbour"
                     &forest.folds,
                     forest.rooted().as_ref(),
                 );
-                assert_eq!(forest.lines(), &drawn[..], "{key:?} left the screen stale");
+                assert_eq!(
+                    forest.lines(),
+                    &Drawn::new(drawn),
+                    "{key:?} left the screen stale"
+                );
                 let changed = forest.selected_line() != selected
                     || forest.from() != from
-                    || forest.lines() != lines;
+                    || forest.lines() != &lines;
                 assert_eq!(reported, changed, "{key:?}, shut by hand: {shut_by_hand}");
                 changed_once |= changed;
             }
@@ -4432,10 +4427,9 @@ credential_command = "secret harbour"
 
     /// The project whose line is the nearest one above `at`.
     fn project_above(forest: &Forest, at: usize) -> String {
-        forest.lines()[..at]
-            .iter()
+        (0..at)
             .rev()
-            .find_map(|line| match &line.content {
+            .find_map(|row| match &forest.lines()[row].content {
                 Content::Project(line) => Some(line.project.clone()),
                 _ => None,
             })
@@ -5165,7 +5159,8 @@ credential_command = "secret harbour"
         let scope = forest
             .handle_at(forest.selected_line())
             .expect("the selection is on a line it can hold");
-        subtree_of(forest.lines(), &scope)
+        let lines: Vec<Line> = forest.lines().iter().cloned().collect();
+        subtree_of(&lines, &scope)
             .iter()
             .map(|line| format!("{}{}", line.prefix, said(&line.content)))
             .collect()
@@ -6097,7 +6092,7 @@ credential_command = "secret harbour"
             let forest = flatten(snapshot);
 
             assert!(
-                !forest.lines().is_empty(),
+                forest.lines().len() > 0,
                 "a forest holding {held} drew nothing at all"
             );
             assert!(
@@ -6856,9 +6851,11 @@ credential_command = "secret harbour"
     fn from_the_selection_down(forest: &Forest) -> impl Iterator<Item = &Line> {
         let at = forest.selected_line();
         let depth = forest.lines()[at].depth;
-        forest.lines()[at..].iter().take(1).chain(
-            forest.lines()[at + 1..]
+        forest.lines().iter().skip(at).take(1).chain(
+            forest
+                .lines()
                 .iter()
+                .skip(at + 1)
                 .take_while(move |line| line.depth > depth),
         )
     }

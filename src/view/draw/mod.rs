@@ -24,7 +24,7 @@ use ratatui::Frame;
 
 use crate::app::Awaited;
 use crate::model::types::PaneStatus;
-use crate::view::fitted::{columns, Fitted, GAP};
+use crate::view::fitted::{Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine};
 use crate::view::palette;
@@ -126,16 +126,10 @@ pub fn draw(
     let lines = forest.lines();
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;
-    let ids = id_width(lines);
+    let ids = lines.id_width();
     let reads = Reads::new(&forest.snapshot().read_at, collecting, now);
 
-    for (row, (at, line)) in lines
-        .iter()
-        .enumerate()
-        .skip(forest.from())
-        .take(height)
-        .enumerate()
-    {
+    for (row, (at, line)) in lines.viewport(forest.from(), height).enumerate() {
         let drawn = fitted(line, ids, &reads);
         let drawn = if at == selected {
             drawn.selected()
@@ -162,19 +156,6 @@ pub fn draw(
         ),
         bands.keys,
     );
-}
-
-/// The widest abbreviated id on screen, so every title starts in the same
-/// column and a reader's eye runs down one edge rather than a ragged one.
-fn id_width(lines: &[lines::Line]) -> usize {
-    lines
-        .iter()
-        .filter_map(|line| match &line.content {
-            Content::Bead(row) => Some(columns(&[Span::raw(row.id.clone())])),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0)
 }
 
 /// One line of the forest, whatever kind it is.
