@@ -2023,6 +2023,73 @@ mod tests {
         alone("dunwich", BLOCKS_BOTH, &panes_on(&[staffed]))
     }
 
+    /// One bead reached four ways down of four different lengths, so the four
+    /// one-copy rules choose four different ways to it and draw four
+    /// different screens.
+    ///
+    /// `bel-1.1.2.1` is the bead with the agent, and it is a child of one of
+    /// `bel-1.1`'s children and a blocker of another. `bel-1.1` waits on it
+    /// as well, which is the way of fewest steps; `bel-1.1.1`, the earlier of
+    /// the two siblings, waits on it; `bel-1.1.2` is its parent; and
+    /// `bel-1.1.3.1` waits on it furthest down. It has the lowest priority of
+    /// `bel-1.1`'s children, so it sorts last among them and the walk reaches
+    /// it under `bel-1.1.1` before it reaches `bel-1.1`'s own way down to it.
+    ///
+    /// Every bead is open and none is ready, so the pane is the only work a
+    /// reader needs in the tree and the way down to it is the whole spine.
+    const FOUR_WAYS_DOWN: &str = r#"[
+      {"id":"bel-1","title":"raise the belfry","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"bel-1.1","title":"hang the bell","status":"open",
+       "dependencies":[{"depends_on_id":"bel-1","type":"parent-child"},
+                       {"depends_on_id":"bel-1.1.2.1","type":"blocks"}],
+       "priority":1,"issue_type":"epic"},
+      {"id":"bel-1.1.1","title":"dress the stone","status":"open",
+       "dependencies":[{"depends_on_id":"bel-1.1","type":"parent-child"},
+                       {"depends_on_id":"bel-1.1.2.1","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"bel-1.1.2","title":"found the mould","status":"open",
+       "dependencies":[{"depends_on_id":"bel-1.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"bel-1.1.2.1","title":"cast the bell","status":"open",
+       "dependencies":[{"depends_on_id":"bel-1.1.2","type":"parent-child"}],
+       "priority":3,"issue_type":"task"},
+      {"id":"bel-1.1.3","title":"cut the louvres","status":"open",
+       "dependencies":[{"depends_on_id":"bel-1.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"bel-1.1.3.1","title":"pin the louvres","status":"open",
+       "dependencies":[{"depends_on_id":"bel-1.1.3","type":"parent-child"},
+                       {"depends_on_id":"bel-1.1.2.1","type":"blocks"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// That tree, with the agent on the bead every rule chooses a way to.
+    fn four_ways_to_the_agent() -> Snapshot {
+        alone("dunwich", FOUR_WAYS_DOWN, &panes_on(&["bel-1.1.2.1"]))
+    }
+
+    /// A tree in which a bead's parent hangs beneath the bead. `cyc-2.2`
+    /// waits on `cyc-2.3` and is its child, so each is drawn under the other,
+    /// and `cyc-2.1` waits on `cyc-2.2` so the pair hang under the root.
+    ///
+    /// Hanging `cyc-2.2` back under its parent would leave the two of them a
+    /// ring nothing above reaches, and the whole way down would rest shut
+    /// over the agent.
+    const PARENT_BENEATH: &str = r#"[
+      {"id":"cyc-2","title":"sink the shaft","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"cyc-2.1","title":"line the shaft","status":"open",
+       "dependencies":[{"depends_on_id":"cyc-2","type":"parent-child"},
+                       {"depends_on_id":"cyc-2.2","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"cyc-2.2","title":"hang the cage","status":"open",
+       "dependencies":[{"depends_on_id":"cyc-2.3","type":"parent-child"},
+                       {"depends_on_id":"cyc-2.3","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"cyc-2.3","title":"splice the rope","status":"open",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
     fn drawn_twice_in_one_tree() -> Snapshot {
@@ -2364,6 +2431,32 @@ credential_command = "secret harbour"
             .unwrap_or_else(|| panic!("{id} is not drawn"))
     }
 
+    /// The bead on every line resting open, in the order they are drawn.
+    /// What a rule does is choose which of them these are.
+    fn resting_open(forest: &Forest) -> Vec<String> {
+        forest
+            .lines()
+            .iter()
+            .filter(|line| line.folded == Some(true))
+            .filter_map(|line| line.bead().map(|bead| bead.id.clone()))
+            .collect()
+    }
+
+    /// Press `key` until the rule named is in force, which is what a reader
+    /// does and what keeps a test off the order of the cycle.
+    fn put_in_force(forest: &mut Forest, rule: Spine, key: Action) {
+        for _ in Spine::EVERY {
+            if forest.spine() == rule {
+                return;
+            }
+            forest.apply(key);
+        }
+        panic!(
+            "{rule:?} never came round: the cycle stopped at {:?}",
+            forest.spine()
+        );
+    }
+
     /// Every line drawn for one bead, by index. A bead reachable from two
     /// roots is drawn under each, so this answers with more than one.
     fn lines_of(forest: &Forest, id: &str) -> Vec<usize> {
@@ -2634,21 +2727,21 @@ credential_command = "secret harbour"
             assert_eq!(
                 forest.lines()[lines_of(&forest, id)[0]].folded,
                 Some(true),
-                "{id} rests shut: {:#?}",
+                "{id} rests open: {:#?}",
                 sketch(&forest)
             );
         }
     }
 
-    /// The first one-copy rule opens each bead that earns a fold on one way
-    /// down, the deepest, so the same tree draws that bead once. The half off
-    /// the way chosen stands over the same agent and says so, which is what
-    /// keeps the rule from hiding one.
+    /// A one-copy rule opens each bead that earns a fold on one way down, so
+    /// the same tree draws that bead once. The half off the way chosen stands
+    /// over the same agent and says so, which is what keeps the rule from
+    /// hiding one.
     #[test]
-    fn the_deepest_rule_opens_one_way_down_and_the_other_half_says_what_it_is_shut_over() {
+    fn a_one_copy_rule_opens_one_way_down_and_the_other_half_says_what_it_is_shut_over() {
         let mut forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
 
-        assert!(forest.apply(Action::CycleSpineForest));
+        put_in_force(&mut forest, Spine::Deepest, Action::CycleSpineForest);
 
         assert_eq!(
             lines_of(&forest, "dun-1").len(),
@@ -2677,6 +2770,87 @@ credential_command = "secret harbour"
             "{:#?}",
             sketch(&forest)
         );
+    }
+
+    /// Each rule chooses its own way down to the same bead, and the screen is
+    /// the way it chose: the bead that waits on it in fewest steps under
+    /// shallowest, the earlier of the two siblings under first reached, its
+    /// own parent under parent-child, and the bead that waits on it furthest
+    /// down under deepest. The rule the forest starts under opens all four at
+    /// once, which is the screen the one-copy rules were written against.
+    #[test]
+    fn each_rule_opens_the_way_down_it_chose_and_rests_the_others_shut() {
+        for (rule, open) in [
+            (
+                Spine::EveryCopy,
+                &[
+                    "bel-1",
+                    "bel-1.1",
+                    "bel-1.1.1",
+                    "bel-1.1.2",
+                    "bel-1.1.3",
+                    "bel-1.1.3.1",
+                ][..],
+            ),
+            (Spine::FirstReached, &["bel-1", "bel-1.1", "bel-1.1.1"]),
+            (Spine::Shallowest, &["bel-1", "bel-1.1"]),
+            (Spine::ParentChild, &["bel-1", "bel-1.1", "bel-1.1.2"]),
+            (
+                Spine::Deepest,
+                &["bel-1", "bel-1.1", "bel-1.1.3", "bel-1.1.3.1"],
+            ),
+        ] {
+            let mut forest = flatten(four_ways_to_the_agent());
+
+            put_in_force(&mut forest, rule, Action::CycleSpineForest);
+
+            assert_eq!(
+                resting_open(&forest),
+                open,
+                "under {rule:?}: {:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// Parent-child falls back to the way the walk placed a bead on where the
+    /// rule was set below that bead's parent. The bead is still work a reader
+    /// needs, so the rule opens the one way down to it there is from here —
+    /// the way that under the same rule over the whole forest rests shut.
+    #[test]
+    fn parent_child_set_below_a_beads_parent_opens_the_way_the_walk_placed_it_on() {
+        let mut forest = flatten(four_ways_to_the_agent());
+        let at = lines_of(&forest, "bel-1.1.1")[0];
+        step_onto(&mut forest, at);
+
+        put_in_force(&mut forest, Spine::ParentChild, Action::CycleSpine);
+
+        assert_eq!(
+            forest.lines()[lines_of(&forest, "bel-1.1.1")[0]].folded,
+            Some(true),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Every rule leaves a way down to the agent open, even where a bead's
+    /// own parent hangs beneath it. Parent-child keeps the way the walk
+    /// placed such a bead on: hanging it back under its parent would ring the
+    /// two of them off from everything above, and the agent would sit behind
+    /// a fold on a line that is drawn wherever the reader looks.
+    #[test]
+    fn a_bead_whose_parent_hangs_beneath_it_is_still_opened_to() {
+        for rule in Spine::EVERY.iter().copied() {
+            let mut forest = flatten(alone("dunwich", PARENT_BENEATH, &panes_on(&["cyc-2.3"])));
+
+            put_in_force(&mut forest, rule, Action::CycleSpineForest);
+
+            assert!(
+                !lines_of(&forest, "cyc-2.3").is_empty(),
+                "under {rule:?} the agent's bead is drawn nowhere: {:#?}",
+                sketch(&forest)
+            );
+        }
     }
 
     /// The key cycles, so pressing it once per rule comes back to the screen
