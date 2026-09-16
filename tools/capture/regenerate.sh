@@ -30,6 +30,6 @@ trap 'rm -f "$raw"' EXIT
 python3 "$repo/tools/capture/frame.py" "$raw" \
   --rows "$ROWS" --cols "$COLS" \
   --svg "$repo/docs/bdi-frame.svg" \
-  --title "bdi drawing the atlas project: twelve beads over two roots, three with a live agent beside them, and one claim with no pane behind it"
+  --title "bdi drawing the arkham project: twelve beads over two roots, three with a live agent beside them, and one claim with no pane behind it"
 
 echo "wrote docs/bdi-frame.svg"

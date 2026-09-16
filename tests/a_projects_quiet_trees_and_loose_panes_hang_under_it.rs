@@ -9,8 +9,8 @@
 //! draws under the project's line, counting rows from the top, is:
 //!
 //! ```text
-//! 0 ▾ atlas
-//! 1   ├── ○ atl-1  raise the beacon
+//! 0 ▾ arkham
+//! 1   ├── ○ ark-1  raise the beacon
 //! 2   │   └── ◐ .1  trim the wick          ◍ wT:p2 working
 //! 3   ├─▸ 1 tree with no live agent        a to show all
 //! 4   └── ⚠ 1 unattributed pane
@@ -45,27 +45,27 @@ const COLS: u16 = 120;
 /// A gap this long between bytes means the collection is over and drawn.
 const A_SILENCE: Duration = Duration::from_millis(300);
 
-/// Two roots of the one project. `atl-1.1` names the pane working on it, so
-/// its tree has a live agent and rests open onto it; nobody is on `atl-2`,
+/// Two roots of the one project. `ark-1.1` names the pane working on it, so
+/// its tree has a live agent and rests open onto it; nobody is on `ark-2`,
 /// so the filter holds that tree back.
 const THE_TRACKER: &str = r#"[
-  {"id":"atl-1","title":"raise the beacon","status":"open",
+  {"id":"ark-1","title":"raise the beacon","status":"open",
    "priority":1,"issue_type":"epic","dependencies":[]},
-  {"id":"atl-1.1","title":"trim the wick","status":"in_progress",
+  {"id":"ark-1.1","title":"trim the wick","status":"in_progress",
    "priority":2,"issue_type":"task",
-   "metadata":{"agent_pane":"wT:p2"},"parent":"atl-1",
-   "dependencies":[{"depends_on_id":"atl-1","type":"parent-child"}]},
-  {"id":"atl-2","title":"dredge the harbour","status":"open",
+   "metadata":{"agent_pane":"wT:p2"},"parent":"ark-1",
+   "dependencies":[{"depends_on_id":"ark-1","type":"parent-child"}]},
+  {"id":"ark-2","title":"dredge the harbour","status":"open",
    "priority":2,"issue_type":"epic","dependencies":[]},
-  {"id":"atl-2.1","title":"survey the silt","status":"open",
-   "priority":2,"issue_type":"task","parent":"atl-2",
-   "dependencies":[{"depends_on_id":"atl-2","type":"parent-child"}]}
+  {"id":"ark-2.1","title":"survey the silt","status":"open",
+   "priority":2,"issue_type":"task","parent":"ark-2",
+   "dependencies":[{"depends_on_id":"ark-2","type":"parent-child"}]}
 ]"#;
 
 /// The quiet root, and one word of the bead beneath it that nothing else on
 /// the screen says. The bead's word is what tells the tree open from the
 /// tree shut.
-const THE_QUIET_ROOT: &[u8] = b"atl-2";
+const THE_QUIET_ROOT: &[u8] = b"ark-2";
 const A_WORD_BENEATH_IT: &[u8] = b"silt";
 /// One word of the quiet root's title, which only the bead window says in
 /// full beside its id.
@@ -95,19 +95,19 @@ const THE_LOOSE_PANES_ROW_ONCE_OPENED: u16 = 7;
 /// and both are read.
 fn a_home_naming_a_project_and_one_that_cannot_be_read(named: &str) -> (PathBuf, PathBuf) {
     let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    let atlas = home.join("atlas");
-    std::fs::create_dir_all(&atlas).expect("the directory is ours to make");
+    let arkham = home.join("arkham");
+    std::fs::create_dir_all(&arkham).expect("the directory is ours to make");
     std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n\n\
-             [[projects]]\nname = \"beacon\"\npath = \"/nowhere/beacon\"\n",
-            atlas.display()
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n\n\
+             [[projects]]\nname = \"kadath\"\npath = \"/nowhere/kadath\"\n",
+            arkham.display()
         ),
     )
     .expect("the config is ours to write");
-    (home, atlas)
+    (home, arkham)
 }
 
 const OPEN_IT: &[u8] = b"l";
@@ -117,16 +117,16 @@ const REFRESH: &[u8] = b"\x12";
 
 #[test]
 fn a_projects_quiet_trees_and_loose_panes_hang_under_its_own_line() {
-    let (home, atlas) = a_home_naming_a_project_and_one_that_cannot_be_read("under-one-line");
+    let (home, arkham) = a_home_naming_a_project_and_one_that_cannot_be_read("under-one-line");
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_TRACKER);
     let herdr = ShimmedHerdr::beside(&home);
     herdr.lists(&format!(
         r#"{{"result":{{"agents":[
-          {{"pane_id":"wT:p2","cwd":"{atlas}","agent_status":"working"}},
-          {{"pane_id":"wT:p3","cwd":"{atlas}","agent_status":"idle"}}
+          {{"pane_id":"wT:p2","cwd":"{arkham}","agent_status":"working"}},
+          {{"pane_id":"wT:p3","cwd":"{arkham}","agent_status":"idle"}}
         ]}}}}"#,
-        atlas = atlas.display()
+        arkham = arkham.display()
     ));
     herdr.shows(ON_THE_LOOSE_PANE);
     let mut environment = tracker.environment();

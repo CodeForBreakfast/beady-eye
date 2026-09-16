@@ -39,12 +39,12 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// that must not run. `jira` is written in a shape no badge on its key reads,
 /// which is the value that has to leave the row silent.
 const THE_TRACKER: &str = r#"[
-  {"id":"orb-1","title":"lift the ground station","status":"open",
+  {"id":"dun-1","title":"lift the ground station","status":"open",
    "priority":1,"issue_type":"epic"},
-  {"id":"orb-1.1","title":"repoint the dish","status":"blocked","parent":"orb-1",
-   "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+  {"id":"dun-1.1","title":"repoint the dish","status":"blocked","parent":"dun-1",
+   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
    "priority":2,"issue_type":"task",
-   "metadata":{"delivery_pr":"orbital/atlas#12","jira":"a note to self"}}
+   "metadata":{"delivery_pr":"dunwich/arkham#12","jira":"a note to self"}}
 ]"#;
 
 /// A key read from the shape expected down to the shape settled for, and a key
@@ -76,10 +76,10 @@ const A_CHAIN_AND_A_LONE_ENTRY: &str = concat!(
 const OPEN_THE_TREE: &[u8] = b"agjlgj";
 
 /// What the first entry for the key draws, which is the row arriving at all.
-const THE_SHAPE_IT_WAS_WRITTEN_FOR: &[u8] = "⇢atlas#12".as_bytes();
+const THE_SHAPE_IT_WAS_WRITTEN_FOR: &[u8] = "⇢arkham#12".as_bytes();
 
 /// What the entry below it would draw from the same value.
-const THE_WHOLE_VALUE: &[u8] = b"orbital/atlas#12";
+const THE_WHOLE_VALUE: &[u8] = b"dunwich/arkham#12";
 
 /// The key a value no badge reads belongs to, which is what the retired
 /// sentence named.

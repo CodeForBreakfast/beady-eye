@@ -17,8 +17,8 @@ use crate::model::snapshot::{a_provider, Filter, ProviderState, Snapshot, Tracke
 /// enough that a test waiting in vain is not a hang.
 pub(in crate::tui) const A_MOMENT: Duration = Duration::from_secs(5);
 
-pub(in crate::tui) fn atlas() -> Wanted {
-    Wanted::Project("atlas".to_string())
+pub(in crate::tui) fn arkham() -> Wanted {
+    Wanted::Project("arkham".to_string())
 }
 
 pub(in crate::tui) fn ferry() -> Wanted {
@@ -49,10 +49,10 @@ pub(in crate::tui) const PATIENCE: TimeDelta = TimeDelta::seconds(30);
 /// what is in one, only on when it arrives.
 pub(in crate::tui) fn a_snapshot() -> Snapshot {
     let tree = Arc::new(Tree {
-        project: "atlas".to_string(),
+        project: "arkham".to_string(),
         root: "a-1".to_string(),
         title: "the only tree there is".to_string(),
-        ..Tree::tracker_unreachable("atlas", "a-1", TrackerFailure::Unavailable)
+        ..Tree::tracker_unreachable("arkham", "a-1", TrackerFailure::Unavailable)
     });
 
     Snapshot {
@@ -68,7 +68,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         projects_named_without_git: Vec::new(),
         read_at: BTreeMap::new(),
         collected: vec![tree],
-        projects: vec!["atlas".to_string()],
+        projects: vec!["arkham".to_string()],
         scope: Scope::default(),
     }
 }

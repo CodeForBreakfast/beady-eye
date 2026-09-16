@@ -755,13 +755,13 @@ mod tests {
             let mut reading = BufReader::new(stream.try_clone().expect("both ends of the stream"));
             let mut line = String::new();
             reading.read_line(&mut line).expect("the first message");
-            writeln!(&stream, "ok atlas").expect("the answer goes back");
+            writeln!(&stream, "ok arkham").expect("the answer goes back");
             line.clear();
             reading.read_line(&mut line).expect("the second message");
         });
 
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            say(&at, &[("atlas\n", "ok atlas"), ("ferry\n", "ok ferry")]);
+            say(&at, &[("arkham\n", "ok arkham"), ("ferry\n", "ok ferry")]);
         }));
         stand_in.join().expect("the stand-in ran to its end");
 
@@ -771,33 +771,36 @@ mod tests {
             "the red names the message bdi never answered: {red}"
         );
         assert!(
-            red.contains("\"ok atlas\""),
+            red.contains("\"ok arkham\""),
             "the red says how far the conversation got: {red}"
         );
     }
 
     #[test]
     fn a_message_naming_a_watched_project_is_taken() {
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
 
-        assert_eq!(reported.take("atlas"), Answer::Watched("atlas".to_string()));
+        assert_eq!(
+            reported.take("arkham"),
+            Answer::Watched("arkham".to_string())
+        );
     }
 
     /// The line arrives with the newline that terminated it, and a writer may
     /// have laid its message out to be read by a human as well.
     #[test]
     fn a_name_is_taken_without_the_whitespace_around_it() {
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
 
         assert_eq!(
-            reported.take("  atlas \n"),
-            Answer::Watched("atlas".to_string())
+            reported.take("  arkham \n"),
+            Answer::Watched("arkham".to_string())
         );
     }
 
     #[test]
     fn a_message_naming_nothing_bdi_watches_is_said_back_and_nothing_else() {
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
 
         assert_eq!(
             reported.take("ghost"),
@@ -810,14 +813,14 @@ mod tests {
     /// ever configured, which is the accepting half of the same staleness.
     #[test]
     fn the_projects_written_are_the_ones_taken_from_then_on() {
-        let reported = watching(["atlas"]);
+        let reported = watching(["arkham"]);
 
         reported.now_watching(["ferry".to_string()]);
 
         assert_eq!(reported.take("ferry"), Answer::Watched("ferry".to_string()));
         assert_eq!(
-            reported.take("atlas"),
-            Answer::Unwatched("atlas".to_string())
+            reported.take("arkham"),
+            Answer::Unwatched("arkham".to_string())
         );
     }
 
@@ -827,7 +830,7 @@ mod tests {
     /// handed. Every connection thread is exactly this clone.
     #[test]
     fn a_clone_taken_before_the_write_takes_against_what_was_written() {
-        let reported = watching(["atlas"]);
+        let reported = watching(["arkham"]);
         let held_by_a_connection = reported.clone();
 
         reported.now_watching(["ferry".to_string()]);
@@ -837,14 +840,14 @@ mod tests {
             Answer::Watched("ferry".to_string())
         );
         assert_eq!(
-            held_by_a_connection.take("atlas"),
-            Answer::Unwatched("atlas".to_string())
+            held_by_a_connection.take("arkham"),
+            Answer::Unwatched("arkham".to_string())
         );
     }
 
     #[test]
     fn a_message_that_names_no_project_is_malformed() {
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
 
         for message in ["", "\n", "   ", "\t \r\n"] {
             assert_eq!(reported.take(message), Answer::Malformed, "for {message:?}");
@@ -856,7 +859,7 @@ mod tests {
     /// long.
     #[test]
     fn a_message_too_long_to_be_a_project_name_is_malformed() {
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
         let shout = "a".repeat(LONGEST_MESSAGE + 1);
 
         assert_eq!(reported.take(&shout), Answer::Malformed);
@@ -866,7 +869,7 @@ mod tests {
     fn without_a_runtime_directory_there_is_no_inbound_channel() {
         let (changed, _changes) = mpsc::channel();
 
-        let refused = listen(None, &watching(["atlas", "ferry"]), changed);
+        let refused = listen(None, &watching(["arkham", "ferry"]), changed);
 
         assert!(matches!(refused, Err(Refused::NoRuntimeDirectory)));
     }
@@ -874,14 +877,14 @@ mod tests {
     #[test]
     fn a_writer_naming_a_watched_project_wakes_the_loop() {
         let at = a_socket_path("wakes-the-loop");
-        let reported = watching(["atlas"]);
+        let reported = watching(["arkham"]);
         let (_socket, changes) = open(&at, &reported);
 
-        say(&at, &[("atlas\n", "ok atlas")]);
+        say(&at, &[("arkham\n", "ok arkham")]);
 
         assert_eq!(
             changes.recv_timeout(A_MOMENT).ok(),
-            Some("atlas".to_string()),
+            Some("arkham".to_string()),
             "the loop was told which project to collect"
         );
     }
@@ -889,7 +892,7 @@ mod tests {
     #[test]
     fn a_writer_naming_something_bdi_does_not_watch_is_told_so_and_the_loop_sleeps_on() {
         let at = a_socket_path("names-a-stranger");
-        let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
+        let (_socket, changes) = open(&at, &watching(["arkham", "ferry"]));
 
         say(&at, &[("ghost\n", "unknown ghost")]);
 
@@ -904,9 +907,9 @@ mod tests {
     #[test]
     fn a_malformed_message_is_dropped_without_disturbing_the_ones_beside_it() {
         let at = a_socket_path("malformed");
-        let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
+        let (_socket, changes) = open(&at, &watching(["arkham", "ferry"]));
 
-        say(&at, &[("\n", "malformed"), ("atlas\n", "ok atlas")]);
+        say(&at, &[("\n", "malformed"), ("arkham\n", "ok arkham")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
     }
 
@@ -923,11 +926,11 @@ mod tests {
     #[test]
     fn a_line_that_never_ends_is_malformed_and_the_writer_is_let_go() {
         let at = a_socket_path("never-ends");
-        let reported = watching(["atlas"]);
+        let reported = watching(["arkham"]);
         let (_socket, changes) = open(&at, &reported);
 
         let (mut writing, mut reading) = connect(&at);
-        let unending = format!("atlas{}", " ".repeat(LONGEST_MESSAGE * 2));
+        let unending = format!("arkham{}", " ".repeat(LONGEST_MESSAGE * 2));
         write!(writing, "{unending}").expect("bdi takes the message");
         writing
             .shutdown(Shutdown::Write)
@@ -963,14 +966,14 @@ mod tests {
     fn the_longest_message_that_still_ends_is_taken() {
         let at = a_socket_path("longest-that-ends");
         let brink = "a".repeat(LONGEST_MESSAGE - 1);
-        let reported = watching([brink.as_str(), "atlas"]);
+        let reported = watching([brink.as_str(), "arkham"]);
         let (_socket, changes) = open(&at, &reported);
 
         say(
             &at,
             &[
                 (&format!("{brink}\n"), &format!("ok {brink}")),
-                ("atlas\n", "ok atlas"),
+                ("arkham\n", "ok arkham"),
             ],
         );
 
@@ -986,11 +989,11 @@ mod tests {
     #[test]
     fn a_writer_may_stay_and_speak_more_than_once() {
         let at = a_socket_path("stays-and-speaks");
-        let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
+        let (_socket, changes) = open(&at, &watching(["arkham", "ferry"]));
 
-        say(&at, &[("atlas\n", "ok atlas"), ("ferry\n", "ok ferry")]);
+        say(&at, &[("arkham\n", "ok arkham"), ("ferry\n", "ok ferry")]);
 
-        for said in ["atlas", "ferry"] {
+        for said in ["arkham", "ferry"] {
             assert_eq!(
                 changes.recv_timeout(A_MOMENT).ok(),
                 Some(said.to_string()),
@@ -1002,12 +1005,12 @@ mod tests {
     #[test]
     fn writers_that_know_nothing_of_each_other_are_all_heard() {
         let at = a_socket_path("several-writers");
-        let (_socket, changes) = open(&at, &watching(["atlas", "ferry"]));
+        let (_socket, changes) = open(&at, &watching(["arkham", "ferry"]));
 
-        say(&at, &[("atlas\n", "ok atlas")]);
+        say(&at, &[("arkham\n", "ok arkham")]);
         say(&at, &[("ferry\n", "ok ferry")]);
 
-        for said in ["atlas", "ferry"] {
+        for said in ["arkham", "ferry"] {
             assert_eq!(
                 changes.recv_timeout(A_MOMENT).ok(),
                 Some(said.to_string()),
@@ -1026,10 +1029,10 @@ mod tests {
         drop(UnixListener::bind(&at).expect("a socket the crashed run left"));
         assert!(at.exists(), "the crashed run's socket is still there");
 
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
         let (_socket, changes) = open(&at, &reported);
 
-        say(&at, &[("atlas\n", "ok atlas")]);
+        say(&at, &[("arkham\n", "ok arkham")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
     }
 
@@ -1040,7 +1043,7 @@ mod tests {
     #[test]
     fn the_directory_bdi_makes_for_its_socket_is_this_users_own() {
         let at = a_socket_path("directory-mode");
-        let (_socket, _changes) = open(&at, &watching(["atlas"]));
+        let (_socket, _changes) = open(&at, &watching(["arkham"]));
 
         let directory = at.parent().expect("the socket is in a directory");
         let mode = std::fs::metadata(directory)
@@ -1064,7 +1067,7 @@ mod tests {
         let at = a_socket_in_a_directory_moded("open-directory", 0o777);
 
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+        let refused = listen(Some(at.clone()), &watching(["arkham"]), changed);
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1118,7 +1121,7 @@ mod tests {
         let at = shared.join("mine").join("changes.sock");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+        let refused = listen(Some(at.clone()), &watching(["arkham"]), changed);
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1150,7 +1153,7 @@ mod tests {
 
         let at = shared.join("link").join("changes.sock");
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at), &watching(["atlas"]), changed);
+        let refused = listen(Some(at), &watching(["arkham"]), changed);
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1251,7 +1254,7 @@ mod tests {
     #[test]
     fn a_file_that_replaced_the_socket_under_a_run_outlives_it() {
         let at = a_socket_path("replaced-socket");
-        let (socket, _changes) = open(&at, &watching(["atlas"]));
+        let (socket, _changes) = open(&at, &watching(["arkham"]));
 
         std::fs::remove_file(&at).expect("somebody else takes the name");
         std::fs::write(&at, "what they put there").expect("and leaves their own file at it");
@@ -1277,7 +1280,7 @@ mod tests {
         std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at.clone()), &watching(["atlas"]), changed);
+        let refused = listen(Some(at.clone()), &watching(["arkham"]), changed);
 
         assert!(
             matches!(refused, Err(Refused::NotASocket(_))),
@@ -1295,14 +1298,14 @@ mod tests {
     #[test]
     fn a_socket_another_bdi_is_listening_on_is_left_alone() {
         let at = a_socket_path("two-bdis");
-        let reported = watching(["atlas", "ferry"]);
+        let reported = watching(["arkham", "ferry"]);
         let (_first, _changes) = open(&at, &reported);
 
         let (changed, _changes) = mpsc::channel();
         let second = listen(Some(at.clone()), &reported, changed);
 
         assert!(matches!(second, Err(Refused::AlreadyListening(_))));
-        say(&at, &[("atlas\n", "ok atlas")]);
+        say(&at, &[("arkham\n", "ok arkham")]);
     }
 
     /// The line that reaches the primary screen carries the half no notice
@@ -1367,7 +1370,7 @@ mod tests {
     #[test]
     fn the_socket_goes_with_the_run_that_made_it() {
         let at = a_socket_path("removed-on-exit");
-        let (socket, _changes) = open(&at, &watching(["atlas", "ferry"]));
+        let (socket, _changes) = open(&at, &watching(["arkham", "ferry"]));
         assert!(at.exists());
 
         drop(socket);

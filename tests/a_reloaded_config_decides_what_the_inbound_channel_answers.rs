@@ -41,7 +41,7 @@ use terminal::{a_socket_of_its_own, the_socket_under, Producer, THE_DESCRIBED_SU
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
 
-const ATLAS: &[u8] = "atlas".as_bytes();
+const ARKHAM: &[u8] = "arkham".as_bytes();
 const FERRY: &[u8] = "ferry".as_bytes();
 
 /// Long enough for a check to fall due, the collection it asks for to be
@@ -85,20 +85,20 @@ fn naming(home: &Path, projects: &[&str]) {
 
 #[test]
 fn the_names_the_channel_accepts_follow_the_config_the_reader_wrote() {
-    let home = a_home_naming("channel-follows-config", &["atlas"]);
+    let home = a_home_naming("channel-follows-config", &["arkham"]);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
     let mut environment = tracker.environment();
     environment.push(a_socket_of_its_own(&home));
 
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &environment);
-    bdi.read_until(ATLAS, GIVING_UP);
+    bdi.read_until(ARKHAM, GIVING_UP);
 
     let mut producer = Producer::connected_to(&the_socket_under(&home));
     assert_eq!(
-        producer.says("atlas"),
-        "ok atlas",
-        "the run started on a config naming atlas, so the channel accepts \
+        producer.says("arkham"),
+        "ok arkham",
+        "the run started on a config naming arkham, so the channel accepts \
          it\n{}",
         bdi.timeline()
     );
@@ -117,11 +117,11 @@ fn the_names_the_channel_accepts_follow_the_config_the_reader_wrote() {
     // on screen to show it — so a pair of assertions would stop at the half
     // the reader can already see and leave the other unmeasured on exactly
     // the runs where it had moved.
-    let answers = (producer.says("ferry"), producer.says("atlas"));
+    let answers = (producer.says("ferry"), producer.says("arkham"));
 
     assert_eq!(
         (answers.0.as_str(), answers.1.as_str()),
-        ("ok ferry", "unknown atlas"),
+        ("ok ferry", "unknown arkham"),
         "the config the reader wrote decides what the channel accepts: the \
          project they added is one bdi is now reading, and the one they took \
          out is not. An `ok` for the removed project asks for a read of one \

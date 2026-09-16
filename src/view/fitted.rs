@@ -576,7 +576,7 @@ mod tests {
     /// A row with something in all three blocks, so any painting at all shows.
     fn a_row() -> Fitted {
         Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![Span::raw("a title")],
             vec![Span::raw("open")],
         )
@@ -598,27 +598,27 @@ mod tests {
     fn a_title_that_says_nothing_in_part_is_given_up_whole() {
         let row = || {
             Fitted::new(
-                vec![Span::raw("orb-7")],
+                vec![Span::raw("dun-7")],
                 vec![Span::raw("collected 10:22:14")],
                 vec![Span::raw("open")],
             )
             .title_or_nothing()
         };
 
-        assert_eq!(drawn(row(), 31), "orb-7  collected 10:22:14  open");
-        assert_eq!(drawn(row(), 30), "orb-7                     open");
+        assert_eq!(drawn(row(), 31), "dun-7  collected 10:22:14  open");
+        assert_eq!(drawn(row(), 30), "dun-7                     open");
     }
 
     /// Only where it is asked for. Every other row keeps the cut it had.
     #[test]
     fn a_title_is_cut_like_any_other_block_unless_it_asks_not_to_be() {
         let row = Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![Span::raw("collected 10:22:14")],
             vec![Span::raw("open")],
         );
 
-        assert_eq!(drawn(row, 30), "orb-7  collected 10:22:…  open");
+        assert_eq!(drawn(row, 30), "dun-7  collected 10:22:…  open");
     }
 
     /// The foot's key row is the same case on the state block: half a key
@@ -628,34 +628,34 @@ mod tests {
     fn a_state_that_says_nothing_in_part_is_given_up_whole() {
         let row = || {
             Fitted::new(
-                vec![Span::raw("orb-7")],
+                vec![Span::raw("dun-7")],
                 vec![Span::raw("a title")],
                 vec![Span::raw("Enter focus   q quit")],
             )
             .state_or_nothing()
         };
 
-        assert_eq!(drawn(row(), 27), "orb-7  Enter focus   q quit");
-        assert_eq!(drawn(row(), 26), "orb-7  a title            ");
+        assert_eq!(drawn(row(), 27), "dun-7  Enter focus   q quit");
+        assert_eq!(drawn(row(), 26), "dun-7  a title            ");
     }
 
     /// Only where it is asked for, as with the title.
     #[test]
     fn a_state_is_cut_like_any_other_block_unless_it_asks_not_to_be() {
         let row = Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![Span::raw("a title")],
             vec![Span::raw("Enter focus   q quit")],
         );
 
-        assert_eq!(drawn(row, 26), "orb-7  Enter focus   q qu…");
+        assert_eq!(drawn(row, 26), "dun-7  Enter focus   q qu…");
     }
 
     /// A row whose state has a short form, for a state whose length is not
     /// this program's to choose.
     fn a_row_saying(title: &str) -> Fitted {
         Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![Span::raw(title.to_string())],
             vec![Span::raw("working on the parser")],
         )
@@ -670,11 +670,11 @@ mod tests {
     fn a_state_with_no_room_for_its_long_form_is_said_in_its_short_one() {
         assert_eq!(
             drawn(a_row_saying("a title"), 37),
-            "orb-7  a title  working on the parser"
+            "dun-7  a title  working on the parser"
         );
         assert_eq!(
             drawn(a_row_saying("a title"), 36),
-            "orb-7  a title               working"
+            "dun-7  a title               working"
         );
     }
 
@@ -686,7 +686,7 @@ mod tests {
     fn a_title_cut_for_width_leaves_the_short_form_the_room_kept_for_it() {
         assert_eq!(
             drawn(a_row_saying("teach the elided run to fold back open"), 40),
-            "orb-7  teach the elided run to…  working"
+            "dun-7  teach the elided run to…  working"
         );
     }
 
@@ -694,7 +694,7 @@ mod tests {
     /// length is a tracker's to choose rather than this program's.
     fn a_shortenable_row() -> Fitted {
         Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![
                 Span::raw("a title"),
                 Span::raw("  "),
@@ -715,11 +715,11 @@ mod tests {
     fn a_span_with_no_room_for_its_long_form_is_said_in_its_short_one() {
         assert_eq!(
             drawn(a_shortenable_row(), 33),
-            "orb-7  a title  ⇢ awaiting review"
+            "dun-7  a title  ⇢ awaiting review"
         );
         assert_eq!(
             drawn(a_shortenable_row(), 32),
-            "orb-7  a title  ⇢ #12           "
+            "dun-7  a title  ⇢ #12           "
         );
     }
 
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn a_span_offering_no_short_form_is_cut_as_it_always_was() {
         let row = Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![
                 Span::raw("a title"),
                 Span::raw("  "),
@@ -736,7 +736,7 @@ mod tests {
             Vec::new(),
         );
 
-        assert_eq!(drawn(row, 32), "orb-7  a title  ⇢ awaiting revi…");
+        assert_eq!(drawn(row, 32), "dun-7  a title  ⇢ awaiting revi…");
     }
 
     /// A short form that fits is a span the row kept whole, so it keeps the
@@ -764,7 +764,7 @@ mod tests {
     /// columns than the first.
     fn a_row_of_two_shortenable_spans() -> Fitted {
         Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![
                 Span::raw("a title"),
                 Span::raw("  "),
@@ -795,22 +795,22 @@ mod tests {
     fn no_more_spans_shorten_than_the_row_has_to_shorten_to_fit() {
         assert_eq!(
             drawn(a_row_of_two_shortenable_spans(), 55),
-            "orb-7  a title  awaiting review  blocked on the tracker"
+            "dun-7  a title  awaiting review  blocked on the tracker"
         );
         assert_eq!(
             drawn(a_row_of_two_shortenable_spans(), 40),
-            "orb-7  a title  awaiting review  blocked"
+            "dun-7  a title  awaiting review  blocked"
         );
         assert_eq!(
             drawn(a_row_of_two_shortenable_spans(), 39),
-            "orb-7  a title  #12  blocked           "
+            "dun-7  a title  #12  blocked           "
         );
     }
 
     /// A row with both kinds of short form, so which gives way first shows.
     fn a_shortenable_row_saying_briefly() -> Fitted {
         Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![
                 Span::raw("a title"),
                 Span::raw("  "),
@@ -834,11 +834,11 @@ mod tests {
     fn a_span_keeps_its_long_form_where_the_state_block_can_swap_instead() {
         assert_eq!(
             drawn(a_shortenable_row_saying_briefly(), 56),
-            "orb-7  a title  ⇢ awaiting review  working on the parser"
+            "dun-7  a title  ⇢ awaiting review  working on the parser"
         );
         assert_eq!(
             drawn(a_shortenable_row_saying_briefly(), 55),
-            "orb-7  a title  ⇢ awaiting review               working"
+            "dun-7  a title  ⇢ awaiting review               working"
         );
     }
 
@@ -882,7 +882,7 @@ mod tests {
     }
 
     /// The URL a reader clicks, in the vocabulary the fixtures use.
-    const SOMEWHERE: &str = "https://forge.invalid/orbital/atlas/pull/12";
+    const SOMEWHERE: &str = "https://forge.invalid/dunwich/arkham/pull/12";
 
     /// A row whose third title span is a link, so the link is neither the
     /// first thing on the line nor the last.
@@ -893,7 +893,7 @@ mod tests {
     /// The same row, for a badge whose text the caller chooses.
     fn a_row_linking(badge: &str) -> Fitted {
         Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![
                 Span::raw("a title"),
                 Span::raw(" "),
@@ -982,7 +982,7 @@ mod tests {
             "https://forge.invalid/\rfoo".to_string(),
         ] {
             let row = Fitted::new(
-                vec![Span::raw("orb-7")],
+                vec![Span::raw("dun-7")],
                 vec![Span::raw("a title"), Span::raw(" "), Span::raw("⇢ #12")],
                 Vec::new(),
             )
@@ -1099,7 +1099,7 @@ mod tests {
     fn a_partial_redraw_cannot_send_an_opening_sequence_without_its_closer() {
         let moved = || {
             Fitted::new(
-                vec![Span::raw("orb-7")],
+                vec![Span::raw("dun-7")],
                 vec![Span::raw("a title"), Span::raw(" "), Span::raw("→ #12")],
                 Vec::new(),
             )
@@ -1134,7 +1134,7 @@ mod tests {
     #[test]
     fn a_link_in_the_identity_is_opened_at_the_column_it_starts_on() {
         let row = Fitted::new(
-            vec![Span::raw("orb-7"), Span::raw(" "), Span::raw("⇢ #12")],
+            vec![Span::raw("dun-7"), Span::raw(" "), Span::raw("⇢ #12")],
             vec![Span::raw("a title")],
             Vec::new(),
         )
@@ -1146,7 +1146,7 @@ mod tests {
 
         let buf = rendered(row, 40);
 
-        assert_eq!(drawn_of(&buf), "orb-7 ⇢ #12  a title                    ");
+        assert_eq!(drawn_of(&buf), "dun-7 ⇢ #12  a title                    ");
         assert_eq!(opened_at(&buf), 6);
     }
 
@@ -1155,7 +1155,7 @@ mod tests {
     #[test]
     fn a_link_in_a_right_justified_state_is_opened_where_it_was_drawn() {
         let row = Fitted::new(
-            vec![Span::raw("orb-7")],
+            vec![Span::raw("dun-7")],
             vec![Span::raw("a title")],
             vec![Span::raw("open"), Span::raw(" "), Span::raw("⇢ #12")],
         )
@@ -1167,7 +1167,7 @@ mod tests {
 
         let buf = rendered(row, 40);
 
-        assert_eq!(drawn_of(&buf), "orb-7  a title                open ⇢ #12");
+        assert_eq!(drawn_of(&buf), "dun-7  a title                open ⇢ #12");
         assert_eq!(opened_at(&buf), 35);
     }
 
@@ -1178,7 +1178,7 @@ mod tests {
         let row = || {
             Fitted::new(
                 vec![
-                    Span::raw("orb-7"),
+                    Span::raw("dun-7"),
                     Span::raw(" "),
                     Span::raw("⇢ awaiting review"),
                 ],
@@ -1192,8 +1192,8 @@ mod tests {
             }])
         };
 
-        assert_eq!(drawn(row(), 23), "orb-7 ⇢ awaiting review");
-        assert_eq!(drawn(row(), 22), "orb-7 ⇢ #12  a title  ");
+        assert_eq!(drawn(row(), 23), "dun-7 ⇢ awaiting review");
+        assert_eq!(drawn(row(), 22), "dun-7 ⇢ #12  a title  ");
     }
 
     /// A short form in the state is said where the state will not fit the
@@ -1203,7 +1203,7 @@ mod tests {
     fn a_span_in_the_state_with_no_room_for_its_long_form_is_said_in_its_short_one() {
         let row = || {
             Fitted::new(
-                vec![Span::raw("orb-7")],
+                vec![Span::raw("dun-7")],
                 vec![Span::raw("a title")],
                 vec![
                     Span::raw("open"),
@@ -1218,8 +1218,8 @@ mod tests {
             }])
         };
 
-        assert_eq!(drawn(row(), 29), "orb-7  open ⇢ awaiting review");
-        assert_eq!(drawn(row(), 28), "orb-7  a title    open ⇢ #12");
+        assert_eq!(drawn(row(), 29), "dun-7  open ⇢ awaiting review");
+        assert_eq!(drawn(row(), 28), "dun-7  a title    open ⇢ #12");
     }
 
     /// The words of a rendered row, with any link's escape bytes taken out.

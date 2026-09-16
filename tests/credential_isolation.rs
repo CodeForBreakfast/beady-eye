@@ -25,7 +25,7 @@ mod canned;
 
 use canned::{Call, Canned};
 
-const ORBITAL_DIR: &str = "/srv/work/orbital";
+const DUNWICH_DIR: &str = "/srv/work/dunwich";
 const HARBOUR_DIR: &str = "/srv/work/harbour";
 const SOLO_DIR: &str = "/srv/work/solo";
 
@@ -36,9 +36,9 @@ const AMBIENT: &str = "the-launching-shells-password";
 /// one project is refused unless every one of them does.
 const TWO_PROJECTS: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
-credential_command = "pass show orbital/tracker"
+name = "dunwich"
+path = "/srv/work/dunwich"
+credential_command = "pass show dunwich/tracker"
 
 [[projects]]
 name = "harbour"
@@ -65,7 +65,7 @@ const NO_PANES: &str = r#"{"id":"cli:agent:list","result":{"agents":[]}}"#;
 fn across_two_projects() -> Canned {
     Canned::default()
         .herdr_holding(NO_PANES)
-        .answering("sh -c pass show orbital/tracker", "orbital-secret\n")
+        .answering("sh -c pass show dunwich/tracker", "dunwich-secret\n")
         .answering("sh -c pass show harbour/tracker", "harbour-secret\n")
         .answering_every("bd", NOTHING)
 }
@@ -114,7 +114,7 @@ fn each_call_carries_the_credential_of_the_tracker_it_is_for_and_no_other() {
     let calls = calls_made_reading(TWO_PROJECTS, &across_two_projects());
 
     for (dir, secret) in [
-        (ORBITAL_DIR, "orbital-secret"),
+        (DUNWICH_DIR, "dunwich-secret"),
         (HARBOUR_DIR, "harbour-secret"),
     ] {
         let asked = bd_calls_in(&calls, dir);

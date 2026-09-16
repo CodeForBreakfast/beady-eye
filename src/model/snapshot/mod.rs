@@ -667,35 +667,35 @@ mod tests {
     use crate::model::types::{Bead, Pane};
     use pretty_assertions::assert_eq;
 
-    /// One project's tree as bd writes it. `orb-7.3` is claimed and long
-    /// untouched with no pane; `orb-7.2` is closed with a pane still on it.
+    /// One project's tree as bd writes it. `dun-7.3` is claimed and long
+    /// untouched with no pane; `dun-7.2` is closed with a pane still on it.
     pub(super) const BEADS: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic","updated_at":"2026-08-29T12:00:00Z",
        "started_at":"2026-08-20T09:00:00Z","metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.1","title":"re-point the dish","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"blocked_on":"human"}},
-      {"id":"orb-7.2","title":"survey the mast","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"survey the mast","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"orb-7.3","title":"lay the feeder cable","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.3","title":"lay the feeder cable","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":1,"issue_type":"task","updated_at":"2026-07-01T12:00:00Z"},
-      {"id":"orb-7.4","title":"file the licence","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.4","title":"file the licence","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":3,"issue_type":"chore"}
     ]"#;
 
     /// `w:p9` is a session on no bead; `w:pF` is one outside every
     /// configured project.
     pub(super) const PANES: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working",
+      {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working",
        "state_labels":{"working":"lifting the mast"}},
-      {"pane_id":"w:p2","cwd":"/srv/work/orbital","agent_status":"idle",
-       "display_agent":"orb-7.2","title":"survey"},
-      {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"blocked"},
+      {"pane_id":"w:p2","cwd":"/srv/work/dunwich","agent_status":"idle",
+       "display_agent":"dun-7.2","title":"survey"},
+      {"pane_id":"w:p9","cwd":"/srv/work/dunwich","agent_status":"blocked"},
       {"pane_id":"w:pF","cwd":"/srv/spike","agent_status":"idle"}
     ]}}"#;
 
@@ -703,9 +703,9 @@ mod tests {
         Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
-credential_command = "secret orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
+credential_command = "secret dunwich"
 
 [[projects]]
 name = "ferry"
@@ -751,7 +751,7 @@ render = "⏸ waiting"
         let cfg = cfg();
         join::resolve(
             &[ProjectRows {
-                project: "orbital",
+                project: "dunwich",
                 rows,
             }],
             Listed::all(panes),
@@ -759,15 +759,15 @@ render = "⏸ waiting"
         )
     }
 
-    /// bd's answers about dependencies. `orb-7.1` is blocked by a bead that is
-    /// not in this tree at all, and `orb-7.4` is ready while `orb-7.1` — the
+    /// bd's answers about dependencies. `dun-7.1` is blocked by a bead that is
+    /// not in this tree at all, and `dun-7.4` is ready while `dun-7.1` — the
     /// other open bead — is not.
     pub(super) fn readiness() -> Readiness {
         Readiness {
-            ready: BTreeSet::from(["orb-7.4".to_string()]),
+            ready: BTreeSet::from(["dun-7.4".to_string()]),
             blocked_by: BTreeMap::from([(
-                "orb-7.1".to_string(),
-                vec!["orb-9".to_string(), "orb-7.3".to_string()],
+                "dun-7.1".to_string(),
+                vec!["dun-9".to_string(), "dun-7.3".to_string()],
             )]),
         }
     }
@@ -778,7 +778,7 @@ render = "⏸ waiting"
         let joined = joined(&assembled.beads, &panes);
         let relations = edges::relations(&assembled.beads);
         build_tree(
-            "orbital",
+            "dunwich",
             &assembled,
             &joined,
             &readiness(),
@@ -825,12 +825,12 @@ render = "⏸ waiting"
         );
         assert_eq!(json["trees"][0]["tracker"], "ok");
         assert_eq!(json["trees"][0]["counts"]["total"], 5);
-        assert_eq!(json["trees"][0]["nodes"][0]["id"], "orb-7");
+        assert_eq!(json["trees"][0]["nodes"][0]["id"], "dun-7");
         assert_eq!(
             json["trees"][0]["nodes"][0]["agent"]["source"],
             "agent_pane"
         );
-        assert_eq!(json["unattributed"][0]["project"], "orbital");
+        assert_eq!(json["unattributed"][0]["project"], "dunwich");
         assert!(
             json["trees"][0]["nodes"][1]["anomalies"].is_array(),
             "anomalies is a list"
@@ -882,7 +882,7 @@ render = "⏸ waiting"
                     TrackerFailure::Auth,
                 )],
                 failed_projects: vec![FailedProject {
-                    project: "orbital".to_string(),
+                    project: "dunwich".to_string(),
                     tracker: TrackerFailure::Parse(an_unreadable()),
                 }],
                 ..Default::default()
@@ -918,7 +918,7 @@ render = "⏸ waiting"
         let snap = build(
             Collected {
                 failed_projects: vec![FailedProject {
-                    project: "orbital".to_string(),
+                    project: "dunwich".to_string(),
                     tracker: TrackerFailure::Auth,
                 }],
                 ..Default::default()
@@ -962,16 +962,16 @@ render = "⏸ waiting"
 
     // ---- finding a bead across trackers -------------------------------
 
-    /// A second tracker whose ids collide with `orbital`'s, because bead
+    /// A second tracker whose ids collide with `dunwich`'s, because bead
     /// prefixes are per-tracker and uncoordinated. The titles are what tells
     /// two beads of one id apart, and `frr-1` belongs to this project alone.
     fn ferry() -> Tree {
         let json = r#"[
-          {"id":"orb-7","title":"berth the ferry","status":"open"},
-          {"id":"orb-7.1","title":"paint the hull","status":"open",
-           "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}]},
+          {"id":"dun-7","title":"berth the ferry","status":"open"},
+          {"id":"dun-7.1","title":"paint the hull","status":"open",
+           "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
           {"id":"frr-1","title":"lift the ramp","status":"open",
-           "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}]}
+           "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}
         ]"#;
         build_tree(
             "ferry",
@@ -997,17 +997,17 @@ render = "⏸ waiting"
         let snap = built(vec![tree(), ferry()], Filter::All);
 
         assert_eq!(
-            snap.node(&key("orbital", "orb-7.1"))
+            snap.node(&key("dunwich", "dun-7.1"))
                 .map(|n| n.title.as_str()),
             Some("re-point the dish")
         );
         assert_eq!(
-            snap.node(&key("ferry", "orb-7.1"))
+            snap.node(&key("ferry", "dun-7.1"))
                 .map(|n| n.title.as_str()),
             Some("paint the hull")
         );
         assert_eq!(
-            snap.locate(&key("ferry", "orb-7.1"))
+            snap.locate(&key("ferry", "dun-7.1"))
                 .map(|(t, _)| t.project.as_str()),
             Some("ferry")
         );
@@ -1027,7 +1027,7 @@ render = "⏸ waiting"
             Some("berth the ferry")
         );
         assert_eq!(
-            snap.node(&key("ferry", "orb-7.1"))
+            snap.node(&key("ferry", "dun-7.1"))
                 .map(|n| n.title.as_str()),
             Some("paint the hull")
         );
@@ -1036,7 +1036,7 @@ render = "⏸ waiting"
             Some("berth the ferry")
         );
         assert_eq!(
-            snap.tree(&key("ferry", "orb-7.1")),
+            snap.tree(&key("ferry", "dun-7.1")),
             None,
             "a bead that is not a root names no tree"
         );
@@ -1046,7 +1046,7 @@ render = "⏸ waiting"
     fn a_bead_in_one_project_is_not_found_through_another_projects_key() {
         let snap = built(vec![tree(), ferry()], Filter::All);
 
-        assert_eq!(snap.node(&key("ferry", "orb-7.4")), None);
-        assert_eq!(snap.node(&key("orbital", "frr-1")), None);
+        assert_eq!(snap.node(&key("ferry", "dun-7.4")), None);
+        assert_eq!(snap.node(&key("dunwich", "frr-1")), None);
     }
 }

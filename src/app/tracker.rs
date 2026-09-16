@@ -500,21 +500,21 @@ mod tests {
     /// A second root, reached only because config or a pane names it: closed,
     /// so no status does.
     const MAST_TREE: &str = r#"[
-      {"id":"orb-4","title":"survey the mast","status":"closed",
+      {"id":"dun-4","title":"survey the mast","status":"closed",
        "priority":2,"issue_type":"task"}
     ]"#;
 
-    /// The orbital tracker with its epic finished and its tasks not: the
+    /// The dunwich tracker with its epic finished and its tasks not: the
     /// shape discovery never sees the top of.
     const CLOSED_OVER_OPEN_WORK: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"closed",
+      {"id":"dun-7","title":"lift the ground station","status":"closed",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"lay the feeder cable","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -523,19 +523,19 @@ mod tests {
     /// to read. Every one of them tops its own parent chain and every one but
     /// the first is placed by the bead above it.
     const CHAIN_OF_PARENTLESS: &str = r#"[
-      {"id":"orb-c1","title":"the hub nothing depends on","status":"open",
+      {"id":"dun-c1","title":"the hub nothing depends on","status":"open",
        "priority":2,"issue_type":"task",
-       "dependencies":[{"depends_on_id":"orb-c2","type":"blocks"}]},
-      {"id":"orb-c2","title":"the second link","status":"open",
+       "dependencies":[{"depends_on_id":"dun-c2","type":"blocks"}]},
+      {"id":"dun-c2","title":"the second link","status":"open",
        "priority":2,"issue_type":"task",
-       "dependencies":[{"depends_on_id":"orb-c3","type":"blocks"}]},
-      {"id":"orb-c3","title":"the third link","status":"open",
+       "dependencies":[{"depends_on_id":"dun-c3","type":"blocks"}]},
+      {"id":"dun-c3","title":"the third link","status":"open",
        "priority":2,"issue_type":"task",
-       "dependencies":[{"depends_on_id":"orb-c4","type":"blocks"}]},
-      {"id":"orb-c4","title":"the fourth link","status":"open",
+       "dependencies":[{"depends_on_id":"dun-c4","type":"blocks"}]},
+      {"id":"dun-c4","title":"the fourth link","status":"open",
        "priority":2,"issue_type":"task",
-       "dependencies":[{"depends_on_id":"orb-c5","type":"blocks"}]},
-      {"id":"orb-c5","title":"the bead everything waits on","status":"open",
+       "dependencies":[{"depends_on_id":"dun-c5","type":"blocks"}]},
+      {"id":"dun-c5","title":"the bead everything waits on","status":"open",
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -570,12 +570,12 @@ mod tests {
     /// refresh asks the tracker for its beads once, and for no subset of them.
     #[test]
     fn a_changed_refresh_asks_the_tracker_for_its_beads_once() {
-        let trackers = orbital();
+        let trackers = dunwich();
 
         run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let listings = trackers
-            .tracker("orbital")
+            .tracker("dunwich")
             .asked()
             .into_iter()
             .filter(|question| *question == Asked::All)
@@ -592,25 +592,25 @@ mod tests {
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [roots.explicit]
-orbital = ["orb-4"]
+dunwich = ["dun-4"]
 "#
         ))
         .expect("the config parses");
-        let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
-                        "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+        let lost = r#"[{"id":"dun-3","title":"its parent was deleted","status":"closed",
+                        "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
                         "priority":2,"issue_type":"task"}]"#;
-        let tracker = orbital_tracker().also(beads(MAST_TREE)).also(beads(lost));
+        let tracker = dunwich_tracker().also(beads(MAST_TREE)).also(beads(lost));
 
         let before = nestings_on_this_thread();
         let (work, _) = read_project(&tracker, &cfg.projects[0], &cfg, &[])
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-3", "orb-4", "orb-7"]);
+        assert_eq!(roots, vec!["dun-3", "dun-4", "dun-7"]);
         assert_eq!(nestings_on_this_thread() - before, 1);
     }
 
@@ -621,13 +621,13 @@ orbital = ["orb-4"]
         let snap = run(
             &one_project(),
             &panes(),
-            &orbital(),
+            &dunwich(),
             Filter::LiveAgents,
             now(),
         );
 
         assert_eq!(snap.trees.len(), 1);
-        assert_eq!(snap.trees[0].root, "orb-7");
+        assert_eq!(snap.trees[0].root, "dun-7");
         assert_eq!(snap.trees[0].title, "lift the ground station");
         assert_eq!(snap.trees[0].beads.len(), 3);
     }
@@ -639,27 +639,27 @@ orbital = ["orb-4"]
     #[test]
     fn discovery_names_every_unfinished_bead_and_wisp_and_nothing_closed() {
         let listing = r#"[
-          {"id":"orb-7","title":"lift the ground station","status":"closed",
+          {"id":"dun-7","title":"lift the ground station","status":"closed",
            "priority":1,"issue_type":"epic"},
-          {"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7",
-           "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+          {"id":"dun-7.1","title":"re-point the dish","status":"open","parent":"dun-7",
+           "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
            "priority":2,"issue_type":"task"},
-          {"id":"orb-8","title":"decommission the old mast","status":"closed",
+          {"id":"dun-8","title":"decommission the old mast","status":"closed",
            "priority":1,"issue_type":"epic"},
-          {"id":"orb-8.1","title":"cut the guy lines","status":"closed","parent":"orb-8",
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
+          {"id":"dun-8.1","title":"cut the guy lines","status":"closed","parent":"dun-8",
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"}],
            "priority":2,"issue_type":"task",
-           "metadata":{"working_topic":"orbital/v1-orb-8.1"}},
-          {"id":"orb-9","title":"wait for the permit","status":"deferred",
+           "metadata":{"working_topic":"dunwich/v1-dun-8.1"}},
+          {"id":"dun-9","title":"wait for the permit","status":"deferred",
            "priority":3,"issue_type":"task"}
         ]"#;
         let wisps = r#"[
-          {"id":"orb-wisp-a1","title":"heartbeat","status":"open",
+          {"id":"dun-wisp-a1","title":"heartbeat","status":"open",
            "priority":2,"issue_type":"task"},
-          {"id":"orb-wisp-b2","title":"a run that finished","status":"closed",
+          {"id":"dun-wisp-b2","title":"a run that finished","status":"closed",
            "priority":2,"issue_type":"molecule"}
         ]"#;
-        let trackers = orbital_with(orbital_holding(listing).also(beads(wisps)));
+        let trackers = dunwich_with(dunwich_holding(listing).also(beads(wisps)));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
@@ -671,7 +671,7 @@ orbital = ["orb-4"]
         let roots: BTreeSet<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            BTreeSet::from(["orb-7", "orb-9", "orb-wisp-a1"]),
+            BTreeSet::from(["dun-7", "dun-9", "dun-wisp-a1"]),
             "the open task climbs to its closed epic; the deferred bead and the open wisp are roots of their own"
         );
     }
@@ -688,11 +688,11 @@ orbital = ["orb-4"]
     /// something `bdi` could not read.
     #[test]
     fn a_bead_whose_parent_the_answer_has_lost_is_top_of_its_own_tree() {
-        let orphan_bead = r#"[{"id":"orb-7.9","title":"its parent is a digest",
-                               "status":"open","parent":"orb-404",
-                               "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+        let orphan_bead = r#"[{"id":"dun-7.9","title":"its parent is a digest",
+                               "status":"open","parent":"dun-404",
+                               "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
                                "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(orphan_bead)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(orphan_bead)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
@@ -704,7 +704,7 @@ orbital = ["orb-4"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7", "orb-7.9"],
+            vec!["dun-7", "dun-7.9"],
             "the chain stops at the last bead this read holds, and names no root above it"
         );
         for tree in &snap.trees {
@@ -716,13 +716,13 @@ orbital = ["orb-4"]
             );
         }
         assert_eq!(
-            rooted_at(&snap, "orb-7").dangling,
+            rooted_at(&snap, "dun-7").dangling,
             Vec::<String>::new(),
             "the tree that never reached it does not report it"
         );
         assert_eq!(
-            rooted_at(&snap, "orb-7.9").dangling,
-            vec!["orb-7.9".to_string()],
+            rooted_at(&snap, "dun-7.9").dangling,
+            vec!["dun-7.9".to_string()],
             "its own tree names the work the tracker no longer holds"
         );
     }
@@ -738,22 +738,22 @@ orbital = ["orb-4"]
     /// asking what places them gives instead. A count alone passes both.
     #[test]
     fn a_chain_of_parentless_beads_is_drawn_as_one_tree() {
-        let trackers = orbital_with(orbital_holding(CHAIN_OF_PARENTLESS));
+        let trackers = dunwich_with(dunwich_holding(CHAIN_OF_PARENTLESS));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
-        for link in ["orb-c1", "orb-c2", "orb-c3", "orb-c4", "orb-c5"] {
+        for link in ["dun-c1", "dun-c2", "dun-c3", "dun-c4", "dun-c5"] {
             assert!(drawn(&snap, link), "{link} is on the screen");
         }
         assert_eq!(
-            drawings(&snap, "orb-c5"),
+            drawings(&snap, "dun-c5"),
             1,
             "and the deepest is drawn once, rather than under every bead that blocks it"
         );
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-c1"],
+            vec!["dun-c1"],
             "the one bead nothing places stands for the whole chain"
         );
     }
@@ -765,15 +765,15 @@ orbital = ["orb-4"]
     /// off the screen with nothing in the foot to say so.
     #[test]
     fn a_parentless_bead_nothing_places_is_still_a_root() {
-        let alone = r#"[{"id":"orb-lone","title":"nothing depends on it","status":"open",
+        let alone = r#"[{"id":"dun-lone","title":"nothing depends on it","status":"open",
                          "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(alone)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(alone)));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
-        assert!(drawn(&snap, "orb-lone"), "it is on the screen");
+        assert!(drawn(&snap, "dun-lone"), "it is on the screen");
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-lone"]);
+        assert_eq!(roots, vec!["dun-7", "dun-lone"]);
     }
 
     /// A parentless bead whose only placer is closed. Nothing discovers a
@@ -787,22 +787,22 @@ orbital = ["orb-4"]
     #[test]
     fn a_parentless_bead_placed_only_by_a_closed_bead_is_drawn_under_it() {
         let under_a_closed_bead = r#"[
-          {"id":"orb-5","title":"finished, and still standing over work",
+          {"id":"dun-5","title":"finished, and still standing over work",
            "status":"closed","priority":2,"issue_type":"task",
-           "dependencies":[{"depends_on_id":"orb-5.1","type":"blocks"}]},
-          {"id":"orb-5.1","title":"open, with no parent and one blocker",
+           "dependencies":[{"depends_on_id":"dun-5.1","type":"blocks"}]},
+          {"id":"dun-5.1","title":"open, with no parent and one blocker",
            "status":"open","priority":2,"issue_type":"task"}
         ]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(under_a_closed_bead)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(under_a_closed_bead)));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
-        assert!(drawn(&snap, "orb-5.1"), "the open bead is on the screen");
-        assert_eq!(drawings(&snap, "orb-5.1"), 1);
+        assert!(drawn(&snap, "dun-5.1"), "the open bead is on the screen");
+        assert_eq!(drawings(&snap, "dun-5.1"), 1);
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7", "orb-5"],
+            vec!["dun-7", "dun-5"],
             "the closed bead that places it is where the tree drawing it starts"
         );
     }
@@ -815,26 +815,26 @@ orbital = ["orb-4"]
     #[test]
     fn a_cycle_of_parentless_beads_is_drawn_once_from_a_stable_top() {
         let looping = r#"[
-          {"id":"orb-l1","title":"blocked by the other","status":"open",
+          {"id":"dun-l1","title":"blocked by the other","status":"open",
            "priority":2,"issue_type":"task",
-           "dependencies":[{"depends_on_id":"orb-l2","type":"blocks"}]},
-          {"id":"orb-l2","title":"and blocked by the first","status":"open",
+           "dependencies":[{"depends_on_id":"dun-l2","type":"blocks"}]},
+          {"id":"dun-l2","title":"and blocked by the first","status":"open",
            "priority":2,"issue_type":"task",
-           "dependencies":[{"depends_on_id":"orb-l1","type":"blocks"}]}
+           "dependencies":[{"depends_on_id":"dun-l1","type":"blocks"}]}
         ]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(looping)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(looping)));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
-        for bead in ["orb-l1", "orb-l2"] {
+        for bead in ["dun-l1", "dun-l2"] {
             assert!(drawn(&snap, bead), "{bead} is on the screen");
             assert_eq!(drawings(&snap, bead), 1, "{bead} is drawn in one tree");
         }
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-l1"]);
+        assert_eq!(roots, vec!["dun-7", "dun-l1"]);
         assert_eq!(
-            rooted_at(&snap, "orb-l1").cycles,
-            vec!["orb-l1".to_string()],
+            rooted_at(&snap, "dun-l1").cycles,
+            vec!["dun-l1".to_string()],
             "and the loop is reported where it was cut"
         );
     }
@@ -845,26 +845,26 @@ orbital = ["orb-4"]
     #[test]
     fn a_wisp_with_no_parent_is_still_a_root_of_its_own() {
         let a_run_in_flight = r#"[
-          {"id":"orb-wisp-a1","title":"a run in flight","status":"open",
+          {"id":"dun-wisp-a1","title":"a run in flight","status":"open",
            "priority":2,"issue_type":"molecule"},
-          {"id":"orb-wisp-a1.1","title":"its first step","status":"open",
-           "parent":"orb-wisp-a1",
-           "dependencies":[{"depends_on_id":"orb-wisp-a1","type":"parent-child"}],
+          {"id":"dun-wisp-a1.1","title":"its first step","status":"open",
+           "parent":"dun-wisp-a1",
+           "dependencies":[{"depends_on_id":"dun-wisp-a1","type":"parent-child"}],
            "priority":2,"issue_type":"task"}
         ]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(a_run_in_flight)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(a_run_in_flight)));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-wisp-a1"]);
+        assert_eq!(roots, vec!["dun-7", "dun-wisp-a1"]);
         assert_eq!(
-            rooted_at(&snap, "orb-wisp-a1")
+            rooted_at(&snap, "dun-wisp-a1")
                 .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["orb-wisp-a1", "orb-wisp-a1.1"],
+            vec!["dun-wisp-a1", "dun-wisp-a1.1"],
             "and its steps hang under it"
         );
     }
@@ -876,23 +876,23 @@ orbital = ["orb-4"]
     #[test]
     fn a_bead_whose_parent_is_lost_stays_a_root_even_where_an_edge_places_it() {
         let placed_and_orphaned = r#"[
-          {"id":"orb-2","title":"blocked by the orphan","status":"open",
+          {"id":"dun-2","title":"blocked by the orphan","status":"open",
            "priority":2,"issue_type":"task",
-           "dependencies":[{"depends_on_id":"orb-7.9","type":"blocks"}]},
-          {"id":"orb-7.9","title":"its parent is a digest","status":"open",
-           "parent":"orb-404",
-           "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-7.9","type":"blocks"}]},
+          {"id":"dun-7.9","title":"its parent is a digest","status":"open",
+           "parent":"dun-404",
+           "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
            "priority":2,"issue_type":"task"}
         ]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(placed_and_orphaned)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(placed_and_orphaned)));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-2", "orb-7.9"]);
+        assert_eq!(roots, vec!["dun-7", "dun-2", "dun-7.9"]);
         assert_eq!(
-            rooted_at(&snap, "orb-7.9").dangling,
-            vec!["orb-7.9".to_string()],
+            rooted_at(&snap, "dun-7.9").dangling,
+            vec!["dun-7.9".to_string()],
             "and the parent the answer lost is still reported"
         );
     }
@@ -909,7 +909,7 @@ orbital = ["orb-4"]
     /// draw nothing for it.
     #[test]
     fn a_root_the_reader_has_just_named_is_drawn_though_the_tracker_has_not_moved() {
-        let trackers = orbital();
+        let trackers = dunwich();
         let before = one_project();
         let after = one_project_with_a_root_named();
 
@@ -935,7 +935,7 @@ orbital = ["orb-4"]
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7", "orb-7.1"],
+            vec!["dun-7", "dun-7.1"],
             "and the tree the reader asked for is one of them"
         );
     }
@@ -947,21 +947,21 @@ orbital = ["orb-4"]
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [roots.explicit]
-orbital = ["orb-c3"]
+dunwich = ["dun-c3"]
 "#
         ))
         .expect("the config parses");
-        let tracker = orbital_holding(CHAIN_OF_PARENTLESS);
+        let tracker = dunwich_holding(CHAIN_OF_PARENTLESS);
 
         let (work, _) = read_project(&tracker, &cfg.projects[0], &cfg, &[])
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-c1", "orb-c3"]);
+        assert_eq!(roots, vec!["dun-c1", "dun-c3"]);
     }
 
     /// A pane naming a bead the chain buries. Its climb ends at a parentless
@@ -977,19 +977,19 @@ orbital = ["orb-c3"]
     #[test]
     fn a_pane_naming_a_buried_bead_draws_it_where_the_tree_puts_it() {
         let watching = Provider::holding(vec![named(
-            pane("w:p1", ORBITAL, PaneStatus::Working),
-            "orb-c5",
+            pane("w:p1", DUNWICH, PaneStatus::Working),
+            "dun-c5",
         )]);
-        let trackers = orbital_with(orbital_holding(CHAIN_OF_PARENTLESS));
+        let trackers = dunwich_with(dunwich_holding(CHAIN_OF_PARENTLESS));
 
         let snap = run(&one_project(), &watching, &trackers, Filter::All, now());
 
-        assert!(drawn(&snap, "orb-c5"), "the bead the pane names is drawn");
-        assert_eq!(drawings(&snap, "orb-c5"), 1);
+        assert!(drawn(&snap, "dun-c5"), "the bead the pane names is drawn");
+        assert_eq!(drawings(&snap, "dun-c5"), 1);
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-c1"],
+            vec!["dun-c1"],
             "a pane on a buried bead does not stand it up beside its own tree"
         );
     }
@@ -1000,20 +1000,20 @@ orbital = ["orb-c3"]
     /// moving.
     #[test]
     fn a_closed_bead_the_answer_holds_no_way_down_to_is_still_drawn() {
-        let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
-                        "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+        let lost = r#"[{"id":"dun-3","title":"its parent was deleted","status":"closed",
+                        "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
                         "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(lost)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(lost)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         // The tree somebody is working leads, as it does whatever else is
         // drawn beside it.
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-3"]);
+        assert_eq!(roots, vec!["dun-7", "dun-3"]);
         assert_eq!(
-            rooted_at(&snap, "orb-3").dangling,
-            vec!["orb-3".to_string()]
+            rooted_at(&snap, "dun-3").dangling,
+            vec!["dun-3".to_string()]
         );
     }
 
@@ -1025,32 +1025,32 @@ orbital = ["orb-c3"]
     /// screen, drawn in no tree and reported in none.
     #[test]
     fn a_component_nothing_discovered_is_drawn_from_its_top() {
-        let component = r#"[{"id":"orb-5","title":"the parent it was moved to","status":"closed",
+        let component = r#"[{"id":"dun-5","title":"the parent it was moved to","status":"closed",
                              "priority":2,"issue_type":"task"},
-                            {"id":"orb-5.1","title":"moved off a parent that is gone",
+                            {"id":"dun-5.1","title":"moved off a parent that is gone",
                              "status":"closed",
-                             "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"},
-                                             {"depends_on_id":"orb-5","type":"parent-child"}],
+                             "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"},
+                                             {"depends_on_id":"dun-5","type":"parent-child"}],
                              "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(component)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(component)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-5"]);
-        let component = rooted_at(&snap, "orb-5");
+        assert_eq!(roots, vec!["dun-7", "dun-5"]);
+        let component = rooted_at(&snap, "dun-5");
         assert_eq!(
             component
                 .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["orb-5", "orb-5.1"],
+            vec!["dun-5", "dun-5.1"],
             "the bead that lost its place is drawn where its surviving edge puts it"
         );
         assert_eq!(
             component.dangling,
-            vec!["orb-5.1".to_string()],
+            vec!["dun-5.1".to_string()],
             "and the tree that draws it is the one that reports it"
         );
     }
@@ -1061,39 +1061,39 @@ orbital = ["orb-c3"]
     /// hangs from off the screen — the whole thing this rule exists to stop.
     #[test]
     fn a_component_whose_top_is_a_loop_is_drawn_from_inside_the_loop() {
-        let looping = r#"[{"id":"orb-9","title":"each other's parent","status":"closed",
-                           "dependencies":[{"depends_on_id":"orb-9b","type":"parent-child"}],
+        let looping = r#"[{"id":"dun-9","title":"each other's parent","status":"closed",
+                           "dependencies":[{"depends_on_id":"dun-9b","type":"parent-child"}],
                            "priority":2,"issue_type":"epic"},
-                          {"id":"orb-9b","title":"and the other way round","status":"closed",
-                           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}],
+                          {"id":"dun-9b","title":"and the other way round","status":"closed",
+                           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"}],
                            "priority":2,"issue_type":"epic"},
-                          {"id":"orb-9.1","title":"under the loop, and off a parent that is gone",
+                          {"id":"dun-9.1","title":"under the loop, and off a parent that is gone",
                            "status":"closed",
-                           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"},
-                                           {"depends_on_id":"orb-404","type":"parent-child"}],
+                           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"},
+                                           {"depends_on_id":"dun-404","type":"parent-child"}],
                            "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(looping)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(looping)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-9"]);
-        let component = rooted_at(&snap, "orb-9");
+        assert_eq!(roots, vec!["dun-7", "dun-9"]);
+        let component = rooted_at(&snap, "dun-9");
         assert_eq!(
             component
                 .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["orb-9", "orb-9.1", "orb-9b"],
+            vec!["dun-9", "dun-9.1", "dun-9b"],
             "every bead in the component is drawn, loop included"
         );
         assert_eq!(
             component.cycles,
-            vec!["orb-9".to_string()],
+            vec!["dun-9".to_string()],
             "and the loop is reported where it was cut"
         );
-        assert_eq!(component.dangling, vec!["orb-9.1".to_string()]);
+        assert_eq!(component.dangling, vec!["dun-9.1".to_string()]);
     }
 
     /// The same again, where the bead hangs under a loop *and* under
@@ -1103,21 +1103,21 @@ orbital = ["orb-c3"]
     /// reached has to end up on the screen, not just the one it started at.
     #[test]
     fn a_loop_over_a_bead_is_drawn_even_where_another_parent_has_a_top() {
-        let both_ways = r#"[{"id":"orb-6","title":"a top of its own","status":"closed",
+        let both_ways = r#"[{"id":"dun-6","title":"a top of its own","status":"closed",
                              "priority":2,"issue_type":"epic"},
-                            {"id":"orb-6c","title":"each other's parent","status":"closed",
-                             "dependencies":[{"depends_on_id":"orb-6d","type":"parent-child"}],
+                            {"id":"dun-6c","title":"each other's parent","status":"closed",
+                             "dependencies":[{"depends_on_id":"dun-6d","type":"parent-child"}],
                              "priority":2,"issue_type":"epic"},
-                            {"id":"orb-6d","title":"and the other way round","status":"closed",
-                             "dependencies":[{"depends_on_id":"orb-6c","type":"parent-child"}],
+                            {"id":"dun-6d","title":"and the other way round","status":"closed",
+                             "dependencies":[{"depends_on_id":"dun-6c","type":"parent-child"}],
                              "priority":2,"issue_type":"epic"},
-                            {"id":"orb-6.1","title":"under both, and off a parent that is gone",
+                            {"id":"dun-6.1","title":"under both, and off a parent that is gone",
                              "status":"closed",
-                             "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
-                                             {"depends_on_id":"orb-6c","type":"parent-child"},
-                                             {"depends_on_id":"orb-404","type":"parent-child"}],
+                             "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"},
+                                             {"depends_on_id":"dun-6c","type":"parent-child"},
+                                             {"depends_on_id":"dun-404","type":"parent-child"}],
                              "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(both_ways)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(both_ways)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
@@ -1129,11 +1129,11 @@ orbital = ["orb-c3"]
                 .collect::<Vec<_>>()
         };
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-6", "orb-6c"]);
-        assert_eq!(ids("orb-6"), vec!["orb-6", "orb-6.1"]);
+        assert_eq!(roots, vec!["dun-7", "dun-6", "dun-6c"]);
+        assert_eq!(ids("dun-6"), vec!["dun-6", "dun-6.1"]);
         assert_eq!(
-            ids("orb-6c"),
-            vec!["orb-6c", "orb-6.1", "orb-6d"],
+            ids("dun-6c"),
+            vec!["dun-6c", "dun-6.1", "dun-6d"],
             "the loop the top could not reach is drawn from inside itself"
         );
     }
@@ -1144,34 +1144,34 @@ orbital = ["orb-c3"]
     /// first, and every bead in it on the screen twice.
     #[test]
     fn a_top_another_top_already_draws_is_not_a_root_as_well() {
-        let under_a_loop = r#"[{"id":"orb-2a","title":"under the loop, off a parent that is gone",
+        let under_a_loop = r#"[{"id":"dun-2a","title":"under the loop, off a parent that is gone",
                                 "status":"closed",
-                                "dependencies":[{"depends_on_id":"orb-2c","type":"parent-child"},
-                                                {"depends_on_id":"orb-404","type":"parent-child"}],
+                                "dependencies":[{"depends_on_id":"dun-2c","type":"parent-child"},
+                                                {"depends_on_id":"dun-404","type":"parent-child"}],
                                 "priority":2,"issue_type":"task"},
-                               {"id":"orb-2c","title":"each other's parent","status":"closed",
-                                "dependencies":[{"depends_on_id":"orb-2d","type":"parent-child"}],
+                               {"id":"dun-2c","title":"each other's parent","status":"closed",
+                                "dependencies":[{"depends_on_id":"dun-2d","type":"parent-child"}],
                                 "priority":2,"issue_type":"epic"},
-                               {"id":"orb-2d","title":"and the other way round","status":"closed",
-                                "dependencies":[{"depends_on_id":"orb-2c","type":"parent-child"}],
+                               {"id":"dun-2d","title":"and the other way round","status":"closed",
+                                "dependencies":[{"depends_on_id":"dun-2c","type":"parent-child"}],
                                 "priority":2,"issue_type":"epic"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(under_a_loop)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(under_a_loop)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7", "orb-2c"],
+            vec!["dun-7", "dun-2c"],
             "one root draws the whole component, so it is the only one"
         );
         assert_eq!(
-            rooted_at(&snap, "orb-2c")
+            rooted_at(&snap, "dun-2c")
                 .beads
                 .iter()
                 .map(|n| n.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["orb-2c", "orb-2a", "orb-2d"]
+            vec!["dun-2c", "dun-2a", "dun-2d"]
         );
     }
 
@@ -1182,15 +1182,15 @@ orbital = ["orb-c3"]
     /// the screen.
     #[test]
     fn a_bead_whose_absent_dependency_would_have_nested_nothing_is_not_a_root() {
-        let unrelated = r#"[{"id":"orb-2","title":"found by work that is gone","status":"closed",
-                             "dependencies":[{"depends_on_id":"orb-404","type":"discovered-by"}],
+        let unrelated = r#"[{"id":"dun-2","title":"found by work that is gone","status":"closed",
+                             "dependencies":[{"depends_on_id":"dun-404","type":"discovered-by"}],
                              "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(unrelated)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(unrelated)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7"]);
+        assert_eq!(roots, vec!["dun-7"]);
     }
 
     /// A blocker the answer has lost would have been drawn *under* the bead
@@ -1198,15 +1198,15 @@ orbital = ["orb-c3"]
     /// went missing with it, and it is where it always was.
     #[test]
     fn a_bead_whose_absent_dependency_would_have_hung_beneath_it_is_not_a_root() {
-        let waiting = r#"[{"id":"orb-2","title":"waiting on work that is gone","status":"closed",
-                           "dependencies":[{"depends_on_id":"orb-404","type":"blocks"}],
+        let waiting = r#"[{"id":"dun-2","title":"waiting on work that is gone","status":"closed",
+                           "dependencies":[{"depends_on_id":"dun-404","type":"blocks"}],
                            "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(waiting)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(waiting)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7"]);
+        assert_eq!(roots, vec!["dun-7"]);
     }
 
     /// The narrowing this rule turns on. A bead that lost one edge and kept
@@ -1215,14 +1215,14 @@ orbital = ["orb-c3"]
     /// twice and count it twice.
     #[test]
     fn a_bead_a_tree_already_draws_is_not_made_a_root_as_well() {
-        let also_waiting = r#"[{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
-                                "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"},
-                                                {"depends_on_id":"orb-404","type":"parent-child"}],
+        let also_waiting = r#"[{"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+                                "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"},
+                                                {"depends_on_id":"dun-404","type":"parent-child"}],
                                 "priority":2,"issue_type":"task",
                                 "metadata":{"agent_pane":"w:p1"}}]"#;
-        let trackers = orbital_with(orbital_holding(&ORBITAL_TREE.replace(
-            r#"{"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+        let trackers = dunwich_with(dunwich_holding(&DUNWICH_TREE.replace(
+            r#"{"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}}"#,
             also_waiting
@@ -1236,37 +1236,37 @@ orbital = ["orb-c3"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7"],
+            vec!["dun-7"],
             "one tree draws it, so one tree reports it"
         );
-        assert_eq!(snap.trees[0].dangling, vec!["orb-7.1".to_string()]);
+        assert_eq!(snap.trees[0].dangling, vec!["dun-7.1".to_string()]);
     }
 
     /// A bead the lost bead's own tree draws is not a second root either,
     /// however many edges it lost of its own.
     #[test]
     fn a_bead_under_a_lost_bead_is_drawn_under_it_rather_than_beside_it() {
-        let lost = r#"[{"id":"orb-3","title":"its parent was deleted","status":"closed",
-                        "dependencies":[{"depends_on_id":"orb-404","type":"parent-child"}],
+        let lost = r#"[{"id":"dun-3","title":"its parent was deleted","status":"closed",
+                        "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
                         "priority":2,"issue_type":"task"},
-                       {"id":"orb-3.1","title":"under it, waiting on more","status":"closed",
-                        "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
-                                        {"depends_on_id":"orb-405","type":"parent-child"}],
+                       {"id":"dun-3.1","title":"under it, waiting on more","status":"closed",
+                        "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"},
+                                        {"depends_on_id":"dun-405","type":"parent-child"}],
                         "priority":2,"issue_type":"task"}]"#;
-        let trackers = orbital_with(orbital_tracker().also(beads(lost)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(lost)));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7", "orb-3"]);
-        let lost = rooted_at(&snap, "orb-3");
+        assert_eq!(roots, vec!["dun-7", "dun-3"]);
+        let lost = rooted_at(&snap, "dun-3");
         assert_eq!(
             lost.beads.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
-            vec!["orb-3", "orb-3.1"]
+            vec!["dun-3", "dun-3.1"]
         );
         assert_eq!(
             lost.dangling,
-            vec!["orb-3".to_string(), "orb-3.1".to_string()]
+            vec!["dun-3".to_string(), "dun-3.1".to_string()]
         );
     }
 
@@ -1277,13 +1277,13 @@ orbital = ["orb-c3"]
     /// beads share the parent.
     #[test]
     fn a_closed_parent_over_open_work_costs_the_tracker_no_further_question() {
-        let trackers = orbital_with(orbital_holding(CLOSED_OVER_OPEN_WORK));
+        let trackers = dunwich_with(dunwich_holding(CLOSED_OVER_OPEN_WORK));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
-        assert_eq!(snap.trees[0].root, "orb-7");
+        assert_eq!(snap.trees[0].root, "dun-7");
         assert_eq!(
-            trackers.tracker("orbital").asked(),
+            trackers.tracker("dunwich").asked(),
             vec![Asked::Fingerprint, Asked::All, Asked::Ready, Asked::Blocked],
             "a parent the listing already carries is not asked for again"
         );
@@ -1295,18 +1295,18 @@ orbital = ["orb-c3"]
     /// still claimed was drawn in its place.
     #[test]
     fn an_effort_is_drawn_from_the_open_work_under_it_with_nobody_on_it() {
-        let trackers = orbital_with(orbital_holding(
-            r#"[{"id":"orb-7","title":"lift the ground station","status":"open",
+        let trackers = dunwich_with(dunwich_holding(
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open",
                  "priority":1,"issue_type":"epic"},
-                {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
-                 "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+                {"id":"dun-7.2","title":"lay the feeder cable","status":"open","parent":"dun-7",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
                  "priority":2,"issue_type":"task"}]"#,
         ));
 
         let snap = run(&one_project(), &no_panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7"]);
+        assert_eq!(roots, vec!["dun-7"]);
     }
 
     /// A parent chain that loops has no top. Stopping where it repeats keeps
@@ -1316,17 +1316,17 @@ orbital = ["orb-c3"]
         // Both ends of the loop, because a climb stops below a parent this
         // read does not hold — and then the cycle guard, not the cycle,
         // would be what this test never reaches.
-        let trackers = orbital_with(orbital_holding(
-            r#"[{"id":"orb-7","title":"lift the ground station","status":"closed","parent":"orb-7.1",
+        let trackers = dunwich_with(dunwich_holding(
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"closed","parent":"dun-7.1",
                  "priority":1,"issue_type":"epic"},
-                {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
+                {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
                  "priority":2,"issue_type":"task"}]"#,
         ));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         assert_eq!(snap.trees.len(), 1);
-        assert_eq!(snap.trees[0].root, "orb-7.1");
+        assert_eq!(snap.trees[0].root, "dun-7.1");
     }
 
     #[test]
@@ -1334,22 +1334,22 @@ orbital = ["orb-c3"]
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [roots.explicit]
-orbital = ["orb-7", "orb-4"]
+dunwich = ["dun-7", "dun-4"]
 "#
         ))
         .expect("the config parses");
-        let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7", "orb-4"],
+            vec!["dun-7", "dun-4"],
             "the root config and discovery both name is drawn once"
         );
     }
@@ -1364,20 +1364,20 @@ orbital = ["orb-7", "orb-4"]
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [[projects]]
 name = "ferry"
 path = "{FERRY}"
 
 [roots.explicit]
-orbital = ["orb-4"]
+dunwich = ["dun-4"]
 "#
         ))
         .expect("the config parses");
         let trackers = Fakes::default()
-            .with("orbital", colliding_tracker().also(beads(MAST_TREE)))
+            .with("dunwich", colliding_tracker().also(beads(MAST_TREE)))
             .with("ferry", colliding_tracker());
 
         let snap = run(&cfg, &no_panes(), &trackers, Filter::All, now());
@@ -1389,8 +1389,8 @@ orbital = ["orb-4"]
             .collect();
         assert_eq!(
             roots,
-            vec![("orbital", "x-1"), ("orbital", "orb-4"), ("ferry", "x-1")],
-            "ferry draws no tree for a root orbital was given"
+            vec![("dunwich", "x-1"), ("dunwich", "dun-4"), ("ferry", "x-1")],
+            "ferry draws no tree for a root dunwich was given"
         );
     }
 
@@ -1407,15 +1407,15 @@ orbital = ["orb-4"]
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [roots.explicit]
-orbital = ["bdi-404"]
+dunwich = ["bdi-404"]
 "#
         ))
         .expect("the config parses");
-        let trackers = orbital_with(Fake::holding(beads(A_CAPTURED_ANSWER)));
+        let trackers = dunwich_with(Fake::holding(beads(A_CAPTURED_ANSWER)));
 
         let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
@@ -1450,26 +1450,26 @@ orbital = ["bdi-404"]
     #[test]
     fn a_bead_named_only_by_a_live_pane_becomes_a_root() {
         let panes = Provider::holding(vec![
-            pane("w:p1", ORBITAL, PaneStatus::Working),
-            named(pane("w:p4", ORBITAL, PaneStatus::Working), "orb-4"),
+            pane("w:p1", DUNWICH, PaneStatus::Working),
+            named(pane("w:p4", DUNWICH, PaneStatus::Working), "dun-4"),
         ]);
-        let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&one_project(), &panes, &trackers, Filter::LiveAgents, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7", "orb-4"],
+            vec!["dun-7", "dun-4"],
             "the pane's bead joins the roots bd's own statuses found"
         );
         assert!(snap.hidden_trees.is_empty());
         let of_the_pane = snap
             .trees
             .iter()
-            .find(|t| t.root == "orb-4")
+            .find(|t| t.root == "dun-4")
             .expect("the pane's bead roots a tree");
-        assert!(node(of_the_pane, "orb-4").agent.is_some());
+        assert!(node(of_the_pane, "dun-4").agent.is_some());
     }
 
     /// `display_agent` is free text, so reading it as a bead id is a guess.
@@ -1481,18 +1481,18 @@ orbital = ["bdi-404"]
     #[test]
     fn a_pane_labelled_with_something_that_is_not_a_bead_costs_the_project_nothing() {
         let panes = Provider::holding(vec![named(
-            pane("w:p4", ORBITAL, PaneStatus::Working),
+            pane("w:p4", DUNWICH, PaneStatus::Working),
             "reviewing the docs",
         )]);
 
-        let snap = run(&one_project(), &panes, &orbital(), Filter::All, now());
+        let snap = run(&one_project(), &panes, &dunwich(), Filter::All, now());
 
         assert!(
             snap.failed_projects.is_empty(),
             "a mislabelled pane is not a tracker outage"
         );
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7"], "rules 1 to 3 are untouched");
+        assert_eq!(roots, vec!["dun-7"], "rules 1 to 3 are untouched");
         let loose: Vec<&str> = snap
             .unattributed
             .iter()
@@ -1507,14 +1507,14 @@ orbital = ["bdi-404"]
     #[test]
     fn a_pane_naming_a_bead_inside_a_tree_contributes_that_tree_not_the_bead() {
         let panes = Provider::holding(vec![named(
-            pane("w:p4", ORBITAL, PaneStatus::Working),
-            "orb-7.3",
+            pane("w:p4", DUNWICH, PaneStatus::Working),
+            "dun-7.3",
         )]);
         // Closed, so discovery never saw it — a seat writing up the bead it
         // has just finished still sits on one.
-        let trackers = orbital_with(orbital_tracker().also(beads(
-            r#"[{"id":"orb-7.3","title":"written up","status":"closed","parent":"orb-7",
-                 "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+        let trackers = dunwich_with(dunwich_tracker().also(beads(
+            r#"[{"id":"dun-7.3","title":"written up","status":"closed","parent":"dun-7",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
                  "priority":2,"issue_type":"task"}]"#,
         )));
 
@@ -1523,7 +1523,7 @@ orbital = ["bdi-404"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            vec!["orb-7"],
+            vec!["dun-7"],
             "climbed to its root, and deduped there"
         );
     }
@@ -1536,11 +1536,11 @@ orbital = ["bdi-404"]
     #[test]
     fn a_pane_contributes_its_root_only_to_the_project_it_sits_in() {
         let panes = Provider::holding(vec![named(
-            pane("w:p4", ORBITAL, PaneStatus::Working),
-            "orb-4",
+            pane("w:p4", DUNWICH, PaneStatus::Working),
+            "dun-4",
         )]);
         let trackers = Fakes::default()
-            .with("orbital", colliding_tracker().also(beads(MAST_TREE)))
+            .with("dunwich", colliding_tracker().also(beads(MAST_TREE)))
             .with("ferry", colliding_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&two_projects(), &panes, &trackers, Filter::All, now());
@@ -1552,7 +1552,7 @@ orbital = ["bdi-404"]
             .collect();
         assert_eq!(
             roots,
-            vec![("orbital", "orb-4"), ("orbital", "x-1"), ("ferry", "x-1")],
+            vec![("dunwich", "dun-4"), ("dunwich", "x-1"), ("ferry", "x-1")],
             "ferry draws no tree for a bead no pane of its own named"
         );
     }
@@ -1565,14 +1565,14 @@ orbital = ["bdi-404"]
     fn a_pane_under_no_configured_project_contributes_no_root() {
         let panes = Provider::holding(vec![named(
             pane("w:p4", "/srv/elsewhere", PaneStatus::Working),
-            "orb-4",
+            "dun-4",
         )]);
-        let trackers = orbital_with(orbital_tracker().also(beads(MAST_TREE)));
+        let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&one_project(), &panes, &trackers, Filter::All, now());
 
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["orb-7"]);
+        assert_eq!(roots, vec!["dun-7"]);
     }
 
     // ---- what the tracker knows that the tree does not -------------------
@@ -1582,20 +1582,20 @@ orbital = ["bdi-404"]
         let snap = run(
             &one_project(),
             &panes(),
-            &orbital(),
+            &dunwich(),
             Filter::LiveAgents,
             now(),
         );
         let tree = &snap.trees[0];
 
-        assert!(node(tree, "orb-7.2").ready, "the tracker named it ready");
-        assert!(!node(tree, "orb-7.1").ready);
+        assert!(node(tree, "dun-7.2").ready, "the tracker named it ready");
+        assert!(!node(tree, "dun-7.1").ready);
         assert_eq!(
-            node(tree, "orb-7.1").blocked_by,
-            vec!["orb-9".to_string()],
+            node(tree, "dun-7.1").blocked_by,
+            vec!["dun-9".to_string()],
             "a blocker outside the tree still reaches the node"
         );
-        assert!(node(tree, "orb-7.2").blocked_by.is_empty());
+        assert!(node(tree, "dun-7.2").blocked_by.is_empty());
     }
 
     // ---- degradation ---------------------------------------------------
@@ -1603,7 +1603,7 @@ orbital = ["bdi-404"]
     #[test]
     fn a_project_whose_listing_fails_is_named_not_dropped() {
         let trackers =
-            orbital_with(orbital_tracker().failing(Asked::All, failing(FailureKind::Auth)));
+            dunwich_with(dunwich_tracker().failing(Asked::All, failing(FailureKind::Auth)));
 
         let snap = run(
             &one_project(),
@@ -1617,7 +1617,7 @@ orbital = ["bdi-404"]
         assert_eq!(
             snap.failed_projects,
             vec![FailedProject {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 tracker: TrackerFailure::Auth,
             }]
         );
@@ -1687,7 +1687,7 @@ orbital = ["bdi-404"]
         ];
 
         for (kind, expected) in kinds {
-            let trackers = orbital_with(orbital_tracker().failing(Asked::All, failing(kind)));
+            let trackers = dunwich_with(dunwich_tracker().failing(Asked::All, failing(kind)));
 
             let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
@@ -1704,7 +1704,7 @@ orbital = ["bdi-404"]
     fn a_tracker_whose_answer_would_not_parse_keeps_what_would_not_parse() {
         let would_not_parse =
             RunFailure::parse("bd", "invalid type: null, expected a string").reading("list");
-        let trackers = orbital_with(orbital_tracker().failing(Asked::All, would_not_parse));
+        let trackers = dunwich_with(dunwich_tracker().failing(Asked::All, would_not_parse));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
@@ -1728,7 +1728,7 @@ orbital = ["bdi-404"]
     /// act on, and none of the seven sentences that would send them to bd.
     #[test]
     fn a_project_with_no_environment_is_its_own_failure_rather_than_bds() {
-        let trackers = orbital().without_the_environment_it_asked_for("orbital");
+        let trackers = dunwich().without_the_environment_it_asked_for("dunwich");
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
@@ -1736,7 +1736,7 @@ orbital = ["bdi-404"]
             snap.failed_projects[0].tracker,
             TrackerFailure::NoEnvironment
         );
-        assert_eq!(snap.failed_projects[0].project, "orbital");
+        assert_eq!(snap.failed_projects[0].project, "dunwich");
     }
 
     /// A root config names that the answer does not hold keeps its id, which
@@ -1748,25 +1748,25 @@ orbital = ["bdi-404"]
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [roots.explicit]
-orbital = ["orb-404"]
+dunwich = ["dun-404"]
 "#
         ))
         .expect("the config parses");
 
-        let snap = run(&cfg, &panes(), &orbital(), Filter::LiveAgents, now());
+        let snap = run(&cfg, &panes(), &dunwich(), Filter::LiveAgents, now());
 
         assert!(
             snap.failed_projects.is_empty(),
             "the project's own tracker answered"
         );
         let roots: BTreeSet<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, BTreeSet::from(["orb-404", "orb-7"]));
+        assert_eq!(roots, BTreeSet::from(["dun-404", "dun-7"]));
         assert_eq!(
-            rooted_at(&snap, "orb-404").tracker,
+            rooted_at(&snap, "dun-404").tracker,
             TrackerState::RootNotFound
         );
         assert!(snap.hidden_trees.is_empty());
@@ -1779,7 +1779,7 @@ orbital = ["orb-404"]
     #[test]
     fn the_one_tracker_read_failing_takes_the_project_down_by_name() {
         let trackers =
-            orbital_with(orbital_tracker().failing(Asked::All, failing(FailureKind::Unavailable)));
+            dunwich_with(dunwich_tracker().failing(Asked::All, failing(FailureKind::Unavailable)));
 
         let snap = run(
             &one_project(),
@@ -1792,7 +1792,7 @@ orbital = ["orb-404"]
         assert_eq!(
             snap.failed_projects,
             vec![FailedProject {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 tracker: TrackerFailure::Unavailable,
             }]
         );
@@ -1813,7 +1813,7 @@ orbital = ["orb-404"]
     /// nothing to draw and nothing whose absence to report.
     #[test]
     fn a_tracker_holding_no_bead_draws_nothing_and_fails_nothing() {
-        let trackers = orbital_with(orbital_holding("[]"));
+        let trackers = dunwich_with(dunwich_holding("[]"));
 
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
@@ -1829,12 +1829,12 @@ orbital = ["orb-404"]
     /// refuses a credential, and none of that belongs on the screen.
     #[test]
     fn a_trackers_own_words_never_reach_the_snapshot() {
-        let trackers = orbital_with(orbital_tracker().failing(
+        let trackers = dunwich_with(dunwich_tracker().failing(
             Asked::All,
             RunFailure {
                 kind: FailureKind::Auth,
                 program: "bd".to_string(),
-                detail: "Access denied for user 'orbital' at db.example.invalid:3306".to_string(),
+                detail: "Access denied for user 'dunwich' at db.example.invalid:3306".to_string(),
                 unreadable: None,
             },
         ));
@@ -1842,7 +1842,7 @@ orbital = ["orb-404"]
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
         let json = serde_json::to_string(&snap).expect("the snapshot serialises");
 
-        for leak in ["Access denied", "db.example.invalid", "'orbital'", "3306"] {
+        for leak in ["Access denied", "db.example.invalid", "'dunwich'", "3306"] {
             assert!(!json.contains(leak), "{leak:?} survived into {json}");
         }
     }
@@ -1852,8 +1852,8 @@ orbital = ["orb-404"]
     #[test]
     fn a_tracker_that_cannot_answer_readiness_fails_rather_than_calling_every_bead_unready() {
         for question in [Asked::Ready, Asked::Blocked] {
-            let trackers = orbital_with(
-                orbital_tracker().failing(question, failing(FailureKind::Unavailable)),
+            let trackers = dunwich_with(
+                dunwich_tracker().failing(question, failing(FailureKind::Unavailable)),
             );
 
             let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
@@ -1877,7 +1877,7 @@ orbital = ["orb-404"]
     #[test]
     fn each_project_is_drawn_from_the_tracker_opened_for_it() {
         let trackers = Fakes::default()
-            .with("orbital", orbital_tracker())
+            .with("dunwich", dunwich_tracker())
             .with("ferry", colliding_tracker());
 
         let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
@@ -1887,7 +1887,7 @@ orbital = ["orb-404"]
             .iter()
             .map(|t| (t.project.as_str(), t.root.as_str()))
             .collect();
-        assert_eq!(roots, vec![("orbital", "orb-7"), ("ferry", "x-1")]);
+        assert_eq!(roots, vec![("dunwich", "dun-7"), ("ferry", "x-1")]);
     }
 
     /// Opening a tracker is where a project's credential command runs, and one
@@ -1897,7 +1897,7 @@ orbital = ["orb-404"]
     #[test]
     fn a_project_whose_tracker_cannot_be_opened_is_named_with_that_failure() {
         let trackers = Fakes::default()
-            .without_the_credential_it_asked_for("orbital")
+            .without_the_credential_it_asked_for("dunwich")
             .with("ferry", colliding_tracker());
 
         let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
@@ -1905,7 +1905,7 @@ orbital = ["orb-404"]
         assert_eq!(
             snap.failed_projects,
             vec![FailedProject {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 tracker: TrackerFailure::NoCredential,
             }]
         );

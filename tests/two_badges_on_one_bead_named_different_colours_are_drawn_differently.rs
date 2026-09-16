@@ -31,12 +31,12 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// Whatever separates them on the wire is the colour each was named, because
 /// there is nothing else left for it to be.
 const THE_TRACKER: &str = r#"[
-  {"id":"orb-1","title":"lift the ground station","status":"open",
+  {"id":"dun-1","title":"lift the ground station","status":"open",
    "priority":1,"issue_type":"epic"},
-  {"id":"orb-1.1","title":"repoint the dish","status":"open","parent":"orb-1",
-   "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+  {"id":"dun-1.1","title":"repoint the dish","status":"open","parent":"dun-1",
+   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
    "priority":2,"issue_type":"task",
-   "metadata":{"jira":"ATLAS-19","design":"DISH-4"}}
+   "metadata":{"jira":"ARKHAM-19","design":"DISH-4"}}
 ]"#;
 
 /// The two kinds of name, side by side on one bead. `agent` is a slot of the
@@ -93,7 +93,7 @@ fn a_badge_naming_a_slot_and_one_naming_a_colour_leave_in_different_colours() {
     bdi.send(OPEN_THE_TREE);
 
     bdi.read_until(
-        drawn(AGENT, "jira.invalid/browse/", "ATLAS-19").as_bytes(),
+        drawn(AGENT, "jira.invalid/browse/", "ARKHAM-19").as_bytes(),
         GIVING_UP,
     );
     bdi.read_until(

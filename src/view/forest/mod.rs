@@ -1590,40 +1590,40 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 
-    /// Orbital's tree as bd writes it. `orb-7.7` waits on a bead no row holds,
-    /// so the tree reports it; `orb-7.1.2` is a node bd stopped at; `orb-7.4`
+    /// Dunwich's tree as bd writes it. `dun-7.7` waits on a bead no row holds,
+    /// so the tree reports it; `dun-7.1.2` is a node bd stopped at; `dun-7.4`
     /// is closed with a pane still on it, and the other three closed siblings
     /// are finished.
-    const ORBITAL: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+    const DUNWICH: &str = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic","updated_at":"2026-08-29T12:00:00Z",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.1","title":"re-point the dish","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-7.1.1","title":"true the mount","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7.1","type":"parent-child"}],
+      {"id":"dun-7.1.1","title":"true the mount","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-7.1.2","title":"seal the feed horn","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7.1","type":"parent-child"}],
+      {"id":"dun-7.1.2","title":"seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7.1","type":"parent-child"}],
        "priority":3,"issue_type":"task"},
-      {"id":"orb-7.2","title":"survey the mast","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"survey the mast","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"orb-7.3","title":"pour the pad","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.3","title":"pour the pad","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-27T09:00:00Z"},
-      {"id":"orb-7.4","title":"clear the access road","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.4","title":"clear the access road","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-26T09:00:00Z",
        "metadata":{"agent_pane":"w:p2"}},
-      {"id":"orb-7.5","title":"set the guard rail","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.5","title":"set the guard rail","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-25T09:00:00Z"},
-      {"id":"orb-7.7","title":"log the survey marks","status":"open",
+      {"id":"dun-7.7","title":"log the survey marks","status":"open",
        "priority":2,"issue_type":"task",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"},
-                       {"depends_on_id":"orb-6","type":"blocks"}]}
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"},
+                       {"depends_on_id":"dun-6","type":"blocks"}]}
     ]"#;
 
     /// Harbour's tree. Nobody is working in it, so the live-agent filter hides
@@ -1826,108 +1826,108 @@ mod tests {
     ///
     /// It names no pane, like Depot, Tower and Siding, so a test staffs it by
     /// naming the bead and one that does not gets the quiet shape.
-    const BEACON: &str = r#"[
-      {"id":"bcn-6","title":"re-lamp the beacon","status":"in_progress",
+    const KADATH: &str = r#"[
+      {"id":"bcn-6","title":"re-lamp the kadath","status":"in_progress",
        "priority":1,"issue_type":"task","updated_at":"2026-08-29T12:00:00Z"}
     ]"#;
 
     /// One epic whose two halves are each held up by the same survey. Under
     /// the rule that a bead's descendants are what must finish before it,
-    /// `orb-9` is drawn beneath both of them: under `orb-8.1` as its child,
-    /// and under `orb-8.2` as what it waits on.
+    /// `dun-9` is drawn beneath both of them: under `dun-8.1` as its child,
+    /// and under `dun-8.2` as what it waits on.
     const TWICE: &str = r#"[
-      {"id":"orb-8","title":"lift the gantry","status":"in_progress",
+      {"id":"dun-8","title":"lift the gantry","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-8.1","title":"pour the pad","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}],
+      {"id":"dun-8.1","title":"pour the pad","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-8.2","title":"rail the crane","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
-                       {"depends_on_id":"orb-9","type":"blocks"}],
+      {"id":"dun-8.2","title":"rail the crane","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"},
+                       {"depends_on_id":"dun-9","type":"blocks"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-9","title":"survey the ground","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-8.1","type":"parent-child"}],
+      {"id":"dun-9","title":"survey the ground","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-8.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-9.1","title":"drill the cores","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}],
+      {"id":"dun-9.1","title":"drill the cores","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
     /// A closed bead holding unfinished work, drawn twice in one tree: under
-    /// `orb-5.1` as its child, and under `orb-5.2` as what it waits on. Both
+    /// `dun-5.1` as its child, and under `dun-5.2` as what it waits on. Both
     /// copies rest shut, because nothing under either is live or ready, so
     /// what each of them says about the work it is shut over is all that
     /// tells them apart.
     ///
-    /// `orb-5.1.1` and `orb-5.2.1` are here to be worked on: they are what
-    /// holds the two halves open, so both copies of `orb-4` are on the
+    /// `dun-5.1.1` and `dun-5.2.1` are here to be worked on: they are what
+    /// holds the two halves open, so both copies of `dun-4` are on the
     /// screen at once.
     const CLOSED_TWICE: &str = r#"[
-      {"id":"orb-5","title":"re-deck the bridge","status":"in_progress",
+      {"id":"dun-5","title":"re-deck the bridge","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-5.1","title":"strip the north span","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"}],
+      {"id":"dun-5.1","title":"strip the north span","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-5","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-5.1.1","title":"cut the north deck","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-5.1","type":"parent-child"}],
+      {"id":"dun-5.1.1","title":"cut the north deck","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-5.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-4","title":"close the towpath","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-5.1","type":"parent-child"}],
+      {"id":"dun-4","title":"close the towpath","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-5.1","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"},
-      {"id":"orb-4.1","title":"post the diversion","status":"open",
-       "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"}],
+      {"id":"dun-4.1","title":"post the diversion","status":"open",
+       "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-5.2","title":"strip the south span","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"},
-                       {"depends_on_id":"orb-4","type":"blocks"}],
+      {"id":"dun-5.2","title":"strip the south span","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-5","type":"parent-child"},
+                       {"depends_on_id":"dun-4","type":"blocks"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-5.2.1","title":"cut the south deck","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-5.2","type":"parent-child"}],
+      {"id":"dun-5.2.1","title":"cut the south deck","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-5.2","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
     /// The same shape again, over a blocker deep enough to show what the way
-    /// down to a copy says about the copy's own children: `orb-6` is drawn
-    /// under `orb-3.1` as its child and under `orb-3.2` as what it waits on,
+    /// down to a copy says about the copy's own children: `dun-6` is drawn
+    /// under `dun-3.1` as its child and under `dun-3.2` as what it waits on,
     /// and the work is two levels below it rather than one.
     const DEEP_TWICE: &str = r#"[
-      {"id":"orb-3","title":"raise the mast","status":"in_progress",
+      {"id":"dun-3","title":"raise the mast","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-3.1","title":"sink the footing","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}],
+      {"id":"dun-3.1","title":"sink the footing","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-3.2","title":"guy the mast","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
-                       {"depends_on_id":"orb-6","type":"blocks"}],
+      {"id":"dun-3.2","title":"guy the mast","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"},
+                       {"depends_on_id":"dun-6","type":"blocks"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6","title":"cast the collar","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-3.1","type":"parent-child"}],
+      {"id":"dun-6","title":"cast the collar","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6.1","title":"mill the collar","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+      {"id":"dun-6.1","title":"mill the collar","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6.1.1","title":"bore the bolt holes","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-6.1","type":"parent-child"}],
+      {"id":"dun-6.1.1","title":"bore the bolt holes","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-6.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
     fn drawn_twice_in_one_tree() -> Snapshot {
-        alone("orbital", TWICE, &panes_on(&["orb-9.1"]))
+        alone("dunwich", TWICE, &panes_on(&["dun-9.1"]))
     }
 
     /// The same, over a blocker with two levels of work beneath it.
     fn deep_bead_drawn_twice_in_one_tree() -> Snapshot {
-        alone("orbital", DEEP_TWICE, &panes_on(&["orb-6.1.1"]))
+        alone("dunwich", DEEP_TWICE, &panes_on(&["dun-6.1.1"]))
     }
 
     /// The same, over a closed bead that still holds unfinished work.
     fn closed_bead_drawn_twice_in_one_tree() -> Snapshot {
         alone(
-            "orbital",
+            "dunwich",
             CLOSED_TWICE,
-            &panes_on(&["orb-5.1.1", "orb-5.2.1"]),
+            &panes_on(&["dun-5.1.1", "dun-5.2.1"]),
         )
     }
 
@@ -2004,16 +2004,16 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
-    /// `w:p3` and `w:p4` both name `orb-7.1`, so neither holds it; `w:p9` is
+    /// `w:p3` and `w:p4` both name `dun-7.1`, so neither holds it; `w:p9` is
     /// working in the project whose tracker refused; `w:pF` is under no
     /// configured project at all.
     const PANES: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
-      {"pane_id":"w:p2","cwd":"/srv/work/orbital","agent_status":"idle"},
-      {"pane_id":"w:p3","cwd":"/srv/work/orbital","agent_status":"working",
-       "display_agent":"orb-7.1"},
-      {"pane_id":"w:p4","cwd":"/srv/work/orbital","agent_status":"idle",
-       "display_agent":"orb-7.1"},
+      {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working"},
+      {"pane_id":"w:p2","cwd":"/srv/work/dunwich","agent_status":"idle"},
+      {"pane_id":"w:p3","cwd":"/srv/work/dunwich","agent_status":"working",
+       "display_agent":"dun-7.1"},
+      {"pane_id":"w:p4","cwd":"/srv/work/dunwich","agent_status":"idle",
+       "display_agent":"dun-7.1"},
       {"pane_id":"w:p9","cwd":"/srv/work/ferry","agent_status":"blocked"},
       {"pane_id":"w:pF","cwd":"/srv/spike","agent_status":"idle"}
     ]}}"#;
@@ -2022,9 +2022,9 @@ mod tests {
         Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
-credential_command = "secret orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
+credential_command = "secret dunwich"
 
 [[projects]]
 name = "ferry"
@@ -2077,25 +2077,25 @@ credential_command = "secret harbour"
         parse_agent_list(A_SESSION, PANES).expect("the panes parse")
     }
 
-    /// One working pane and one idle one, both in Orbital's tree. Enough to
+    /// One working pane and one idle one, both in Dunwich's tree. Enough to
     /// staff a fixture without the conflicting and unconfigured panes the
     /// shared snapshot carries to exercise its groups.
     const TWO_PANES: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
-      {"pane_id":"w:p2","cwd":"/srv/work/orbital","agent_status":"idle"}
+      {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working"},
+      {"pane_id":"w:p2","cwd":"/srv/work/dunwich","agent_status":"idle"}
     ]}}"#;
 
     fn two_panes() -> Vec<Pane> {
         parse_agent_list(A_SESSION, TWO_PANES).expect("the panes parse")
     }
 
-    fn joined(orbital: &Assembled, harbour: &Assembled, panes: &[Pane]) -> Joined {
+    fn joined(dunwich: &Assembled, harbour: &Assembled, panes: &[Pane]) -> Joined {
         let cfg = cfg();
         join::resolve(
             &[
                 ProjectRows {
-                    project: "orbital",
-                    rows: &orbital.beads,
+                    project: "dunwich",
+                    rows: &dunwich.beads,
                 },
                 ProjectRows {
                     project: "harbour",
@@ -2108,10 +2108,10 @@ credential_command = "secret harbour"
     }
 
     fn tree_of(project: &str, json: &str) -> Tree {
-        let orbital = assembled(ORBITAL);
+        let dunwich = assembled(DUNWICH);
         let harbour = assembled(HARBOUR);
         let panes = panes();
-        let joined = joined(&orbital, &harbour, &panes);
+        let joined = joined(&dunwich, &harbour, &panes);
         build_tree(
             project,
             &assembled(json),
@@ -2168,10 +2168,10 @@ credential_command = "secret harbour"
     }
 
     fn gather(trees: Vec<Tree>, failed: Vec<FailedProject>, filter: Filter) -> Snapshot {
-        let orbital = assembled(ORBITAL);
+        let dunwich = assembled(DUNWICH);
         let harbour = assembled(HARBOUR);
         let panes = panes();
-        let joined = joined(&orbital, &harbour, &panes);
+        let joined = joined(&dunwich, &harbour, &panes);
         snapshot::build(
             Collected {
                 trees,
@@ -2192,7 +2192,7 @@ credential_command = "secret harbour"
     fn built(filter: Filter) -> Snapshot {
         gather(
             vec![
-                tree_of("orbital", ORBITAL),
+                tree_of("dunwich", DUNWICH),
                 Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
@@ -2393,15 +2393,15 @@ credential_command = "secret harbour"
     #[test]
     fn folding_one_copy_of_a_bead_drawn_twice_in_one_tree_leaves_the_other_alone() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
 
         step_onto(&mut forest, lower);
         forest.apply(Action::ToggleFold);
-        let [upper, _] = copies_of(&forest, "orb-9");
+        let [upper, _] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, upper);
         forest.apply(Action::ToggleFold);
 
-        let [upper, lower] = copies_of(&forest, "orb-9");
+        let [upper, lower] = copies_of(&forest, "dun-9");
         assert_eq!(
             (forest.lines()[upper].folded, forest.lines()[lower].folded),
             (Some(false), Some(true)),
@@ -2416,7 +2416,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_bead_drawn_twice_in_one_tree_rests_open_on_the_first_line_and_shut_on_the_second() {
         let forest = flatten(drawn_twice_in_one_tree());
-        let [upper, lower] = copies_of(&forest, "orb-9");
+        let [upper, lower] = copies_of(&forest, "dun-9");
 
         assert_eq!(
             (forest.lines()[upper].folded, forest.lines()[lower].folded),
@@ -2431,9 +2431,9 @@ credential_command = "secret harbour"
     #[test]
     fn the_second_line_of_a_bead_drawn_twice_opens_onto_the_same_subtree() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
         assert_eq!(
-            lines_of(&forest, "orb-9.1").len(),
+            lines_of(&forest, "dun-9.1").len(),
             1,
             "{:#?}",
             sketch(&forest)
@@ -2443,7 +2443,7 @@ credential_command = "secret harbour"
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
-            lines_of(&forest, "orb-9.1").len(),
+            lines_of(&forest, "dun-9.1").len(),
             2,
             "{:#?}",
             sketch(&forest)
@@ -2455,13 +2455,13 @@ credential_command = "secret harbour"
     #[test]
     fn letting_go_of_the_folds_shuts_a_second_line_a_reader_opened() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         forest.apply(Action::ToggleFold);
 
         forest.apply(Action::RestoreDefault);
 
-        let [upper, lower] = copies_of(&forest, "orb-9");
+        let [upper, lower] = copies_of(&forest, "dun-9");
         assert_eq!(
             (forest.lines()[upper].folded, forest.lines()[lower].folded),
             (Some(true), Some(false)),
@@ -2478,7 +2478,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_rule_scoped_to_a_second_copy_of_a_bead_begins_afresh_there() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
         let scoped = forest.lines()[lower]
             .place
             .clone()
@@ -2488,7 +2488,7 @@ credential_command = "secret harbour"
         forest.answer();
         forest.lay_out();
 
-        let [upper, lower] = copies_of(&forest, "orb-9");
+        let [upper, lower] = copies_of(&forest, "dun-9");
         assert_eq!(
             (forest.lines()[upper].folded, forest.lines()[lower].folded),
             (Some(true), Some(true)),
@@ -2496,7 +2496,7 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
         assert_eq!(
-            lines_of(&forest, "orb-9.1").len(),
+            lines_of(&forest, "dun-9.1").len(),
             2,
             "{:#?}",
             sketch(&forest)
@@ -2509,7 +2509,7 @@ credential_command = "secret harbour"
     #[test]
     fn every_line_of_a_bead_drawn_twice_says_what_it_is_shut_over() {
         let forest = flatten(closed_bead_drawn_twice_in_one_tree());
-        let [upper, lower] = copies_of(&forest, "orb-4");
+        let [upper, lower] = copies_of(&forest, "dun-4");
 
         assert_eq!(
             (notes_at(&forest, upper), notes_at(&forest, lower)),
@@ -2609,12 +2609,12 @@ credential_command = "secret harbour"
     /// other bead in it is finished, and a tree with nothing live in it rests
     /// as its header.
     fn depot() -> Snapshot {
-        alone("orbital", DEPOT, &panes_on(&["dep-1.1"]))
+        alone("dunwich", DEPOT, &panes_on(&["dep-1.1"]))
     }
 
     /// One project's tree, joined against its own rows so that a pane the
     /// fixture names lands on the bead that names it. `tree_of` joins every
-    /// fixture against Orbital's rows, which is what the shared snapshot
+    /// fixture against Dunwich's rows, which is what the shared snapshot
     /// needs and what leaves any other fixture's beads unstaffed.
     fn alone(project: &str, json: &str, panes: &[Pane]) -> Snapshot {
         ready_alone(project, json, panes, &[])
@@ -2721,16 +2721,16 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
-                "  ├── ◐ orb-7 lift the ground station",
+                "▾ dunwich",
+                "  ├── ◐ dun-7 lift the ground station",
                 "  │   ├── ! Dangling(1)",
                 "  │   ├─▸ ○ .1 re-point the dish",
                 "  │   ├── ○ .7 log the survey marks",
                 "  │   ├── ✓ .4 clear the access road",
                 "  │   └─▸ … 3 more",
-                "  └── [Unattributed orbital] 2",
-                "      ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"orb-7.1\"), title: None, claim_refused: true })",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Idle, display_agent: Some(\"orb-7.1\"), title: None, claim_refused: true })",
+                "  └── [Unattributed dunwich] 2",
+                "      ├── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p3\" }, project: \"dunwich\", cwd: \"/srv/work/dunwich\", pane_status: Working, display_agent: Some(\"dun-7.1\"), title: None, claim_refused: true })",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p4\" }, project: \"dunwich\", cwd: \"/srv/work/dunwich\", pane_status: Idle, display_agent: Some(\"dun-7.1\"), title: None, claim_refused: true })",
                 "▾ ferry",
                 "  ├── ⚠ fer-2 unread",
                 "  └── [Unattributed ferry] 1",
@@ -2741,7 +2741,7 @@ credential_command = "secret harbour"
                 "▾ [Unconfigured] 1",
                 "  └── - Unconfigured(UnconfiguredPane { pane: PaneKey { session: \"default\", id: \"w:pF\" }, cwd: \"/srv/spike\", pane_status: Idle })",
                 "▾ [Conflicts] 1",
-                "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"orbital\", id: \"orb-7.1\" }, panes: [PaneKey { session: \"default\", id: \"w:p3\" }, PaneKey { session: \"default\", id: \"w:p4\" }] })",
+                "  └── - Conflict(SeveralPanesNameOneBead { bead: BeadKey { project: \"dunwich\", id: \"dun-7.1\" }, panes: [PaneKey { session: \"default\", id: \"w:p3\" }, PaneKey { session: \"default\", id: \"w:p4\" }] })",
             ]
         );
     }
@@ -2754,7 +2754,7 @@ credential_command = "secret harbour"
         let forest = flatten(snapshot());
 
         assert_eq!(forest.selected_line(), 1);
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7")));
     }
 
     /// The fold state is the user's and the live work's, and moving is
@@ -2811,8 +2811,8 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest)[..3],
             [
-                "▾ orbital",
-                "  ├─▸ ◐ orb-7 lift the ground station",
+                "▾ dunwich",
+                "  ├─▸ ◐ dun-7 lift the ground station",
                 "  │   └── ! Dangling(1)",
             ]
         );
@@ -2832,7 +2832,7 @@ credential_command = "secret harbour"
         );
     }
 
-    /// A working pane in Orbital on each of `on`. Each pane names its bead,
+    /// A working pane in Dunwich on each of `on`. Each pane names its bead,
     /// which is how a bead carrying no configured key gets its agent, so a
     /// fixture is staffed by naming the beads someone is on.
     fn panes_on(on: &[&str]) -> Vec<Pane> {
@@ -2840,7 +2840,7 @@ credential_command = "secret harbour"
             .iter()
             .map(|id| {
                 format!(
-                    r#"{{"pane_id":"w:{id}","cwd":"/srv/work/orbital",
+                    r#"{{"pane_id":"w:{id}","cwd":"/srv/work/dunwich",
                        "agent_status":"working","display_agent":"{id}"}}"#
                 )
             })
@@ -2853,13 +2853,13 @@ credential_command = "secret harbour"
     }
 
     fn tower_staffed(on: &[&str]) -> Snapshot {
-        alone("orbital", TOWER, &panes_on(on))
+        alone("dunwich", TOWER, &panes_on(on))
     }
 
     /// The same tree with nobody on it and the named beads ready, so the two
     /// halves of the fold default can be asked the same question.
     fn tower_ready(on: &[&str]) -> Snapshot {
-        ready_alone("orbital", TOWER, &[], on)
+        ready_alone("dunwich", TOWER, &[], on)
     }
 
     /// Two of one project's trees in one snapshot, joined against both so a
@@ -2873,7 +2873,7 @@ credential_command = "secret harbour"
         rows.extend(wharf.beads.clone());
         let joined = join::resolve(
             &[ProjectRows {
-                project: "orbital",
+                project: "dunwich",
                 rows: &rows,
             }],
             Listed::all(panes),
@@ -2881,7 +2881,7 @@ credential_command = "secret harbour"
         );
         let tree = |rows: &Assembled| {
             build_tree(
-                "orbital",
+                "dunwich",
                 rows,
                 &joined,
                 &Readiness::default(),
@@ -2938,7 +2938,7 @@ credential_command = "secret harbour"
     #[test]
     fn the_default_opens_every_forebear_of_a_live_agent_or_of_ready_work_and_nothing_else() {
         let opened = vec![
-            "▾ orbital",
+            "▾ dunwich",
             "  └── ○ tow-1 raise the tower",
             "      ├── ○ .1 stand the mast",
             "      │   └── ○ .1 bolt the sections",
@@ -2977,12 +2977,12 @@ credential_command = "secret harbour"
             r#"{"id":"tow-1.1.1.1","title":"dress the cables","status":"in_progress",
        "updated_at":"2026-08-30T11:00:00Z","#,
         );
-        let forest = flatten(ready_alone("orbital", &claimed, &[], &[]));
+        let forest = flatten(ready_alone("dunwich", &claimed, &[], &[]));
 
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ○ tow-1 raise the tower",
                 "      ├── ○ .1 stand the mast",
                 "      │   └── ○ .1 bolt the sections",
@@ -3003,7 +3003,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             sketch(&forest),
-            vec!["▾ orbital", "  └─▸ ○ tow-1 raise the tower"]
+            vec!["▾ dunwich", "  └─▸ ○ tow-1 raise the tower"]
         );
     }
 
@@ -3013,7 +3013,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_fold_set_by_hand_survives_a_refresh_that_brings_nothing_new_under_it() {
         let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
-        select(&mut forest, &key("orbital", "tow-1.1"));
+        select(&mut forest, &key("dunwich", "tow-1.1"));
         forest.apply(Action::ToggleFold);
 
         forest.refresh(tower_staffed(&["tow-1.1.1.1"]));
@@ -3032,7 +3032,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_fold_set_by_hand_outlives_the_work_it_was_shut_over_going_away() {
         let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
-        select(&mut forest, &key("orbital", "tow-1.1"));
+        select(&mut forest, &key("dunwich", "tow-1.1"));
         forest.apply(Action::ToggleFold);
 
         forest.refresh(tower_staffed(&["tow-1.2.1"]));
@@ -3047,7 +3047,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_fold_set_by_hand_is_spent_when_live_work_arrives_beneath_it() {
         let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
-        select(&mut forest, &key("orbital", "tow-1.1"));
+        select(&mut forest, &key("dunwich", "tow-1.1"));
         forest.apply(Action::ToggleFold);
 
         forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.1.1"]));
@@ -3080,7 +3080,7 @@ credential_command = "secret harbour"
     /// A group over live panes is a fold `bdi` chose, and a count is not a
     /// view of what it holds: it says they exist and nothing about which they
     /// are. What collection and the filter did is a report, and rests shut.
-    /// In the order the groups are drawn: orbital's and ferry's loose panes,
+    /// In the order the groups are drawn: dunwich's and ferry's loose panes,
     /// harbour's hidden tree, then the failed project, the unconfigured pane
     /// and the conflict below the trees.
     #[test]
@@ -3157,7 +3157,7 @@ credential_command = "secret harbour"
 
     /// A line that stands for more than itself says how much of that is done,
     /// which is the question a root's `35/51` answers — asked here one level
-    /// down. `orb-7.1` is open and holds two open children, so its subtree is
+    /// down. `dun-7.1` is open and holds two open children, so its subtree is
     /// three beads with none of them closed.
     ///
     /// Counted including the bead's own line, because that is what a root
@@ -3168,7 +3168,7 @@ credential_command = "secret harbour"
         let forest = flatten(snapshot());
 
         assert_eq!(
-            row_of(&forest, "orb-7.1").progress,
+            row_of(&forest, "dun-7.1").progress,
             Some(Progress {
                 closed: 0,
                 total: 3
@@ -3181,7 +3181,7 @@ credential_command = "secret harbour"
     /// stuck at `0/3` whatever its children did would be worse than no count.
     #[test]
     fn a_finished_subtree_counts_its_closed_beads_and_not_only_its_size() {
-        let tree = tree_of("orbital", DEPOT);
+        let tree = tree_of("dunwich", DEPOT);
         let (at, above) = way_to(&tree, "dep-1.2");
 
         assert_eq!(
@@ -3209,7 +3209,7 @@ credential_command = "secret harbour"
           {"id":"shr-1.9","title":"what both wait on","status":"closed",
            "dependencies":[{"depends_on_id":"shr-1","type":"parent-child"}]}
         ]"#;
-        let tree = tree_of("orbital", SHARED);
+        let tree = tree_of("dunwich", SHARED);
 
         assert_eq!(
             progress_of(&tree, 0, &[]),
@@ -3233,7 +3233,7 @@ credential_command = "secret harbour"
           {"id":"wtd-1.9","title":"done","status":"closed",
            "dependencies":[{"depends_on_id":"wtd-1","type":"parent-child"}]}
         ]"#;
-        let tree = tree_of("orbital", WAITED);
+        let tree = tree_of("dunwich", WAITED);
         let (at, above) = way_to(&tree, "wtd-1.9");
 
         assert_eq!(progress_of(&tree, at, &above), None);
@@ -3245,7 +3245,7 @@ credential_command = "secret harbour"
     fn a_bead_with_no_children_has_no_progress_to_report() {
         let forest = flatten(snapshot());
 
-        assert_eq!(row_of(&forest, "orb-7.7").progress, None);
+        assert_eq!(row_of(&forest, "dun-7.7").progress, None);
     }
 
     /// Everything a line says of the tree beneath it — how far along it is,
@@ -3300,7 +3300,7 @@ credential_command = "secret harbour"
     /// line is drawn, the lines measure the table they were given.
     #[test]
     fn the_widths_measure_the_lines_a_counted_subtree_has_not_drawn() {
-        let mut forest = flatten(alone("orbital", WIDE_BELOW, &[]));
+        let mut forest = flatten(alone("dunwich", WIDE_BELOW, &[]));
         forest.apply(Action::ExpandForest);
         let drawn = forest.lines();
         let widths_of = |lines: &mut dyn Iterator<Item = &Line>| {
@@ -3440,7 +3440,7 @@ credential_command = "secret harbour"
     /// tree holds once can be answered once only where no way down is cut.
     #[test]
     fn a_bead_on_a_loop_counts_what_the_way_down_leaves_beneath_it() {
-        let forest = flatten(alone("orbital", LOOPED, &panes_on(&["cyc-1.1"])));
+        let forest = flatten(alone("dunwich", LOOPED, &panes_on(&["cyc-1.1"])));
 
         assert_eq!(
             row_of(&forest, "cyc-1.1").progress,
@@ -3457,22 +3457,22 @@ credential_command = "secret harbour"
     #[test]
     fn where_no_loop_is_cut_every_way_down_to_a_bead_gets_the_same_answer() {
         let fixtures = [
-            ORBITAL,
+            DUNWICH,
             DEPOT,
             RELAY,
             SIDING,
             TOWER,
-            BEACON,
+            KADATH,
             SLUICE,
             TWICE,
             CLOSED_TWICE,
             SHARED_IN_A_RUN,
         ];
         let staffed = panes_on(&[
-            "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
+            "dun-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
         ]);
         for json in fixtures {
-            let tree = alone("orbital", json, &staffed).collected.remove(0);
+            let tree = alone("dunwich", json, &staffed).collected.remove(0);
             assert!(tree.cycles.is_empty(), "{} has a loop", tree.root);
             let facts = TreeFacts::of(&tree);
 
@@ -3511,7 +3511,7 @@ credential_command = "secret harbour"
     /// leaving the glyph to say `closed` over a bead that is not.
     #[test]
     fn a_run_holds_closed_beads_and_nothing_else_which_is_what_lets_one_glyph_stand_for_it() {
-        let tree = tree_of("orbital", DEPOT);
+        let tree = tree_of("dunwich", DEPOT);
 
         let mut runs = 0;
         for at in 0..tree.beads.len() {
@@ -3541,13 +3541,13 @@ credential_command = "secret harbour"
         select_run(&mut forest);
         forest.apply(Action::ToggleFold);
 
-        select(&mut forest, &key("orbital", "dep-1.2"));
+        select(&mut forest, &key("dunwich", "dep-1.2"));
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
             sketch(&forest)[..7],
             [
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ dep-1 re-lay the sidings",
                 "      ├── ○ .1 grade the bed",
                 "      └── … 6 more",
@@ -3566,9 +3566,9 @@ credential_command = "secret harbour"
         select_run(&mut forest);
         forest.apply(Action::ToggleFold);
 
-        let reordered = edited(ORBITAL, r#""priority":3"#, r#""priority":1"#);
+        let reordered = edited(DUNWICH, r#""priority":3"#, r#""priority":1"#);
         forest.refresh(gather(
-            vec![tree_of("orbital", &reordered)],
+            vec![tree_of("dunwich", &reordered)],
             Vec::new(),
             Filter::LiveAgents,
         ));
@@ -3608,12 +3608,12 @@ credential_command = "secret harbour"
     #[test]
     fn a_single_quiet_closed_sibling_is_drawn_rather_than_said_as_a_count() {
         let one_closed = edited(
-            ORBITAL,
-            r#"{"id":"orb-7.3","title":"pour the pad","status":"closed"#,
-            r#"{"id":"orb-7.3","title":"pour the pad","status":"open"#,
+            DUNWICH,
+            r#"{"id":"dun-7.3","title":"pour the pad","status":"closed"#,
+            r#"{"id":"dun-7.3","title":"pour the pad","status":"open"#,
         );
         let snapshot = gather(
-            vec![tree_of("orbital", &one_closed)],
+            vec![tree_of("dunwich", &one_closed)],
             Vec::new(),
             Filter::LiveAgents,
         );
@@ -3637,8 +3637,8 @@ credential_command = "secret harbour"
     #[test]
     fn nothing_the_forest_folds_by_itself_hides_a_live_agent_or_an_anomaly() {
         let mut worth_drawing = 0;
-        for json in [ORBITAL, DEPOT, RELAY] {
-            let snapshot = alone("orbital", json, &two_panes());
+        for json in [DUNWICH, DEPOT, RELAY] {
+            let snapshot = alone("dunwich", json, &two_panes());
             let forest = flatten(snapshot.clone());
             let drawn: Vec<&str> = forest
                 .lines()
@@ -3675,8 +3675,8 @@ credential_command = "secret harbour"
     #[test]
     fn nothing_the_forest_folds_by_itself_hides_work_bd_would_start() {
         let mut asked = 0;
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
-            let unstaffed = alone("orbital", json, &[]);
+        for json in [DUNWICH, DEPOT, RELAY, SIDING, TOWER, KADATH] {
+            let unstaffed = alone("dunwich", json, &[]);
             let unfinished: Vec<String> = unstaffed.trees[0]
                 .beads
                 .iter()
@@ -3686,7 +3686,7 @@ credential_command = "secret harbour"
 
             for id in unfinished {
                 asked += 1;
-                let forest = flatten(ready_alone("orbital", json, &[], &[&id]));
+                let forest = flatten(ready_alone("dunwich", json, &[], &[&id]));
                 let drawn: Vec<&str> = forest
                     .lines()
                     .iter()
@@ -3710,12 +3710,12 @@ credential_command = "secret harbour"
     /// the beads it had just hidden the agent among.
     #[test]
     fn a_run_never_closes_over_a_subtree_with_a_live_agent_in_it() {
-        let forest = flatten(alone("orbital", RELAY, &two_panes()));
+        let forest = flatten(alone("dunwich", RELAY, &two_panes()));
 
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ rly-2 re-site the relay",
                 "      ├── ○ .1 trench the run",
                 "      ├── ✓ .2 strike the old mast",
@@ -3739,8 +3739,8 @@ credential_command = "secret harbour"
     #[test]
     fn a_run_counts_exactly_the_beads_its_phrase_is_true_of() {
         let mut runs = 0;
-        for json in [ORBITAL, DEPOT, RELAY, SHARED_IN_A_RUN] {
-            let tree = alone("orbital", json, &two_panes()).trees.remove(0);
+        for json in [DUNWICH, DEPOT, RELAY, SHARED_IN_A_RUN] {
+            let tree = alone("dunwich", json, &two_panes()).trees.remove(0);
 
             for at in 0..tree.beads.len() {
                 let above = above(&tree, at);
@@ -3787,12 +3787,12 @@ credential_command = "secret harbour"
     /// from the tree the count is about cannot disagree with it.
     #[test]
     fn a_run_counts_a_blocker_two_of_its_branches_share_once() {
-        let forest = flatten(alone("orbital", SHARED_IN_A_RUN, &[]));
+        let forest = flatten(alone("dunwich", SHARED_IN_A_RUN, &[]));
 
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ lck-1 refit the lock gates",
                 "      ├── ◐ .5 hang the new gates",
                 "      └─▸ … 5 more",
@@ -3810,7 +3810,7 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ dep-1 re-lay the sidings",
                 "      ├── ○ .1 grade the bed",
                 "      ├── ○ .3 clear the ballast",
@@ -3840,7 +3840,7 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ sdg-4 re-point the crossover",
                 "      ├─▸ ◐ .3 re-signal the box",
                 "      ├─▸ ✓ .1 slew the up line",
@@ -3871,7 +3871,7 @@ credential_command = "secret harbour"
     /// shut line asks whatever its own status is.
     #[test]
     fn what_a_branch_holds_never_counts_the_bead_it_was_asked_about() {
-        let tree = tree_of("orbital", SIDING);
+        let tree = tree_of("dunwich", SIDING);
         let (at, above) = way_to(&tree, "sdg-4.3");
 
         assert_eq!(counts_beneath(&tree, at, &above).unfinished(), 1);
@@ -3900,7 +3900,7 @@ credential_command = "secret harbour"
             r#""status":"closed","closed_at":"2026-08-26T09:00:00Z",
        "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
         );
-        let forest = flatten(alone("orbital", &deep, &panes_on(&["sdg-4.3"])));
+        let forest = flatten(alone("dunwich", &deep, &panes_on(&["sdg-4.3"])));
 
         assert_eq!(
             row_of(&forest, "sdg-4.1").notes,
@@ -3929,7 +3929,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_closed_branch_opened_over_its_work_stops_counting_it() {
         let mut forest = flatten(siding());
-        select(&mut forest, &key("orbital", "sdg-4.1"));
+        select(&mut forest, &key("dunwich", "sdg-4.1"));
 
         forest.apply(Action::ToggleFold);
 
@@ -3948,8 +3948,8 @@ credential_command = "secret harbour"
     /// somebody is still in it.
     #[test]
     fn a_branch_shut_over_a_working_agent_says_how_many_are_inside_it() {
-        let mut forest = flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
-        select(&mut forest, &key("orbital", "sdg-4.3"));
+        let mut forest = flatten(alone("dunwich", SIDING, &panes_on(&["sdg-4.3.1"])));
+        select(&mut forest, &key("dunwich", "sdg-4.3"));
 
         forest.apply(Action::ToggleFold);
 
@@ -3970,8 +3970,8 @@ credential_command = "secret harbour"
     /// gets the same answer about its own tree.
     #[test]
     fn a_root_shut_over_a_working_agent_says_it_exactly_as_a_branch_does() {
-        let mut forest = flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
-        select(&mut forest, &key("orbital", "sdg-4"));
+        let mut forest = flatten(alone("dunwich", SIDING, &panes_on(&["sdg-4.3.1"])));
+        select(&mut forest, &key("dunwich", "sdg-4"));
 
         forest.apply(Action::ToggleFold);
 
@@ -3990,7 +3990,7 @@ credential_command = "secret harbour"
     /// hiding, not a standing property of the bead.
     #[test]
     fn a_branch_opened_over_its_agents_stops_counting_them() {
-        let forest = flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3.1"])));
+        let forest = flatten(alone("dunwich", SIDING, &panes_on(&["sdg-4.3.1"])));
 
         assert_eq!(fold_of(&forest, "sdg-4.3"), Some(true));
         assert_eq!(row_of(&forest, "sdg-4.3").shut_over, None);
@@ -4003,11 +4003,11 @@ credential_command = "secret harbour"
     #[test]
     fn the_agents_a_line_counts_are_the_ones_it_hides_and_never_its_own() {
         let mut forest = flatten(alone(
-            "orbital",
+            "dunwich",
             SIDING,
             &panes_on(&["sdg-4.3", "sdg-4.3.1"]),
         ));
-        select(&mut forest, &key("orbital", "sdg-4.3"));
+        select(&mut forest, &key("dunwich", "sdg-4.3"));
 
         forest.apply(Action::ToggleFold);
 
@@ -4031,8 +4031,8 @@ credential_command = "secret harbour"
             r#"{"id":"sdg-4.3.1","title":"prove the interlocking","status":"open"#,
             r#"{"id":"sdg-4.3.1","title":"prove the interlocking","closed_at":"2026-08-28T09:00:00Z","status":"closed"#,
         );
-        let mut forest = flatten(alone("orbital", &stale, &panes_on(&["sdg-4.3.1"])));
-        select(&mut forest, &key("orbital", "sdg-4.3"));
+        let mut forest = flatten(alone("dunwich", &stale, &panes_on(&["sdg-4.3.1"])));
+        select(&mut forest, &key("dunwich", "sdg-4.3"));
 
         forest.apply(Action::ToggleFold);
 
@@ -4050,14 +4050,14 @@ credential_command = "secret harbour"
     /// hunting for a second agent that is not there.
     #[test]
     fn one_agent_reached_two_ways_down_is_counted_once() {
-        let mut forest = flatten(alone("orbital", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
+        let mut forest = flatten(alone("dunwich", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
         assert_eq!(
             lines_of(&forest, "lck-2").len(),
             2,
             "{:#?}",
             sketch(&forest)
         );
-        select(&mut forest, &key("orbital", "lck-1"));
+        select(&mut forest, &key("dunwich", "lck-1"));
 
         forest.apply(Action::ToggleFold);
 
@@ -4087,7 +4087,7 @@ credential_command = "secret harbour"
             r#"{"id":"sdg-4","title":"re-point the crossover","status":"in_progress"#,
             r#"{"id":"sdg-4","title":"re-point the crossover","closed_at":"2026-08-29T09:00:00Z","status":"closed"#,
         );
-        let forest = flatten(alone("orbital", &done, &[]));
+        let forest = flatten(alone("dunwich", &done, &[]));
 
         assert_eq!(fold_of(&forest, "sdg-4"), Some(false));
         assert_eq!(
@@ -4097,7 +4097,7 @@ credential_command = "secret harbour"
     }
 
     fn siding() -> Snapshot {
-        alone("orbital", SIDING, &panes_on(&["sdg-4.3"]))
+        alone("dunwich", SIDING, &panes_on(&["sdg-4.3"]))
     }
 
     /// The case Graeme chose this default for. `sdg-4.1` is closed and its
@@ -4110,7 +4110,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_closed_branch_over_ready_work_rests_open_down_the_spine_to_it() {
         let forest = flatten(ready_alone(
-            "orbital",
+            "dunwich",
             SIDING,
             &panes_on(&["sdg-4.3"]),
             &["sdg-4.1.2"],
@@ -4119,7 +4119,7 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ sdg-4 re-point the crossover",
                 "      ├─▸ ◐ .3 re-signal the box",
                 "      ├── ✓ .1 slew the up line",
@@ -4156,7 +4156,7 @@ credential_command = "secret harbour"
             r#""status":"deferred",
        "dependencies":[{"depends_on_id":"sdg-4.1","type":"parent-child"}]"#,
         );
-        let forest = flatten(alone("orbital", &waiting, &panes_on(&["sdg-4.3"])));
+        let forest = flatten(alone("dunwich", &waiting, &panes_on(&["sdg-4.3"])));
 
         assert_eq!(fold_of(&forest, "sdg-4.1"), Some(false));
         assert_eq!(
@@ -4170,14 +4170,14 @@ credential_command = "secret harbour"
     #[test]
     fn opening_a_finished_subtree_draws_what_it_holds() {
         let mut forest = flatten(finished_branches());
-        select(&mut forest, &key("orbital", "dep-1.2"));
+        select(&mut forest, &key("dunwich", "dep-1.2"));
 
         forest.apply(Action::ToggleFold);
 
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ dep-1 re-lay the sidings",
                 "      ├── ○ .1 grade the bed",
                 "      ├── ○ .3 clear the ballast",
@@ -4197,24 +4197,24 @@ credential_command = "secret harbour"
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"closed"#,
             r#"{"id":"dep-1.3","title":"clear the ballast","status":"open"#,
         );
-        alone("orbital", &json, &panes_on(&["dep-1.1"]))
+        alone("dunwich", &json, &panes_on(&["dep-1.1"]))
     }
 
     #[test]
     fn the_selection_survives_a_refresh_that_reorders_the_nodes() {
         let mut forest = flatten(snapshot());
-        open(&mut forest, &key("orbital", "orb-7.1"));
-        select(&mut forest, &key("orbital", "orb-7.1.2"));
+        open(&mut forest, &key("dunwich", "dun-7.1"));
+        select(&mut forest, &key("dunwich", "dun-7.1.2"));
         let was = forest.selected_line();
 
-        let reordered = edited(ORBITAL, r#""priority":3"#, r#""priority":1"#);
+        let reordered = edited(DUNWICH, r#""priority":3"#, r#""priority":1"#);
         forest.refresh(gather(
-            vec![tree_of("orbital", &reordered)],
+            vec![tree_of("dunwich", &reordered)],
             Vec::new(),
             Filter::LiveAgents,
         ));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.2")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.2")));
         assert_ne!(forest.selected_line(), was);
     }
 
@@ -4224,34 +4224,34 @@ credential_command = "secret harbour"
     #[test]
     fn a_refresh_that_drops_the_selected_bead_falls_back_to_its_parent() {
         let mut forest = flatten(snapshot());
-        open(&mut forest, &key("orbital", "orb-7.1"));
-        select(&mut forest, &key("orbital", "orb-7.1.2"));
+        open(&mut forest, &key("dunwich", "dun-7.1"));
+        select(&mut forest, &key("dunwich", "dun-7.1.2"));
 
         let without = edited(
-            ORBITAL,
-            r#"{"id":"orb-7.1.2","title":"seal the feed horn","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7.1","type":"parent-child"}],
+            DUNWICH,
+            r#"{"id":"dun-7.1.2","title":"seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7.1","type":"parent-child"}],
        "priority":3,"issue_type":"task"},"#,
             "",
         );
         forest.refresh(gather(
-            vec![tree_of("orbital", &without)],
+            vec![tree_of("dunwich", &without)],
             Vec::new(),
             Filter::LiveAgents,
         ));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     }
 
     /// The bead the selection was on is gone with its whole tree, and the
     /// nearest of its forebears the new snapshot still draws is its
-    /// project's line: orbital still has panes working in it that no bead
+    /// project's line: dunwich still has panes working in it that no bead
     /// claims, so the line is still there to fall back to.
     #[test]
     fn a_refresh_that_drops_the_selected_bead_leaves_the_selection_somewhere_real() {
         let mut forest = flatten(snapshot());
-        open(&mut forest, &key("orbital", "orb-7.1"));
-        select(&mut forest, &key("orbital", "orb-7.1.2"));
+        open(&mut forest, &key("dunwich", "dun-7.1"));
+        select(&mut forest, &key("dunwich", "dun-7.1.2"));
         // Harbour has no live agent, so it is a tree only a reader showing
         // every tree can be left standing on.
         forest.apply(Action::ToggleFilter);
@@ -4265,7 +4265,7 @@ credential_command = "secret harbour"
         assert!(
             matches!(
                 &forest.lines()[forest.selected_line()].content,
-                Content::Project(line) if line.project == "orbital"
+                Content::Project(line) if line.project == "dunwich"
             ),
             "{:#?}",
             sketch(&forest)
@@ -4293,38 +4293,38 @@ credential_command = "secret harbour"
     #[test]
     fn collapsing_an_expanded_node_and_then_collapsing_again_moves_to_its_parent() {
         let mut forest = flatten(snapshot());
-        open(&mut forest, &key("orbital", "orb-7.1"));
+        open(&mut forest, &key("dunwich", "dun-7.1"));
 
         assert!(forest.apply(Action::CollapseOrParent));
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
         assert!(!sketch(&forest).iter().any(|line| line.contains(".1.1")));
 
         assert!(forest.apply(Action::CollapseOrParent));
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7")));
     }
 
     #[test]
     fn expanding_a_collapsed_node_and_then_expanding_again_moves_to_its_first_child() {
         let mut forest = flatten(snapshot());
-        open(&mut forest, &key("orbital", "orb-7.1"));
+        open(&mut forest, &key("dunwich", "dun-7.1"));
         forest.apply(Action::CollapseOrParent);
 
         assert!(forest.apply(Action::ExpandOrChild));
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
 
         assert!(forest.apply(Action::ExpandOrChild));
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
     }
 
     #[test]
     fn a_leaf_has_no_child_to_move_to_and_no_fold_to_collapse() {
         let mut forest = flatten(snapshot());
-        open(&mut forest, &key("orbital", "orb-7.1"));
-        select(&mut forest, &key("orbital", "orb-7.1.1"));
+        open(&mut forest, &key("dunwich", "dun-7.1"));
+        select(&mut forest, &key("dunwich", "dun-7.1.1"));
 
         assert!(!forest.apply(Action::ExpandOrChild));
         assert!(forest.apply(Action::CollapseOrParent));
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     }
 
     #[test]
@@ -4773,18 +4773,18 @@ credential_command = "secret harbour"
         let lines = forest.lines();
 
         assert!(
-            matches!(&lines[0].content, Content::Project(line) if line.project == "orbital"),
+            matches!(&lines[0].content, Content::Project(line) if line.project == "dunwich"),
             "{:#?}",
             sketch(&forest)
         );
         assert!(
-            matches!(&lines[1].content, Content::Bead(row) if row.id == "orb-7"),
+            matches!(&lines[1].content, Content::Bead(row) if row.id == "dun-7"),
             "{:#?}",
             sketch(&forest)
         );
     }
 
-    /// `bdi-2bb.25`: the root carries a pane of its own while `orb-7.4`
+    /// `bdi-2bb.25`: the root carries a pane of its own while `dun-7.4`
     /// beneath it carries another, so a count over the subtree and the root's
     /// own agent cannot come out the same by chance.
     #[test]
@@ -4792,7 +4792,7 @@ credential_command = "secret harbour"
         let forest = flatten(snapshot());
 
         assert_eq!(
-            row_of(&forest, "orb-7").agent.as_deref(),
+            row_of(&forest, "dun-7").agent.as_deref(),
             Some("◍ w:p1 · working")
         );
     }
@@ -4815,15 +4815,15 @@ credential_command = "secret harbour"
     }
 
     /// A project's line counts the beads of its own trees and no other's.
-    /// `built` puts a tree under orbital and one under harbour, so a count
+    /// `built` puts a tree under dunwich and one under harbour, so a count
     /// taken over the wrong run of trees shows on one line or the other.
     #[test]
     fn a_project_line_counts_its_own_trees_and_no_others() {
         let forest = flatten(built(Filter::All));
 
         assert_eq!(
-            header_of(&forest, "orbital").counts,
-            tree_of("orbital", ORBITAL).counts
+            header_of(&forest, "dunwich").counts,
+            tree_of("dunwich", DUNWICH).counts
         );
         assert_eq!(
             header_of(&forest, "harbour").counts,
@@ -5002,12 +5002,12 @@ credential_command = "secret harbour"
     fn opening_one_projects_hidden_trees_leaves_another_projects_shut() {
         let colliding = edited(SLIPWAY, "hbr-9", "hbr-3");
         let mut forest = flatten(gather(
-            vec![tree_of("harbour", HARBOUR), tree_of("orbital", &colliding)],
+            vec![tree_of("harbour", HARBOUR), tree_of("dunwich", &colliding)],
             Vec::new(),
             Filter::LiveAgents,
         ));
         select_hidden_tree(&mut forest);
-        assert_eq!(cursor(&forest), Some(&key("orbital", "hbr-3")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "hbr-3")));
 
         let harbours = forest
             .lines()
@@ -5027,16 +5027,16 @@ credential_command = "secret harbour"
     /// project and not under the trees just opened.
     #[test]
     fn a_projects_loose_panes_follow_its_opened_quiet_trees_at_their_own_depth() {
-        let mut quiet = alone("orbital", TOWER, &panes_on(&["nobody"]));
+        let mut quiet = alone("dunwich", TOWER, &panes_on(&["nobody"]));
         quiet.refilter(Filter::LiveAgents);
         let mut forest = flatten(quiet);
         assert_eq!(
             sketch(&forest)[..4],
             [
-                "▾ orbital",
-                "  ├─▸ [HiddenTrees orbital] 1",
-                "  └── [Unattributed orbital] 1",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None, claim_refused: false })",
+                "▾ dunwich",
+                "  ├─▸ [HiddenTrees dunwich] 1",
+                "  └── [Unattributed dunwich] 1",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"dunwich\", cwd: \"/srv/work/dunwich\", pane_status: Working, display_agent: Some(\"nobody\"), title: None, claim_refused: false })",
             ]
         );
 
@@ -5045,11 +5045,11 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest)[..5],
             [
-                "▾ orbital",
-                "  ├── [HiddenTrees orbital] 1",
+                "▾ dunwich",
+                "  ├── [HiddenTrees dunwich] 1",
                 "  │   └─▸ ○ tow-1 raise the tower",
-                "  └── [Unattributed orbital] 1",
-                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"orbital\", cwd: \"/srv/work/orbital\", pane_status: Working, display_agent: Some(\"nobody\"), title: None, claim_refused: false })",
+                "  └── [Unattributed dunwich] 1",
+                "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:nobody\" }, project: \"dunwich\", cwd: \"/srv/work/dunwich\", pane_status: Working, display_agent: Some(\"nobody\"), title: None, claim_refused: false })",
             ]
         );
     }
@@ -5076,7 +5076,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_failed_projects_loose_panes_hang_under_its_own_line() {
         let forest = flatten(gather(
-            vec![tree_of("orbital", ORBITAL)],
+            vec![tree_of("dunwich", DUNWICH)],
             vec![FailedProject {
                 project: "ferry".into(),
                 tracker: TrackerFailure::Unstartable,
@@ -5125,7 +5125,7 @@ credential_command = "secret harbour"
         );
         let opened_on = forest.selected_line();
         assert_eq!(
-            drawn[opened_on], "  └── [Unattributed orbital] 2",
+            drawn[opened_on], "  └── [Unattributed dunwich] 2",
             "the selection settles on the first thing drawn, not on nothing: {drawn:#?}"
         );
 
@@ -5200,7 +5200,7 @@ credential_command = "secret harbour"
             forest.lines()[forest.selected_line()]
                 .bead()
                 .map(|bead| bead.id.clone()),
-            Some("orb-7".to_string()),
+            Some("dun-7".to_string()),
             "{:#?}",
             sketch(&forest)
         );
@@ -5214,7 +5214,7 @@ credential_command = "secret harbour"
         snapshot
     }
 
-    /// The same snapshot with the two panes that were fighting over `orb-7.1`
+    /// The same snapshot with the two panes that were fighting over `dun-7.1`
     /// gone, which empties the unattributed group of the one the tests hold.
     fn built_without_the_conflicting_panes() -> Snapshot {
         let mut snapshot = snapshot();
@@ -5224,12 +5224,12 @@ credential_command = "secret harbour"
 
     #[test]
     fn an_empty_group_draws_nothing() {
-        let orbital = assembled(ORBITAL);
+        let dunwich = assembled(DUNWICH);
         let harbour = assembled(HARBOUR);
-        let joined = joined(&orbital, &harbour, &panes());
+        let joined = joined(&dunwich, &harbour, &panes());
         let snapshot = snapshot::build(
             Collected {
-                trees: vec![tree_of("orbital", ORBITAL)],
+                trees: vec![tree_of("dunwich", DUNWICH)],
                 failed_projects: Vec::new(),
                 read_at: every_project_read(),
             },
@@ -5266,9 +5266,9 @@ credential_command = "secret harbour"
             .position(|line| {
                 matches!(&line.content, Content::Group(group)
                     if group.kind == GroupKind::Unattributed
-                        && group.project.as_deref() == Some("orbital"))
+                        && group.project.as_deref() == Some("dunwich"))
             })
-            .expect("orbital has panes no bead claims");
+            .expect("dunwich has panes no bead claims");
         forest.select_line(group);
 
         // Ferry's one loose pane is under ferry's own line, and stays.
@@ -5312,7 +5312,7 @@ credential_command = "secret harbour"
                        {"depends_on_id":"hbr-9","type":"blocks"}"#,
         );
         let snapshot = gather(
-            vec![tree_of("orbital", ORBITAL), tree_of("harbour", &broken)],
+            vec![tree_of("dunwich", DUNWICH), tree_of("harbour", &broken)],
             Vec::new(),
             Filter::LiveAgents,
         );
@@ -5344,7 +5344,7 @@ credential_command = "secret harbour"
                        {"depends_on_id":"hbr-9","type":"blocks"}"#,
         );
         let mut snapshot = gather(
-            vec![tree_of("orbital", ORBITAL), tree_of("harbour", &broken)],
+            vec![tree_of("dunwich", DUNWICH), tree_of("harbour", &broken)],
             Vec::new(),
             Filter::LiveAgents,
         );
@@ -5378,21 +5378,21 @@ credential_command = "secret harbour"
     /// so two projects can each hold a root called `hbr-3` and they are
     /// different beads. Each is hidden under its own project, and a match
     /// that asked the root alone would report harbour as hiding the finding
-    /// that is in orbital's.
+    /// that is in dunwich's.
     #[test]
     fn a_hidden_tree_does_not_take_a_finding_from_the_same_root_in_another_project() {
         let colliding = edited(SLIPWAY, "hbr-9", "hbr-3");
         let forest = flatten(gather(
-            vec![tree_of("harbour", HARBOUR), tree_of("orbital", &colliding)],
+            vec![tree_of("harbour", HARBOUR), tree_of("dunwich", &colliding)],
             Vec::new(),
             Filter::LiveAgents,
         ));
 
         let harbour = hidden_trees_group(&forest, "harbour");
-        let orbital = hidden_trees_group(&forest, "orbital");
+        let dunwich = hidden_trees_group(&forest, "dunwich");
 
         assert_eq!((harbour.count, harbour.with_findings), (1, 0));
-        assert_eq!((orbital.count, orbital.with_findings), (1, 1));
+        assert_eq!((dunwich.count, dunwich.with_findings), (1, 1));
     }
 
     /// The line over one project's hidden trees.
@@ -5501,7 +5501,7 @@ credential_command = "secret harbour"
     /// that differs from the same tree shown.
     #[test]
     fn a_hidden_tree_rests_shut_even_over_work_that_would_open_it_shown() {
-        let ready = ready_alone("orbital", HARBOUR, &[], &["hbr-3.1"]);
+        let ready = ready_alone("dunwich", HARBOUR, &[], &["hbr-3.1"]);
         assert_eq!(
             lines_of(&flatten(ready.clone()), "hbr-3.1").len(),
             1,
@@ -5588,7 +5588,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_hidden_trees_findings_are_drawn_under_its_root_as_any_trees_are() {
         let mut forest = flatten(gather(
-            vec![tree_of("orbital", ORBITAL), tree_of("harbour", SLIPWAY)],
+            vec![tree_of("dunwich", DUNWICH), tree_of("harbour", SLIPWAY)],
             Vec::new(),
             Filter::LiveAgents,
         ));
@@ -5672,12 +5672,12 @@ credential_command = "secret harbour"
     /// nearest row to where the selection was is not the group's line.
     #[test]
     fn a_refresh_that_hides_the_selected_tree_moves_the_selection_to_the_group() {
-        let mut staffed = alone("orbital", TOWER, &panes_on(&["tow-1.1", "nobody"]));
+        let mut staffed = alone("dunwich", TOWER, &panes_on(&["tow-1.1", "nobody"]));
         staffed.refilter(Filter::LiveAgents);
         let mut forest = flatten(staffed);
-        select(&mut forest, &key("orbital", "tow-1.1"));
+        select(&mut forest, &key("dunwich", "tow-1.1"));
 
-        forest.refresh(alone("orbital", TOWER, &panes_on(&["nobody"])));
+        forest.refresh(alone("dunwich", TOWER, &panes_on(&["nobody"])));
 
         assert_eq!(forest.snapshot().hidden_trees.len(), 1);
         assert_eq!(forest.snapshot().unattributed.len(), 1);
@@ -5707,17 +5707,17 @@ credential_command = "secret harbour"
     /// drawn, and the selection with it.
     #[test]
     fn with_the_group_open_a_bead_inside_the_hidden_tree_falls_back_to_its_root() {
-        let mut forest = flatten(ready_alone("orbital", HARBOUR, &[], &["hbr-3.1"]));
+        let mut forest = flatten(ready_alone("dunwich", HARBOUR, &[], &["hbr-3.1"]));
         forest.folds.set(
-            Handle::Group(GroupKind::HiddenTrees, Some("orbital".into())),
+            Handle::Group(GroupKind::HiddenTrees, Some("dunwich".into())),
             true,
         );
-        select(&mut forest, &key("orbital", "hbr-3.1"));
+        select(&mut forest, &key("dunwich", "hbr-3.1"));
 
         forest.apply(Action::ToggleFilter);
 
         assert_eq!(forest.snapshot().filter, Filter::LiveAgents);
-        assert_eq!(cursor(&forest), Some(&key("orbital", "hbr-3")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "hbr-3")));
     }
 
     /// Only the cursor's own tree going into the group takes the selection
@@ -5726,20 +5726,20 @@ credential_command = "secret harbour"
     /// however many other trees of the same project the group is shut over.
     #[test]
     fn a_fold_shutting_over_the_selection_keeps_it_out_of_the_hidden_trees_group() {
-        let mut staffed = together("orbital", &[TOWER, HARBOUR], &panes_on(&["tow-1.1"]));
+        let mut staffed = together("dunwich", &[TOWER, HARBOUR], &panes_on(&["tow-1.1"]));
         staffed.refilter(Filter::LiveAgents);
         let mut forest = flatten(staffed);
         assert_eq!(forest.snapshot().hidden_trees.len(), 1);
-        select(&mut forest, &key("orbital", "tow-1.1"));
+        select(&mut forest, &key("dunwich", "tow-1.1"));
         forest.apply(Action::ToggleFold);
         forest.apply(Action::Move(Motion::NextRow));
-        assert_eq!(cursor(&forest), Some(&key("orbital", "tow-1.1.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "tow-1.1.1")));
 
         forest.apply(Action::RestoreDefault);
 
         assert_eq!(
             cursor(&forest),
-            Some(&key("orbital", "tow-1.2")),
+            Some(&key("dunwich", "tow-1.2")),
             "{:#?}",
             sketch(&forest)
         );
@@ -5776,9 +5776,9 @@ credential_command = "secret harbour"
     fn nothing_reported_disappears_under_any_fold_state() {
         let snapshot = snapshot();
         let mut handles = vec![
-            Handle::Bead(Place::root(key("orbital", "orb-7"))),
+            Handle::Bead(Place::root(key("dunwich", "dun-7"))),
             Handle::Bead(Place::root(key("ferry", "fer-2"))),
-            Handle::Bead(Place::root(key("orbital", "orb-7")).step_to(key("orbital", "orb-7.1"))),
+            Handle::Bead(Place::root(key("dunwich", "dun-7")).step_to(key("dunwich", "dun-7.1"))),
         ];
         handles.extend(
             layout::every_group(&snapshot)
@@ -5902,7 +5902,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_shut_node_starts_in_the_same_column_as_an_open_sibling() {
         let forest = flatten(ready_alone(
-            "orbital",
+            "dunwich",
             SIDING,
             &panes_on(&["sdg-4.3"]),
             &["sdg-4.1.2"],
@@ -5953,12 +5953,12 @@ credential_command = "secret harbour"
     /// on a child, and the width is the four columns a level every line has.
     #[test]
     fn a_bead_drawn_under_one_it_blocks_hangs_on_a_dashed_arm() {
-        let mut forest = flatten(alone("orbital", SLUICE, &panes_on(&["slu-1.1"])));
+        let mut forest = flatten(alone("dunwich", SLUICE, &panes_on(&["slu-1.1"])));
 
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ slu-1 rehang the sluice",
                 "      ├─▸ ◐ .1 forge the new pintles",
                 "      └── ○ .2 hang the gate",
@@ -5971,7 +5971,7 @@ credential_command = "secret harbour"
         assert_eq!(
             sketch(&forest),
             vec![
-                "▾ orbital",
+                "▾ dunwich",
                 "  └── ◐ slu-1 rehang the sluice",
                 "      ├── ◐ .1 forge the new pintles",
                 "      │   └── ○ .1 cast the pintle blanks",
@@ -5992,9 +5992,9 @@ credential_command = "secret harbour"
         let fixtures = [
             flatten(snapshot()),
             flatten(tower_staffed(&["tow-1.1.1.1"])),
-            flatten(alone("orbital", SLUICE, &panes_on(&["slu-1.1"]))),
-            flatten(alone("orbital", RELAY, &two_panes())),
-            flatten(alone("orbital", SIDING, &panes_on(&["sdg-4.3"]))),
+            flatten(alone("dunwich", SLUICE, &panes_on(&["slu-1.1"]))),
+            flatten(alone("dunwich", RELAY, &two_panes())),
+            flatten(alone("dunwich", SIDING, &panes_on(&["sdg-4.3"]))),
         ];
 
         let mut shortened = 0;
@@ -6034,11 +6034,11 @@ credential_command = "secret harbour"
     /// no prefix at all.
     #[test]
     fn every_prefix_is_four_columns_a_level() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON, SLUICE] {
+        for json in [DUNWICH, DEPOT, RELAY, SIDING, TOWER, KADATH, SLUICE] {
             let staffed = panes_on(&[
-                "orb-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
+                "dun-7.1", "dep-1.1", "rly-2.1", "sdg-4.3", "tow-1.1", "bcn-6", "slu-1.1",
             ]);
-            let mut forest = flatten(alone("orbital", json, &staffed));
+            let mut forest = flatten(alone("dunwich", json, &staffed));
             four_columns_a_level(&forest);
             forest.apply(Action::ExpandSubtree);
             four_columns_a_level(&forest);
@@ -6091,11 +6091,11 @@ credential_command = "secret harbour"
     /// of the state instead.
     #[test]
     fn a_root_with_no_children_holds_no_fold_to_set() {
-        let forest = flatten(alone("orbital", BEACON, &panes_on(&["bcn-6"])));
+        let forest = flatten(alone("dunwich", KADATH, &panes_on(&["bcn-6"])));
 
         assert_eq!(
             sketch(&forest),
-            vec!["▾ orbital", "  └── ◐ bcn-6 re-lamp the beacon"]
+            vec!["▾ dunwich", "  └── ◐ bcn-6 re-lamp the kadath"]
         );
 
         let root = forest
@@ -6115,8 +6115,8 @@ credential_command = "secret harbour"
 
     /// A pane working in a configured project, with no tracker answering for
     /// it, so it reaches the forest as a loose one.
-    const WORKING_IN_ORBITAL: &str = r#"{"result":{"agents":[
-      {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"}
+    const WORKING_IN_DUNWICH: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working"}
     ]}}"#;
 
     /// A pane working in a directory no configured project covers.
@@ -6168,7 +6168,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_run_that_has_read_nothing_yet_draws_a_line_for_every_configured_project() {
         let awaiting = Snapshot::awaiting(
-            vec!["orbital".to_string(), "ferry".to_string()],
+            vec!["dunwich".to_string(), "ferry".to_string()],
             Vec::new(),
             A_PROVIDER,
             Scope::Everything,
@@ -6176,7 +6176,7 @@ credential_command = "secret harbour"
             now(),
         );
 
-        assert_eq!(sketch(&flatten(awaiting)), vec!["▾ orbital", "▾ ferry"]);
+        assert_eq!(sketch(&flatten(awaiting)), vec!["▾ dunwich", "▾ ferry"]);
     }
 
     /// A scope the reader did not type is said on the screen: a reader who
@@ -6187,7 +6187,7 @@ credential_command = "secret harbour"
     fn a_scope_the_directory_chose_is_said_below_the_groups() {
         let chosen = Snapshot {
             scope: Scope::Directory {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 widened: Vec::new(),
             },
             ..built(Filter::LiveAgents)
@@ -6197,7 +6197,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             drawn.last().map(String::as_str),
-            Some("  ~ reading orbital")
+            Some("  ~ reading dunwich")
         );
         let last_group = drawn.iter().rposition(|line| line.contains('['));
         assert!(
@@ -6211,11 +6211,11 @@ credential_command = "secret harbour"
     #[test]
     fn the_first_frame_already_says_the_directory_chose() {
         let chosen = Snapshot::awaiting(
-            vec!["orbital".to_string()],
+            vec!["dunwich".to_string()],
             Vec::new(),
             A_PROVIDER,
             Scope::Directory {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 widened: Vec::new(),
             },
             Filter::LiveAgents,
@@ -6224,7 +6224,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             sketch(&flatten(chosen)),
-            vec!["▾ orbital", "  ~ reading orbital"]
+            vec!["▾ dunwich", "  ~ reading dunwich"]
         );
     }
 
@@ -6232,9 +6232,9 @@ credential_command = "secret harbour"
     /// run reading everything has nothing to say.
     #[test]
     fn a_scope_the_reader_typed_is_silent() {
-        for scope in [Scope::Everything, Scope::Asked(vec!["orbital".to_string()])] {
+        for scope in [Scope::Everything, Scope::Asked(vec!["dunwich".to_string()])] {
             let awaiting = Snapshot::awaiting(
-                vec!["orbital".to_string()],
+                vec!["dunwich".to_string()],
                 Vec::new(),
                 A_PROVIDER,
                 scope,
@@ -6242,7 +6242,7 @@ credential_command = "secret harbour"
                 now(),
             );
 
-            assert_eq!(sketch(&flatten(awaiting)), vec!["▾ orbital"]);
+            assert_eq!(sketch(&flatten(awaiting)), vec!["▾ dunwich"]);
         }
     }
 
@@ -6256,9 +6256,9 @@ credential_command = "secret harbour"
     #[test]
     fn a_project_read_and_holding_nothing_draws_no_line() {
         let read = Snapshot {
-            read_at: std::collections::BTreeMap::from([("orbital".to_string(), now())]),
+            read_at: std::collections::BTreeMap::from([("dunwich".to_string(), now())]),
             ..Snapshot::awaiting(
-                vec!["orbital".to_string()],
+                vec!["dunwich".to_string()],
                 Vec::new(),
                 A_PROVIDER,
                 Scope::Everything,
@@ -6292,7 +6292,7 @@ credential_command = "secret harbour"
         // The config's three, and not the fixture's fourth: `lunar` is a
         // failed project no `[[projects]]` entry names, so it is reported
         // among the failures and has no line of its own to be drawn on.
-        assert_eq!(snapshot.projects, ["orbital", "ferry", "harbour"]);
+        assert_eq!(snapshot.projects, ["dunwich", "ferry", "harbour"]);
     }
 
     /// Every tracker answered and none of them had a root. The screen has to
@@ -6328,7 +6328,7 @@ credential_command = "secret harbour"
                 "a tree",
                 only(
                     Collected {
-                        trees: vec![tree_of("orbital", ORBITAL)],
+                        trees: vec![tree_of("dunwich", DUNWICH)],
                         failed_projects: Vec::new(),
                         read_at: every_project_read(),
                     },
@@ -6362,7 +6362,7 @@ credential_command = "secret harbour"
             ),
             (
                 "a loose pane",
-                only(Collected::default(), &one_pane(WORKING_IN_ORBITAL)),
+                only(Collected::default(), &one_pane(WORKING_IN_DUNWICH)),
             ),
             (
                 "an unconfigured pane",
@@ -6784,7 +6784,7 @@ credential_command = "secret harbour"
 
     /// Tower with `tow-1.1.1.1` gone, so `tow-1.1.1` is a leaf with no fold.
     fn tower_without_cables() -> Snapshot {
-        alone("orbital", &without(TOWER, "tow-1.1.1.1"), &[])
+        alone("dunwich", &without(TOWER, "tow-1.1.1.1"), &[])
     }
 
     /// A run goes when its finished siblings drop below three, and what `e`
@@ -6803,7 +6803,7 @@ credential_command = "secret harbour"
         );
 
         forest.refresh(alone(
-            "orbital",
+            "dunwich",
             &without(DEPOT, "dep-1.4"),
             &panes_on(&["dep-1.1"]),
         ));
@@ -7144,8 +7144,8 @@ credential_command = "secret harbour"
     /// root the selection opens on stands over every fold that tree has.
     #[test]
     fn expanding_from_a_root_leaves_no_fold_shut_under_it() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
-            let mut forest = flatten(alone("orbital", json, &two_panes()));
+        for json in [DUNWICH, DEPOT, RELAY, SIDING, TOWER, KADATH] {
+            let mut forest = flatten(alone("dunwich", json, &two_panes()));
             forest.apply(Action::ExpandSubtree);
 
             assert!(
@@ -7161,8 +7161,8 @@ credential_command = "secret harbour"
     /// stands over, and leaves the project above it as the reader had it.
     #[test]
     fn collapsing_from_a_root_shuts_it_and_leaves_the_project_above_it_open() {
-        for json in [ORBITAL, DEPOT, RELAY, SIDING, TOWER, BEACON] {
-            let mut forest = flatten(alone("orbital", json, &two_panes()));
+        for json in [DUNWICH, DEPOT, RELAY, SIDING, TOWER, KADATH] {
+            let mut forest = flatten(alone("dunwich", json, &two_panes()));
             forest.apply(Action::CollapseSubtree);
 
             assert!(
@@ -7185,7 +7185,7 @@ credential_command = "secret harbour"
     #[test]
     fn expanding_the_forest_leaves_no_fold_shut_anywhere() {
         let mut forest = flatten(built(Filter::All));
-        select_project(&mut forest, "orbital");
+        select_project(&mut forest, "dunwich");
 
         forest.apply(Action::ExpandForest);
 
@@ -7309,14 +7309,14 @@ credential_command = "secret harbour"
     fn collapsing_from_a_project_leaves_the_other_projects_where_they_were() {
         let mut forest = flatten(built(Filter::All));
         forest.apply(Action::ExpandSubtree);
-        select_project(&mut forest, "orbital");
+        select_project(&mut forest, "dunwich");
         let elsewhere: Vec<String> = drawn_beads(&forest)
             .into_iter()
-            .filter(|id| !id.starts_with("orb-"))
+            .filter(|id| !id.starts_with("dun-"))
             .collect();
         assert!(
             !elsewhere.is_empty(),
-            "nothing outside orbital to be left alone: {:#?}",
+            "nothing outside dunwich to be left alone: {:#?}",
             sketch(&forest)
         );
 
@@ -7325,14 +7325,14 @@ credential_command = "secret harbour"
         assert_eq!(
             drawn_beads(&forest)
                 .into_iter()
-                .filter(|id| !id.starts_with("orb-"))
+                .filter(|id| !id.starts_with("dun-"))
                 .collect::<Vec<_>>(),
             elsewhere,
             "{:#?}",
             sketch(&forest)
         );
         assert!(
-            !drawn_beads(&forest).iter().any(|id| id.starts_with("orb-")),
+            !drawn_beads(&forest).iter().any(|id| id.starts_with("dun-")),
             "{:#?}",
             sketch(&forest)
         );
@@ -7649,7 +7649,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             forest.place().map(|place| place.key().clone()),
-            Some(key("orbital", "orb-7"))
+            Some(key("dunwich", "dun-7"))
         );
     }
 
@@ -7671,15 +7671,15 @@ credential_command = "secret harbour"
     fn the_forest_draws_the_beads_its_trees_hold_and_no_others() {
         let forest = flatten(snapshot());
 
-        assert!(forest.draws(&key("orbital", "orb-7.1.1")));
-        assert!(!forest.draws(&key("orbital", "orb-404")));
+        assert!(forest.draws(&key("dunwich", "dun-7.1.1")));
+        assert!(!forest.draws(&key("dunwich", "dun-404")));
         assert!(
-            !forest.draws(&key("ferry", "orb-7")),
+            !forest.draws(&key("ferry", "dun-7")),
             "a bead is (project, id), so one project's id is not another's"
         );
     }
 
-    /// The whole point: `orb-7.1` is drawn shut, so `orb-7.1.1` is on no line
+    /// The whole point: `dun-7.1` is drawn shut, so `dun-7.1.1` is on no line
     /// at all. Going to it opens what is over it and lands on it.
     #[test]
     fn going_to_a_bead_under_a_shut_fold_opens_it_and_lands_there() {
@@ -7690,9 +7690,9 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
 
-        assert!(forest.go_to(&key("orbital", "orb-7.1.1")));
+        assert!(forest.go_to(&key("dunwich", "dun-7.1.1")));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
         assert!(
             drawn_here(&forest, "true the mount"),
             "{:#?}",
@@ -7717,7 +7717,7 @@ credential_command = "secret harbour"
     #[test]
     fn going_to_a_bead_opens_a_fold_the_reader_shut_by_hand() {
         let mut forest = flatten(snapshot());
-        forest.go_to(&key("orbital", "orb-7.1"));
+        forest.go_to(&key("dunwich", "dun-7.1"));
         forest.apply(Action::CollapseSubtree);
         assert!(
             !drawn_here(&forest, "true the mount"),
@@ -7725,9 +7725,9 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
 
-        assert!(forest.go_to(&key("orbital", "orb-7.1.1")));
+        assert!(forest.go_to(&key("dunwich", "dun-7.1.1")));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
     }
 
     /// A bead no tree holds is nowhere to go, and the forest is left exactly
@@ -7738,7 +7738,7 @@ credential_command = "secret harbour"
         let was = sketch(&forest);
         let selected = forest.selected_line();
 
-        assert!(!forest.go_to(&key("orbital", "orb-404")));
+        assert!(!forest.go_to(&key("dunwich", "dun-404")));
 
         assert_eq!(sketch(&forest), was);
         assert_eq!(forest.selected_line(), selected);
@@ -7754,7 +7754,7 @@ credential_command = "secret harbour"
             .lines()
             .iter()
             .filter_map(|line| line.place.clone())
-            .filter(|place| *place.key() == key("orbital", "orb-9.1"))
+            .filter(|place| *place.key() == key("dunwich", "dun-9.1"))
             .collect();
         assert_eq!(
             twice.len(),
@@ -7777,9 +7777,9 @@ credential_command = "secret harbour"
     fn a_search_matches_part_of_an_id() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("7.1.1"), went_to("orbital", "orb-7.1.1", 1, 1));
+        assert_eq!(forest.seek("7.1.1"), went_to("dunwich", "dun-7.1.1", 1, 1));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
         assert!(
             drawn_here(&forest, "true the mount"),
             "{:#?}",
@@ -7798,16 +7798,16 @@ credential_command = "secret harbour"
     #[test]
     fn a_search_matches_the_shortened_id_the_row_draws() {
         let mut forest = flatten(snapshot());
-        let drawn = row_of(&forest, "orb-7.1").id.clone();
+        let drawn = row_of(&forest, "dun-7.1").id.clone();
 
-        assert_eq!(forest.seek(&drawn), went_to("orbital", "orb-7.1", 1, 4));
+        assert_eq!(forest.seek(&drawn), went_to("dunwich", "dun-7.1", 1, 4));
     }
 
     #[test]
     fn a_search_matches_part_of_a_title() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("mount"), went_to("orbital", "orb-7.1.1", 1, 1));
+        assert_eq!(forest.seek("mount"), went_to("dunwich", "dun-7.1.1", 1, 1));
     }
 
     /// A title is prose and the reader is retyping a word they read off a
@@ -7817,7 +7817,7 @@ credential_command = "secret harbour"
     fn a_search_ignores_letter_case() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("MoUnT"), went_to("orbital", "orb-7.1.1", 1, 1));
+        assert_eq!(forest.seek("MoUnT"), went_to("dunwich", "dun-7.1.1", 1, 1));
     }
 
     /// Matches are numbered in the order the forest draws them, which is the
@@ -7828,14 +7828,14 @@ credential_command = "secret harbour"
     fn matches_are_numbered_in_the_order_the_forest_draws_them() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("7.1"), went_to("orbital", "orb-7.1", 1, 3));
+        assert_eq!(forest.seek("7.1"), went_to("dunwich", "dun-7.1", 1, 3));
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "orb-7.1.1", 2, 3))
+            Some(went_to("dunwich", "dun-7.1.1", 2, 3))
         );
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "orb-7.1.2", 3, 3))
+            Some(went_to("dunwich", "dun-7.1.2", 3, 3))
         );
     }
 
@@ -7850,7 +7850,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "orb-7.1", 1, 3))
+            Some(went_to("dunwich", "dun-7.1", 1, 3))
         );
     }
 
@@ -7861,7 +7861,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             forest.next_match(false),
-            Some(went_to("orbital", "orb-7.1.2", 3, 3))
+            Some(went_to("dunwich", "dun-7.1.2", 3, 3))
         );
     }
 
@@ -7872,11 +7872,11 @@ credential_command = "secret harbour"
     fn stepping_carries_on_from_where_the_reader_has_moved_to() {
         let mut forest = flatten(snapshot());
         forest.seek("7.1");
-        assert!(forest.go_to(&key("orbital", "orb-7.1.1")));
+        assert!(forest.go_to(&key("dunwich", "dun-7.1.1")));
 
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "orb-7.1.2", 3, 3))
+            Some(went_to("dunwich", "dun-7.1.2", 3, 3))
         );
     }
 
@@ -7885,16 +7885,16 @@ credential_command = "secret harbour"
     /// what `bdi-2bb.37` shipped — a substring match that let a row merely
     /// titled after a bead shadow the bead would take it back.
     ///
-    /// The numbering is untouched by it: `orb-6.1` is drawn first and holds
+    /// The numbering is untouched by it: `dun-6.1` is drawn first and holds
     /// the id in its title, so the bead landed on is the second of two. The
     /// landing is the only thing the whole id decides.
     #[test]
     fn a_whole_id_lands_on_its_own_bead_however_many_rows_above_it_match() {
-        let mut forest = flatten(alone("orbital", NAMED_IN_A_TITLE, &[]));
+        let mut forest = flatten(alone("dunwich", NAMED_IN_A_TITLE, &[]));
 
-        assert_eq!(forest.seek("orb-6.2"), went_to("orbital", "orb-6.2", 2, 2));
+        assert_eq!(forest.seek("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-6.2")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-6.2")));
     }
 
     /// A bead reachable more than once is drawn more than once and matched
@@ -7905,12 +7905,12 @@ credential_command = "secret harbour"
     fn a_bead_drawn_twice_is_one_match() {
         let mut forest = flatten(drawn_twice_in_one_tree());
 
-        // `orb-9` is drawn under `orb-8.1` and again under `orb-8.2`, and
-        // `orb-9.1` holds the same characters. Three lines, two matches.
-        assert_eq!(forest.seek("orb-9"), went_to("orbital", "orb-9", 1, 2));
+        // `dun-9` is drawn under `dun-8.1` and again under `dun-8.2`, and
+        // `dun-9.1` holds the same characters. Three lines, two matches.
+        assert_eq!(forest.seek("dun-9"), went_to("dunwich", "dun-9", 1, 2));
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "orb-9.1", 2, 2))
+            Some(went_to("dunwich", "dun-9.1", 2, 2))
         );
     }
 
@@ -7935,7 +7935,7 @@ credential_command = "secret harbour"
         let was = sketch(&forest);
         let selected = forest.selected_line();
 
-        assert_eq!(forest.seek("orb-404"), Landed::Nowhere("orb-404".into()));
+        assert_eq!(forest.seek("dun-404"), Landed::Nowhere("dun-404".into()));
 
         assert_eq!(sketch(&forest), was);
         assert_eq!(forest.selected_line(), selected);
@@ -7950,12 +7950,12 @@ credential_command = "secret harbour"
         let mut forest = flatten(two_trackers_holding_one_id());
 
         assert_eq!(
-            forest.seek("orb-7.1.1"),
-            went_to("orbital", "orb-7.1.1", 1, 2)
+            forest.seek("dun-7.1.1"),
+            went_to("dunwich", "dun-7.1.1", 1, 2)
         );
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("ferry", "orb-7.1.1", 2, 2))
+            Some(went_to("ferry", "dun-7.1.1", 2, 2))
         );
     }
 
@@ -7971,7 +7971,7 @@ credential_command = "secret harbour"
     ///
     /// Both projects read a tracker using the same prefix, so every bead
     /// matches once in each. From `ferry`'s line, carrying on reaches
-    /// `ferry`'s first bead — and starting again would reach `orbital`'s,
+    /// `ferry`'s first bead — and starting again would reach `dunwich`'s,
     /// which is what this used to do.
     ///
     /// **The match asked for is the anchor itself, which is the one position
@@ -7980,7 +7980,7 @@ credential_command = "secret harbour"
     /// so `ferry`'s root is a match the walk should reach, not one it should
     /// step over. Ask for a match further down and the two readings return
     /// the same bead and this proves only that the anchor was consulted:
-    /// `orb-7.1.1` was the first thing tried here and it could not tell them
+    /// `dun-7.1.1` was the first thing tried here and it could not tell them
     /// apart, because the root is drawn above it.
     ///
     /// **The anchor is the first bead drawn below the selection, so a row
@@ -7989,7 +7989,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_from_a_row_that_is_not_a_bead_carries_on_from_there() {
         let mut forest = flatten(two_trackers_holding_one_id());
-        forest.seek("orb-7");
+        forest.seek("dun-7");
         walk::until(
             &mut forest,
             |forest| {
@@ -8006,7 +8006,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("ferry", "orb-7", 10, 18)),
+            Some(went_to("ferry", "dun-7", 10, 18)),
             "stepping from the project line either started the walk again \
              or stepped over the bead the reader is standing above"
         );
@@ -8019,7 +8019,7 @@ credential_command = "secret harbour"
     /// line — so a walk anchored anywhere but inside the group answers with a
     /// bead from the other block, whichever way it steps.
     fn a_group_shut_over_matches() -> Snapshot {
-        let mut staffed = together("orbital", &[TOWER, HARBOUR], &panes_on(&["tow-1.1"]));
+        let mut staffed = together("dunwich", &[TOWER, HARBOUR], &panes_on(&["tow-1.1"]));
         staffed.refilter(Filter::LiveAgents);
         staffed
     }
@@ -8075,7 +8075,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "hbr-3", 7, 8)),
+            Some(went_to("dunwich", "hbr-3", 7, 8)),
             "stepping on from the shut group left the beads it hides behind: {:#?}",
             sketch(&forest)
         );
@@ -8092,7 +8092,7 @@ credential_command = "secret harbour"
 
         assert_eq!(
             forest.next_match(false),
-            Some(went_to("orbital", "tow-1.2.1", 6, 8)),
+            Some(went_to("dunwich", "tow-1.2.1", 6, 8)),
             "stepping back from the shut group came round instead: {:#?}",
             sketch(&forest)
         );
@@ -8135,7 +8135,7 @@ credential_command = "secret harbour"
     /// nothing.
     #[test]
     fn going_to_a_bead_drawn_twice_lands_on_the_copy_drawn_above_a_run() {
-        let mut forest = flatten(alone("orbital", TWIN_BESIDE_A_RUN, &panes_on(&["twn-1.4"])));
+        let mut forest = flatten(alone("dunwich", TWIN_BESIDE_A_RUN, &panes_on(&["twn-1.4"])));
 
         // Four, not three: a run counts the work it stands over, and `twn-9`
         // hangs under one of the three.
@@ -8146,11 +8146,11 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
 
-        assert!(forest.go_to(&key("orbital", "twn-9")));
+        assert!(forest.go_to(&key("dunwich", "twn-9")));
 
         assert_eq!(
             forest.place().map(|place| place.steps.clone()),
-            Some(vec![key("orbital", "twn-1.4"), key("orbital", "twn-9")]),
+            Some(vec![key("dunwich", "twn-1.4"), key("dunwich", "twn-9")]),
             "{:#?}",
             sketch(&forest)
         );
@@ -8189,7 +8189,7 @@ credential_command = "secret harbour"
     /// The difference is not open against closed, which the sibling sort
     /// already handles. It is that a run is of *finished branches*, and
     /// `lines::finished` is every bead in the branch closed **and no agent on
-    /// it** — a stricter thing than the status the sort reads. `orb-7.4` is
+    /// it** — a stricter thing than the status the sort reads. `dun-7.4` is
     /// closed with a pane working it, so it is not finished, and it stays
     /// drawn among its siblings while `.2`, `.3` and `.5` elide beneath them.
     /// Sorted it is fifth of its siblings; drawn it is third.
@@ -8201,7 +8201,7 @@ credential_command = "secret harbour"
     fn a_run_of_finished_children_is_walked_where_the_screen_draws_it() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("orb-7."), went_to("orbital", "orb-7.1", 1, 8));
+        assert_eq!(forest.seek("dun-7."), went_to("dunwich", "dun-7.1", 1, 8));
         // `.1`'s own children, drawn under it and above its siblings, then
         // `.7`, which the sibling sort already puts above the closed ones.
         forest.next_match(true);
@@ -8209,10 +8209,10 @@ credential_command = "secret harbour"
         forest.next_match(true);
 
         // The staffed closed bead, drawn above the run rather than in it.
-        // Walked from `links_below` alone this is `orb-7.2`.
+        // Walked from `links_below` alone this is `dun-7.2`.
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("orbital", "orb-7.4", 5, 8))
+            Some(went_to("dunwich", "dun-7.4", 5, 8))
         );
     }
 
@@ -8226,14 +8226,14 @@ credential_command = "secret harbour"
     fn matches_are_numbered_by_the_order_projects_are_drawn_not_read() {
         let mut forest = flatten(read_in_reverse());
 
-        // `orbital` is named first by the config and read second here.
+        // `dunwich` is named first by the config and read second here.
         assert_eq!(
-            forest.seek("orb-7.1.1"),
-            went_to("orbital", "orb-7.1.1", 1, 2)
+            forest.seek("dun-7.1.1"),
+            went_to("dunwich", "dun-7.1.1", 1, 2)
         );
         assert_eq!(
             forest.next_match(true),
-            Some(went_to("harbour", "orb-7.1.1", 2, 2))
+            Some(went_to("harbour", "dun-7.1.1", 2, 2))
         );
     }
 
@@ -8241,7 +8241,7 @@ credential_command = "secret harbour"
     /// the config names them in.
     fn read_in_reverse() -> Snapshot {
         gather(
-            vec![tree_of("harbour", ORBITAL), tree_of("orbital", ORBITAL)],
+            vec![tree_of("harbour", DUNWICH), tree_of("dunwich", DUNWICH)],
             Vec::new(),
             Filter::All,
         )
@@ -8251,7 +8251,7 @@ credential_command = "secret harbour"
     /// coordinates and nothing forbids.
     fn two_trackers_holding_one_id() -> Snapshot {
         gather(
-            vec![tree_of("orbital", ORBITAL), tree_of("ferry", ORBITAL)],
+            vec![tree_of("dunwich", DUNWICH), tree_of("ferry", DUNWICH)],
             Vec::new(),
             Filter::All,
         )
@@ -8260,13 +8260,13 @@ credential_command = "secret harbour"
     /// A tree where one bead's title names another bead's whole id, and is
     /// drawn above it. A search for that id matches both of them.
     const NAMED_IN_A_TITLE: &str = r#"[
-      {"id":"orb-6","title":"re-site the mast","status":"in_progress",
+      {"id":"dun-6","title":"re-site the mast","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-6.1","title":"wait on orb-6.2 before pouring","status":"open",
-       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+      {"id":"dun-6.1","title":"wait on dun-6.2 before pouring","status":"open",
+       "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6.2","title":"cure the base","status":"open",
-       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+      {"id":"dun-6.2","title":"cure the base","status":"open",
+       "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -8299,7 +8299,7 @@ credential_command = "secret harbour"
     #[test]
     fn focusing_a_root_leaves_it_the_only_one_drawn() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7");
+        focus_on(&mut forest, "dun-7");
 
         assert_eq!(
             // Without the things in the groups, which say nothing about where
@@ -8309,14 +8309,14 @@ credential_command = "secret harbour"
                 .filter(|row| !row.contains("── - "))
                 .collect::<Vec<String>>(),
             vec![
-                "▾ orbital",
-                "  ├── ◐ orb-7 lift the ground station",
+                "▾ dunwich",
+                "  ├── ◐ dun-7 lift the ground station",
                 "  │   ├── ! Dangling(1)",
                 "  │   ├─▸ ○ .1 re-point the dish",
                 "  │   ├── ○ .7 log the survey marks",
                 "  │   ├── ✓ .4 clear the access road",
                 "  │   └─▸ … 3 more",
-                "  └── [Unattributed orbital] 2",
+                "  └── [Unattributed dunwich] 2",
                 "▾ ferry",
                 "  ├─▸ [OutOfTheWay ferry] 1",
                 "  └── [Unattributed ferry] 1",
@@ -8330,12 +8330,12 @@ credential_command = "secret harbour"
     }
 
     /// Every other root is one line away rather than gone, under the project
-    /// it belongs to. Orbital's own root is behind that line too, for the part
+    /// it belongs to. Dunwich's own root is behind that line too, for the part
     /// of it the mode stopped drawing: the beads above the focused bead.
     #[test]
     fn the_roots_the_mode_stops_drawing_go_behind_one_line_per_project() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         assert_eq!(
             sketch(&forest)
@@ -8343,11 +8343,11 @@ credential_command = "secret harbour"
                 .filter(|row| !row.contains("── - "))
                 .collect::<Vec<String>>(),
             vec![
-                "▾ orbital",
-                "  ├─▸ ○ orb-7.1 re-point the dish",
+                "▾ dunwich",
+                "  ├─▸ ○ dun-7.1 re-point the dish",
                 "  │   └── ! Dangling(1)",
-                "  ├─▸ [OutOfTheWay orbital] 1",
-                "  └── [Unattributed orbital] 2",
+                "  ├─▸ [OutOfTheWay dunwich] 1",
+                "  └── [Unattributed dunwich] 2",
                 "▾ ferry",
                 "  ├─▸ [OutOfTheWay ferry] 1",
                 "  └── [Unattributed ferry] 1",
@@ -8372,7 +8372,7 @@ credential_command = "secret harbour"
             ("harbour", "hbr-3 dredge the channel"),
         ] {
             let mut forest = flatten(snapshot());
-            focus_on(&mut forest, "orb-7.1");
+            focus_on(&mut forest, "dun-7.1");
 
             open_the_line_holding_roots_back(&mut forest, project);
 
@@ -8426,10 +8426,10 @@ credential_command = "secret harbour"
         select_hidden_tree(&mut forest);
         assert!(forest.apply(Action::FocusForest));
 
-        let held = held_by_the_line(&forest, "orbital");
+        let held = held_by_the_line(&forest, "dunwich");
 
-        assert_eq!(held, counts_of(&forest, "orbital", "orb-7"));
-        assert!(held.live_agents > 0, "orbital is where the agents are");
+        assert_eq!(held, counts_of(&forest, "dunwich", "dun-7"));
+        assert!(held.live_agents > 0, "dunwich is where the agents are");
     }
 
     /// What one of a project's trees adds up to, by its root.
@@ -8449,13 +8449,13 @@ credential_command = "secret harbour"
     fn putting_the_forest_back_leaves_the_selection_on_the_bead_it_was_rooted_at() {
         let mut forest = flatten(snapshot());
         let was = sketch(&forest);
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
         forest.apply(Action::Move(Motion::LastRow));
 
         assert!(forest.apply(Action::FocusForest));
 
         assert_eq!(sketch(&forest), was);
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     }
 
     /// `bdi` runs on the live-agent filter unless told otherwise, and the
@@ -8488,8 +8488,8 @@ credential_command = "secret harbour"
     #[test]
     fn moving_the_selection_leaves_the_forest_rooted_where_it_was() {
         let mut forest = flatten(snapshot());
-        toggle_fold_of(&mut forest, "orb-7.1");
-        focus_on(&mut forest, "orb-7.1");
+        toggle_fold_of(&mut forest, "dun-7.1");
+        focus_on(&mut forest, "dun-7.1");
         let rooted = sketch(&forest);
 
         forest.apply(Action::Move(Motion::LastRow));
@@ -8503,14 +8503,14 @@ credential_command = "secret harbour"
     #[test]
     fn a_collection_that_has_lost_the_focused_bead_puts_the_forest_back() {
         let mut forest = flatten(snapshot());
-        toggle_fold_of(&mut forest, "orb-7.1");
-        focus_on(&mut forest, "orb-7.1.1");
+        toggle_fold_of(&mut forest, "dun-7.1");
+        focus_on(&mut forest, "dun-7.1.1");
         assert!(!drawn_here(&forest, "fer-2"), "rooted at one bead");
 
-        let renamed = edited(ORBITAL, r#""id":"orb-7.1.1""#, r#""id":"orb-7.1.9""#);
+        let renamed = edited(DUNWICH, r#""id":"dun-7.1.1""#, r#""id":"dun-7.1.9""#);
         forest.refresh(gather(
             vec![
-                tree_of("orbital", &renamed),
+                tree_of("dunwich", &renamed),
                 Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
@@ -8530,12 +8530,12 @@ credential_command = "secret harbour"
     #[test]
     fn the_key_roots_the_forest_afresh_once_the_focused_bead_has_gone() {
         let mut forest = flatten(snapshot());
-        toggle_fold_of(&mut forest, "orb-7.1");
-        focus_on(&mut forest, "orb-7.1.1");
-        let renamed = edited(ORBITAL, r#""id":"orb-7.1.1""#, r#""id":"orb-7.1.9""#);
+        toggle_fold_of(&mut forest, "dun-7.1");
+        focus_on(&mut forest, "dun-7.1.1");
+        let renamed = edited(DUNWICH, r#""id":"dun-7.1.1""#, r#""id":"dun-7.1.9""#);
         forest.refresh(gather(
             vec![
-                tree_of("orbital", &renamed),
+                tree_of("dunwich", &renamed),
                 Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
@@ -8543,7 +8543,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         ));
 
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         assert!(
             !drawn_here(&forest, "fer-2"),
@@ -8560,10 +8560,10 @@ credential_command = "secret harbour"
     #[test]
     fn the_key_roots_the_forest_afresh_once_the_focused_root_stopped_reading() {
         let mut forest = flatten(built(Filter::All));
-        focus_on(&mut forest, "orb-7");
+        focus_on(&mut forest, "dun-7");
         forest.refresh(gather(
             vec![
-                Tree::tracker_unreachable("orbital", "orb-7", TrackerFailure::Auth),
+                Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
             Vec::new(),
@@ -8578,7 +8578,7 @@ credential_command = "secret harbour"
         focus_on(&mut forest, "hbr-3");
 
         assert!(
-            !drawn_here(&forest, "⚠ orb-7 unread"),
+            !drawn_here(&forest, "⚠ dun-7 unread"),
             "rooted at the bead just asked for: {:#?}",
             sketch(&forest)
         );
@@ -8590,7 +8590,7 @@ credential_command = "secret harbour"
     #[test]
     fn going_to_a_held_back_bead_opens_the_line_holding_its_root() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         assert!(
             forest.go_to(&key("harbour", "hbr-3")),
@@ -8609,11 +8609,11 @@ credential_command = "secret harbour"
         assert!(forest.apply(Action::FocusForest));
 
         assert!(
-            forest.go_to(&key("orbital", "orb-7.1")),
-            "cannot reach orbital: {:#?}",
+            forest.go_to(&key("dunwich", "dun-7.1")),
+            "cannot reach dunwich: {:#?}",
             sketch(&forest)
         );
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     }
 
     /// The reader is put back on the bead they were finishing even where they
@@ -8622,12 +8622,12 @@ credential_command = "secret harbour"
     #[test]
     fn putting_the_forest_back_opens_what_has_been_shut_over_the_bead() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
-        forest.folds.set(Handle::Project("orbital".into()), false);
+        focus_on(&mut forest, "dun-7.1");
+        forest.folds.set(Handle::Project("dunwich".into()), false);
 
         assert!(forest.apply(Action::FocusForest));
 
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     }
 
     /// A bead that moved is still the bead. What ends the mode is the bead
@@ -8636,19 +8636,19 @@ credential_command = "secret harbour"
     #[test]
     fn a_collection_that_moved_the_focused_bead_stays_rooted_at_it() {
         let mut forest = flatten(snapshot());
-        toggle_fold_of(&mut forest, "orb-7.1");
-        focus_on(&mut forest, "orb-7.1.2");
+        toggle_fold_of(&mut forest, "dun-7.1");
+        focus_on(&mut forest, "dun-7.1.2");
         let moved = edited(
-            ORBITAL,
+            DUNWICH,
             r#""seal the feed horn","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7.1""#,
+       "dependencies":[{"depends_on_id":"dun-7.1""#,
             r#""seal the feed horn","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7""#,
+       "dependencies":[{"depends_on_id":"dun-7""#,
         );
 
         forest.refresh(gather(
             vec![
-                tree_of("orbital", &moved),
+                tree_of("dunwich", &moved),
                 Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
@@ -8670,7 +8670,7 @@ credential_command = "secret harbour"
     #[test]
     fn putting_the_forest_back_says_the_screen_changed() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7");
+        focus_on(&mut forest, "dun-7");
 
         assert!(forest.apply(Action::FocusForest));
     }
@@ -8681,7 +8681,7 @@ credential_command = "secret harbour"
     #[test]
     fn every_match_a_search_counts_under_the_mode_can_be_landed_on() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         let first = forest.seek("the");
         let Landed::On { of, .. } = first else {
@@ -8702,16 +8702,16 @@ credential_command = "secret harbour"
     #[test]
     fn the_focused_bead_closing_leaves_the_forest_rooted_at_it() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         let closed = edited(
-            ORBITAL,
-            r#"{"id":"orb-7.1","title":"re-point the dish","status":"open"#,
-            r#"{"id":"orb-7.1","title":"re-point the dish","status":"closed"#,
+            DUNWICH,
+            r#"{"id":"dun-7.1","title":"re-point the dish","status":"open"#,
+            r#"{"id":"dun-7.1","title":"re-point the dish","status":"closed"#,
         );
         forest.refresh(gather(
             vec![
-                tree_of("orbital", &closed),
+                tree_of("dunwich", &closed),
                 Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
@@ -8735,7 +8735,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         let was = sketch(&forest);
 
-        select_project(&mut forest, "orbital");
+        select_project(&mut forest, "dunwich");
         assert!(!forest.apply(Action::FocusForest));
         assert_eq!(sketch(&forest), was);
 
@@ -8758,8 +8758,8 @@ credential_command = "secret harbour"
     #[test]
     fn focusing_a_bead_under_a_root_draws_it_where_that_root_was() {
         let mut forest = flatten(snapshot());
-        toggle_fold_of(&mut forest, "orb-7.1");
-        focus_on(&mut forest, "orb-7.1");
+        toggle_fold_of(&mut forest, "dun-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         assert_eq!(
             sketch(&forest)
@@ -8767,12 +8767,12 @@ credential_command = "secret harbour"
                 .take_while(|row| !row.contains("Unattributed"))
                 .collect::<Vec<String>>(),
             vec![
-                "▾ orbital",
-                "  ├── ○ orb-7.1 re-point the dish",
+                "▾ dunwich",
+                "  ├── ○ dun-7.1 re-point the dish",
                 "  │   ├── ! Dangling(1)",
                 "  │   ├── ○ .1 true the mount",
                 "  │   └── ○ .2 seal the feed horn",
-                "  ├─▸ [OutOfTheWay orbital] 1",
+                "  ├─▸ [OutOfTheWay dunwich] 1",
             ]
         );
     }
@@ -8784,9 +8784,9 @@ credential_command = "secret harbour"
     #[test]
     fn the_beads_above_the_focused_bead_go_behind_the_line_as_a_root_does() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
-        open_the_line_holding_roots_back(&mut forest, "orbital");
+        open_the_line_holding_roots_back(&mut forest, "dunwich");
 
         assert_eq!(
             sketch(&forest)
@@ -8794,11 +8794,11 @@ credential_command = "secret harbour"
                 .take_while(|row| !row.contains("Unattributed"))
                 .collect::<Vec<String>>(),
             vec![
-                "▾ orbital",
-                "  ├─▸ ○ orb-7.1 re-point the dish",
+                "▾ dunwich",
+                "  ├─▸ ○ dun-7.1 re-point the dish",
                 "  │   └── ! Dangling(1)",
-                "  ├── [OutOfTheWay orbital] 1",
-                "  │   └─▸ ◐ orb-7 lift the ground station",
+                "  ├── [OutOfTheWay dunwich] 1",
+                "  │   └─▸ ◐ dun-7 lift the ground station",
                 "  │       └── ! Dangling(1)",
             ]
         );
@@ -8810,10 +8810,10 @@ credential_command = "secret harbour"
     #[test]
     fn a_bead_behind_the_line_reads_against_the_root_it_hangs_under() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
-        open_the_line_holding_roots_back(&mut forest, "orbital");
+        focus_on(&mut forest, "dun-7.1");
+        open_the_line_holding_roots_back(&mut forest, "dunwich");
 
-        toggle_fold_of(&mut forest, "orb-7");
+        toggle_fold_of(&mut forest, "dun-7");
 
         assert!(
             drawn_here(&forest, "○ .7 log the survey marks"),
@@ -8827,9 +8827,9 @@ credential_command = "secret harbour"
     #[test]
     fn the_line_leaves_the_focused_bead_to_the_root_of_the_forest() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
-        open_the_line_holding_roots_back(&mut forest, "orbital");
+        open_the_line_holding_roots_back(&mut forest, "dunwich");
 
         assert_eq!(
             sketch(&forest)
@@ -8847,16 +8847,16 @@ credential_command = "secret harbour"
     #[test]
     fn the_line_counts_the_seats_above_the_focused_bead() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
-        let held = held_by_the_line(&forest, "orbital");
+        let held = held_by_the_line(&forest, "dunwich");
 
         assert_eq!(
             held.live_agents,
-            counts_of(&forest, "orbital", "orb-7").live_agents,
-            "every seat in orbital is on a bead the mode stopped drawing"
+            counts_of(&forest, "dunwich", "dun-7").live_agents,
+            "every seat in dunwich is on a bead the mode stopped drawing"
         );
-        assert!(held.live_agents > 0, "orbital is where the agents are");
+        assert!(held.live_agents > 0, "dunwich is where the agents are");
     }
 
     /// It counts what it is standing over rather than the whole root the beads
@@ -8866,14 +8866,14 @@ credential_command = "secret harbour"
     #[test]
     fn the_line_counts_only_the_beads_the_mode_stopped_drawing() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
-        let held = held_by_the_line(&forest, "orbital");
+        let held = held_by_the_line(&forest, "dunwich");
 
         assert_eq!(
             held.total,
-            counts_of(&forest, "orbital", "orb-7").total - 3,
-            "orb-7.1 and the two beads beneath it are drawn at the root"
+            counts_of(&forest, "dunwich", "dun-7").total - 3,
+            "dun-7.1 and the two beads beneath it are drawn at the root"
         );
     }
 
@@ -8882,14 +8882,14 @@ credential_command = "secret harbour"
     #[test]
     fn going_to_a_bead_above_the_focused_one_opens_the_line_it_is_behind() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         assert!(
-            forest.go_to(&key("orbital", "orb-7")),
+            forest.go_to(&key("dunwich", "dun-7")),
             "cannot reach the bead above: {:#?}",
             sketch(&forest)
         );
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-7")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7")));
     }
 
     /// A run says what opening it would draw. Where the bead the forest is
@@ -8899,11 +8899,11 @@ credential_command = "secret harbour"
     #[test]
     fn a_run_behind_the_line_leaves_the_focused_bead_out_of_its_count() {
         let mut forest = flatten(snapshot());
-        assert!(forest.go_to(&key("orbital", "orb-7.2")), "no such bead");
+        assert!(forest.go_to(&key("dunwich", "dun-7.2")), "no such bead");
         assert!(forest.apply(Action::FocusForest));
 
         assert!(
-            forest.go_to(&key("orbital", "orb-7.3")),
+            forest.go_to(&key("dunwich", "dun-7.3")),
             "cannot reach a bead in the run: {:#?}",
             sketch(&forest)
         );
@@ -8921,11 +8921,11 @@ credential_command = "secret harbour"
     #[test]
     fn a_run_behind_the_line_leaves_out_a_focused_bead_beneath_a_member() {
         let mut forest = flatten(depot());
-        assert!(forest.go_to(&key("orbital", "dep-1.2.1")), "no such bead");
+        assert!(forest.go_to(&key("dunwich", "dep-1.2.1")), "no such bead");
         assert!(forest.apply(Action::FocusForest));
 
         assert!(
-            forest.go_to(&key("orbital", "dep-1.3")),
+            forest.go_to(&key("dunwich", "dep-1.3")),
             "cannot reach the run: {:#?}",
             sketch(&forest)
         );
@@ -8940,12 +8940,12 @@ credential_command = "secret harbour"
     #[test]
     fn going_to_the_focused_bead_reaches_the_copy_it_is_rooted_at() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
 
         assert!(
-            forest.go_to(&key("orbital", "orb-9")),
+            forest.go_to(&key("dunwich", "dun-9")),
             "cannot reach the bead the forest is rooted at: {:#?}",
             sketch(&forest)
         );
@@ -8959,7 +8959,7 @@ credential_command = "secret harbour"
     #[test]
     fn rooting_the_forest_at_a_later_copy_keeps_where_that_copy_stands() {
         let mut forest = flatten(deep_bead_drawn_twice_in_one_tree());
-        let [upper, lower] = copies_of(&forest, "orb-6");
+        let [upper, lower] = copies_of(&forest, "dun-6");
         assert_eq!(
             forest.lines()[upper].folded,
             Some(true),
@@ -8970,7 +8970,7 @@ credential_command = "secret harbour"
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
 
-        let [milling] = lines_of(&forest, "orb-6.1")[..] else {
+        let [milling] = lines_of(&forest, "dun-6.1")[..] else {
             panic!("the copy's own child is drawn once: {:#?}", sketch(&forest));
         };
         assert_eq!(
@@ -8987,16 +8987,16 @@ credential_command = "secret harbour"
     #[test]
     fn going_to_a_bead_under_the_focused_copy_reaches_it() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
 
         assert!(
-            forest.go_to(&key("orbital", "orb-9.1")),
+            forest.go_to(&key("dunwich", "dun-9.1")),
             "cannot reach the bead beneath it: {:#?}",
             sketch(&forest)
         );
-        assert_eq!(cursor(&forest), Some(&key("orbital", "orb-9.1")));
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-9.1")));
     }
 
     /// A root the tracker files under another root is still the bead the
@@ -9005,7 +9005,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_collection_that_filed_the_focused_root_under_another_stays_rooted_at_it() {
         let staffed = panes_on(&["hbr-9.1"]);
-        let mut forest = flatten(together("orbital", &[HARBOUR, SLIPWAY], &staffed));
+        let mut forest = flatten(together("dunwich", &[HARBOUR, SLIPWAY], &staffed));
         focus_on(&mut forest, "hbr-9");
         assert!(
             !drawn_here(&forest, "dredge the channel"),
@@ -9013,7 +9013,7 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
 
-        forest.refresh(together("orbital", &[SLIPWAY_UNDER_HARBOUR], &staffed));
+        forest.refresh(together("dunwich", &[SLIPWAY_UNDER_HARBOUR], &staffed));
 
         assert!(
             drawn_here(&forest, "re-deck the slipway"),
@@ -9021,7 +9021,7 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
         assert!(
-            drawn_here(&forest, "[OutOfTheWay orbital]"),
+            drawn_here(&forest, "[OutOfTheWay dunwich]"),
             "still rooted at one bead: {:#?}",
             sketch(&forest)
         );
@@ -9033,11 +9033,11 @@ credential_command = "secret harbour"
     #[test]
     fn a_search_counts_from_the_bead_the_forest_is_rooted_at() {
         let mut forest = flatten(together(
-            "orbital",
+            "dunwich",
             &[HARBOUR, SLIPWAY],
             &panes_on(&["hbr-9.1"]),
         ));
-        assert!(forest.go_to(&key("orbital", "hbr-3.1")), "no such bead");
+        assert!(forest.go_to(&key("dunwich", "hbr-3.1")), "no such bead");
         assert!(forest.apply(Action::FocusForest));
 
         let landed = forest.seek("the");
@@ -9045,7 +9045,7 @@ credential_command = "secret harbour"
         let Landed::On { key: found, at, .. } = landed else {
             panic!("nothing matched: {landed:?}")
         };
-        assert_eq!((found, at), (key("orbital", "hbr-3.1"), 1));
+        assert_eq!((found, at), (key("dunwich", "hbr-3.1"), 1));
     }
 
     /// Stepping through matches from a row that is not a bead carries on from
@@ -9055,9 +9055,9 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_from_the_shut_line_carries_on_into_the_roots_behind_it() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
         forest.seek("the");
-        let at = the_line_holding_roots_back(&forest, "orbital");
+        let at = the_line_holding_roots_back(&forest, "dunwich");
         step_onto(&mut forest, at);
         assert_eq!(
             forest.lines()[at].folded,
@@ -9070,7 +9070,7 @@ credential_command = "secret harbour"
         let Some(Landed::On { key: found, .. }) = landed else {
             panic!("nothing matched: {landed:?}")
         };
-        assert_eq!(found, key("orbital", "orb-7"));
+        assert_eq!(found, key("dunwich", "dun-7"));
     }
 
     /// A root whose tracker refused leads its project whatever the filter
@@ -9081,16 +9081,16 @@ credential_command = "secret harbour"
     fn stepping_from_the_shut_line_reaches_past_a_root_holding_no_bead() {
         let mut forest = flatten(gather(
             vec![
-                tree_of("orbital", ORBITAL),
-                Tree::tracker_unreachable("orbital", "orb-0", TrackerFailure::Auth),
+                tree_of("dunwich", DUNWICH),
+                Tree::tracker_unreachable("dunwich", "dun-0", TrackerFailure::Auth),
                 tree_of("harbour", HARBOUR),
             ],
             Vec::new(),
             Filter::LiveAgents,
         ));
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
         forest.seek("the");
-        let at = the_line_holding_roots_back(&forest, "orbital");
+        let at = the_line_holding_roots_back(&forest, "dunwich");
         step_onto(&mut forest, at);
 
         let landed = forest.next_match(true);
@@ -9098,7 +9098,7 @@ credential_command = "secret harbour"
         let Some(Landed::On { key: found, .. }) = landed else {
             panic!("nothing matched: {landed:?}")
         };
-        assert_eq!(found, key("orbital", "orb-7"));
+        assert_eq!(found, key("dunwich", "dun-7"));
     }
 
     /// Open every fold on the screen, with the keys a reader has, until the
@@ -9135,7 +9135,7 @@ credential_command = "secret harbour"
     /// without it, because the mode is what moves the rows.
     #[test]
     fn a_search_enumerates_the_beads_in_the_order_the_rows_draw_them() {
-        for rooted in [None, Some("orb-7.1")] {
+        for rooted in [None, Some("dun-7.1")] {
             let mut forest = flatten(snapshot());
             if let Some(bead) = rooted {
                 focus_on(&mut forest, bead);
@@ -9169,13 +9169,13 @@ credential_command = "secret harbour"
     #[test]
     fn a_search_counts_a_bead_above_the_focused_one() {
         let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "orb-7.1");
+        focus_on(&mut forest, "dun-7.1");
 
         let landed = forest.seek("lift the ground station");
 
         let Landed::On { key: found, .. } = landed else {
             panic!("nothing matched: {landed:?}")
         };
-        assert_eq!(found, key("orbital", "orb-7"));
+        assert_eq!(found, key("dunwich", "dun-7"));
     }
 }

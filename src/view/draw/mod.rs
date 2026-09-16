@@ -278,8 +278,8 @@ mod tests {
         Content::Elided {
             count,
             under: lines::Place::root(BeadKey {
-                project: "orbital".into(),
-                id: "orb-7".into(),
+                project: "dunwich".into(),
+                id: "dun-7".into(),
             }),
         }
     }

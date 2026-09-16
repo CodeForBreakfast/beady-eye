@@ -32,14 +32,14 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// that never moves is a colour a single badge cannot be shown to have taken
 /// from anywhere.
 const THE_TRACKER: &str = r#"[
-  {"id":"orb-1","title":"lift the ground station","status":"open",
+  {"id":"dun-1","title":"lift the ground station","status":"open",
    "priority":1,"issue_type":"epic"},
-  {"id":"orb-1.1","title":"repoint the dish","status":"blocked","parent":"orb-1",
-   "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
-   "priority":2,"issue_type":"task","metadata":{"jira":"ATLAS-19"}},
-  {"id":"orb-1.2","title":"trim the sails","status":"in_progress","parent":"orb-1",
-   "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
-   "priority":2,"issue_type":"task","metadata":{"jira":"ATLAS-20"}}
+  {"id":"dun-1.1","title":"repoint the dish","status":"blocked","parent":"dun-1",
+   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
+   "priority":2,"issue_type":"task","metadata":{"jira":"ARKHAM-19"}},
+  {"id":"dun-1.2","title":"trim the sails","status":"in_progress","parent":"dun-1",
+   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
+   "priority":2,"issue_type":"task","metadata":{"jira":"ARKHAM-20"}}
 ]"#;
 
 /// The badge this whole knob is for: a ticket in another tracker, pointing at
@@ -86,6 +86,6 @@ fn a_badge_coloured_by_status_takes_a_different_colour_on_each_beads_row() {
     bdi.settle(A_SILENCE, GIVING_UP);
     bdi.send(OPEN_THE_TREE);
 
-    bdi.read_until(drawn(BLOCKED, "ATLAS-19").as_bytes(), GIVING_UP);
-    bdi.read_until(drawn(IN_PROGRESS, "ATLAS-20").as_bytes(), GIVING_UP);
+    bdi.read_until(drawn(BLOCKED, "ARKHAM-19").as_bytes(), GIVING_UP);
+    bdi.read_until(drawn(IN_PROGRESS, "ARKHAM-20").as_bytes(), GIVING_UP);
 }

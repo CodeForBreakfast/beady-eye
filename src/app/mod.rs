@@ -29,21 +29,21 @@ mod fixtures {
     use crate::model::snapshot::{Node, Tree};
     use crate::model::types::{Bead, PaneStatus};
 
-    pub(super) const ORBITAL: &str = "/srv/work/orbital";
+    pub(super) const DUNWICH: &str = "/srv/work/dunwich";
     pub(super) const FERRY: &str = "/srv/work/ferry";
 
     /// One project's tracker: an epic over two tasks, one of them naming the
     /// pane working it. Every row carries its own `parent` as well as the
     /// edge, because a tracker writes both.
-    pub(super) const ORBITAL_TREE: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+    pub(super) const DUNWICH_TREE: &str = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"lay the feeder cable","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -59,8 +59,8 @@ mod fixtures {
     /// `w:p1` is on a bead; `w:p9` is a session on none.
     pub(super) fn panes() -> Provider {
         Provider::holding(vec![
-            titled(pane("w:p1", ORBITAL, PaneStatus::Working), "the dish"),
-            pane("w:p9", ORBITAL, PaneStatus::Idle),
+            titled(pane("w:p1", DUNWICH, PaneStatus::Working), "the dish"),
+            pane("w:p9", DUNWICH, PaneStatus::Idle),
         ])
     }
 
@@ -82,8 +82,8 @@ mod fixtures {
         Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 "#
         ))
         .expect("the config parses")
@@ -96,9 +96,9 @@ path = "{ORBITAL}"
         Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
-credential_command = "pass show orbital"
+name = "dunwich"
+path = "{DUNWICH}"
+credential_command = "pass show dunwich"
 "#
         ))
         .expect("the config parses")
@@ -115,11 +115,11 @@ credential_command = "pass show orbital"
         Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [roots.explicit]
-orbital = ["orb-7.1"]
+dunwich = ["dun-7.1"]
 "#
         ))
         .expect("the config parses")
@@ -129,8 +129,8 @@ orbital = ["orb-7.1"]
         Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [[projects]]
 name = "ferry"
@@ -140,27 +140,27 @@ path = "{FERRY}"
         .expect("the config parses")
     }
 
-    /// Orbital's tracker holding `rows` in place of its usual tree, with the
+    /// Dunwich's tracker holding `rows` in place of its usual tree, with the
     /// same task ready and the same task blocked from outside it.
-    pub(super) fn orbital_holding(rows: &str) -> Fake {
+    pub(super) fn dunwich_holding(rows: &str) -> Fake {
         Fake::holding(beads(rows))
-            .ready(["orb-7.2"])
-            .blocked("orb-7.1", &["orb-9"])
+            .ready(["dun-7.2"])
+            .blocked("dun-7.1", &["dun-9"])
     }
 
-    /// Orbital's tracker as a healthy single-project run finds it.
-    pub(super) fn orbital_tracker() -> Fake {
-        orbital_holding(ORBITAL_TREE)
+    /// Dunwich's tracker as a healthy single-project run finds it.
+    pub(super) fn dunwich_tracker() -> Fake {
+        dunwich_holding(DUNWICH_TREE)
     }
 
-    /// The one project's trackers, with orbital's staged as `tracker`.
-    pub(super) fn orbital_with(tracker: Fake) -> Fakes {
-        Fakes::default().with("orbital", tracker)
+    /// The one project's trackers, with dunwich's staged as `tracker`.
+    pub(super) fn dunwich_with(tracker: Fake) -> Fakes {
+        Fakes::default().with("dunwich", tracker)
     }
 
     /// The one project's trackers as a healthy run finds them.
-    pub(super) fn orbital() -> Fakes {
-        orbital_with(orbital_tracker())
+    pub(super) fn dunwich() -> Fakes {
+        dunwich_with(dunwich_tracker())
     }
 
     /// One of the two trackers that chose the same prefix.
@@ -171,7 +171,7 @@ path = "{FERRY}"
     /// Both projects' trackers, each holding the colliding tree.
     pub(super) fn colliding_trackers() -> Fakes {
         Fakes::default()
-            .with("orbital", colliding_tracker())
+            .with("dunwich", colliding_tracker())
             .with("ferry", colliding_tracker())
     }
 

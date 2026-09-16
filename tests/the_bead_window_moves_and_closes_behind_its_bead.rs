@@ -37,9 +37,9 @@ const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 const REFRESH: &[u8] = b"\x12";
 
 /// The title of the window over that bead, from `view::show`, and the whole
-/// of it: the tree's header is `orb-0tp`, so the id alone would also be met
+/// of it: the tree's header is `dun-0tp`, so the id alone would also be met
 /// by the window over the row above.
-const ITS_WINDOW: &[u8] = "orb-0tp.6 · Esc to go back".as_bytes();
+const ITS_WINDOW: &[u8] = "dun-0tp.6 · Esc to go back".as_bytes();
 
 /// The part of that title every bead's window says, whichever bead it is on.
 ///
@@ -186,7 +186,7 @@ fn without_the_first_bead() -> String {
         serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("a capture of bd list --json");
     let kept: Vec<serde_json::Value> = rows
         .into_iter()
-        .filter(|row| row["id"] != "orb-0tp.6")
+        .filter(|row| row["id"] != "dun-0tp.6")
         .collect();
     assert_eq!(kept.len(), 4, "the capture has to have held that bead");
     serde_json::to_string(&kept).expect("rows serialise")

@@ -1059,7 +1059,7 @@ impl Outstanding {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, A_MOMENT, PATIENCE};
+    use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
     use crate::view::phrase;
@@ -2412,7 +2412,7 @@ mod tests {
     fn a_burst_about_one_project_inside_the_window_costs_one_read() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = waiting((0..100).map(|_| Event::Changed(atlas())).collect());
+        let events = waiting((0..100).map(|_| Event::Changed(arkham())).collect());
 
         drive(
             &mut view,
@@ -2427,7 +2427,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [vec![atlas()]],
+            [vec![arkham()]],
             "a hundred messages, one read, and the screen told once"
         );
     }
@@ -2459,7 +2459,7 @@ mod tests {
     fn the_loop_sleeps_until_the_soonest_of_what_it_is_waiting_for() {
         let now = Utc::now();
         let mut outstanding = gathering(A_LONG_WINDOW);
-        outstanding.ask(atlas(), now);
+        outstanding.ask(arkham(), now);
         let mut sooner = Armed::polling("ferry".to_string(), Some(AN_INTERVAL));
         sooner.came_back(&ferry(), now);
 
@@ -2495,7 +2495,7 @@ mod tests {
     fn the_loop_sleeps_until_the_band_is_due_to_read_its_pane_again() {
         let now = Utc::now();
         let mut outstanding = gathering(A_LONG_WINDOW);
-        outstanding.ask(atlas(), now);
+        outstanding.ask(arkham(), now);
         let view = Recorder {
             rereads_in: Some(AN_INTERVAL),
             ..Recorder::default()
@@ -2548,10 +2548,10 @@ mod tests {
         )
     }
 
-    const ATLAS_ALONE: &str = "[[projects]]\nname = \"atlas\"\npath = \"/srv/work/atlas\"\n";
+    const ARKHAM_ALONE: &str = "[[projects]]\nname = \"arkham\"\npath = \"/srv/work/arkham\"\n";
     const FERRY_ALONE: &str = "[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
-    const ATLAS_AND_FERRY: &str = "[[projects]]\nname = \"atlas\"\npath = \"/srv/work/atlas\"\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
-    const ATLAS_TOLD_INSTEAD: &str = "[[projects]]\nname = \"atlas\"\npath = \"/srv/work/atlas\"\npoll = false\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
+    const ARKHAM_AND_FERRY: &str = "[[projects]]\nname = \"arkham\"\npath = \"/srv/work/arkham\"\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
+    const ARKHAM_TOLD_INSTEAD: &str = "[[projects]]\nname = \"arkham\"\npath = \"/srv/work/arkham\"\npoll = false\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
 
     fn a_config(text: &str) -> Config {
         Config::from_toml(text).expect("the fixture parses")
@@ -2600,14 +2600,18 @@ mod tests {
             at_once(),
             a_run_reading(nothing_armed()),
             &polling_every_interval(),
-            Some(a_config_file_saying("gained", ATLAS_AND_FERRY, ATLAS_ALONE)),
+            Some(a_config_file_saying(
+                "gained",
+                ARKHAM_AND_FERRY,
+                ARKHAM_ALONE,
+            )),
         )
         .expect("the loop runs");
 
         assert_eq!(
             asked.try_iter().collect::<Vec<_>>(),
             [
-                Asked::Reloaded(Box::new(a_config(ATLAS_AND_FERRY))),
+                Asked::Reloaded(Box::new(a_config(ARKHAM_AND_FERRY))),
                 Asked::Read(Wanted::Everything)
             ],
             "the collector was handed the config the reader wrote, and then \
@@ -2628,7 +2632,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
-        let reported = Reported::watching(["atlas".to_string()]);
+        let reported = Reported::watching(["arkham".to_string()]);
 
         drive(
             &mut view,
@@ -2637,15 +2641,15 @@ mod tests {
             at_once(),
             Reading::of(nothing_armed(), reported.clone()),
             &polling_every_interval(),
-            Some(a_config_file_saying("accepts", FERRY_ALONE, ATLAS_ALONE)),
+            Some(a_config_file_saying("accepts", FERRY_ALONE, ARKHAM_ALONE)),
         )
         .expect("the loop runs");
 
         assert_eq!(
-            (reported.take("ferry"), reported.take("atlas")),
+            (reported.take("ferry"), reported.take("arkham")),
             (
                 crate::collect::changes::Answer::Watched("ferry".to_string()),
-                crate::collect::changes::Answer::Unwatched("atlas".to_string())
+                crate::collect::changes::Answer::Unwatched("arkham".to_string())
             ),
             "the channel accepts the project the reader added and refuses \
              the one they took out, without the run being started again"
@@ -2710,8 +2714,8 @@ mod tests {
     fn the_projects_that_poll_are_the_ones_the_config_now_names() {
         let reached = until_a_project_asks_for_itself(
             "swapped",
-            vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))],
-            ATLAS_ALONE,
+            vec![Armed::polling("arkham".to_string(), Some(AN_INTERVAL))],
+            ARKHAM_ALONE,
             FERRY_ALONE,
         );
 
@@ -2722,7 +2726,7 @@ mod tests {
              came back"
         );
         assert!(
-            !reached.contains(&Asked::Read(atlas())),
+            !reached.contains(&Asked::Read(arkham())),
             "and the project the config lost asked for nothing: {reached:?}"
         );
     }
@@ -2741,11 +2745,11 @@ mod tests {
         let reached = until_a_project_asks_for_itself(
             "told-instead",
             vec![
-                Armed::polling("atlas".to_string(), Some(AN_INTERVAL)),
+                Armed::polling("arkham".to_string(), Some(AN_INTERVAL)),
                 Armed::polling("ferry".to_string(), Some(AN_INTERVAL)),
             ],
-            ATLAS_AND_FERRY,
-            ATLAS_TOLD_INSTEAD,
+            ARKHAM_AND_FERRY,
+            ARKHAM_TOLD_INSTEAD,
         );
 
         assert_eq!(
@@ -2754,7 +2758,7 @@ mod tests {
             "the project the edit left alone asked for itself"
         );
         assert!(
-            !reached.contains(&Asked::Read(atlas())),
+            !reached.contains(&Asked::Read(arkham())),
             "and the one it stopped polling asked for nothing, though it is \
              still read: {reached:?}"
         );
@@ -2839,7 +2843,7 @@ mod tests {
     fn a_deadline_decided_after_the_frame_is_what_is_left_of_it() {
         let now = Utc::now();
         let mut view = Recorder::default();
-        View::collecting(&mut view, &[reading(atlas(), now)]);
+        View::collecting(&mut view, &[reading(arkham(), now)]);
 
         let drawn_at = now - TimeDelta::milliseconds(30);
         assert_eq!(
@@ -2866,8 +2870,8 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Key(key(KeyCode::Char('x')))]);
-        let mut overdue = Armed::polling("atlas".to_string(), Some(AN_INTERVAL));
-        overdue.came_back(&atlas(), Utc::now() - TimeDelta::hours(1));
+        let mut overdue = Armed::polling("arkham".to_string(), Some(AN_INTERVAL));
+        overdue.came_back(&arkham(), Utc::now() - TimeDelta::hours(1));
 
         drive(
             &mut view,
@@ -2882,7 +2886,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [vec![atlas()]],
+            [vec![arkham()]],
             "the poll asked, and said so"
         );
         assert_eq!(
@@ -2899,7 +2903,7 @@ mod tests {
     /// list, because what is being waited on is the loop's own deadline: a
     /// list that ran out would close the channel and end the run before the
     /// interval was up.
-    fn until_atlas_asks_for_itself(view: &mut Recorder) -> Option<Wanted> {
+    fn until_arkham_asks_for_itself(view: &mut Recorder) -> Option<Wanted> {
         let (ask, asked) = mpsc::channel();
         let (send, events) = mpsc::channel();
         send.send(Event::Collected(Box::new(a_snapshot())))
@@ -2915,7 +2919,10 @@ mod tests {
             &events,
             &ask,
             started(),
-            a_run_reading(vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))]),
+            a_run_reading(vec![Armed::polling(
+                "arkham".to_string(),
+                Some(AN_INTERVAL),
+            )]),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -2934,12 +2941,12 @@ mod tests {
     fn a_project_asks_for_itself_again_once_its_read_comes_back() {
         let mut view = Recorder::default();
 
-        let asked_for = until_atlas_asks_for_itself(&mut view);
+        let asked_for = until_arkham_asks_for_itself(&mut view);
 
         assert_eq!(
             asked_for,
-            Some(atlas()),
-            "the read that came back armed atlas, and its interval came round"
+            Some(arkham()),
+            "the read that came back armed arkham, and its interval came round"
         );
     }
 
@@ -2957,11 +2964,11 @@ mod tests {
     fn a_project_that_asked_for_itself_says_so_on_the_screen() {
         let mut view = Recorder::default();
 
-        until_atlas_asks_for_itself(&mut view);
+        until_arkham_asks_for_itself(&mut view);
 
         assert_eq!(
             view.collecting().last(),
-            Some(&vec![atlas()]),
+            Some(&vec![arkham()]),
             "the poll's own read is said on the screen like any other"
         );
     }
@@ -2989,7 +2996,7 @@ mod tests {
     /// assertion below having given the loop no opportunity to misbehave —
     /// which is a pass, not a flake, and so nothing draws attention to it.
     /// What the loop is let go on instead is a pass a whole interval past
-    /// that ask: atlas came due again with the ask still outstanding, and
+    /// that ask: arkham came due again with the ask still outstanding, and
     /// `Armed::asks` declined it.
     #[test]
     fn a_project_whose_ask_is_never_answered_asks_no_more() {
@@ -3016,7 +3023,10 @@ mod tests {
             &events,
             &ask,
             started(),
-            a_run_reading(vec![Armed::polling("atlas".to_string(), Some(AN_INTERVAL))]),
+            a_run_reading(vec![Armed::polling(
+                "arkham".to_string(),
+                Some(AN_INTERVAL),
+            )]),
             &polling_every_interval(),
             nothing_watched(),
         )
@@ -3024,18 +3034,18 @@ mod tests {
 
         let (first, asked) = holding.join().expect("the thread ran");
         let reached_the_collector = reads(first.into_iter().chain(asked.try_iter()));
-        let asked_at = *view.asked_at().first().expect("atlas asked once");
+        let asked_at = *view.asked_at().first().expect("arkham asked once");
         let last_looked = *view.reread_at.last().expect("the loop went round");
         assert!(
             last_looked - asked_at >= an_interval(),
-            "the loop last looked at what was due {} after the ask, so atlas \
+            "the loop last looked at what was due {} after the ask, so arkham \
              never came due again while that ask stood",
             last_looked - asked_at
         );
         assert_eq!(
             reached_the_collector,
-            [atlas()],
-            "atlas came due again and was declined: nothing had answered it"
+            [arkham()],
+            "arkham came due again and was declined: nothing had answered it"
         );
     }
 
@@ -3068,7 +3078,7 @@ mod tests {
     fn a_collection_nobody_asked_for_is_still_said_on_the_screen() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = waiting(vec![Event::Changed(atlas())]);
+        let events = waiting(vec![Event::Changed(arkham())]);
 
         drive(
             &mut view,
@@ -3081,7 +3091,7 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(view.collecting(), [vec![atlas()]]);
+        assert_eq!(view.collecting(), [vec![arkham()]]);
         assert_eq!(view.drawn(), 2);
     }
 
@@ -3137,7 +3147,7 @@ mod tests {
         // out. A window of wall clock would ask instead how many frames a
         // real 320 ms buys, which is the scheduler's answer and not the
         // loop's.
-        let events = going_round(&mut view, 2, vec![Event::Changed(atlas())]);
+        let events = going_round(&mut view, 2, vec![Event::Changed(arkham())]);
 
         drive(
             &mut view,
@@ -3155,7 +3165,7 @@ mod tests {
             "the first frame, the collection starting, and the mark turning: {}",
             view.drawn()
         );
-        assert_eq!(view.collecting(), [vec![atlas()]], "no second collection");
+        assert_eq!(view.collecting(), [vec![arkham()]], "no second collection");
         assert_eq!(view.applied, [], "and no action for a frame running out");
     }
 
@@ -3168,7 +3178,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
             Event::Changed(ferry()),
             Event::Collected(Box::new(a_snapshot())),
         ]);
@@ -3186,7 +3196,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [vec![atlas()], vec![atlas(), ferry()], vec![ferry()]],
+            [vec![arkham()], vec![arkham(), ferry()], vec![ferry()]],
             "the one the event asked for, then it with ferry waiting behind \
              it, then ferry alone once the first came back"
         );
@@ -3201,7 +3211,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let before = Utc::now();
-        let events = waiting(vec![Event::Changed(atlas())]);
+        let events = waiting(vec![Event::Changed(arkham())]);
 
         drive(
             &mut view,
@@ -3234,8 +3244,8 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
+            Event::Changed(arkham()),
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
@@ -3252,7 +3262,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [vec![atlas()], vec![atlas(), atlas()], vec![atlas()]],
+            [vec![arkham()], vec![arkham(), arkham()], vec![arkham()]],
             "the one in flight, then it with the second waiting, then the \
              second alone"
         );
@@ -3277,7 +3287,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
@@ -3294,7 +3304,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [vec![atlas()], vec![]],
+            [vec![arkham()], vec![]],
             "the one the event asked for, and nothing once it landed"
         );
     }
@@ -3309,7 +3319,7 @@ mod tests {
     fn a_request_waiting_its_turn_is_said_beside_the_one_in_flight() {
         let mut view = Recorder::default();
         let (ask, _asked) = mpsc::channel();
-        let events = waiting(vec![Event::Changed(atlas()), Event::Changed(ferry())]);
+        let events = waiting(vec![Event::Changed(arkham()), Event::Changed(ferry())]);
 
         drive(
             &mut view,
@@ -3324,7 +3334,7 @@ mod tests {
 
         assert_eq!(
             view.collecting(),
-            [vec![atlas()], vec![atlas(), ferry()]],
+            [vec![arkham()], vec![arkham(), ferry()]],
             "the one in flight, then it and the one behind it"
         );
         assert_eq!(view.drawn(), 3, "and the screen changed for it");
@@ -3335,7 +3345,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
             Event::Changed(ferry()),
             Event::Key(control('r')),
         ]);
@@ -3353,7 +3363,7 @@ mod tests {
 
         assert_eq!(
             reads(asked.try_iter()),
-            [atlas()],
+            [arkham()],
             "the two behind it wait for the one in flight to come back"
         );
     }
@@ -3367,7 +3377,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
             Event::Changed(ferry()),
             Event::Collected(Box::new(a_snapshot())),
         ]);
@@ -3383,7 +3393,7 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(reads(asked.try_iter()), [atlas(), ferry()]);
+        assert_eq!(reads(asked.try_iter()), [arkham(), ferry()]);
     }
 
     /// A project reported for again while it is being read is read again: the
@@ -3393,8 +3403,8 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
+            Event::Changed(arkham()),
             Event::Collected(Box::new(a_snapshot())),
         ]);
 
@@ -3409,7 +3419,7 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(reads(asked.try_iter()), [atlas(), atlas()]);
+        assert_eq!(reads(asked.try_iter()), [arkham(), arkham()]);
     }
 
     /// Whatever waits behind a collection is bounded by the projects there
@@ -3420,7 +3430,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
             Event::Changed(ferry()),
             Event::Key(control('r')),
             Event::Changed(ferry()),
@@ -3441,7 +3451,7 @@ mod tests {
 
         assert_eq!(
             reads(asked.try_iter()),
-            [atlas(), Wanted::Everything],
+            [arkham(), Wanted::Everything],
             "ferry was going to be read by the whole collection anyway"
         );
     }
@@ -3486,7 +3496,7 @@ mod tests {
         let mut view = Recorder::default();
         let (ask, asked) = mpsc::channel();
         let events = waiting(vec![
-            Event::Changed(atlas()),
+            Event::Changed(arkham()),
             Event::Collected(Box::new(a_snapshot())),
             Event::Changed(ferry()),
         ]);
@@ -3505,7 +3515,7 @@ mod tests {
         assert_eq!(view.collected, 1);
         assert_eq!(
             reads(asked.try_iter()),
-            [atlas(), ferry()],
+            [arkham(), ferry()],
             "the collection was over, so the second change asked for its own"
         );
     }
@@ -3976,11 +3986,11 @@ mod tests {
         /// waiting.
         #[test]
         fn a_read_that_cannot_be_sent_yet_is_stamped_when_it_joins_the_queue() {
-            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(arkham());
 
             outstanding.ask(ferry(), at(5));
 
-            assert_eq!(stamps(&outstanding), [(atlas(), at(0)), (ferry(), at(5))]);
+            assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (ferry(), at(5))]);
         }
 
         /// A project with nothing reporting for it is polled every refresh
@@ -3992,12 +4002,12 @@ mod tests {
         /// read, and the mark would never turn.
         #[test]
         fn a_project_reported_for_again_while_it_waits_keeps_the_wait_it_has() {
-            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(arkham());
 
             outstanding.ask(ferry(), at(5));
             outstanding.ask(ferry(), at(35));
 
-            assert_eq!(stamps(&outstanding), [(atlas(), at(0)), (ferry(), at(5))]);
+            assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (ferry(), at(5))]);
         }
 
         /// `codex review` on this change, and it is right: a whole collection
@@ -4018,14 +4028,14 @@ mod tests {
         /// nobody asked.
         #[test]
         fn a_whole_collection_absorbing_what_waits_starts_a_wait_of_its_own() {
-            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(arkham());
 
             outstanding.ask(ferry(), at(5));
             outstanding.ask(Wanted::Everything, at(40));
 
             assert_eq!(
                 stamps(&outstanding),
-                [(atlas(), at(0)), (Wanted::Everything, at(40))],
+                [(arkham(), at(0)), (Wanted::Everything, at(40))],
                 "not :05, which would be every other project's wait too"
             );
         }
@@ -4038,14 +4048,14 @@ mod tests {
         #[test]
         fn a_whole_collection_absorbs_a_read_that_has_not_been_sent() {
             let mut outstanding = Outstanding::waiting(PATIENCE, A_LONG_WINDOW);
-            outstanding.ask(atlas(), at(0));
+            outstanding.ask(arkham(), at(0));
 
             outstanding.ask(Wanted::Everything, at(1));
 
             assert_eq!(
                 stamps(&outstanding),
                 [(Wanted::Everything, at(1))],
-                "the whole collection reads atlas anyway, and nothing had gone yet"
+                "the whole collection reads arkham anyway, and nothing had gone yet"
             );
         }
 
@@ -4053,13 +4063,13 @@ mod tests {
         /// running is not the collection about to be asked for.
         #[test]
         fn a_whole_collection_keeps_the_read_already_in_flight() {
-            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(arkham());
 
             outstanding.ask(Wanted::Everything, at(1));
 
             assert_eq!(
                 stamps(&outstanding),
-                [(atlas(), at(0)), (Wanted::Everything, at(1))]
+                [(arkham(), at(0)), (Wanted::Everything, at(1))]
             );
         }
 
@@ -4106,7 +4116,7 @@ mod tests {
             .unanswered_after();
             let (ask, asked) = mpsc::channel();
             let mut outstanding = Outstanding::for_a_run(shortest);
-            outstanding.ask(atlas(), at(0));
+            outstanding.ask(arkham(), at(0));
 
             let held_for = outstanding
                 .sends_in(at(0))
@@ -4117,12 +4127,12 @@ mod tests {
 
             assert_eq!(
                 reads(asked.try_iter()),
-                [atlas()],
+                [arkham()],
                 "the window was out, so the read went"
             );
             assert!(
                 !outstanding.awaited()[0].unanswered_at(out),
-                "and atlas was not yet said to have stopped being read"
+                "and arkham was not yet said to have stopped being read"
             );
         }
 
@@ -4132,7 +4142,7 @@ mod tests {
         /// moment ago the instant that tracker answers.
         #[test]
         fn a_read_that_reaches_the_front_keeps_the_stamp_it_queued_at() {
-            let (mut outstanding, _ask, _asked) = hung_on(atlas());
+            let (mut outstanding, _ask, _asked) = hung_on(arkham());
             outstanding.ask(ferry(), at(5));
 
             outstanding.came_back();
@@ -4145,7 +4155,7 @@ mod tests {
         /// working on and the rest follow in turn.
         #[test]
         fn the_reads_are_sent_in_the_order_they_were_asked_for() {
-            let (mut outstanding, ask, asked) = hung_on(atlas());
+            let (mut outstanding, ask, asked) = hung_on(arkham());
             outstanding.ask(ferry(), at(5));
             outstanding.ask(Wanted::Project("harbour".to_string()), at(6));
 
@@ -4156,7 +4166,7 @@ mod tests {
 
             assert_eq!(
                 reads(asked.try_iter()),
-                [atlas(), ferry(), Wanted::Project("harbour".to_string())]
+                [arkham(), ferry(), Wanted::Project("harbour".to_string())]
             );
         }
 

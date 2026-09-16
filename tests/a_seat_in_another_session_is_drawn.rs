@@ -27,7 +27,7 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 
 /// The session the seat is in, and the one that will not answer. Neither is
 /// the session herdr runs where nothing names one.
-const ANOTHER_SESSION: &str = "beacon";
+const ANOTHER_SESSION: &str = "kadath";
 const A_SILENT_SESSION: &str = "standing-agents";
 
 /// The pane the bead names, by id alone — what a seat writes to `agent_pane`.
@@ -39,7 +39,7 @@ const WHAT_THE_SEAT_SAYS: &str = "re-pointing the dish";
 /// One bead, claimed, naming the seat.
 fn a_bead_naming_the_seat() -> String {
     format!(
-        r#"[{{"id":"atl-1","title":"re-point the dish","status":"in_progress",
+        r#"[{{"id":"ark-1","title":"re-point the dish","status":"in_progress",
             "priority":2,"issue_type":"task","updated_at":"2026-09-03T08:00:00Z",
             "metadata":{{"agent_pane":"{THE_SEAT}"}}}}]"#
     )

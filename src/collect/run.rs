@@ -647,7 +647,7 @@ mod tests {
     /// The two shapes bd writes when it cannot open a tracker: a credential
     /// the server refuses, and a server that does not answer. Both name a
     /// database, a host and a user the output must never carry.
-    const REFUSED: &str = r#"Error: failed to open database: failed to check if database "atlas" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'atlas'"#;
+    const REFUSED: &str = r#"Error: failed to open database: failed to check if database "arkham" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'arkham'"#;
     const UNREACHABLE: &str = "Error: failed to open database: Dolt server unreachable at nosuchhost.invalid:3306: dial tcp: lookup nosuchhost.invalid: no such host";
 
     /// bd's refusal of `bd sql` on its embedded Dolt, as `CANNOT_RUN` was
@@ -853,7 +853,7 @@ mod tests {
         let failure = failing_command(REFUSED);
         let shown = format!("{failure} {failure:?}");
 
-        for secret in ["atlas", "db.example.invalid", "Access denied", "1045"] {
+        for secret in ["arkham", "db.example.invalid", "Access denied", "1045"] {
             assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
         }
     }

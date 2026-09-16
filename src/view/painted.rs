@@ -154,7 +154,7 @@ mod tests {
         buffer
             .cell_mut((0, 0))
             .expect("a cell to write")
-            .set_symbol("\x1b]8;;https://forge.invalid/orbital/atlas\x1b\\⇢ #12\x1b]8;;\x1b\\")
+            .set_symbol("\x1b]8;;https://forge.invalid/dunwich/arkham\x1b\\⇢ #12\x1b]8;;\x1b\\")
             .set_diff_option(CellDiffOption::ForcedWidth(
                 NonZeroU16::new(5).expect("five columns"),
             ));
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn the_columns_a_forced_width_covers_are_not_read() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 1));
-        Line::from("beacon").render(Rect::new(0, 0, 4, 1), &mut buffer);
+        Line::from("kadath").render(Rect::new(0, 0, 4, 1), &mut buffer);
         buffer
             .cell_mut((0, 0))
             .expect("a cell to write")
@@ -176,6 +176,6 @@ mod tests {
                 NonZeroU16::new(3).expect("three columns"),
             ));
 
-        assert_eq!(Painted::read(&buffer).rows(), vec!["bc"]);
+        assert_eq!(Painted::read(&buffer).rows(), vec!["ka"]);
     }
 }

@@ -16,14 +16,14 @@
 //! before any key is pressed, counting the rows of the screen from the top:
 //!
 //! ```text
-//! 0 ▾ atlas  ✓ 1s ago                                   3/10  1 agent
-//! 1   ├── ○ atl-1    raise the beacon                            3/8
+//! 0 ▾ arkham  ✓ 1s ago                                   3/10  1 agent
+//! 1   ├── ○ ark-1    raise the beacon                            3/8
 //! 2   │   ├── ○ .1       cast the bracket                        0/2
 //! 3   │   │   └── ◐ .1       pour the iron          ◍ wT:p2 · working
 //! 4   │   ├── ○ .2       glaze the lantern                       0/3
-//! 5   │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath
+//! 5   │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath
 //! 6   │   ├── ○ .3       mount the lens                          0/3
-//! 7   │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath
+//! 7   │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath
 //! 8   │   └─▸ ✓ 3 more beads · closed, and nobody on them
 //! 9   └─▸ 1 tree with no live agent                    a to show all
 //! ```
@@ -75,18 +75,18 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// the top of this file.
 const THE_TRACKER: &str = include_str!("fixtures/bd_every_fold_kind.json");
 
-/// The pane on `atl-1.1.1`, which is what rests the root open and holds the
+/// The pane on `ark-1.1.1`, which is what rests the root open and holds the
 /// tree in front of the filter.
 const THE_PANE: &str = "wT:p2";
 
 /// The same tracker after a second seat has started on a bead under
-/// `atl-1.3`, which was quiet until then, and the pane it sits in.
+/// `ark-1.3`, which was quiet until then, and the pane it sits in.
 const THE_TRACKER_WITH_NEW_WORK: &str =
     include_str!("fixtures/bd_every_fold_kind_and_new_work.json");
 const THE_NEW_PANE: &str = "wT:p3";
 
-/// The same tracker after the seat on `atl-1.1.1` has finished it and gone,
-/// which leaves nothing under `atl-1.1` to rest it open.
+/// The same tracker after the seat on `ark-1.1.1` has finished it and gone,
+/// which leaves nothing under `ark-1.1` to rest it open.
 const THE_TRACKER_WITH_FINISHED_WORK: &str =
     include_str!("fixtures/bd_every_fold_kind_and_finished_work.json");
 
@@ -111,21 +111,21 @@ const SHOW_IT: &[u8] = b"\r";
 const BACK: &[u8] = b"\x1b";
 
 /// Rows of the first screen, counted from the top, that the tests select.
-const RAISE_THE_BEACON: u16 = 1;
+const RAISE_THE_KADATH: u16 = 1;
 const GLAZE_THE_LANTERN: u16 = 4;
 const THE_COPY_UNDER_IT: u16 = 5;
 const MOUNT_THE_LENS: u16 = 6;
 
 /// The forest as the first screen draws it, in the words the assertions use.
 const AT_REST: &[&str] = &[
-    "▾ atlas  ✓ <age> ago  3/10  1 agent",
-    "  ├── ○ atl-1  raise the beacon  3/8",
+    "▾ arkham  ✓ <age> ago  3/10  1 agent",
+    "  ├── ○ ark-1  raise the beacon  3/8",
     "  │   ├── ○ .1  cast the bracket  0/2",
     "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├── ○ .2  glaze the lantern  0/3",
-    "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+    "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   ├── ○ .3  mount the lens  0/3",
-    "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+    "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
     "  └─▸ 1 tree with no live agent  a to show all",
 ];
@@ -133,37 +133,37 @@ const AT_REST: &[&str] = &[
 /// The forest with every fold open: the run's members, the subtree under each
 /// copy of the blocker, and the tree the filter was holding back.
 const EVERYTHING_OPEN: &[&str] = &[
-    "▾ atlas  ✓ <age> ago  3/10  1 agent",
-    "  ├── ○ atl-1  raise the beacon  3/8",
+    "▾ arkham  ✓ <age> ago  3/10  1 agent",
+    "  ├── ○ ark-1  raise the beacon  3/8",
     "  │   ├── ○ .1  cast the bracket  0/2",
     "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├── ○ .2  glaze the lantern  0/3",
-    "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+    "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
     "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├── ○ .3  mount the lens  0/3",
-    "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+    "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
     "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   └── ✓ 3 more beads · closed, and nobody on them",
     "  │       ├── ✓ .4  survey the headland",
     "  │       ├── ✓ .5  draw up the plans",
     "  │       └── ✓ .6  clear the site",
     "  └── 1 tree with no live agent  a to show all",
-    "      └── ○ atl-2  dredge the harbour  0/2",
+    "      └── ○ ark-2  dredge the harbour  0/2",
     "          └── ○ .1  survey the silt",
 ];
 
 /// The forest with every fold shut, which is the project's line alone.
-const EVERYTHING_SHUT: &[&str] = &["▸ atlas  ✓ <age> ago  3/10  1 agent"];
+const EVERYTHING_SHUT: &[&str] = &["▸ arkham  ✓ <age> ago  3/10  1 agent"];
 
 /// The forest with `glaze the lantern` shut by hand and nothing else moved.
 const GLAZE_THE_LANTERN_SHUT: &[&str] = &[
-    "▾ atlas  ✓ <age> ago  3/10  1 agent",
-    "  ├── ○ atl-1  raise the beacon  3/8",
+    "▾ arkham  ✓ <age> ago  3/10  1 agent",
+    "  ├── ○ ark-1  raise the beacon  3/8",
     "  │   ├── ○ .1  cast the bracket  0/2",
     "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
     "  │   ├── ○ .3  mount the lens  0/3",
-    "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+    "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
     "  └─▸ 1 tree with no live agent  a to show all",
 ];
@@ -171,15 +171,15 @@ const GLAZE_THE_LANTERN_SHUT: &[&str] = &[
 /// The forest with the copy of the blocker under `glaze the lantern` open,
 /// and nothing else moved.
 const THE_COPY_OPEN: &[&str] = &[
-    "▾ atlas  ✓ <age> ago  3/10  1 agent",
-    "  ├── ○ atl-1  raise the beacon  3/8",
+    "▾ arkham  ✓ <age> ago  3/10  1 agent",
+    "  ├── ○ ark-1  raise the beacon  3/8",
     "  │   ├── ○ .1  cast the bracket  0/2",
     "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├── ○ .2  glaze the lantern  0/3",
-    "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+    "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
     "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├── ○ .3  mount the lens  0/3",
-    "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+    "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
     "  └─▸ 1 tree with no live agent  a to show all",
 ];
@@ -233,11 +233,11 @@ fn l_h_and_space_move_one_fold_and_the_selection_through_it() {
 
     bdi.send(OPEN_OR_STEP_IN);
     assert_eq!(forest(&mut bdi, &TALL), THE_COPY_OPEN);
-    assert_eq!(selected(&mut bdi, &TALL), "atl-1.1.1");
+    assert_eq!(selected(&mut bdi, &TALL), "ark-1.1.1");
 
     bdi.send(SHUT_OR_STEP_OUT);
     assert_eq!(forest(&mut bdi, &TALL), THE_COPY_OPEN);
-    assert_eq!(selected(&mut bdi, &TALL), "atl-1.1");
+    assert_eq!(selected(&mut bdi, &TALL), "ark-1.1");
 
     bdi.send(SHUT_OR_STEP_OUT);
     assert_eq!(forest(&mut bdi, &TALL), AT_REST);
@@ -262,34 +262,34 @@ fn the_motions_walk_the_opened_forest_and_scroll_the_view_after_it() {
 
     bdi.send(DOWN);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[..7]);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-1");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-1");
 
     bdi.send(LAST_ROW);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[10..]);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-2.1");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-2.1");
 
     bdi.send(UP);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[10..]);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-2");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-2");
 
     bdi.send(HALF_SCREEN_UP);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[10..]);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-1.5");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-1.5");
 
     bdi.send(HALF_SCREEN_UP);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[9..16]);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-1.1.1");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-1.1.1");
 
     bdi.send(HALF_SCREEN_DOWN);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[9..16]);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-1.5");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-1.5");
 
     // The first row is the project's, and a project has no window to name
     // it, so the row below says where `g` went.
     bdi.send(FIRST_ROW);
     assert_eq!(forest(&mut bdi, &SHORT), &EVERYTHING_OPEN[..7]);
     bdi.send(DOWN);
-    assert_eq!(selected(&mut bdi, &SHORT), "atl-1");
+    assert_eq!(selected(&mut bdi, &SHORT), "ark-1");
 }
 
 /// `a` draws the tree the filter was holding back among the others, resting
@@ -306,15 +306,15 @@ fn a_moves_the_hidden_tree_and_leaves_the_folds_alone() {
     assert_eq!(
         forest(&mut bdi, &TALL),
         &[
-            "▾ atlas  ✓ <age> ago  3/10  1 agent",
-            "  ├── ○ atl-1  raise the beacon  3/8",
+            "▾ arkham  ✓ <age> ago  3/10  1 agent",
+            "  ├── ○ ark-1  raise the beacon  3/8",
             "  │   ├── ○ .1  cast the bracket  0/2",
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
             "  │   ├── ○ .3  mount the lens  0/3",
-            "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+            "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
-            "  └─▸ ○ atl-2  dredge the harbour  0/2",
+            "  └─▸ ○ ark-2  dredge the harbour  0/2",
         ]
     );
 
@@ -353,12 +353,12 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
     assert_eq!(
         forest(&mut bdi, &TALL),
         &[
-            "▾ atlas  ✓ <age> ago  3/10  1 agent",
-            "  ├── ○ atl-1  raise the beacon  3/8",
+            "▾ arkham  ✓ <age> ago  3/10  1 agent",
+            "  ├── ○ ark-1  raise the beacon  3/8",
             "  │   ├── ○ .1  cast the bracket  0/2",
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├── ○ .2  glaze the lantern  0/3",
-            "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+            "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
             "  └─▸ 1 tree with no live agent  a to show all",
@@ -374,15 +374,15 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
     assert_eq!(
         forest(&mut bdi, &TALL),
         &[
-            "▾ atlas  ✓ <age> ago  3/11  2 agents",
-            "  ├── ○ atl-1  raise the beacon  3/9",
+            "▾ arkham  ✓ <age> ago  3/11  2 agents",
+            "  ├── ○ ark-1  raise the beacon  3/9",
             "  │   ├── ○ .1  cast the bracket  0/2",
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├── ○ .2  glaze the lantern  0/3",
-            "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+            "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   ├── ○ .3  mount the lens  0/4",
             "  │   │   ├── ◐ .1  grind the glass  ◍ wT:p3 · working",
-            "  │   │   └┄▸ ○ atl-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
+            "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · closed, and nobody on them",
             "  └─▸ 1 tree with no live agent  a to show all",
         ]
@@ -398,26 +398,26 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
 fn a_refresh_keeps_a_fold_e_found_resting_open_open_when_the_work_under_it_finishes() {
     let (mut bdi, fixture) = over_every_fold_kind("finished-work", &TALL);
     bdi.send(SHOW_EVERY_TREE);
-    bdi.send(&clicked_on(RAISE_THE_BEACON));
+    bdi.send(&clicked_on(RAISE_THE_KADATH));
     bdi.send(EXPAND_THE_SUBTREE);
     assert_eq!(
         forest(&mut bdi, &TALL),
         &[
-            "▾ atlas  ✓ <age> ago  3/10  1 agent",
-            "  ├── ○ atl-1  raise the beacon  3/8",
+            "▾ arkham  ✓ <age> ago  3/10  1 agent",
+            "  ├── ○ ark-1  raise the beacon  3/8",
             "  │   ├── ○ .1  cast the bracket  0/2",
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├── ○ .2  glaze the lantern  0/3",
-            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+            "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
             "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├── ○ .3  mount the lens  0/3",
-            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  0/2",
+            "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
             "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   └── ✓ 3 more beads · closed, and nobody on them",
             "  │       ├── ✓ .4  survey the headland",
             "  │       ├── ✓ .5  draw up the plans",
             "  │       └── ✓ .6  clear the site",
-            "  └─▸ ○ atl-2  dredge the harbour  0/2",
+            "  └─▸ ○ ark-2  dredge the harbour  0/2",
         ]
     );
 
@@ -428,21 +428,21 @@ fn a_refresh_keeps_a_fold_e_found_resting_open_open_when_the_work_under_it_finis
     assert_eq!(
         forest(&mut bdi, &TALL),
         &[
-            "▾ atlas  ✓ <age> ago  4/10",
-            "  ├── ○ atl-1  raise the beacon  4/8",
+            "▾ arkham  ✓ <age> ago  4/10",
+            "  ├── ○ ark-1  raise the beacon  4/8",
             "  │   ├── ○ .1  cast the bracket  1/2",
             "  │   │   └── ✓ .1  pour the iron",
             "  │   ├── ○ .2  glaze the lantern  1/3",
-            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  1/2",
+            "  │   │   └┄┄ ○ ark-1.1  cast the bracket  1/2",
             "  │   │       └── ✓ .1  pour the iron",
             "  │   ├── ○ .3  mount the lens  1/3",
-            "  │   │   └┄┄ ○ atl-1.1  cast the bracket  1/2",
+            "  │   │   └┄┄ ○ ark-1.1  cast the bracket  1/2",
             "  │   │       └── ✓ .1  pour the iron",
             "  │   └── ✓ 3 more beads · closed, and nobody on them",
             "  │       ├── ✓ .4  survey the headland",
             "  │       ├── ✓ .5  draw up the plans",
             "  │       └── ✓ .6  clear the site",
-            "  └─▸ ○ atl-2  dredge the harbour  0/2",
+            "  └─▸ ○ ark-2  dredge the harbour  0/2",
         ]
     );
 }
@@ -456,12 +456,12 @@ fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
     bdi.send(COLLAPSE_THE_FOREST);
     assert_eq!(forest(&mut bdi, &TALL), EVERYTHING_SHUT);
 
-    bdi.send(b"/atl-1.1.1\r");
+    bdi.send(b"/ark-1.1.1\r");
     assert_eq!(
         forest(&mut bdi, &TALL),
         &[
-            "▾ atlas  ✓ <age> ago  3/10  1 agent",
-            "  ├── ○ atl-1  raise the beacon  3/8",
+            "▾ arkham  ✓ <age> ago  3/10  1 agent",
+            "  ├── ○ ark-1  raise the beacon  3/8",
             "  │   ├── ○ .1  cast the bracket  0/2",
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
@@ -473,7 +473,7 @@ fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
             "  └─▸ 1 tree with no live agent  a to show all",
         ]
     );
-    assert_eq!(selected(&mut bdi, &TALL), "atl-1.1.1");
+    assert_eq!(selected(&mut bdi, &TALL), "ark-1.1.1");
 }
 
 /// A click on a row of the opened forest selects the line drawn there, which
@@ -487,7 +487,7 @@ fn a_click_after_e_selects_the_row_it_lands_on() {
     let survey_the_silt = 16;
     bdi.send(&clicked_on(survey_the_silt));
     assert_eq!(forest(&mut bdi, &TALL), EVERYTHING_OPEN);
-    assert_eq!(selected(&mut bdi, &TALL), "atl-2.1");
+    assert_eq!(selected(&mut bdi, &TALL), "ark-2.1");
 }
 
 /// The shims a run reads, kept so a test can change what the next collection
@@ -495,7 +495,7 @@ fn a_click_after_e_selects_the_row_it_lands_on() {
 struct Fixture {
     tracker: ShimmedTracker,
     herdr: ShimmedHerdr,
-    atlas: PathBuf,
+    arkham: PathBuf,
 }
 
 impl Fixture {
@@ -507,7 +507,7 @@ impl Fixture {
             .map(|pane| {
                 format!(
                     r#"{{"pane_id":"{pane}","cwd":"{}","agent_status":"working"}}"#,
-                    self.atlas.display()
+                    self.arkham.display()
                 )
             })
             .collect();
@@ -523,14 +523,14 @@ impl Fixture {
 /// so the directory chooses no scope.
 fn over_every_fold_kind(named: &str, screen: &Screen) -> (Driven, Fixture) {
     let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    let atlas = home.join("atlas");
-    std::fs::create_dir_all(&atlas).expect("the directory is ours to make");
+    let arkham = home.join("arkham");
+    std::fs::create_dir_all(&arkham).expect("the directory is ours to make");
     std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n",
-            atlas.display()
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n",
+            arkham.display()
         ),
     )
     .expect("the config is ours to write");
@@ -538,7 +538,7 @@ fn over_every_fold_kind(named: &str, screen: &Screen) -> (Driven, Fixture) {
     let fixture = Fixture {
         tracker: ShimmedTracker::beside(&home),
         herdr: ShimmedHerdr::beside(&home),
-        atlas,
+        arkham,
     };
     fixture.tracker.holds(THE_TRACKER);
     fixture.herdr.lists(&fixture.panes(&[THE_PANE]));

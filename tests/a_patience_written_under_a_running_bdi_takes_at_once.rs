@@ -65,7 +65,7 @@ fn settling(home: &Path, settings: &str) {
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n{settings}",
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n{settings}",
             home.display()
         ),
     )

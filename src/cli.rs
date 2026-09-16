@@ -427,14 +427,14 @@ mod tests {
     /// project's repository is worked in.
     const ONE_PROJECT: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 "#;
 
     const TWO_PROJECTS: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 
 [[projects]]
 name = "ferry"
@@ -442,7 +442,7 @@ path = "/srv/work/ferry"
 "#;
 
     const A_WORKTREE_PER_SEAT: &str = "\
-worktree /srv/work/orbital
+worktree /srv/work/dunwich
 HEAD 4d3c1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d
 branch refs/heads/main
 
@@ -528,7 +528,7 @@ detached
         }
     }
 
-    /// git as a machine with two projects checked out answers it: orbital
+    /// git as a machine with two projects checked out answers it: dunwich
     /// worked in its checkout and a seat's worktree, ferry in its checkout
     /// alone.
     fn two_repositories() -> FakeRunner {
@@ -541,18 +541,18 @@ detached
     /// it reads that project, and nothing goes near the other.
     #[test]
     fn bdi_started_under_a_configured_project_reads_that_project_alone() {
-        let path = a_config_file_holding("started-in-orbital", TWO_PROJECTS);
+        let path = a_config_file_holding("started-in-dunwich", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(&runner, &path, &started_in("/srv/work/orbital/src"))
+        let cfg = read_config(&runner, &path, &started_in("/srv/work/dunwich/src"))
             .expect("the config is ours to read")
             .config;
 
-        assert_eq!(read_by(&cfg), ["orbital"]);
+        assert_eq!(read_by(&cfg), ["dunwich"]);
         assert_eq!(
             cfg.scope,
             Scope::Directory {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 widened: Vec::new(),
             }
         );
@@ -576,12 +576,12 @@ detached
         let cfg = read_config(
             &runner,
             &path,
-            &started_in("/srv/work/orbital/ground-station/src"),
+            &started_in("/srv/work/dunwich/ground-station/src"),
         )
         .expect("the config is ours to read")
         .config;
 
-        assert_eq!(read_by(&cfg), ["orbital"]);
+        assert_eq!(read_by(&cfg), ["dunwich"]);
 
         std::fs::remove_file(&path).expect("the file is ours to remove");
     }
@@ -599,7 +599,7 @@ detached
             .expect("the config is ours to read")
             .config;
 
-        assert_eq!(read_by(&cfg), ["orbital"]);
+        assert_eq!(read_by(&cfg), ["dunwich"]);
         let from_the_directory: Vec<String> = runner
             .inner
             .calls()
@@ -631,7 +631,7 @@ detached
             .expect("the config is ours to read")
             .config;
 
-        assert_eq!(read_by(&cfg), ["orbital", "ferry"]);
+        assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
         assert_eq!(cfg.scope, Scope::Everything);
 
         std::fs::remove_file(&path).expect("the file is ours to remove");
@@ -649,16 +649,16 @@ detached
             &path,
             &Launch {
                 reading: Reading::EveryProject,
-                ..started_in("/srv/work/orbital/src")
+                ..started_in("/srv/work/dunwich/src")
             },
         )
         .expect("the config is ours to read")
         .config;
 
-        assert_eq!(read_by(&cfg), ["orbital", "ferry"]);
+        assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
         assert_eq!(cfg.scope, Scope::Everything);
         assert!(
-            !directories_entered(&runner).contains(&Some(PathBuf::from("/srv/work/orbital/src"))),
+            !directories_entered(&runner).contains(&Some(PathBuf::from("/srv/work/dunwich/src"))),
             "the directory was consulted when the command line had already decided"
         );
 
@@ -671,14 +671,14 @@ detached
     #[test]
     fn an_explicit_project_outranks_the_directory() {
         let path = a_config_file_holding("project-outranks", TWO_PROJECTS);
-        let runner = never_entering("/srv/work/orbital", two_repositories());
+        let runner = never_entering("/srv/work/dunwich", two_repositories());
 
         let cfg = read_config(
             &runner,
             &path,
             &Launch {
                 reading: Reading::Named(vec!["ferry".to_string()]),
-                ..started_in("/srv/work/orbital/src")
+                ..started_in("/srv/work/dunwich/src")
             },
         )
         .expect("the config is ours to read")
@@ -690,7 +690,7 @@ detached
         std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
-    /// `bdi ferry:fer-1` from orbital's desktop reads both. The widening
+    /// `bdi ferry:fer-1` from dunwich's desktop reads both. The widening
     /// happens before git is asked where each project is worked, so the
     /// project a root brought in learns its working trees like any other.
     #[test]
@@ -703,13 +703,13 @@ detached
             &path,
             &Launch {
                 roots: &["ferry:fer-1".to_string()],
-                ..started_in("/srv/work/orbital/src")
+                ..started_in("/srv/work/dunwich/src")
             },
         )
         .expect("a root elsewhere widens a scope the directory chose")
         .config;
 
-        assert_eq!(read_by(&cfg), ["orbital", "ferry"]);
+        assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
         assert_eq!(
             cfg.roots.explicit,
             BTreeMap::from([("ferry".to_string(), vec!["fer-1".to_string()])])
@@ -733,9 +733,9 @@ detached
             &runner,
             &path,
             &Launch {
-                reading: Reading::Named(vec!["orbital".to_string()]),
+                reading: Reading::Named(vec!["dunwich".to_string()]),
                 roots: &["ferry:fer-1".to_string()],
-                ..started_in("/srv/work/orbital/src")
+                ..started_in("/srv/work/dunwich/src")
             },
         )
         .expect_err("asking for ferry's root and asking not to read ferry");
@@ -745,8 +745,8 @@ detached
         std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
-    /// A bare id belongs to the one project being read, so `bdi orb-7` from
-    /// orbital's checkout needs no project name however many the config
+    /// A bare id belongs to the one project being read, so `bdi dun-7` from
+    /// dunwich's checkout needs no project name however many the config
     /// names.
     #[test]
     fn a_bare_root_belongs_to_the_project_the_directory_chose() {
@@ -757,16 +757,16 @@ detached
             &runner,
             &path,
             &Launch {
-                roots: &["orb-7".to_string()],
-                ..started_in("/srv/work/orbital/src")
+                roots: &["dun-7".to_string()],
+                ..started_in("/srv/work/dunwich/src")
             },
         )
-        .expect("the directory leaves only orbital")
+        .expect("the directory leaves only dunwich")
         .config;
 
         assert_eq!(
             cfg.roots.explicit,
-            BTreeMap::from([("orbital".to_string(), vec!["orb-7".to_string()])])
+            BTreeMap::from([("dunwich".to_string(), vec!["dun-7".to_string()])])
         );
 
         std::fs::remove_file(&path).expect("the file is ours to remove");
@@ -780,16 +780,16 @@ detached
             std::env::temp_dir().join(format!("bdi-absent-everything-{}.toml", std::process::id()));
         let runner = FakeRunner::default()
             .with("bd where --json", "{}")
-            .with("git rev-parse --show-toplevel", "/srv/work/orbital")
+            .with("git rev-parse --show-toplevel", "/srv/work/dunwich")
             .with("git worktree list --porcelain", A_WORKTREE_PER_SEAT)
-            .with("git remote get-url origin", "git@host:owner/orbital.git");
+            .with("git remote get-url origin", "git@host:owner/dunwich.git");
 
         let cfg =
-            config_for_wherever_bdi_was_run(&runner, &absent, &started_in("/srv/work/orbital/src"))
+            config_for_wherever_bdi_was_run(&runner, &absent, &started_in("/srv/work/dunwich/src"))
                 .expect("the directory is a project")
                 .config;
 
-        assert_eq!(read_by(&cfg), ["orbital"]);
+        assert_eq!(read_by(&cfg), ["dunwich"]);
         assert_eq!(cfg.scope, Scope::Everything);
     }
 
@@ -822,7 +822,7 @@ detached
         assert_eq!(
             cfg.projects[0].worktrees,
             vec![
-                PathBuf::from("/srv/work/orbital"),
+                PathBuf::from("/srv/work/dunwich"),
                 PathBuf::from("/tmp/seat-a/wt"),
             ]
         );
@@ -887,7 +887,7 @@ detached
             &runner,
             &path,
             &Launch {
-                reading: Reading::Named(vec!["orbital".to_string()]),
+                reading: Reading::Named(vec!["dunwich".to_string()]),
                 ..every_project()
             },
         )
@@ -899,8 +899,8 @@ detached
             "ferry was scoped out, so nothing should have gone to its directory; asked {asked:?}"
         );
         assert!(
-            asked.contains(&Some(PathBuf::from("/srv/work/orbital"))),
-            "orbital was scoped in, so git was asked where it is worked; asked {asked:?}"
+            asked.contains(&Some(PathBuf::from("/srv/work/dunwich"))),
+            "dunwich was scoped in, so git was asked where it is worked; asked {asked:?}"
         );
 
         std::fs::remove_file(&path).expect("the file is ours to remove");
@@ -916,16 +916,16 @@ detached
         let absent = std::env::temp_dir().join(format!("bdi-absent-{}.toml", std::process::id()));
         let runner = FakeRunner::default()
             .with("bd where --json", "{}")
-            .with("git rev-parse --show-toplevel", "/srv/work/orbital")
+            .with("git rev-parse --show-toplevel", "/srv/work/dunwich")
             .with("git worktree list --porcelain", A_WORKTREE_PER_SEAT)
-            .with("git remote get-url origin", "git@host:owner/orbital.git");
+            .with("git remote get-url origin", "git@host:owner/dunwich.git");
 
         let refused = config_for_wherever_bdi_was_run(
             &runner,
             &absent,
             &Launch {
                 reading: Reading::Named(vec!["nothing-of-the-sort".to_string()]),
-                ..started_in("/srv/work/orbital")
+                ..started_in("/srv/work/dunwich")
             },
         )
         .expect_err("the scope names no project the current directory is in");
@@ -955,17 +955,17 @@ detached
 
     #[test]
     fn bead_ids_are_taken_as_arguments() {
-        let cli = Cli::parse_from(["bdi", "orb-7", "ferry:fer-9", "--json"]);
+        let cli = Cli::parse_from(["bdi", "dun-7", "ferry:fer-9", "--json"]);
 
-        assert_eq!(cli.beads, ["orb-7", "ferry:fer-9"]);
+        assert_eq!(cli.beads, ["dun-7", "ferry:fer-9"]);
         assert!(cli.json);
     }
 
     #[test]
     fn the_projects_to_draw_are_taken_as_a_repeatable_option() {
-        let cli = Cli::parse_from(["bdi", "--project", "orbital", "--project", "ferry"]);
+        let cli = Cli::parse_from(["bdi", "--project", "dunwich", "--project", "ferry"]);
 
-        assert_eq!(cli.projects, ["orbital", "ferry"]);
+        assert_eq!(cli.projects, ["dunwich", "ferry"]);
     }
 
     #[test]
@@ -1109,8 +1109,8 @@ detached
 
     fn a_project(poll: bool) -> crate::config::Project {
         crate::config::Project {
-            name: "orbital".to_string(),
-            path: PathBuf::from("/srv/work/orbital"),
+            name: "dunwich".to_string(),
+            path: PathBuf::from("/srv/work/dunwich"),
             environment_command: None,
             credential_command: None,
             poll,

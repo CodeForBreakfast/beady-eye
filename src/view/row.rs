@@ -606,7 +606,7 @@ mod tests {
     /// it: it ends the hyperlink early and retitles the reader's window.
     const HOSTILE: &str = "\u{1b}]0;owned\u{7}";
 
-    const SOMEWHERE: &str = "https://forge.invalid/orbital/atlas/pull/12";
+    const SOMEWHERE: &str = "https://forge.invalid/dunwich/arkham/pull/12";
 
     fn badged(text: &str, link: Option<&str>) -> Node {
         let mut node = node("smt-4kd3p.20", Status::Open);
@@ -643,7 +643,7 @@ mod tests {
     fn a_link_holding_a_control_character_leaves_its_key_on_the_row() {
         let hostile = badged(
             "⇢ #12",
-            Some(&format!("https://forge.invalid/orbital{HOSTILE}/pull/12")),
+            Some(&format!("https://forge.invalid/dunwich{HOSTILE}/pull/12")),
         );
 
         let row = cells(&hostile, Some(ROOT), None, None);
@@ -660,7 +660,7 @@ mod tests {
     fn a_badges_own_words_holding_a_control_character_lose_the_link_too() {
         let hostile = badged(
             &format!("⇢ #12{HOSTILE}"),
-            Some("https://forge.invalid/orbital/atlas/pull/12"),
+            Some("https://forge.invalid/dunwich/arkham/pull/12"),
         );
 
         let row = cells(&hostile, Some(ROOT), None, None);
@@ -677,7 +677,7 @@ mod tests {
     /// about the drawn row shows a form that was never said.
     #[test]
     fn a_short_form_holding_a_control_character_leaves_its_key_on_the_row() {
-        let mut hostile = badged("⇢ atlas #12", Some(SOMEWHERE));
+        let mut hostile = badged("⇢ arkham #12", Some(SOMEWHERE));
         hostile.badges[0].short = Some(format!("⇢ #12{HOSTILE}"));
 
         let row = cells(&hostile, Some(ROOT), None, None);
@@ -716,7 +716,7 @@ mod tests {
     /// short form at all.
     #[test]
     fn a_badge_that_draws_both_its_forms_leaves_nothing_on_the_row() {
-        let mut both = badged("⇢ atlas #12", Some(SOMEWHERE));
+        let mut both = badged("⇢ arkham #12", Some(SOMEWHERE));
         both.badges[0].short = Some("⇢ #12".into());
 
         let row = cells(&both, Some(ROOT), None, None);
@@ -782,7 +782,7 @@ mod tests {
             Badged {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
-                link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+                link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
                 short: None,
                 colour: None,
             },
@@ -799,7 +799,7 @@ mod tests {
 
         assert_eq!(
             row.badges[0].link.as_deref(),
-            Some("https://forge.invalid/orbital/atlas/pull/12")
+            Some("https://forge.invalid/dunwich/arkham/pull/12")
         );
         assert_eq!(row.badges[1].link, None);
         assert!(

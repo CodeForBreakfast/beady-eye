@@ -27,10 +27,10 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// One tracker whose sync adapter has filled the field on its root, and whose
 /// reader has also written a reference by hand in metadata.
 const THE_TRACKER: &str = r#"[
-  {"id":"orb-1","title":"lift the ground station","status":"open",
+  {"id":"dun-1","title":"lift the ground station","status":"open",
    "priority":1,"issue_type":"epic",
    "external_ref":"https://jira.invalid/browse/HELIO-412",
-   "metadata":{"jira":"ATLAS-19"}}
+   "metadata":{"jira":"ARKHAM-19"}}
 ]"#;
 
 /// A badge on the field and a badge on metadata. The field's is written as a
@@ -74,5 +74,5 @@ fn a_badge_on_the_external_reference_is_drawn_beside_one_on_metadata() {
 
     // Badges are drawn in the order their config names them, so the one on
     // metadata follows on the same row rather than waiting for a repaint.
-    bdi.read_until(b"ATLAS-19", GIVING_UP);
+    bdi.read_until(b"ARKHAM-19", GIVING_UP);
 }
