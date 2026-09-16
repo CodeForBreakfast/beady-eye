@@ -1982,6 +1982,42 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// One bead both halves of an epic wait on, with work of its own beneath
+    /// it, and one half with work of its own as well.
+    ///
+    /// The shape the one-copy rules were written for: `orb-1` is drawn under
+    /// `orb-2.1` as what it waits on and under `orb-2.2` for the same reason,
+    /// and both ways down to it are the same length.
+    ///
+    /// Every bead is open and none is ready, so the only work a reader needs
+    /// in it is the pane a test staffs it with — and moving that pane is the
+    /// whole of what moves the spine.
+    const BLOCKS_BOTH: &str = r#"[
+      {"id":"orb-2","title":"step the derrick","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-2.1","title":"seat the shoe","status":"open",
+       "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"},
+                       {"depends_on_id":"orb-1","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-2.2","title":"trim the stay","status":"open",
+       "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"},
+                       {"depends_on_id":"orb-1","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-2.2.1","title":"swage the stay","status":"open",
+       "dependencies":[{"depends_on_id":"orb-2.2","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-1","title":"turn the pintle","status":"open",
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-1.1","title":"ream the pintle","status":"open",
+       "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// That tree with one agent, on the bead named.
+    fn a_blocker_both_halves_wait_on(staffed: &str) -> Snapshot {
+        alone("orbital", BLOCKS_BOTH, &panes_on(&[staffed]))
+    }
+
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
     fn drawn_twice_in_one_tree() -> Snapshot {
@@ -2572,6 +2608,177 @@ credential_command = "secret harbour"
             "{:#?}",
             sketch(&forest)
         );
+    }
+
+
+    // ---- which copy of a bead the fold default opens ------------------------
+
+    /// The rule as it has always stood puts every copy of a bead on the
+    /// spine, so a bead both halves of an epic wait on is drawn under each of
+    /// them and the work beneath it is drawn under the first.
+    #[test]
+    fn every_copy_of_a_bead_two_siblings_wait_on_is_opened_to() {
+        let forest = flatten(a_blocker_both_halves_wait_on("orb-1.1"));
+
+        assert_eq!(lines_of(&forest, "orb-1").len(), 2, "{:#?}", sketch(&forest));
+        for id in ["orb-2.1", "orb-2.2"] {
+            assert_eq!(
+                forest.lines()[lines_of(&forest, id)[0]].folded,
+                Some(true),
+                "{id} rests shut: {:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// The first one-copy rule opens each bead that earns a fold on one way
+    /// down, the deepest, so the same tree draws that bead once. The half off
+    /// the way chosen stands over the same agent and says so, which is what
+    /// keeps the rule from hiding one.
+    #[test]
+    fn the_deepest_rule_opens_one_way_down_and_the_other_half_says_what_it_is_shut_over() {
+        let mut forest = flatten(a_blocker_both_halves_wait_on("orb-1.1"));
+
+        assert!(forest.apply(Action::CycleSpineForest));
+
+        assert_eq!(lines_of(&forest, "orb-1").len(), 1, "{:#?}", sketch(&forest));
+        assert_eq!(
+            forest.lines()[lines_of(&forest, "orb-2.1")[0]].folded,
+            Some(true),
+            "the deepest way down to orb-1 goes through orb-2.1: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(
+            forest.lines()[lines_of(&forest, "orb-2.2")[0]].folded,
+            Some(false),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(
+            row_of(&forest, "orb-2.2")
+                .shut_over
+                .as_ref()
+                .map(|beneath| beneath.live_agents),
+            Some(1),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The key cycles, so pressing it once per rule comes back to the screen
+    /// it started on.
+    #[test]
+    fn cycling_the_rule_through_every_one_puts_the_screen_back() {
+        let mut forest = flatten(a_blocker_both_halves_wait_on("orb-1.1"));
+        let was = sketch(&forest);
+
+        for _ in Spine::EVERY {
+            forest.apply(Action::CycleSpineForest);
+        }
+
+        assert_eq!(sketch(&forest), was);
+    }
+
+    /// `s` puts the rule in force under the selected node alone. A tree it
+    /// was not pressed in is drawn exactly as it was, which is what tells it
+    /// from `S`.
+    #[test]
+    fn a_rule_set_under_one_node_leaves_the_rest_of_the_forest_alone() {
+        let two_roots = || {
+            together(
+                "orbital",
+                &[BLOCKS_BOTH, TWICE],
+                &panes_on(&["orb-1.1", "orb-9.1"]),
+            )
+        };
+        // The second root and everything under it, which is every line from
+        // its own down: the rule is set in the first, so nothing here is in
+        // the subtree it was set on.
+        let other = |forest: &Forest| sketch(forest)[lines_of(forest, "orb-8")[0]..].to_vec();
+        let mut forest = flatten(two_roots());
+        let elsewhere = other(&forest);
+
+        let at = lines_of(&forest, "orb-2")[0];
+        step_onto(&mut forest, at);
+        assert!(forest.apply(Action::CycleSpine));
+
+        assert_eq!(lines_of(&forest, "orb-1").len(), 1, "{:#?}", sketch(&forest));
+        assert_eq!(
+            other(&forest),
+            elsewhere,
+            "the other tree moved: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The rule is derived from the snapshot on every refresh rather than
+    /// written down as folds, so the way it opens follows the agents as they
+    /// move. Here the agent leaves the bead both halves wait on for one under
+    /// the half that was resting shut, and the two halves change places.
+    #[test]
+    fn the_way_chosen_opens_to_the_agent_wherever_a_refresh_puts_it() {
+        let mut forest = flatten(a_blocker_both_halves_wait_on("orb-1.1"));
+        assert!(forest.apply(Action::CycleSpineForest));
+
+        forest.refresh(a_blocker_both_halves_wait_on("orb-2.2.1"));
+
+        assert_eq!(
+            (
+                forest.lines()[lines_of(&forest, "orb-2.1")[0]].folded,
+                forest.lines()[lines_of(&forest, "orb-2.2")[0]].folded,
+            ),
+            (Some(false), Some(true)),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A looped tree is drawn under every rule. The ways a one-copy rule
+    /// chooses are the longest that skip a link back onto the way down, which
+    /// is the same cut every walk here makes, so a loop costs a degraded
+    /// answer rather than no answer.
+    #[test]
+    fn a_looped_tree_draws_under_every_rule() {
+        let mut forest = flatten(alone("orbital", LOOPED, &panes_on(&["cyc-1.1"])));
+
+        for _ in Spine::EVERY {
+            assert!(!sketch(&forest).is_empty());
+            assert!(lines_of(&forest, "cyc-1.1").len() == 1, "{:#?}", sketch(&forest));
+            forest.apply(Action::CycleSpineForest);
+        }
+    }
+
+    /// The rule and the folds the reader set by hand are separate things.
+    /// With every fold pointed shut, the rule changes nothing on screen; `D`
+    /// lets go of the folds and what the forest rests as is the new rule's.
+    #[test]
+    fn cycling_the_rule_moves_no_fold_the_reader_set_by_hand() {
+        let mut forest = flatten(a_blocker_both_halves_wait_on("orb-1.1"));
+        forest.apply(Action::CollapseForest);
+        let shut = sketch(&forest);
+
+        assert!(!forest.apply(Action::CycleSpineForest));
+        assert_eq!(sketch(&forest), shut);
+
+        assert!(forest.apply(Action::RestoreDefault));
+        assert_eq!(lines_of(&forest, "orb-1").len(), 1, "{:#?}", sketch(&forest));
+    }
+
+    /// The screen says which rule is in force at the selection, and the
+    /// selection is what it is said at: a node a reader has put a rule in
+    /// force under says that rule, and a node outside it says the forest's.
+    #[test]
+    fn the_rule_in_force_is_the_one_set_on_the_nearest_line_at_or_above_the_selection() {
+        let mut forest = flatten(a_blocker_both_halves_wait_on("orb-1.1"));
+        let at = lines_of(&forest, "orb-2.1")[0];
+        step_onto(&mut forest, at);
+        forest.apply(Action::CycleSpine);
+
+        assert_eq!(forest.spine(), Spine::EveryCopy.next());
+
+        let at = lines_of(&forest, "orb-2.2")[0];
+        step_onto(&mut forest, at);
+        assert_eq!(forest.spine(), Spine::EveryCopy);
     }
 
     /// A shut line says what it is shut over on every copy of its bead. The
