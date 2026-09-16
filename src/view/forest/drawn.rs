@@ -24,6 +24,7 @@ use crate::view::row::{self, Widths};
 use super::facts::Facts;
 use super::handle::{names, Handle};
 use super::layout;
+use super::spine::Stand;
 
 /// One snapshot's lines in render order.
 #[derive(Debug, Clone, Default)]
@@ -49,14 +50,14 @@ pub(super) struct Ground {
     pub(super) beneath_shut: bool,
 }
 
-/// What a subtree left undrawn is counted from: a bead copy, whether it is
-/// the first copy of its bead, which way the scope over it points every fold
-/// that rests, and the bead the walk leaves out.
+/// What a subtree left undrawn is counted from: a bead copy, where it
+/// stands on the spine, which way the scope over it points every fold that
+/// rests, and the bead the walk leaves out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Counted {
     pub(super) tree: usize,
     pub(super) at: usize,
-    pub(super) first: bool,
+    pub(super) stand: Stand,
     pub(super) forced: Option<bool>,
     pub(super) without: Option<usize>,
 }
