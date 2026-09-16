@@ -1887,27 +1887,27 @@ mod tests {
     ]"#;
 
     /// The same shape again, over a blocker deep enough to show what the way
-    /// down to a copy says about the copy's own children: `orb-6` is drawn
-    /// under `orb-3.1` as its child and under `orb-3.2` as what it waits on,
+    /// down to a copy says about the copy's own children: `dun-6` is drawn
+    /// under `dun-3.1` as its child and under `dun-3.2` as what it waits on,
     /// and the work is two levels below it rather than one.
     const DEEP_TWICE: &str = r#"[
-      {"id":"orb-3","title":"raise the mast","status":"in_progress",
+      {"id":"dun-3","title":"raise the mast","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-3.1","title":"sink the footing","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}],
+      {"id":"dun-3.1","title":"sink the footing","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-3.2","title":"guy the mast","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
-                       {"depends_on_id":"orb-6","type":"blocks"}],
+      {"id":"dun-3.2","title":"guy the mast","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"},
+                       {"depends_on_id":"dun-6","type":"blocks"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6","title":"cast the collar","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-3.1","type":"parent-child"}],
+      {"id":"dun-6","title":"cast the collar","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6.1","title":"mill the collar","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+      {"id":"dun-6.1","title":"mill the collar","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-6.1.1","title":"bore the bolt holes","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-6.1","type":"parent-child"}],
+      {"id":"dun-6.1.1","title":"bore the bolt holes","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-6.1","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -1919,7 +1919,7 @@ mod tests {
 
     /// The same, over a blocker with two levels of work beneath it.
     fn deep_bead_drawn_twice_in_one_tree() -> Snapshot {
-        alone("orbital", DEEP_TWICE, &panes_on(&["orb-6.1.1"]))
+        alone("dunwich", DEEP_TWICE, &panes_on(&["dun-6.1.1"]))
     }
 
     /// The same, over a closed bead that still holds unfinished work.
@@ -2478,7 +2478,7 @@ credential_command = "secret harbour"
     #[test]
     fn a_rule_scoped_to_a_second_copy_of_a_bead_begins_afresh_there() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        let [_, lower] = copies_of(&forest, "orb-9");
+        let [_, lower] = copies_of(&forest, "dun-9");
         let scoped = forest.lines()[lower]
             .place
             .clone()
@@ -2488,7 +2488,7 @@ credential_command = "secret harbour"
         forest.answer();
         forest.lay_out();
 
-        let [upper, lower] = copies_of(&forest, "orb-9");
+        let [upper, lower] = copies_of(&forest, "dun-9");
         assert_eq!(
             (forest.lines()[upper].folded, forest.lines()[lower].folded),
             (Some(true), Some(true)),
@@ -2496,7 +2496,7 @@ credential_command = "secret harbour"
             sketch(&forest)
         );
         assert_eq!(
-            lines_of(&forest, "orb-9.1").len(),
+            lines_of(&forest, "dun-9.1").len(),
             2,
             "{:#?}",
             sketch(&forest)
@@ -8959,7 +8959,7 @@ credential_command = "secret harbour"
     #[test]
     fn rooting_the_forest_at_a_later_copy_keeps_where_that_copy_stands() {
         let mut forest = flatten(deep_bead_drawn_twice_in_one_tree());
-        let [upper, lower] = copies_of(&forest, "orb-6");
+        let [upper, lower] = copies_of(&forest, "dun-6");
         assert_eq!(
             forest.lines()[upper].folded,
             Some(true),
@@ -8970,7 +8970,7 @@ credential_command = "secret harbour"
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
 
-        let [milling] = lines_of(&forest, "orb-6.1")[..] else {
+        let [milling] = lines_of(&forest, "dun-6.1")[..] else {
             panic!("the copy's own child is drawn once: {:#?}", sketch(&forest));
         };
         assert_eq!(
