@@ -21,11 +21,11 @@ use crate::view::row;
 use crate::view::{Action, Motion, Notch};
 
 pub use drawn::Drawn;
+pub use spine::Spine;
 use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
 use layout::Rooted;
-use spine::Spine;
 
 /// Where a search came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +112,9 @@ pub struct Forest {
     /// What layout reads of the snapshot, answered when it was taken.
     facts: Arc<Facts>,
     folds: Folds,
+    /// Which rule opens the spine where no line beneath the top of the
+    /// forest says otherwise.
+    spine: Spine,
     /// Which rule opens the spine under each line the reader set one on.
     /// Keyed as a hand fold is, so a rule set on a way down that leaves the
     /// tree names no line and goes with it.
@@ -150,11 +153,13 @@ pub struct Forest {
 
 /// Flatten a snapshot into its lines.
 pub fn flatten(snapshot: Snapshot) -> Forest {
+    let spine = Spine::default();
     let spines = BTreeMap::new();
     let mut forest = Forest {
-        facts: Arc::new(Facts::of(&snapshot, &spines)),
+        facts: Arc::new(Facts::of(&snapshot, spine, &spines)),
         snapshot,
         folds: Folds::default(),
+        spine,
         spines,
         cursor: None,
         from: 0,
@@ -548,6 +553,14 @@ impl Forest {
                 self.folds.clear();
                 true
             }
+            Action::CycleSpine => {
+                self.cycle_spine();
+                true
+            }
+            Action::CycleSpineForest => {
+                self.cycle_spine_forest();
+                true
+            }
             Action::ToggleFilter => {
                 self.toggle_filter();
                 true
@@ -649,6 +662,51 @@ impl Forest {
         })
     }
 
+    /// `s`: put the rule after the one in force at the selection in force
+    /// under the selected node, and leave every hand fold alone.
+    ///
+    /// Whatever rule the reader had set beneath the node goes, as a scope
+    /// that points folds takes what was set beneath it: the node is what
+    /// they are asking about now. A line that is not a bead's stands for no
+    /// way down and answers to neither key.
+    fn cycle_spine(&mut self) {
+        let Some(Handle::Bead(place)) = self.handle_at(self.selected) else {
+            return;
+        };
+        let next = self.spine_on(&place).next();
+        self.spines
+            .retain(|handle, _| !beneath_the_line(&place, handle));
+        self.spines.insert(Handle::Bead(place), next);
+        self.answer();
+    }
+
+    /// `S`: the same for the whole forest, which is every line at the top of
+    /// it and everything under them.
+    fn cycle_spine_forest(&mut self) {
+        self.spine = self.spine.next();
+        self.spines.clear();
+        self.answer();
+    }
+
+    /// The rule in force at the selection, which is what the screen says it
+    /// is. The forest's own where the selection is not on a bead's line: no
+    /// way down stands there for a rule to have been set on.
+    pub fn spine(&self) -> Spine {
+        match self.handle_at(self.selected) {
+            Some(Handle::Bead(place)) => self.spine_on(&place),
+            _ => self.spine,
+        }
+    }
+
+    /// The rule in force on one line: the one set on it, the one set on the
+    /// nearest line above it, or the forest's.
+    fn spine_on(&self, place: &Place) -> Spine {
+        std::iter::once(place.clone())
+            .chain(place.forebears())
+            .find_map(|above| self.spines.get(&Handle::Bead(above)).copied())
+            .unwrap_or(self.spine)
+    }
+
     fn toggle_filter(&mut self) {
         let next = match self.snapshot.filter {
             Filter::LiveAgents => Filter::All,
@@ -667,7 +725,7 @@ impl Forest {
     /// Answer what layout reads of the snapshot in hand, here and not per
     /// keystroke.
     fn answer(&mut self) {
-        self.facts = Arc::new(Facts::of(&self.snapshot, &self.spines));
+        self.facts = Arc::new(Facts::of(&self.snapshot, self.spine, &self.spines));
     }
 
     /// `e` and `c`: point every fold in the selected node's subtree, at every
@@ -1558,6 +1616,19 @@ fn way_down_to(
         reaching.beneath(drawn, &node.beneath)
     });
     path
+}
+
+/// Whether `handle` names a line strictly beneath the one at `place`.
+///
+/// A place is a way down, so what is beneath a line is what the way down to
+/// it is a proper prefix of.
+fn beneath_the_line(place: &Place, handle: &Handle) -> bool {
+    let (Handle::Bead(under) | Handle::Elided(under)) = handle else {
+        return false;
+    };
+    under.tree == place.tree
+        && under.steps.len() > place.steps.len()
+        && under.steps.starts_with(&place.steps)
 }
 
 #[cfg(test)]

@@ -1214,7 +1214,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 23 more bindings · no room on a screen this short",
+                "  … 25 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1321,6 +1321,8 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
+                "  s         cycle which copy of a bead opens, under the selected node",
+                "  S         cycle which copy of a bead opens, across the whole forest",
                 "  F         draw the selected bead as the only root, or put the forest back",
                 "  /         find part of a bead's id or title, wherever the forest draws it",
                 "  n         go to the next bead matching the search",

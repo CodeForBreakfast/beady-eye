@@ -631,6 +631,8 @@ fn answered(
                 | Action::ExpandForest
                 | Action::CollapseForest
                 | Action::RestoreDefault
+                | Action::CycleSpine
+                | Action::CycleSpineForest
                 | Action::ToggleFilter
                 | Action::FocusForest
                 | Action::Search
