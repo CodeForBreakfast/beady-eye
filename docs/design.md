@@ -85,6 +85,7 @@ coin one — and say so.**
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
+| **spine** | *coined* | the ways down a fold default opens, and the rule that chooses them. The default rule opens every way down to work a reader needs; a one-copy rule opens one of them per bead and rests the rest shut over the same work. Neither project has the concept, because neither draws a tree that reaches a bead twice. |
 | **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
 | **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
 | **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in where neither the project's config nor its directory says how to enter it. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
@@ -926,6 +927,31 @@ alone still costs a keypress to see ready work, and opening to every unfinished
 bead put roughly 34 of 77 nodes on screen plus their spines, which is close to
 having no fold at all. Measured at `3385907` against `279e71b` on this
 tracker's 81 nodes: 35 lines at rest before, 39 after.
+
+**Which rule opens the spine is the reader's to choose, and `s` cycles it.**
+A bead is drawn once for every way down to it — under its parent, and under
+each bead it holds up — so the default above opens every one of those ways,
+and a blocker two siblings wait on puts its whole subtree on the screen twice.
+Under a **one-copy rule** each bead that is work a reader needs is opened to
+down one way only, and every other copy of it rests shut over that same work
+and says so, in the words any shut line uses. The invariant is untouched:
+nothing is hidden, because a copy resting shut still counts the agents and the
+anomalies beneath it and still names them on its row. What changes is how many
+times the reader reads the same subtree. The first such rule is **deepest**:
+the way chosen is the longest one down to the bead, so the bead is drawn under
+as much of what waits on it as the tree can show at once, and a tie goes to
+the way through the parent placed first. A tree with a loop in it is drawn
+under every rule — a link back onto the way down is skipped, exactly as every
+other walk of the forest skips it, so a loop costs a degraded choice rather
+than no screen.
+
+`s` puts the next rule in force under the selected node and `S` across the
+whole forest, and neither touches a fold the reader set by hand: the rule
+decides what a node rests as, and a hand fold stands over the rule as it
+stands over the default. The rule in force at the selection is named at the
+foot, where a rule the reader put in force accounts for the screen it gave
+them; the rule the forest starts under is named nowhere, because it is the
+screen every reader has always had.
 
 **A fold set by hand stands over what it folded away, and is spent when a
 refresh brings something live beneath it that was not there before.** So a
@@ -2419,6 +2445,8 @@ The bindings are vim-like, with the arrows as aliases:
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
+| `s` | cycle which copy of a bead opens, under the selected node |
+| `S` | cycle which copy of a bead opens, across the whole forest |
 | `F` | draw the selected bead as the only root, or put the forest back |
 | `/` | find part of a bead's id or title, wherever the forest draws it |
 | `n` | go to the next bead matching the search |
