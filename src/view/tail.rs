@@ -272,8 +272,8 @@ mod tests {
     /// must be read again.
     fn snapshot(agents: ProviderState) -> Snapshot {
         let tree = Arc::new(Tree {
-            project: "orbital".to_string(),
-            root: "orb-7".to_string(),
+            project: "dunwich".to_string(),
+            root: "dun-7".to_string(),
             title: "lift the ground station".to_string(),
             counts: Counts {
                 total: 5,
@@ -283,11 +283,11 @@ mod tests {
             },
             tracker: TrackerState::Ok,
             beads: vec![
-                node("orb-7", None),
-                node("orb-7.1", Some(agent_on("w:p1"))),
-                node("orb-7.2", None),
-                node("orb-7.3", None),
-                node("orb-7.4", Some(agent_on("w:p1"))),
+                node("dun-7", None),
+                node("dun-7.1", Some(agent_on("w:p1"))),
+                node("dun-7.2", None),
+                node("dun-7.3", None),
+                node("dun-7.4", Some(agent_on("w:p1"))),
             ],
             children: vec![
                 (1..5)
@@ -319,7 +319,7 @@ mod tests {
             projects_named_without_git: Vec::new(),
             read_at: BTreeMap::new(),
             collected: vec![tree],
-            projects: vec!["orbital".to_string()],
+            projects: vec!["dunwich".to_string()],
             scope: Scope::default(),
         }
     }
@@ -535,7 +535,7 @@ mod tests {
 
     fn key(id: &str) -> BeadKey {
         BeadKey {
-            project: "orbital".to_string(),
+            project: "dunwich".to_string(),
             id: id.to_string(),
         }
     }
@@ -543,8 +543,8 @@ mod tests {
     fn loose() -> LoosePane {
         LoosePane {
             pane: pane_key("w:p2"),
-            project: "orbital".to_string(),
-            cwd: "/tmp/bdi-ground/orbital".to_string(),
+            project: "dunwich".to_string(),
+            cwd: "/tmp/bdi-ground/dunwich".to_string(),
             pane_status: PaneStatus::Working,
             display_agent: None,
             title: None,
@@ -557,8 +557,8 @@ mod tests {
     fn another_loose() -> LoosePane {
         LoosePane {
             pane: pane_key("w:p10"),
-            project: "orbital".to_string(),
-            cwd: "/tmp/bdi-ground/orbital".to_string(),
+            project: "dunwich".to_string(),
+            cwd: "/tmp/bdi-ground/dunwich".to_string(),
             pane_status: PaneStatus::Idle,
             display_agent: None,
             title: None,
@@ -576,7 +576,7 @@ mod tests {
 
     fn pane_in_another_project() -> Conflict {
         Conflict::PaneInAnotherProject {
-            bead: key("orb-7.2"),
+            bead: key("dun-7.2"),
             pane: pane_key("w:p4"),
             pane_project: None,
         }
@@ -586,13 +586,13 @@ mod tests {
         Conflict::SeveralBeadsNameOnePane {
             pane: pane_key("w:p5"),
             caption: None,
-            beads: vec![key("orb-7.2"), key("orb-7.3")],
+            beads: vec![key("dun-7.2"), key("dun-7.3")],
         }
     }
 
     fn bead_and_pane_disagree() -> Conflict {
         Conflict::BeadAndPaneDisagree {
-            bead: key("orb-7.2"),
+            bead: key("dun-7.2"),
             named_by_bead: pane_key("w:p6"),
             named_by_pane: pane_key("w:p7"),
         }
@@ -600,7 +600,7 @@ mod tests {
 
     fn several_panes_name_one_bead() -> Conflict {
         Conflict::SeveralPanesNameOneBead {
-            bead: key("orb-7.3"),
+            bead: key("dun-7.3"),
             panes: vec![pane_key("w:p8"), pane_key("w:p9")],
         }
     }

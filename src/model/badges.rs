@@ -211,7 +211,7 @@ mod tests {
     /// carries badges and the view draws a row.
     #[test]
     fn a_badges_colour_travels_with_its_text() {
-        let bead = bead_with(r#"{"jira":"ATLAS-19"}"#);
+        let bead = bead_with(r#"{"jira":"ARKHAM-19"}"#);
         let cfg = vec![Badge {
             key: "metadata.jira".into(),
             match_value: None,
@@ -227,7 +227,7 @@ mod tests {
             got.drawn,
             vec![Badged {
                 key: "metadata.jira".to_string(),
-                text: "ATLAS-19".to_string(),
+                text: "ARKHAM-19".to_string(),
                 link: None,
                 short: None,
                 colour: Some(Colour::Status),
@@ -247,7 +247,7 @@ mod tests {
     fn bead_referencing(external_ref: &str) -> Bead {
         let json = format!(
             r#"[{{"id":"p-1","title":"root","status":"open",
-                  "external_ref":{external_ref},"metadata":{{"jira":"ATLAS-19"}}}}]"#
+                  "external_ref":{external_ref},"metadata":{{"jira":"ARKHAM-19"}}}}]"#
         );
         parse_beads(&json).expect("the bead parses").remove(0)
     }
@@ -291,7 +291,7 @@ mod tests {
                 },
                 Badged {
                     key: "metadata.jira".to_string(),
-                    text: "ATLAS-19".to_string(),
+                    text: "ARKHAM-19".to_string(),
                     link: None,
                     short: None,
                     colour: None,
@@ -329,7 +329,7 @@ mod tests {
             assert_eq!(got.undrawn, Vec::new(), "reported on {spelling}");
         }
 
-        let carrying_neither = bead_with(r#"{"jira":"ATLAS-19"}"#);
+        let carrying_neither = bead_with(r#"{"jira":"ARKHAM-19"}"#);
         for key in ["external_ref", "metadata.nobody_wrote_this"] {
             let got = badges_for(&carrying_neither, &[promising(key)]);
 
@@ -349,7 +349,7 @@ mod tests {
     /// this asserts it never ran at all.
     #[test]
     fn two_badges_on_one_key_that_both_read_a_value_draw_the_first_alone() {
-        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+        let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
         let permissive = Badge {
             match_value: Some(matching(".*")),
             render: "⇢ {}".into(),
@@ -366,7 +366,7 @@ mod tests {
                 key: "metadata.delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
                 short: None,
-                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 colour: None,
             }]
         );
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn a_badge_that_draws_its_link_reports_nothing() {
-        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+        let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
 
         let got = badges_for(&bead, &[qualified_only()]);
 
@@ -490,7 +490,7 @@ mod tests {
             vec![Badged {
                 key: "metadata.delivery_pr".to_string(),
                 text: "⇢ #30".to_string(),
-                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 short: None,
                 colour: None,
             }]
@@ -503,7 +503,7 @@ mod tests {
     /// this module's.
     #[test]
     fn a_badge_carries_the_short_form_its_config_named() {
-        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+        let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
         let both_forms = Badge {
             render: "⇢ {repo} #{number}".into(),
             short: Some("⇢ #{number}".into()),
@@ -516,9 +516,9 @@ mod tests {
             got.drawn,
             vec![Badged {
                 key: "metadata.delivery_pr".to_string(),
-                text: "⇢ atlas #30".to_string(),
+                text: "⇢ arkham #30".to_string(),
                 short: Some("⇢ #30".to_string()),
-                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 colour: None,
             }]
         );
@@ -529,7 +529,7 @@ mod tests {
     /// every badge written before there was a second one to name.
     #[test]
     fn a_badge_whose_config_names_no_short_form_carries_none() {
-        let bead = bead_with(r#"{"delivery_pr":"orbital/atlas#30"}"#);
+        let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
 
         let got = badges_for(&bead, &[qualified_only()]);
 

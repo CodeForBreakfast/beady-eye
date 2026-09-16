@@ -168,7 +168,7 @@ fn the_snapshot_reports_it_as_its_own_failure_and_no_bd_was_asked() {
 
     let snapshot = snapshot_of(&bdi_json(&home, &tracker.environment()));
 
-    assert_eq!(failed_projects(&snapshot), vec![("atlas", NO_ENVIRONMENT)]);
+    assert_eq!(failed_projects(&snapshot), vec![("arkham", NO_ENVIRONMENT)]);
     assert!(
         !tracker.read_the_tracker(),
         "bd was asked something for a project bdi could not enter, which is \
@@ -228,7 +228,7 @@ fn a_configured_wrapper_that_will_not_run_reaches_the_same_failure() {
 
     let snapshot = snapshot_of(&bdi_json(&home, &tracker.environment()));
 
-    assert_eq!(failed_projects(&snapshot), vec![("atlas", NO_ENVIRONMENT)]);
+    assert_eq!(failed_projects(&snapshot), vec![("arkham", NO_ENVIRONMENT)]);
     assert!(
         !tracker.read_the_tracker(),
         "bd was asked something for a project whose configured wrapper is \

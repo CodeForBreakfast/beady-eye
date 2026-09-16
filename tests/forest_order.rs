@@ -20,19 +20,19 @@ use canned::Canned;
 const TRACKER: &str = include_str!("fixtures/bulk_loose_roots.json");
 
 const PANES: &str = r#"{"result":{"agents":[
-  {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working","title":"the dish"}
+  {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working","title":"the dish"}
 ]}}"#;
 
 const CONFIG: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 "#;
 
 /// The tracker holding the fixture, with nothing ready and nothing blocked.
 fn trackers() -> Fakes {
     Fakes::default().with(
-        "orbital",
+        "dunwich",
         Fake::holding(parse_beads(TRACKER).expect("the fixture parses")),
     )
 }
@@ -60,9 +60,9 @@ fn the_efforts_that_hold_work_come_before_the_beads_filed_in_bulk() {
     assert_eq!(
         roots(Filter::All),
         [
-            "orb-d1", // one agent on it
-            "orb-c3", // five beads left, nobody on it
-            "orb-b1", "orb-b2", "orb-b3", "orb-b4", "orb-b5", "orb-b6",
+            "dun-d1", // one agent on it
+            "dun-c3", // five beads left, nobody on it
+            "dun-b1", "dun-b2", "dun-b3", "dun-b4", "dun-b5", "dun-b6",
         ]
     );
 }
@@ -74,6 +74,6 @@ fn showing_every_tree_leaves_the_staffed_ones_where_they_were() {
     let filtered = roots(Filter::LiveAgents);
     let all = roots(Filter::All);
 
-    assert_eq!(filtered, ["orb-d1"]);
+    assert_eq!(filtered, ["dun-d1"]);
     assert_eq!(all[..filtered.len()], filtered[..]);
 }

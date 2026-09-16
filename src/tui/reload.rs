@@ -186,8 +186,8 @@ mod tests {
     use std::rc::Rc;
     use std::time::SystemTime;
 
-    const ORBITAL: &str = "[[projects]]\nname = \"orbital\"\npath = \"/srv/work/orbital\"\n";
-    const ORBITAL_AND_FERRY: &str = "[[projects]]\nname = \"orbital\"\npath = \"/srv/work/orbital\"\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
+    const DUNWICH: &str = "[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n";
+    const DUNWICH_AND_FERRY: &str = "[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n\n[[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n";
     const NOT_TOML: &str = "[[projects]\nthis is not toml\n";
 
     const EVERY_TWO_SECONDS: Duration = Duration::from_secs(2);
@@ -206,10 +206,10 @@ mod tests {
         }
     }
 
-    /// The config `ORBITAL_AND_FERRY` says, which is what every check here
+    /// The config `DUNWICH_AND_FERRY` says, which is what every check here
     /// that finds something new finds.
     fn both() -> Config {
-        Config::from_toml(ORBITAL_AND_FERRY).expect("the fixture parses")
+        Config::from_toml(DUNWICH_AND_FERRY).expect("the fixture parses")
     }
 
     fn at(seconds: i64) -> DateTime<Utc> {
@@ -274,8 +274,8 @@ mod tests {
     /// from.
     #[test]
     fn the_first_check_reads_the_file_the_config_in_force_came_from() {
-        let path = a_config_file("first-check", ORBITAL, 100);
-        let (mut reload, parsed) = watching(path, ORBITAL);
+        let path = a_config_file("first-check", DUNWICH, 100);
+        let (mut reload, parsed) = watching(path, DUNWICH);
 
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
         assert_eq!(parsed.get(), 1);
@@ -286,8 +286,8 @@ mod tests {
     /// carries the scoping and a `git worktree list` per project behind it.
     #[test]
     fn a_config_saying_what_it_already_said_is_not_parsed_again() {
-        let path = a_config_file("untouched", ORBITAL, 100);
-        let (mut reload, parsed) = watching(path, ORBITAL);
+        let path = a_config_file("untouched", DUNWICH, 100);
+        let (mut reload, parsed) = watching(path, DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
         assert_eq!(reload.checks(at(4)), Reloaded::Untouched);
@@ -300,11 +300,11 @@ mod tests {
 
     #[test]
     fn a_config_the_reader_has_written_comes_into_force() {
-        let path = a_config_file("written", ORBITAL, 100);
-        let (mut reload, _) = watching(path.clone(), ORBITAL);
+        let path = a_config_file("written", DUNWICH, 100);
+        let (mut reload, _) = watching(path.clone(), DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
-        written(&path, ORBITAL_AND_FERRY, 200);
+        written(&path, DUNWICH_AND_FERRY, 200);
 
         assert_eq!(came_into_force(reload.checks(at(4))), &both());
     }
@@ -315,11 +315,11 @@ mod tests {
     /// this is the arm that keeps a cosmetic edit from waking them.
     #[test]
     fn a_config_saying_the_same_in_different_words_is_no_reload() {
-        let path = a_config_file("recommented", ORBITAL, 100);
-        let (mut reload, parsed) = watching(path.clone(), ORBITAL);
+        let path = a_config_file("recommented", DUNWICH, 100);
+        let (mut reload, parsed) = watching(path.clone(), DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
-        written(&path, &format!("# the one project\n{ORBITAL}"), 200);
+        written(&path, &format!("# the one project\n{DUNWICH}"), 200);
 
         assert_eq!(reload.checks(at(4)), Reloaded::Unchanged);
         assert_eq!(
@@ -338,11 +338,11 @@ mod tests {
     /// now carries.
     #[test]
     fn a_config_put_there_under_the_stamp_the_file_already_had_is_still_read() {
-        let path = a_config_file("same-stamp", ORBITAL, 100);
-        let (mut reload, _) = watching(path.clone(), ORBITAL);
+        let path = a_config_file("same-stamp", DUNWICH, 100);
+        let (mut reload, _) = watching(path.clone(), DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
-        written(&path, ORBITAL_AND_FERRY, 100);
+        written(&path, DUNWICH_AND_FERRY, 100);
 
         assert_eq!(came_into_force(reload.checks(at(4))), &both());
     }
@@ -352,11 +352,11 @@ mod tests {
     /// the file is newer would never read it.
     #[test]
     fn a_config_put_there_under_an_earlier_stamp_is_still_read() {
-        let path = a_config_file("earlier-stamp", ORBITAL, 100);
-        let (mut reload, _) = watching(path.clone(), ORBITAL);
+        let path = a_config_file("earlier-stamp", DUNWICH, 100);
+        let (mut reload, _) = watching(path.clone(), DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
-        written(&path, ORBITAL_AND_FERRY, 50);
+        written(&path, DUNWICH_AND_FERRY, 50);
 
         assert_eq!(came_into_force(reload.checks(at(4))), &both());
     }
@@ -367,14 +367,14 @@ mod tests {
     /// half-parsed text, could not give.
     #[test]
     fn a_config_that_will_not_parse_leaves_the_running_one_in_force() {
-        let path = a_config_file("unparsed", ORBITAL_AND_FERRY, 100);
-        let (mut reload, _) = watching(path.clone(), ORBITAL_AND_FERRY);
+        let path = a_config_file("unparsed", DUNWICH_AND_FERRY, 100);
+        let (mut reload, _) = watching(path.clone(), DUNWICH_AND_FERRY);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
         written(&path, NOT_TOML, 200);
         assert_eq!(reload.checks(at(4)), Reloaded::Broken);
 
-        written(&path, ORBITAL_AND_FERRY, 300);
+        written(&path, DUNWICH_AND_FERRY, 300);
         assert_eq!(
             reload.checks(at(6)),
             Reloaded::Unchanged,
@@ -384,14 +384,14 @@ mod tests {
 
     #[test]
     fn a_config_that_will_not_open_leaves_the_running_one_in_force() {
-        let path = a_config_file("unopened", ORBITAL_AND_FERRY, 100);
-        let (mut reload, _) = watching(path.clone(), ORBITAL_AND_FERRY);
+        let path = a_config_file("unopened", DUNWICH_AND_FERRY, 100);
+        let (mut reload, _) = watching(path.clone(), DUNWICH_AND_FERRY);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
         std::fs::remove_file(&path).expect("the config is ours to remove");
         assert_eq!(reload.checks(at(4)), Reloaded::Broken);
 
-        written(&path, ORBITAL_AND_FERRY, 300);
+        written(&path, DUNWICH_AND_FERRY, 300);
         assert_eq!(reload.checks(at(6)), Reloaded::Unchanged);
     }
 
@@ -402,14 +402,14 @@ mod tests {
     /// not load.
     #[test]
     fn a_config_fixed_under_the_stamp_the_broken_one_had_is_still_read() {
-        let path = a_config_file("fixed-same-stamp", ORBITAL, 100);
-        let (mut reload, parsed) = watching(path.clone(), ORBITAL);
+        let path = a_config_file("fixed-same-stamp", DUNWICH, 100);
+        let (mut reload, parsed) = watching(path.clone(), DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
         written(&path, NOT_TOML, 200);
         assert_eq!(reload.checks(at(4)), Reloaded::Broken);
 
-        written(&path, ORBITAL_AND_FERRY, 200);
+        written(&path, DUNWICH_AND_FERRY, 200);
         assert_eq!(came_into_force(reload.checks(at(6))), &both());
         assert_eq!(parsed.get(), 3);
     }
@@ -421,8 +421,8 @@ mod tests {
     /// already given.
     #[test]
     fn a_config_still_broken_is_not_parsed_again_to_say_so() {
-        let path = a_config_file("still-broken", ORBITAL, 100);
-        let (mut reload, parsed) = watching(path.clone(), ORBITAL);
+        let path = a_config_file("still-broken", DUNWICH, 100);
+        let (mut reload, parsed) = watching(path.clone(), DUNWICH);
         assert_eq!(reload.checks(at(2)), Reloaded::Unchanged);
 
         written(&path, NOT_TOML, 200);
@@ -434,8 +434,8 @@ mod tests {
 
     #[test]
     fn a_check_that_is_not_due_reads_nothing() {
-        let path = a_config_file("not-due", ORBITAL, 100);
-        let (mut reload, parsed) = watching(path, ORBITAL);
+        let path = a_config_file("not-due", DUNWICH, 100);
+        let (mut reload, parsed) = watching(path, DUNWICH);
 
         assert_eq!(reload.checks(at(1)), Reloaded::Untouched);
         assert_eq!(parsed.get(), 0);
@@ -443,8 +443,8 @@ mod tests {
 
     #[test]
     fn a_check_falls_due_its_interval_after_the_one_before_it() {
-        let path = a_config_file("interval", ORBITAL, 100);
-        let (mut reload, _) = watching(path, ORBITAL);
+        let path = a_config_file("interval", DUNWICH, 100);
+        let (mut reload, _) = watching(path, DUNWICH);
 
         assert_eq!(reload.checks_in(at(0)), Some(EVERY_TWO_SECONDS));
         assert_eq!(reload.checks_in(at(1)), Some(Duration::from_secs(1)));
@@ -457,8 +457,8 @@ mod tests {
     /// negative.
     #[test]
     fn a_check_already_overdue_is_due_now() {
-        let path = a_config_file("overdue", ORBITAL, 100);
-        let (reload, _) = watching(path, ORBITAL);
+        let path = a_config_file("overdue", DUNWICH, 100);
+        let (reload, _) = watching(path, DUNWICH);
 
         assert_eq!(reload.checks_in(at(9)), Some(Duration::ZERO));
     }
@@ -468,11 +468,11 @@ mod tests {
     /// never wakes for.
     #[test]
     fn an_interval_that_outruns_time_falls_due_never() {
-        let path = a_config_file("outruns", ORBITAL, 100);
+        let path = a_config_file("outruns", DUNWICH, 100);
         let mut reload = Reload::watching(
             path,
             Duration::MAX,
-            a_config(ORBITAL),
+            a_config(DUNWICH),
             Box::new(Config::from_toml),
             at(0),
         );

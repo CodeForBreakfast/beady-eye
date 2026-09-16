@@ -13,7 +13,7 @@ fn configured(named: &str) -> PathBuf {
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n",
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n",
             home.display()
         ),
     )

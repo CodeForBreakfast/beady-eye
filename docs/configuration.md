@@ -9,25 +9,25 @@ Everything has a default except the project list:
 
 ```toml
 [[projects]]
-name = "atlas"
-path = "/home/you/atlas"
+name = "arkham"
+path = "/home/you/arkham"
 
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 environment_command = "nix develop -c"
 
 [[projects]]
-name = "beacon"
-path = "/home/you/dev/beacon"
-credential_command = "secret-tool lookup tracker beacon"
+name = "kadath"
+path = "/home/you/dev/kadath"
+credential_command = "secret-tool lookup tracker kadath"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
-render = "⇢ beacon/{}"
+render = "⇢ kadath/{}"
 
 [roots.explicit]
-atlas = ["atlas-1", "atlas-10"]
+arkham = ["arkham-1", "arkham-10"]
 
 [[badges]]
 key    = "metadata.delivery_pr"
@@ -359,7 +359,7 @@ which is what lets the badge sit beside a title.
 
 ### A pull request written as an owner, a repository and a number
 
-A bead carrying `delivery_pr = "orbital/atlas#12"`:
+A bead carrying `delivery_pr = "dunwich/arkham#12"`:
 
 ```toml
 [[badges]]
@@ -370,7 +370,7 @@ short  = "⇢ #{number}"
 link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 ```
 
-The row draws `⇢ atlas #12` and opens the pull request. The owner never reaches
+The row draws `⇢ arkham #12` and opens the pull request. The owner never reaches
 the row: a capture `render` leaves out is still `link`'s to use. Narrow the pane
 and the badge drops the repository rather than the row dropping the badge, and
 `⇢ #12` opens the same page.
@@ -383,19 +383,19 @@ The project's own entry supplies the rest, and is tried before the shared one:
 
 ```toml
 [[projects]]
-name = "beacon"
-path = "/home/you/dev/beacon"
+name = "kadath"
+path = "/home/you/dev/kadath"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
 match  = "(?<number>[0-9]+)"
 render = "⇢ #{number}"
-link   = "https://forge.invalid/orbital/beacon/pull/{number}"
+link   = "https://forge.invalid/dunwich/kadath/pull/{number}"
 ```
 
-This is tried first on `beacon`'s beads, and on no other project's, by the rule
+This is tried first on `kadath`'s beads, and on no other project's, by the rule
 [`[[projects.badges]]`](#projectsbadges) gives. The `[[badges]]` entry is still
-there underneath it, so a `beacon` bead that does carry an owner and repository
+there underneath it, so a `kadath` bead that does carry an owner and repository
 is read by that one as before.
 
 ### A reference stored as a full URL

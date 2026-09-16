@@ -1112,7 +1112,7 @@ mod tests {
     use crate::model::tree::Link;
     use crate::model::types::testing::key as pane_key;
     use crate::model::types::{Edge, PaneStatus, Status};
-    use crate::tui::fixtures::{a_snapshot, atlas, ferry, reading, PATIENCE};
+    use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
     use crate::tui::keys::{action, BINDINGS};
     use crate::view::bindings::bindings_window;
@@ -1946,10 +1946,10 @@ mod tests {
     #[test]
     fn a_screen_holds_what_the_collection_in_flight_is_reading_and_since_when() {
         let mut shown = shown(a_snapshot());
-        let reading_atlas = reading(atlas(), an_instant());
+        let reading_arkham = reading(arkham(), an_instant());
 
-        shown.collecting(std::slice::from_ref(&reading_atlas));
-        assert_eq!(shown.collecting, [reading_atlas]);
+        shown.collecting(std::slice::from_ref(&reading_arkham));
+        assert_eq!(shown.collecting, [reading_arkham]);
 
         shown.collecting(&[]);
         assert_eq!(shown.collecting, []);
@@ -1965,11 +1965,11 @@ mod tests {
         let at = an_instant();
 
         assert!(
-            shown.collecting(&[reading(atlas(), at)]),
+            shown.collecting(&[reading(arkham(), at)]),
             "None to one project"
         );
         assert!(
-            !shown.collecting(&[reading(atlas(), at)]),
+            !shown.collecting(&[reading(arkham(), at)]),
             "the same collection again"
         );
         assert!(
@@ -1989,8 +1989,8 @@ mod tests {
         let mut shown = shown(a_snapshot());
         let at = an_instant();
 
-        assert!(shown.collecting(&[reading(atlas(), at)]));
-        assert!(shown.collecting(&[reading(atlas(), at + chrono::TimeDelta::seconds(1))]));
+        assert!(shown.collecting(&[reading(arkham(), at)]));
+        assert!(shown.collecting(&[reading(arkham(), at + chrono::TimeDelta::seconds(1))]));
     }
 
     /// `codex review` on this change, and it is right: the foot said
@@ -2002,7 +2002,7 @@ mod tests {
     fn a_screen_at_rest_over_a_read_goes_stale_and_says_when() {
         let mut snapshot = a_snapshot();
         let read = an_instant();
-        snapshot.read_at.insert("orbital".to_string(), read);
+        snapshot.read_at.insert("dunwich".to_string(), read);
 
         let shown = shown(snapshot);
 
@@ -2022,7 +2022,7 @@ mod tests {
         snapshot.read_at.insert("ferry".to_string(), read);
         snapshot
             .read_at
-            .insert("orbital".to_string(), read - chrono::TimeDelta::hours(2));
+            .insert("dunwich".to_string(), read - chrono::TimeDelta::hours(2));
 
         let shown = shown(snapshot);
 
@@ -2038,7 +2038,7 @@ mod tests {
     #[test]
     fn a_screen_with_a_collection_on_it_and_no_age_holds_for_one_frame() {
         let mut shown = shown(a_snapshot());
-        shown.collecting(&[reading(atlas(), an_instant())]);
+        shown.collecting(&[reading(arkham(), an_instant())]);
 
         assert_eq!(shown.holds_for(an_instant()), Some(phrase::FRAME));
     }
@@ -2052,7 +2052,7 @@ mod tests {
     fn a_screen_whose_first_collection_stopped_answering_has_nothing_left_to_expire() {
         let mut shown = shown(a_snapshot());
         let asked_at = an_instant();
-        shown.collecting(&[reading(atlas(), asked_at)]);
+        shown.collecting(&[reading(arkham(), asked_at)]);
 
         assert_eq!(
             shown.holds_for(asked_at + chrono::TimeDelta::seconds(30)),
@@ -2068,9 +2068,9 @@ mod tests {
     fn a_hung_tracker_is_redrawn_for_its_rows_age_rather_than_for_a_still_mark() {
         let mut snapshot = a_snapshot();
         let read = an_instant();
-        snapshot.read_at.insert("atlas".to_string(), read);
+        snapshot.read_at.insert("arkham".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(&[reading(atlas(), read)]);
+        shown.collecting(&[reading(arkham(), read)]);
 
         assert_eq!(
             shown.holds_for(read + chrono::TimeDelta::seconds(30)),
@@ -2088,9 +2088,9 @@ mod tests {
     fn a_collection_in_flight_does_not_stop_the_ages_beneath_it_running_out() {
         let mut snapshot = a_snapshot();
         let read = an_instant();
-        snapshot.read_at.insert("atlas".to_string(), read);
+        snapshot.read_at.insert("arkham".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(&[reading(atlas(), read)]);
+        shown.collecting(&[reading(arkham(), read)]);
 
         assert_eq!(
             shown.holds_for(read + chrono::TimeDelta::milliseconds(970)),
@@ -2106,9 +2106,9 @@ mod tests {
         let mut snapshot = a_snapshot();
         let read = an_instant();
         let now = read + chrono::TimeDelta::seconds(86_400);
-        snapshot.read_at.insert("atlas".to_string(), read);
+        snapshot.read_at.insert("arkham".to_string(), read);
         let mut shown = shown(snapshot);
-        shown.collecting(&[reading(atlas(), now)]);
+        shown.collecting(&[reading(arkham(), now)]);
 
         assert_eq!(shown.holds_for(now), Some(phrase::FRAME));
     }
@@ -3040,12 +3040,12 @@ mod tests {
     /// forest rather than leaving it where it already was.
     fn a_hidden_grove_above_a_shown_tree() -> Snapshot {
         let grove = a_grove(6).trees[0].clone();
-        let atlas = a_snapshot().trees[0].clone();
-        let both = vec![grove, atlas];
+        let arkham = a_snapshot().trees[0].clone();
+        let both = vec![grove, arkham];
 
         let mut snapshot = Snapshot {
             collected: both,
-            projects: vec!["grove".to_string(), "atlas".to_string()],
+            projects: vec!["grove".to_string(), "arkham".to_string()],
             ..a_snapshot_of(Vec::new())
         };
         snapshot.refilter(Filter::LiveAgents);
@@ -3057,12 +3057,12 @@ mod tests {
         let mut shown = shown(a_hidden_grove_above_a_shown_tree());
         let was = shown.forest.selected_line();
 
-        assert_eq!(cursor(&shown), Some(&bead("atlas", "a-1")));
+        assert_eq!(cursor(&shown), Some(&bead("arkham", "a-1")));
 
         assert!(shown.apply(Action::ToggleFilter));
 
         assert_eq!(shown.forest.snapshot().filter, Filter::All);
-        assert_eq!(cursor(&shown), Some(&bead("atlas", "a-1")));
+        assert_eq!(cursor(&shown), Some(&bead("arkham", "a-1")));
         assert_ne!(
             shown.forest.selected_line(),
             was,

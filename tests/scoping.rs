@@ -21,11 +21,11 @@ use std::process::{Command, Output};
 /// its tracker answered.
 const TWO_PROJECTS: &str = "\
 [[projects]]
-name = \"atlas\"
+name = \"arkham\"
 path = \"{}\"
 
 [[projects]]
-name = \"beacon\"
+name = \"kadath\"
 path = \"{}\"
 ";
 
@@ -68,19 +68,19 @@ fn bdi_started_in(cwd: &Path, config: &Path, args: &[&str]) -> Output {
 /// one of them and one started beside the config is in neither.
 fn a_config_naming_two_projects_apart(named: &str) -> (PathBuf, PathBuf, PathBuf) {
     let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    let atlas = home.join("atlas");
-    let beacon = home.join("beacon");
-    std::fs::create_dir_all(&atlas).expect("the directory is ours to make");
-    std::fs::create_dir_all(&beacon).expect("the directory is ours to make");
+    let arkham = home.join("arkham");
+    let kadath = home.join("kadath");
+    std::fs::create_dir_all(&arkham).expect("the directory is ours to make");
+    std::fs::create_dir_all(&kadath).expect("the directory is ours to make");
     let path = home.join("config.toml");
     std::fs::write(
         &path,
         TWO_PROJECTS
-            .replacen("{}", &atlas.display().to_string(), 1)
-            .replacen("{}", &beacon.display().to_string(), 1),
+            .replacen("{}", &arkham.display().to_string(), 1)
+            .replacen("{}", &kadath.display().to_string(), 1),
     )
     .expect("the config is ours to write");
-    (path, atlas, beacon)
+    (path, arkham, kadath)
 }
 
 /// How the snapshot names a project it read, whether or not the tracker
@@ -94,7 +94,7 @@ fn named_in(snapshot: &str, project: &str) -> bool {
 /// control.
 ///
 /// The control is what makes the second half mean anything: without it, a bdi
-/// that had never read `beacon` for some unrelated reason would pass just as
+/// that had never read `kadath` for some unrelated reason would pass just as
 /// well as one that scoped it out.
 #[test]
 fn a_scope_leaves_the_projects_it_does_not_name_out_of_the_run() {
@@ -104,20 +104,20 @@ fn a_scope_leaves_the_projects_it_does_not_name_out_of_the_run() {
     let whole = String::from_utf8_lossy(&unscoped.stdout).to_string();
 
     assert!(unscoped.status.success(), "bdi exited {}", unscoped.status);
-    assert!(named_in(&whole, "atlas"), "got: {whole}");
+    assert!(named_in(&whole, "arkham"), "got: {whole}");
     assert!(
-        named_in(&whole, "beacon"),
+        named_in(&whole, "kadath"),
         "asking for no particular project is not asking for none: bdi reads \
          every project the config names; got: {whole}"
     );
 
-    let scoped = String::from_utf8_lossy(&bdi(&config, &["--project", "atlas", "--json"]).stdout)
+    let scoped = String::from_utf8_lossy(&bdi(&config, &["--project", "arkham", "--json"]).stdout)
         .to_string();
 
-    assert!(named_in(&scoped, "atlas"), "got: {scoped}");
+    assert!(named_in(&scoped, "arkham"), "got: {scoped}");
     assert!(
-        !named_in(&scoped, "beacon"),
-        "beacon was not asked for, so nothing should have gone and read it; got: {scoped}"
+        !named_in(&scoped, "kadath"),
+        "kadath was not asked for, so nothing should have gone and read it; got: {scoped}"
     );
 }
 
@@ -133,8 +133,8 @@ fn a_scope_naming_no_configured_project_stops_bdi_and_says_what_it_knows() {
 
     assert!(!out.status.success(), "bdi exited {}: {said}", out.status);
     assert!(said.contains("cinder"), "got: {said}");
-    assert!(said.contains("atlas"), "got: {said}");
-    assert!(said.contains("beacon"), "got: {said}");
+    assert!(said.contains("arkham"), "got: {said}");
+    assert!(said.contains("kadath"), "got: {said}");
     assert!(
         out.stdout.is_empty(),
         "a scoped-out snapshot was emitted anyway"
@@ -148,36 +148,36 @@ fn a_scope_naming_no_configured_project_stops_bdi_and_says_what_it_knows() {
 /// green.
 ///
 /// The control is the run started beside the config, under neither
-/// project, which reads both — so a `bdi` that had never read `beacon` for
+/// project, which reads both — so a `bdi` that had never read `kadath` for
 /// some unrelated reason cannot pass the scoped half.
 #[test]
 fn bdi_started_under_a_project_reads_that_project_and_all_projects_reads_every_one() {
-    let (config, atlas, _) = a_config_naming_two_projects_apart("scoped-by-directory");
+    let (config, arkham, _) = a_config_naming_two_projects_apart("scoped-by-directory");
     let beside = config.parent().expect("the config sits in a directory");
 
     let whole =
         String::from_utf8_lossy(&bdi_started_in(beside, &config, &["--json"]).stdout).to_string();
-    assert!(named_in(&whole, "atlas"), "got: {whole}");
+    assert!(named_in(&whole, "arkham"), "got: {whole}");
     assert!(
-        named_in(&whole, "beacon"),
+        named_in(&whole, "kadath"),
         "started under no configured project, bdi reads every one; got: {whole}"
     );
 
     let scoped =
-        String::from_utf8_lossy(&bdi_started_in(&atlas, &config, &["--json"]).stdout).to_string();
-    assert!(named_in(&scoped, "atlas"), "got: {scoped}");
+        String::from_utf8_lossy(&bdi_started_in(&arkham, &config, &["--json"]).stdout).to_string();
+    assert!(named_in(&scoped, "arkham"), "got: {scoped}");
     assert!(
-        !named_in(&scoped, "beacon"),
-        "bdi was started under atlas, so nothing should have gone and read beacon; got: {scoped}"
+        !named_in(&scoped, "kadath"),
+        "bdi was started under arkham, so nothing should have gone and read kadath; got: {scoped}"
     );
 
     let opted_out = String::from_utf8_lossy(
-        &bdi_started_in(&atlas, &config, &["--all-projects", "--json"]).stdout,
+        &bdi_started_in(&arkham, &config, &["--all-projects", "--json"]).stdout,
     )
     .to_string();
-    assert!(named_in(&opted_out, "atlas"), "got: {opted_out}");
+    assert!(named_in(&opted_out, "arkham"), "got: {opted_out}");
     assert!(
-        named_in(&opted_out, "beacon"),
+        named_in(&opted_out, "kadath"),
         "--all-projects reads every configured project; got: {opted_out}"
     );
 }

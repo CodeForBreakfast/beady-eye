@@ -706,7 +706,7 @@ mod tests {
     /// block of its own, and the badge is in it with everywhere it points.
     #[test]
     fn a_badge_in_the_state_still_opens_where_the_caption_gave_way() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let mut staffed = captioned("teach the elided run to fold back open on a keypress");
         staffed.badges = vec![Badged {
             key: "delivery_pr".into(),
@@ -749,7 +749,7 @@ mod tests {
 
         assert!(drawn[0].contains("wallpaper timer calls dms"), "{drawn:?}");
         assert!(drawn[0].contains("⇢ #12  ◍ wCM:p9 · working"), "{drawn:?}");
-        assert!(!drawn[0].contains("atlas"), "{drawn:?}");
+        assert!(!drawn[0].contains("arkham"), "{drawn:?}");
     }
 
     /// And it gives way only where it costs the title something. A row wide
@@ -867,7 +867,7 @@ mod tests {
     /// the title, because a link belongs to its span and not to a block.
     #[test]
     fn a_row_is_drawn_in_whatever_order_its_layout_names() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let mut badged = node("smt-4kd3p.2", "the noctalia widget", Status::InProgress);
         badged.badges = vec![
             Badged {
@@ -879,7 +879,7 @@ mod tests {
             },
             Badged {
                 key: "jira".into(),
-                text: "ATLAS-19".into(),
+                text: "ARKHAM-19".into(),
                 link: None,
                 short: None,
                 colour: None,
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(
             drawn,
             vec![
-                "  ├── ◐ ⇢ #12 .2   the noctalia widget  ATLAS-19         ◍ wCM:p9 · working  3/8"
+                "  ├── ◐ ⇢ #12 .2   the noctalia widget  ARKHAM-19        ◍ wCM:p9 · working  3/8"
             ]
         );
         assert!(
@@ -989,7 +989,7 @@ mod tests {
             Badged {
                 key: "delivery_pr".into(),
                 text: "⇢ #12".into(),
-                link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+                link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
                 short: None,
                 colour: None,
             },
@@ -1030,7 +1030,7 @@ mod tests {
             let mut badged = node("smt-4kd3p.20", "a bead", status);
             badged.badges = vec![Badged {
                 key: "jira".into(),
-                text: "ATLAS-19".into(),
+                text: "ARKHAM-19".into(),
                 link: None,
                 short: None,
                 colour: Some(Colour::Status),
@@ -1042,7 +1042,7 @@ mod tests {
             );
             (
                 run_saying(&painted, ".20").style.fg,
-                run_saying(&painted, "ATLAS-19").style.fg,
+                run_saying(&painted, "ARKHAM-19").style.fg,
             )
         };
 
@@ -1069,7 +1069,7 @@ mod tests {
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![Badged {
             key: "jira".into(),
-            text: "ATLAS-19".into(),
+            text: "ARKHAM-19".into(),
             link: None,
             short: None,
             colour: None,
@@ -1077,7 +1077,7 @@ mod tests {
         let row = row(&badged);
 
         let painted = Painted::of(bead_line(&row, BRANCH, &ids(4), &Layout::default()), 100, 1);
-        let badge = run_saying(&painted, "ATLAS-19");
+        let badge = run_saying(&painted, "ARKHAM-19");
 
         assert_eq!(badge.style.fg, tone(&row).fg, "{badge:?}");
         assert_ne!(
@@ -1095,8 +1095,8 @@ mod tests {
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![Badged {
             key: "jira".into(),
-            text: "ATLAS-19".into(),
-            link: Some("https://forge.invalid/browse/ATLAS-19".into()),
+            text: "ARKHAM-19".into(),
+            link: Some("https://forge.invalid/browse/ARKHAM-19".into()),
             short: None,
             colour: Some(Colour::Status),
         }];
@@ -1106,7 +1106,7 @@ mod tests {
             100,
             1,
         );
-        let badge = run_saying(&painted, "ATLAS-19");
+        let badge = run_saying(&painted, "ARKHAM-19");
 
         assert!(
             badge.style.add_modifier.contains(Modifier::UNDERLINED),
@@ -1153,7 +1153,7 @@ mod tests {
         badged.badges = vec![Badged {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
-            link: Some("https://forge.invalid/orbital\u{1b}]0;owned\u{7}/pull/12".into()),
+            link: Some("https://forge.invalid/dunwich\u{1b}]0;owned\u{7}/pull/12".into()),
             short: None,
             colour: None,
         }];
@@ -1191,7 +1191,7 @@ mod tests {
             colour: None,
         };
         let linked = Badged {
-            link: Some("https://forge.invalid/orbital/atlas/pull/12".into()),
+            link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
             short: None,
             colour: None,
             ..unlinked.clone()
@@ -1247,7 +1247,7 @@ mod tests {
             );
             run_saying(&painted, "⇢ #").style
         };
-        let somewhere = Some("https://forge.invalid/orbital/atlas/pull/12");
+        let somewhere = Some("https://forge.invalid/dunwich/arkham/pull/12");
 
         assert!(
             badge_at(EXACTLY_THE_ROW, somewhere)
@@ -1277,7 +1277,7 @@ mod tests {
     /// has.
     #[test]
     fn a_badge_the_row_cut_opens_where_a_badge_it_kept_whole_opens() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![Badged {
             key: "delivery_pr".into(),
@@ -1316,7 +1316,7 @@ mod tests {
     /// the note says is `row::cells`' to say and is read there.
     #[test]
     fn a_badge_the_emitter_refuses_is_not_opened_at_the_widths_that_cut_it() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let held = "\u{1b}]0;owned\u{7}";
         let opened_at = |text: String, width: u16| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
@@ -1352,7 +1352,7 @@ mod tests {
     /// rather than retyping what it stands for.
     #[test]
     fn the_badge_that_names_a_url_is_the_one_emitted_as_a_hyperlink() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let badge = |link: Option<&str>| Badged {
             key: "delivery_pr".into(),
             text: "⇢ #12".into(),
@@ -1381,13 +1381,13 @@ mod tests {
         );
     }
 
-    /// A badge saying `⇢ atlas #12`, with `⇢ #12` to fall back to. The long
+    /// A badge saying `⇢ arkham #12`, with `⇢ #12` to fall back to. The long
     /// form is a tracker's length to choose and the short one is the config's,
     /// so neither is `bdi`'s and the row can only pick between them.
     fn shortenable(to: Option<&str>) -> Badged {
         Badged {
             key: "delivery_pr".into(),
-            text: "⇢ atlas #12".into(),
+            text: "⇢ arkham #12".into(),
             short: Some("⇢ #12".into()),
             link: to.map(str::to_string),
             colour: None,
@@ -1413,12 +1413,12 @@ mod tests {
     #[test]
     fn a_badge_too_wide_for_the_row_is_said_in_the_short_form_its_config_named() {
         assert_eq!(
-            a_row_badged(shortenable(None), 33),
-            "  ├── ● .20   a bead  ⇢ atlas #12"
+            a_row_badged(shortenable(None), 34),
+            "  ├── ● .20   a bead  ⇢ arkham #12"
         );
         assert_eq!(
-            a_row_badged(shortenable(None), 32),
-            "  ├── ● .20   a bead  ⇢ #12     "
+            a_row_badged(shortenable(None), 33),
+            "  ├── ● .20   a bead  ⇢ #12      "
         );
     }
 
@@ -1432,8 +1432,8 @@ mod tests {
         };
 
         assert_eq!(
-            a_row_badged(one_length, 32),
-            "  ├── ● .20   a bead  ⇢ atlas #…"
+            a_row_badged(one_length, 33),
+            "  ├── ● .20   a bead  ⇢ arkham #…"
         );
     }
 
@@ -1443,7 +1443,7 @@ mod tests {
     /// for the words that name it.
     #[test]
     fn a_badge_said_in_its_short_form_still_points_where_the_long_one_did() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
         badged.badges = vec![shortenable(Some(somewhere))];
 
@@ -1496,7 +1496,7 @@ mod tests {
     /// long form is refused would open a page nothing marked as a link.
     #[test]
     fn a_badge_whose_two_forms_disagree_about_its_link_keeps_one_length() {
-        let somewhere = "https://forge.invalid/orbital/atlas/pull/12";
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
         let held = "\u{1b}]0;owned\u{7}";
         // Read without the notes the row would carry beside them. What each
         // badge leaves on the row is `row::cells`' to say and is read there;
@@ -1535,7 +1535,7 @@ mod tests {
         );
 
         let refused_long = Badged {
-            text: format!("⇢ atlas #12{held}"),
+            text: format!("⇢ arkham #12{held}"),
             ..shortenable(Some(somewhere))
         };
         assert_eq!(

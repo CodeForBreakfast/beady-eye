@@ -40,14 +40,14 @@ const THREE_LINES: u16 = 3;
 /// capture ends with. Far enough down that it is on screen before the notch
 /// and still on screen after it, which is what lets one row say how far the
 /// view travelled.
-const A_ROOT_THE_NOTCH_KEEPS_ON_SCREEN: &[u8] = b"orb-b1";
+const A_ROOT_THE_NOTCH_KEEPS_ON_SCREEN: &[u8] = b"dun-b1";
 
 /// The window over that root, for a click that lands on it.
-const THAT_ROOTS_WINDOW: &str = "orb-b1 · Esc to go back";
+const THAT_ROOTS_WINDOW: &str = "dun-b1 · Esc to go back";
 
 /// The root the walk leaves the selection on, which the notch takes off the
 /// screen — the whole point of the test that names it.
-const THE_SELECTED_ROOT: &[u8] = b"orb-c3";
+const THE_SELECTED_ROOT: &[u8] = b"dun-c3";
 
 /// One notch of the wheel moves the forest three lines down.
 ///

@@ -12,15 +12,15 @@
         },
         "agent_status": "idle",
         "cwd": "/tmp/bdi-ground/lander",
-        "display_agent": "beacon-update",
+        "display_agent": "kadath-update",
         "focused": false,
         "foreground_cwd": "/tmp/bdi-ground/lander",
         "pane_id": "wK:p1",
         "revision": 2,
         "state_change_seq": 49,
         "state_labels": {
-          "idle": "/beacon-update run (wisp lnd-wisp-2rk)",
-          "working": "/beacon-update run (wisp lnd-wisp-2rk)"
+          "idle": "/kadath-update run (wisp lnd-wisp-2rk)",
+          "working": "/kadath-update run (wisp lnd-wisp-2rk)"
         },
         "tab_id": "wK:t1",
         "terminal_id": "term_65abb88ca064e52",
@@ -37,10 +37,10 @@
           "value": "4a29e7b5-c081-4d63-8fa7-1e60c94db372"
         },
         "agent_status": "working",
-        "cwd": "/tmp/bdi-ground/orbital",
+        "cwd": "/tmp/bdi-ground/dunwich",
         "display_agent": "orch: v1",
         "focused": false,
-        "foreground_cwd": "/tmp/bdi-ground/orbital",
+        "foreground_cwd": "/tmp/bdi-ground/dunwich",
         "pane_id": "wM:p1",
         "revision": 2,
         "state_change_seq": 50,
@@ -48,7 +48,7 @@
         "terminal_id": "term_65abb88ca4dd653",
         "terminal_title": "◑ Claude Code",
         "terminal_title_stripped": "Claude Code",
-        "title": "orchestrating orb-9fw",
+        "title": "orchestrating dun-9fw",
         "workspace_id": "wM"
       },
       {
@@ -60,10 +60,10 @@
           "value": "0e6a54c9-38d7-4b02-95e1-c7f42a08bd63"
         },
         "agent_status": "working",
-        "cwd": "/tmp/bdi-ground/orbital",
+        "cwd": "/tmp/bdi-ground/dunwich",
         "display_agent": "dep-tree shape",
         "focused": false,
-        "foreground_cwd": "/tmp/bdi-ground/orbital",
+        "foreground_cwd": "/tmp/bdi-ground/dunwich",
         "pane_id": "wM:pG",
         "revision": 2,
         "state_change_seq": 52,
@@ -71,7 +71,7 @@
         "terminal_id": "term_65abb890c8b3a62",
         "terminal_title": "◑ Claude Code",
         "terminal_title_stripped": "Claude Code",
-        "title": "orb-9fw.12: retiring the dep-tree row shape from fixtures",
+        "title": "dun-9fw.12: retiring the dep-tree row shape from fixtures",
         "workspace_id": "wM"
       },
       {
@@ -83,10 +83,10 @@
           "value": "39b072e5-4c81-49fa-b7d3-a6e0f18c25d9"
         },
         "agent_status": "working",
-        "cwd": "/tmp/bdi-ground/orbital",
+        "cwd": "/tmp/bdi-ground/dunwich",
         "display_agent": "watcher-shortcut",
         "focused": false,
-        "foreground_cwd": "/tmp/bdi-ground/orbital",
+        "foreground_cwd": "/tmp/bdi-ground/dunwich",
         "pane_id": "wM:pK",
         "revision": 2,
         "state_change_seq": 54,
@@ -94,7 +94,7 @@
         "terminal_id": "term_65abb8911c71765",
         "terminal_title": "◑ Claude Code",
         "terminal_title_stripped": "Claude Code",
-        "title": "orb-9fw.22: run orbital under a file watcher",
+        "title": "dun-9fw.22: run dunwich under a file watcher",
         "workspace_id": "wM"
       },
       {
@@ -106,9 +106,9 @@
           "value": "7d3f8021-b5a6-4e19-a04c-8f21e6c5307b"
         },
         "agent_status": "working",
-        "cwd": "/tmp/bdi-ground/orbital",
+        "cwd": "/tmp/bdi-ground/dunwich",
         "focused": false,
-        "foreground_cwd": "/tmp/bdi-ground/orbital",
+        "foreground_cwd": "/tmp/bdi-ground/dunwich",
         "pane_id": "wM:pC",
         "revision": 2,
         "state_change_seq": 51,
@@ -127,10 +127,10 @@
           "value": "f251c8a4-6b09-4d37-82ea-9c05b71fe480"
         },
         "agent_status": "idle",
-        "cwd": "/tmp/bdi-ground/orbital",
+        "cwd": "/tmp/bdi-ground/dunwich",
         "display_agent": "push-gate-doc",
         "focused": false,
-        "foreground_cwd": "/tmp/bdi-ground/orbital",
+        "foreground_cwd": "/tmp/bdi-ground/dunwich",
         "pane_id": "wM:pH",
         "revision": 2,
         "state_change_seq": 53,
@@ -138,7 +138,7 @@
         "terminal_id": "term_65abb890cce2b63",
         "terminal_title": "✳ Claude Code",
         "terminal_title_stripped": "Claude Code",
-        "title": "orb-9fw.30: document the behind-signature in CLAUDE.md",
+        "title": "dun-9fw.30: document the behind-signature in CLAUDE.md",
         "workspace_id": "wM"
       },
       {
@@ -150,9 +150,9 @@
           "value": "8c40d9f2-15b7-4e60-a3c8-2b95740fe1a6"
         },
         "agent_status": "idle",
-        "cwd": "/tmp/bdi-ground/orbital",
+        "cwd": "/tmp/bdi-ground/dunwich",
         "focused": false,
-        "foreground_cwd": "/tmp/bdi-ground/orbital",
+        "foreground_cwd": "/tmp/bdi-ground/dunwich",
         "pane_id": "wN:p1",
         "revision": 2,
         "state_change_seq": 55,

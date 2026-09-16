@@ -248,7 +248,7 @@ fn incoming(read: event::Event) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::fixtures::{atlas, A_MOMENT};
+    use crate::tui::fixtures::{arkham, A_MOMENT};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::io::Write;
     use std::os::unix::net::UnixStream;
@@ -276,11 +276,11 @@ mod tests {
             "nothing was reported until the source said so"
         );
 
-        cue.send(atlas()).expect("the source is listening");
+        cue.send(arkham()).expect("the source is listening");
 
         assert_eq!(
             events.recv_timeout(A_MOMENT).ok(),
-            Some(Event::Changed(atlas())),
+            Some(Event::Changed(arkham())),
             "the loop was told which project moved, not just that something did"
         );
     }
@@ -325,12 +325,12 @@ mod tests {
         });
 
         changed
-            .send("atlas".to_string())
+            .send("arkham".to_string())
             .expect("the source is listening");
 
         assert_eq!(
             events.recv_timeout(A_MOMENT).ok(),
-            Some(Event::Changed(atlas())),
+            Some(Event::Changed(arkham())),
             "the loop was told which project a writer said had moved"
         );
     }
@@ -344,7 +344,7 @@ mod tests {
         let reporter = thread::spawn(move || report(&mut OnCue(cued), &to_the_loop));
 
         drop(events);
-        let _ = cue.send(atlas());
+        let _ = cue.send(arkham());
 
         assert!(reporter.join().is_ok());
     }
@@ -533,7 +533,7 @@ mod tests {
 
         let (socket, notice) = inbound(changes::listen(
             Some(at),
-            &Reported::watching(["atlas".to_string()]),
+            &Reported::watching(["arkham".to_string()]),
             changed,
         ));
 
@@ -556,7 +556,7 @@ mod tests {
 
         let _socket = changes::listen(
             Some(at.clone()),
-            &Reported::watching(["atlas".to_string()]),
+            &Reported::watching(["arkham".to_string()]),
             changed.clone(),
         )
         .expect("a socket of this test's own");
@@ -572,11 +572,11 @@ mod tests {
         });
 
         let mut writer = UnixStream::connect(&at).expect("bdi is listening");
-        writeln!(writer, "atlas").expect("the channel takes a line");
+        writeln!(writer, "arkham").expect("the channel takes a line");
 
         assert_eq!(
             events.recv_timeout(A_MOMENT).ok(),
-            Some(Event::Changed(atlas())),
+            Some(Event::Changed(arkham())),
             "what a writer said on the socket reached the loop as a project to collect for"
         );
     }

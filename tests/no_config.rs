@@ -92,7 +92,7 @@ fn bdi_project_names_the_project_read_with_no_config() {
     tracker.tracks(&cwd);
     tracker.holds(THE_TRACKER);
     let mut environment = tracker.environment();
-    environment.push(("BDI_PROJECT".to_string(), "orbital".to_string()));
+    environment.push(("BDI_PROJECT".to_string(), "dunwich".to_string()));
 
     let out = bdi_in(&cwd, &["--json"], &environment);
     let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
@@ -104,7 +104,7 @@ fn bdi_project_names_the_project_read_with_no_config() {
         .expect("the directory has a name")
         .to_string_lossy();
     assert!(
-        snapshot.contains("\"project\": \"orbital\""),
+        snapshot.contains("\"project\": \"dunwich\""),
         "the project is not called what BDI_PROJECT says: {snapshot}"
     );
     assert!(
@@ -126,7 +126,7 @@ fn another_tools_project_variable_is_not_read() {
     tracker.tracks(&cwd);
     tracker.holds(THE_TRACKER);
     let mut environment = tracker.environment();
-    environment.push(("COMMY_PROJECT".to_string(), "orbital".to_string()));
+    environment.push(("COMMY_PROJECT".to_string(), "dunwich".to_string()));
 
     let out = bdi_in(&cwd, &["--json"], &environment);
     let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
@@ -142,7 +142,7 @@ fn another_tools_project_variable_is_not_read() {
         "the project is not called after its directory: {snapshot}"
     );
     assert!(
-        !snapshot.contains("\"project\": \"orbital\""),
+        !snapshot.contains("\"project\": \"dunwich\""),
         "another tool's variable named the project: {snapshot}"
     );
 
@@ -267,13 +267,13 @@ fn a_project_the_environment_names_publishes_no_guess_without_git_either() {
 
     let mut environment = tracker.environment();
     environment.push(shims_first_with_nothing_called("git", &home));
-    environment.push(("BDI_PROJECT".to_string(), "orbital".to_string()));
+    environment.push(("BDI_PROJECT".to_string(), "dunwich".to_string()));
 
     let out = bdi_in(&home, &["--json"], &environment);
     let snapshot = emitted(&out);
 
     assert_eq!(
-        snapshot["trees"][0]["project"], "orbital",
+        snapshot["trees"][0]["project"], "dunwich",
         "the project is not called what BDI_PROJECT says: {snapshot:#}"
     );
     assert_eq!(

@@ -222,7 +222,7 @@ pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n{settings}",
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n{settings}",
             home.display()
         ),
     )
@@ -570,7 +570,7 @@ const SHOW_EVERY_ROOT: &[u8] = b"agj";
 /// Where that walk leaves the selection, and the whole of the window's title
 /// over it. Whole because the id of a root is a prefix of nothing else here,
 /// but the title of the window is what says a window is over *this* bead.
-pub const THE_FIRST_ROOTS_WINDOW: &str = "orb-c3 · Esc to go back";
+pub const THE_FIRST_ROOTS_WINDOW: &str = "dun-c3 · Esc to go back";
 
 /// A `bdi` on a pty of this size over [`THE_LOOSE_ROOTS`], with every root
 /// drawn and the selection on the first of them.

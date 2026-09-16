@@ -280,9 +280,9 @@ mod tests {
     #[test]
     fn the_scope_the_directory_chose_is_said_with_the_way_to_the_rest() {
         assert_eq!(
-            Painted::of(scoped_line("  ", "orbital"), 80, 1).rows(),
+            Painted::of(scoped_line("  ", "dunwich"), 80, 1).rows(),
             vec![
-                "  reading orbital, where bdi was started      --all-projects reads every project"
+                "  reading dunwich, where bdi was started      --all-projects reads every project"
             ]
         );
     }
@@ -447,8 +447,8 @@ mod tests {
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/tmp/bdi-ground/orbital"
+name = "dunwich"
+path = "/tmp/bdi-ground/dunwich"
 "#,
         )
         .expect("the config parses");
@@ -489,8 +489,8 @@ path = "/tmp/bdi-ground/orbital"
 
         assert_eq!(
             row_naming(&frame, "wG:p6"),
-            "      ├── ◍ wG:p6 working  orb-2kd.5 · writing the parser and its tests  \
-             /tmp/bdi-ground/orbital"
+            "      ├── ◍ wG:p6 working  dun-2kd.5 · writing the parser and its tests  \
+             /tmp/bdi-ground/dunwich"
         );
     }
 
@@ -501,7 +501,7 @@ path = "/tmp/bdi-ground/orbital"
 
         assert_eq!(
             row_naming(&frame, "wG:p1"),
-            "      ├── ◍ wG:p1 idle  /tmp/bdi-ground/orbital"
+            "      ├── ◍ wG:p1 idle  /tmp/bdi-ground/dunwich"
         );
     }
 

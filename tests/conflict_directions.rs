@@ -33,9 +33,9 @@ use pretty_assertions::assert_eq;
 
 const CONFIG: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/orbital"
-credential_command = "echo orbital"
+name = "dunwich"
+path = "/srv/dunwich"
+credential_command = "echo dunwich"
 
 [[projects]]
 name = "ferry"
@@ -44,11 +44,11 @@ credential_command = "echo ferry"
 "#;
 
 /// Every working tree of each project's repository, as git would have listed
-/// them. `ferry` keeps one inside `orbital`'s own checkout, so the ranking
+/// them. `ferry` keeps one inside `dunwich`'s own checkout, so the ranking
 /// that gives a shared path to the deepest tree has something to rank.
 const WORKING_TREES: [(&str, &[&str]); 2] = [
-    ("orbital", &["/srv/orbital", "/srv/wt/orbital-lift"]),
-    ("ferry", &["/srv/ferry", "/srv/orbital/vendor/ferry"]),
+    ("dunwich", &["/srv/dunwich", "/srv/wt/dunwich-lift"]),
+    ("ferry", &["/srv/ferry", "/srv/dunwich/vendor/ferry"]),
 ];
 
 /// The other tracker exists so a pane can sit in a project that is not the one
@@ -85,9 +85,9 @@ struct Reading {
     claimed: BTreeMap<BeadKey, String>,
 }
 
-fn read(orbital_rows: &str, agents: &str) -> Reading {
+fn read(dunwich_rows: &str, agents: &str) -> Reading {
     let cfg = config();
-    let assembled: Vec<(&str, _)> = [("orbital", orbital_rows), ("ferry", FERRY_ROWS)]
+    let assembled: Vec<(&str, _)> = [("dunwich", dunwich_rows), ("ferry", FERRY_ROWS)]
         .into_iter()
         .map(|(project, rows)| {
             let beads = parse_beads(rows).expect("the rows parse");
@@ -236,28 +236,28 @@ fn arm(conflict: &Conflict) -> &'static str {
 fn a_claim_reaching_out_of_its_project() -> Reading {
     read(
         r#"[
-          {"id":"orb-1","title":"lift the ground station","status":"open"},
-          {"id":"orb-1.1","title":"its pane sits in the ferry's checkout",
+          {"id":"dun-1","title":"lift the ground station","status":"open"},
+          {"id":"dun-1.1","title":"its pane sits in the ferry's checkout",
            "status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p1"}},
-          {"id":"orb-1.2","title":"its pane sits under no configured project",
+          {"id":"dun-1.2","title":"its pane sits under no configured project",
            "status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p2"}},
-          {"id":"orb-1.3","title":"its pane sits in another tree of its own repository",
+          {"id":"dun-1.3","title":"its pane sits in another tree of its own repository",
            "status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p3"}},
-          {"id":"orb-1.4","title":"its pane sits in the ferry's tree inside orbital's",
+          {"id":"dun-1.4","title":"its pane sits in the ferry's tree inside dunwich's",
            "status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p4"}}
         ]"#,
         r#"{"pane_id":"w:p1","cwd":"/srv/ferry/src","agent_status":"working"},
            {"pane_id":"w:p2","cwd":"/tmp/nowhere","agent_status":"idle"},
-           {"pane_id":"w:p3","cwd":"/srv/wt/orbital-lift/src","agent_status":"working"},
-           {"pane_id":"w:p4","cwd":"/srv/orbital/vendor/ferry/src","agent_status":"idle"}"#,
+           {"pane_id":"w:p3","cwd":"/srv/wt/dunwich-lift/src","agent_status":"working"},
+           {"pane_id":"w:p4","cwd":"/srv/dunwich/vendor/ferry/src","agent_status":"idle"}"#,
     )
 }
 
@@ -265,16 +265,16 @@ fn a_claim_reaching_out_of_its_project() -> Reading {
 fn two_claims_on_one_pane() -> Reading {
     read(
         r#"[
-          {"id":"orb-2","title":"lay the feeder cable","status":"open"},
-          {"id":"orb-2.1","title":"one of two claims on the same pane",
+          {"id":"dun-2","title":"lay the feeder cable","status":"open"},
+          {"id":"dun-2.1","title":"one of two claims on the same pane",
            "status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p1"}},
-          {"id":"orb-2.2","title":"the other","status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+          {"id":"dun-2.2","title":"the other","status":"in_progress",
+           "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p1"}}
         ]"#,
-        r#"{"pane_id":"w:p1","cwd":"/srv/orbital/src","agent_status":"working"}"#,
+        r#"{"pane_id":"w:p1","cwd":"/srv/dunwich/src","agent_status":"working"}"#,
     )
 }
 
@@ -283,21 +283,21 @@ fn two_claims_on_one_pane() -> Reading {
 fn disagreements_that_refuse_no_claim() -> Reading {
     read(
         r#"[
-          {"id":"orb-3","title":"survey the mast","status":"open"},
-          {"id":"orb-3.1","title":"names one pane while another names it",
+          {"id":"dun-3","title":"survey the mast","status":"open"},
+          {"id":"dun-3.1","title":"names one pane while another names it",
            "status":"in_progress",
-           "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}],
+           "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"}],
            "metadata":{"agent_pane":"w:p1"}},
-          {"id":"orb-3.2","title":"two panes name it and it names none",
-           "status":"in_progress","dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}]}
+          {"id":"dun-3.2","title":"two panes name it and it names none",
+           "status":"in_progress","dependencies":[{"depends_on_id":"dun-3","type":"parent-child"}]}
         ]"#,
-        r#"{"pane_id":"w:p1","cwd":"/srv/orbital/src","agent_status":"working"},
-           {"pane_id":"w:p2","cwd":"/srv/orbital/src","agent_status":"idle",
-            "display_agent":"orb-3.1"},
-           {"pane_id":"w:p3","cwd":"/srv/orbital/src","agent_status":"idle",
-            "display_agent":"orb-3.2"},
-           {"pane_id":"w:p4","cwd":"/srv/orbital/src","agent_status":"idle",
-            "display_agent":"orb-3.2"}"#,
+        r#"{"pane_id":"w:p1","cwd":"/srv/dunwich/src","agent_status":"working"},
+           {"pane_id":"w:p2","cwd":"/srv/dunwich/src","agent_status":"idle",
+            "display_agent":"dun-3.1"},
+           {"pane_id":"w:p3","cwd":"/srv/dunwich/src","agent_status":"idle",
+            "display_agent":"dun-3.2"},
+           {"pane_id":"w:p4","cwd":"/srv/dunwich/src","agent_status":"idle",
+            "display_agent":"dun-3.2"}"#,
     )
 }
 

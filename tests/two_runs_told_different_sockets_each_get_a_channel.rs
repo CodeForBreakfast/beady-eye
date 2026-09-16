@@ -38,7 +38,7 @@ const COLS: u16 = 120;
 /// The project both runs read, drawn once the config has been read — which
 /// is after the socket has been asked for, so a run that has drawn it has
 /// settled where it listens.
-const ATLAS: &[u8] = "atlas".as_bytes();
+const ARKHAM: &[u8] = "arkham".as_bytes();
 
 /// A `HOME` whose config names one project and the socket to listen on.
 fn a_home_listening_on(named: &str, socket: &Path) -> PathBuf {
@@ -65,7 +65,7 @@ fn two_runs_told_different_sockets_each_get_a_channel() {
     let environment = tracker.environment();
 
     let mut first = Driven::bdi(ROWS, COLS, home.clone(), &environment);
-    first.read_until(ATLAS, GIVING_UP);
+    first.read_until(ARKHAM, GIVING_UP);
 
     let mut second = Driven::bdi_with_arguments(
         ROWS,
@@ -74,19 +74,19 @@ fn two_runs_told_different_sockets_each_get_a_channel() {
         &["--socket", &named_on_the_command_line.display().to_string()],
         &environment,
     );
-    second.read_until(ATLAS, GIVING_UP);
+    second.read_until(ARKHAM, GIVING_UP);
 
     // Both answers taken before either is judged. They are one fact — that
     // two runs on one machine are each reachable — and a pair of assertions
     // would stop at the first run, which is the half that already worked.
     let answers = (
-        Producer::connected_to(&named_by_the_config).says("atlas"),
-        Producer::connected_to(&named_on_the_command_line).says("atlas"),
+        Producer::connected_to(&named_by_the_config).says("arkham"),
+        Producer::connected_to(&named_on_the_command_line).says("arkham"),
     );
 
     assert_eq!(
         (answers.0.as_str(), answers.1.as_str()),
-        ("ok atlas", "ok atlas"),
+        ("ok arkham", "ok arkham"),
         "a producer reaches each run where that run was told to listen: the \
          first on the path its config named, the second on the path its \
          command line named over the same config. Neither has a runtime \

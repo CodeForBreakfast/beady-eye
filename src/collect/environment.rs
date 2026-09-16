@@ -284,7 +284,7 @@ mod tests {
     /// nothing else.
     fn ambient_project() -> Project {
         Project {
-            name: "atlas".to_string(),
+            name: "arkham".to_string(),
             path: project_dir(),
             environment_command: None,
             credential_command: None,
@@ -381,7 +381,7 @@ mod tests {
     /// reading it as part of that variable's name loses the variable.
     #[test]
     fn text_a_projects_envrc_wrote_first_does_not_lose_the_variable_behind_it() {
-        let noise = "entering the atlas shell\n";
+        let noise = "entering the arkham shell\n";
         let runner = FakeRunner::default().with(
             &entering_the_directory(),
             &format!(
@@ -524,7 +524,7 @@ mod tests {
     fn a_credential_command_answers_instead_of_entering_the_directory() {
         let runner = FakeRunner::default().with("sh -c op read the/password", "hunter2\n");
         let project = Project {
-            name: "atlas".to_string(),
+            name: "arkham".to_string(),
             path: project_dir(),
             environment_command: None,
             credential_command: Some("op read the/password".to_string()),
@@ -625,7 +625,7 @@ mod tests {
     fn a_projects_credential_command_supplies_its_password() {
         let runner = FakeRunner::default().with("sh -c op read the/password", "hunter2\n");
         let project = Project {
-            name: "atlas".to_string(),
+            name: "arkham".to_string(),
             path: project_dir(),
             environment_command: None,
             credential_command: Some("op read the/password".to_string()),
@@ -684,7 +684,7 @@ mod tests {
     /// A project whose credential command would not run.
     fn credentialled_by(command: &str) -> Project {
         Project {
-            name: "atlas".to_string(),
+            name: "arkham".to_string(),
             path: project_dir(),
             environment_command: None,
             credential_command: Some(command.to_string()),

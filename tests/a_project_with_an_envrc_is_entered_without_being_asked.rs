@@ -64,7 +64,7 @@ const THE_PROJECTS_OWN_ROOT: &str = "own-2bb";
 
 /// What a config that names a project calls it, which is also what the
 /// snapshot calls it back.
-const THE_CONFIGURED_PROJECT: &str = "atlas";
+const THE_CONFIGURED_PROJECT: &str = "arkham";
 
 fn the_projects_own() -> String {
     THE_LAUNCHING_SHELLS.replace("bdi-", ANOTHER_PREFIX)

@@ -194,7 +194,7 @@ fn a_project_the_environment_names_is_not_warned_with_no_git_either() {
     let home = a_home_with_no_config("no-git-named");
     let (mut environment, _tracker, _herdr) = a_run_in(&home);
     with_no_git(&mut environment, &home);
-    environment.push(("BDI_PROJECT".to_string(), "orbital".to_string()));
+    environment.push(("BDI_PROJECT".to_string(), "dunwich".to_string()));
 
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &environment);
     let drawn = drawn_by(&mut bdi);

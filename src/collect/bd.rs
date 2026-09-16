@@ -507,13 +507,13 @@ mod tests {
         let rows = parse_beads(JOINED).expect("the captured rows parse");
         let bead = rows
             .iter()
-            .find(|b| b.id == "orb-9fw")
-            .expect("orb-9fw is in the capture");
+            .find(|b| b.id == "dun-9fw")
+            .expect("dun-9fw is in the capture");
 
         assert!(
             bead.description
                 .as_deref()
-                .is_some_and(|said| said.starts_with("`orbital` reads a repository")),
+                .is_some_and(|said| said.starts_with("`dunwich` reads a repository")),
             "{:?}",
             bead.description
         );
@@ -524,7 +524,7 @@ mod tests {
             "{:?}",
             bead.notes
         );
-        assert_eq!(bead.owner.as_deref(), Some("mira@orbital.invalid"));
+        assert_eq!(bead.owner.as_deref(), Some("mira@dunwich.invalid"));
     }
 
     /// bd leaves both out of a row that has neither, and a row it writes
@@ -624,7 +624,7 @@ mod tests {
         let rows = r#"[
             {"id":"a","title":"t","status":"open","issue_type":"feature",
              "external_ref":"https://jira.invalid/browse/HELIO-412",
-             "metadata":{"jira":"ATLAS-19","helio.ticket":"HELIO-9"}}
+             "metadata":{"jira":"ARKHAM-19","helio.ticket":"HELIO-9"}}
         ]"#;
 
         let fields = &parse_beads(rows).expect("the row parses")[0].values;
@@ -640,7 +640,7 @@ mod tests {
         );
         assert_eq!(
             fields.get("metadata.jira").map(String::as_str),
-            Some("ATLAS-19")
+            Some("ARKHAM-19")
         );
         assert_eq!(
             fields.get("metadata.helio.ticket").map(String::as_str),
@@ -660,7 +660,7 @@ mod tests {
             {"id":"a","title":"t","status":"open","priority":1,"pinned":true,
              "external_ref":null,"parent":"",
              "dependencies":[{"depends_on_id":"b","type":"blocks"}],
-             "metadata":{"jira":"ATLAS-19"}}
+             "metadata":{"jira":"ARKHAM-19"}}
         ]"#;
 
         let fields = &parse_beads(rows).expect("the row parses")[0].values;
@@ -905,7 +905,7 @@ mod tests {
     fn opened(runner: &FakeRunner) -> Reader<'_> {
         Reader {
             runner,
-            name: "atlas".to_string(),
+            name: "arkham".to_string(),
             path: project_dir(),
             env: credentialled(),
             without_a_probe: Box::leak(Box::default()),
@@ -916,7 +916,7 @@ mod tests {
     /// else, read in `bdi`'s own environment.
     fn ambient_project() -> Project {
         Project {
-            name: "atlas".to_string(),
+            name: "arkham".to_string(),
             path: project_dir(),
             environment_command: None,
             credential_command: None,
@@ -1456,7 +1456,7 @@ mod tests {
     /// with five reads in it and no way to tell which.
     #[test]
     fn a_listing_that_will_not_parse_names_the_read_and_where_it_broke() {
-        let row = r#"[{"id":"atl-1","title":42,"status":"open"}]"#;
+        let row = r#"[{"id":"ark-1","title":42,"status":"open"}]"#;
         let runner = FakeRunner::default().with(&spelled(TRACKER_CALL), row);
 
         let unreadable = opened(&runner)
@@ -1477,7 +1477,7 @@ mod tests {
     /// holds no such row.
     #[test]
     fn a_wisp_that_will_not_parse_names_the_read_that_carried_it() {
-        let row = r#"[{"id":"atl-2","title":42,"status":"open"}]"#;
+        let row = r#"[{"id":"ark-2","title":42,"status":"open"}]"#;
         let runner = FakeRunner::default()
             .with(&spelled(TRACKER_CALL), "[]")
             .with(&spelled(WISP_CALL), row);

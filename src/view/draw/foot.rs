@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn a_project_named_without_git_is_said_at_the_foot_from_the_snapshot() {
         let guessed = Snapshot {
-            projects_named_without_git: vec!["orbital".to_string()],
+            projects_named_without_git: vec!["dunwich".to_string()],
             ..nothing_to_qualify()
         };
 
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn several_guessed_names_are_one_notice() {
         let guessed = Snapshot {
-            projects_named_without_git: vec!["orbital".to_string(), "ferry".to_string()],
+            projects_named_without_git: vec!["dunwich".to_string(), "ferry".to_string()],
             ..nothing_to_qualify()
         };
 
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn a_guessed_name_outranks_what_this_process_settled() {
         let guessed = Snapshot {
-            projects_named_without_git: vec!["orbital".to_string()],
+            projects_named_without_git: vec!["dunwich".to_string()],
             ..behind_a_frame(a_provider(State::NotAnswering))
         };
 

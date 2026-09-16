@@ -1,11 +1,11 @@
 [
   {
-    "id": "orb-9fw.21",
-    "title": "A signal kills orbital without restoring the terminal",
+    "id": "dun-9fw.21",
+    "title": "A signal kills dunwich without restoring the terminal",
     "status": "closed",
     "priority": 1,
     "issue_type": "bug",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:38Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:21Z",
@@ -13,8 +13,8 @@
     "close_reason": "The terminal is restored on SIGINT and SIGTERM both.",
     "dependencies": [
       {
-        "issue_id": "orb-9fw.21",
-        "depends_on_id": "orb-9fw",
+        "issue_id": "dun-9fw.21",
+        "depends_on_id": "dun-9fw",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:37Z",
         "created_by": "Mira Vance",
@@ -24,36 +24,36 @@
     "dependency_count": 0,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "orb-9fw"
+    "parent": "dun-9fw"
   },
   {
-    "id": "orb-9fw.22",
-    "title": "Run orbital under a file watcher so a running copy picks up changes",
+    "id": "dun-9fw.22",
+    "title": "Run dunwich under a file watcher so a running copy picks up changes",
     "status": "in_progress",
     "priority": 1,
     "issue_type": "task",
     "assignee": "Mira Vance",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:38Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:16Z",
     "started_at": "2026-09-05T12:41:16Z",
     "metadata": {
       "agent_pane": "wM:pK",
-      "working_topic": "orbital/v1-orb-9fw.22"
+      "working_topic": "dunwich/v1-dun-9fw.22"
     },
     "dependencies": [
       {
-        "issue_id": "orb-9fw.22",
-        "depends_on_id": "orb-9fw",
+        "issue_id": "dun-9fw.22",
+        "depends_on_id": "dun-9fw",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:38Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-9fw.22",
-        "depends_on_id": "orb-9fw.21",
+        "issue_id": "dun-9fw.22",
+        "depends_on_id": "dun-9fw.21",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:11Z",
         "created_by": "Mira Vance",
@@ -63,18 +63,18 @@
     "dependency_count": 1,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-9fw"
+    "parent": "dun-9fw"
   },
   {
-    "id": "orb-9fw",
-    "title": "orbital v1: release notes from the commit log",
-    "description": "`orbital` reads a repository's commit log and writes the release notes for it:\none section per change type, ordered, with the trailers folded in. Read-only\nagainst git. This epic is the whole of what `docs/design.md` calls v1.\n\n**`docs/design.md` is a starting point, not gospel** — where it is ambiguous the\nseat that hits the ambiguity decides with the code in front of it and records\nwhat it chose. The fuller statement is below.\n\n**Effort slug: `v1`.** Every topic for this effort is built from it.\n\n## Roster\n\nEleven beads, all in this tracker. No foreign strands, no tracking beads.\n\n| bead | task | blocked by |\n|---|---|---|\n| orb-2kd.1 | T1 scaffold the crate, extending the existing dev shell | — |\n| orb-2kd.2 | T2 configuration, with the per-repository trailer map | .1 |\n| orb-2kd.3 | T3 parse the commit log into typed entries | .1 |\n| orb-2kd.4 | T4 group entries by type and order them | .3 |\n\n## Global constraints, on every bead\n\n- **Never write to the repository.** Only `log`, `show`, `for-each-ref`.\n- **The key is `(repository, sha)`, never `sha` alone.** A short sha is\n  ambiguous across repositories and nothing coordinates them.\n- **Degrade, never disappear.** An unreadable ref, a malformed trailer, a\n  commit with no parent — each is reported, never dropped.\n- **Fail loudly on an unexpected shape.** A field of the wrong type is an\n  error; a *missing* field is normal.\n",
-    "notes": "Correction to this bead's roster, from orb-2kd.3's capture: assignee and started_at ARE present on every claimed bead, contrary to 'never observed at all' above. Both stay optional, so no design change.",
+    "id": "dun-9fw",
+    "title": "dunwich v1: release notes from the commit log",
+    "description": "`dunwich` reads a repository's commit log and writes the release notes for it:\none section per change type, ordered, with the trailers folded in. Read-only\nagainst git. This epic is the whole of what `docs/design.md` calls v1.\n\n**`docs/design.md` is a starting point, not gospel** — where it is ambiguous the\nseat that hits the ambiguity decides with the code in front of it and records\nwhat it chose. The fuller statement is below.\n\n**Effort slug: `v1`.** Every topic for this effort is built from it.\n\n## Roster\n\nEleven beads, all in this tracker. No foreign strands, no tracking beads.\n\n| bead | task | blocked by |\n|---|---|---|\n| dun-2kd.1 | T1 scaffold the crate, extending the existing dev shell | — |\n| dun-2kd.2 | T2 configuration, with the per-repository trailer map | .1 |\n| dun-2kd.3 | T3 parse the commit log into typed entries | .1 |\n| dun-2kd.4 | T4 group entries by type and order them | .3 |\n\n## Global constraints, on every bead\n\n- **Never write to the repository.** Only `log`, `show`, `for-each-ref`.\n- **The key is `(repository, sha)`, never `sha` alone.** A short sha is\n  ambiguous across repositories and nothing coordinates them.\n- **Degrade, never disappear.** An unreadable ref, a malformed trailer, a\n  commit with no parent — each is reported, never dropped.\n- **Fail loudly on an unexpected shape.** A field of the wrong type is an\n  error; a *missing* field is normal.\n",
+    "notes": "Correction to this bead's roster, from dun-2kd.3's capture: assignee and started_at ARE present on every claimed bead, contrary to 'never observed at all' above. Both stay optional, so no design change.",
     "status": "open",
     "priority": 1,
     "issue_type": "epic",
     "assignee": "Mira Vance",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:09Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:17Z",
@@ -86,25 +86,25 @@
     "comment_count": 0
   },
   {
-    "id": "orb-9fw.30",
+    "id": "dun-9fw.30",
     "title": "CLAUDE.md does not say what the push gate shows when you are behind",
     "status": "in_progress",
     "priority": 2,
     "issue_type": "task",
     "assignee": "Rowan Ash",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:44Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:17Z",
     "started_at": "2026-09-05T12:41:17Z",
     "metadata": {
       "agent_pane": "wM:pH",
-      "working_topic": "orbital/v1-orb-9fw.30"
+      "working_topic": "dunwich/v1-dun-9fw.30"
     },
     "dependencies": [
       {
-        "issue_id": "orb-9fw.30",
-        "depends_on_id": "orb-9fw",
+        "issue_id": "dun-9fw.30",
+        "depends_on_id": "dun-9fw",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:44Z",
         "created_by": "Mira Vance",
@@ -114,6 +114,6 @@
     "dependency_count": 0,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-9fw"
+    "parent": "dun-9fw"
   }
 ]

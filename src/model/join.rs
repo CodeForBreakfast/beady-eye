@@ -446,7 +446,7 @@ mod tests {
     const JOINED_BEADS: &str = include_str!("../../tests/fixtures/joined_bd_list.json");
     const JOINED_PANES: &str = include_str!("../../tests/fixtures/joined_herdr_agent_list.json");
 
-    const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/orbital";
+    const FIXTURE_PROJECT_PATH: &str = "/tmp/bdi-ground/dunwich";
 
     fn project(name: &str, path: &str) -> Project {
         Project {
@@ -568,13 +568,13 @@ mod tests {
             Conflict::PaneIdInSeveralSessions {
                 bead: key("proj", "p-1"),
                 pane_id: "w:p1".to_string(),
-                sessions: vec![A_SESSION.to_string(), "beacon".to_string()],
+                sessions: vec![A_SESSION.to_string(), "kadath".to_string()],
             }
             .refused_panes(),
             vec![
                 pane_key("w:p1"),
                 PaneKey {
-                    session: "beacon".to_string(),
+                    session: "kadath".to_string(),
                     id: "w:p1".to_string(),
                 },
             ]
@@ -595,7 +595,7 @@ mod tests {
         let beads = rows(A_BEAD_NAMING_W_P1);
         let mut live = panes(r#"{"pane_id":"w:p1","cwd":"/srv/proj","agent_status":"idle"}"#);
         live.extend(panes_in(
-            "beacon",
+            "kadath",
             r#"{"pane_id":"w:p1","cwd":"/srv/proj","agent_status":"working"}"#,
         ));
         let cfg = vec![project("proj", "/srv/proj")];
@@ -612,7 +612,7 @@ mod tests {
         let ambiguous = Conflict::PaneIdInSeveralSessions {
             bead: key("proj", "p-1"),
             pane_id: "w:p1".to_string(),
-            sessions: vec![A_SESSION.to_string(), "beacon".to_string()],
+            sessions: vec![A_SESSION.to_string(), "kadath".to_string()],
         };
         assert_eq!(joined.agents, BTreeMap::new());
         assert_eq!(joined.conflicts, vec![ambiguous.clone()]);
@@ -637,7 +637,7 @@ mod tests {
         let beads = rows(A_BEAD_NAMING_W_P1);
         let mut live = panes(r#"{"pane_id":"w:p1","cwd":"/srv/proj","agent_status":"idle"}"#);
         live.extend(panes_in(
-            "beacon",
+            "kadath",
             r#"{"pane_id":"w:p1","cwd":"/srv/proj","agent_status":"working","display_agent":"p-1"}"#,
         ));
         let cfg = vec![project("proj", "/srv/proj")];
@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(
             a.pane,
             PaneKey {
-                session: "beacon".to_string(),
+                session: "kadath".to_string(),
                 id: "w:p1".to_string(),
             }
         );
@@ -695,18 +695,18 @@ mod tests {
     fn a_captured_bead_takes_the_captured_pane_it_names() {
         let beads = rows(JOINED_BEADS);
         let live = parse_agent_list(A_SESSION, JOINED_PANES).expect("the fixture parses");
-        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("dunwich", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "orbital",
+                project: "dunwich",
                 rows: &beads,
             }],
             Listed::all(&live),
             &Config::naming(cfg),
         );
 
-        let a = pane_of(&joined, "orbital", "orb-9fw.22");
+        let a = pane_of(&joined, "dunwich", "dun-9fw.22");
         assert_eq!(a.pane, pane_key("wM:pK"));
         assert_eq!(a.source, JoinSource::AgentPane);
         assert_eq!(joined.conflicts, vec![]);
@@ -813,21 +813,21 @@ mod tests {
     fn a_pane_naming_its_bead_resolves_as_inferred() {
         let beads = rows(BEADS);
         let live = parse_agent_list(A_SESSION, PANES).expect("the fixture parses");
-        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("dunwich", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "orbital",
+                project: "dunwich",
                 rows: &beads,
             }],
             Listed::all(&live),
             &Config::naming(cfg),
         );
 
-        // wG:p5 carries display_agent=orb-2kd.3; the one bead in the tracker
+        // wG:p5 carries display_agent=dun-2kd.3; the one bead in the tracker
         // that names a pane names one this capture does not hold, so the
         // inferred direction is the only one that fires.
-        let a = pane_of(&joined, "orbital", "orb-2kd.3");
+        let a = pane_of(&joined, "dunwich", "dun-2kd.3");
         assert_eq!(a.pane, pane_key("wG:p5"));
         assert_eq!(a.source, JoinSource::DisplayAgent);
         assert_eq!(joined.agents.len(), 1);
@@ -1119,11 +1119,11 @@ mod tests {
     fn a_pane_in_no_configured_project_joins_nothing_and_is_unattributed() {
         let beads = rows(BEADS);
         let live = parse_agent_list(A_SESSION, PANES).expect("the fixture parses");
-        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("dunwich", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "orbital",
+                project: "dunwich",
                 rows: &beads,
             }],
             Listed::all(&live),
@@ -1534,27 +1534,27 @@ mod tests {
     fn a_contested_pane_carries_its_own_account_of_what_it_is_working_on() {
         let beads = rows(
             r#"[
-              {"id":"orb-9fw","title":"orbital v1","status":"open"},
-              {"id":"orb-2bb.16","title":"a claim its seat moved on from",
+              {"id":"dun-9fw","title":"dunwich v1","status":"open"},
+              {"id":"dun-2bb.16","title":"a claim its seat moved on from",
                "status":"in_progress",
-               "dependencies":[{"depends_on_id":"orb-9fw","type":"parent-child"}],
+               "dependencies":[{"depends_on_id":"dun-9fw","type":"parent-child"}],
                "metadata":{"agent_pane":"wM:pG"}},
-              {"id":"orb-9fw.12","title":"retiring the dep-tree row shape",
+              {"id":"dun-9fw.12","title":"retiring the dep-tree row shape",
                "status":"in_progress",
-               "dependencies":[{"depends_on_id":"orb-9fw","type":"parent-child"}],
+               "dependencies":[{"depends_on_id":"dun-9fw","type":"parent-child"}],
                "metadata":{"agent_pane":"wM:pG"}},
-              {"id":"orb-2bb.19","title":"the other claim it moved on from",
+              {"id":"dun-2bb.19","title":"the other claim it moved on from",
                "status":"in_progress",
-               "dependencies":[{"depends_on_id":"orb-9fw","type":"parent-child"}],
+               "dependencies":[{"depends_on_id":"dun-9fw","type":"parent-child"}],
                "metadata":{"agent_pane":"wM:pG"}}
             ]"#,
         );
         let live = parse_agent_list(A_SESSION, JOINED_PANES).expect("the fixture parses");
-        let cfg = vec![project("orbital", FIXTURE_PROJECT_PATH)];
+        let cfg = vec![project("dunwich", FIXTURE_PROJECT_PATH)];
 
         let joined = resolve(
             &[ProjectRows {
-                project: "orbital",
+                project: "dunwich",
                 rows: &beads,
             }],
             Listed::all(&live),
@@ -1567,12 +1567,12 @@ mod tests {
             vec![Conflict::SeveralBeadsNameOnePane {
                 pane: pane_key("wM:pG"),
                 caption: Some(
-                    "orb-9fw.12: retiring the dep-tree row shape from fixtures".to_string()
+                    "dun-9fw.12: retiring the dep-tree row shape from fixtures".to_string()
                 ),
                 beads: vec![
-                    key("orbital", "orb-2bb.16"),
-                    key("orbital", "orb-2bb.19"),
-                    key("orbital", "orb-9fw.12"),
+                    key("dunwich", "dun-2bb.16"),
+                    key("dunwich", "dun-2bb.19"),
+                    key("dunwich", "dun-9fw.12"),
                 ],
             }]
         );

@@ -35,7 +35,7 @@ const NOTHING_ELSE_WILL_COLLECT: &str = "[tui]\nrefresh_seconds = 600\n";
 /// The one project the config below names. Its own line on the forest, which
 /// is drawn from the configured name rather than from anything a tracker
 /// said, so it is on the screen before any tracker has answered.
-const THE_PROJECT: &[u8] = "atlas".as_bytes();
+const THE_PROJECT: &[u8] = "arkham".as_bytes();
 
 /// Two frames of the collecting mark, from `view::phrase`. Written out rather
 /// than asked of `bdi`, so a mark changed by hand is a test to change by
