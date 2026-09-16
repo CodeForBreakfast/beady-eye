@@ -518,6 +518,11 @@ impl Forest {
     /// answers at once on a forest of any size.
     pub fn apply(&mut self, action: Action) -> bool {
         let selected = self.selected;
+        // The rule in force is on the screen as well as in the rows, and a
+        // forest whose every fold is set by hand draws the same rows under
+        // every rule — so a press that moves the rule and no row still has
+        // something new to say.
+        let spine = self.spine();
         let redraw = match action {
             Action::Move(motion) => {
                 self.move_to(motion);
@@ -588,7 +593,7 @@ impl Forest {
             false
         };
         let revealed = self.reveal();
-        self.selected != selected || redrawn || revealed
+        self.selected != selected || redrawn || revealed || self.spine() != spine
     }
 
     /// Root the forest at the selected bead, or put it back where it is
@@ -2767,15 +2772,15 @@ credential_command = "secret harbour"
     }
 
     /// The rule and the folds the reader set by hand are separate things.
-    /// With every fold pointed shut, the rule changes nothing on screen; `D`
-    /// lets go of the folds and what the forest rests as is the new rule's.
+    /// With every fold pointed shut, the rule moves no row; `D` lets go of
+    /// the folds and what the forest rests as is the new rule's.
     #[test]
     fn cycling_the_rule_moves_no_fold_the_reader_set_by_hand() {
         let mut forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
         forest.apply(Action::CollapseForest);
         let shut = sketch(&forest);
 
-        assert!(!forest.apply(Action::CycleSpineForest));
+        forest.apply(Action::CycleSpineForest);
         assert_eq!(sketch(&forest), shut);
 
         assert!(forest.apply(Action::RestoreDefault));
@@ -2785,6 +2790,22 @@ credential_command = "secret harbour"
             "{:#?}",
             sketch(&forest)
         );
+    }
+
+    /// The rule is on the screen as well as in the rows, so a press that
+    /// moves it asks for the screen back even where every row is where it
+    /// was. Under a forest folded shut by hand the rows cannot move, and the
+    /// foot would have gone on naming the rule the reader had just left.
+    #[test]
+    fn cycling_the_rule_asks_for_the_screen_back_where_no_row_moves() {
+        let mut forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
+        forest.apply(Action::CollapseForest);
+        let shut = sketch(&forest);
+
+        assert!(forest.apply(Action::CycleSpineForest));
+
+        assert_eq!(sketch(&forest), shut);
+        assert_eq!(forest.spine(), Spine::EveryCopy.next());
     }
 
     /// The screen says which rule is in force at the selection, and the

@@ -3922,6 +3922,36 @@ mod tests {
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
     }
 
+    /// A rule the reader puts in force accounts for a screen that draws one
+    /// copy of a bead where it used to draw every one, so it stands at the
+    /// foot until they put it back. The rule the forest starts under is the
+    /// screen they have always had and is named nowhere.
+    #[test]
+    fn s_puts_the_rule_it_left_the_forest_under_on_the_foot() {
+        let mut shown = shown(a_grove(6));
+
+        press(&mut shown, KeyCode::Char('S'));
+        assert!(
+            foot_of(&mut shown, 100, 24).contains("opening the deepest copy of each bead"),
+            "{:?}",
+            foot_of(&mut shown, 100, 24)
+        );
+
+        press(&mut shown, KeyCode::Char('S'));
+        assert_eq!(foot_of(&mut shown, 100, 24).trim_end(), key_row());
+    }
+
+    /// Under a forest folded shut by hand no rule can move a row, and the
+    /// press is still worth a frame: the foot would otherwise go on naming
+    /// the rule the reader has just left until something else redrew it.
+    #[test]
+    fn s_asks_for_a_frame_where_hand_folds_leave_every_row_where_it_was() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('C'));
+
+        assert!(press(&mut shown, KeyCode::Char('S')));
+    }
+
     /// The row at the foot of a frame of this screen, as drawn.
     fn foot_of(shown: &mut Shown, width: u16, height: u16) -> String {
         painted(
