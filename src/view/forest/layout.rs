@@ -32,7 +32,7 @@ use crate::view::row::{self, Widths};
 use super::drawn::{Beneath, Count, Counted, Drawn, Ground, Node, Undrawn};
 use super::facts::{Facts, TreeFacts, Uniform};
 use super::handle::{item_key, Folds, Handle, ItemKey, Scope};
-use super::spine::{self, Stand};
+use super::spine::{Spine, Stand};
 
 /// One entry in a parent's sequence of children, before it becomes a line.
 /// Notes and beads share the sequence because they share the box-drawing, and
@@ -434,9 +434,10 @@ pub(super) fn group_holding(snapshot: &Snapshot, key: &ItemKey) -> Option<Handle
 }
 
 /// The lines the folds name, by the way down to each: every line with an
-/// entry, every line a scope leaves resting, and whatever the caller asked
-/// to have drawn. A line named nowhere in here, with nothing named beneath
-/// it, answers from the scope over it alone.
+/// entry, every line a scope leaves resting, every line a rule begins on,
+/// and whatever the caller asked to have drawn. A line named nowhere in
+/// here, with nothing named beneath it, answers from the scope and the
+/// stand over it alone.
 #[derive(Default)]
 struct Named(BTreeMap<BeadKey, Mentioned>);
 
@@ -518,7 +519,7 @@ impl<'a> Layout<'a> {
             rooted,
             beneath_shut,
             row,
-            named: Named::of(folds.mentioned().chain(also)),
+            named: Named::of(folds.mentioned().chain(facts.beginnings()).chain(also)),
             kept: RefCell::default(),
         }
     }
@@ -840,19 +841,18 @@ impl<'a> TreeLayout<'a> {
         // drawn where its tree's root would be, and keeps the place it has
         // everywhere else, so a fold set on it survives the key that rooted
         // the forest there and the key that puts the forest back.
-        let (root, way, over, named) = match self.rooted {
+        let (root, way, (over, stand), named) = match self.rooted {
             Some(rooted) => (
                 rooted.place.clone(),
                 rooted.way.clone(),
-                self.scope_over_rooted(rooted),
+                self.over_rooted(rooted),
                 self.named_under(&rooted.place),
             ),
-            None => (
-                Place::root(root_key(self.tree)),
-                vec![0],
-                self.over,
-                self.named,
-            ),
+            None => {
+                let root = Place::root(root_key(self.tree));
+                let stand = self.begins_at(&root);
+                (root, vec![0], (self.over, stand), self.named)
+            }
         };
         let (at, above) = way.split_last().expect("a way down ends somewhere");
         let at = *at;
@@ -880,7 +880,6 @@ impl<'a> TreeLayout<'a> {
         // being worked and what could be started.
         let kids = self.children_entries(at, above);
         let bead = self.facts.bead(self.tree, at, above);
-        let stand = stand_along(self.tree, &way);
         let handle = Handle::Bead(root.clone());
         let pointed = folds.pointed(&handle, over);
         let open = !kids.is_empty() && pointed.unwrap_or(!self.rests_shut && bead.opens_a_fold);
@@ -917,22 +916,51 @@ impl<'a> TreeLayout<'a> {
             .fold(self.named, |named, step| named?.under(&step.id))
     }
 
-    /// The scope over the bead the forest is rooted at. The beads above it
-    /// are drawn behind the line the mode holds the rest back with, and a
-    /// scope set on one of them still stands over it — so they are read on
-    /// the way down to it, as the walk that drew them would have read them.
-    fn scope_over_rooted(&self, rooted: &Rooted) -> Option<&'a Scope> {
+    /// The scope over the bead the forest is rooted at, and where its way
+    /// down stands. The beads above it are drawn behind the line the mode
+    /// holds the rest back with, and a scope set on one of them still stands
+    /// over it — so they are read on the way down to it, as the walk that
+    /// drew them would have read them.
+    fn over_rooted(&self, rooted: &Rooted) -> (Option<&'a Scope>, Stand) {
         let folds: &'a Folds = self.layout.folds;
         let mut over = self.over;
         let mut place = Place::root(root_key(self.tree));
-        for step in &rooted.way[1..] {
+        let mut stand = self.begins_at(&place);
+        for step in rooted.way.windows(2) {
             over = folds.beneath(&Handle::Bead(place.clone()), over);
-            place = place.step_to(BeadKey {
-                project: self.tree.project.clone(),
-                id: self.tree.beads[*step].id.clone(),
-            });
+            let link = self.tree.children[step[0]]
+                .iter()
+                .find(|link| link.bead == step[1])
+                .expect("a way down follows the tree's own links");
+            place = place.step_to(self.key_of(link));
+            stand = self.stand_at(&place, stand, link);
         }
-        over
+        (over, stand)
+    }
+
+    /// Where a tree's root stands: where the rule begins, set on the root's
+    /// own line or in force over the tree.
+    fn begins_at(&self, root: &Place) -> Stand {
+        self.begun(root)
+            .unwrap_or_else(|| Spine::default().begins())
+    }
+
+    /// Where the child at `place` stands, reached by `link` from a parent
+    /// at `stand`: where the rule a scope set on its line begins, or beneath
+    /// its parent by the link taken.
+    fn stand_at(&self, place: &Place, stand: Stand, link: &Link) -> Stand {
+        self.begun(place).unwrap_or_else(|| stand.beneath(link))
+    }
+
+    fn begun(&self, place: &Place) -> Option<Stand> {
+        self.layout.facts.begun(&Handle::Bead(place.clone()))
+    }
+
+    fn key_of(&self, link: &Link) -> BeadKey {
+        BeadKey {
+            project: self.tree.project.clone(),
+            id: self.tree.beads[link.bead].id.clone(),
+        }
     }
 
     /// `above` is the way down to `parent`, the parent itself included: the
@@ -999,11 +1027,21 @@ impl<'a> TreeLayout<'a> {
                 Child::Node(link) => {
                     let node = &self.tree.beads[link.bead];
                     let named = named.and_then(|named| named.under(&node.id));
-                    let stand = spine::beneath(stand, link);
                     drawn.push(match (named, self.answers) {
-                        (None, Some(answers)) => {
-                            self.undrawn(answers, link, parent, over, stand, trunk, last, depth)
-                        }
+                        // A line the folds name nothing at or beneath is no
+                        // rule's beginning either — a scope that put one in
+                        // force names its line — so the stand under it is
+                        // its parent's, taken down the link.
+                        (None, Some(answers)) => self.undrawn(
+                            answers,
+                            link,
+                            parent,
+                            over,
+                            stand.beneath(link),
+                            trunk,
+                            last,
+                            depth,
+                        ),
                         (named, _) => {
                             self.draw_child(link, parent, above, over, named, stand, trunk, last)
                         }
@@ -1032,10 +1070,8 @@ impl<'a> TreeLayout<'a> {
         let folds = self.layout.folds;
         let at = link.bead;
         let node = &self.tree.beads[at];
-        let place = parent.step_to(BeadKey {
-            project: self.tree.project.clone(),
-            id: node.id.clone(),
-        });
+        let place = parent.step_to(self.key_of(link));
+        let stand = self.stand_at(&place, stand, link);
         let kids = self.children_entries(at, above);
         let bead = self.facts.bead(self.tree, at, above);
         let handle = Handle::Bead(place.clone());
@@ -1043,7 +1079,7 @@ impl<'a> TreeLayout<'a> {
         // branch with none rests as one line, its glyph, its fraction and its
         // marker saying what it holds.
         let pointed = folds.pointed(&handle, over);
-        let open = !kids.is_empty() && pointed.unwrap_or(spine::rests_open(stand, &bead));
+        let open = !kids.is_empty() && pointed.unwrap_or(stand.rests_open(&bead));
         let below = folds.beneath(&handle, over);
         let folded = (!kids.is_empty()).then_some(open);
         let line = bead_line(
@@ -1221,18 +1257,6 @@ fn run_size_undrawn(
     }
 }
 
-/// Where the bead at the end of `way` stands, the tree's root at its head:
-/// the root's stand, taken down every link the way takes.
-fn stand_along(tree: &Tree, way: &[usize]) -> Stand {
-    way.windows(2).fold(spine::root(), |stand, step| {
-        let link = tree.children[step[0]]
-            .iter()
-            .find(|link| link.bead == step[1])
-            .expect("a way down follows the tree's own links");
-        spine::beneath(stand, link)
-    })
-}
-
 /// The rows and the identity's widths a subtree nothing draws adds up to,
 /// from the tree alone: which way every fold in it goes is the scope's, or
 /// the default's, and neither needs the line.
@@ -1256,7 +1280,7 @@ fn count(
     } = counted;
     let (drawn, elided) = split_without(answers, tree, at, without);
     let kids = !drawn.is_empty() || !elided.is_empty();
-    let open = kids && forced.unwrap_or(spine::rests_open(stand, answers.bead(at)));
+    let open = kids && forced.unwrap_or(stand.rests_open(answers.bead(at)));
     let mut total = Count {
         rows: 1,
         widths: Widths::default(),
@@ -1340,7 +1364,7 @@ fn count_child(
 ) -> Count {
     let child = Counted {
         at: link.bead,
-        stand: spine::beneath(parent.stand, link),
+        stand: parent.stand.beneath(link),
         ..parent
     };
     let mut count = count(kept, tree, answers, beneath_shut, row, child);
@@ -1386,7 +1410,7 @@ fn undrawn_node(
         .into_iter()
         .any(|link| Some(link.bead) != counted.without);
     let bead = answers.bead(at);
-    let rests_open = spine::rests_open(counted.stand, bead);
+    let rests_open = counted.stand.rests_open(bead);
     let open = kids && counted.forced.unwrap_or(rests_open);
     let folded = kids.then_some(open);
     let line = bead_line(
@@ -1520,7 +1544,7 @@ fn children_of(
 ) -> Node {
     let counted = Counted {
         at: link.bead,
-        stand: spine::beneath(parent.stand, link),
+        stand: parent.stand.beneath(link),
         ..parent
     };
     let rows = ground

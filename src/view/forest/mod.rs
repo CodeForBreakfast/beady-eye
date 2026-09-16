@@ -25,6 +25,7 @@ use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
 use layout::Rooted;
+use spine::Spine;
 
 /// Where a search came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +112,10 @@ pub struct Forest {
     /// What layout reads of the snapshot, answered when it was taken.
     facts: Arc<Facts>,
     folds: Folds,
+    /// Which rule opens the spine under each line the reader set one on.
+    /// Keyed as a hand fold is, so a rule set on a way down that leaves the
+    /// tree names no line and goes with it.
+    spines: BTreeMap<Handle, Spine>,
     cursor: Option<Handle>,
     /// The first line the last frame had room to draw, and how many it had
     /// room for.
@@ -145,10 +150,12 @@ pub struct Forest {
 
 /// Flatten a snapshot into its lines.
 pub fn flatten(snapshot: Snapshot) -> Forest {
+    let spines = BTreeMap::new();
     let mut forest = Forest {
-        facts: Arc::new(Facts::of(&snapshot)),
+        facts: Arc::new(Facts::of(&snapshot, &spines)),
         snapshot,
         folds: Folds::default(),
+        spines,
         cursor: None,
         from: 0,
         room: 0,
@@ -660,7 +667,7 @@ impl Forest {
     /// Answer what layout reads of the snapshot in hand, here and not per
     /// keystroke.
     fn answer(&mut self) {
-        self.facts = Arc::new(Facts::of(&self.snapshot));
+        self.facts = Arc::new(Facts::of(&self.snapshot, &self.spines));
     }
 
     /// `e` and `c`: point every fold in the selected node's subtree, at every
@@ -1879,10 +1886,40 @@ mod tests {
        "priority":2,"issue_type":"task"}
     ]"#;
 
+    /// The same shape again, over a blocker deep enough to show what the way
+    /// down to a copy says about the copy's own children: `orb-6` is drawn
+    /// under `orb-3.1` as its child and under `orb-3.2` as what it waits on,
+    /// and the work is two levels below it rather than one.
+    const DEEP_TWICE: &str = r#"[
+      {"id":"orb-3","title":"raise the mast","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"orb-3.1","title":"sink the footing","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-3.2","title":"guy the mast","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
+                       {"depends_on_id":"orb-6","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-6","title":"cast the collar","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-3.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-6.1","title":"mill the collar","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"orb-6.1.1","title":"bore the bolt holes","status":"in_progress",
+       "dependencies":[{"depends_on_id":"orb-6.1","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
     fn drawn_twice_in_one_tree() -> Snapshot {
         alone("orbital", TWICE, &panes_on(&["orb-9.1"]))
+    }
+
+    /// The same, over a blocker with two levels of work beneath it.
+    fn deep_bead_drawn_twice_in_one_tree() -> Snapshot {
+        alone("orbital", DEEP_TWICE, &panes_on(&["orb-6.1.1"]))
     }
 
     /// The same, over a closed bead that still holds unfinished work.
@@ -2428,6 +2465,39 @@ credential_command = "secret harbour"
         assert_eq!(
             (forest.lines()[upper].folded, forest.lines()[lower].folded),
             (Some(true), Some(false)),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The rule that opens the spine begins afresh at the node a scope is set
+    /// on. Under the one rule there is, a second copy of a bead rests shut
+    /// because the way down to it is not the first; a scope set on that copy
+    /// makes it the first the rule has seen, and it rests open as the upper
+    /// one does.
+    #[test]
+    fn a_rule_scoped_to_a_second_copy_of_a_bead_begins_afresh_there() {
+        let mut forest = flatten(drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "orb-9");
+        let scoped = forest.lines()[lower]
+            .place
+            .clone()
+            .expect("a bead line stands on a place");
+
+        forest.spines.insert(Handle::Bead(scoped), Spine::EveryCopy);
+        forest.answer();
+        forest.lay_out();
+
+        let [upper, lower] = copies_of(&forest, "orb-9");
+        assert_eq!(
+            (forest.lines()[upper].folded, forest.lines()[lower].folded),
+            (Some(true), Some(true)),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(
+            lines_of(&forest, "orb-9.1").len(),
+            2,
             "{:#?}",
             sketch(&forest)
         );
@@ -8877,6 +8947,36 @@ credential_command = "secret harbour"
         assert!(
             forest.go_to(&key("orbital", "orb-9")),
             "cannot reach the bead the forest is rooted at: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Rooting the forest at a copy does not begin the rule afresh there.
+    /// The mode draws one bead where a root goes, and the way down to it is
+    /// the way down it has everywhere else — so a later copy goes on standing
+    /// where it stood, and the subtree that rests shut under it on the whole
+    /// forest rests shut here too.
+    #[test]
+    fn rooting_the_forest_at_a_later_copy_keeps_where_that_copy_stands() {
+        let mut forest = flatten(deep_bead_drawn_twice_in_one_tree());
+        let [upper, lower] = copies_of(&forest, "orb-6");
+        assert_eq!(
+            forest.lines()[upper].folded,
+            Some(true),
+            "the first copy opens onto the work: {:#?}",
+            sketch(&forest)
+        );
+
+        step_onto(&mut forest, lower);
+        assert!(forest.apply(Action::FocusForest));
+
+        let [milling] = lines_of(&forest, "orb-6.1")[..] else {
+            panic!("the copy's own child is drawn once: {:#?}", sketch(&forest));
+        };
+        assert_eq!(
+            forest.lines()[milling].folded,
+            Some(false),
+            "{:#?}",
             sketch(&forest)
         );
     }
