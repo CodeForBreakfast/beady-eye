@@ -264,7 +264,9 @@ fn shallowest(tree: &Tree, at: usize) -> Vec<Option<usize>> {
 ///
 /// A bead whose parent is outside what the rule was set over stands as it
 /// would with no parent at all: the way down through that parent is not a way
-/// down from here, and a rule cannot open a line it does not reach.
+/// down from here, and a rule cannot open a line it does not reach. A bead
+/// whose parent hangs beneath it keeps the way the walk placed it on too,
+/// for the same reason said the other way round.
 fn parent_child(tree: &Tree, at: usize) -> Vec<Option<usize>> {
     let mut from = first_reached(tree, at);
     for (parent, links) in tree.children.iter().enumerate() {
@@ -275,12 +277,37 @@ fn parent_child(tree: &Tree, at: usize) -> Vec<Option<usize>> {
             // A bead no way down from here reaches is on no spine to move,
             // and the bead the rule begins on is one of those: the walk above
             // left it standing where the rule put it.
-            if link.edge == Edge::ParentChild && from[link.bead].is_some() {
+            if link.edge == Edge::ParentChild
+                && from[link.bead].is_some()
+                && runs_down_to(at, parent, link.bead, &from)
+            {
                 from[link.bead] = Some(parent);
             }
         }
     }
     from
+}
+
+/// Whether the way chosen to `parent` runs down from `at` without passing
+/// through `child`.
+///
+/// A looped tree can hang a bead's parent beneath the bead, and hanging the
+/// bead back under that parent would leave the two of them a ring the line
+/// the rule begins on no longer reaches — so neither would be opened to and
+/// an agent under either would sit behind a fold. Asked before each way is
+/// moved, this keeps every way down a way down from `at`.
+fn runs_down_to(at: usize, parent: usize, child: usize, from: &[Option<usize>]) -> bool {
+    let mut above = parent;
+    while above != at {
+        if above == child {
+            return false;
+        }
+        let Some(further) = from[above] else {
+            return false;
+        };
+        above = further;
+    }
+    true
 }
 
 /// The longest way down to each bead the tree's links reach from `at`, ties

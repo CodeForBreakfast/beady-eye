@@ -2068,6 +2068,28 @@ mod tests {
         alone("dunwich", FOUR_WAYS_DOWN, &panes_on(&["bel-1.1.2.1"]))
     }
 
+    /// A tree in which a bead's parent hangs beneath the bead. `cyc-2.2`
+    /// waits on `cyc-2.3` and is its child, so each is drawn under the other,
+    /// and `cyc-2.1` waits on `cyc-2.2` so the pair hang under the root.
+    ///
+    /// Hanging `cyc-2.2` back under its parent would leave the two of them a
+    /// ring nothing above reaches, and the whole way down would rest shut
+    /// over the agent.
+    const PARENT_BENEATH: &str = r#"[
+      {"id":"cyc-2","title":"sink the shaft","status":"open",
+       "priority":1,"issue_type":"epic"},
+      {"id":"cyc-2.1","title":"line the shaft","status":"open",
+       "dependencies":[{"depends_on_id":"cyc-2","type":"parent-child"},
+                       {"depends_on_id":"cyc-2.2","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"cyc-2.2","title":"hang the cage","status":"open",
+       "dependencies":[{"depends_on_id":"cyc-2.3","type":"parent-child"},
+                       {"depends_on_id":"cyc-2.3","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"cyc-2.3","title":"splice the rope","status":"open",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
     /// One tree drawing one bead twice, which is the shape a blocker nested
     /// under each bead it holds up gives: same root, same key, two lines.
     fn drawn_twice_in_one_tree() -> Snapshot {
@@ -2809,6 +2831,26 @@ credential_command = "secret harbour"
             "{:#?}",
             sketch(&forest)
         );
+    }
+
+    /// Every rule leaves a way down to the agent open, even where a bead's
+    /// own parent hangs beneath it. Parent-child keeps the way the walk
+    /// placed such a bead on: hanging it back under its parent would ring the
+    /// two of them off from everything above, and the agent would sit behind
+    /// a fold on a line that is drawn wherever the reader looks.
+    #[test]
+    fn a_bead_whose_parent_hangs_beneath_it_is_still_opened_to() {
+        for rule in Spine::EVERY.iter().copied() {
+            let mut forest = flatten(alone("dunwich", PARENT_BENEATH, &panes_on(&["cyc-2.3"])));
+
+            put_in_force(&mut forest, rule, Action::CycleSpineForest);
+
+            assert!(
+                !lines_of(&forest, "cyc-2.3").is_empty(),
+                "under {rule:?} the agent's bead is drawn nowhere: {:#?}",
+                sketch(&forest)
+            );
+        }
     }
 
     /// The key cycles, so pressing it once per rule comes back to the screen
