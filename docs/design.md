@@ -937,10 +937,19 @@ down one way only, and every other copy of it rests shut over that same work
 and says so, in the words any shut line uses. The invariant is untouched:
 nothing is hidden, because a copy resting shut still counts the agents and the
 anomalies beneath it and still names them on its row. What changes is how many
-times the reader reads the same subtree. The first such rule is **deepest**:
-the way chosen is the longest one down to the bead, so the bead is drawn under
-as much of what waits on it as the tree can show at once, and a tie goes to
-the way through the parent placed first. A tree with a loop in it is drawn
+times the reader reads the same subtree. There are four such rules, and the
+key offers them in this order. **First reached** takes the way the walk placed
+the bead on, which is the copy the rest of the screen already treats as the
+bead's own. **Shallowest** takes the way of fewest steps, so the bead is drawn
+as near the top of the tree as anything reaches it. **Parent-child** takes the
+way the bead's own parent-child edge hangs it on, and falls back to first
+reached where no way down from the line the rule was set on reaches its parent.
+**Deepest** takes the longest way down, so the bead is drawn under as much of
+what waits on it as the tree can show at once. Shallowest and deepest break a
+tie the same way, through the parent placed first. Deepest is the one expected
+to earn its keep: once agents have wired dependencies between an epic's
+children, shallowest and parent-child both stop at that epic's first level,
+where the other two go on down to the work. A tree with a loop in it is drawn
 under every rule — a link back onto the way down is skipped, exactly as every
 other walk of the forest skips it, so a loop costs a degraded choice rather
 than no screen.

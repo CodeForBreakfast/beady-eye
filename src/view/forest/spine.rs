@@ -15,6 +15,7 @@
 
 use crate::model::snapshot::{Node, Tree};
 use crate::model::tree::{links_from, Link};
+use crate::model::types::Edge;
 use crate::view::lines::{quiet, BeadFacts};
 
 /// A rule for which lines the spine opens to. *Spine* is coined.
@@ -24,6 +25,16 @@ pub enum Spine {
     /// reaches opens while every later copy rests shut.
     #[default]
     EveryCopy,
+    /// One copy of each bead is on the spine: the one the walk placed the
+    /// bead on, which is the first way down it reaches.
+    FirstReached,
+    /// One copy of each bead is on the spine: the one at the end of the
+    /// shortest way down to it.
+    Shallowest,
+    /// One copy of each bead is on the spine: the one its own parent-child
+    /// edge hangs it on, and the one the walk placed it on where no way down
+    /// from here reaches its parent.
+    ParentChild,
     /// One copy of each bead is on the spine: the one at the end of the
     /// longest way down to it.
     Deepest,
@@ -51,7 +62,13 @@ pub(super) enum Stand {
 
 impl Spine {
     /// Every rule there is, in the order a reader cycles them.
-    pub const EVERY: &'static [Spine] = &[Spine::EveryCopy, Spine::Deepest];
+    pub const EVERY: &'static [Spine] = &[
+        Spine::EveryCopy,
+        Spine::FirstReached,
+        Spine::Shallowest,
+        Spine::ParentChild,
+        Spine::Deepest,
+    ];
 
     /// The rule after this one, back round to the first at the end.
     pub fn next(self) -> Spine {
@@ -69,19 +86,33 @@ impl Spine {
     /// into `chosen`, and the stand says where, so the two questions below
     /// can be asked of the stand alone and a few bits.
     pub(super) fn begins(self, tree: &Tree, at: usize, chosen: &mut Vec<Chosen>) -> Stand {
-        match self {
-            Spine::EveryCopy => Stand::EveryCopy { first: true },
-            Spine::Deepest => {
-                let ways = Chosen::deepest(tree, at);
-                let stand = Stand::OneCopy {
-                    chosen: chosen.len(),
-                    on: true,
-                    over_work: ways.over_work(at),
-                };
-                chosen.push(ways);
-                stand
-            }
-        }
+        let Some(ways) = self.chooses(tree, at) else {
+            return Stand::EveryCopy { first: true };
+        };
+        let stand = Stand::OneCopy {
+            chosen: chosen.len(),
+            on: true,
+            over_work: ways.over_work(at),
+        };
+        chosen.push(ways);
+        stand
+    }
+
+    /// The ways this rule chooses beneath the bead at `at`, and nothing where
+    /// it puts every copy of a bead on the spine.
+    ///
+    /// Which way down each bead is opened on is the whole of what one
+    /// one-copy rule has that another does not, so each is a chooser here and
+    /// the machinery beneath is theirs in common.
+    fn chooses(self, tree: &Tree, at: usize) -> Option<Chosen> {
+        let from = match self {
+            Spine::EveryCopy => return None,
+            Spine::FirstReached => first_reached(tree, at),
+            Spine::Shallowest => shallowest(tree, at),
+            Spine::ParentChild => parent_child(tree, at),
+            Spine::Deepest => deepest(tree, at),
+        };
+        Some(Chosen::of(tree, at, from))
     }
 }
 
@@ -143,17 +174,9 @@ pub(super) struct Chosen {
 }
 
 impl Chosen {
-    /// The longest way down to each bead the tree's links reach from `at`,
-    /// ties going to the way through the earlier-placed parent.
-    ///
-    /// A link back to a bead the way down came through is skipped, as every
-    /// walk here skips one, so a looped tree answers with the longest way
-    /// that skips such a link rather than with no way at all.
-    fn deepest(tree: &Tree, at: usize) -> Self {
-        let mut deepest: Vec<Option<usize>> = vec![None; tree.beads.len()];
-        let mut from: Vec<Option<usize>> = vec![None; tree.beads.len()];
-        deepest[at] = Some(0);
-        deepen(tree, at, 0, &mut vec![at], &mut deepest, &mut from);
+    /// The ways a chooser answered with, and what work a reader needs is
+    /// beneath each bead once only those ways are walked.
+    fn of(tree: &Tree, at: usize, from: Vec<Option<usize>>) -> Self {
         let over_work = work_beneath(tree, at, &from);
         Chosen { from, over_work }
     }
@@ -167,6 +190,111 @@ impl Chosen {
     fn over_work(&self, at: usize) -> bool {
         self.over_work[at]
     }
+}
+
+/// The way down the walk placed each bead on: the first one it reaches from
+/// `at`. Begun on a tree's root that is the way `first` names on a link;
+/// begun lower down it is the same question asked of that subtree alone, as
+/// the deepest way is.
+///
+/// A bead reached a second time is not walked a second time. The forest's own
+/// walk does descend into every copy, but a later copy stands over the same
+/// beads the first one stood over, so nothing under it is reached any sooner.
+/// That is also what cuts a loop here, so no way down is needed to cut one.
+fn first_reached(tree: &Tree, at: usize) -> Vec<Option<usize>> {
+    let mut from: Vec<Option<usize>> = vec![None; tree.beads.len()];
+    let mut reached = vec![false; tree.beads.len()];
+    reached[at] = true;
+    reach(tree, at, &mut reached, &mut from);
+    from
+}
+
+fn reach(tree: &Tree, at: usize, reached: &mut Vec<bool>, from: &mut Vec<Option<usize>>) {
+    for link in links_from(&tree.children, at, &[]) {
+        if reached[link.bead] {
+            continue;
+        }
+        reached[link.bead] = true;
+        from[link.bead] = Some(at);
+        reach(tree, link.bead, reached, from);
+    }
+}
+
+/// The way down of fewest steps to each bead the tree's links reach from
+/// `at`, ties going to the way through the earlier-placed parent as the
+/// deepest way's do.
+///
+/// The walk goes out a step at a time and settles each bead the step it is
+/// first reached on, which is the step of fewest. A link back onto a bead
+/// already settled is a way no shorter than the one it has, so a loop costs
+/// nothing here and no way down is needed to cut one.
+fn shallowest(tree: &Tree, at: usize) -> Vec<Option<usize>> {
+    let mut from: Vec<Option<usize>> = vec![None; tree.beads.len()];
+    let mut settled = vec![false; tree.beads.len()];
+    settled[at] = true;
+    let mut step = vec![at];
+    while !step.is_empty() {
+        let mut reached = Vec::new();
+        for above in &step {
+            for link in links_from(&tree.children, *above, &[]) {
+                if settled[link.bead] {
+                    continue;
+                }
+                match from[link.bead] {
+                    // Another bead this same step out reached it already, and
+                    // the tie goes to whichever of them was placed first.
+                    Some(already) => from[link.bead] = Some(already.min(*above)),
+                    None => {
+                        from[link.bead] = Some(*above);
+                        reached.push(link.bead);
+                    }
+                }
+            }
+        }
+        for bead in &reached {
+            settled[*bead] = true;
+        }
+        step = reached;
+    }
+    from
+}
+
+/// The way down each bead's own parent-child edge hangs it on, and the way
+/// the walk placed it on where no way down from `at` reaches its parent.
+///
+/// A bead whose parent is outside what the rule was set over stands as it
+/// would with no parent at all: the way down through that parent is not a way
+/// down from here, and a rule cannot open a line it does not reach.
+fn parent_child(tree: &Tree, at: usize) -> Vec<Option<usize>> {
+    let mut from = first_reached(tree, at);
+    for (parent, links) in tree.children.iter().enumerate() {
+        if parent != at && from[parent].is_none() {
+            continue;
+        }
+        for link in links {
+            // A bead no way down from here reaches is on no spine to move,
+            // and the bead the rule begins on is one of those: the walk above
+            // left it standing where the rule put it.
+            if link.edge == Edge::ParentChild && from[link.bead].is_some() {
+                from[link.bead] = Some(parent);
+            }
+        }
+    }
+    from
+}
+
+/// The longest way down to each bead the tree's links reach from `at`, ties
+/// going to the way through the earlier-placed parent.
+///
+/// A link back to a bead the way down came through is skipped, as every walk
+/// here skips one, so a looped tree answers with the longest way that skips
+/// such a link rather than with no way at all.
+fn deepest(tree: &Tree, at: usize) -> Vec<Option<usize>> {
+    let mut deepest: Vec<Option<usize>> = vec![None; tree.beads.len()];
+    let mut from: Vec<Option<usize>> = vec![None; tree.beads.len()];
+    deepest[at] = Some(0);
+    deepen(tree, at, 0, &mut vec![at], &mut deepest, &mut from);
+    from
 }
 
 /// Take every way down from `at` that is deeper than the one already found

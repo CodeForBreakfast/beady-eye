@@ -670,7 +670,35 @@ mod tests {
 
         let foot = frame_of(&forest, 100, 4).rows().remove(3);
 
-        says(&foot, "opening the deepest copy of each bead");
+        says(
+            &foot,
+            phrase::spine(forest.spine()).expect("a rule a reader can reach is named"),
+        );
+    }
+
+    /// Every rule a reader can reach accounts for its own screen. Two of them
+    /// sharing an account would leave a reader who cycled between them with
+    /// nothing on the row to tell which one they had stopped on.
+    #[test]
+    fn each_rule_the_reader_can_reach_is_named_in_its_own_words() {
+        let mut said: Vec<&str> = Vec::new();
+        let reachable = Spine::EVERY
+            .iter()
+            .copied()
+            .filter(|rule| *rule != Spine::default());
+        for rule in reachable {
+            let words = phrase::spine(rule).unwrap_or_else(|| panic!("{rule:?} is named"));
+            let drawn =
+                Painted::of(status_bar(&[], None, None, A_KEY_ROW, rule, 100), 100, 1).rows();
+
+            says(&drawn[0], words);
+            said.push(words);
+        }
+
+        let every = said.len();
+        said.sort_unstable();
+        said.dedup();
+        assert_eq!(said.len(), every, "two rules share an account: {said:?}");
     }
 
     /// Both the answer and the rule are the screen telling the reader what is

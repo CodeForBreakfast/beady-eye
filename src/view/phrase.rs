@@ -520,6 +520,9 @@ pub fn scoped_by_the_directory(project: &str) -> String {
 pub fn spine(spine: Spine) -> Option<&'static str> {
     match spine {
         Spine::EveryCopy => None,
+        Spine::FirstReached => Some("opening the first copy of each bead"),
+        Spine::Shallowest => Some("opening the shallowest copy of each bead"),
+        Spine::ParentChild => Some("opening each bead under its own parent"),
         Spine::Deepest => Some("opening the deepest copy of each bead"),
     }
 }

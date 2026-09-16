@@ -1116,6 +1116,7 @@ mod tests {
     use crate::tui::keys::tests::key;
     use crate::tui::keys::{action, BINDINGS};
     use crate::view::bindings::bindings_window;
+    use crate::view::forest::Spine;
     use crate::view::lines::{Content, GroupKind};
     use crate::view::painted::{Painted, Run};
     use crate::view::row::Cell;
@@ -3929,15 +3930,19 @@ mod tests {
     #[test]
     fn s_puts_the_rule_it_left_the_forest_under_on_the_foot() {
         let mut shown = shown(a_grove(6));
+        let first =
+            phrase::spine(Spine::default().next()).expect("a rule a reader can reach is named");
 
         press(&mut shown, KeyCode::Char('S'));
         assert!(
-            foot_of(&mut shown, 100, 24).contains("opening the deepest copy of each bead"),
+            foot_of(&mut shown, 100, 24).contains(first),
             "{:?}",
             foot_of(&mut shown, 100, 24)
         );
 
-        press(&mut shown, KeyCode::Char('S'));
+        for _ in 1..Spine::EVERY.len() {
+            press(&mut shown, KeyCode::Char('S'));
+        }
         assert_eq!(foot_of(&mut shown, 100, 24).trim_end(), key_row());
     }
 
