@@ -600,7 +600,7 @@ mod tests {
     /// A bead with something in every section `bd show` prints.
     fn a_bead() -> Node {
         Node {
-            id: "orb-7.1".to_string(),
+            id: "dun-7.1".to_string(),
             title: "re-point the dish".to_string(),
             status: Status::InProgress,
             issue_type: "task".to_string(),
@@ -622,19 +622,19 @@ mod tests {
             notes: "The crane is booked for Tuesday.".to_string(),
             owner: Some("kim".to_string()),
             parent: Some(related(
-                "orb-7",
+                "dun-7",
                 Edge::ParentChild,
                 Status::InProgress,
                 "lift the ground station",
             )),
             depends_on: vec![related(
-                "orb-7.3",
+                "dun-7.3",
                 Edge::Blocks,
                 Status::Closed,
                 "lay the feeder cable",
             )],
             blocks: vec![related(
-                "orb-7.4",
+                "dun-7.4",
                 Edge::Blocks,
                 Status::Open,
                 "file the licence",
@@ -673,8 +673,8 @@ mod tests {
         assert_eq!(
             drawn(&a_bead(), &mut Show::default(), 44, 22),
             vec![
-                "┌orb-7.1 · Esc to go back──────────────────┐",
-                "│◐ orb-7.1  re-point the dish              │",
+                "┌dun-7.1 · Esc to go back──────────────────┐",
+                "│◐ dun-7.1  re-point the dish              │",
                 "│  in_progress · P2 · task · kim           │",
                 "│  ◍ lifting the mast · working            │",
                 "│                                          │",
@@ -687,13 +687,13 @@ mod tests {
                 "│  The crane is booked for Tuesday.        │",
                 "│                                          │",
                 "│PARENT                                    │",
-                "│  ↑ ◐ orb-7  lift the ground station      │",
+                "│  ↑ ◐ dun-7  lift the ground station      │",
                 "│                                          │",
                 "│DEPENDS ON                                │",
-                "│  → ✓ orb-7.3  lay the feeder cable       │",
+                "│  → ✓ dun-7.3  lay the feeder cable       │",
                 "│                                          │",
                 "│BLOCKS                                    │",
-                "│  ← ○ orb-7.4  file the licence           │",
+                "│  ← ○ dun-7.4  file the licence           │",
                 "└──────────────────────────────────────────┘",
             ]
         );
@@ -717,8 +717,8 @@ mod tests {
         assert_eq!(
             drawn(&bare, &mut Show::default(), 44, 4),
             vec![
-                "┌orb-7.1 · Esc to go back──────────────────┐",
-                "│◐ orb-7.1  re-point the dish              │",
+                "┌dun-7.1 · Esc to go back──────────────────┐",
+                "│◐ dun-7.1  re-point the dish              │",
                 "│  in_progress · P2 · task                 │",
                 "└──────────────────────────────────────────┘",
             ]
@@ -777,7 +777,7 @@ mod tests {
     /// wraps is one of the things that moves it.
     fn the_name_drawn(rows: &[String]) -> Vec<&str> {
         rows.iter()
-            .skip_while(|row| !row.contains("◐ orb-7.1"))
+            .skip_while(|row| !row.contains("◐ dun-7.1"))
             .take_while(|row| !row.contains("in_progress"))
             .map(String::as_str)
             .collect()
@@ -798,7 +798,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         assert_eq!(
-            name.strip_prefix("◐ orb-7.1  "),
+            name.strip_prefix("◐ dun-7.1  "),
             Some(A_LONG_TITLE),
             "{rows:#?}"
         );
@@ -841,7 +841,7 @@ mod tests {
 
         assert_eq!(
             drawn(&spaced, &mut Show::default(), 44, 22)[1],
-            "│◐ orb-7.1  re-point   the dish            │"
+            "│◐ dun-7.1  re-point   the dish            │"
         );
     }
 
@@ -854,8 +854,8 @@ mod tests {
         assert_eq!(
             drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 6),
             vec![
-                "┌orb-7.1 · Esc to go back · j, k to scroll─┐",
-                "│◐ orb-7.1  Thirty-three of thirty-four fo…│",
+                "┌dun-7.1 · Esc to go back · j, k to scroll─┐",
+                "│◐ dun-7.1  Thirty-three of thirty-four fo…│",
                 "│  in_progress · P2 · task · kim           │",
                 "│  ◍ lifting the mast · working            │",
                 "│                                          │",
@@ -879,10 +879,10 @@ mod tests {
         let rows = drawn(&a_bead(), &mut Show::default(), 13, 30);
         let named = rows
             .iter()
-            .position(|row| row.contains("◐ orb-7.1"))
+            .position(|row| row.contains("◐ dun-7.1"))
             .expect("the bead is named");
 
-        assert_eq!(rows[named], "│◐ orb-7.1 …│", "{rows:#?}");
+        assert_eq!(rows[named], "│◐ dun-7.1 …│", "{rows:#?}");
         assert_eq!(rows[named + 1], "│  in_progr…│", "{rows:#?}");
     }
 
@@ -905,13 +905,13 @@ mod tests {
         assert_eq!(
             drawn(&named, &mut Show::default(), 24, 8),
             vec![
-                "┌orb-7.1 · Esc to go ba┐",
-                "│◐ orb-7.1  re-point   │",
+                "┌dun-7.1 · Esc to go ba┐",
+                "│◐ dun-7.1  re-point   │",
                 "│           the dish   │",
                 "│  in_progress · P2 · …│",
                 "│                      │",
                 "│PARENT                │",
-                "│  ↑ ◐ orb-7  lift the…│",
+                "│  ↑ ◐ dun-7  lift the…│",
                 "└──────────────────────┘",
             ]
         );
@@ -923,8 +923,8 @@ mod tests {
     fn a_window_too_short_for_the_bead_scrolls_by_motion() {
         let mut view = Show::default();
         let top = drawn(&a_bead(), &mut view, 44, 6);
-        assert_eq!(top[0], "┌orb-7.1 · Esc to go back · j, k to scroll─┐");
-        assert_eq!(top[1], "│◐ orb-7.1  re-point the dish              │");
+        assert_eq!(top[0], "┌dun-7.1 · Esc to go back · j, k to scroll─┐");
+        assert_eq!(top[1], "│◐ dun-7.1  re-point the dish              │");
 
         assert!(!view.scroll(Motion::PreviousRow), "already at the top");
         assert!(view.scroll(Motion::NextRow));
@@ -944,7 +944,7 @@ mod tests {
 
         assert!(view.scroll(Motion::LastRow));
         let bottom = drawn(&a_bead(), &mut view, 44, 6);
-        assert_eq!(bottom[4], "│  ← ○ orb-7.4  file the licence           │");
+        assert_eq!(bottom[4], "│  ← ○ dun-7.4  file the licence           │");
         assert!(!view.scroll(Motion::NextRow), "nothing below the last row");
         assert!(!view.scroll(Motion::LastRow), "already there");
 
@@ -952,7 +952,7 @@ mod tests {
         assert!(view.scroll(Motion::FirstRow));
         assert_eq!(
             drawn(&a_bead(), &mut view, 44, 6)[1],
-            "│◐ orb-7.1  re-point the dish              │"
+            "│◐ dun-7.1  re-point the dish              │"
         );
     }
 
@@ -976,9 +976,9 @@ mod tests {
         let rows = drawn(&bead, &mut view, WIDE, TALL);
 
         for (id, drawn_as) in [
-            ("orb-7", "orb-7  lift the ground station"),
-            ("orb-7.3", "orb-7.3  lay the feeder cable"),
-            ("orb-7.4", "orb-7.4  file the licence"),
+            ("dun-7", "dun-7  lift the ground station"),
+            ("dun-7.3", "dun-7.3  lay the feeder cable"),
+            ("dun-7.4", "dun-7.4  file the licence"),
         ] {
             assert_eq!(
                 drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, drawn_as)),
@@ -1017,7 +1017,7 @@ mod tests {
         let rows = drawn(&bead, &mut view, WIDE, TALL);
 
         assert_eq!(
-            drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, "┌orb-7.1")),
+            drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, "┌dun-7.1")),
             Drawn::Beyond,
             "the title is drawn on the page: {rows:#?}"
         );
@@ -1037,7 +1037,7 @@ mod tests {
         let over_a_taller_screen = over(WIDE, TALL * 2);
         let rows = drawn(&bead, &mut view, WIDE, TALL * 2);
 
-        let above = drawn_on(&rows, "┌orb-7.1");
+        let above = drawn_on(&rows, "┌dun-7.1");
         assert!(above > 0, "the window starts at the top of the screen");
         assert_eq!(
             drawn_at(over_a_taller_screen, &bead, &view, above - 1),
@@ -1067,9 +1067,9 @@ mod tests {
                 over(WIDE, short),
                 &bead,
                 &view,
-                drawn_on(&after, "orb-7.4  file the licence")
+                drawn_on(&after, "dun-7.4  file the licence")
             ),
-            Drawn::Related("orb-7.4"),
+            Drawn::Related("dun-7.4"),
             "the row the last reference was scrolled onto names another bead: {after:#?}"
         );
     }
@@ -1092,7 +1092,7 @@ mod tests {
         assert!(view.scroll(Motion::LastRow));
         let rows = drawn(&bead, &mut view, WIDE, barely_taller_than_the_sections);
 
-        let under_the_border = drawn_on(&rows, "┌orb-7.1") + 1;
+        let under_the_border = drawn_on(&rows, "┌dun-7.1") + 1;
         assert_eq!(
             drawn_at(
                 over(WIDE, barely_taller_than_the_sections),
@@ -1100,7 +1100,7 @@ mod tests {
                 &view,
                 under_the_border
             ),
-            Drawn::Related("orb-7.3"),
+            Drawn::Related("dun-7.3"),
             "no reference is drawn against the border, so this says nothing: {rows:#?}"
         );
         assert_eq!(
@@ -1161,7 +1161,7 @@ mod tests {
     fn a_related_bead_the_answer_does_not_hold_is_named_as_such() {
         let dangling = Node {
             depends_on: vec![Related {
-                id: "orb-9".to_string(),
+                id: "dun-9".to_string(),
                 edge: Edge::Blocks,
                 status: None,
                 title: None,
@@ -1171,7 +1171,7 @@ mod tests {
         let rows = drawn(&dangling, &mut Show::default(), 50, 24);
 
         assert!(
-            rows.contains(&"│  → orb-9  not in the tracker's answer          │".to_string()),
+            rows.contains(&"│  → dun-9  not in the tracker's answer          │".to_string()),
             "{rows:#?}"
         );
     }
@@ -1182,7 +1182,7 @@ mod tests {
     fn an_edge_of_a_kind_bdi_does_not_know_says_which_kind() {
         let odd = Node {
             depends_on: vec![related(
-                "orb-2",
+                "dun-2",
                 Edge::Other("relates-to".to_string()),
                 Status::Open,
                 "the survey",
@@ -1192,7 +1192,7 @@ mod tests {
         let rows = drawn(&odd, &mut Show::default(), 50, 24);
 
         assert!(
-            rows.contains(&"│  → ○ orb-2  the survey · “relates-to”          │".to_string()),
+            rows.contains(&"│  → ○ dun-2  the survey · “relates-to”          │".to_string()),
             "{rows:#?}"
         );
     }
@@ -1244,7 +1244,7 @@ mod tests {
         assert!(view.scrolled(Notch::Up, 3));
         assert_eq!(
             drawn(&a_bead(), &mut view, 44, 6)[1],
-            "│◐ orb-7.1  re-point the dish              │"
+            "│◐ dun-7.1  re-point the dish              │"
         );
         assert!(!view.scrolled(Notch::Up, 3), "already at the top");
     }
@@ -1326,7 +1326,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead(), &mut Show::default(), 44, 2),
             vec![
-                "┌orb-7.1 · Esc to go back · j, k to scroll─┐",
+                "┌dun-7.1 · Esc to go back · j, k to scroll─┐",
                 "└──────────────────────────────────────────┘",
             ]
         );
@@ -1439,7 +1439,7 @@ mod tests {
         let top = painted(&a_bead(), 44, 22).row(1);
 
         assert_eq!(
-            run_saying(&top, "orb-7.1").style.fg,
+            run_saying(&top, "dun-7.1").style.fg,
             Some(Color::Rgb(89, 194, 255)),
             "{top:?}"
         );
@@ -1506,7 +1506,7 @@ mod tests {
         let blocks = painted.row(20);
 
         assert_eq!(
-            run_saying(&depends_on, "orb-7.3  lay the feeder cable")
+            run_saying(&depends_on, "dun-7.3  lay the feeder cable")
                 .style
                 .fg,
             palette::TIER_FINISHED.fg,
@@ -1518,7 +1518,7 @@ mod tests {
             "the arrow says the edge, not the state: {depends_on:?}"
         );
         assert_eq!(
-            run_saying(&blocks, "orb-7.4  file the licence").style.fg,
+            run_saying(&blocks, "dun-7.4  file the licence").style.fg,
             palette::PAGE.fg,
             "{blocks:?}"
         );
@@ -1546,7 +1546,7 @@ mod tests {
             let bead = Node {
                 status: status.clone(),
                 depends_on: vec![related(
-                    "orb-7.3",
+                    "dun-7.3",
                     Edge::Blocks,
                     status.clone(),
                     "the cable",
@@ -1565,7 +1565,7 @@ mod tests {
                 "{status:?} lost its word: {rows:#?}"
             );
             assert!(
-                rows[17].contains(&format!("→ {glyph} orb-7.3")),
+                rows[17].contains(&format!("→ {glyph} dun-7.3")),
                 "{status:?} lost its glyph on a related row: {rows:#?}"
             );
         }
@@ -1615,12 +1615,12 @@ mod tests {
             toned,
             vec![
                 "◐".to_string(),
-                "orb-7.1".to_string(),
+                "dun-7.1".to_string(),
                 phrase::status_word(&Status::InProgress),
                 "◍ lifting the mast · working".to_string(),
                 "◐".to_string(),
                 "✓".to_string(),
-                "orb-7.3  lay the feeder cable".to_string(),
+                "dun-7.3  lay the feeder cable".to_string(),
             ],
             "{painted:?}"
         );
@@ -1638,7 +1638,7 @@ mod tests {
         for (y, said) in [
             (6, "Point it at the new bird."),
             (11, "The crane is booked for Tuesday."),
-            (14, "orb-7  lift the ground station"),
+            (14, "dun-7  lift the ground station"),
         ] {
             let run = run_saying(&painted.row(y), said);
             assert_eq!(run.style.fg, Some(Color::Reset), "{said}: {run:?}");
@@ -1684,7 +1684,7 @@ mod tests {
                 .iter()
                 .map(|it| it.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["orb-7", "orb-7.3", "orb-7.4"]
+            vec!["dun-7", "dun-7.3", "dun-7.4"]
         );
     }
 
@@ -1702,8 +1702,8 @@ mod tests {
             "a row for each bead named"
         );
         // Read the row and check it says the bead of the same ordinal, rather
-        // than searching the list for whichever id the row contains: `orb-7`
-        // is inside `orb-7.3`, so a search finds the parent on every row and
+        // than searching the list for whichever id the row contains: `dun-7`
+        // is inside `dun-7.3`, so a search finds the parent on every row and
         // an order that had drifted would still line up.
         for (at, named) in super::related(&bead).iter().enumerate() {
             let said: String = page.rows[page.related[at]]
@@ -1786,7 +1786,7 @@ mod tests {
     fn the_bead_the_window_is_on_is_drawn_as_a_selected_row_is() {
         let bead = a_bead();
         let mut view = Show::default();
-        view.go_to("orb-7");
+        view.go_to("dun-7");
 
         // Found by what the row says rather than by its number: the window is
         // centred, so a page row and a screen row are not the same count.
@@ -1825,7 +1825,7 @@ mod tests {
         let page = said(&bead, 58, 60);
         let last = *page.related.last().expect("a bead names beads");
 
-        view.go_to("orb-7.4");
+        view.go_to("dun-7.4");
         let drawn = drawn_where(&bead, &mut view, 60, 8, true);
 
         assert!(

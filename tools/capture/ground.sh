@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The invented ground the README's frame is drawn from: a `bd` and a `herdr`
-# that answer for the atlas project and nothing else.
+# that answer for the arkham project and nothing else.
 #
 # Everything here is invented, and has to be — CLAUDE.local.md's *Only
 # invented examples go in the repo*. The frame this produces ships inside the
@@ -15,7 +15,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ground=${1:?a directory to lay the ground in}
 
-atlas="$ground/atlas"
+arkham="$ground/arkham"
 answers="$ground/bd-answers"
 agents="$ground/herdr-agents"
 
@@ -34,22 +34,22 @@ if [ -e "$ground" ] && [ ! -e "$ground/environment" ]; then
   exit 1
 fi
 rm -rf "$ground"
-mkdir -p "$atlas" "$answers" "$agents" "$ground/.config/beady-eye"
+mkdir -p "$arkham" "$answers" "$agents" "$ground/.config/beady-eye"
 
 cat >"$ground/.config/beady-eye/config.toml" <<TOML
 [[projects]]
-name = "atlas"
-path = "$atlas"
+name = "arkham"
+path = "$arkham"
 TOML
 
 # The tracker. Twelve beads over two roots: a payments epic whose refund
 # strand is being worked, and a search bug. Three are closed, three name a
-# pane, and atlas-5 names one that no session reports — the drift the caption
+# pane, and arkham-5 names one that no session reports — the drift the caption
 # points at.
-python3 - "$answers" "$atlas" <<'PY'
+python3 - "$answers" "$arkham" <<'PY'
 import json, sys
 
-answers, atlas = sys.argv[1], sys.argv[2]
+answers, arkham = sys.argv[1], sys.argv[2]
 
 def bead(id, title, status, kind, parent=None, blocked_by=None, pane=None):
     row = {
@@ -70,23 +70,23 @@ def bead(id, title, status, kind, parent=None, blocked_by=None, pane=None):
     return row
 
 rows = [
-    bead("atlas-1", "Payments move to the new gateway", "open", "epic"),
-    bead("atlas-2", "Pin the gateway client version", "open", "task", "atlas-1"),
-    bead("atlas-3", "The refund path calls the gateway", "in_progress", "task",
-         "atlas-1", pane="wG:p2"),
-    bead("atlas-4", "Backfill the refund ledger", "open", "task", "atlas-3"),
-    bead("atlas-5", "Retire the old refund worker", "in_progress", "task",
-         "atlas-3", pane="wG:p9"),
-    bead("atlas-6", "Cut the live keys over", "open", "task", "atlas-1",
-         blocked_by="atlas-2"),
-    bead("atlas-7", "Webhook retries are not idempotent", "in_progress", "bug",
-         "atlas-1", pane="wG:p4"),
-    bead("atlas-8", "Reconcile the settlement report", "closed", "task", "atlas-1"),
-    bead("atlas-9", "Drop the gateway shim", "closed", "task", "atlas-1"),
-    bead("atlas-10", "Search returns stale results after an edit", "open", "bug"),
-    bead("atlas-11", "Invalidate the index on write", "in_progress", "task",
-         "atlas-10", pane="wG:p6"),
-    bead("atlas-12", "Measure the reindex cost", "closed", "task", "atlas-10"),
+    bead("arkham-1", "Payments move to the new gateway", "open", "epic"),
+    bead("arkham-2", "Pin the gateway client version", "open", "task", "arkham-1"),
+    bead("arkham-3", "The refund path calls the gateway", "in_progress", "task",
+         "arkham-1", pane="wG:p2"),
+    bead("arkham-4", "Backfill the refund ledger", "open", "task", "arkham-3"),
+    bead("arkham-5", "Retire the old refund worker", "in_progress", "task",
+         "arkham-3", pane="wG:p9"),
+    bead("arkham-6", "Cut the live keys over", "open", "task", "arkham-1",
+         blocked_by="arkham-2"),
+    bead("arkham-7", "Webhook retries are not idempotent", "in_progress", "bug",
+         "arkham-1", pane="wG:p4"),
+    bead("arkham-8", "Reconcile the settlement report", "closed", "task", "arkham-1"),
+    bead("arkham-9", "Drop the gateway shim", "closed", "task", "arkham-1"),
+    bead("arkham-10", "Search returns stale results after an edit", "open", "bug"),
+    bead("arkham-11", "Invalidate the index on write", "in_progress", "task",
+         "arkham-10", pane="wG:p6"),
+    bead("arkham-12", "Measure the reindex cost", "closed", "task", "arkham-10"),
 ]
 
 UNFINISHED = "open,in_progress,blocked,deferred"
@@ -106,12 +106,12 @@ for call in ("query ephemeral=true --limit 0 --json",
              "blocked --json"):
     write(call, [])
 with open(f"{answers}/where --json", "w") as f:
-    json.dump({"database_path": f"{atlas}/.beads/dolt",
-               "path": f"{atlas}/.beads", "schema_version": 1}, f)
+    json.dump({"database_path": f"{arkham}/.beads/dolt",
+               "path": f"{arkham}/.beads", "schema_version": 1}, f)
 PY
 
 # The session. Six panes in the project's directory: the three the beads name,
-# and three more working there that no bead claims. atlas-5's pane is not
+# and three more working there that no bead claims. arkham-5's pane is not
 # among them, so the claim it carries has nothing behind it.
 cat >"$ground/herdr-sessions.json" <<JSON
 {"sessions":[{"default":true,"name":"default","running":true,
@@ -120,12 +120,12 @@ JSON
 
 cat >"$agents/default.json" <<JSON
 {"id":"cli:agent:list","result":{"type":"agent_list","agents":[
-  {"pane_id":"wG:p2","cwd":"$atlas","agent_status":"working","agent":"claude"},
-  {"pane_id":"wG:p4","cwd":"$atlas","agent_status":"working","agent":"claude"},
-  {"pane_id":"wG:p6","cwd":"$atlas","agent_status":"working","agent":"claude"},
-  {"pane_id":"wG:p1","cwd":"$atlas","agent_status":"idle","agent":"claude"},
-  {"pane_id":"wG:p7","cwd":"$atlas","agent_status":"idle","agent":"claude"},
-  {"pane_id":"wG:pB","cwd":"$atlas","agent_status":"working","agent":"claude"}
+  {"pane_id":"wG:p2","cwd":"$arkham","agent_status":"working","agent":"claude"},
+  {"pane_id":"wG:p4","cwd":"$arkham","agent_status":"working","agent":"claude"},
+  {"pane_id":"wG:p6","cwd":"$arkham","agent_status":"working","agent":"claude"},
+  {"pane_id":"wG:p1","cwd":"$arkham","agent_status":"idle","agent":"claude"},
+  {"pane_id":"wG:p7","cwd":"$arkham","agent_status":"idle","agent":"claude"},
+  {"pane_id":"wG:pB","cwd":"$arkham","agent_status":"working","agent":"claude"}
 ]}}
 JSON
 

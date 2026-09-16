@@ -35,7 +35,7 @@ use terminal::{a_socket_of_its_own, contains, THE_DESCRIBED_SUBTREE};
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
 
-const ATLAS: &[u8] = "atlas".as_bytes();
+const ARKHAM: &[u8] = "arkham".as_bytes();
 const FERRY: &[u8] = "ferry".as_bytes();
 
 /// Long enough for a check to fall due, the collection it asks for to be
@@ -79,14 +79,14 @@ fn naming(home: &Path, projects: &[&str]) {
 
 #[test]
 fn a_project_added_to_the_config_appears_and_one_removed_leaves() {
-    let home = a_home_naming("config-collects", &["atlas"]);
+    let home = a_home_naming("config-collects", &["arkham"]);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
     let mut environment = tracker.environment();
     environment.push(a_socket_of_its_own(&home));
 
     let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &environment);
-    bdi.read_until(ATLAS, GIVING_UP);
+    bdi.read_until(ARKHAM, GIVING_UP);
 
     naming(&home, &["ferry"]);
     bdi.read_until(FERRY, A_RELOAD_AND_ITS_COLLECTION);
@@ -100,7 +100,7 @@ fn a_project_added_to_the_config_appears_and_one_removed_leaves() {
         bdi.timeline()
     );
     assert!(
-        !contains(&frame, ATLAS),
+        !contains(&frame, ARKHAM),
         "and the one they took out left no rows behind it\n{}",
         bdi.timeline()
     );

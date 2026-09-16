@@ -129,7 +129,7 @@ impl Armed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::fixtures::{atlas, ferry};
+    use crate::tui::fixtures::{arkham, ferry};
 
     const EVERY: Duration = Duration::from_secs(30);
 
@@ -138,7 +138,7 @@ mod tests {
     }
 
     fn polling() -> Armed {
-        Armed::polling("atlas".to_string(), Some(EVERY))
+        Armed::polling("arkham".to_string(), Some(EVERY))
     }
 
     /// The largest whole number of seconds — the unit `refresh_seconds` is
@@ -160,9 +160,9 @@ mod tests {
     #[test]
     fn a_project_whose_interval_reaches_the_end_of_time_still_asks() {
         let every = Duration::from_secs(seconds_to_the_end_of_time(at(100)));
-        let mut armed = Armed::polling("atlas".to_string(), Some(every));
+        let mut armed = Armed::polling("arkham".to_string(), Some(every));
 
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks_in(at(100)), Some(every));
     }
@@ -174,9 +174,9 @@ mod tests {
     #[test]
     fn a_project_whose_interval_outruns_time_asks_no_more() {
         let every = Duration::from_secs(seconds_to_the_end_of_time(at(100)) + 1);
-        let mut armed = Armed::polling("atlas".to_string(), Some(every));
+        let mut armed = Armed::polling("arkham".to_string(), Some(every));
 
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks_in(at(100)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -190,9 +190,9 @@ mod tests {
     /// has gone wrong hands over.
     #[test]
     fn a_project_whose_interval_fills_the_key_asks_no_more() {
-        let mut armed = Armed::polling("atlas".to_string(), Some(Duration::from_secs(u64::MAX)));
+        let mut armed = Armed::polling("arkham".to_string(), Some(Duration::from_secs(u64::MAX)));
 
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks_in(at(100)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -204,10 +204,10 @@ mod tests {
     fn a_project_asks_again_one_interval_after_the_read_that_answered_it() {
         let mut armed = polling();
 
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks(at(129)), None, "the interval was not out");
-        assert_eq!(armed.asks(at(130)), Some(atlas()));
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
     /// A run that has read nothing has a read on its way already. Arming at
@@ -224,9 +224,9 @@ mod tests {
     /// here ever asks, however many reads come back.
     #[test]
     fn a_project_that_does_not_poll_never_asks_for_itself() {
-        let mut armed = Armed::polling("atlas".to_string(), None);
+        let mut armed = Armed::polling("arkham".to_string(), None);
 
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks_in(at(100)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -238,16 +238,16 @@ mod tests {
     #[test]
     fn asking_disarms_until_another_read_comes_back() {
         let mut armed = polling();
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
-        assert_eq!(armed.asks(at(130)), Some(atlas()));
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
 
         assert_eq!(armed.asks(at(200)), None, "nothing has answered the ask");
         assert_eq!(armed.asks_in(at(200)), None);
 
-        armed.came_back(&atlas(), at(210));
+        armed.came_back(&arkham(), at(210));
 
-        assert_eq!(armed.asks(at(240)), Some(atlas()));
+        assert_eq!(armed.asks(at(240)), Some(arkham()));
     }
 
     /// The hazard, stated as a test so that a later arm added anywhere but on
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn a_project_whose_read_never_comes_back_asks_no_more() {
         let mut armed = polling();
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
         armed.asks(at(130));
 
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -271,7 +271,7 @@ mod tests {
         let mut armed = polling();
 
         for reported_at in [100, 120, 140, 160] {
-            armed.came_back(&atlas(), at(reported_at));
+            armed.came_back(&arkham(), at(reported_at));
             assert_eq!(
                 armed.asks(at(reported_at + 20)),
                 None,
@@ -283,7 +283,7 @@ mod tests {
 
         assert_eq!(
             armed.asks(at(190)),
-            Some(atlas()),
+            Some(arkham()),
             "the reports stopped at 160, so the poll comes due one interval after"
         );
     }
@@ -293,7 +293,7 @@ mod tests {
     /// the poll its neighbour still needs, rather than swept up with it.
     #[test]
     fn a_project_with_a_producer_is_left_out_of_the_poll_its_neighbour_needs() {
-        let mut has_one = Armed::polling("atlas".to_string(), None);
+        let mut has_one = Armed::polling("arkham".to_string(), None);
         let mut has_none = Armed::polling("ferry".to_string(), Some(EVERY));
 
         has_one.came_back(&Wanted::Everything, at(100));
@@ -311,9 +311,9 @@ mod tests {
     fn a_project_the_channel_stops_covering_is_polled_again() {
         let mut armed = polling();
 
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
-        assert_eq!(armed.asks(at(130)), Some(atlas()));
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
     /// A read of everything reads this project too, so it arms this project.
@@ -323,7 +323,7 @@ mod tests {
 
         armed.came_back(&Wanted::Everything, at(100));
 
-        assert_eq!(armed.asks(at(130)), Some(atlas()));
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
     /// And a read of a different project does not: that is the whole of
@@ -331,14 +331,14 @@ mod tests {
     #[test]
     fn a_read_of_another_project_leaves_this_one_as_it_was() {
         let mut armed = polling();
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         armed.came_back(&ferry(), at(120));
 
         assert_eq!(
             armed.asks(at(130)),
-            Some(atlas()),
-            "atlas asks 30 after its own read, not 30 after ferry's"
+            Some(arkham()),
+            "arkham asks 30 after its own read, not 30 after ferry's"
         );
     }
 
@@ -348,15 +348,15 @@ mod tests {
     /// at once.
     #[test]
     fn projects_read_at_different_instants_stay_apart() {
-        let mut first = Armed::polling("atlas".to_string(), Some(EVERY));
+        let mut first = Armed::polling("arkham".to_string(), Some(EVERY));
         let mut second = Armed::polling("ferry".to_string(), Some(EVERY));
 
-        first.came_back(&atlas(), at(100));
+        first.came_back(&arkham(), at(100));
         second.came_back(&ferry(), at(112));
 
         assert_eq!(first.asks_in(at(100)), Some(EVERY));
         assert_eq!(second.asks_in(at(100)), Some(Duration::from_secs(42)));
-        assert_eq!(first.asks(at(130)), Some(atlas()));
+        assert_eq!(first.asks(at(130)), Some(arkham()));
         assert_eq!(second.asks(at(130)), None, "ferry's own read was later");
     }
 
@@ -366,13 +366,13 @@ mod tests {
     #[test]
     fn an_ask_already_overdue_says_it_waits_no_longer() {
         let mut armed = polling();
-        armed.came_back(&atlas(), at(100));
+        armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks_in(at(500)), Some(Duration::ZERO));
     }
 
     #[test]
     fn a_project_answers_to_its_own_name() {
-        assert_eq!(polling().project(), "atlas");
+        assert_eq!(polling().project(), "arkham");
     }
 }

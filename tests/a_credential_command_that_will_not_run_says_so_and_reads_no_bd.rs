@@ -168,7 +168,7 @@ fn the_snapshot_reports_it_as_its_own_failure_and_no_bd_was_asked() {
 
     let snapshot = snapshot_of(&bdi_json(&home, &tracker.environment()));
 
-    assert_eq!(failed_projects(&snapshot), vec![("atlas", NO_CREDENTIAL)]);
+    assert_eq!(failed_projects(&snapshot), vec![("arkham", NO_CREDENTIAL)]);
     assert!(
         !tracker.read_the_tracker(),
         "bd was asked something for a project whose credential command would \

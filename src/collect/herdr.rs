@@ -260,8 +260,8 @@ mod tests {
         let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
         let p = pane(&panes, "wG:p6");
 
-        assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/orbital"));
-        assert_eq!(p.display_agent.as_deref(), Some("orb-2kd.5"));
+        assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/dunwich"));
+        assert_eq!(p.display_agent.as_deref(), Some("dun-2kd.5"));
         assert_eq!(
             p.title.as_deref(),
             Some("read the trailers into typed entries")
@@ -425,13 +425,13 @@ mod tests {
     /// and every pane that comes back is held as that session's.
     #[test]
     fn agent_list_asks_the_session_it_is_given_by_name() {
-        let runner = FakeRunner::default().with("herdr --session beacon agent list", FIXTURE);
+        let runner = FakeRunner::default().with("herdr --session kadath agent list", FIXTURE);
 
-        let panes = agent_list(&runner, "beacon").unwrap();
+        let panes = agent_list(&runner, "kadath").unwrap();
 
         assert_eq!(panes.len(), 10);
-        assert!(panes.iter().all(|pane| pane.session == "beacon"));
-        let call = runner.call("herdr --session beacon agent list");
+        assert!(panes.iter().all(|pane| pane.session == "kadath"));
+        let call = runner.call("herdr --session kadath agent list");
         assert_eq!(call.cwd, None);
         assert!(call.env.is_empty());
     }

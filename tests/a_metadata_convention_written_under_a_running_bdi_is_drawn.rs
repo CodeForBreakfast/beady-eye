@@ -53,10 +53,10 @@ const OPEN_THE_TREE: &[u8] = b"agjlgj";
 /// joins — rather than both keys agreeing and the setting making no
 /// difference either way.
 const THE_TRACKER: &str = r#"[
-  {"id":"orb-1","title":"lift the ground station","status":"open",
+  {"id":"dun-1","title":"lift the ground station","status":"open",
    "priority":1,"issue_type":"epic"},
-  {"id":"orb-1.1","title":"repoint the dish","status":"in_progress","parent":"orb-1",
-   "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}],
+  {"id":"dun-1.1","title":"repoint the dish","status":"in_progress","parent":"dun-1",
+   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
    "priority":2,"issue_type":"task",
    "metadata":{"agent_pane":"wT:p9","seat":"wT:p1","phase":"trimming-sails"}}
 ]"#;
@@ -64,7 +64,7 @@ const THE_TRACKER: &str = r#"[
 /// A word of the bead's title, which is what names its row here.
 ///
 /// Its title and not its id, because the forest draws a nested bead's id as
-/// the part that is its own: `orb-1.1` under `orb-1` is drawn `.1`, and a
+/// the part that is its own: `dun-1.1` under `dun-1` is drawn `.1`, and a
 /// test looking for the whole id finds nothing on a row that is right there.
 /// One word, because a row reaches the wire a word at a time with a cursor
 /// move where each space would be — so a needle with a space in it is in no
@@ -118,7 +118,7 @@ fn settling(home: &Path, settings: &str) {
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n{settings}",
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n{settings}",
             home.display()
         ),
     )

@@ -1,23 +1,23 @@
 [
   {
-    "id": "orb-2kd.1",
+    "id": "dun-2kd.1",
     "title": "T1 scaffold the crate, extending the existing dev shell",
     "status": "closed",
     "priority": 1,
     "issue_type": "task",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:11Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:18Z",
     "closed_at": "2026-09-05T12:41:18Z",
     "close_reason": "Landed in the dev shell; the crate builds under the pinned toolchain.",
     "metadata": {
-      "working_topic": "orbital/v1-orb-2kd.1"
+      "working_topic": "dunwich/v1-dun-2kd.1"
     },
     "dependencies": [
       {
-        "issue_id": "orb-2kd.1",
-        "depends_on_id": "orb-2kd",
+        "issue_id": "dun-2kd.1",
+        "depends_on_id": "dun-2kd",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:10Z",
         "created_by": "Mira Vance",
@@ -27,17 +27,17 @@
     "dependency_count": 0,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "orb-2kd"
+    "parent": "dun-2kd"
   },
   {
-    "id": "orb-2kd",
+    "id": "dun-2kd",
     "title": "Read and group: parse the log, emit the grouped contract",
     "description": "A binary that reads a repository and emits grouped release notes as JSON. The\nrenderer and the man page are out of scope and get their own plans.\n\n**The plan has a Known defects section at its end.** Each entry names the task\nit lands in, and every one is folded into the relevant bead. A worker that\nimplements its plan task verbatim will reproduce a known bug. **Read the\nbead's corrections before the plan's code.**\n\n## Critical path\n\n`.1` → `.3` → `.4` → `.10` → `.11`.\n\n`.2` opens once `.1` is done and runs alongside the whole chain. That is the\neffort's one long parallel strand.\n",
     "notes": "The ordering table moved to config during .4; the plan's hard-coded order is superseded.",
     "status": "closed",
     "priority": 1,
     "issue_type": "epic",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:10Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:21Z",
@@ -45,8 +45,8 @@
     "close_reason": "Every task under it is closed and the contract is emitted.",
     "dependencies": [
       {
-        "issue_id": "orb-2kd",
-        "depends_on_id": "orb-9fw",
+        "issue_id": "dun-2kd",
+        "depends_on_id": "dun-9fw",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:09Z",
         "created_by": "Mira Vance",
@@ -56,18 +56,18 @@
     "dependency_count": 0,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-9fw"
+    "parent": "dun-9fw"
   },
   {
-    "id": "orb-9fw",
-    "title": "orbital v1: release notes from the commit log",
-    "description": "`orbital` reads a repository's commit log and writes the release notes for it:\none section per change type, ordered, with the trailers folded in. Read-only\nagainst git. This epic is the whole of what `docs/design.md` calls v1.\n\n**`docs/design.md` is a starting point, not gospel** — where it is ambiguous the\nseat that hits the ambiguity decides with the code in front of it and records\nwhat it chose. The fuller statement is below.\n\n**Effort slug: `v1`.** Every topic for this effort is built from it.\n\n## Roster\n\nEleven beads, all in this tracker. No foreign strands, no tracking beads.\n\n| bead | task | blocked by |\n|---|---|---|\n| orb-2kd.1 | T1 scaffold the crate, extending the existing dev shell | — |\n| orb-2kd.2 | T2 configuration, with the per-repository trailer map | .1 |\n| orb-2kd.3 | T3 parse the commit log into typed entries | .1 |\n| orb-2kd.4 | T4 group entries by type and order them | .3 |\n\n## Global constraints, on every bead\n\n- **Never write to the repository.** Only `log`, `show`, `for-each-ref`.\n- **The key is `(repository, sha)`, never `sha` alone.** A short sha is\n  ambiguous across repositories and nothing coordinates them.\n- **Degrade, never disappear.** An unreadable ref, a malformed trailer, a\n  commit with no parent — each is reported, never dropped.\n- **Fail loudly on an unexpected shape.** A field of the wrong type is an\n  error; a *missing* field is normal.\n",
-    "notes": "Correction to this bead's roster, from orb-2kd.3's capture: assignee and started_at ARE present on every claimed bead, contrary to 'never observed at all' above. Both stay optional, so no design change.",
+    "id": "dun-9fw",
+    "title": "dunwich v1: release notes from the commit log",
+    "description": "`dunwich` reads a repository's commit log and writes the release notes for it:\none section per change type, ordered, with the trailers folded in. Read-only\nagainst git. This epic is the whole of what `docs/design.md` calls v1.\n\n**`docs/design.md` is a starting point, not gospel** — where it is ambiguous the\nseat that hits the ambiguity decides with the code in front of it and records\nwhat it chose. The fuller statement is below.\n\n**Effort slug: `v1`.** Every topic for this effort is built from it.\n\n## Roster\n\nEleven beads, all in this tracker. No foreign strands, no tracking beads.\n\n| bead | task | blocked by |\n|---|---|---|\n| dun-2kd.1 | T1 scaffold the crate, extending the existing dev shell | — |\n| dun-2kd.2 | T2 configuration, with the per-repository trailer map | .1 |\n| dun-2kd.3 | T3 parse the commit log into typed entries | .1 |\n| dun-2kd.4 | T4 group entries by type and order them | .3 |\n\n## Global constraints, on every bead\n\n- **Never write to the repository.** Only `log`, `show`, `for-each-ref`.\n- **The key is `(repository, sha)`, never `sha` alone.** A short sha is\n  ambiguous across repositories and nothing coordinates them.\n- **Degrade, never disappear.** An unreadable ref, a malformed trailer, a\n  commit with no parent — each is reported, never dropped.\n- **Fail loudly on an unexpected shape.** A field of the wrong type is an\n  error; a *missing* field is normal.\n",
+    "notes": "Correction to this bead's roster, from dun-2kd.3's capture: assignee and started_at ARE present on every claimed bead, contrary to 'never observed at all' above. Both stay optional, so no design change.",
     "status": "open",
     "priority": 1,
     "issue_type": "epic",
     "assignee": "Mira Vance",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:09Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:17Z",
@@ -79,32 +79,32 @@
     "comment_count": 0
   },
   {
-    "id": "orb-2kd.11",
+    "id": "dun-2kd.11",
     "title": "T11 grouping rule 4: entries named only by a trailer",
     "status": "closed",
     "priority": 2,
     "issue_type": "task",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:21Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:20Z",
     "closed_at": "2026-09-05T12:41:20Z",
     "close_reason": "Rule 4 lands with the trailer-only case covered.",
     "metadata": {
-      "working_topic": "orbital/v1-orb-2kd.11"
+      "working_topic": "dunwich/v1-dun-2kd.11"
     },
     "dependencies": [
       {
-        "issue_id": "orb-2kd.11",
-        "depends_on_id": "orb-2kd.10",
+        "issue_id": "dun-2kd.11",
+        "depends_on_id": "dun-2kd.10",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:10Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-2kd.11",
-        "depends_on_id": "orb-2kd",
+        "issue_id": "dun-2kd.11",
+        "depends_on_id": "dun-2kd",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:20Z",
         "created_by": "Mira Vance",
@@ -114,43 +114,43 @@
     "dependency_count": 1,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-2kd"
+    "parent": "dun-2kd"
   },
   {
-    "id": "orb-2kd.10",
+    "id": "dun-2kd.10",
     "title": "T10 wire the binary and emit the grouped contract",
     "status": "closed",
     "priority": 2,
     "issue_type": "task",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:20Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:19Z",
     "closed_at": "2026-09-05T12:41:19Z",
     "close_reason": "Binary wired; the contract is emitted and asserted against a captured run.",
     "metadata": {
-      "working_topic": "orbital/v1-orb-2kd.10"
+      "working_topic": "dunwich/v1-dun-2kd.10"
     },
     "dependencies": [
       {
-        "issue_id": "orb-2kd.10",
-        "depends_on_id": "orb-2kd",
+        "issue_id": "dun-2kd.10",
+        "depends_on_id": "dun-2kd",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:19Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-2kd.10",
-        "depends_on_id": "orb-2kd.9",
+        "issue_id": "dun-2kd.10",
+        "depends_on_id": "dun-2kd.9",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:10Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-2kd.10",
-        "depends_on_id": "orb-2kd.8",
+        "issue_id": "dun-2kd.10",
+        "depends_on_id": "dun-2kd.8",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:09Z",
         "created_by": "Mira Vance",
@@ -160,37 +160,37 @@
     "dependency_count": 2,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "orb-2kd"
+    "parent": "dun-2kd"
   },
   {
-    "id": "orb-2kd.4",
+    "id": "dun-2kd.4",
     "title": "T4 group entries by type and order them",
     "description": "Group parsed entries by type and order them, so the writer has a shape to walk\nrather than a list to sort.\n\nOrdering is by the type table in config, then by commit order within a type.\nEntries with no type go last under their own heading.",
     "notes": "The plan's ordering is hard-coded; this moved it to config. Read the bead before the plan.",
     "status": "closed",
     "priority": 2,
     "issue_type": "task",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:13Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:19Z",
     "closed_at": "2026-09-05T12:41:19Z",
     "close_reason": "Grouping reads its order from config.",
     "metadata": {
-      "working_topic": "orbital/v1-orb-2kd.4"
+      "working_topic": "dunwich/v1-dun-2kd.4"
     },
     "dependencies": [
       {
-        "issue_id": "orb-2kd.4",
-        "depends_on_id": "orb-2kd",
+        "issue_id": "dun-2kd.4",
+        "depends_on_id": "dun-2kd",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:13Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-2kd.4",
-        "depends_on_id": "orb-2kd.3",
+        "issue_id": "dun-2kd.4",
+        "depends_on_id": "dun-2kd.3",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:09Z",
         "created_by": "Mira Vance",
@@ -200,37 +200,37 @@
     "dependency_count": 1,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-2kd"
+    "parent": "dun-2kd"
   },
   {
-    "id": "orb-2kd.3",
+    "id": "dun-2kd.3",
     "title": "T3 parse the commit log into typed entries",
     "description": "Parse `git log --format=...` into typed entries: subject, body, trailers, and\nthe type prefix the subject carries.\n\n## Done when\n\n- A conventional subject is split into type, optional scope and description.\n- A subject that is not conventional parses as an entry with no type rather\n  than as an error.\n- Trailers are read from the body's last paragraph only, which is where the\n  format puts them.",
     "notes": "Measured against a real log: a subject with a scope but no type parses as untyped rather than failing, so the type table needs a fallback row.",
     "status": "closed",
     "priority": 2,
     "issue_type": "task",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:12Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:41:18Z",
     "closed_at": "2026-09-05T12:41:18Z",
     "close_reason": "Parser lands with the untyped fallback the notes describe.",
     "metadata": {
-      "working_topic": "orbital/v1-orb-2kd.3"
+      "working_topic": "dunwich/v1-dun-2kd.3"
     },
     "dependencies": [
       {
-        "issue_id": "orb-2kd.3",
-        "depends_on_id": "orb-2kd.1",
+        "issue_id": "dun-2kd.3",
+        "depends_on_id": "dun-2kd.1",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:08Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-2kd.3",
-        "depends_on_id": "orb-2kd",
+        "issue_id": "dun-2kd.3",
+        "depends_on_id": "dun-2kd",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:12Z",
         "created_by": "Mira Vance",
@@ -240,6 +240,6 @@
     "dependency_count": 1,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "orb-2kd"
+    "parent": "dun-2kd"
   }
 ]

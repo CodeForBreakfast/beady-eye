@@ -1029,22 +1029,22 @@ mod tests {
 
     const EVERY_SECTION: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-credential_command = "cat /home/user/dev/beacon/.beads-password"
+name = "kadath"
+path = "/home/user/dev/kadath"
+credential_command = "cat /home/user/dev/kadath/.beads-password"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
-render = "⇢ beacon/{}"
+render = "⇢ kadath/{}"
 
 [roots.explicit]
-atlas  = ["a-1", "a-9"]
-beacon = ["b-1"]
+arkham  = ["a-1", "a-9"]
+kadath = ["b-1"]
 
 [[badges]]
 key    = "metadata.delivery_pr"
@@ -1080,30 +1080,30 @@ state    = ["agent", "anomalies", "progress"]
 
     const ONE_PROJECT: &str = r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 "#;
 
     const ONE_CREDENTIALLED_ONE_AMBIENT: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 "#;
 
     const TWO_AMBIENT: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 
 [[projects]]
 name = "cinder"
@@ -1118,26 +1118,26 @@ path = "/home/user/dev/cinder"
             cfg.projects,
             vec![
                 Project {
-                    name: "atlas".to_string(),
-                    path: PathBuf::from("/home/user/atlas"),
+                    name: "arkham".to_string(),
+                    path: PathBuf::from("/home/user/arkham"),
                     environment_command: None,
-                    credential_command: Some("secret-tool lookup tracker atlas".to_string()),
+                    credential_command: Some("secret-tool lookup tracker arkham".to_string()),
                     poll: true,
                     badges: Vec::new(),
                     worktrees: Vec::new(),
                 },
                 Project {
-                    name: "beacon".to_string(),
-                    path: PathBuf::from("/home/user/dev/beacon"),
+                    name: "kadath".to_string(),
+                    path: PathBuf::from("/home/user/dev/kadath"),
                     environment_command: None,
                     credential_command: Some(
-                        "cat /home/user/dev/beacon/.beads-password".to_string()
+                        "cat /home/user/dev/kadath/.beads-password".to_string()
                     ),
                     poll: true,
                     badges: vec![Badge {
                         key: "metadata.delivery_pr".to_string(),
                         match_value: None,
-                        render: "⇢ beacon/{}".to_string(),
+                        render: "⇢ kadath/{}".to_string(),
                         link: None,
                         short: None,
                         colour: None,
@@ -1151,10 +1151,10 @@ path = "/home/user/dev/cinder"
             Roots {
                 explicit: BTreeMap::from([
                     (
-                        "atlas".to_string(),
+                        "arkham".to_string(),
                         vec!["a-1".to_string(), "a-9".to_string()]
                     ),
-                    ("beacon".to_string(), vec!["b-1".to_string()]),
+                    ("kadath".to_string(), vec!["b-1".to_string()]),
                 ]),
             }
         );
@@ -1264,12 +1264,12 @@ identity = ["glyph", "id", "badge.metadata.jira"]
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
+name = "arkham"
+path = "/home/user/arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 
 [[projects.badges]]
 key    = "metadata.jira"
@@ -1358,18 +1358,18 @@ title = ["title", "badge.metadata.jira", "badges"]
                 matching("metadata.blocked_on", "human", "⏸ waiting"),
             ],
             ..Config::naming(vec![drawing(
-                "beacon",
+                "kadath",
                 vec![
-                    badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                    badge("metadata.delivery_pr", "⇢ kadath/{}"),
                     badge("metadata.epic", "▣ {}"),
                 ],
             )])
         };
 
         assert_eq!(
-            cfg.badges_for_project("beacon"),
+            cfg.badges_for_project("kadath"),
             vec![
-                badge("metadata.delivery_pr", "⇢ beacon/{}"),
+                badge("metadata.delivery_pr", "⇢ kadath/{}"),
                 badge("metadata.delivery_pr", "⇢ {}"),
                 matching("metadata.blocked_on", "human", "⏸ waiting"),
                 badge("metadata.epic", "▣ {}"),
@@ -1393,13 +1393,13 @@ title = ["title", "badge.metadata.jira", "badges"]
                 matching("metadata.blocked_on", "dependency", "⏸ blocked"),
             ],
             ..Config::naming(vec![drawing(
-                "beacon",
+                "kadath",
                 vec![matching("metadata.blocked_on", "human", "⏸ ask Ada")],
             )])
         };
 
         assert_eq!(
-            cfg.badges_for_project("beacon"),
+            cfg.badges_for_project("kadath"),
             vec![
                 matching("metadata.blocked_on", "human", "⏸ ask Ada"),
                 matching("metadata.blocked_on", "human", "⏸ waiting"),
@@ -1412,11 +1412,11 @@ title = ["title", "badge.metadata.jira", "badges"]
     fn a_project_naming_no_badges_draws_the_global_list() {
         let cfg = Config {
             badges: vec![badge("metadata.delivery_pr", "⇢ {}")],
-            ..Config::naming(vec![drawing("atlas", Vec::new())])
+            ..Config::naming(vec![drawing("arkham", Vec::new())])
         };
 
         assert_eq!(
-            cfg.badges_for_project("atlas"),
+            cfg.badges_for_project("arkham"),
             vec![badge("metadata.delivery_pr", "⇢ {}")]
         );
     }
@@ -1430,13 +1430,13 @@ title = ["title", "badge.metadata.jira", "badges"]
     fn a_project_key_written_after_its_badges_is_refused_by_the_badge() {
         let misplaced = r#"
 [[projects]]
-name = "beacon"
+name = "kadath"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
-render = "⇢ beacon/{}"
+render = "⇢ kadath/{}"
 
-path = "/home/user/dev/beacon"
+path = "/home/user/dev/kadath"
 "#;
 
         let refused = Config::from_toml(misplaced).expect_err("a badge has no path");
@@ -1603,7 +1603,7 @@ path = "/home/user/dev/beacon"
 
         assert_eq!(
             cfg.projects[0].credential_command.as_deref(),
-            Some("secret-tool lookup tracker atlas")
+            Some("secret-tool lookup tracker arkham")
         );
     }
 
@@ -1618,8 +1618,8 @@ path = "/home/user/dev/beacon"
 
     const ONE_ENTERED_WITH_DIRENV: &str = r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 environment_command = "direnv exec ."
 "#;
 
@@ -1637,8 +1637,8 @@ environment_command = "direnv exec ."
 
     const ENTERED_WITH_A_SPACE_IN_AN_ARGUMENT: &str = r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 environment_command = ["nix", "develop", ".#dev shell", "-c"]
 "#;
 
@@ -1671,8 +1671,8 @@ environment_command = ["nix", "develop", ".#dev shell", "-c"]
 
     const ENTERED_SOME_OTHER_WAY: &str = r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 environment_command = "nix develop -c"
 "#;
 
@@ -1700,15 +1700,15 @@ environment_command = "nix develop -c"
             let err = Config::from_toml(&format!(
                 r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 environment_command = {empty}
 "#
             ))
             .unwrap_err()
             .to_string();
 
-            assert!(err.contains("beacon"), "for {empty}, got: {err}");
+            assert!(err.contains("kadath"), "for {empty}, got: {err}");
             assert!(
                 err.contains("environment_command"),
                 "for {empty}, got: {err}"
@@ -1718,8 +1718,8 @@ environment_command = {empty}
 
     const ENTERED_THE_OLD_WAY: &str = r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 environment = "direnv"
 "#;
 
@@ -1739,26 +1739,26 @@ environment = "direnv"
 
     const TWO_PROJECTS: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-credential_command = "cat /home/user/dev/beacon/.beads-password"
+name = "kadath"
+path = "/home/user/dev/kadath"
+credential_command = "cat /home/user/dev/kadath/.beads-password"
 "#;
 
     const ROOT_IN_NO_CONFIGURED_PROJECT: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-credential_command = "cat /home/user/dev/beacon/.beads-password"
+name = "kadath"
+path = "/home/user/dev/kadath"
+credential_command = "cat /home/user/dev/kadath/.beads-password"
 
 [roots.explicit]
 cinder = ["c-1"]
@@ -1771,35 +1771,35 @@ cinder = ["c-1"]
             .to_string();
 
         assert!(err.contains("cinder"), "got: {err}");
-        assert!(err.contains("atlas"), "got: {err}");
-        assert!(err.contains("beacon"), "got: {err}");
+        assert!(err.contains("arkham"), "got: {err}");
+        assert!(err.contains("kadath"), "got: {err}");
     }
 
     const ROOT_IN_A_SECOND_PROJECT: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
-credential_command = "cat /home/user/dev/beacon/.beads-password"
+name = "kadath"
+path = "/home/user/dev/kadath"
+credential_command = "cat /home/user/dev/kadath/.beads-password"
 
 [roots.explicit]
-beacon = ["b-7"]
+kadath = ["b-7"]
 "#;
 
     const ONE_NAME_ON_TWO_PROJECTS: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
-credential_command = "secret-tool lookup tracker atlas"
+name = "arkham"
+path = "/home/user/arkham"
+credential_command = "secret-tool lookup tracker arkham"
 
 [[projects]]
-name = "atlas"
-path = "/home/user/dev/atlas-fork"
-credential_command = "cat /home/user/dev/atlas-fork/.beads-password"
+name = "arkham"
+path = "/home/user/dev/arkham-fork"
+credential_command = "cat /home/user/dev/arkham-fork/.beads-password"
 "#;
 
     #[test]
@@ -1808,17 +1808,17 @@ credential_command = "cat /home/user/dev/atlas-fork/.beads-password"
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("atlas"), "got: {err}");
+        assert!(err.contains("arkham"), "got: {err}");
     }
 
     const ONE_NAME_ON_TWO_AMBIENT_PROJECTS: &str = r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
+name = "arkham"
+path = "/home/user/arkham"
 
 [[projects]]
-name = "atlas"
-path = "/home/user/dev/atlas-fork"
+name = "arkham"
+path = "/home/user/dev/arkham-fork"
 "#;
 
     /// Both guards have something to say about this config, and only one of
@@ -1829,7 +1829,7 @@ path = "/home/user/dev/atlas-fork"
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("atlas"), "got: {err}");
+        assert!(err.contains("arkham"), "got: {err}");
         assert!(!err.contains("credential_command"), "got: {err}");
     }
 
@@ -1840,12 +1840,12 @@ path = "/home/user/dev/atlas-fork"
     #[test]
     fn a_qualified_root_from_the_command_line_goes_to_the_project_it_names() {
         let cfg = two_projects()
-            .with_roots_named_on_the_command_line(&["beacon:b-7".to_string()])
-            .expect("beacon is configured");
+            .with_roots_named_on_the_command_line(&["kadath:b-7".to_string()])
+            .expect("kadath is configured");
 
         assert_eq!(
             cfg.roots.explicit,
-            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+            BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
 
@@ -1853,11 +1853,11 @@ path = "/home/user/dev/atlas-fork"
     fn a_root_from_the_command_line_joins_those_the_config_names() {
         let cfg = Config::from_toml(EVERY_SECTION)
             .expect("the config parses")
-            .with_roots_named_on_the_command_line(&["atlas:a-3".to_string()])
-            .expect("atlas is configured");
+            .with_roots_named_on_the_command_line(&["arkham:a-3".to_string()])
+            .expect("arkham is configured");
 
         assert_eq!(
-            cfg.roots.explicit["atlas"],
+            cfg.roots.explicit["arkham"],
             ["a-1", "a-9", "a-3"],
             "the command line appends rather than replacing"
         );
@@ -1872,7 +1872,7 @@ path = "/home/user/dev/atlas-fork"
 
         assert_eq!(
             cfg.roots.explicit,
-            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+            BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
 
@@ -1884,8 +1884,8 @@ path = "/home/user/dev/atlas-fork"
             .to_string();
 
         assert!(err.contains("b-7"), "got: {err}");
-        assert!(err.contains("atlas"), "got: {err}");
-        assert!(err.contains("beacon"), "got: {err}");
+        assert!(err.contains("arkham"), "got: {err}");
+        assert!(err.contains("kadath"), "got: {err}");
     }
 
     #[test]
@@ -1896,12 +1896,12 @@ path = "/home/user/dev/atlas-fork"
             .to_string();
 
         assert!(err.contains("cinder"), "got: {err}");
-        assert!(err.contains("beacon"), "got: {err}");
+        assert!(err.contains("kadath"), "got: {err}");
     }
 
     #[test]
     fn a_root_that_is_all_colon_and_no_bead_is_rejected() {
-        for named in ["atlas:", ":a-1", ":"] {
+        for named in ["arkham:", ":a-1", ":"] {
             let err = two_projects()
                 .with_roots_named_on_the_command_line(&[named.to_string()])
                 .unwrap_err()
@@ -1922,10 +1922,10 @@ path = "/home/user/dev/atlas-fork"
     #[test]
     fn a_scope_reads_only_the_projects_it_names() {
         let cfg = two_projects()
-            .scoped_to(&["beacon".to_string()])
-            .expect("beacon is configured");
+            .scoped_to(&["kadath".to_string()])
+            .expect("kadath is configured");
 
-        assert_eq!(read_by(&cfg), ["beacon"]);
+        assert_eq!(read_by(&cfg), ["kadath"]);
     }
 
     /// The projects a scope leaves out stay known. A pane is placed by which
@@ -1935,12 +1935,12 @@ path = "/home/user/dev/atlas-fork"
     #[test]
     fn a_scope_leaves_the_config_naming_every_project() {
         let cfg = two_projects()
-            .scoped_to(&["beacon".to_string()])
-            .expect("beacon is configured");
+            .scoped_to(&["kadath".to_string()])
+            .expect("kadath is configured");
 
-        assert_eq!(names_of(&cfg.projects), ["atlas", "beacon"]);
-        assert!(cfg.reads("beacon"));
-        assert!(!cfg.reads("atlas"));
+        assert_eq!(names_of(&cfg.projects), ["arkham", "kadath"]);
+        assert!(cfg.reads("kadath"));
+        assert!(!cfg.reads("arkham"));
     }
 
     /// The forest is drawn in the order the config names, so a scope is a
@@ -1948,10 +1948,10 @@ path = "/home/user/dev/atlas-fork"
     #[test]
     fn a_scope_leaves_the_projects_it_keeps_in_the_order_the_config_names() {
         let cfg = two_projects()
-            .scoped_to(&["beacon".to_string(), "atlas".to_string()])
+            .scoped_to(&["kadath".to_string(), "arkham".to_string()])
             .expect("both are configured");
 
-        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(read_by(&cfg), ["arkham", "kadath"]);
     }
 
     /// Asking for no particular project is not asking for none. What decides
@@ -1963,7 +1963,7 @@ path = "/home/user/dev/atlas-fork"
             .scoped_to(&[])
             .expect("a scope of nothing scopes nothing");
 
-        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(read_by(&cfg), ["arkham", "kadath"]);
         assert_eq!(cfg.scope, Scope::Everything);
     }
 
@@ -1972,19 +1972,19 @@ path = "/home/user/dev/atlas-fork"
     #[test]
     fn the_project_holding_the_directory_is_the_one_read() {
         let cfg =
-            two_projects().scoped_to_the_project_holding(Path::new("/home/user/dev/beacon/src"));
+            two_projects().scoped_to_the_project_holding(Path::new("/home/user/dev/kadath/src"));
 
-        assert_eq!(read_by(&cfg), ["beacon"]);
+        assert_eq!(read_by(&cfg), ["kadath"]);
         assert_eq!(
             cfg.scope,
             Scope::Directory {
-                project: "beacon".to_string(),
+                project: "kadath".to_string(),
                 widened: Vec::new(),
             }
         );
         assert_eq!(
             names_of(&cfg.projects),
-            ["atlas", "beacon"],
+            ["arkham", "kadath"],
             "the projects the directory left out stay known"
         );
     }
@@ -2016,7 +2016,7 @@ path = "/home/user/dev/inner"
     fn a_directory_no_project_holds_leaves_every_project_read() {
         let cfg = two_projects().scoped_to_the_project_holding(Path::new("/home/user/elsewhere"));
 
-        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(read_by(&cfg), ["arkham", "kadath"]);
         assert_eq!(cfg.scope, Scope::Everything);
     }
 
@@ -2026,20 +2026,20 @@ path = "/home/user/dev/inner"
     #[test]
     fn a_root_under_a_project_the_directory_left_out_widens_the_read_set() {
         let cfg = two_projects()
-            .scoped_to_the_project_holding(Path::new("/home/user/dev/beacon"))
-            .with_roots_named_on_the_command_line(&["atlas:a-1".to_string()])
+            .scoped_to_the_project_holding(Path::new("/home/user/dev/kadath"))
+            .with_roots_named_on_the_command_line(&["arkham:a-1".to_string()])
             .expect("a root elsewhere widens a scope the directory chose");
 
-        assert_eq!(read_by(&cfg), ["atlas", "beacon"]);
+        assert_eq!(read_by(&cfg), ["arkham", "kadath"]);
         assert_eq!(
             cfg.roots.explicit,
-            BTreeMap::from([("atlas".to_string(), vec!["a-1".to_string()])])
+            BTreeMap::from([("arkham".to_string(), vec!["a-1".to_string()])])
         );
         assert_eq!(
             cfg.scope,
             Scope::Directory {
-                project: "beacon".to_string(),
-                widened: vec!["atlas".to_string()],
+                project: "kadath".to_string(),
+                widened: vec!["arkham".to_string()],
             }
         );
     }
@@ -2049,13 +2049,13 @@ path = "/home/user/dev/inner"
     #[test]
     fn a_bare_root_belongs_to_the_project_the_directory_chose() {
         let cfg = two_projects()
-            .scoped_to_the_project_holding(Path::new("/home/user/dev/beacon"))
+            .scoped_to_the_project_holding(Path::new("/home/user/dev/kadath"))
             .with_roots_named_on_the_command_line(&["b-7".to_string()])
-            .expect("the directory leaves only beacon");
+            .expect("the directory leaves only kadath");
 
         assert_eq!(
             cfg.roots.explicit,
-            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+            BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
 
@@ -2071,8 +2071,8 @@ path = "/home/user/dev/inner"
             .to_string();
 
         assert!(err.contains("cinder"), "got: {err}");
-        assert!(err.contains("atlas"), "got: {err}");
-        assert!(err.contains("beacon"), "got: {err}");
+        assert!(err.contains("arkham"), "got: {err}");
+        assert!(err.contains("kadath"), "got: {err}");
     }
 
     /// A root the *config* names under an excluded project is not the
@@ -2090,12 +2090,12 @@ path = "/home/user/dev/inner"
     fn a_configured_root_under_a_project_the_scope_left_out_is_kept_and_unread() {
         let cfg = Config::from_toml(ROOT_IN_A_SECOND_PROJECT)
             .expect("the config parses")
-            .scoped_to(&["atlas".to_string()])
+            .scoped_to(&["arkham".to_string()])
             .expect("a config root elsewhere is not a contradiction");
 
-        assert_eq!(read_by(&cfg), ["atlas"]);
+        assert_eq!(read_by(&cfg), ["arkham"]);
         assert_eq!(
-            cfg.roots.explicit["beacon"],
+            cfg.roots.explicit["kadath"],
             ["b-7"],
             "nothing reads it, so nothing has to take it out"
         );
@@ -2108,14 +2108,14 @@ path = "/home/user/dev/inner"
     #[test]
     fn a_root_naming_a_project_the_scope_left_out_is_rejected() {
         let err = two_projects()
-            .scoped_to(&["atlas".to_string()])
-            .expect("atlas is configured")
-            .with_roots_named_on_the_command_line(&["beacon:b-7".to_string()])
+            .scoped_to(&["arkham".to_string()])
+            .expect("arkham is configured")
+            .with_roots_named_on_the_command_line(&["kadath:b-7".to_string()])
             .unwrap_err()
             .to_string();
 
-        assert!(err.contains("beacon"), "got: {err}");
-        assert!(err.contains("atlas"), "got: {err}");
+        assert!(err.contains("kadath"), "got: {err}");
+        assert!(err.contains("arkham"), "got: {err}");
     }
 
     /// What a bare id was ever ambiguous about is which of the trackers being
@@ -2123,14 +2123,14 @@ path = "/home/user/dev/inner"
     #[test]
     fn a_bare_root_belongs_to_the_only_project_a_scope_leaves() {
         let cfg = two_projects()
-            .scoped_to(&["beacon".to_string()])
-            .expect("beacon is configured")
+            .scoped_to(&["kadath".to_string()])
+            .expect("kadath is configured")
             .with_roots_named_on_the_command_line(&["b-7".to_string()])
-            .expect("the scope leaves only beacon");
+            .expect("the scope leaves only kadath");
 
         assert_eq!(
             cfg.roots.explicit,
-            BTreeMap::from([("beacon".to_string(), vec!["b-7".to_string()])])
+            BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
 
@@ -2150,8 +2150,8 @@ path = "/home/user/dev/inner"
         let err = Config::from_toml(
             r#"
 [[projects]]
-name = "atlas"
-path = "/home/user/atlas"
+name = "arkham"
+path = "/home/user/arkham"
 
 [roots]
 metadata_keys = ["working_topic"]
@@ -2240,10 +2240,10 @@ metadata_keys = ["working_topic"]
             colour: None,
         };
         assert_eq!(
-            b.apply("owner/atlas#7"),
-            Some("⇢ atlas #7 of owner/atlas#7".to_string())
+            b.apply("owner/arkham#7"),
+            Some("⇢ arkham #7 of owner/arkham#7".to_string())
         );
-        assert_eq!(b.apply("owner/atlas"), None);
+        assert_eq!(b.apply("owner/arkham"), None);
     }
 
     #[test]
@@ -2272,8 +2272,8 @@ metadata_keys = ["working_topic"]
             colour: None,
         };
         assert_eq!(
-            b.apply("{topic}/atlas"),
-            Some("{topic} · atlas".to_string())
+            b.apply("{topic}/arkham"),
+            Some("{topic} · arkham".to_string())
         );
     }
 
@@ -2290,10 +2290,10 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.apply("orbital/atlas#7"), Some("⇢ #7".to_string()));
+        assert_eq!(b.apply("dunwich/arkham#7"), Some("⇢ #7".to_string()));
         assert_eq!(
-            b.link_for("orbital/atlas#7"),
-            Some("https://forge.invalid/orbital/atlas/pull/7".to_string())
+            b.link_for("dunwich/arkham#7"),
+            Some("https://forge.invalid/dunwich/arkham/pull/7".to_string())
         );
     }
 
@@ -2316,8 +2316,8 @@ metadata_keys = ["working_topic"]
         assert_eq!(b.apply("12"), Some("⇢ #12".to_string()));
         assert_eq!(b.link_for("12"), None);
         assert_eq!(
-            b.link_for("orbital/atlas#12"),
-            Some("https://forge.invalid/orbital/atlas/pull/12".to_string())
+            b.link_for("dunwich/arkham#12"),
+            Some("https://forge.invalid/dunwich/arkham/pull/12".to_string())
         );
     }
 
@@ -2363,7 +2363,7 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.link_for("orbital/atlas#7"), None);
+        assert_eq!(b.link_for("dunwich/arkham#7"), None);
     }
 
     /// A `short` is a template over the same captures, so a badge says itself
@@ -2378,8 +2378,8 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.apply("orbital/atlas#7"), Some("⇢ atlas #7".to_string()));
-        assert_eq!(b.short_for("orbital/atlas#7"), Some("⇢ #7".to_string()));
+        assert_eq!(b.apply("dunwich/arkham#7"), Some("⇢ arkham #7".to_string()));
+        assert_eq!(b.short_for("dunwich/arkham#7"), Some("⇢ #7".to_string()));
     }
 
     /// The same rule a `link` follows, for the same reason. `⇢ #{number}`
@@ -2397,11 +2397,11 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.apply("atlas#12"), Some("⇢ atlas #12".to_string()));
-        assert_eq!(b.short_for("atlas#12"), None);
+        assert_eq!(b.apply("arkham#12"), Some("⇢ arkham #12".to_string()));
+        assert_eq!(b.short_for("arkham#12"), None);
         assert_eq!(
-            b.short_for("orbital/atlas#12"),
-            Some("⇢ orbital #12".to_string())
+            b.short_for("dunwich/arkham#12"),
+            Some("⇢ dunwich #12".to_string())
         );
     }
 
@@ -2415,7 +2415,7 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.short_for("orbital/atlas#7"), None);
+        assert_eq!(b.short_for("dunwich/arkham#7"), None);
     }
 
     /// A badge that does not apply to the value says nothing at either
@@ -2449,7 +2449,7 @@ short  = "⇢ #{{number}}"
         .expect("the config reads");
 
         assert_eq!(
-            cfg.badges[0].short_for("orbital/atlas#7"),
+            cfg.badges[0].short_for("dunwich/arkham#7"),
             Some("⇢ #7".to_string())
         );
     }
@@ -2468,8 +2468,8 @@ link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
         .expect("the config reads");
 
         assert_eq!(
-            cfg.badges[0].link_for("orbital/atlas#7"),
-            Some("https://forge.invalid/orbital/atlas/pull/7".to_string())
+            cfg.badges[0].link_for("dunwich/arkham#7"),
+            Some("https://forge.invalid/dunwich/arkham/pull/7".to_string())
         );
     }
 
@@ -2608,8 +2608,8 @@ colour = "chartreuse"
         let err = Config::from_toml(
             r#"
 [[projects]]
-name = "beacon"
-path = "/home/user/dev/beacon"
+name = "kadath"
+path = "/home/user/dev/kadath"
 worktrees = ["/home/user/anywhere-at-all"]
 "#,
         )

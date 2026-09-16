@@ -232,17 +232,17 @@ mod tests {
 
         assert_eq!(
             order,
-            ["orb-7", "orb-7.3", "orb-7.1", "orb-7.4", "orb-7.2"],
+            ["dun-7", "dun-7.3", "dun-7.1", "dun-7.4", "dun-7.2"],
             "work in flight leads, finished work trails"
         );
         assert_eq!(
             rows(&t),
             vec![
-                ("orb-7", 0, None),
-                ("orb-7.3", 1, Some(Edge::ParentChild)),
-                ("orb-7.1", 1, Some(Edge::ParentChild)),
-                ("orb-7.4", 1, Some(Edge::ParentChild)),
-                ("orb-7.2", 1, Some(Edge::ParentChild)),
+                ("dun-7", 0, None),
+                ("dun-7.3", 1, Some(Edge::ParentChild)),
+                ("dun-7.1", 1, Some(Edge::ParentChild)),
+                ("dun-7.4", 1, Some(Edge::ParentChild)),
+                ("dun-7.2", 1, Some(Edge::ParentChild)),
             ]
         );
     }
@@ -250,8 +250,8 @@ mod tests {
     #[test]
     fn the_root_names_the_tree() {
         let t = tree();
-        assert_eq!(t.project, "orbital");
-        assert_eq!(t.root, "orb-7");
+        assert_eq!(t.project, "dunwich");
+        assert_eq!(t.root, "dun-7");
         assert_eq!(t.title, "lift the ground station");
         assert_eq!(t.tracker, TrackerState::Ok);
     }
@@ -274,14 +274,14 @@ mod tests {
     fn a_bead_firing_two_rules_is_counted_once() {
         let t = tree();
         assert_eq!(
-            node(&t, "orb-7.3").anomalies,
+            node(&t, "dun-7.3").anomalies,
             vec![
                 Anomaly::OrphanClaim { refused: None },
                 Anomaly::StaleClaim { days: 60 }
             ],
             "an old claim whose agent died is both"
         );
-        assert_eq!(node(&t, "orb-7.2").anomalies, vec![Anomaly::StalePane]);
+        assert_eq!(node(&t, "dun-7.2").anomalies, vec![Anomaly::StalePane]);
         assert_eq!(
             t.counts.anomalies, 2,
             "the count is beads to look at, not rules that fired"
@@ -295,7 +295,7 @@ mod tests {
         let joined = joined(&assembled.beads, &[]);
         let relations = relations(&assembled.beads);
         let tree = build_tree(
-            "orbital",
+            "dunwich",
             &assembled,
             &joined,
             &readiness(),
@@ -330,7 +330,7 @@ mod tests {
 
     /// `orphan-claim` is the one rule that keys on a pane being *absent*, so
     /// it is the one a run with nothing to answer for panes turns into a lie:
-    /// every claim in flight reads as an agent that died. `orb-7` is such a
+    /// every claim in flight reads as an agent that died. `dun-7` is such a
     /// claim, and `bd` alone holds no fact against it — it is fresh, so even
     /// its age says nothing. The four rules that key on a pane being *there*
     /// fall silent on their own, and asserting the whole set is what keeps
@@ -341,7 +341,7 @@ mod tests {
 
         assert_eq!(
             anomalies(&snap),
-            vec![("orb-7.3", [Anomaly::StaleClaim { days: 60 }].as_slice())],
+            vec![("dun-7.3", [Anomaly::StaleClaim { days: 60 }].as_slice())],
             "how long a claim has sat there is bd's own answer"
         );
         assert_eq!(snap.trees[0].counts.anomalies, 1);
@@ -359,36 +359,36 @@ mod tests {
 
         assert_eq!(
             anomalies(&snap),
-            vec![("orb-7.3", [Anomaly::StaleClaim { days: 60 }].as_slice())]
+            vec![("dun-7.3", [Anomaly::StaleClaim { days: 60 }].as_slice())]
         );
     }
 
     #[test]
     fn ready_comes_from_bd_rather_than_the_bead_s_status() {
         let t = tree();
-        assert!(node(&t, "orb-7.4").ready);
+        assert!(node(&t, "dun-7.4").ready);
         assert!(
-            !node(&t, "orb-7.1").ready,
+            !node(&t, "dun-7.1").ready,
             "open is not ready; only bd knows which"
         );
-        assert!(!node(&t, "orb-7").ready);
+        assert!(!node(&t, "dun-7").ready);
     }
 
     #[test]
     fn blocked_by_comes_from_bd_rather_than_the_tree() {
         let t = tree();
         assert_eq!(
-            node(&t, "orb-7.1").blocked_by,
-            ["orb-9", "orb-7.3"],
+            node(&t, "dun-7.1").blocked_by,
+            ["dun-9", "dun-7.3"],
             "a blocker outside the tree is still a blocker"
         );
-        assert!(node(&t, "orb-7.4").blocked_by.is_empty());
+        assert!(node(&t, "dun-7.4").blocked_by.is_empty());
     }
 
     #[test]
     fn the_contract_fields_reach_the_node() {
         let t = tree();
-        let root = node(&t, "orb-7");
+        let root = node(&t, "dun-7");
         assert_eq!(root.status, Status::InProgress);
         assert_eq!(root.issue_type, "epic");
         assert_eq!(root.priority, 1);
@@ -398,7 +398,7 @@ mod tests {
         );
         assert_eq!(root.closed_at, None);
         assert_eq!(
-            node(&t, "orb-7.2").closed_at,
+            node(&t, "dun-7.2").closed_at,
             Some("2026-08-28T09:00:00Z".parse().unwrap())
         );
     }
@@ -410,18 +410,18 @@ mod tests {
     #[test]
     fn the_bead_as_bd_show_gives_it_reaches_the_node() {
         let json = r#"[
-          {"id":"orb-6","title":"root","status":"open","owner":"kim",
+          {"id":"dun-6","title":"root","status":"open","owner":"kim",
            "description":"lift the whole station","notes":"the crane is booked"},
-          {"id":"orb-6.1","title":"waiting","status":"open",
-           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
-                           {"depends_on_id":"orb-6.2","type":"blocks"}]},
-          {"id":"orb-6.2","title":"what it waits on","status":"closed",
-           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"}]}
+          {"id":"dun-6.1","title":"waiting","status":"open",
+           "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"},
+                           {"depends_on_id":"dun-6.2","type":"blocks"}]},
+          {"id":"dun-6.2","title":"what it waits on","status":"closed",
+           "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}]}
         ]"#;
         let beads = parse_beads(json).expect("the rows parse");
         let relations = relations(&beads);
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
@@ -431,7 +431,7 @@ mod tests {
             now(),
         );
 
-        let root = node(&t, "orb-6");
+        let root = node(&t, "dun-6");
         assert_eq!(root.description, "lift the whole station");
         assert_eq!(root.notes, "the crane is booked");
         assert_eq!(root.owner.as_deref(), Some("kim"));
@@ -439,13 +439,13 @@ mod tests {
         assert_eq!(root.depends_on, vec![]);
         assert_eq!(root.blocks, vec![]);
 
-        let waiting = node(&t, "orb-6.1");
+        let waiting = node(&t, "dun-6.1");
         assert_eq!(waiting.description, "", "a row with nothing to say");
         assert_eq!(waiting.notes, "");
         assert_eq!(waiting.owner, None);
         assert_eq!(
             waiting.parent.as_ref().map(|p| p.id.as_str()),
-            Some("orb-6")
+            Some("dun-6")
         );
         assert_eq!(
             waiting
@@ -453,17 +453,17 @@ mod tests {
                 .iter()
                 .map(|r| (r.id.as_str(), r.status.clone(), r.title.as_deref()))
                 .collect::<Vec<_>>(),
-            [("orb-6.2", Some(Status::Closed), Some("what it waits on"))]
+            [("dun-6.2", Some(Status::Closed), Some("what it waits on"))]
         );
 
-        let waited_on = node(&t, "orb-6.2");
+        let waited_on = node(&t, "dun-6.2");
         assert_eq!(
             waited_on
                 .blocks
                 .iter()
                 .map(|r| (r.id.as_str(), r.status.clone(), r.title.as_deref()))
                 .collect::<Vec<_>>(),
-            [("orb-6.1", Some(Status::Open), Some("waiting"))]
+            [("dun-6.1", Some(Status::Open), Some("waiting"))]
         );
     }
 
@@ -471,7 +471,7 @@ mod tests {
     fn the_badges_reach_the_node() {
         let t = tree();
         assert_eq!(
-            node(&t, "orb-7.1").badges,
+            node(&t, "dun-7.1").badges,
             vec![Badged {
                 key: "metadata.blocked_on".to_string(),
                 text: "⏸ waiting".to_string(),
@@ -480,7 +480,7 @@ mod tests {
                 colour: None,
             }]
         );
-        assert!(node(&t, "orb-7").badges.is_empty());
+        assert!(node(&t, "dun-7").badges.is_empty());
     }
 
     /// The two shapes a reference is held in that a pattern written for the
@@ -493,22 +493,22 @@ mod tests {
     #[test]
     fn a_value_no_badge_on_its_key_reads_reaches_the_node_drawing_nothing() {
         let json = r#"[
-          {"id":"orb-8","title":"root","status":"open"},
-          {"id":"orb-8.1","title":"a bare number","status":"blocked",
+          {"id":"dun-8","title":"root","status":"open"},
+          {"id":"dun-8.1","title":"a bare number","status":"blocked",
            "metadata":{"delivery_pr":"30"},
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]},
-          {"id":"orb-8.2","title":"a whole URL","status":"blocked",
-           "metadata":{"delivery_pr":"https://forge.invalid/orbital/atlas/pull/30"},
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]},
-          {"id":"orb-8.3","title":"the shape it was written for","status":"blocked",
-           "metadata":{"delivery_pr":"orbital/atlas#30"},
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]}
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"}]},
+          {"id":"dun-8.2","title":"a whole URL","status":"blocked",
+           "metadata":{"delivery_pr":"https://forge.invalid/dunwich/arkham/pull/30"},
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"}]},
+          {"id":"dun-8.3","title":"the shape it was written for","status":"blocked",
+           "metadata":{"delivery_pr":"dunwich/arkham#30"},
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"}]}
         ]"#;
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 
 [[badges]]
 key    = "metadata.delivery_pr"
@@ -521,7 +521,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
         let beads = parse_beads(json).expect("the rows parse");
 
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
@@ -531,29 +531,29 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
             now(),
         );
 
-        for unread in ["orb-8.1", "orb-8.2"] {
+        for unread in ["dun-8.1", "dun-8.2"] {
             assert!(node(&t, unread).badges.is_empty(), "drew on {unread}");
             assert_eq!(node(&t, unread).undrawn, Vec::new(), "reported on {unread}");
         }
 
         assert_eq!(
-            node(&t, "orb-8.3").undrawn,
+            node(&t, "dun-8.3").undrawn,
             Vec::new(),
             "the shape the pattern was written for has nothing to report"
         );
         assert_eq!(
-            node(&t, "orb-8.3").badges,
+            node(&t, "dun-8.3").badges,
             vec![Badged {
                 key: "metadata.delivery_pr".to_string(),
-                text: "⇢ atlas #30".to_string(),
-                link: Some("https://forge.invalid/orbital/atlas/pull/30".to_string()),
+                text: "⇢ arkham #30".to_string(),
+                link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 short: None,
                 colour: None,
             }]
         );
 
         assert_eq!(
-            node(&t, "orb-8").undrawn,
+            node(&t, "dun-8").undrawn,
             Vec::new(),
             "a bead carrying the key at all is the only one this is about"
         );
@@ -574,8 +574,8 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 
 [[projects.badges]]
 key    = "metadata.blocked_on"
@@ -591,7 +591,7 @@ render = "⏸ waiting"
         .expect("the config parses");
 
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled,
             &joined,
             &readiness(),
@@ -602,7 +602,7 @@ render = "⏸ waiting"
         );
 
         assert_eq!(
-            node(&t, "orb-7.1").badges,
+            node(&t, "dun-7.1").badges,
             vec![Badged {
                 key: "metadata.blocked_on".to_string(),
                 text: "⏸ ask the ground station".to_string(),
@@ -624,19 +624,19 @@ render = "⏸ waiting"
     #[test]
     fn a_value_a_projects_badge_does_not_read_falls_through_to_the_shared_one() {
         let json = r#"[
-          {"id":"orb-9","title":"root","status":"open"},
-          {"id":"orb-9.1","title":"a bare number","status":"blocked",
+          {"id":"dun-9","title":"root","status":"open"},
+          {"id":"dun-9.1","title":"a bare number","status":"blocked",
            "metadata":{"delivery_pr":"12"},
-           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}]},
-          {"id":"orb-9.2","title":"the shape the shared list reads","status":"blocked",
-           "metadata":{"delivery_pr":"orbital/atlas#30"},
-           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}]}
+           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"}]},
+          {"id":"dun-9.2","title":"the shape the shared list reads","status":"blocked",
+           "metadata":{"delivery_pr":"dunwich/arkham#30"},
+           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"}]}
         ]"#;
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
@@ -653,7 +653,7 @@ render = "⇢ {repo} #{number}"
         let beads = parse_beads(json).expect("the rows parse");
 
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
@@ -664,7 +664,7 @@ render = "⇢ {repo} #{number}"
         );
 
         assert_eq!(
-            node(&t, "orb-9.1").badges,
+            node(&t, "dun-9.1").badges,
             vec![Badged {
                 key: "metadata.delivery_pr".to_string(),
                 text: "⇢ #12".to_string(),
@@ -675,10 +675,10 @@ render = "⇢ {repo} #{number}"
             "the project's own entry is the one that reads a bare number"
         );
         assert_eq!(
-            node(&t, "orb-9.2").badges,
+            node(&t, "dun-9.2").badges,
             vec![Badged {
                 key: "metadata.delivery_pr".to_string(),
-                text: "⇢ atlas #30".to_string(),
+                text: "⇢ arkham #30".to_string(),
                 link: None,
                 short: None,
                 colour: None,
@@ -690,7 +690,7 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn the_agent_reaches_the_node_with_the_direction_that_resolved_it() {
         let t = tree();
-        let claimed = node(&t, "orb-7")
+        let claimed = node(&t, "dun-7")
             .agent
             .as_ref()
             .expect("the bead named a pane");
@@ -698,12 +698,12 @@ render = "⇢ {repo} #{number}"
         assert_eq!(claimed.source, JoinSource::AgentPane);
         assert_eq!(claimed.title.as_deref(), Some("lifting the mast"));
 
-        let inferred = node(&t, "orb-7.2")
+        let inferred = node(&t, "dun-7.2")
             .agent
             .as_ref()
             .expect("the pane named the bead");
         assert_eq!(inferred.source, JoinSource::DisplayAgent);
-        assert!(node(&t, "orb-7.1").agent.is_none());
+        assert!(node(&t, "dun-7.1").agent.is_none());
     }
 
     #[test]
@@ -714,7 +714,7 @@ render = "⇢ {repo} #{number}"
         j.agents.insert(
             BeadKey {
                 project: "ferry".to_string(),
-                id: "orb-7.4".to_string(),
+                id: "dun-7.4".to_string(),
             },
             AgentRef {
                 pane: key("w:pB"),
@@ -725,7 +725,7 @@ render = "⇢ {repo} #{number}"
         );
 
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &a,
             &j,
             &readiness(),
@@ -736,7 +736,7 @@ render = "⇢ {repo} #{number}"
         );
 
         assert!(
-            node(&t, "orb-7.4").agent.is_none(),
+            node(&t, "dun-7.4").agent.is_none(),
             "prefixes are per-tracker; an id alone does not name a bead"
         );
         assert_eq!(t.counts.live_agents, 2);
@@ -745,14 +745,14 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn a_bead_whose_parent_is_absent_is_reported_and_kept() {
         let json = r#"[
-          {"id":"orb-4","title":"root","status":"open"},
-          {"id":"orb-4.2","title":"waiting on a bead bd did not return","status":"open",
-           "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"},
-                           {"depends_on_id":"orb-4.1","type":"blocks"}]}
+          {"id":"dun-4","title":"root","status":"open"},
+          {"id":"dun-4.2","title":"waiting on a bead bd did not return","status":"open",
+           "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"},
+                           {"depends_on_id":"dun-4.1","type":"blocks"}]}
         ]"#;
         let a = assembled(json);
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &a,
             &Joined::default(),
             &Readiness::default(),
@@ -762,9 +762,9 @@ render = "⇢ {repo} #{number}"
             now(),
         );
 
-        assert_eq!(t.dangling, ["orb-4.2"]);
+        assert_eq!(t.dangling, ["dun-4.2"]);
         assert_eq!(t.counts.total, 2, "a reported bead is still drawn");
-        assert_eq!(rows(&t)[1], ("orb-4.2", 1, Some(Edge::ParentChild)));
+        assert_eq!(rows(&t)[1], ("dun-4.2", 1, Some(Edge::ParentChild)));
     }
 
     /// The nesting is the whole of what this tree says, so each row has to
@@ -774,15 +774,15 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn a_node_carries_the_kind_of_edge_its_copy_was_reached_by() {
         let json = r#"[
-          {"id":"orb-9","title":"root","status":"open"},
-          {"id":"orb-9.1","title":"waiting","status":"open",
-           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"},
-                           {"depends_on_id":"orb-9.2","type":"blocks"}]},
-          {"id":"orb-9.2","title":"what it waits on","status":"closed",
-           "dependencies":[{"depends_on_id":"orb-9","type":"parent-child"}]}
+          {"id":"dun-9","title":"root","status":"open"},
+          {"id":"dun-9.1","title":"waiting","status":"open",
+           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"},
+                           {"depends_on_id":"dun-9.2","type":"blocks"}]},
+          {"id":"dun-9.2","title":"what it waits on","status":"closed",
+           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"}]}
         ]"#;
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
@@ -795,32 +795,32 @@ render = "⇢ {repo} #{number}"
         assert_eq!(
             rows(&t),
             vec![
-                ("orb-9", 0, None),
-                ("orb-9.1", 1, Some(Edge::ParentChild)),
-                ("orb-9.2", 2, Some(Edge::Blocks)),
-                ("orb-9.2", 1, Some(Edge::ParentChild)),
+                ("dun-9", 0, None),
+                ("dun-9.1", 1, Some(Edge::ParentChild)),
+                ("dun-9.2", 2, Some(Edge::Blocks)),
+                ("dun-9.2", 1, Some(Edge::ParentChild)),
             ]
         );
     }
 
     #[test]
     fn a_header_counts_beads_rather_than_the_rows_they_are_drawn_on() {
-        // `orb-8.9` blocks both of the root's children, so it is drawn three
+        // `dun-8.9` blocks both of the root's children, so it is drawn three
         // times. A header saying five would send a reader looking for a bead
         // that is not there.
         let json = r#"[
-          {"id":"orb-8","title":"root","status":"open"},
-          {"id":"orb-8.1","title":"one","status":"open",
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
-                           {"depends_on_id":"orb-8.9","type":"blocks"}]},
-          {"id":"orb-8.2","title":"two","status":"open",
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"},
-                           {"depends_on_id":"orb-8.9","type":"blocks"}]},
-          {"id":"orb-8.9","title":"what both wait on","status":"closed",
-           "dependencies":[{"depends_on_id":"orb-8","type":"parent-child"}]}
+          {"id":"dun-8","title":"root","status":"open"},
+          {"id":"dun-8.1","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"},
+                           {"depends_on_id":"dun-8.9","type":"blocks"}]},
+          {"id":"dun-8.2","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"},
+                           {"depends_on_id":"dun-8.9","type":"blocks"}]},
+          {"id":"dun-8.9","title":"what both wait on","status":"closed",
+           "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"}]}
         ]"#;
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
@@ -838,19 +838,19 @@ render = "⇢ {repo} #{number}"
 
     #[test]
     fn a_cycle_is_reported_and_its_beads_kept() {
-        // `orb-5.1` hangs under `orb-5` and is blocked by it, so each must
+        // `dun-5.1` hangs under `dun-5` and is blocked by it, so each must
         // finish before the other.
         let json = r#"[
-          {"id":"orb-5","title":"root","status":"open"},
-          {"id":"orb-5.1","title":"one","status":"open",
-           "dependencies":[{"depends_on_id":"orb-5","type":"parent-child"},
-                           {"depends_on_id":"orb-5","type":"blocks"}]},
-          {"id":"orb-5.2","title":"two","status":"open",
-           "dependencies":[{"depends_on_id":"orb-5.1","type":"parent-child"}]}
+          {"id":"dun-5","title":"root","status":"open"},
+          {"id":"dun-5.1","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"dun-5","type":"parent-child"},
+                           {"depends_on_id":"dun-5","type":"blocks"}]},
+          {"id":"dun-5.2","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"dun-5.1","type":"parent-child"}]}
         ]"#;
         let a = assembled(json);
         let t = build_tree(
-            "orbital",
+            "dunwich",
             &a,
             &Joined::default(),
             &Readiness::default(),
@@ -860,7 +860,7 @@ render = "⇢ {repo} #{number}"
             now(),
         );
 
-        assert_eq!(t.cycles, ["orb-5"]);
+        assert_eq!(t.cycles, ["dun-5"]);
         assert_eq!(t.counts.total, 3);
     }
 
@@ -872,8 +872,8 @@ render = "⇢ {repo} #{number}"
             snap.unattributed,
             vec![LoosePane {
                 pane: key("w:p9"),
-                project: "orbital".to_string(),
-                cwd: "/srv/work/orbital".to_string(),
+                project: "dunwich".to_string(),
+                cwd: "/srv/work/dunwich".to_string(),
                 pane_status: PaneStatus::Blocked,
                 display_agent: None,
                 title: None,
@@ -889,18 +889,18 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn a_pane_whose_claim_the_join_refused_is_apart_from_one_nothing_claims() {
         let contested = r#"[
-          {"id":"orb-1","title":"root","status":"open"},
-          {"id":"orb-1.1","title":"one","status":"in_progress",
+          {"id":"dun-1","title":"root","status":"open"},
+          {"id":"dun-1.1","title":"one","status":"in_progress",
            "metadata":{"agent_pane":"w:p5"},
-           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}]},
-          {"id":"orb-1.2","title":"two","status":"in_progress",
+           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]},
+          {"id":"dun-1.2","title":"two","status":"in_progress",
            "metadata":{"agent_pane":"w:p5"},
-           "dependencies":[{"depends_on_id":"orb-1","type":"parent-child"}]}
+           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]}
         ]"#;
         let panes = panes(
             r#"{"result":{"agents":[
-              {"pane_id":"w:p5","cwd":"/srv/work/orbital","agent_status":"working"},
-              {"pane_id":"w:p9","cwd":"/srv/work/orbital","agent_status":"idle"}
+              {"pane_id":"w:p5","cwd":"/srv/work/dunwich","agent_status":"working"},
+              {"pane_id":"w:p9","cwd":"/srv/work/dunwich","agent_status":"idle"}
             ]}}"#,
         );
         let assembled = assembled(contested);
@@ -950,8 +950,8 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn a_pane_under_a_project_the_scope_left_out_is_neither_loose_nor_unconfigured() {
         let cfg = cfg()
-            .scoped_to(&["orbital".to_string()])
-            .expect("orbital is configured");
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured");
         let panes = panes(
             r#"{"result":{"agents":[
               {"pane_id":"w:p2","cwd":"/srv/work/ferry/src","agent_status":"idle"}
@@ -1011,8 +1011,8 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn a_pane_in_a_linked_worktree_of_an_excluded_project_is_neither_loose_nor_unconfigured() {
         let cfg = cfg()
-            .scoped_to(&["orbital".to_string()])
-            .expect("orbital is configured");
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured");
 
         let snap = built_over(&a_pane_in_a_linked_worktree_of_ferry(), &cfg);
 
@@ -1071,9 +1071,9 @@ render = "⇢ {repo} #{number}"
     #[test]
     fn the_join_s_conflicts_reach_the_snapshot() {
         let disagreeing = r#"{"result":{"agents":[
-          {"pane_id":"w:p1","cwd":"/srv/work/orbital","agent_status":"working"},
-          {"pane_id":"w:p2","cwd":"/srv/work/orbital","agent_status":"idle",
-           "display_agent":"orb-7"}
+          {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working"},
+          {"pane_id":"w:p2","cwd":"/srv/work/dunwich","agent_status":"idle",
+           "display_agent":"dun-7"}
         ]}}"#;
         let a = assembled(BEADS);
         let p = panes(disagreeing);
@@ -1093,8 +1093,8 @@ render = "⇢ {repo} #{number}"
             snap.conflicts,
             vec![Conflict::BeadAndPaneDisagree {
                 bead: BeadKey {
-                    project: "orbital".to_string(),
-                    id: "orb-7".to_string(),
+                    project: "dunwich".to_string(),
+                    id: "dun-7".to_string(),
                 },
                 named_by_bead: key("w:p1"),
                 named_by_pane: key("w:p2"),
@@ -1111,7 +1111,7 @@ render = "⇢ {repo} #{number}"
                 tracker: TrackerFailure::Auth,
             },
             FailedProject {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 tracker: TrackerFailure::Unavailable,
             },
         ];
@@ -1146,8 +1146,8 @@ render = "⇢ {repo} #{number}"
         let cfg = Config::from_toml(
             r#"
 [[projects]]
-name = "orbital"
-path = "/tmp/bdi-ground/orbital"
+name = "dunwich"
+path = "/tmp/bdi-ground/dunwich"
 "#,
         )
         .expect("the config parses");
@@ -1170,8 +1170,8 @@ path = "/tmp/bdi-ground/orbital"
             .unattributed
             .iter()
             .find(|p| p.pane.id == "wG:p6")
-            .expect("in orbital's directory and on no bead");
-        assert_eq!(p6.display_agent.as_deref(), Some("orb-2kd.5"));
+            .expect("in dunwich's directory and on no bead");
+        assert_eq!(p6.display_agent.as_deref(), Some("dun-2kd.5"));
         assert_eq!(
             p6.title.as_deref(),
             Some("writing the parser and its tests")

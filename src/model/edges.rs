@@ -81,16 +81,16 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use pretty_assertions::assert_eq;
 
-    /// `orb-3.1` hangs under `orb-3` and waits on `orb-3.2`, which is closed;
-    /// `orb-3.2` also waits on `orb-9`, which the answer does not hold.
+    /// `dun-3.1` hangs under `dun-3` and waits on `dun-3.2`, which is closed;
+    /// `dun-3.2` also waits on `dun-9`, which the answer does not hold.
     const BEADS: &str = r#"[
-      {"id":"orb-3","title":"the root","status":"in_progress"},
-      {"id":"orb-3.1","title":"the waiting one","status":"open",
-       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
-                       {"depends_on_id":"orb-3.2","type":"blocks"}]},
-      {"id":"orb-3.2","title":"the one waited on","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-3","type":"parent-child"},
-                       {"depends_on_id":"orb-9","type":"blocks"}]}
+      {"id":"dun-3","title":"the root","status":"in_progress"},
+      {"id":"dun-3.1","title":"the waiting one","status":"open",
+       "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"},
+                       {"depends_on_id":"dun-3.2","type":"blocks"}]},
+      {"id":"dun-3.2","title":"the one waited on","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-3","type":"parent-child"},
+                       {"depends_on_id":"dun-9","type":"blocks"}]}
     ]"#;
 
     fn tied() -> BTreeMap<String, Relations> {
@@ -109,29 +109,29 @@ mod tests {
     #[test]
     fn the_parent_is_read_off_the_parent_child_edge_with_its_status_and_title() {
         assert_eq!(
-            tied()["orb-3.1"].parent,
+            tied()["dun-3.1"].parent,
             Some(held(
-                "orb-3",
+                "dun-3",
                 Edge::ParentChild,
                 Status::InProgress,
                 "the root"
             ))
         );
-        assert_eq!(tied()["orb-3"].parent, None, "the root hangs under nothing");
+        assert_eq!(tied()["dun-3"].parent, None, "the root hangs under nothing");
     }
 
     #[test]
     fn what_a_bead_depends_on_is_every_edge_but_the_parent() {
         assert_eq!(
-            tied()["orb-3.1"].depends_on,
+            tied()["dun-3.1"].depends_on,
             vec![held(
-                "orb-3.2",
+                "dun-3.2",
                 Edge::Blocks,
                 Status::Closed,
                 "the one waited on"
             )]
         );
-        assert_eq!(tied()["orb-3"].depends_on, vec![]);
+        assert_eq!(tied()["dun-3"].depends_on, vec![]);
     }
 
     /// Degrade, never disappear: a dependency on a bead the tracker no longer
@@ -139,9 +139,9 @@ mod tests {
     #[test]
     fn a_dependency_the_answer_does_not_hold_keeps_its_id_and_nothing_else() {
         assert_eq!(
-            tied()["orb-3.2"].depends_on,
+            tied()["dun-3.2"].depends_on,
             vec![Related {
-                id: "orb-9".to_string(),
+                id: "dun-9".to_string(),
                 edge: Edge::Blocks,
                 status: None,
                 title: None,
@@ -154,16 +154,16 @@ mod tests {
     #[test]
     fn what_a_bead_blocks_is_read_off_the_beads_that_wait_on_it() {
         assert_eq!(
-            tied()["orb-3.2"].blocks,
+            tied()["dun-3.2"].blocks,
             vec![held(
-                "orb-3.1",
+                "dun-3.1",
                 Edge::Blocks,
                 Status::Open,
                 "the waiting one"
             )]
         );
         assert_eq!(
-            tied()["orb-3"].blocks,
+            tied()["dun-3"].blocks,
             vec![],
             "a parent is waited on by nothing; its children hang under it"
         );
@@ -172,21 +172,21 @@ mod tests {
     #[test]
     fn what_a_bead_blocks_is_in_id_order_however_the_answer_was_ordered() {
         let rows = r#"[
-          {"id":"orb-4","title":"waited on","status":"open"},
-          {"id":"orb-4.9","title":"last","status":"open",
-           "dependencies":[{"depends_on_id":"orb-4","type":"blocks"}]},
-          {"id":"orb-4.1","title":"first","status":"open",
-           "dependencies":[{"depends_on_id":"orb-4","type":"blocks"}]}
+          {"id":"dun-4","title":"waited on","status":"open"},
+          {"id":"dun-4.9","title":"last","status":"open",
+           "dependencies":[{"depends_on_id":"dun-4","type":"blocks"}]},
+          {"id":"dun-4.1","title":"first","status":"open",
+           "dependencies":[{"depends_on_id":"dun-4","type":"blocks"}]}
         ]"#;
         let tied = relations(&parse_beads(rows).expect("the rows parse"));
 
         assert_eq!(
-            tied["orb-4"]
+            tied["dun-4"]
                 .blocks
                 .iter()
                 .map(|r| r.id.as_str())
                 .collect::<Vec<_>>(),
-            ["orb-4.1", "orb-4.9"]
+            ["dun-4.1", "dun-4.9"]
         );
     }
 
@@ -195,18 +195,18 @@ mod tests {
     #[test]
     fn an_edge_of_a_kind_bdi_does_not_know_is_kept_with_its_kind() {
         let rows = r#"[
-          {"id":"orb-5","title":"one","status":"open"},
-          {"id":"orb-5.1","title":"two","status":"open",
-           "dependencies":[{"depends_on_id":"orb-5","type":"relates-to"}]}
+          {"id":"dun-5","title":"one","status":"open"},
+          {"id":"dun-5.1","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"dun-5","type":"relates-to"}]}
         ]"#;
         let tied = relations(&parse_beads(rows).expect("the rows parse"));
 
         assert_eq!(
-            tied["orb-5.1"].depends_on[0].edge,
+            tied["dun-5.1"].depends_on[0].edge,
             Edge::Other("relates-to".to_string())
         );
         assert_eq!(
-            tied["orb-5"].blocks,
+            tied["dun-5"].blocks,
             vec![],
             "only a blocks edge says the other bead is waited on"
         );

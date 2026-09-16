@@ -32,7 +32,7 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 
 /// The one project the config names. Its line is drawn from the configured
 /// name rather than from anything a tracker said, so it is the first frame.
-const THE_PROJECT: &[u8] = "atlas".as_bytes();
+const THE_PROJECT: &[u8] = "arkham".as_bytes();
 
 /// The one thing crossterm writes to a terminal and waits for the answer to:
 /// *where is the cursor*. `Terminal::clear` opens with it, and so does

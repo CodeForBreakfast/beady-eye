@@ -391,8 +391,8 @@ a root under a project no collection reaches is dropped with nothing said
 about it. Refusing is the degrade-never-disappear answer here rather than the
 price of it. Against a scope the directory chose there is no contradiction,
 because the reader asked for nothing the root contradicts: the root widens
-the read set to take its project in, so `bdi meadow:mdw-123` from the orbital
-desktop reads orbital and meadow. The widening happens before git is asked
+the read set to take its project in, so `bdi meadow:mdw-123` from the dunwich
+desktop reads dunwich and meadow. The widening happens before git is asked
 where each project is worked, so the project a root brought in learns its
 working trees like any other.
 
@@ -406,8 +406,8 @@ project no collection reaches.
 
 One consequence worth knowing: a scope that leaves exactly one project makes a
 bare bead id unambiguous, because what a bare id was ever ambiguous about is
-which of the trackers being read holds it. `bdi --project orbital orb-7` works
-against a config naming three, and so does `bdi orb-7` from orbital's
+which of the trackers being read holds it. `bdi --project dunwich dun-7` works
+against a config naming three, and so does `bdi dun-7` from dunwich's
 checkout.
 
 **Considered and rejected: widening an explicit `--project` by the projects
@@ -446,7 +446,7 @@ of them. Its config names which keys to notice:
 
 ```toml
 [roots.explicit]                        # roots named outright, per tracker
-orbital = ["orb-7"]
+dunwich = ["dun-7"]
 
 [[badges]]                              # rendered as a marker on the row
 key    = "metadata.delivery_pr"
@@ -1140,8 +1140,8 @@ difference between the two rungs:
 
 ```toml
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 environment_command = "nix develop -c"
 ```
 
@@ -1729,7 +1729,7 @@ name to the socket after any command that wrote something.
     "state": "answering",
     "sessions": [
       { "name": "default", "state": "answering" },
-      { "name": "beacon", "state": "not-answering" }
+      { "name": "kadath", "state": "not-answering" }
     ]
   },
   "filter": "live-agents",
@@ -1786,7 +1786,7 @@ name to the socket after any command that wrote something.
     }
   ],
   "hidden_trees": [ { "project": "summit-works", "root": "smt-3pd9k", "title": "…", "reason": "no-live-agent" } ],
-  "failed_projects": [ { "project": "meadow", "tracker": { "reason": "auth" } }, { "project": "orbital", "tracker": { "reason": "parse", "read": "list", "cause": "invalid type: null, expected a string at line 1 column 25" } } ],
+  "failed_projects": [ { "project": "meadow", "tracker": { "reason": "auth" } }, { "project": "dunwich", "tracker": { "reason": "parse", "read": "list", "cause": "invalid type: null, expected a string at line 1 column 25" } } ],
   "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "smt-4kd3p.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": [],
@@ -2501,7 +2501,7 @@ merely *titled* after a bead must not shadow it, and that promise is older
 than the widening from an exact match. It changes the landing and not the
 numbering, so a deliberate id search can truthfully say *5 of 12*.
 
-The foot names the bead and the count on every landing: `orbital · orb-7.1 —
+The foot names the bead and the count on every landing: `dunwich · dun-7.1 —
 5 of 12 matching`. It used to say nothing when a search landed cleanly,
 because the selection was the whole answer. It is not any more — the reader
 typed a fragment rather than a name, the id on the row they land on is the

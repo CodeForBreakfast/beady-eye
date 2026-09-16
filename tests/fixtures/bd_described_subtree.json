@@ -1,19 +1,19 @@
 [
   {
-    "id": "orb-0tp",
+    "id": "dun-0tp",
     "title": "Every outside program is optional: one seam per capability, and a setup that lacks one runs without it",
-    "description": "orbital reads two outside programs, git and a pager, and is about to be\npublic. The README promises \"git, and nothing else\" and `docs/design.md`\ncalls the pager \"a convenience, not a dependency\". The code keeps neither\npromise yet. Measured 2026-09-02 at 58e1f79:\n\n- The pager is reached by name from `render::page` (`pager::open`) and wired\n  by name in `cli::wire` (`Pager::new(RealRunner, ..)`). A machine with no\n  pager gets a warning about the pager on every run, on every invocation.\n- git is reached by name from `read::log`, and its argv is known to three\n  modules rather than one, so a change to how orbital calls it is a change in\n  three places and a test in none of them.\n- The editor is reached only from `note::edit`, which is the shape the other\n  two want.\n\n## What this is not\n\nNot a plugin system, and not configuration. Nothing here lets a setup\nsubstitute a different pager or a different git; the seam exists so that a\nsetup which lacks one runs without it, and so that the argv lives in one\nplace. A setup that wants a different pager already has `PAGER`.\n\n## The seam\n\nOne trait per capability, named for what the capability provides rather than\nfor the program that provides it:\n\n| capability | trait | today |\n|---|---|---|\n| the change log | `Changes` | `read::log`, git by name |\n| paging output | `Paging` | `render::page`, pager by name |\n| editing a note | `Editing` | `note::edit`, editor by name |\n\nEach has exactly one implementation in this crate and each implementation\nnames its program once. `cli::wire` chooses the implementation; nothing below\n`cli/` knows a program name.\n\n## Absence is a state, not a failure\n\nThe distinction the current code loses. A setup with no pager is not a setup\nwhose pager failed: the first is ordinary and the second is worth saying\nsomething about. So each capability resolves to one of three things at wire\ntime — present, absent, or present and broken — and only the third is drawn\non screen.\n\nThat is also what makes the warning stop. Today the warning fires on absence,\nwhich is the common case on a machine that never had a pager, so the reader\nlearns to ignore a line that would matter if it ever said something else.\n\n## Done when\n\n- Each outside program sits behind one seam, and a setup that lacks one runs\n  without it rather than warning about it on every frame.\n- The argv for each is spelled in one place, and a test asserts the whole\n  argv rather than the subcommand.\n- Nothing under `read/`, `render/` or `note/` names a program.\n- A setup whose pager cannot be executed is told so, naming the pager, and\n  a setup that has no pager is told nothing.\n\n## Not in this bead\n\n- Choosing a pager, or reading `PAGER`. That is `orb-0tp.4`.\n- The editor seam's own tests, which want a fake that can fail mid-write and\n  are a bead of their own.\n- Anything about git's own configuration. orbital reads a repository; it does\n  not manage one.\n\n## Why now\n\nThe promise in the README is the reason this is P1 rather than P3. A public\nrepository whose README describes a dependency model the code does not have\nis a bug report waiting to be filed by somebody who tried it, and the fix\nafter that report is the same fix as this one plus an apology.",
+    "description": "dunwich reads two outside programs, git and a pager, and is about to be\npublic. The README promises \"git, and nothing else\" and `docs/design.md`\ncalls the pager \"a convenience, not a dependency\". The code keeps neither\npromise yet. Measured 2026-09-02 at 58e1f79:\n\n- The pager is reached by name from `render::page` (`pager::open`) and wired\n  by name in `cli::wire` (`Pager::new(RealRunner, ..)`). A machine with no\n  pager gets a warning about the pager on every run, on every invocation.\n- git is reached by name from `read::log`, and its argv is known to three\n  modules rather than one, so a change to how dunwich calls it is a change in\n  three places and a test in none of them.\n- The editor is reached only from `note::edit`, which is the shape the other\n  two want.\n\n## What this is not\n\nNot a plugin system, and not configuration. Nothing here lets a setup\nsubstitute a different pager or a different git; the seam exists so that a\nsetup which lacks one runs without it, and so that the argv lives in one\nplace. A setup that wants a different pager already has `PAGER`.\n\n## The seam\n\nOne trait per capability, named for what the capability provides rather than\nfor the program that provides it:\n\n| capability | trait | today |\n|---|---|---|\n| the change log | `Changes` | `read::log`, git by name |\n| paging output | `Paging` | `render::page`, pager by name |\n| editing a note | `Editing` | `note::edit`, editor by name |\n\nEach has exactly one implementation in this crate and each implementation\nnames its program once. `cli::wire` chooses the implementation; nothing below\n`cli/` knows a program name.\n\n## Absence is a state, not a failure\n\nThe distinction the current code loses. A setup with no pager is not a setup\nwhose pager failed: the first is ordinary and the second is worth saying\nsomething about. So each capability resolves to one of three things at wire\ntime — present, absent, or present and broken — and only the third is drawn\non screen.\n\nThat is also what makes the warning stop. Today the warning fires on absence,\nwhich is the common case on a machine that never had a pager, so the reader\nlearns to ignore a line that would matter if it ever said something else.\n\n## Done when\n\n- Each outside program sits behind one seam, and a setup that lacks one runs\n  without it rather than warning about it on every frame.\n- The argv for each is spelled in one place, and a test asserts the whole\n  argv rather than the subcommand.\n- Nothing under `read/`, `render/` or `note/` names a program.\n- A setup whose pager cannot be executed is told so, naming the pager, and\n  a setup that has no pager is told nothing.\n\n## Not in this bead\n\n- Choosing a pager, or reading `PAGER`. That is `dun-0tp.4`.\n- The editor seam's own tests, which want a fake that can fail mid-write and\n  are a bead of their own.\n- Anything about git's own configuration. dunwich reads a repository; it does\n  not manage one.\n\n## Why now\n\nThe promise in the README is the reason this is P1 rather than P3. A public\nrepository whose README describes a dependency model the code does not have\nis a bug report waiting to be filed by somebody who tried it, and the fix\nafter that report is the same fix as this one plus an apology.",
     "status": "open",
     "priority": 1,
     "issue_type": "epic",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:52Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:49:16Z",
     "dependencies": [
       {
-        "issue_id": "orb-0tp",
-        "depends_on_id": "orb-9fw",
+        "issue_id": "dun-0tp",
+        "depends_on_id": "dun-9fw",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:52Z",
         "created_by": "Mira Vance",
@@ -23,23 +23,23 @@
     "dependency_count": 0,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-9fw"
+    "parent": "dun-9fw"
   },
   {
-    "id": "orb-0tp.9",
+    "id": "dun-0tp.9",
     "title": "A pager or an editor that cannot be run is reported as git's failure",
-    "description": "`read::run::RunFailure::from_exit` classifies the stderr and exit of every\nsubprocess orbital runs, and the screen phrases the result as git's. A pager\nor an editor that cannot be run (`Exec`) reaches the same mapping, so a\nmissing pager or a typo in `pager_command` is drawn as \"git could not be\nrun\". The reader is sent to check git when git was never reached.\n\n## Done when\n\n- A failure to run a pager or an editor is reported on screen as that\n  program's, naming which one, and a git failure as git's.\n- Tested with a runner whose pager cannot be executed, asserting the words\n  the screen shows.",
+    "description": "`read::run::RunFailure::from_exit` classifies the stderr and exit of every\nsubprocess dunwich runs, and the screen phrases the result as git's. A pager\nor an editor that cannot be run (`Exec`) reaches the same mapping, so a\nmissing pager or a typo in `pager_command` is drawn as \"git could not be\nrun\". The reader is sent to check git when git was never reached.\n\n## Done when\n\n- A failure to run a pager or an editor is reported on screen as that\n  program's, naming which one, and a git failure as git's.\n- Tested with a runner whose pager cannot be executed, asserting the words\n  the screen shows.",
     "status": "open",
     "priority": 3,
     "issue_type": "bug",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:59Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:49:18Z",
     "dependencies": [
       {
-        "issue_id": "orb-0tp.9",
-        "depends_on_id": "orb-0tp",
+        "issue_id": "dun-0tp.9",
+        "depends_on_id": "dun-0tp",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:58Z",
         "created_by": "Mira Vance",
@@ -49,23 +49,23 @@
     "dependency_count": 0,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-0tp"
+    "parent": "dun-0tp"
   },
   {
-    "id": "orb-0tp.8",
+    "id": "dun-0tp.8",
     "title": "group/mod.rs's tests are one module every grouping change appends to",
     "description": "`group/mod.rs`'s tests are one module every grouping change appends to, and it\nis now long enough that a reader looking for the ordering rules reads the\nwhole file to find out there are none. 1,340 lines, 61 tests, one `mod\ntests`.\n\nSplit it by what each test is about, and let the module names say it. On a\nfirst pass the tests fall into four groups:\n\n- ordering within a type\n- ordering between types\n- what an untyped entry does\n- what an empty group does\n\n## Not a behaviour change\n\nNo test is deleted and none is rewritten. A test that moves keeps its name,\nits body and its assertions; only the module around it is new. The check is\nthat the count is the same before and after and that `cargo test group::`\nruns the same number.\n\n## Done when\n\n- `group/mod.rs`'s tests are split into named modules by subject.\n- The test count is unchanged.\n- No test body changed.",
     "status": "open",
     "priority": 3,
     "issue_type": "chore",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:58Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:49:18Z",
     "dependencies": [
       {
-        "issue_id": "orb-0tp.8",
-        "depends_on_id": "orb-0tp",
+        "issue_id": "dun-0tp.8",
+        "depends_on_id": "dun-0tp",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:57Z",
         "created_by": "Mira Vance",
@@ -75,23 +75,23 @@
     "dependency_count": 0,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-0tp"
+    "parent": "dun-0tp"
   },
   {
-    "id": "orb-0tp.7",
+    "id": "dun-0tp.7",
     "title": "phrase.rs is one file every screen change edits",
     "description": "`phrase.rs` is one file every screen change edits, so two seats working on\ndifferent screens collide in it for no reason other than where the words\nlive. Measured over the last forty commits: eleven touch `phrase.rs`, and\nnine of those eleven touch exactly one other file.\n\nMove each phrase next to the screen that says it, and leave `phrase.rs`\nholding only the ones more than one screen shares.\n\n## What stays\n\nA phrase used by two or more screens stays, because moving it to one of them\nmakes the other import from a screen it has nothing else to do with. On\ntoday's count that is six phrases, all of them about failure: the four\ntracker states, \"nothing to show\", and the truncation marker.\n\n## What moves\n\nEverything else, which is thirty-one phrases across five screens. Each goes\ninto the module that draws it, private, with the test that asserts its\nwording moving with it.\n\n## Not a wording change\n\nNo phrase changes. A diff that shows a word changing is a diff that has done\nsomething this bead did not ask for, and the check for that is that the\nstrings are identical before and after — `git diff -w --stat` should show\nthe same total additions and deletions.\n\n## Done when\n\n- `phrase.rs` holds only phrases more than one screen uses.\n- Every moved phrase is private to the module that draws it.\n- No phrase's wording changed.",
     "status": "open",
     "priority": 3,
     "issue_type": "chore",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:57Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:49:17Z",
     "dependencies": [
       {
-        "issue_id": "orb-0tp.7",
-        "depends_on_id": "orb-0tp",
+        "issue_id": "dun-0tp.7",
+        "depends_on_id": "dun-0tp",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:57Z",
         "created_by": "Mira Vance",
@@ -101,39 +101,39 @@
     "dependency_count": 0,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-0tp"
+    "parent": "dun-0tp"
   },
   {
-    "id": "orb-0tp.6",
+    "id": "dun-0tp.6",
     "title": "Change sources sit behind one seam outside cli/, and a local repository is one implementation of it",
-    "description": "Change sources sit behind one seam outside `cli/`, and a local repository is\none implementation of it rather than the only shape the code knows.\n\nToday `cli::wire` opens the repository itself and hands a path down, so a\nsource that is not a path on this machine cannot be added without changing\nevery layer it passes through. The path reaches `read::log`, `read::refs`\nand `group::order`, and each of the three does its own thing with it.\n\n## The shape\n\nOne trait, `Changes`, with the three questions the rest of the crate asks:\n\n```rust\ntrait Changes {\n    fn entries(&self, since: Option<&Rev>) -> Result<Vec<Entry>>;\n    fn refs(&self) -> Result<Vec<Ref>>;\n    fn head(&self) -> Result<Rev>;\n}\n```\n\n`LocalRepository` implements it and is the only implementation this crate\nships. The point is not to have two; the point is that the layers below\n`cli/` name the trait, so the second one costs a file rather than a\nrefactor.\n\n## Why the boundary is at cli/\n\nBecause that is where the process's own facts already live — the working\ndirectory, the environment, the argv. A layer that has to be told where the\nrepository is has not been given a dependency; it has been given a\nresponsibility it cannot discharge, and every test of it has to construct a\nrepository on disk to say anything at all.\n\n## Done when\n\n- One trait names what a change source provides, and the local repository\n  implements it.\n- `cli/` names the trait and not the implementation.\n- `read/` and `group/` take the trait, and their tests take a fake rather\n  than a temporary directory.\n- No path to a repository is passed below `cli/`.\n\n## Blocked on\n\n`orb-0tp.2`, which pulls the argv into one place — this seam wants that done\nfirst or it moves the same argv twice. And `orb-rer.9`, which is the last\ncaller in `render/` still reaching for a path.",
+    "description": "Change sources sit behind one seam outside `cli/`, and a local repository is\none implementation of it rather than the only shape the code knows.\n\nToday `cli::wire` opens the repository itself and hands a path down, so a\nsource that is not a path on this machine cannot be added without changing\nevery layer it passes through. The path reaches `read::log`, `read::refs`\nand `group::order`, and each of the three does its own thing with it.\n\n## The shape\n\nOne trait, `Changes`, with the three questions the rest of the crate asks:\n\n```rust\ntrait Changes {\n    fn entries(&self, since: Option<&Rev>) -> Result<Vec<Entry>>;\n    fn refs(&self) -> Result<Vec<Ref>>;\n    fn head(&self) -> Result<Rev>;\n}\n```\n\n`LocalRepository` implements it and is the only implementation this crate\nships. The point is not to have two; the point is that the layers below\n`cli/` name the trait, so the second one costs a file rather than a\nrefactor.\n\n## Why the boundary is at cli/\n\nBecause that is where the process's own facts already live — the working\ndirectory, the environment, the argv. A layer that has to be told where the\nrepository is has not been given a dependency; it has been given a\nresponsibility it cannot discharge, and every test of it has to construct a\nrepository on disk to say anything at all.\n\n## Done when\n\n- One trait names what a change source provides, and the local repository\n  implements it.\n- `cli/` names the trait and not the implementation.\n- `read/` and `group/` take the trait, and their tests take a fake rather\n  than a temporary directory.\n- No path to a repository is passed below `cli/`.\n\n## Blocked on\n\n`dun-0tp.2`, which pulls the argv into one place — this seam wants that done\nfirst or it moves the same argv twice. And `dun-rer.9`, which is the last\ncaller in `render/` still reaching for a path.",
     "status": "open",
     "priority": 3,
     "issue_type": "feature",
-    "owner": "mira@orbital.invalid",
+    "owner": "mira@dunwich.invalid",
     "created_at": "2026-09-05T12:40:56Z",
     "created_by": "Mira Vance",
     "updated_at": "2026-09-05T12:49:17Z",
     "dependencies": [
       {
-        "issue_id": "orb-0tp.6",
-        "depends_on_id": "orb-0tp.2",
+        "issue_id": "dun-0tp.6",
+        "depends_on_id": "dun-0tp.2",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:12Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-0tp.6",
-        "depends_on_id": "orb-rer.9",
+        "issue_id": "dun-0tp.6",
+        "depends_on_id": "dun-rer.9",
         "type": "blocks",
         "created_at": "2026-09-05T13:41:11Z",
         "created_by": "Mira Vance",
         "metadata": "{}"
       },
       {
-        "issue_id": "orb-0tp.6",
-        "depends_on_id": "orb-0tp",
+        "issue_id": "dun-0tp.6",
+        "depends_on_id": "dun-0tp",
         "type": "parent-child",
         "created_at": "2026-09-05T13:40:56Z",
         "created_by": "Mira Vance",
@@ -143,6 +143,6 @@
     "dependency_count": 2,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "orb-0tp"
+    "parent": "dun-0tp"
   }
 ]

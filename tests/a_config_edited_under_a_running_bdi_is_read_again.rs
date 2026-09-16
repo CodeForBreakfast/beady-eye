@@ -32,7 +32,7 @@ const COLS: u16 = 120;
 /// It has to be that rather than anything a collection puts there: the
 /// build sandbox has no herdr and no tracker at the temp `HOME`, so the
 /// headings the other pty tests wait for never arrive.
-const THE_FIRST_FRAME: &[u8] = "atlas".as_bytes();
+const THE_FIRST_FRAME: &[u8] = "arkham".as_bytes();
 
 /// The notice, from `view::phrase`. Its first words rather than the whole
 /// line: the foot is drawn as a difference from the frame before, so a phrase

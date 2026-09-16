@@ -264,11 +264,11 @@ mod tests {
         let claimed = Node {
             status: Status::InProgress,
             anomalies: vec![Anomaly::OrphanClaim { refused: None }],
-            ..node("orb-4.1", "seat the guy wires", Status::InProgress)
+            ..node("dun-4.1", "seat the guy wires", Status::InProgress)
         };
         let counts = Counts::over(&[claimed]);
 
-        let drawn = Painted::of(line(&project("orbital", counts), OPEN), 40, 1).rows();
+        let drawn = Painted::of(line(&project("dunwich", counts), OPEN), 40, 1).rows();
 
         says(&drawn[0], &format!("{WARNING} 1"));
         does_not_say(&drawn[0], "agent");

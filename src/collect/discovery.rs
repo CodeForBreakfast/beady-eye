@@ -284,8 +284,8 @@ mod tests {
     /// the directory disagree deliberately, so a test can tell which was read.
     fn a_tracked_repository() -> FakeRunner {
         FakeRunner::default()
-            .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
-            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .with("bd where --json", r#"{"path":"/srv/work/dunwich/.beads"}"#)
+            .with("git rev-parse --show-toplevel", "/srv/work/dunwich\n")
             .with(
                 "git remote get-url origin",
                 "git@github.com:pilot/ground-station.git\n",
@@ -296,7 +296,7 @@ mod tests {
     /// `git worktree list --porcelain` for a repository nobody has added a
     /// worktree to: the checkout itself, and nothing else.
     const ONE_CHECKOUT: &str = "\
-worktree /srv/work/orbital
+worktree /srv/work/dunwich
 HEAD 4d3c1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d
 branch refs/heads/main
 ";
@@ -304,7 +304,7 @@ branch refs/heads/main
     /// The same, for a repository worked in the way this one is: a checkout
     /// and a worktree per seat, each somewhere else entirely.
     const A_WORKTREE_PER_SEAT: &str = "\
-worktree /srv/work/orbital
+worktree /srv/work/dunwich
 HEAD 4d3c1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d
 branch refs/heads/main
 
@@ -330,7 +330,7 @@ detached
     fn the_repository_the_directory_sits_in_becomes_the_one_project() {
         let cfg = from_the_current_directory(
             &a_tracked_repository(),
-            Path::new("/srv/work/orbital/src"),
+            Path::new("/srv/work/dunwich/src"),
             None,
         )
         .expect("the repository is a project");
@@ -339,12 +339,12 @@ detached
             cfg.projects,
             vec![Project {
                 name: "ground-station".to_string(),
-                path: PathBuf::from("/srv/work/orbital"),
+                path: PathBuf::from("/srv/work/dunwich"),
                 environment_command: None,
                 credential_command: None,
                 poll: true,
                 badges: Vec::new(),
-                worktrees: vec![PathBuf::from("/srv/work/orbital")],
+                worktrees: vec![PathBuf::from("/srv/work/dunwich")],
             }]
         );
     }
@@ -363,7 +363,7 @@ detached
         assert_eq!(
             cfg.projects[0].worktrees,
             vec![
-                PathBuf::from("/srv/work/orbital"),
+                PathBuf::from("/srv/work/dunwich"),
                 PathBuf::from("/tmp/seat-a/wt"),
                 PathBuf::from("/tmp/seat-b/wt"),
             ]
@@ -375,21 +375,21 @@ detached
     #[test]
     fn a_repository_git_lists_no_worktrees_for_still_holds_its_own_path() {
         let runner = FakeRunner::default()
-            .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
-            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .with("bd where --json", r#"{"path":"/srv/work/dunwich/.beads"}"#)
+            .with("git rev-parse --show-toplevel", "/srv/work/dunwich\n")
             .with(
                 "git remote get-url origin",
                 "git@github.com:pilot/ground-station.git\n",
             )
             .failing("git worktree list --porcelain", no_such_repository());
 
-        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/dunwich"), None)
             .expect("the repository is a project");
 
         assert!(cfg.projects[0].worktrees.is_empty());
         assert!(
             cfg.projects[0]
-                .holds(Path::new("/srv/work/orbital/src"))
+                .holds(Path::new("/srv/work/dunwich/src"))
                 .is_some(),
             "a project git listed no worktrees for holds nothing at all"
         );
@@ -419,8 +419,8 @@ detached
     /// for.
     const ONE_CONFIGURED_PROJECT: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
 "#;
 
     /// A config naming a directory inside the repository rather than the
@@ -428,16 +428,16 @@ path = "/srv/work/orbital"
     const A_PROJECT_IN_A_SUBDIRECTORY: &str = r#"
 [[projects]]
 name = "dish"
-path = "/srv/work/orbital/crates/dish"
+path = "/srv/work/dunwich/crates/dish"
 "#;
 
     /// Two, each in its own repository, so a test can see which directory
     /// each question was asked in.
     const TWO_CONFIGURED_PROJECTS: &str = r#"
 [[projects]]
-name = "orbital"
-path = "/srv/work/orbital"
-credential_command = "secret-tool lookup tracker orbital"
+name = "dunwich"
+path = "/srv/work/dunwich"
+credential_command = "secret-tool lookup tracker dunwich"
 
 [[projects]]
 name = "harbour"
@@ -563,7 +563,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         assert_eq!(
             cfg.projects[0].worktrees,
             vec![
-                PathBuf::from("/srv/work/orbital"),
+                PathBuf::from("/srv/work/dunwich"),
                 PathBuf::from("/tmp/seat-a/wt"),
                 PathBuf::from("/tmp/seat-b/wt"),
             ]
@@ -596,7 +596,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         assert_eq!(
             asked,
             vec![
-                Some(PathBuf::from("/srv/work/orbital")),
+                Some(PathBuf::from("/srv/work/dunwich")),
                 Some(PathBuf::from("/srv/work/harbour")),
             ]
         );
@@ -619,14 +619,14 @@ path = "/tmp/seat-b/wt/crates/dish"
         assert_eq!(
             cfg.projects[0].worktrees,
             vec![
-                PathBuf::from("/srv/work/orbital/crates/dish"),
+                PathBuf::from("/srv/work/dunwich/crates/dish"),
                 PathBuf::from("/tmp/seat-a/wt/crates/dish"),
                 PathBuf::from("/tmp/seat-b/wt/crates/dish"),
             ]
         );
         assert!(
             cfg.projects[0]
-                .holds(Path::new("/srv/work/orbital/docs"))
+                .holds(Path::new("/srv/work/dunwich/docs"))
                 .is_none(),
             "a project configured as one directory annexed the repository around it"
         );
@@ -647,7 +647,7 @@ path = "/tmp/seat-b/wt/crates/dish"
         assert!(cfg.projects[0].worktrees.is_empty());
         assert!(
             cfg.projects[0]
-                .holds(Path::new("/srv/work/orbital/src"))
+                .holds(Path::new("/srv/work/dunwich/src"))
                 .is_some(),
             "a project in no repository holds nothing at all"
         );
@@ -791,12 +791,12 @@ path = "/tmp/seat-b/wt/crates/dish"
         std::fs::create_dir_all(&checkout).expect("the directory is ours to make");
         git_in(&checkout, &["init"]);
         git_in(&checkout, &["commit", "--allow-empty", "-m", "root"]);
-        let spelled = scratch.join("orbital");
+        let spelled = scratch.join("dunwich");
         std::os::unix::fs::symlink(&checkout, &spelled).expect("the link is ours to make");
 
         let cfg = with_the_working_trees_git_lists(
             Config::from_toml(&format!(
-                "[[projects]]\nname = \"orbital\"\npath = \"{}\"\n",
+                "[[projects]]\nname = \"dunwich\"\npath = \"{}\"\n",
                 spelled.display()
             ))
             .expect("the config parses"),
@@ -822,12 +822,12 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn the_worktrees_are_listed_from_where_bdi_was_run() {
         let runner = a_tracked_repository();
 
-        from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
+        from_the_current_directory(&runner, Path::new("/srv/work/dunwich/src"), None)
             .expect("the repository is a project");
 
         assert_eq!(
             runner.call("git worktree list --porcelain").cwd,
-            Some(PathBuf::from("/srv/work/orbital/src"))
+            Some(PathBuf::from("/srv/work/dunwich/src"))
         );
     }
 
@@ -835,7 +835,7 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_synthesised_project_gets_every_other_default() {
         let cfg = from_the_current_directory(
             &a_tracked_repository(),
-            Path::new("/srv/work/orbital"),
+            Path::new("/srv/work/dunwich"),
             None,
         )
         .expect("the repository is a project");
@@ -851,19 +851,19 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn the_environment_names_the_project_ahead_of_git() {
         let cfg = from_the_current_directory(
             &a_tracked_repository(),
-            Path::new("/srv/work/orbital"),
-            Some("atlas"),
+            Path::new("/srv/work/dunwich"),
+            Some("arkham"),
         )
         .expect("the repository is a project");
 
-        assert_eq!(cfg.projects[0].name, "atlas");
+        assert_eq!(cfg.projects[0].name, "arkham");
     }
 
     #[test]
     fn an_empty_name_in_the_environment_is_no_name_at_all() {
         let cfg = from_the_current_directory(
             &a_tracked_repository(),
-            Path::new("/srv/work/orbital"),
+            Path::new("/srv/work/dunwich"),
             Some(""),
         )
         .expect("the repository is a project");
@@ -874,15 +874,15 @@ path = "/tmp/seat-b/wt/crates/dish"
     #[test]
     fn a_repository_with_no_remote_is_named_by_its_directory() {
         let runner = FakeRunner::default()
-            .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
-            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .with("bd where --json", r#"{"path":"/srv/work/dunwich/.beads"}"#)
+            .with("git rev-parse --show-toplevel", "/srv/work/dunwich\n")
             .with("git worktree list --porcelain", ONE_CHECKOUT)
             .failing("git remote get-url origin", no_such_repository());
 
-        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/dunwich"), None)
             .expect("the repository is a project");
 
-        assert_eq!(cfg.projects[0].name, "orbital");
+        assert_eq!(cfg.projects[0].name, "dunwich");
     }
 
     #[test]
@@ -895,12 +895,12 @@ path = "/tmp/seat-b/wt/crates/dish"
             "/srv/git/ground-station.git",
         ] {
             let runner = FakeRunner::default()
-                .with("bd where --json", r#"{"path":"/srv/work/orbital/.beads"}"#)
-                .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+                .with("bd where --json", r#"{"path":"/srv/work/dunwich/.beads"}"#)
+                .with("git rev-parse --show-toplevel", "/srv/work/dunwich\n")
                 .with("git worktree list --porcelain", ONE_CHECKOUT)
                 .with("git remote get-url origin", &format!("{url}\n"));
 
-            let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+            let cfg = from_the_current_directory(&runner, Path::new("/srv/work/dunwich"), None)
                 .expect("the repository is a project");
 
             assert_eq!(cfg.projects[0].name, "ground-station", "from {url}");
@@ -915,9 +915,9 @@ path = "/tmp/seat-b/wt/crates/dish"
 
     /// What `bd where --json` says, as bd writes it: the workspace, the
     /// database inside it, and the schema that database is at.
-    const THE_TRACKER_AT_ORBITAL: &str = r#"{
-  "database_path": "/srv/work/orbital/.beads/dolt",
-  "path": "/srv/work/orbital/.beads",
+    const THE_TRACKER_AT_DUNWICH: &str = r#"{
+  "database_path": "/srv/work/dunwich/.beads/dolt",
+  "path": "/srv/work/dunwich/.beads",
   "schema_version": 1
 }"#;
 
@@ -925,7 +925,7 @@ path = "/tmp/seat-b/wt/crates/dish"
     /// where the repository starts.
     fn a_tracked_tree_with_no_git() -> FakeRunner {
         FakeRunner::default()
-            .with("bd where --json", THE_TRACKER_AT_ORBITAL)
+            .with("bd where --json", THE_TRACKER_AT_DUNWICH)
             .failing("git rev-parse --show-toplevel", no_git())
             .failing("git remote get-url origin", no_git())
     }
@@ -937,12 +937,12 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_project_no_git_can_root_is_rooted_at_the_tracker_above_the_reader() {
         let cfg = from_the_current_directory(
             &a_tracked_tree_with_no_git(),
-            Path::new("/srv/work/orbital/src"),
+            Path::new("/srv/work/dunwich/src"),
             None,
         )
         .expect("the tree bd tracks is a project");
 
-        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/dunwich"));
     }
 
     /// What a root taken from the reader costs: `Project::holds` is what
@@ -953,14 +953,14 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_project_rooted_at_its_tracker_holds_the_seats_working_elsewhere_in_it() {
         let cfg = from_the_current_directory(
             &a_tracked_tree_with_no_git(),
-            Path::new("/srv/work/orbital/src"),
+            Path::new("/srv/work/dunwich/src"),
             None,
         )
         .expect("the tree bd tracks is a project");
 
         assert!(
             cfg.projects[0]
-                .holds(Path::new("/srv/work/orbital/docs"))
+                .holds(Path::new("/srv/work/dunwich/docs"))
                 .is_some(),
             "a seat working elsewhere in the tracked tree is in no project"
         );
@@ -968,13 +968,13 @@ path = "/tmp/seat-b/wt/crates/dish"
 
     /// The name is read off the root, so the root is what settles it: two
     /// readers of one tracker standing in different directories are looking
-    /// at one project under one name, rather than at `orbital` and `src`.
+    /// at one project under one name, rather than at `dunwich` and `src`.
     #[test]
     fn a_project_no_git_can_name_is_named_after_the_tracker_not_the_reader() {
         for standing_in in [
-            "/srv/work/orbital",
-            "/srv/work/orbital/src",
-            "/srv/work/orbital/crates/dish",
+            "/srv/work/dunwich",
+            "/srv/work/dunwich/src",
+            "/srv/work/dunwich/crates/dish",
         ] {
             let cfg = from_the_current_directory(
                 &a_tracked_tree_with_no_git(),
@@ -983,7 +983,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             )
             .expect("the tree bd tracks is a project");
 
-            assert_eq!(cfg.projects[0].name, "orbital", "standing in {standing_in}");
+            assert_eq!(cfg.projects[0].name, "dunwich", "standing in {standing_in}");
         }
     }
 
@@ -994,7 +994,7 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_machine_with_no_git_says_the_name_it_gave_the_project_is_a_guess() {
         let discovered = from_the_current_directory(
             &a_tracked_tree_with_no_git(),
-            Path::new("/srv/work/orbital/src"),
+            Path::new("/srv/work/dunwich/src"),
             None,
         )
         .expect("the tree bd tracks is a project");
@@ -1009,15 +1009,15 @@ path = "/tmp/seat-b/wt/crates/dish"
     #[test]
     fn a_repository_with_no_origin_is_named_after_its_directory_and_says_nothing() {
         let runner = FakeRunner::default()
-            .with("bd where --json", THE_TRACKER_AT_ORBITAL)
-            .with("git rev-parse --show-toplevel", "/srv/work/orbital\n")
+            .with("bd where --json", THE_TRACKER_AT_DUNWICH)
+            .with("git rev-parse --show-toplevel", "/srv/work/dunwich\n")
             .with("git worktree list --porcelain", ONE_CHECKOUT)
             .failing("git remote get-url origin", no_such_repository());
 
-        let discovered = from_the_current_directory(&runner, Path::new("/srv/work/orbital"), None)
+        let discovered = from_the_current_directory(&runner, Path::new("/srv/work/dunwich"), None)
             .expect("the repository is a project");
 
-        assert_eq!(discovered.projects[0].name, "orbital");
+        assert_eq!(discovered.projects[0].name, "dunwich");
         assert!(!discovered.named_without_git);
     }
 
@@ -1044,12 +1044,12 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_project_the_environment_names_is_no_guess_on_a_machine_with_no_git() {
         let discovered = from_the_current_directory(
             &a_tracked_tree_with_no_git(),
-            Path::new("/srv/work/orbital/src"),
-            Some("atlas"),
+            Path::new("/srv/work/dunwich/src"),
+            Some("arkham"),
         )
         .expect("the tree bd tracks is a project");
 
-        assert_eq!(discovered.projects[0].name, "atlas");
+        assert_eq!(discovered.projects[0].name, "arkham");
         assert!(!discovered.named_without_git);
     }
 
@@ -1061,12 +1061,12 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn an_empty_name_in_the_environment_leaves_the_name_a_guess() {
         let discovered = from_the_current_directory(
             &a_tracked_tree_with_no_git(),
-            Path::new("/srv/work/orbital/src"),
+            Path::new("/srv/work/dunwich/src"),
             Some(""),
         )
         .expect("the tree bd tracks is a project");
 
-        assert_eq!(discovered.projects[0].name, "orbital");
+        assert_eq!(discovered.projects[0].name, "dunwich");
         assert!(discovered.named_without_git);
     }
 
@@ -1130,7 +1130,7 @@ path = "/tmp/seat-b/wt/crates/dish"
             .failing("git rev-parse --show-toplevel", no_git())
             .failing("git remote get-url origin", no_git());
 
-        let cfg = from_the_current_directory(&runner, Path::new("/home/pilot/work/orbital"), None)
+        let cfg = from_the_current_directory(&runner, Path::new("/home/pilot/work/dunwich"), None)
             .expect("the tree bd tracks is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/home/pilot"));
@@ -1143,13 +1143,13 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn a_repository_git_names_is_the_root_whatever_the_tracker_sits_beside() {
         let runner = a_tracked_repository().with(
             "bd where --json",
-            r#"{"path":"/srv/work/orbital/crates/dish/.beads"}"#,
+            r#"{"path":"/srv/work/dunwich/crates/dish/.beads"}"#,
         );
 
-        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
+        let cfg = from_the_current_directory(&runner, Path::new("/srv/work/dunwich/src"), None)
             .expect("the repository is a project");
 
-        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/orbital"));
+        assert_eq!(cfg.projects[0].path, PathBuf::from("/srv/work/dunwich"));
         assert_eq!(cfg.projects[0].name, "ground-station");
     }
 
@@ -1220,12 +1220,12 @@ path = "/tmp/seat-b/wt/crates/dish"
     fn the_tracker_is_probed_where_bdi_was_run() {
         let runner = a_tracked_repository();
 
-        from_the_current_directory(&runner, Path::new("/srv/work/orbital/src"), None)
+        from_the_current_directory(&runner, Path::new("/srv/work/dunwich/src"), None)
             .expect("the repository is a project");
 
         assert_eq!(
             runner.call("bd where --json").cwd,
-            Some(PathBuf::from("/srv/work/orbital/src"))
+            Some(PathBuf::from("/srv/work/dunwich/src"))
         );
     }
 }

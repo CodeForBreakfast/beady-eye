@@ -71,7 +71,7 @@ fn declaring(home: &Path, background: &str) {
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"atlas\"\npath = \"{}\"\n\n[theme]\nbackground = \"{background}\"\n",
+            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n\n[theme]\nbackground = \"{background}\"\n",
             home.display()
         ),
     )

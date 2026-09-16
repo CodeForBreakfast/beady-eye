@@ -564,13 +564,13 @@ mod tests {
     /// elsewhere, over open tasks. No pane can be on it and no anomaly rule
     /// can fire on it, which is the one state the default filter folds away.
     const UNSTAFFED_TREE: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"blocked",
+      {"id":"dun-7","title":"lift the ground station","status":"blocked",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"open","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"lay the feeder cable","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -597,7 +597,7 @@ mod tests {
         let snap = run(
             &one_project(),
             &no_session,
-            &orbital(),
+            &dunwich(),
             Filter::LiveAgents,
             now(),
         );
@@ -621,7 +621,7 @@ mod tests {
         let snap = run(
             &one_project(),
             &nothing,
-            &orbital(),
+            &dunwich(),
             Filter::LiveAgents,
             now(),
         );
@@ -647,7 +647,7 @@ mod tests {
         let snap = run(
             &one_project(),
             &broken,
-            &orbital(),
+            &dunwich(),
             Filter::LiveAgents,
             now(),
         );
@@ -660,7 +660,7 @@ mod tests {
     /// answered, so the panes it gave are all the panes there are.
     #[test]
     fn a_provider_holding_no_pane_has_still_answered() {
-        let snap = run(&one_project(), &no_panes(), &orbital(), Filter::All, now());
+        let snap = run(&one_project(), &no_panes(), &dunwich(), Filter::All, now());
 
         assert_eq!(snap.agents.state, ProviderState::Answering);
     }
@@ -681,14 +681,14 @@ mod tests {
 
     /// Reading a claim's missing pane as an agent that died is only sound
     /// where something answered for panes, and the collection is what carries
-    /// that from the provider it read to the rules. Both of orbital's claims
+    /// that from the provider it read to the rules. Both of dunwich's claims
     /// are orphaned where a provider answered and holds no pane, and neither
     /// is where nothing answered — a run that cannot tell reports the
     /// provider rather than the beads.
     #[test]
     fn a_claim_is_only_orphaned_against_a_provider_that_answered() {
-        let answered = run(&one_project(), &no_panes(), &orbital(), Filter::All, now());
-        assert_eq!(orphaned(&answered), ["orb-7", "orb-7.1"]);
+        let answered = run(&one_project(), &no_panes(), &dunwich(), Filter::All, now());
+        assert_eq!(orphaned(&answered), ["dun-7", "dun-7.1"]);
 
         for silent in [
             Provider::unlistable(RunFailure::not_installed(
@@ -700,7 +700,7 @@ mod tests {
                 "Permission denied (os error 13)",
             )),
         ] {
-            let snap = run(&one_project(), &silent, &orbital(), Filter::All, now());
+            let snap = run(&one_project(), &silent, &dunwich(), Filter::All, now());
 
             assert_eq!(
                 orphaned(&snap),
@@ -714,10 +714,10 @@ mod tests {
     #[test]
     fn a_tree_with_no_live_agent_is_reported_rather_than_dropped() {
         let nobody = no_panes();
-        let trackers = orbital_with(
+        let trackers = dunwich_with(
             Fake::holding(beads(UNSTAFFED_TREE))
-                .ready(["orb-7.2"])
-                .blocked("orb-7", &["orb-9"]),
+                .ready(["dun-7.2"])
+                .blocked("dun-7", &["dun-9"]),
         );
 
         let filtered = run(
@@ -729,7 +729,7 @@ mod tests {
         );
         assert!(filtered.trees.is_empty());
         assert_eq!(filtered.hidden_trees.len(), 1);
-        assert_eq!(filtered.hidden_trees[0].root, "orb-7");
+        assert_eq!(filtered.hidden_trees[0].root, "dun-7");
 
         let all = run(&one_project(), &nobody, &trackers, Filter::All, now());
         assert_eq!(all.trees.len(), 1);
@@ -741,7 +741,7 @@ mod tests {
         let snap = run(
             &one_project(),
             &panes(),
-            &orbital(),
+            &dunwich(),
             Filter::LiveAgents,
             now(),
         );
@@ -752,7 +752,7 @@ mod tests {
             .map(|p| p.pane.id.as_str())
             .collect();
         assert_eq!(loose, vec!["w:p9"]);
-        assert_eq!(snap.unattributed[0].project, "orbital");
+        assert_eq!(snap.unattributed[0].project, "dunwich");
     }
 
     // ---- several projects at once --------------------------------------
@@ -762,7 +762,7 @@ mod tests {
     #[test]
     fn a_pane_joins_only_the_project_its_directory_sits_in() {
         let panes = Provider::holding(vec![named(
-            pane("w:p1", ORBITAL, PaneStatus::Working),
+            pane("w:p1", DUNWICH, PaneStatus::Working),
             "x-1.1",
         )]);
 
@@ -775,7 +775,7 @@ mod tests {
         );
 
         assert!(
-            node(tree_of(&snap, "orbital"), "x-1.1").agent.is_some(),
+            node(tree_of(&snap, "dunwich"), "x-1.1").agent.is_some(),
             "the pane's own project"
         );
         assert!(
@@ -788,7 +788,7 @@ mod tests {
     /// so the join has both directions to do across both trackers.
     fn panes_in_both() -> Provider {
         Provider::holding(vec![
-            named(pane("w:p1", ORBITAL, PaneStatus::Working), "x-1.1"),
+            named(pane("w:p1", DUNWICH, PaneStatus::Working), "x-1.1"),
             pane("w:p2", FERRY, PaneStatus::Idle),
         ])
     }
@@ -905,8 +905,8 @@ mod tests {
     #[test]
     fn the_projects_named_are_read_together_rather_than_in_turn() {
         let trackers = Meeting::at(colliding_trackers())
-            .holding("orbital", "ferry")
-            .holding("ferry", "orbital");
+            .holding("dunwich", "ferry")
+            .holding("ferry", "dunwich");
 
         collect(
             &mut Collection::default(),
@@ -917,7 +917,7 @@ mod tests {
 
         assert_eq!(
             trackers.arrived(),
-            BTreeSet::from(["orbital".to_string(), "ferry".to_string()]),
+            BTreeSet::from(["dunwich".to_string(), "ferry".to_string()]),
             "both trackers were asked for a fingerprint, so a wait spent alone would have been recorded"
         );
         assert_eq!(
@@ -945,8 +945,8 @@ mod tests {
         )
     }
 
-    fn orbital_alone() -> Wanted {
-        Wanted::Project("orbital".to_string())
+    fn dunwich_alone() -> Wanted {
+        Wanted::Project("dunwich".to_string())
     }
 
     /// Every question `project`'s tracker was asked. What the refresh gate
@@ -959,15 +959,15 @@ mod tests {
     /// `now()`, so nothing is a stale claim at that instant and everything is
     /// two days later.
     const AGEING_TREE: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic","metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"},
        "updated_at":"2026-08-01T12:00:00Z"},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"lay the feeder cable","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
@@ -986,14 +986,14 @@ mod tests {
     /// after `now()`. `bd ready` does not name it before that instant and
     /// does after, and nothing is written when it passes.
     const DEFERRED_TREE: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"in_progress",
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"open",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"lay the feeder cable","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task",
        "defer_until":"2026-08-30T14:00:00Z"}
     ]"#;
@@ -1003,12 +1003,12 @@ mod tests {
         "2026-08-30T14:00:00Z".parse().expect("the instant parses")
     }
 
-    /// A pane sitting in orbital with a bead's id on it, which is a root the
+    /// A pane sitting in dunwich with a bead's id on it, which is a root the
     /// tracker was never asked about.
     fn pane_on_a_bead() -> Provider {
         Provider::holding(vec![named(
-            pane("w:p1", ORBITAL, PaneStatus::Working),
-            "orb-7.2",
+            pane("w:p1", DUNWICH, PaneStatus::Working),
+            "dun-7.2",
         )])
     }
 
@@ -1018,7 +1018,7 @@ mod tests {
     /// instead of four, and the one question is its fingerprint.
     #[test]
     fn a_project_whose_tracker_has_not_moved_is_asked_once() {
-        let trackers = orbital();
+        let trackers = dunwich();
         let cfg = one_project();
         let mut standing = Collection::default();
 
@@ -1030,19 +1030,19 @@ mod tests {
             Filter::All,
             now(),
         );
-        let first = asked_of(&trackers, "orbital");
+        let first = asked_of(&trackers, "dunwich");
         standing.collect(
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             now(),
         );
 
         assert_eq!(first, 4, "a project read for the first time costs both");
         assert_eq!(
-            asked_of(&trackers, "orbital") - first,
+            asked_of(&trackers, "dunwich") - first,
             1,
             "and a project that has not moved since costs the fingerprint alone"
         );
@@ -1058,18 +1058,18 @@ mod tests {
         standing.collect(
             &cfg,
             &panes(),
-            &orbital(),
+            &dunwich(),
             &Wanted::Everything,
             Filter::All,
             now(),
         );
 
-        let moved = orbital_with(orbital_tracker().moved());
-        let after = standing.collect(&cfg, &panes(), &moved, &orbital_alone(), Filter::All, now());
+        let moved = dunwich_with(dunwich_tracker().moved());
+        let after = standing.collect(&cfg, &panes(), &moved, &dunwich_alone(), Filter::All, now());
 
-        assert_eq!(asked_of(&moved, "orbital"), 4);
+        assert_eq!(asked_of(&moved, "dunwich"), 4);
         assert!(
-            !trees_of(&after, "orbital").is_empty(),
+            !trees_of(&after, "dunwich").is_empty(),
             "and everything it read is drawn"
         );
     }
@@ -1085,7 +1085,7 @@ mod tests {
     /// stands still, which is the reader's own idle project.
     #[test]
     fn a_project_the_reader_has_rewritten_is_read_again_though_its_tracker_has_not_moved() {
-        let trackers = orbital();
+        let trackers = dunwich();
         let mut standing = Collection::default();
         standing.collect(
             &one_project(),
@@ -1095,7 +1095,7 @@ mod tests {
             Filter::All,
             now(),
         );
-        let first = asked_of(&trackers, "orbital");
+        let first = asked_of(&trackers, "dunwich");
 
         let after = standing.collect(
             &one_project_reached_with_a_credential(),
@@ -1107,13 +1107,13 @@ mod tests {
         );
 
         assert_eq!(
-            asked_of(&trackers, "orbital") - first,
+            asked_of(&trackers, "dunwich") - first,
             4,
             "the cascade ran again rather than being skipped against a read taken \
              under the settings the reader has just replaced"
         );
         assert!(
-            !trees_of(&after, "orbital").is_empty(),
+            !trees_of(&after, "dunwich").is_empty(),
             "and what it read under the new settings is drawn"
         );
     }
@@ -1131,14 +1131,14 @@ mod tests {
         standing.collect(
             &cfg,
             &panes(),
-            &orbital(),
+            &dunwich(),
             &Wanted::Everything,
             Filter::All,
             now(),
         );
 
-        let refused = orbital_with(
-            orbital_tracker()
+        let refused = dunwich_with(
+            dunwich_tracker()
                 .moved()
                 .failing(Asked::All, failing(FailureKind::Auth)),
         );
@@ -1146,7 +1146,7 @@ mod tests {
             &cfg,
             &panes(),
             &refused,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             now(),
         );
@@ -1154,18 +1154,18 @@ mod tests {
 
         // The tracker has not moved since the failure — the same fingerprint
         // the failure was taken at — and this time it answers the cascade.
-        let recovered = orbital_with(orbital_tracker().moved());
+        let recovered = dunwich_with(dunwich_tracker().moved());
         let after = standing.collect(
             &cfg,
             &panes(),
             &recovered,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             now(),
         );
 
         assert_eq!(
-            asked_of(&recovered, "orbital"),
+            asked_of(&recovered, "dunwich"),
             4,
             "the cascade ran again rather than being skipped against the fingerprint the failure was taken at"
         );
@@ -1178,8 +1178,8 @@ mod tests {
     #[test]
     fn a_tracker_that_cannot_answer_its_fingerprint_is_read_in_full_every_interval() {
         let cfg = one_project();
-        let blind = orbital_with(
-            orbital_tracker().failing(Asked::Fingerprint, failing(FailureKind::Unavailable)),
+        let blind = dunwich_with(
+            dunwich_tracker().failing(Asked::Fingerprint, failing(FailureKind::Unavailable)),
         );
         let mut standing = Collection::default();
 
@@ -1191,20 +1191,20 @@ mod tests {
             Filter::All,
             now(),
         );
-        let first = asked_of(&blind, "orbital");
-        let after = standing.collect(&cfg, &panes(), &blind, &orbital_alone(), Filter::All, now());
+        let first = asked_of(&blind, "dunwich");
+        let after = standing.collect(&cfg, &panes(), &blind, &dunwich_alone(), Filter::All, now());
 
         assert_eq!(
             first, 4,
             "the fingerprint was asked for and the cascade ran anyway"
         );
         assert_eq!(
-            asked_of(&blind, "orbital") - first,
+            asked_of(&blind, "dunwich") - first,
             4,
             "and again, rather than settling into a skip against a fingerprint nobody established"
         );
         assert!(
-            !trees_of(&after, "orbital").is_empty(),
+            !trees_of(&after, "dunwich").is_empty(),
             "a tracker blind to its fingerprint still draws its trees"
         );
     }
@@ -1215,7 +1215,7 @@ mod tests {
     #[test]
     fn a_tracker_with_no_fingerprint_is_read_in_full_every_interval() {
         let cfg = one_project();
-        let unfingerprinted = orbital_with(orbital_tracker().without_a_fingerprint());
+        let unfingerprinted = dunwich_with(dunwich_tracker().without_a_fingerprint());
         let mut standing = Collection::default();
 
         standing.collect(
@@ -1226,19 +1226,19 @@ mod tests {
             Filter::All,
             now(),
         );
-        let first = asked_of(&unfingerprinted, "orbital");
+        let first = asked_of(&unfingerprinted, "dunwich");
         let after = standing.collect(
             &cfg,
             &panes(),
             &unfingerprinted,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             now(),
         );
 
         assert_eq!(first, 4);
-        assert_eq!(asked_of(&unfingerprinted, "orbital") - first, 4);
-        assert!(!trees_of(&after, "orbital").is_empty());
+        assert_eq!(asked_of(&unfingerprinted, "dunwich") - first, 4);
+        assert!(!trees_of(&after, "dunwich").is_empty());
     }
 
     /// The same rule where a fingerprint *is* standing to skip against, which
@@ -1253,25 +1253,25 @@ mod tests {
         standing.collect(
             &cfg,
             &panes(),
-            &orbital(),
+            &dunwich(),
             &Wanted::Everything,
             Filter::All,
             now(),
         );
 
-        let blind = orbital_with(
-            orbital_tracker().failing(Asked::Fingerprint, failing(FailureKind::Unavailable)),
+        let blind = dunwich_with(
+            dunwich_tracker().failing(Asked::Fingerprint, failing(FailureKind::Unavailable)),
         );
-        standing.collect(&cfg, &panes(), &blind, &orbital_alone(), Filter::All, now());
-        let first = asked_of(&blind, "orbital");
-        standing.collect(&cfg, &panes(), &blind, &orbital_alone(), Filter::All, now());
+        standing.collect(&cfg, &panes(), &blind, &dunwich_alone(), Filter::All, now());
+        let first = asked_of(&blind, "dunwich");
+        standing.collect(&cfg, &panes(), &blind, &dunwich_alone(), Filter::All, now());
 
         assert_eq!(
             first, 4,
             "the fingerprint went unanswered, so the cascade ran rather than the standing one being kept"
         );
         assert_eq!(
-            asked_of(&blind, "orbital") - first,
+            asked_of(&blind, "dunwich") - first,
             4,
             "and the read it just took left nothing for the next interval to skip against either"
         );
@@ -1283,7 +1283,7 @@ mod tests {
     #[test]
     fn a_skipped_read_is_as_fresh_as_the_collection_that_skipped_it() {
         let cfg = one_project();
-        let trackers = orbital();
+        let trackers = dunwich();
         let earlier = now();
         let later = earlier + chrono::Duration::seconds(30);
         let mut standing = Collection::default();
@@ -1300,14 +1300,14 @@ mod tests {
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             later,
         );
 
-        assert_eq!(after.read_at["orbital"], later);
+        assert_eq!(after.read_at["dunwich"], later);
         assert!(
-            !trees_of(&after, "orbital").is_empty(),
+            !trees_of(&after, "dunwich").is_empty(),
             "and everything the skipped read stood on is still drawn"
         );
     }
@@ -1319,7 +1319,7 @@ mod tests {
     #[test]
     fn a_skipped_read_still_ages_what_the_screen_says_about_it() {
         let cfg = one_project();
-        let trackers = orbital_with(orbital_holding(AGEING_TREE));
+        let trackers = dunwich_with(dunwich_holding(AGEING_TREE));
         let earlier = now();
         let later = earlier + chrono::Duration::days(2);
         let mut standing = Collection::default();
@@ -1336,7 +1336,7 @@ mod tests {
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             later,
         );
@@ -1350,7 +1350,7 @@ mod tests {
             "and 31 days is outside it at the second, which read nothing"
         );
         assert_eq!(
-            asked_of(&trackers, "orbital"),
+            asked_of(&trackers, "dunwich"),
             5,
             "the second collection cost the fingerprint alone, so the ageing is the draw's and not the read's"
         );
@@ -1364,7 +1364,7 @@ mod tests {
     #[test]
     fn a_read_stops_speaking_for_the_tracker_once_a_held_bead_is_due() {
         let cfg = one_project();
-        let trackers = orbital_with(orbital_holding(DEFERRED_TREE));
+        let trackers = dunwich_with(dunwich_holding(DEFERRED_TREE));
         let read_at = now();
         let mut standing = Collection::default();
         standing.collect(
@@ -1375,34 +1375,34 @@ mod tests {
             Filter::All,
             read_at,
         );
-        let first = asked_of(&trackers, "orbital");
+        let first = asked_of(&trackers, "dunwich");
 
         let hour = chrono::Duration::hours(1);
         standing.collect(
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             read_at + hour,
         );
-        let while_held = asked_of(&trackers, "orbital");
+        let while_held = asked_of(&trackers, "dunwich");
 
         standing.collect(
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             read_at + hour * 3,
         );
-        let once_due = asked_of(&trackers, "orbital");
+        let once_due = asked_of(&trackers, "dunwich");
 
         standing.collect(
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             read_at + hour * 4,
         );
@@ -1418,7 +1418,7 @@ mod tests {
             "and the whole cascade at the first refresh past the instant it is due"
         );
         assert_eq!(
-            asked_of(&trackers, "orbital") - once_due,
+            asked_of(&trackers, "dunwich") - once_due,
             1,
             "after which nothing is held back, so the fingerprint alone again rather than for ever"
         );
@@ -1433,7 +1433,7 @@ mod tests {
     #[test]
     fn a_read_has_stopped_speaking_at_the_instant_a_held_bead_is_due_rather_than_after_it() {
         let cfg = one_project();
-        let trackers = orbital_with(orbital_holding(DEFERRED_TREE));
+        let trackers = dunwich_with(dunwich_holding(DEFERRED_TREE));
         let mut standing = Collection::default();
         standing.collect(
             &cfg,
@@ -1443,18 +1443,18 @@ mod tests {
             Filter::All,
             now(),
         );
-        let first = asked_of(&trackers, "orbital");
+        let first = asked_of(&trackers, "dunwich");
 
         standing.collect(
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             when_it_is_due(),
         );
 
-        assert_eq!(asked_of(&trackers, "orbital") - first, 4);
+        assert_eq!(asked_of(&trackers, "dunwich") - first, 4);
     }
 
     /// The other side of the same instant. A bead due exactly as the read was
@@ -1464,7 +1464,7 @@ mod tests {
     #[test]
     fn a_bead_due_as_the_read_was_taken_leaves_nothing_to_turn_over() {
         let cfg = one_project();
-        let trackers = orbital_with(orbital_holding(DEFERRED_TREE));
+        let trackers = dunwich_with(dunwich_holding(DEFERRED_TREE));
         let mut standing = Collection::default();
         standing.collect(
             &cfg,
@@ -1474,19 +1474,19 @@ mod tests {
             Filter::All,
             when_it_is_due(),
         );
-        let first = asked_of(&trackers, "orbital");
+        let first = asked_of(&trackers, "dunwich");
 
         let hour = chrono::Duration::hours(1);
         standing.collect(
             &cfg,
             &panes(),
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             when_it_is_due() + hour,
         );
 
-        assert_eq!(asked_of(&trackers, "orbital") - first, 1);
+        assert_eq!(asked_of(&trackers, "dunwich") - first, 1);
     }
 
     /// A root can come from a pane rather than from the tracker, so what the
@@ -1502,38 +1502,38 @@ mod tests {
         standing.collect(
             &cfg,
             &panes(),
-            &orbital(),
+            &dunwich(),
             &Wanted::Everything,
             Filter::All,
             now(),
         );
 
-        let again = orbital();
+        let again = dunwich();
         standing.collect(
             &cfg,
             &pane_on_a_bead(),
             &again,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             now(),
         );
 
         assert_eq!(
-            asked_of(&again, "orbital"),
+            asked_of(&again, "dunwich"),
             4,
             "the tracker had not moved, but what the panes name had"
         );
     }
 
-    /// Both trackers, with orbital's refusing its credential. The fingerprint
+    /// Both trackers, with dunwich's refusing its credential. The fingerprint
     /// is refused as well, which is what a tracker that has stopped answering
     /// does: it is the same connection the cascade would have used. Refusing
     /// only the cascade would stage a tracker that answers one question and
     /// not the next, and the refresh would rightly never ask the second.
-    fn orbital_refusing() -> Fakes {
+    fn dunwich_refusing() -> Fakes {
         Fakes::default()
             .with(
-                "orbital",
+                "dunwich",
                 colliding_tracker()
                     .failing(Asked::Fingerprint, failing(FailureKind::Auth))
                     .failing(Asked::All, failing(FailureKind::Auth)),
@@ -1550,14 +1550,14 @@ mod tests {
     }
 
     /// The pane on ferry's desktop is neither drawn nor reported by a run
-    /// scoped to orbital, and in particular is not reported as unconfigured:
+    /// scoped to dunwich, and in particular is not reported as unconfigured:
     /// the config still names ferry, and the pane is placed against the
     /// config as written.
     #[test]
     fn a_pane_under_a_project_the_scope_left_out_is_not_reported() {
         let scoped = two_projects()
-            .scoped_to(&["orbital".to_string()])
-            .expect("orbital is configured");
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured");
 
         let snap = Collection::default().collect(
             &scoped,
@@ -1571,25 +1571,25 @@ mod tests {
         assert_eq!(snap.unconfigured, vec![]);
         assert!(
             !snap.unattributed.iter().any(|pane| pane.pane.id == "w:p2"),
-            "ferry's pane was reported by a run reading orbital: {:#?}",
+            "ferry's pane was reported by a run reading dunwich: {:#?}",
             snap.unattributed
         );
         let named: Vec<&str> = scoped.projects.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             named,
-            ["orbital", "ferry"],
+            ["dunwich", "ferry"],
             "the config as written is still reachable"
         );
     }
 
-    /// orbital, and a second project at a checkout that is really on disk so
+    /// dunwich, and a second project at a checkout that is really on disk so
     /// that a linked worktree of it can be too.
-    fn orbital_and_ferry_at(checkout: &Path) -> Config {
+    fn dunwich_and_ferry_at(checkout: &Path) -> Config {
         Config::from_toml(&format!(
             r#"
 [[projects]]
-name = "orbital"
-path = "{ORBITAL}"
+name = "dunwich"
+path = "{DUNWICH}"
 
 [[projects]]
 name = "ferry"
@@ -1623,7 +1623,7 @@ path = "{}"
     #[test]
     fn a_pane_in_a_linked_worktree_is_reported_in_the_project_its_main_working_tree_is_under() {
         let fixture = a_linked_worktree_git_made("collection-linked-worktree");
-        let cfg = orbital_and_ferry_at(&fixture.checkout);
+        let cfg = dunwich_and_ferry_at(&fixture.checkout);
 
         let snap = run(
             &cfg,
@@ -1649,7 +1649,7 @@ path = "{}"
         assert_eq!(snap.unconfigured, vec![]);
     }
 
-    /// The same pane under a run scoped to orbital. ferry is never asked
+    /// The same pane under a run scoped to dunwich. ferry is never asked
     /// where it is worked, so its linked worktrees are unknown and the pane
     /// is held by nothing as the config stands; placing it by its main
     /// working tree is what keeps another desktop's work off this screen
@@ -1661,9 +1661,9 @@ path = "{}"
     #[test]
     fn a_pane_in_an_excluded_projects_linked_worktree_is_placed_without_running_anything() {
         let fixture = a_linked_worktree_git_made("collection-linked-worktree-excluded");
-        let cfg = orbital_and_ferry_at(&fixture.checkout)
-            .scoped_to(&["orbital".to_string()])
-            .expect("orbital is configured");
+        let cfg = dunwich_and_ferry_at(&fixture.checkout)
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured");
         let provider = a_pane_sitting_in(&fixture.linked);
 
         let snap = run(&cfg, &provider, &colliding_trackers(), Filter::All, now());
@@ -1709,7 +1709,7 @@ path = "{}"
 
         let distinct: BTreeSet<&str> = runs.iter().copied().collect();
 
-        assert_eq!(runs, ["orbital", "ferry"], "{:#?}", snap.trees);
+        assert_eq!(runs, ["dunwich", "ferry"], "{:#?}", snap.trees);
         assert_eq!(
             runs.len(),
             distinct.len(),
@@ -1728,7 +1728,7 @@ path = "{}"
         let mut standing = Collection::default();
         collect(&mut standing, &panes, &trackers, &Wanted::Everything);
 
-        let refreshed = collect(&mut standing, &panes, &trackers, &orbital_alone());
+        let refreshed = collect(&mut standing, &panes, &trackers, &dunwich_alone());
         let rebuilt = collect(
             &mut Collection::default(),
             &panes,
@@ -1747,9 +1747,9 @@ path = "{}"
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
         collect(&mut standing, &panes, &trackers, &Wanted::Everything);
-        let (orbital, ferry) = (asked_of(&trackers, "orbital"), asked_of(&trackers, "ferry"));
+        let (dunwich, ferry) = (asked_of(&trackers, "dunwich"), asked_of(&trackers, "ferry"));
 
-        collect(&mut standing, &panes, &trackers, &orbital_alone());
+        collect(&mut standing, &panes, &trackers, &dunwich_alone());
 
         assert_eq!(
             asked_of(&trackers, "ferry"),
@@ -1757,8 +1757,8 @@ path = "{}"
             "ferry was not named, so its tracker was not asked again"
         );
         assert!(
-            asked_of(&trackers, "orbital") > orbital,
-            "orbital was named, so it was read"
+            asked_of(&trackers, "dunwich") > dunwich,
+            "dunwich was named, so it was read"
         );
     }
 
@@ -1770,8 +1770,8 @@ path = "{}"
     #[test]
     fn a_collection_asks_the_provider_for_its_sessions_once_and_each_session_once() {
         let panes = Provider::holding(vec![
-            named(pane("w:p1", ORBITAL, PaneStatus::Working), "x-1.1"),
-            in_session(pane("w:p2", FERRY, PaneStatus::Idle), "beacon"),
+            named(pane("w:p1", DUNWICH, PaneStatus::Working), "x-1.1"),
+            in_session(pane("w:p2", FERRY, PaneStatus::Idle), "kadath"),
         ]);
         let trackers = colliding_trackers();
         let mut standing = Collection::default();
@@ -1781,7 +1781,7 @@ path = "{}"
                 session: A_SESSION.to_string(),
             },
             AskedOfTheProvider::List {
-                session: "beacon".to_string(),
+                session: "kadath".to_string(),
             },
         ];
 
@@ -1793,7 +1793,7 @@ path = "{}"
             "two projects were read, and each session on the machine was asked once"
         );
 
-        collect(&mut standing, &panes, &trackers, &orbital_alone());
+        collect(&mut standing, &panes, &trackers, &dunwich_alone());
 
         assert_eq!(
             panes.asked(),
@@ -1808,7 +1808,7 @@ path = "{}"
     #[test]
     fn a_session_that_will_not_answer_is_named_and_the_others_still_draw() {
         let panes = Provider::holding(vec![named(
-            in_session(pane("w:p1", ORBITAL, PaneStatus::Working), "beacon"),
+            in_session(pane("w:p1", DUNWICH, PaneStatus::Working), "kadath"),
             "x-1.1",
         )])
         .not_answering_for("standing-agents", wedged());
@@ -1830,7 +1830,7 @@ path = "{}"
                     state: SessionState::Answering,
                 },
                 Session {
-                    name: "beacon".to_string(),
+                    name: "kadath".to_string(),
                     state: SessionState::Answering,
                 },
                 Session {
@@ -1843,11 +1843,11 @@ path = "{}"
             snap.agents.unanswered().collect::<Vec<_>>(),
             ["standing-agents"]
         );
-        let seat = node(tree_of(&snap, "orbital"), "x-1.1")
+        let seat = node(tree_of(&snap, "dunwich"), "x-1.1")
             .agent
             .as_ref()
-            .expect("the seat in beacon is on its bead");
-        assert_eq!(seat.pane.session, "beacon");
+            .expect("the seat in kadath is on its bead");
+        assert_eq!(seat.pane.session, "kadath");
     }
 
     /// A session that is running and will not answer for its panes.
@@ -1863,16 +1863,16 @@ path = "{}"
     /// Three claims, each naming the pane its seat sits in, so a collection
     /// over two sessions can be asked about each of them separately.
     const SEATED_TREE: &str = r#"[
-      {"id":"orb-7","title":"lift the ground station","status":"open",
+      {"id":"dun-7","title":"lift the ground station","status":"open",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-7.1","title":"re-point the dish","status":"in_progress","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p1"}},
-      {"id":"orb-7.2","title":"lay the feeder cable","status":"in_progress","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.2","title":"lay the feeder cable","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p2"}},
-      {"id":"orb-7.3","title":"tune the receiver","status":"in_progress","parent":"orb-7",
-       "dependencies":[{"depends_on_id":"orb-7","type":"parent-child"}],
+      {"id":"dun-7.3","title":"tune the receiver","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
        "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p3"}}
     ]"#;
 
@@ -1888,13 +1888,13 @@ path = "{}"
     #[test]
     fn a_claim_whose_seat_is_in_a_session_that_went_quiet_is_not_orphaned_and_the_rest_still_are() {
         let cfg = one_project();
-        let trackers = orbital_with(orbital_holding(SEATED_TREE));
+        let trackers = dunwich_with(dunwich_holding(SEATED_TREE));
         let mut standing = Collection::default();
 
         let seated = Provider::holding(vec![
-            pane("w:p1", ORBITAL, PaneStatus::Working),
-            in_session(pane("w:p2", ORBITAL, PaneStatus::Working), "beacon"),
-            pane("w:p3", ORBITAL, PaneStatus::Working),
+            pane("w:p1", DUNWICH, PaneStatus::Working),
+            in_session(pane("w:p2", DUNWICH, PaneStatus::Working), "kadath"),
+            pane("w:p3", DUNWICH, PaneStatus::Working),
         ]);
         let before = standing.collect(
             &cfg,
@@ -1910,9 +1910,9 @@ path = "{}"
             "every seat is on its pane while both sessions answer"
         );
 
-        // beacon stops answering, and `w:p3` leaves the session that still does.
-        let quiet = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)])
-            .not_answering_for("beacon", wedged());
+        // kadath stops answering, and `w:p3` leaves the session that still does.
+        let quiet = Provider::holding(vec![pane("w:p1", DUNWICH, PaneStatus::Working)])
+            .not_answering_for("kadath", wedged());
         let after = standing.collect(
             &cfg,
             &quiet,
@@ -1924,17 +1924,17 @@ path = "{}"
 
         assert_eq!(
             after.agents.unanswered().collect::<Vec<_>>(),
-            ["beacon"],
+            ["kadath"],
             "the session that went quiet is still a finding of its own"
         );
         assert_eq!(
             orphaned(&after),
-            ["orb-7.3"],
+            ["dun-7.3"],
             "the seat that died in the session that answered is reported, and \
              the one in the session that did not is not"
         );
         assert!(
-            node(tree_of(&after, "orbital"), "orb-7.1").agent.is_some(),
+            node(tree_of(&after, "dunwich"), "dun-7.1").agent.is_some(),
             "the seat that answered is still drawn on its bead"
         );
     }
@@ -1949,18 +1949,18 @@ path = "{}"
     /// is invoked — tracked as `bdi-0tp.15`.
     #[test]
     fn a_claim_in_a_session_that_has_never_answered_is_orphaned_as_before() {
-        let quiet = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)])
-            .not_answering_for("beacon", wedged());
+        let quiet = Provider::holding(vec![pane("w:p1", DUNWICH, PaneStatus::Working)])
+            .not_answering_for("kadath", wedged());
 
         let snap = run(
             &one_project(),
             &quiet,
-            &orbital_with(orbital_holding(SEATED_TREE)),
+            &dunwich_with(dunwich_holding(SEATED_TREE)),
             Filter::All,
             now(),
         );
 
-        assert_eq!(orphaned(&snap), ["orb-7.2", "orb-7.3"]);
+        assert_eq!(orphaned(&snap), ["dun-7.2", "dun-7.3"]);
     }
 
     /// What a session that stops being run takes with it. A name the provider
@@ -1970,12 +1970,12 @@ path = "{}"
     #[test]
     fn a_session_the_provider_has_stopped_running_takes_what_it_was_holding() {
         let cfg = one_project();
-        let trackers = orbital_with(orbital_holding(SEATED_TREE));
+        let trackers = dunwich_with(dunwich_holding(SEATED_TREE));
         let mut standing = Collection::default();
 
         let both = Provider::holding(vec![
-            pane("w:p1", ORBITAL, PaneStatus::Working),
-            in_session(pane("w:p2", ORBITAL, PaneStatus::Working), "beacon"),
+            pane("w:p1", DUNWICH, PaneStatus::Working),
+            in_session(pane("w:p2", DUNWICH, PaneStatus::Working), "kadath"),
         ]);
         standing.collect(
             &cfg,
@@ -1986,8 +1986,8 @@ path = "{}"
             now(),
         );
 
-        // beacon stops being run at all, and starts again under the same name.
-        let alone = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)]);
+        // kadath stops being run at all, and starts again under the same name.
+        let alone = Provider::holding(vec![pane("w:p1", DUNWICH, PaneStatus::Working)]);
         standing.collect(
             &cfg,
             &alone,
@@ -1996,8 +1996,8 @@ path = "{}"
             Filter::All,
             now(),
         );
-        let quiet = Provider::holding(vec![pane("w:p1", ORBITAL, PaneStatus::Working)])
-            .not_answering_for("beacon", wedged());
+        let quiet = Provider::holding(vec![pane("w:p1", DUNWICH, PaneStatus::Working)])
+            .not_answering_for("kadath", wedged());
         let after = standing.collect(
             &cfg,
             &quiet,
@@ -2009,7 +2009,7 @@ path = "{}"
 
         assert_eq!(
             orphaned(&after),
-            ["orb-7.2", "orb-7.3"],
+            ["dun-7.2", "dun-7.3"],
             "the pane list of the session that went is not the new one's"
         );
     }
@@ -2020,27 +2020,27 @@ path = "{}"
     #[test]
     fn a_pane_id_two_sessions_hold_is_awarded_to_nobody_and_reported() {
         let panes = Provider::holding(vec![
-            titled(pane("w:p1", ORBITAL, PaneStatus::Working), "in default"),
+            titled(pane("w:p1", DUNWICH, PaneStatus::Working), "in default"),
             titled(
-                in_session(pane("w:p1", ORBITAL, PaneStatus::Idle), "beacon"),
-                "in beacon",
+                in_session(pane("w:p1", DUNWICH, PaneStatus::Idle), "kadath"),
+                "in kadath",
             ),
         ]);
 
-        let snap = run(&one_project(), &panes, &orbital(), Filter::All, now());
+        let snap = run(&one_project(), &panes, &dunwich(), Filter::All, now());
 
-        let claimed = node(tree_of(&snap, "orbital"), "orb-7.1");
+        let claimed = node(tree_of(&snap, "dunwich"), "dun-7.1");
         assert_eq!(claimed.agent, None, "neither pane is awarded");
         assert_eq!(
             claimed.anomalies,
             vec![Anomaly::OrphanClaim {
                 refused: Some(Conflict::PaneIdInSeveralSessions {
                     bead: BeadKey {
-                        project: "orbital".to_string(),
-                        id: "orb-7.1".to_string(),
+                        project: "dunwich".to_string(),
+                        id: "dun-7.1".to_string(),
                     },
                     pane_id: "w:p1".to_string(),
-                    sessions: vec![A_SESSION.to_string(), "beacon".to_string()],
+                    sessions: vec![A_SESSION.to_string(), "kadath".to_string()],
                 }),
             }]
         );
@@ -2052,7 +2052,7 @@ path = "{}"
             .collect();
         assert_eq!(
             loose,
-            vec![(A_SESSION, "w:p1"), ("beacon", "w:p1")],
+            vec![(A_SESSION, "w:p1"), ("kadath", "w:p1")],
             "both panes are still drawn, each under its session"
         );
     }
@@ -2064,8 +2064,8 @@ path = "{}"
     fn a_project_a_scope_left_out_has_its_tracker_unasked() {
         let trackers = colliding_trackers();
         let scoped = two_projects()
-            .scoped_to(&["orbital".to_string()])
-            .expect("orbital is configured");
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured");
 
         Collection::default().collect(
             &scoped,
@@ -2082,8 +2082,8 @@ path = "{}"
             "ferry was scoped out, so nothing should have gone near its tracker"
         );
         assert!(
-            asked_of(&trackers, "orbital") > 0,
-            "orbital was scoped in, so it was read"
+            asked_of(&trackers, "dunwich") > 0,
+            "dunwich was scoped in, so it was read"
         );
     }
 
@@ -2101,23 +2101,23 @@ path = "{}"
             &Wanted::Everything,
         );
 
-        let after = collect(&mut standing, &panes, &orbital_refusing(), &orbital_alone());
+        let after = collect(&mut standing, &panes, &dunwich_refusing(), &dunwich_alone());
 
         assert_eq!(
             after.failed_projects,
             vec![FailedProject {
-                project: "orbital".to_string(),
+                project: "dunwich".to_string(),
                 tracker: TrackerFailure::Auth,
             }]
         );
         assert!(
-            trees_of(&after, "orbital").is_empty(),
-            "orbital's trees went with the tracker that could not be read"
+            trees_of(&after, "dunwich").is_empty(),
+            "dunwich's trees went with the tracker that could not be read"
         );
         assert_eq!(
             trees_of(&after, "ferry"),
             trees_of(&before, "ferry"),
-            "ferry is exactly what it was before orbital's outage"
+            "ferry is exactly what it was before dunwich's outage"
         );
     }
 
@@ -2137,7 +2137,7 @@ path = "{}"
             pane("w:p2", FERRY, PaneStatus::Working),
             "x-1.1",
         )]);
-        let after = collect(&mut standing, &arrived, &trackers, &orbital_alone());
+        let after = collect(&mut standing, &arrived, &trackers, &dunwich_alone());
 
         assert!(
             node(tree_of(&after, "ferry"), "x-1.1").agent.is_some(),
@@ -2171,7 +2171,7 @@ path = "{}"
             &cfg,
             &panes,
             &trackers,
-            &orbital_alone(),
+            &dunwich_alone(),
             Filter::All,
             later,
         );
@@ -2179,7 +2179,7 @@ path = "{}"
         assert_eq!(
             after.read_at,
             BTreeMap::from([
-                ("orbital".to_string(), later),
+                ("dunwich".to_string(), later),
                 ("ferry".to_string(), earlier),
             ]),
             "only the project the refresh named was read again"
@@ -2192,7 +2192,7 @@ path = "{}"
 
     /// A read that failed is stamped like any other, because a tracker that
     /// refused takes its trees down with it — `after` has no rows of
-    /// orbital's left to be stale. Keeping the last read that *worked* would
+    /// dunwich's left to be stale. Keeping the last read that *worked* would
     /// drag the whole view's freshness back to it over rows nothing on the
     /// screen came from, which is the same false claim as `generated_at` in
     /// the other direction.
@@ -2215,16 +2215,16 @@ path = "{}"
         let after = standing.collect(
             &cfg,
             &panes,
-            &orbital_refusing(),
-            &orbital_alone(),
+            &dunwich_refusing(),
+            &dunwich_alone(),
             Filter::All,
             later,
         );
 
         assert!(
-            trees_of(&after, "orbital").is_empty(),
-            "nothing orbital's earlier read produced is still drawn"
+            trees_of(&after, "dunwich").is_empty(),
+            "nothing dunwich's earlier read produced is still drawn"
         );
-        assert_eq!(after.read_at["orbital"], later);
+        assert_eq!(after.read_at["dunwich"], later);
     }
 }

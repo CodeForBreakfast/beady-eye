@@ -33,7 +33,7 @@ const LONG_ENOUGH_TO_ANSWER: Duration = Duration::from_secs(10);
 const THE_TRACKER: &str = include_str!("fixtures/bd_before_the_metadata_cutover.json");
 
 /// Every bead that capture holds, by the id its row is drawn under.
-const EVERY_BEAD: [&str; 6] = ["orb-v1", "orb-v2", "orb-v3", "orb-v4", "orb-v5", "orb-v6"];
+const EVERY_BEAD: [&str; 6] = ["dun-v1", "dun-v2", "dun-v3", "dun-v4", "dun-v5", "dun-v6"];
 
 /// A badge on the key one row's metadata spells from inside a string.
 const A_BADGE_ON_PHASE: &str = "\n[[badges]]\nkey = \"metadata.phase\"\nrender = \"{}\"\n";

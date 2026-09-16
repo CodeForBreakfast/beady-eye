@@ -30,9 +30,9 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 
 /// One tracker, whose root carries a reference to somewhere a reader can go.
 const THE_TRACKER: &str = r#"[
-  {"id":"orb-1","title":"lift the ground station","status":"open",
+  {"id":"dun-1","title":"lift the ground station","status":"open",
    "priority":1,"issue_type":"epic",
-   "metadata":{"delivery_pr":"orbital/atlas#12"}}
+   "metadata":{"delivery_pr":"dunwich/arkham#12"}}
 ]"#;
 
 /// A badge on that key, drawn as a reference and pointing at the page the
@@ -68,6 +68,6 @@ fn a_badge_that_names_a_url_reaches_the_terminal_as_a_hyperlink() {
     bdi.send(SHOW_EVERY_TREE);
 
     let clickable =
-        format!("{OSC_8}https://forge.invalid/orbital/atlas/pull/12{ST}⇢ #12{OSC_8}{ST}");
+        format!("{OSC_8}https://forge.invalid/dunwich/arkham/pull/12{ST}⇢ #12{OSC_8}{ST}");
     bdi.read_until(clickable.as_bytes(), GIVING_UP);
 }

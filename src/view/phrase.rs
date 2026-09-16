@@ -829,7 +829,7 @@ mod tests {
     /// The two shapes bd writes when it cannot open a tracker, measured
     /// against this repo's own tracker on 2026-08-30. Both name a database, a
     /// host and a user, and none of it may reach a phrase.
-    const REFUSED: &str = r#"Error: failed to open database: failed to check if database "atlas" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'atlas'"#;
+    const REFUSED: &str = r#"Error: failed to open database: failed to check if database "arkham" exists on server db.example.invalid:3306: Error 1045 (28000): Access denied for user 'arkham'"#;
     const UNREACHABLE: &str = "Error: failed to open database: Dolt server unreachable at nosuchhost.invalid:3306: dial tcp: lookup nosuchhost.invalid: no such host";
 
     fn key(id: &str) -> BeadKey {
@@ -1048,7 +1048,7 @@ mod tests {
                 Conflict::PaneInAnotherProject { .. } => Some(Conflict::PaneIdInSeveralSessions {
                     bead: key("smt-4kd3p.20"),
                     pane_id: "wCM:p9".into(),
-                    sessions: vec!["default".into(), "beacon".into()],
+                    sessions: vec!["default".into(), "kadath".into()],
                 }),
                 Conflict::PaneIdInSeveralSessions { .. } => None,
             },
@@ -1431,7 +1431,7 @@ mod tests {
     #[test]
     fn nothing_a_tool_wrote_reaches_a_phrase() {
         let mut poison: Vec<String> = [
-            "atlas",
+            "arkham",
             "db.example.invalid",
             "nosuchhost.invalid",
             "Access denied",

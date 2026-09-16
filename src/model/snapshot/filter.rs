@@ -139,20 +139,20 @@ mod tests {
     /// anomaly rule can fire on it, which is the one state the default filter
     /// folds away.
     const UNSTAFFED: &str = r#"[
-      {"id":"orb-2","title":"quiet work","status":"blocked",
+      {"id":"dun-2","title":"quiet work","status":"blocked",
        "priority":2,"issue_type":"epic"},
-      {"id":"orb-2.1","title":"read the almanac","status":"open",
-       "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+      {"id":"dun-2.1","title":"read the almanac","status":"open",
+       "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"}],
        "priority":2,"issue_type":"task"},
-      {"id":"orb-2.2","title":"log the pass","status":"closed",
-       "dependencies":[{"depends_on_id":"orb-2","type":"parent-child"}],
+      {"id":"dun-2.2","title":"log the pass","status":"closed",
+       "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"}],
        "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z"}
     ]"#;
 
     /// A tree nobody is working in, told apart from its neighbours by its root.
     fn quiet(root: &str, title: &str) -> Tree {
         let mut t = build_tree(
-            "orbital",
+            "dunwich",
             &assembled(UNSTAFFED),
             &Joined::default(),
             &Readiness::default(),
@@ -170,18 +170,18 @@ mod tests {
     /// never returned, and a bead blocked by its own forebear.
     fn quiet_with_reports() -> Tree {
         let json = r#"[
-          {"id":"orb-6","title":"the far side","status":"open"},
-          {"id":"orb-6.2","title":"waiting on a bead bd did not return","status":"open",
-           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
-                           {"depends_on_id":"orb-6.1","type":"blocks"}]},
-          {"id":"orb-6.3","title":"one","status":"open",
-           "dependencies":[{"depends_on_id":"orb-6","type":"parent-child"},
-                           {"depends_on_id":"orb-6","type":"blocks"}]},
-          {"id":"orb-6.4","title":"two","status":"open",
-           "dependencies":[{"depends_on_id":"orb-6.3","type":"parent-child"}]}
+          {"id":"dun-6","title":"the far side","status":"open"},
+          {"id":"dun-6.2","title":"waiting on a bead bd did not return","status":"open",
+           "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"},
+                           {"depends_on_id":"dun-6.1","type":"blocks"}]},
+          {"id":"dun-6.3","title":"one","status":"open",
+           "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"},
+                           {"depends_on_id":"dun-6","type":"blocks"}]},
+          {"id":"dun-6.4","title":"two","status":"open",
+           "dependencies":[{"depends_on_id":"dun-6.3","type":"parent-child"}]}
         ]"#;
         build_tree(
-            "orbital",
+            "dunwich",
             &assembled(json),
             &Joined::default(),
             &Readiness::default(),
@@ -193,19 +193,19 @@ mod tests {
     }
 
     /// One project's tree whose only activity is a bead a seat has claimed
-    /// and no pane has joined yet: `orb-4.1` is `in_progress`, freshly
+    /// and no pane has joined yet: `dun-4.1` is `in_progress`, freshly
     /// touched, and named by no pane.
     const CLAIMED_WITH_NO_PANE: &str = r#"[
-      {"id":"orb-4","title":"raise the mast","status":"open",
+      {"id":"dun-4","title":"raise the mast","status":"open",
        "priority":1,"issue_type":"epic"},
-      {"id":"orb-4.1","title":"seat the guy wires","status":"in_progress",
-       "dependencies":[{"depends_on_id":"orb-4","type":"parent-child"}],
+      {"id":"dun-4.1","title":"seat the guy wires","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"}],
        "priority":1,"issue_type":"task","updated_at":"2026-08-30T11:00:00Z"}
     ]"#;
 
     fn claimed_with_no_pane() -> Tree {
         build_tree(
-            "orbital",
+            "dunwich",
             &assembled(CLAIMED_WITH_NO_PANE),
             &Joined::default(),
             &Readiness::default(),
@@ -219,7 +219,7 @@ mod tests {
     /// A quiet tree, a live one, and another quiet one: the interleaving a
     /// lifted filter has to put back.
     fn interleaved() -> Vec<Tree> {
-        vec![quiet("orb-2", "quiet work"), tree(), quiet_with_reports()]
+        vec![quiet("dun-2", "quiet work"), tree(), quiet_with_reports()]
     }
 
     /// A tree with nothing in it but the numbers the order is made from.
@@ -256,14 +256,14 @@ mod tests {
     fn a_projects_trees_stay_together_where_the_config_put_them() {
         assert_eq!(
             ordered(vec![
-                counted("orbital", "orb-1", 0, 2, 0),
-                counted("orbital", "orb-2", 0, 9, 0),
+                counted("dunwich", "dun-1", 0, 2, 0),
+                counted("dunwich", "dun-2", 0, 9, 0),
                 counted("ferry", "fer-1", 1, 1, 0),
                 counted("ferry", "fer-2", 0, 40, 0),
             ]),
             [
-                "orbital:orb-2",
-                "orbital:orb-1",
+                "dunwich:dun-2",
+                "dunwich:dun-1",
                 "ferry:fer-1",
                 "ferry:fer-2"
             ]
@@ -276,10 +276,10 @@ mod tests {
     fn a_tree_of_finished_beads_does_not_outrank_a_smaller_one_still_going() {
         assert_eq!(
             ordered(vec![
-                counted("orbital", "orb-done", 0, 90, 88),
-                counted("orbital", "orb-going", 0, 5, 0),
+                counted("dunwich", "dun-done", 0, 90, 88),
+                counted("dunwich", "dun-going", 0, 5, 0),
             ]),
-            ["orbital:orb-going", "orbital:orb-done"]
+            ["dunwich:dun-going", "dunwich:dun-done"]
         );
     }
 
@@ -289,12 +289,12 @@ mod tests {
     #[test]
     fn a_tree_bdi_could_not_read_leads_the_forest() {
         let mut trees = vec![
-            counted("orbital", "orb-1", 1, 40, 0),
-            Tree::tracker_unreachable("orbital", "orb-9", TrackerFailure::Auth),
+            counted("dunwich", "dun-1", 1, 40, 0),
+            Tree::tracker_unreachable("dunwich", "dun-9", TrackerFailure::Auth),
         ];
         in_flight_first(&mut trees);
 
-        assert_eq!(trees[0].root, "orb-9");
+        assert_eq!(trees[0].root, "dun-9");
     }
 
     /// Nothing tells the beads filed in bulk apart, so the tail is at least
@@ -303,25 +303,25 @@ mod tests {
     fn trees_holding_the_same_work_come_in_id_order() {
         assert_eq!(
             ordered(vec![
-                counted("orbital", "orb-c", 0, 1, 0),
-                counted("orbital", "orb-a", 0, 1, 0),
-                counted("orbital", "orb-b", 0, 1, 0),
+                counted("dunwich", "dun-c", 0, 1, 0),
+                counted("dunwich", "dun-a", 0, 1, 0),
+                counted("dunwich", "dun-b", 0, 1, 0),
             ]),
-            ["orbital:orb-a", "orbital:orb-b", "orbital:orb-c"]
+            ["dunwich:dun-a", "dunwich:dun-b", "dunwich:dun-c"]
         );
     }
 
     #[test]
     fn a_tree_with_no_live_agent_is_hidden_and_reported() {
-        let snap = snapshot(vec![tree(), quiet("orb-2", "quiet work")]);
+        let snap = snapshot(vec![tree(), quiet("dun-2", "quiet work")]);
 
         assert_eq!(snap.trees.len(), 1);
-        assert_eq!(snap.trees[0].root, "orb-7");
+        assert_eq!(snap.trees[0].root, "dun-7");
         assert_eq!(
             snap.hidden_trees,
             vec![HiddenTree {
-                project: "orbital".to_string(),
-                root: "orb-2".to_string(),
+                project: "dunwich".to_string(),
+                root: "dun-2".to_string(),
                 title: "quiet work".to_string(),
                 reason: "no-live-agent",
                 findings: false,
@@ -335,8 +335,8 @@ mod tests {
     /// hidden: the view asks the hidden tree and never the forest.
     #[test]
     fn a_hidden_tree_waiting_on_a_bead_bd_never_returned_has_a_finding() {
-        let mut waiting = quiet("orb-2", "quiet work");
-        waiting.dangling = vec!["orb-2.9".to_string()];
+        let mut waiting = quiet("dun-2", "quiet work");
+        waiting.dangling = vec!["dun-2.9".to_string()];
         let snap = snapshot(vec![tree(), waiting]);
 
         assert!(snap.hidden_trees[0].findings);
@@ -344,8 +344,8 @@ mod tests {
 
     #[test]
     fn a_hidden_tree_blocked_by_its_own_forebear_has_a_finding() {
-        let mut looping = quiet("orb-2", "quiet work");
-        looping.cycles = vec!["orb-2".to_string()];
+        let mut looping = quiet("dun-2", "quiet work");
+        looping.cycles = vec!["dun-2".to_string()];
         let snap = snapshot(vec![tree(), looping]);
 
         assert!(snap.hidden_trees[0].findings);
@@ -377,7 +377,7 @@ mod tests {
             snap.hidden_trees
         );
         assert_eq!(snap.trees.len(), 1);
-        assert_eq!(snap.trees[0].root, "orb-4");
+        assert_eq!(snap.trees[0].root, "dun-4");
     }
 
     #[test]
@@ -473,7 +473,7 @@ mod tests {
         let roots: Vec<&str> = lifted.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            ["orb-7", "orb-6", "orb-2"],
+            ["dun-7", "dun-6", "dun-2"],
             "the forest's own order, not the shown ones followed by the hidden ones"
         );
         assert!(lifted.hidden_trees.is_empty());
@@ -518,7 +518,7 @@ mod tests {
         let back = lifted
             .trees
             .iter()
-            .find(|t| t.root == "orb-6")
+            .find(|t| t.root == "dun-6")
             .expect("the hidden tree is back");
 
         assert_eq!(
@@ -526,8 +526,8 @@ mod tests {
             &quiet_with_reports(),
             "what a filter hid it must be able to show again"
         );
-        assert_eq!(back.dangling, ["orb-6.2"]);
-        assert_eq!(back.cycles, ["orb-6"]);
+        assert_eq!(back.dangling, ["dun-6.2"]);
+        assert_eq!(back.cycles, ["dun-6"]);
     }
 
     #[test]
@@ -539,8 +539,8 @@ mod tests {
         }];
         before.conflicts = vec![Conflict::BeadAndPaneDisagree {
             bead: BeadKey {
-                project: "orbital".to_string(),
-                id: "orb-7".to_string(),
+                project: "dunwich".to_string(),
+                id: "dun-7".to_string(),
             },
             named_by_bead: key("w:p1"),
             named_by_pane: key("w:p2"),
@@ -575,7 +575,7 @@ mod tests {
     fn without_herdr_a_refilter_hides_nothing() {
         let blind = build(
             Collected {
-                trees: vec![quiet("orb-2", "quiet work")],
+                trees: vec![quiet("dun-2", "quiet work")],
                 ..Collected::default()
             },
             &[],
@@ -605,7 +605,7 @@ mod tests {
             json.get("collected").is_none(),
             "the trees kept for a refilter are not emitted"
         );
-        assert_eq!(json["trees"][0]["root"], "orb-7");
-        assert_eq!(json["hidden_trees"][0]["root"], "orb-6");
+        assert_eq!(json["trees"][0]["root"], "dun-7");
+        assert_eq!(json["hidden_trees"][0]["root"], "dun-6");
     }
 }
