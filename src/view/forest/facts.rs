@@ -15,8 +15,12 @@ use crate::model::snapshot::{Counts, Snapshot, Tree};
 use crate::model::tree::Link;
 use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFacts};
 
+use super::handle::Handle;
+use super::spine::{Spine, Stand};
+
 /// One snapshot's answers: a tree's for every tree it holds, shown or
-/// hidden, by its root, and every project's counts over all of its trees.
+/// hidden, by its root, every project's counts over all of its trees, and
+/// where a way down stands at each node a rule begins on.
 ///
 /// A hidden tree is a tree, and the filter only decides where it is drawn,
 /// so it is answered as the shown ones are rather than when a reader opens
@@ -25,10 +29,12 @@ use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFact
 pub(super) struct Facts {
     trees: BTreeMap<BeadKey, TreeFacts>,
     projects: BTreeMap<String, Counts>,
+    begun: BTreeMap<Handle, Stand>,
 }
 
 impl Facts {
-    pub(super) fn of(snapshot: &Snapshot) -> Self {
+    /// `spines` is which rule the reader has put in force under which lines.
+    pub(super) fn of(snapshot: &Snapshot, spines: &BTreeMap<Handle, Spine>) -> Self {
         let mut trees = BTreeMap::new();
         for tree in snapshot.trees.iter().chain(&snapshot.collected) {
             trees
@@ -37,6 +43,10 @@ impl Facts {
         }
         Facts {
             trees,
+            begun: spines
+                .iter()
+                .map(|(handle, spine)| (handle.clone(), spine.begins()))
+                .collect(),
             projects: snapshot
                 .collected
                 .chunk_by(|a, b| a.project == b.project)
@@ -61,6 +71,17 @@ impl Facts {
     /// Nothing for a project with no trees, which is what its line counts.
     pub(super) fn project(&self, project: &str) -> Counts {
         self.projects.get(project).cloned().unwrap_or_default()
+    }
+
+    /// Where a way down stands at the line a rule begins on, where a scope
+    /// set one there. Nothing for a line that answers from the rule over it.
+    pub(super) fn begun(&self, handle: &Handle) -> Option<Stand> {
+        self.begun.get(handle).copied()
+    }
+
+    /// Every line a rule begins on.
+    pub(super) fn beginnings(&self) -> impl Iterator<Item = &Handle> {
+        self.begun.keys()
     }
 }
 
