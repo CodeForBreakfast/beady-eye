@@ -9,6 +9,7 @@ mod drawn;
 mod facts;
 mod handle;
 mod layout;
+mod spine;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;

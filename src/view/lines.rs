@@ -387,25 +387,6 @@ pub(crate) fn walks_on_this_thread() -> usize {
     WALKS.with(std::cell::Cell::get)
 }
 
-/// Whether the line at `at` is the first this tree draws of its bead.
-///
-/// A bead reached more than one way down gets a line for each way, and the
-/// first of them is the one that stands for the work: the one whose every
-/// link down from the root is the way the walk first reached its bead. Asked
-/// of the tree rather than of the lines already drawn, so a fold the reader
-/// opens elsewhere cannot move which line that is.
-pub(crate) fn first_copy(tree: &Tree, at: usize, above: &[usize]) -> bool {
-    above
-        .iter()
-        .copied()
-        .zip(above.iter().copied().skip(1).chain([at]))
-        .all(|(from, to)| {
-            tree.children[from]
-                .iter()
-                .any(|link| link.bead == to && link.first)
-        })
-}
-
 /// Whether the line at `at` rests open: whether anything beneath it is work
 /// a reader needs on the first screen.
 ///
