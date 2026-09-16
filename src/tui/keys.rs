@@ -92,6 +92,18 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: Some("keys"),
     },
     Binding {
+        keys: &[alone(KeyCode::Char('s'), "s")],
+        action: Action::CycleSpine,
+        does: "cycle which copy of a bead opens, under the selected node",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('S'), "S")],
+        action: Action::CycleSpineForest,
+        does: "cycle which copy of a bead opens, across the whole forest",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Char('F'), "F")],
         action: Action::FocusForest,
         does: "draw the selected bead as the only root, or put the forest back",
@@ -364,6 +376,8 @@ pub(super) mod tests {
             Action::ExpandForest,
             Action::CollapseForest,
             Action::RestoreDefault,
+            Action::CycleSpine,
+            Action::CycleSpineForest,
             Action::ToggleFilter,
             Action::Focus,
             Action::FocusForest,
@@ -398,6 +412,8 @@ pub(super) mod tests {
                 | Action::ExpandForest
                 | Action::CollapseForest
                 | Action::RestoreDefault
+                | Action::CycleSpine
+                | Action::CycleSpineForest
                 | Action::ToggleFilter
                 | Action::Focus
                 | Action::FocusForest

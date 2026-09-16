@@ -87,6 +87,11 @@ pub enum Action {
     /// Let go of every fold set by hand, so the forest rests as `bdi` would
     /// have drawn it for the snapshot it is holding now.
     RestoreDefault,
+    /// Put the next rule that opens the spine in force under the selected
+    /// node, leaving every hand fold where it is.
+    CycleSpine,
+    /// The same across the whole forest.
+    CycleSpineForest,
     /// Show every tree, rather than only those with a live agent.
     ToggleFilter,
     /// Focus the selected bead's pane in herdr.

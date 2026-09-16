@@ -32,7 +32,7 @@ use crate::view::row::{self, Widths};
 use super::drawn::{Beneath, Count, Counted, Drawn, Ground, Node, Undrawn};
 use super::facts::{Facts, TreeFacts, Uniform};
 use super::handle::{item_key, Folds, Handle, ItemKey, Scope};
-use super::spine::{Spine, Stand};
+use super::spine::{Chosen, Stand};
 
 /// One entry in a parent's sequence of children, before it becomes a line.
 /// Notes and beads share the sequence because they share the box-drawing, and
@@ -589,7 +589,7 @@ impl<'a> Layout<'a> {
             index: self.tree_index(tree),
             tree,
             facts,
-            answers: facts.uniform(),
+            answers: self.facts.uniform(&root),
             named: self.named.tree(&root),
             rests_shut,
             rooted,
@@ -933,27 +933,33 @@ impl<'a> TreeLayout<'a> {
                 .find(|link| link.bead == step[1])
                 .expect("a way down follows the tree's own links");
             place = place.step_to(self.key_of(link));
-            stand = self.stand_at(&place, stand, link);
+            stand = self.stand_at(&place, stand, step[0], link);
         }
         (over, stand)
     }
 
     /// Where a tree's root stands: where the rule begins, set on the root's
-    /// own line or in force over the tree.
+    /// own line or in force over the forest.
     fn begins_at(&self, root: &Place) -> Stand {
-        self.begun(root)
-            .unwrap_or_else(|| Spine::default().begins())
+        self.begun(root).unwrap_or_else(Stand::over_nothing)
     }
 
-    /// Where the child at `place` stands, reached by `link` from a parent
-    /// at `stand`: where the rule a scope set on its line begins, or beneath
-    /// its parent by the link taken.
-    fn stand_at(&self, place: &Place, stand: Stand, link: &Link) -> Stand {
-        self.begun(place).unwrap_or_else(|| stand.beneath(link))
+    /// Where the child at `place` stands, reached by `link` from the bead at
+    /// `from` standing at `stand`: where the rule a scope set on its line
+    /// begins, or beneath its parent by the link taken.
+    fn stand_at(&self, place: &Place, stand: Stand, from: usize, link: &Link) -> Stand {
+        self.begun(place)
+            .unwrap_or_else(|| stand.beneath(from, link, self.chosen()))
     }
 
     fn begun(&self, place: &Place) -> Option<Stand> {
         self.layout.facts.begun(&Handle::Bead(place.clone()))
+    }
+
+    /// The ways every one-copy rule in force chose, which a stand under one
+    /// of them is read against.
+    fn chosen(&self) -> &'a [Chosen] {
+        self.layout.facts.chosen()
     }
 
     fn key_of(&self, link: &Link) -> BeadKey {
@@ -1027,6 +1033,7 @@ impl<'a> TreeLayout<'a> {
                 Child::Node(link) => {
                     let node = &self.tree.beads[link.bead];
                     let named = named.and_then(|named| named.under(&node.id));
+                    let from = *above.last().expect("a way down ends on the parent");
                     drawn.push(match (named, self.answers) {
                         // A line the folds name nothing at or beneath is no
                         // rule's beginning either — a scope that put one in
@@ -1037,7 +1044,7 @@ impl<'a> TreeLayout<'a> {
                             link,
                             parent,
                             over,
-                            stand.beneath(link),
+                            stand.beneath(from, link, self.chosen()),
                             trunk,
                             last,
                             depth,
@@ -1071,7 +1078,8 @@ impl<'a> TreeLayout<'a> {
         let at = link.bead;
         let node = &self.tree.beads[at];
         let place = parent.step_to(self.key_of(link));
-        let stand = self.stand_at(&place, stand, link);
+        let from = *above.last().expect("a way down ends on the parent");
+        let stand = self.stand_at(&place, stand, from, link);
         let kids = self.children_entries(at, above);
         let bead = self.facts.bead(self.tree, at, above);
         let handle = Handle::Bead(place.clone());
@@ -1364,7 +1372,7 @@ fn count_child(
 ) -> Count {
     let child = Counted {
         at: link.bead,
-        stand: parent.stand.beneath(link),
+        stand: parent.stand.beneath(parent.at, link, answers.chosen()),
         ..parent
     };
     let mut count = count(kept, tree, answers, beneath_shut, row, child);
@@ -1440,8 +1448,7 @@ fn ground_of<'g>(ground: &'g Ground, counted: &Counted) -> (&'g Arc<Tree>, Unifo
     let tree = &ground.trees[counted.tree];
     let answers = ground
         .facts
-        .tree(&root_key(tree))
-        .uniform()
+        .uniform(&root_key(tree))
         .expect("a subtree left undrawn is in a tree with one answer per bead");
     (tree, answers)
 }
@@ -1544,7 +1551,7 @@ fn children_of(
 ) -> Node {
     let counted = Counted {
         at: link.bead,
-        stand: parent.stand.beneath(link),
+        stand: parent.stand.beneath(parent.at, link, answers.chosen()),
         ..parent
     };
     let rows = ground

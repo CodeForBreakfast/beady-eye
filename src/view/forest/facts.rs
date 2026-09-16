@@ -13,10 +13,10 @@ use std::collections::BTreeMap;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Snapshot, Tree};
 use crate::model::tree::Link;
-use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFacts};
+use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFacts, Place};
 
 use super::handle::Handle;
-use super::spine::{Spine, Stand};
+use super::spine::{Chosen, Spine, Stand};
 
 /// One snapshot's answers: a tree's for every tree it holds, shown or
 /// hidden, by its root, every project's counts over all of its trees, and
@@ -30,23 +30,50 @@ pub(super) struct Facts {
     trees: BTreeMap<BeadKey, TreeFacts>,
     projects: BTreeMap<String, Counts>,
     begun: BTreeMap<Handle, Stand>,
+    chosen: Vec<Chosen>,
 }
 
 impl Facts {
-    /// `spines` is which rule the reader has put in force under which lines.
-    pub(super) fn of(snapshot: &Snapshot, spines: &BTreeMap<Handle, Spine>) -> Self {
+    /// `spine` is the rule in force over the forest, and `spines` the rule
+    /// the reader has put in force under each line they set one on.
+    pub(super) fn of(snapshot: &Snapshot, spine: Spine, spines: &BTreeMap<Handle, Spine>) -> Self {
         let mut trees = BTreeMap::new();
         for tree in snapshot.trees.iter().chain(&snapshot.collected) {
             trees
                 .entry(root_key(tree))
                 .or_insert_with(|| TreeFacts::of(tree));
         }
+        // The rule over the forest begins on every tree's root, and a rule
+        // set on a line begins there instead of the one it stands under.
+        let mut beginnings: BTreeMap<Handle, Spine> = trees
+            .keys()
+            .map(|root| (Handle::Bead(Place::root(root.clone())), spine))
+            .collect();
+        beginnings.extend(
+            spines
+                .iter()
+                .map(|(handle, spine)| (handle.clone(), *spine)),
+        );
+
+        let mut chosen = Vec::new();
+        let mut begun = BTreeMap::new();
+        for (handle, spine) in beginnings {
+            let Handle::Bead(place) = &handle else {
+                continue;
+            };
+            // A rule set on a way down that leaves the tree names no line,
+            // and goes with it.
+            let Some((tree, at)) = stands_on(snapshot, place) else {
+                continue;
+            };
+            let stand = spine.begins(tree, at, &mut chosen);
+            begun.insert(handle, stand);
+        }
+
         Facts {
             trees,
-            begun: spines
-                .iter()
-                .map(|(handle, spine)| (handle.clone(), spine.begins()))
-                .collect(),
+            begun,
+            chosen,
             projects: snapshot
                 .collected
                 .chunk_by(|a, b| a.project == b.project)
@@ -83,6 +110,33 @@ impl Facts {
     pub(super) fn beginnings(&self) -> impl Iterator<Item = &Handle> {
         self.begun.keys()
     }
+
+    /// The ways every one-copy rule in force chose, by the index each stand
+    /// under one of them holds.
+    pub(super) fn chosen(&self) -> &[Chosen] {
+        &self.chosen
+    }
+
+    /// One tree's answers where every bead has one, with the chosen ways
+    /// beside them. None in a tree with a loop cut in it.
+    pub(super) fn uniform(&self, root: &BeadKey) -> Option<Uniform<'_>> {
+        self.tree(root).uniform(&self.chosen)
+    }
+}
+
+/// The tree a place was drawn in and the bead it names, where the snapshot
+/// still holds both.
+fn stands_on<'a>(snapshot: &'a Snapshot, place: &Place) -> Option<(&'a Tree, usize)> {
+    let tree = snapshot
+        .trees
+        .iter()
+        .chain(&snapshot.collected)
+        .find(|tree| root_key(tree) == place.tree)?;
+    let at = tree
+        .beads
+        .iter()
+        .position(|bead| bead.id == place.key().id)?;
+    Some((tree, at))
 }
 
 /// One tree's answers, kept per bead where a bead has one answer: a tree
@@ -127,8 +181,10 @@ impl TreeFacts {
 
     /// The answers a bead has one of, whichever way down reaches it: every
     /// bead's, in a tree with no loop in it, and none in a tree with one.
-    pub(super) fn uniform(&self) -> Option<Uniform<'_>> {
-        self.beads.as_deref().map(Uniform)
+    /// `chosen` is what a stand under a one-copy rule is read against, which
+    /// the walk carries alongside them.
+    fn uniform<'a>(&'a self, chosen: &'a [Chosen]) -> Option<Uniform<'a>> {
+        self.beads.as_deref().map(|beads| Uniform { beads, chosen })
     }
 
     /// What the line at `at` says of the tree beneath it.
@@ -167,23 +223,32 @@ impl TreeFacts {
 }
 
 /// One tree's answers where every bead has one answer, asked by the bead
-/// alone.
+/// alone, and the ways the rules in force chose — which the same walk reads
+/// and which no bead can be asked for.
 #[derive(Clone, Copy)]
-pub(super) struct Uniform<'a>(&'a [Answered]);
+pub(super) struct Uniform<'a> {
+    beads: &'a [Answered],
+    chosen: &'a [Chosen],
+}
 
-impl Uniform<'_> {
+impl<'a> Uniform<'a> {
     pub(super) fn bead(&self, at: usize) -> &BeadFacts {
-        &self.0[at].facts
+        &self.beads[at].facts
     }
 
     /// The children of `at` split into the ones drawn and the run that is
     /// not. No way down is needed to cut a loop, because there is none.
-    pub(super) fn split<'a>(&self, tree: &'a Tree, at: usize) -> (Vec<&'a Link>, Vec<&'a Link>) {
-        split_by(tree, at, &[], |bead| self.0[bead].facts.finished)
+    pub(super) fn split<'t>(&self, tree: &'t Tree, at: usize) -> (Vec<&'t Link>, Vec<&'t Link>) {
+        split_by(tree, at, &[], |bead| self.beads[bead].facts.finished)
     }
 
     /// What the run under `at` stands for.
     pub(super) fn run(&self, at: usize) -> usize {
-        self.0[at].run
+        self.beads[at].run
+    }
+
+    /// The ways every one-copy rule in force chose.
+    pub(super) fn chosen(&self) -> &'a [Chosen] {
+        self.chosen
     }
 }

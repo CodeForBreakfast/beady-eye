@@ -5,6 +5,7 @@ use ratatui::text::Span;
 
 use crate::model::snapshot::{ProviderState, Snapshot};
 use crate::view::fitted::{columns, Fitted, GAP};
+use crate::view::forest::Spine;
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::WARNING;
@@ -77,6 +78,13 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// beside it: a reader typing is owed their own characters and the column
 /// they end at, and one keystroke — Esc, Enter, a click — puts the row back.
 ///
+/// `spine` is the rule opening the fold default where the selection is,
+/// and it stands for as long as the reader leaves it in force. It is said
+/// where the answer is said, and an answer takes the place while it is up:
+/// both are the screen telling the reader what is so, the answer is the
+/// newer of the two, and a rule they set is still in force a keystroke
+/// later.
+///
 /// `width` is what this row will be drawn into. Choosing which words to say
 /// is a different job from cutting the words chosen, and only the first of
 /// them belongs here.
@@ -89,6 +97,7 @@ pub(super) fn status_bar(
     said: Option<&Said>,
     prompt: Option<&str>,
     keys: &str,
+    spine: Spine,
     width: usize,
 ) -> Fitted {
     if let Some(typed) = prompt {
@@ -101,7 +110,9 @@ pub(super) fn status_bar(
 
     let keys = Span::raw(keys.to_string());
     let answer: Vec<Span<'static>> = said
-        .map(|said| Span::raw(phrase::said(said)))
+        .map(phrase::said)
+        .or_else(|| phrase::spine(spine).map(str::to_string))
+        .map(Span::raw)
         .into_iter()
         .collect();
 
@@ -162,6 +173,7 @@ mod tests {
     use crate::config::Scope;
     use crate::model::snapshot::{a_provider, Filter, ProviderState as State, A_PROVIDER};
     use crate::view::draw::tests::*;
+    use crate::view::Action;
 
     /// A frame's snapshot with the provider a test is about and nothing else
     /// to say.
@@ -245,7 +257,12 @@ mod tests {
     /// on screen whole where there is room for it.
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
-        let drawn = Painted::of(status_bar(&[], None, None, A_KEY_ROW, 60), 60, 1).rows();
+        let drawn = Painted::of(
+            status_bar(&[], None, None, A_KEY_ROW, Spine::EveryCopy, 60),
+            60,
+            1,
+        )
+        .rows();
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
@@ -257,7 +274,14 @@ mod tests {
     #[test]
     fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 90),
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                90,
+            ),
             90,
             1,
         )
@@ -276,7 +300,14 @@ mod tests {
     #[test]
     fn a_bdi_nothing_can_reach_says_so_for_the_life_of_the_session() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], None, None, A_KEY_ROW, 90),
+            status_bar(
+                &[Notice::NoInboundChannel],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                90,
+            ),
             90,
             1,
         )
@@ -299,6 +330,7 @@ mod tests {
                 None,
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 200,
             ),
             200,
@@ -325,6 +357,7 @@ mod tests {
                 None,
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 80,
             ),
             80,
@@ -352,6 +385,7 @@ mod tests {
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 80,
             ),
             80,
@@ -373,6 +407,7 @@ mod tests {
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 120,
             ),
             120,
@@ -400,6 +435,7 @@ mod tests {
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 50,
             ),
             50,
@@ -442,6 +478,7 @@ mod tests {
                 None,
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 40,
             ),
             40,
@@ -459,7 +496,14 @@ mod tests {
     #[test]
     fn a_lone_notice_too_wide_for_the_row_is_said_briefly() {
         let drawn = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], None, None, A_KEY_ROW, 60),
+            status_bar(
+                &[Notice::NoInboundChannel],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                60,
+            ),
             60,
             1,
         )
@@ -473,7 +517,14 @@ mod tests {
     #[test]
     fn a_notice_said_briefly_is_still_painted_as_a_warning() {
         let painted = Painted::of(
-            status_bar(&[Notice::NoInboundChannel], None, None, A_KEY_ROW, 60),
+            status_bar(
+                &[Notice::NoInboundChannel],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                60,
+            ),
             60,
             1,
         )
@@ -502,6 +553,7 @@ mod tests {
                 None,
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 100,
             ),
             100,
@@ -529,6 +581,7 @@ mod tests {
                 None,
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 40,
             ),
             40,
@@ -552,6 +605,7 @@ mod tests {
                 None,
                 None,
                 A_KEY_ROW,
+                Spine::EveryCopy,
                 100,
             ),
             100,
@@ -565,6 +619,143 @@ mod tests {
             ),
             "{painted:?}"
         );
+    }
+
+    // ---- which rule opens the spine ----------------------------------------
+
+    /// The rule the forest starts under opens every way down to a bead, which
+    /// is the screen this program drew before there was a rule to name. There
+    /// is nothing in front of the reader to account for, so the foot accounts
+    /// for nothing and the row stays the keys.
+    #[test]
+    fn the_rule_the_forest_starts_under_is_not_named() {
+        let drawn = Painted::of(
+            status_bar(&[], None, None, A_KEY_ROW, Spine::EveryCopy, 100),
+            100,
+            1,
+        )
+        .rows();
+
+        assert_eq!(drawn[0].trim_end(), A_KEY_ROW);
+    }
+
+    /// A one-copy rule draws a bead in one of the places it stands and rests
+    /// the others shut. That screen lasts for as long as the reader leaves
+    /// the rule in force, so what accounts for it stands on the row rather
+    /// than passing like an answer.
+    #[test]
+    fn a_rule_the_reader_put_in_force_is_said_at_the_foot() {
+        let drawn = Painted::of(
+            status_bar(&[], None, None, A_KEY_ROW, Spine::Deepest, 100),
+            100,
+            1,
+        )
+        .rows();
+
+        assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
+        says(&drawn[0], "opening the deepest copy of each bead");
+    }
+
+    /// The foot reads the rule off the forest rather than being handed one,
+    /// so the words on the row are the rule the screen above them was drawn
+    /// under.
+    #[test]
+    fn the_foot_names_the_rule_the_forest_was_drawn_under() {
+        let mut forest = opened(&snapshot(
+            vec![grove(1)],
+            Vec::new(),
+            ProviderState::Answering,
+        ));
+        forest.apply(Action::CycleSpineForest);
+
+        let foot = frame_of(&forest, 100, 4).rows().remove(3);
+
+        says(&foot, "opening the deepest copy of each bead");
+    }
+
+    /// Both the answer and the rule are the screen telling the reader what is
+    /// so, and the answer is the newer of the two. The rule is still in force
+    /// underneath it and comes back with the reader's next key.
+    #[test]
+    fn what_a_keystroke_came_to_takes_the_rules_place_while_it_is_up() {
+        let drawn = Painted::of(
+            status_bar(
+                &[],
+                Some(&Said::Copied("dun-1".to_string())),
+                None,
+                A_KEY_ROW,
+                Spine::Deepest,
+                100,
+            ),
+            100,
+            1,
+        )
+        .rows();
+
+        assert!(drawn[0].trim_end().ends_with("copied dun-1"), "{drawn:?}");
+        assert!(
+            !drawn[0].contains("deepest"),
+            "the rule and the answer were both said: {drawn:?}"
+        );
+    }
+
+    /// A notice and a rule are two different things: one is what this run
+    /// cannot do and the other is what the reader asked for. The notice keeps
+    /// the start of the row and the paint that asks to be looked at, the keys
+    /// keep the end, and the rule goes between them where nothing is wrong.
+    #[test]
+    fn a_rule_beside_a_notice_is_said_between_it_and_the_keys() {
+        let painted = Painted::of(
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::Deepest,
+                150,
+            ),
+            150,
+            1,
+        );
+        let drawn = painted.rows();
+
+        assert_eq!(
+            drawn[0].trim_end(),
+            format!(
+                "⚠ no herdr session · which agents are alive is unknown  \
+                 opening the deepest copy of each bead{}{A_KEY_ROW}",
+                " ".repeat(150 - 54 - 2 - 37 - A_KEY_ROW.chars().count())
+            )
+        );
+        assert!(
+            painted
+                .row(0)
+                .iter()
+                .any(|run| run.said.contains("deepest") && run.style.fg != palette::ATTENTION.fg),
+            "a rule the reader asked for was painted as a warning: {:?}",
+            painted.row(0)
+        );
+    }
+
+    /// Half a sentence about the fold default accounts for nothing, so a row
+    /// with no room for the whole of it says none of it — and the keys, which
+    /// were there before the reader pressed anything, stay.
+    #[test]
+    fn a_rule_the_row_has_no_room_for_is_dropped_whole_and_the_keys_stay() {
+        let row = |width: usize| {
+            Painted::of(
+                status_bar(&[], None, None, A_KEY_ROW, Spine::Deepest, width),
+                width as u16,
+                1,
+            )
+            .rows()
+            .remove(0)
+        };
+        let rule = "opening the deepest copy of each bead";
+        let fits = A_KEY_ROW.chars().count() + GAP + rule.chars().count();
+
+        assert_eq!(row(fits), format!("{A_KEY_ROW}  {rule}"));
+        assert_eq!(row(fits - 1).trim_end(), A_KEY_ROW);
     }
 
     /// A frame draws what the snapshot behind it found and what the session
@@ -627,7 +818,14 @@ mod tests {
     #[test]
     fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 60),
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                60,
+            ),
             60,
             1,
         )
@@ -644,7 +842,14 @@ mod tests {
     #[test]
     fn a_foot_too_narrow_for_the_whole_key_row_draws_none_of_it() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 60),
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                60,
+            ),
             60,
             1,
         )
@@ -662,7 +867,14 @@ mod tests {
     #[test]
     fn the_narrowest_screen_draws_no_part_of_the_key_row_beside_a_notice() {
         let drawn = Painted::of(
-            status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, 40),
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                A_KEY_ROW,
+                Spine::EveryCopy,
+                40,
+            ),
             40,
             1,
         )
@@ -678,7 +890,14 @@ mod tests {
         let fits = notice.chars().count() + GAP + A_KEY_ROW.chars().count();
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[Notice::AgentsUnknown], None, None, A_KEY_ROW, width),
+                status_bar(
+                    &[Notice::AgentsUnknown],
+                    None,
+                    None,
+                    A_KEY_ROW,
+                    Spine::EveryCopy,
+                    width,
+                ),
                 width as u16,
                 1,
             )

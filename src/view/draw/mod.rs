@@ -154,6 +154,7 @@ pub fn draw(
             foot.said,
             foot.prompt,
             foot.keys,
+            forest.spine(),
             bands.keys.width as usize,
         ),
         bands.keys,
