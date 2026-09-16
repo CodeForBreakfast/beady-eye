@@ -21,11 +21,11 @@ use crate::view::row;
 use crate::view::{Action, Motion, Notch};
 
 pub use drawn::Drawn;
-pub use spine::Spine;
 use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, selectable, Folds, Handle};
 use layout::Rooted;
+pub use spine::Spine;
 
 /// Where a search came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2610,7 +2610,6 @@ credential_command = "secret harbour"
         );
     }
 
-
     // ---- which copy of a bead the fold default opens ------------------------
 
     /// The rule as it has always stood puts every copy of a bead on the
@@ -2620,7 +2619,12 @@ credential_command = "secret harbour"
     fn every_copy_of_a_bead_two_siblings_wait_on_is_opened_to() {
         let forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
 
-        assert_eq!(lines_of(&forest, "dun-1").len(), 2, "{:#?}", sketch(&forest));
+        assert_eq!(
+            lines_of(&forest, "dun-1").len(),
+            2,
+            "{:#?}",
+            sketch(&forest)
+        );
         for id in ["dun-2.1", "dun-2.2"] {
             assert_eq!(
                 forest.lines()[lines_of(&forest, id)[0]].folded,
@@ -2641,7 +2645,12 @@ credential_command = "secret harbour"
 
         assert!(forest.apply(Action::CycleSpineForest));
 
-        assert_eq!(lines_of(&forest, "dun-1").len(), 1, "{:#?}", sketch(&forest));
+        assert_eq!(
+            lines_of(&forest, "dun-1").len(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
         assert_eq!(
             forest.lines()[lines_of(&forest, "dun-2.1")[0]].folded,
             Some(true),
@@ -2702,7 +2711,12 @@ credential_command = "secret harbour"
         step_onto(&mut forest, at);
         assert!(forest.apply(Action::CycleSpine));
 
-        assert_eq!(lines_of(&forest, "dun-1").len(), 1, "{:#?}", sketch(&forest));
+        assert_eq!(
+            lines_of(&forest, "dun-1").len(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
         assert_eq!(
             other(&forest),
             elsewhere,
@@ -2743,7 +2757,11 @@ credential_command = "secret harbour"
 
         for _ in Spine::EVERY {
             assert!(!sketch(&forest).is_empty());
-            assert!(lines_of(&forest, "cyc-1.1").len() == 1, "{:#?}", sketch(&forest));
+            assert!(
+                lines_of(&forest, "cyc-1.1").len() == 1,
+                "{:#?}",
+                sketch(&forest)
+            );
             forest.apply(Action::CycleSpineForest);
         }
     }
@@ -2761,7 +2779,12 @@ credential_command = "secret harbour"
         assert_eq!(sketch(&forest), shut);
 
         assert!(forest.apply(Action::RestoreDefault));
-        assert_eq!(lines_of(&forest, "dun-1").len(), 1, "{:#?}", sketch(&forest));
+        assert_eq!(
+            lines_of(&forest, "dun-1").len(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 
     /// The screen says which rule is in force at the selection, and the

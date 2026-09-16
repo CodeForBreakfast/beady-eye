@@ -269,7 +269,10 @@ mod tests {
         let mut reached = vec![Spine::default()];
         while reached.len() < Spine::EVERY.len() {
             let next = reached.last().expect("the cycle starts somewhere").next();
-            assert!(!reached.contains(&next), "the cycle closed early: {reached:?}");
+            assert!(
+                !reached.contains(&next),
+                "the cycle closed early: {reached:?}"
+            );
             reached.push(next);
         }
 

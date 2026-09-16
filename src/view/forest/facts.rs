@@ -36,11 +36,7 @@ pub(super) struct Facts {
 impl Facts {
     /// `spine` is the rule in force over the forest, and `spines` the rule
     /// the reader has put in force under each line they set one on.
-    pub(super) fn of(
-        snapshot: &Snapshot,
-        spine: Spine,
-        spines: &BTreeMap<Handle, Spine>,
-    ) -> Self {
+    pub(super) fn of(snapshot: &Snapshot, spine: Spine, spines: &BTreeMap<Handle, Spine>) -> Self {
         let mut trees = BTreeMap::new();
         for tree in snapshot.trees.iter().chain(&snapshot.collected) {
             trees
@@ -188,9 +184,7 @@ impl TreeFacts {
     /// `chosen` is what a stand under a one-copy rule is read against, which
     /// the walk carries alongside them.
     fn uniform<'a>(&'a self, chosen: &'a [Chosen]) -> Option<Uniform<'a>> {
-        self.beads
-            .as_deref()
-            .map(|beads| Uniform { beads, chosen })
+        self.beads.as_deref().map(|beads| Uniform { beads, chosen })
     }
 
     /// What the line at `at` says of the tree beneath it.
