@@ -2317,21 +2317,21 @@ The bead window at its floor:
 ```
 ┌ smt-4kd3p.1 ─────────────────────────────────────────────────────────────────────┐
 │                                                                                  │
-│  ◐ smt-4kd3p.1  wire the niri theme include                                      │
+│ ◐ smt-4kd3p.1  wire the niri theme include                                       │
 │                                                                                  │
-│  in_progress · P2 · task · Mira Vance                                            │
-│  created 2026-08-30 · updated 2026-09-02                                         │
-│  ◍ wCM:p6 · idle · inferred, not confirmed                                       │
+│ in_progress · P2 · task · Mira Vance                                             │
+│ created 2026-08-30 · updated 2026-09-02                                          │
+│ ◍ wCM:p6 · idle · inferred, not confirmed                                        │
 │                                                                                  │
-│  DESCRIPTION                                                                     │
+│ DESCRIPTION                                                                      │
 │                                                                                  │
-│    The niri config still sources the theme file the old generation wrote,        │
-│    so a rebuild puts its colours back and the session draws two themes at        │
-│    once until the include is repointed.                                          │
+│   The niri config still sources the theme file the old generation wrote,         │
+│   so a rebuild puts its colours back and the session draws two themes at         │
+│   once until the include is repointed.                                           │
 │                                                                                  │
-│  PARENT                                                                          │
+│ PARENT                                                                           │
 │                                                                                  │
-│    ↑ ◐ smt-4kd3p  DMS → noctalia v5                                              │
+│   ↑ ◐ smt-4kd3p  DMS → noctalia v5                                               │
 │                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```

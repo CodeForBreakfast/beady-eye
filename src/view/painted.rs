@@ -13,6 +13,7 @@
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell, CellDiffOption};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 use ratatui::{Frame, Terminal};
@@ -88,6 +89,25 @@ impl Painted {
     /// One row, in runs of a single style.
     pub(crate) fn row(&self, y: usize) -> Vec<Run> {
         self.0[y].clone()
+    }
+
+    /// What a window drew in the column inside each of its side borders, on
+    /// every row between its top and bottom ones.
+    ///
+    /// A frame compared character for character cannot stand in for this: a
+    /// row of one is trimmed of its trailing spaces, and a right-hand margin
+    /// is trailing spaces.
+    pub(crate) fn margins(&self, window: Rect) -> String {
+        let rows = self.rows();
+        (window.top() + 1..window.bottom().saturating_sub(1))
+            .flat_map(|y| {
+                let row: Vec<char> = rows[usize::from(y)].chars().collect();
+                [
+                    row[usize::from(window.left()) + 1],
+                    row[usize::from(window.right()) - 2],
+                ]
+            })
+            .collect()
     }
 }
 
