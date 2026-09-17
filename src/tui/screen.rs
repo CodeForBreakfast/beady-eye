@@ -540,7 +540,14 @@ impl Shown {
     /// on it would be a move they never asked for.
     fn clicked_bead(&mut self, screen: Rect, row: u16) -> Landed {
         let landed = show::selected(&self.forest).map(|node| {
-            show::drawn_at(screen, node, show::fraction(&self.forest), &self.show, row)
+            show::drawn_at(
+                screen,
+                node,
+                show::fraction(&self.forest),
+                &self.show,
+                row,
+                &|related| show::followable(&self.forest, related),
+            )
         });
         let on = match landed {
             Some(show::Drawn::Related(id)) => id.to_string(),
@@ -939,19 +946,17 @@ fn paint(
         Over::Bindings => key_bindings(frame, frame.area(), &bindings()),
         Over::Bead(show) => {
             if let Some(node) = show::selected(forest) {
-                // Whether any bead this one names can be gone to is the
-                // forest's to answer, and the title says which keys are worth
-                // pressing on the strength of it.
-                let follows = show::related(node)
-                    .into_iter()
-                    .any(|related| show::followable(forest, related));
+                // Whether a bead this one names can be gone to is the
+                // forest's to answer, and the window asks it of each of them:
+                // the ids it answers for are drawn in blue, and the title
+                // says which keys are worth pressing on the strength of it.
                 show::show(
                     frame,
                     frame.area(),
                     node,
                     show::fraction(forest),
                     show,
-                    follows,
+                    &|related| show::followable(forest, related),
                 );
             }
         }
