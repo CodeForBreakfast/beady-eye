@@ -792,12 +792,16 @@ pub fn status_word(status: &Status) -> String {
 /// Where the window has no room at all the id stands alone too. Nothing of
 /// the bead is on the screen, and a range over rows nobody can see is a
 /// count of what the reader has not been shown.
+///
+/// The last screenful ends on the bead's last row rather than running past
+/// it: `Show::fit` holds the view at `total - room` before this is asked, so
+/// the range is the rows the window is actually showing.
 pub fn bead_window_title(id: &str, from: usize, room: usize, total: usize) -> String {
     if room == 0 || total <= room {
         return id.to_string();
     }
     let first = from + 1;
-    let last = (from + room).min(total);
+    let last = from + room;
     format!("{id} · {first}–{last} of {total}")
 }
 
