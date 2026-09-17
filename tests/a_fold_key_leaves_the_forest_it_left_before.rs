@@ -588,11 +588,10 @@ fn selected(bdi: &mut Driven, screen: &Screen) -> String {
         .iter()
         .find_map(|row| {
             let (before, _) = row.split_once(" · Esc to go back")?;
-            Some(
-                before
-                    .trim_start_matches(|glyph: char| !glyph.is_alphanumeric())
-                    .to_string(),
-            )
+            // The forest draws to the left of the window on the row its top
+            // edge is on, so the id starts at the window's own corner rather
+            // than at the first letter of the row.
+            Some(before.rsplit('┌').next()?.to_string())
         })
         .unwrap_or_else(|| panic!("no bead window is up. The screen: {rows:#?}"));
     bdi.send(BACK);
