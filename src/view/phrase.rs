@@ -788,10 +788,6 @@ pub fn status_word(status: &Status) -> String {
 /// rewraps. A bead the window holds whole says nothing about position: there
 /// is nowhere else to be. Neither does a window with no room at all, where
 /// nothing of the bead is on the screen to count.
-///
-/// The last screenful ends on the bead's last row rather than running past
-/// it: `Show::fit` holds the view at `total - room` before this is asked, so
-/// the range is the rows the window is actually showing.
 pub fn bead_window_title(id: &str, from: usize, room: usize, total: usize) -> String {
     if room == 0 || total <= room {
         return id.to_string();

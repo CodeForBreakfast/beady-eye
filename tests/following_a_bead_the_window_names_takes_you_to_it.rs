@@ -17,7 +17,7 @@ mod terminal;
 use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
-use terminal::{over_the_described_subtree, window_over, THE_DESCRIBED_SUBTREE};
+use terminal::{contains, over_the_described_subtree, window_over, THE_DESCRIBED_SUBTREE};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -43,14 +43,21 @@ const FOLLOW: &[u8] = b"\r";
 /// `Esc`, which goes back to the bead the reader followed from.
 const BACK: &[u8] = b"\x1b";
 
-/// The title of the window over the bead the walk lands on, and the whole of
-/// it: the tree's header is `dun-0tp`, so the id alone would also be met by
-/// the window over the row above.
+/// The bead the walk lands on, which the window opens over.
 const THE_FIRST_BEAD: &str = "dun-0tp.6";
 
-/// The title of the window over that bead's parent, which is the tree's root
-/// and the bead `Tab` puts the ring on.
+/// Its parent, which is the tree's root and the bead `Tab` puts the ring on.
 const ITS_PARENT: &str = "dun-0tp";
+
+/// The parent drawn as a bead the forest can take the reader to: `bd`'s own
+/// blue from `view::palette` as the terminal is told it, with the id right
+/// after it.
+///
+/// This is what says the forest answered before the test presses anything.
+/// Only an id the forest can be gone to is drawn in a run of its own, so the
+/// colour and the id reach the wire together, where the id on its own is on
+/// the forest's tree header as well.
+const THE_PARENT_CAN_BE_GONE_TO: &str = "\u{1b}[38;2;89;194;255;49mdun-0tp";
 
 /// Following the parent moves the forest to it and redraws the window there.
 ///
@@ -66,10 +73,21 @@ fn following_a_bead_the_window_names_takes_the_reader_to_it() {
     let opened = open_the_first_bead(&mut bdi);
 
     bdi.send(NEXT_BEAD_NAMED);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    let on_the_parent = repaint(&mut bdi, ROWS);
+    assert!(
+        contains(&on_the_parent, THE_PARENT_CAN_BE_GONE_TO.as_bytes()),
+        "the window does not draw the parent as a bead the forest can be gone \
+         to, so there is nothing for this test to follow. The screen it drew: \
+         {:?}\n{}",
+        String::from_utf8_lossy(&on_the_parent),
+        bdi.timeline()
+    );
+
     bdi.send(FOLLOW);
     bdi.settle(A_SILENCE, GIVING_UP);
 
-    let followed = repaint(&mut bdi, ROWS);
+    let followed = repaint(&mut bdi, ROWS + 1);
     assert!(
         window_over(&followed).is_some(),
         "the window closed on the press that asked for the bead. The screen \
