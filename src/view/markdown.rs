@@ -178,16 +178,40 @@ const RULE: char = '─';
 
 /// The text as lines, before wrapping. A rule is as wide as `width`, which
 /// is the one thing here that needs to know it.
+///
+/// Tables are parsed so that a table can be drawn as the rows its author
+/// wrote, spaces and all: nothing here reads a table's cells, and with the
+/// option off its rows arrive as prose and reflow into one.
 fn lines(text: &str, width: usize) -> Vec<Line> {
     let mut rendering = Rendering {
         width,
         ..Rendering::default()
     };
-    for event in Parser::new_ext(text, Options::empty()) {
-        rendering.take(event);
+    let mut inside_table = false;
+    for (event, source) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Table(_)) => {
+                inside_table = true;
+                rendering.verbatim_block(&undented(&text[source]));
+            }
+            Event::End(TagEnd::Table) => inside_table = false,
+            _ if inside_table => {}
+            event => rendering.take(event),
+        }
     }
     rendering.close();
     rendering.lines
+}
+
+/// A table's source with what it sits inside taken off the front of each
+/// line: a quote's bar and an item's indent are drawn from the line's own
+/// prefix, and a space in front of a row says nothing inside a table.
+fn undented(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| line.trim_start_matches([' ', '\t', '>']))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A list being rendered: what its next item is marked with.
@@ -286,7 +310,8 @@ impl Rendering {
             | Event::InlineMath(said)
             | Event::DisplayMath(said)
             | Event::FootnoteReference(said) => self.say(&said),
-            Event::SoftBreak | Event::HardBreak => self.break_line(),
+            Event::SoftBreak => self.say(" "),
+            Event::HardBreak => self.break_line(),
             Event::Rule => {
                 self.open_block();
                 let room = self.width.saturating_sub(columns_of(&self.indent()));
@@ -325,6 +350,14 @@ impl Rendering {
             spans: Vec::new(),
             verbatim: false,
         });
+    }
+
+    /// A block of its own, drawn as its author laid it out: every space
+    /// kept, and a line of it a row on the screen.
+    fn verbatim_block(&mut self, said: &str) {
+        self.open_block();
+        self.line().verbatim = true;
+        self.say(said);
     }
 
     /// End the line being written, and set a blank line between it and the
@@ -438,13 +471,64 @@ mod tests {
     }
 
     /// Text with no markdown in it draws as it always has: wrapped at the
-    /// spaces, a line break in the source a row break on the screen, and a
-    /// blank line a blank row.
+    /// spaces, and a blank line a blank row.
     #[test]
-    fn plain_text_wraps_at_a_space_and_keeps_its_line_breaks_and_blank_lines() {
+    fn plain_text_wraps_at_a_space_and_keeps_its_blank_lines() {
         assert_eq!(
             words(&rows("one two three\nfour\n\nfive", 9)),
             ["one two", "three", "four", "", "five"]
+        );
+    }
+
+    /// An author hard-wraps a description for `bd show`, and the window is
+    /// wider than that: a line break inside a paragraph is a space, as
+    /// CommonMark reads it, so the paragraph fills the width it is given.
+    #[test]
+    fn a_hard_wrapped_paragraph_fills_the_width_it_is_given() {
+        assert_eq!(
+            words(&rows("one two\nthree four\nfive", 14)),
+            ["one two three", "four five"]
+        );
+    }
+
+    /// A break the author asked for is not one the layout put there, so two
+    /// spaces at the end of a line, or a backslash, still breaks the row.
+    #[test]
+    fn a_hard_break_still_breaks_the_row() {
+        assert_eq!(words(&rows("one  \ntwo", 20)), ["one", "two"]);
+        assert_eq!(words(&rows("one\\\ntwo", 20)), ["one", "two"]);
+    }
+
+    /// A table is laid out by its author, column under column, and reflowing
+    /// it would close every gap that lines it up. It is drawn as written.
+    #[test]
+    fn a_table_keeps_the_rows_and_the_spacing_its_author_wrote() {
+        assert_eq!(
+            words(&rows("| name  | n |\n| ----- | - |\n| x     | 1 |", 40)),
+            ["| name  | n |", "| ----- | - |", "| x     | 1 |"]
+        );
+    }
+
+    /// A table inside a quote or an item is barred and indented by the rows
+    /// it is drawn on, so its source is drawn carrying neither.
+    #[test]
+    fn a_table_inside_a_quote_or_an_item_is_not_marked_twice() {
+        assert_eq!(
+            words(&rows("> | a | b |\n> | - | - |", 40)),
+            ["│ | a | b |", "│ | - | - |"]
+        );
+        assert_eq!(
+            words(&rows("- x\n\n  | a | b |\n  | - | - |", 40)),
+            ["• x", "", "  | a | b |", "  | - | - |"]
+        );
+    }
+
+    /// A table sits in the prose round it the way any other block does.
+    #[test]
+    fn a_table_stands_clear_of_the_prose_either_side_of_it() {
+        assert_eq!(
+            words(&rows("said\n\n| a |\n| - |\n\nafter", 20)),
+            ["said", "", "| a |", "| - |", "", "after"]
         );
     }
 
@@ -522,11 +606,11 @@ mod tests {
         );
     }
 
-    /// An item written over two lines of source is one item, its second
-    /// line under its text.
+    /// An item written over two lines of source is one item, and it reflows
+    /// as one.
     #[test]
-    fn an_item_broken_over_two_source_lines_hangs_under_its_text() {
-        assert_eq!(words(&rows("- one\n  two", 9)), ["• one", "  two"]);
+    fn an_item_broken_over_two_source_lines_is_one_item() {
+        assert_eq!(words(&rows("- one\n  two", 9)), ["• one two"]);
     }
 
     /// An item with a paragraph of its own under it keeps that paragraph
