@@ -33,7 +33,7 @@ use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::due::due_after;
-use super::keys::{bead_key_row, bindings, key_row};
+use super::keys::{bead_key_rows, bindings, key_row};
 use super::reload::Reloaded;
 
 /// What the config settles about the drawing, as one value read from it in
@@ -971,6 +971,18 @@ enum Over<'a> {
     Bead(&'a mut Show),
 }
 
+/// The row under the tail for whatever is up over the forest.
+///
+/// The bindings go up over the forest rather than over a bead, and the prompt
+/// is drawn over the keys rather than beside them, so both leave the forest's
+/// row where it was.
+fn keys_under(over: &Over<'_>) -> Vec<String> {
+    match over {
+        Over::Bead(_) => bead_key_rows(),
+        Over::Nothing | Over::Bindings => vec![key_row()],
+    }
+}
+
 #[cfg(panic = "abort")]
 compile_error!(
     "putting the terminal back is `Screen`'s `Drop`, and a build with \
@@ -1085,14 +1097,7 @@ impl View for Screen {
             Showing::Bindings => Over::Bindings,
             Showing::Bead => Over::Bead(show),
         };
-        // The window's own keys while it is up. The bindings go up over the
-        // forest rather than over a bead, and the prompt is drawn over the
-        // keys rather than beside them, so both leave the forest's row where
-        // it was.
-        let keys = match showing {
-            Showing::Bead => bead_key_row(),
-            Showing::Forest | Showing::Bindings | Showing::Searching => key_row(),
-        };
+        let keys = keys_under(&over);
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
@@ -1547,7 +1552,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        let keys = key_row();
+        let keys = keys_under(&over);
         let foot = draw::Foot {
             standing: &[],
             said: pressed.said,
@@ -4051,6 +4056,49 @@ mod tests {
         .rows()
         .pop()
         .expect("a screen with rows on it")
+    }
+
+    /// A grove on a machine whose herdr will not answer, which is a notice on
+    /// every frame and fifty-four of an eighty-column foot's columns.
+    fn a_grove_with_no_herdr(beads: usize) -> Snapshot {
+        Snapshot {
+            agents: a_provider(ProviderState::NotAnswering),
+            ..a_grove(beads)
+        }
+    }
+
+    /// The bead this was written for. The window holds four fifths of the
+    /// screen and its title no longer names the way out, so a notice that
+    /// took the whole row away left nothing on screen saying how to leave.
+    /// Eighty columns is a supported width, and a machine with no herdr
+    /// raises that notice on every frame rather than in a corner.
+    #[test]
+    fn the_windows_row_keeps_the_way_out_beside_a_notice() {
+        let mut shown = shown(a_grove_with_no_herdr(6));
+        assert!(shown.apply(Action::ShowBead));
+
+        let foot = bead_view(&mut shown, 80, 24)
+            .pop()
+            .expect("a screen with rows on it");
+
+        assert!(foot.contains("no herdr session"), "{foot:?}");
+        assert!(foot.trim_end().ends_with("Esc back   ? keys"), "{foot:?}");
+    }
+
+    /// The forest's row keeps the rule it was written under, which is still
+    /// right where it was written: a reader there is held nowhere and can
+    /// look, so a key they can rediscover costs them less than a fact they
+    /// never learn.
+    #[test]
+    fn the_forests_row_still_goes_whole_beside_a_notice() {
+        let mut shown = shown(a_grove_with_no_herdr(6));
+
+        let foot = foot_of(&mut shown, 80, 24);
+
+        assert_eq!(
+            foot.trim_end(),
+            "\u{26a0} no herdr session \u{b7} which agents are alive is unknown"
+        );
     }
 
     /// Nothing else on the screen changes for a copy, so the foot is where a

@@ -35,8 +35,8 @@ const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 /// `Esc`, which takes the window down.
 const LEAVE_THE_WINDOW: &[u8] = b"\x1b";
 
-/// The whole of the bead window's row, from `keys::bead_key_row`.
-const THE_WINDOWS_KEYS: &str = "Esc back   Tab related   y id   ? keys";
+/// The whole of the bead window's row, from `keys::bead_key_rows`.
+const THE_WINDOWS_KEYS: &str = "Esc back   ? keys   Tab related   y id";
 
 /// The whole of the forest's, from `keys::key_row`.
 const THE_FORESTS_KEYS: &str = "a all   ? keys   / find   q quit";

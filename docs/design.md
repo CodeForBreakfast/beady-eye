@@ -2378,18 +2378,32 @@ of *Keys*: `Esc` first, four keys, and the rest behind `?`. `Esc` is first
 because a reader who cannot see how to leave is stuck in a view they may have
 opened by accident.
 
-The four are `Esc back   Tab related   y id   ? keys`. After the way out and
-the way to the rest, the two that are left go to what a reader of this window
-cannot work out for themselves. Nothing on the page says the beads it names
-can be stepped through, so `Tab` is the whole of that; and `y` works on every
-bead, where `f` does nothing on one with no pane, and taking the id away is
-what a reader opens a bead to do.
+The four are `Esc back   ? keys   Tab related   y id`, and the order ranks
+them because it is also the order the row gives them up in. After the way out
+and the way to the rest, the two that are left go to what a reader of this
+window cannot work out for themselves. Nothing on the page says the beads it
+names can be stepped through, so `Tab` is the whole of that; and `y` works on
+every bead, where `f` does nothing on one with no pane, and taking the id away
+is what a reader opens a bead to do.
 `Enter` is off the row for the reason *Keys* gives for taking it off the
 forest's: pressing Enter on the thing under the cursor is what a reader of any
 list does anyway, and `Tab related` is what puts a thing under the cursor. The
 motion keys are off it for the reason the arrows are off the forest's, and how
 far down the bead the reader has got is the border title's to say. `q` is a
 second way out beside `Esc`, which a row of four cannot afford.
+
+**This row gives its keys up from the end rather than whole**, and `Esc back`
+is the last of them to go. Words being given up before facts are, and from the
+end, is what the foot already does with a notice's own words.
+
+*Keys yield before any notice* was written for the forest, where a reader is
+held nowhere: a key they can rediscover by looking costs less than a fact they
+would never learn. Under a window holding four fifths of the screen there is
+nothing to look at, and a notice wide enough to take the row leaves no way out
+anywhere on the screen. So the forest's row still goes whole or not at all
+while the window's narrows, and the foot is never told which of them it has: a
+row reaches it as the forms its caller will stand behind, fullest first, and
+the forest's is one form.
 
 The view is the hub. From it, `Enter` and `f` focus the bead's pane in herdr,
 `y` copies its id, and the view stays up; `Esc` goes back to the forest, and
