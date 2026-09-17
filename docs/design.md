@@ -2256,18 +2256,26 @@ detection cost delta.
 
 ### The bead
 
-`Enter` on a bead row shows that bead whole, as `bd show` would: its glyph,
-id and title; its status, priority, type and owner; the agent the join put on
-it, with its pane and state; then, under the names `bd show` prints and in its
-order, the description, the notes, the parent, what it depends on and what it
-blocks — each related bead with its glyph, id and title, and one the tracker's
-answer no longer holds named by its id alone and said to be *not in the
-tracker's answer*. A section the bead has nothing in is left out, as `bd show`
-leaves it out. Everything drawn comes from the rows `bdi` already holds: the
-description and the notes are in the `bd list --json` rows, and the related
-beads' statuses and titles, with the reverse edge that says what a bead
-blocks, are read once over the whole answer when a project is collected. No
-key costs a call to `bd`.
+`Enter` on a bead row shows that bead whole, as `bd show` would: a head naming
+the bead and saying everything its row says; then, under the names `bd show`
+prints and in its order, the description, the notes, the parent, what it
+depends on and what it blocks — each related bead with its glyph, id and title,
+and one the tracker's answer no longer holds named by its id alone and said to
+be *not in the tracker's answer*. A section the bead has nothing in is left
+out, as `bd show` leaves it out. Everything drawn comes from the rows `bdi`
+already holds: the description and the notes are in the `bd list --json` rows,
+and the related beads' statuses and titles, with the reverse edge that says
+what a bead blocks, are read once over the whole answer when a project is
+collected. No key costs a call to `bd`.
+
+**The bead window is a drawer against the right edge of the screen:** the full
+height above the foot row whatever the bead's own height, at least eighty-two
+columns inside its border, and four fifths of the screen where the screen has
+more than that. What stays visible to its left is the forest's own spine, its
+glyphs and its ids, with the selected row still reversed among them, so the
+reader keeps their place and is shown no cut title. The tail band goes under
+the drawer as the forest does. The forest beside it is not dimmed: dim means
+nobody is on a row, on every surface.
 
 It is a window over the forest, like the key bindings, rather than a screen in
 place of it: the row it was opened from is untouched beneath it, so leaving
@@ -2276,41 +2284,99 @@ left it, and a collection landing behind it refreshes the forest and leaves
 the view up — unless it moved the selection off the bead, because the bead
 closed into a run or left the tracker, in which case the view goes back to the
 forest rather than show the forebear the selection fell to under the title the
-reader opened. The window follows the terminal: four fifths of the screen on
-either side, centred, so a bigger terminal gets a bigger window rather than
-the same box in the middle of a bigger forest, and never less than eighty
-columns inside its border — about where `bd show` wraps its own prose — by
-twenty-four rows, so a small screen is filled rather than cramped. A bead
-shorter than that height keeps a window its own height. The description and
-the notes are rendered as markdown, in the window's own styling rather than
-the forest's: a heading bold and clear of the prose, an item behind `bd`'s own
-bullet and hanging under its text, a code span or block in a tone of its own,
-emphasis italic and strong emphasis bold, a quote barred down its side, and a
-link followed by where it goes. A line break in the source stays a row break,
-so text that is not markdown draws as it always did, and text that is broken
-markdown is drawn as written: a renderer that drops text is worse than none.
-Prose wraps to the window, and so does the line naming the bead: this is the
-one place a reader has asked for that bead in full, and the reason a forest
-row is cut — a forest is a column of rows that has to line up, and its
-selection's geometry is one row per bead — holds nowhere here, over one bead
-drawn at its own height with nothing lining up against it. A name that takes
-more than one row hangs under where its title starts and is toned as the head
-the whole way down, so it reads as one block rather than as a title and a
-stray. Every other row — a related bead's — is cut to the window the way a row
-of the forest is, and the forest's own rows stay cut. A window the bead's
-glyph and id already fill across, or one with no rows for a wrapped name to
-take without filling it, cuts the title on its own row instead: a name that
-says nothing on any of its rows, or that fills the window on its own with the
-status and the prose below the foot of it, has taken the page from the reader
-to say what the reader already knew. A title the window has room for is drawn
-as its author wrote it, runs of spaces and all: breaking a line across rows is
-what closes those up, and a window that closed one up without having to would
-be the one place on the screen saying something the forest row beside it and
-`bd show` both say differently. Where the bead is taller than the window,
-the title says how to see the rest, and the motion keys move the bead rather
-than the selection: `j`, `k` and the arrows a row, `^D` and `^U` half the
-window, `g` and `G` to either end, and the wheel `wheel_notch_lines` a notch,
-which is what it moves over the forest as well.
+reader opened.
+
+Inside the bead window, top to bottom: a blank row; the head; then `bd show`'s
+sections, under `bd show`'s names and in its order.
+
+**The head is the forest row unfolded** — every cell the row draws, at its
+whole width, one row each, and beside them the facts the row has no width to
+carry. In this order:
+
+- the glyph, the id, the labels where `bd show` puts them beside the id, and
+  the title
+- the status word, the priority, the type, the owner and the assignee, by name
+  as `bd show` prints them
+- the created, updated, started and closed dates, as `bd show` prints them
+- the agent, with its state and its join caveat, as the forest's agent cell
+  says them
+- each anomaly, on a row of its own
+- the badges, with their links, separated as the forest separates them
+- the progress fraction, where the row has one
+
+The head is built from the cells the forest row is built from, so the two
+cannot disagree about a bead: one place decides a cell's words, and the row and
+the head are two widths of it rather than two renderings.
+
+**Every row sits one column in from each side of the border.** The floor is
+eighty-two rather than eighty so that the margin is paid for by the frame: the
+prose still gets the eighty columns `bd show` wraps its own at.
+
+The bead window at its floor:
+
+```
+┌ smt-4kd3p.1 ─────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  ◐ smt-4kd3p.1  wire the niri theme include                                      │
+│                                                                                  │
+│  in_progress · P2 · task · Mira Vance                                            │
+│  created 2026-08-30 · updated 2026-09-02                                         │
+│  ◍ wCM:p6 · idle · inferred, not confirmed                                       │
+│                                                                                  │
+│  DESCRIPTION                                                                     │
+│                                                                                  │
+│    The niri config still sources the theme file the old generation wrote,        │
+│    so a rebuild puts its colours back and the session draws two themes at        │
+│    once until the include is repointed.                                          │
+│                                                                                  │
+│  PARENT                                                                          │
+│                                                                                  │
+│    ↑ ◐ smt-4kd3p  DMS → noctalia v5                                              │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+The description and the notes are rendered as markdown, in the bead window's
+own styling rather than the forest's: a heading bold and clear of the prose, an
+item behind `bd`'s own bullet and hanging under its text, a code span or block
+in a tone of its own, emphasis italic and strong emphasis bold, a quote barred
+down its side, and a link followed by where it goes. **Prose reflows to the
+window.** A soft line break in the source is a space, as CommonMark reads it,
+so a paragraph fills the width it is given; a hard break, a list item, a code
+block and a table keep their rows. The window is never narrower than the width
+an author wraps for, so nothing reads worse than its source. Text that is
+broken markdown is drawn as written: a renderer that drops text is worse than
+none.
+
+The line naming the bead wraps too: this is the one place a reader has asked
+for that bead in full, and the reason a forest row is cut — a forest is a
+column of rows that has to line up, and its selection's geometry is one row per
+bead — holds nowhere here, over one bead drawn at its own height with nothing
+lining up against it. A name that takes more than one row hangs under where its
+title starts and is toned as the head the whole way down, so it reads as one
+block rather than as a title and a stray. Every other row — a related bead's —
+is cut the way a row of the forest is. A window the bead's glyph and id already
+fill across, or one with no rows for a wrapped name to take without filling it,
+cuts the title on its own row instead: a name that says nothing on any of its
+rows, or that fills the window on its own with the status and the prose below
+the foot of it, has taken the page from the reader to say what the reader
+already knew. A title the window has room for is drawn as its author wrote it,
+runs of spaces and all: breaking a line across rows is what closes those up,
+and a window that closed one up without having to would be the one place on the
+screen saying something the forest row beside it and `bd show` both say
+differently.
+
+The border title carries the id, and how far down the bead the reader is
+where the bead is taller than the window. There the motion keys move the bead
+rather than the selection: `j`, `k` and the arrows a row, `^D` and `^U` half
+the window, `g` and `G` to either end, and the wheel `wheel_notch_lines` a
+notch, which is what it moves over the forest as well.
+
+**The bead window's keys go on the foot row while it is up**, where the
+forest's own keys are the rest of the time. The row keeps the forty-column rule
+of *Keys*: `Esc` first, four keys, and the rest behind `?`. `Esc` is first
+because a reader who cannot see how to leave is stuck in a view they may have
+opened by accident.
 
 The view is the hub. From it, `Enter` and `f` focus the bead's pane in herdr,
 `y` copies its id, and the view stays up; `Esc` goes back to the forest, and
@@ -2319,9 +2385,6 @@ at is still there to quit from. *Back* rather than *close*, because closing is
 what `bd close`
 does to a bead and this does nothing to one. `?` puts the bindings up over the
 forest, `^R` collects behind the view, and every other key does nothing there.
-The title — *`<id>` · Esc to go back* — is the line that survives every cut,
-because a reader who cannot see how to leave is stuck in a view they may have
-opened by accident.
 
 `Enter` on a row that is not a bead — a project's line, a group, a thing in
 one, a root whose tree would not read — has nothing to show, and does nothing

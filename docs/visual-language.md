@@ -40,6 +40,7 @@ each of those seats needs one section rather than the argument.
 | building the one palette | *2. One palette, in one place* — the list is the deliverable |
 | deciding what a channel may carry | *1. The channel assignment* — six channels, one kind of fact each |
 | wondering whether `bdi` should detect the theme | *4. Whether `bdi` follows the reader's theme* — the answer is no, and what to do instead |
+| drawing the bead window (`bdi-2bb.59`) | *In the bead window, blue means a bead you can go to* — the one rule that surface adds |
 | reconciling `docs/design.md` (`bdi-2bb.1`) | *What this changes in `docs/design.md`* — four extensions and one reframing |
 | checking a claim | *Sources*, at the end |
 
@@ -73,18 +74,18 @@ draw that meaning at all.
 | meaning | forest: bead row | forest: project line | forest: group, item, note | bead window: head | bead window: page | tail band | bindings window | status bar |
 |---|---|---|---|---|---|---|---|---|
 | **bead status** | glyph in `bd-*` | — | — | glyph in `bd-*`, status word in `bd-*` | related row's glyph in `bd-*` | — | — | — |
-| **bead identity** | plain | — | — | `bd-blue` | — | — | — | — |
+| **bead identity** | plain | — | — | `bd-blue` | followable related row's id `bd-blue` | — | — | — |
 | **a live agent** | `green` | `green` | `green` | `green` | — | — | — | — |
-| **wants looking at** | `yellow` | `yellow` | `yellow` | — | — | — | — | `yellow` |
+| **wants looking at** | `yellow` | `yellow` | `yellow` | anomaly row `yellow` | — | — | — | `yellow` |
 | **how live this row is** | `default` / `grey8` / `grey↓` | off the scale — all `default` | — | — | — | — | — | — |
-| **finished** | `grey↓` | — | — | — | closed related row `grey↓` | — | — | — |
+| **finished** | `grey↓` | — | — | — | closed related row `grey↓`, its glyph and a followable id excepted | — | — | — |
 | **the cursor is here** | `REVERSED` | `REVERSED` | `REVERSED` | — | — | — | — | — |
 | **tree structure** | `default` | `default` | fold arrow `default` | — | — | — | — | — |
 | **a landmark** | — | — | — | heading `default` + `BOLD` | — | — | window title `BOLD` | — |
 | **an edge** | — | — | — | arrow `default` | — | — | — | — |
 | **nothing went wrong here** | — | — | `default` | — | — | — | — | — |
-| **an affordance** | — | — | `grey8` | window title `BOLD` | — | — | rows `plain`, title `BOLD` | keys `plain` |
-| **metadata / age** | — | mark and age `grey8` | — | facts line `plain` | — | — | — | — |
+| **an affordance** | — | — | `grey8` | — | — | — | rows `plain`, title `BOLD` | keys `plain` |
+| **metadata / age** | — | mark and age `grey8` | — | facts, dates and scroll position `plain` | — | — | — | — |
 | **chrome** | — | — | — | border `plain` | — | rule `grey8` | border `plain` | — |
 | **an explanation** | note `yellow` | unread reason `yellow` | item `yellow` | — | — | reason `grey8` | — | notice `yellow` |
 | **the body of a page** | — | — | — | — | `grey8` | — | — | — |
@@ -98,8 +99,9 @@ draw that meaning at all.
 
 ## What the table shows
 
-Five findings and the rule the sixth left behind once it was answered, then
-two things that look like findings and are not. Each is
+Five findings and two rules — the one the sixth finding left behind once it
+was answered, and the one the bead window's colour settled — then two things
+that look like findings and are not. Each is
 confirmed against the sites rather than argued from the shape of the code.
 
 ### One grey says five unrelated things
@@ -191,6 +193,18 @@ carries what a treatment meant on the first to the second.
 The channels with exactly one client each — `REVERSED` for the selection,
 `ITALIC` for emphasis, `UNDERLINED` for a link — have never produced a defect,
 and this is what that buys.
+
+### In the bead window, blue means a bead you can go to
+
+The window adds one rule to the assignment above and takes nothing away. Every
+cell it draws keeps the tone the forest row gives it, and `IDENTITY` — `bd`'s
+own blue for an id — is spent there on an id the reader can follow and on
+nothing else: the head's id, a related row's id where `followable` says the
+forest can take them to it, a badge whose config gave it `colour = "identity"`,
+and a prose id that resolves, once `bdi-ms4g` draws one.
+
+An id that leads nowhere keeps the page's tone, so a reader sees before they
+press `Tab` which rows it will stop on.
 
 ### One meaning is drawn at both ends of the emphasis range
 
@@ -554,7 +568,7 @@ says which one.
 
 | channel | carries | rule |
 |---|---|---|
-| **hue** | *what kind of thing this is* — a bead's status, and the two facts `bd` cannot say: a live agent, and something wrong | quoted from `bd` where `bd` has an opinion; `bdi`'s own two are the only additions |
+| **hue** | *what kind of thing this is* — a bead's status, a bead's id, and the two facts `bd` cannot say: a live agent, and something wrong | quoted from `bd` where `bd` has an opinion; `bdi`'s own two are the only additions, and where it spends `bd`'s blue is its own — see *In the bead window, blue means a bead you can go to* |
 | **brightness** | *how live this row is* — and nothing else, on any surface | the one axis `bdi` adds to `bd list`; every other use of brightness gives it up |
 | **weight** | *this is the thing to go to* — a row with an agent on it, a section name, a heading, the way out on a window's border | one reading per surface, and on the forest the top of the liveness scale as well |
 | **reverse** | *the cursor is here* | exactly one client, and it stays that way |
