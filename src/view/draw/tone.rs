@@ -28,7 +28,7 @@ use crate::view::row::Row;
 /// anomaly. A closed bead whose pane is still alive is exactly the row worth
 /// looking at, and dimming it is how it would be missed.
 pub(super) fn tone(row: &Row) -> Style {
-    let finished = row.status.is_closed() && row.agent.is_none() && row.anomalies.is_none();
+    let finished = row.status.is_closed() && row.agent.is_none() && row.anomalies.is_empty();
     if row.agent.is_some() {
         palette::TIER_STAFFED
     } else if finished {

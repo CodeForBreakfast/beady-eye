@@ -1,6 +1,8 @@
 //! The bead view: the selected bead shown whole, as `bd show` shows it, in a
 //! window over the forest.
 
+use std::collections::HashMap;
+
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Span;
@@ -11,14 +13,16 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
-use crate::view::draw::regions;
+use crate::view::draw::bead::{badge_style, opens_at};
 use crate::view::draw::tone::status_style;
-use crate::view::fitted::{cover, indent, Fitted};
+use crate::view::draw::{done, regions};
+use crate::view::fitted::{self, cover, indent, Fitted, Link};
 use crate::view::forest::Forest;
+use crate::view::lines::Content;
 use crate::view::markdown;
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::{agent_marker, status_glyph};
+use crate::view::row::{self, status_glyph, Progress};
 use crate::view::{Motion, Notch};
 
 /// The section names `bd show` prints, verbatim, in the order it prints
@@ -247,6 +251,21 @@ pub struct Page {
     pub rows: Vec<Vec<Span<'static>>>,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
+    /// Which spans of which rows the terminal is told point somewhere, for
+    /// the rows that hold a link at all.
+    links: HashMap<usize, Vec<Link>>,
+}
+
+/// How much of what the selected line stands for is done, where the forest
+/// has a fraction for it.
+///
+/// Read off the line rather than worked out here: it counts the whole subtree
+/// under the bead, which the bead's own fields say nothing about.
+pub fn fraction(forest: &Forest) -> Option<Progress> {
+    match &forest.lines().get(forest.selected_line())?.content {
+        Content::Bead(row) => row.progress,
+        _ => None,
+    }
 }
 
 /// The bead the selection is on, where it is on one.
@@ -282,10 +301,10 @@ fn window_block() -> Block<'static> {
     Block::bordered().padding(Padding::new(MARGIN, MARGIN, BLANK_ROW, 0))
 }
 
-fn lay_out(area: Rect, node: &Node) -> Laid {
+fn lay_out(area: Rect, node: &Node, progress: Option<Progress>) -> Laid {
     let window = show_window(area);
     let inner = window_block().inner(window);
-    let page = said(node, inner.width as usize, inner.height as usize);
+    let page = said(node, progress, inner.width as usize, inner.height as usize);
     Laid {
         page,
         window,
@@ -317,8 +336,14 @@ pub enum Drawn<'a> {
 /// `view` is what the last frame left behind, and a frame is always drawn
 /// before a press is answered, so how far down the bead it had scrolled is
 /// how far down the reader was looking.
-pub fn drawn_at<'a>(area: Rect, node: &'a Node, view: &Show, row: u16) -> Drawn<'a> {
-    let Laid { page, inner, .. } = lay_out(area, node);
+pub fn drawn_at<'a>(
+    area: Rect,
+    node: &'a Node,
+    progress: Option<Progress>,
+    view: &Show,
+    row: u16,
+) -> Drawn<'a> {
+    let Laid { page, inner, .. } = lay_out(area, node, progress);
     if !(inner.y..inner.bottom()).contains(&row) {
         return Drawn::Beyond;
     }
@@ -350,9 +375,15 @@ fn show_window(area: Rect) -> Rect {
     }
 }
 
-/// The bead, one screen row at a time, in `bd show`'s order: the bead's own
-/// name, the facts under it, the agent the join put on it, then each section
-/// the bead has something in, under the name `bd show` gives it.
+/// The bead, one screen row at a time: the head, then each section the bead
+/// has something in, under the name `bd show` gives it and in its order.
+///
+/// The head is the forest row unfolded — every cell the row draws, at its
+/// whole width, one row each — so one place decides a cell's words and the
+/// row and the head cannot disagree about a bead.
+///
+/// No `above`, because the head has no row above it for an id to be read
+/// against, so the id is drawn whole.
 ///
 /// The name and the prose are both wrapped to `width`; every other row is cut
 /// to it when drawn. A row of the forest is cut because a forest is a column
@@ -364,16 +395,21 @@ fn show_window(area: Rect) -> Rect {
 ///
 /// `window` is what the window has room for down the screen, which the name
 /// alone is not allowed to fill — see `title_of`.
-pub fn said(node: &Node, width: usize, window: usize) -> Page {
+pub fn said(node: &Node, progress: Option<Progress>, width: usize, window: usize) -> Page {
+    let cells = row::cells(node, None, progress, None);
     let name = vec![
-        glyph(&node.status),
+        Span::styled(cells.glyph.to_string(), status_style(&cells.status)),
         Span::raw(" "),
-        Span::styled(node.id.clone(), palette::IDENTITY),
+        Span::styled(cells.id.clone(), palette::IDENTITY),
         Span::raw(indent()),
     ];
     let where_the_title_starts = name.iter().map(Span::width).sum::<usize>();
     let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
-    for line in title_of(node, width.saturating_sub(where_the_title_starts), window) {
+    for line in title_of(
+        &cells.title,
+        width.saturating_sub(where_the_title_starts),
+        window,
+    ) {
         let mut row = if rows.is_empty() {
             name.clone()
         } else {
@@ -386,16 +422,48 @@ pub fn said(node: &Node, width: usize, window: usize) -> Page {
     facts.extend(node.owner.clone());
     rows.push(indented(vec![
         Span::styled(
-            phrase::status_word(&node.status),
-            status_style(&node.status),
+            phrase::status_word(&cells.status),
+            status_style(&cells.status),
         ),
         Span::raw(format!(" · {}", facts.join(" · "))),
     ]));
-    if let Some(agent) = &node.agent {
+    if let Some(agent) = &cells.agent {
+        rows.push(indented(vec![Span::styled(agent.clone(), palette::AGENT)]));
+    }
+    for anomaly in &cells.anomalies {
         rows.push(indented(vec![Span::styled(
-            agent_marker(agent),
-            palette::AGENT,
+            row::anomaly_alone(anomaly),
+            palette::ATTENTION,
         )]));
+    }
+    let mut links = HashMap::new();
+    let mut badges = vec![Span::raw(indent())];
+    let mut opened = Vec::new();
+    for badge in &cells.badges {
+        if badges.len() > 1 {
+            badges.push(Span::raw(indent()));
+        }
+        if let Some(to) = opens_at(badge) {
+            opened.push(Link {
+                block: fitted::Block::Identity,
+                at: badges.len(),
+                to: to.to_string(),
+            });
+        }
+        badges.push(Span::styled(
+            badge.text.clone(),
+            badge_style(badge, &cells.status),
+        ));
+    }
+    if badges.len() > 1 {
+        links.insert(rows.len(), opened);
+        rows.push(badges);
+    }
+    if let Some(progress) = cells.progress {
+        rows.push(indented(vec![Span::raw(done(
+            progress.closed,
+            progress.total,
+        ))]));
     }
 
     let room = width.saturating_sub(indent().len());
@@ -435,7 +503,11 @@ pub fn said(node: &Node, width: usize, window: usize) -> Page {
         rows.extend(body);
     }
 
-    Page { rows, related }
+    Page {
+        rows,
+        related,
+        links,
+    }
 }
 
 /// The bead's title in the `room` its own glyph and id leave beside it: as
@@ -464,12 +536,12 @@ pub fn said(node: &Node, width: usize, window: usize) -> Page {
 /// worse answer to a title in a window that has room for it and the better
 /// answer to one that has not: a cut row says less than a wrapped name and
 /// it says it where the reader is looking.
-fn title_of(node: &Node, room: usize, window: usize) -> Vec<Vec<Span<'static>>> {
-    let as_written = vec![vec![Span::raw(node.title.clone())]];
+fn title_of(title: &str, room: usize, window: usize) -> Vec<Vec<Span<'static>>> {
+    let as_written = vec![vec![Span::raw(title.to_string())]];
     if room == 0 {
         return as_written;
     }
-    let broken = markdown::wrapped(&node.title, room);
+    let broken = markdown::wrapped(title, room);
     if broken.len() == 1 || broken.len() >= window {
         return as_written;
     }
@@ -542,15 +614,23 @@ fn dimmed_if_closed(status: &Status) -> Style {
 /// selection is on, and brought inside the window where the last frame left
 /// it beyond what there was room for — a ring nobody can see is a ring the
 /// reader has lost.
-pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows: bool) {
+pub fn show(
+    frame: &mut Frame,
+    area: Rect,
+    node: &Node,
+    progress: Option<Progress>,
+    view: &mut Show,
+    follows: bool,
+) {
     let Laid {
         page,
         window,
         inner,
-    } = lay_out(area, node);
+    } = lay_out(area, node, progress);
     if window.is_empty() {
         return;
     }
+    let mut links = page.links;
 
     let block = window_block();
     view.fit(page.rows.len(), inner.height as usize);
@@ -576,7 +656,9 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
         .enumerate()
     {
         let at = view.from + n;
-        let drawn = Fitted::new(row, Vec::new(), Vec::new()).toned(palette::PAGE);
+        let drawn = Fitted::new(row, Vec::new(), Vec::new())
+            .linking(links.remove(&at).unwrap_or_default())
+            .toned(palette::PAGE);
         let drawn = if on == Some(at) {
             drawn.selected()
         } else {
@@ -595,11 +677,16 @@ pub fn show(frame: &mut Frame, area: Rect, node: &Node, view: &mut Show, follows
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::anomaly::Anomaly;
+    use crate::model::badges::Badged;
     use crate::model::edges::Related;
     use crate::model::join::{AgentRef, JoinSource};
     use crate::model::types::testing::key;
     use crate::model::types::{Edge, PaneStatus, Status};
+    use crate::view::fitted::hyperlink;
+    use ratatui::backend::TestBackend;
     use ratatui::style::Modifier;
+    use ratatui::Terminal;
 
     use crate::view::painted::{Painted, Run};
     use pretty_assertions::assert_eq;
@@ -663,18 +750,30 @@ mod tests {
     /// which is what a test that is not about following one wants: the title
     /// then offers no key it would be pressed for nothing.
     fn drawn(node: &Node, view: &mut Show, width: u16, height: u16) -> Vec<String> {
-        drawn_where(node, view, width, height, false)
+        drawn_where(node, None, view, width, height, false)
+    }
+
+    /// The same window over a bead the forest has a fraction for.
+    fn drawn_with(
+        node: &Node,
+        progress: Option<Progress>,
+        view: &mut Show,
+        width: u16,
+        height: u16,
+    ) -> Vec<String> {
+        drawn_where(node, progress, view, width, height, false)
     }
 
     fn drawn_where(
         node: &Node,
+        progress: Option<Progress>,
         view: &mut Show,
         width: u16,
         height: u16,
         follows: bool,
     ) -> Vec<String> {
         Painted::drawn_by(width, height, |frame| {
-            show(frame, frame.area(), node, view, follows)
+            show(frame, frame.area(), node, progress, view, follows)
         })
         .rows()
         .into_iter()
@@ -1012,7 +1111,13 @@ mod tests {
                 ("dun-7.4", "dun-7.4  file the licence"),
             ] {
                 assert_eq!(
-                    drawn_at(over(WIDE, height), &bead, &view, drawn_on(&rows, drawn_as)),
+                    drawn_at(
+                        over(WIDE, height),
+                        &bead,
+                        None,
+                        &view,
+                        drawn_on(&rows, drawn_as)
+                    ),
                     Drawn::Related(id),
                     "at {height} rows the row {drawn_as:?} was drawn on names \
                      another bead: {rows:#?}"
@@ -1032,7 +1137,13 @@ mod tests {
 
         for drawn_as in ["PARENT", "Point it at the new bird", "re-point the dish"] {
             assert_eq!(
-                drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, drawn_as)),
+                drawn_at(
+                    over(WIDE, TALL),
+                    &bead,
+                    None,
+                    &view,
+                    drawn_on(&rows, drawn_as)
+                ),
                 Drawn::Page,
                 "the row {drawn_as:?} was drawn on is not the page: {rows:#?}"
             );
@@ -1050,12 +1161,18 @@ mod tests {
         let rows = drawn(&bead, &mut view, WIDE, TALL);
 
         assert_eq!(
-            drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, "┌dun-7.1")),
+            drawn_at(
+                over(WIDE, TALL),
+                &bead,
+                None,
+                &view,
+                drawn_on(&rows, "┌dun-7.1")
+            ),
             Drawn::Beyond,
             "the title is drawn on the page: {rows:#?}"
         );
         assert_eq!(
-            drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, "└─")),
+            drawn_at(over(WIDE, TALL), &bead, None, &view, drawn_on(&rows, "└─")),
             Drawn::Beyond,
             "the foot of the window is drawn on the page: {rows:#?}"
         );
@@ -1077,7 +1194,7 @@ mod tests {
             "the window stops above the foot: {rows:#?}"
         );
         assert_eq!(
-            drawn_at(over_a_taller_screen, &bead, &view, under),
+            drawn_at(over_a_taller_screen, &bead, None, &view, under),
             Drawn::Beyond,
             "the foot's row is drawn on the page: {rows:#?}"
         );
@@ -1103,6 +1220,7 @@ mod tests {
             drawn_at(
                 over(WIDE, short),
                 &bead,
+                None,
                 &view,
                 drawn_on(&after, "dun-7.4  file the licence")
             ),
@@ -1136,6 +1254,7 @@ mod tests {
             drawn_at(
                 over(WIDE, barely_taller_than_the_sections),
                 &bead,
+                None,
                 &view,
                 under_the_blank_row
             ),
@@ -1146,6 +1265,7 @@ mod tests {
             drawn_at(
                 over(WIDE, barely_taller_than_the_sections),
                 &bead,
+                None,
                 &view,
                 under_the_blank_row - 1
             ),
@@ -1417,9 +1537,9 @@ mod tests {
             for height in 4..=26 {
                 let mut view = Show::default();
                 let painted = Painted::drawn_by(width, height, |frame| {
-                    show(frame, frame.area(), &bead, &mut view, false);
+                    show(frame, frame.area(), &bead, None, &mut view, false);
                 });
-                let margins = painted.margins(lay_out(over(width, height), &bead).window);
+                let margins = painted.margins(lay_out(over(width, height), &bead, None).window);
                 read += margins.chars().count();
 
                 assert_eq!(
@@ -1448,7 +1568,7 @@ mod tests {
 
     fn painted(node: &Node, width: u16, height: u16) -> Painted {
         Painted::drawn_by(width, height, |frame| {
-            show(frame, frame.area(), node, &mut Show::default(), false)
+            show(frame, frame.area(), node, None, &mut Show::default(), false)
         })
     }
 
@@ -1796,7 +1916,7 @@ mod tests {
     #[test]
     fn the_rows_the_page_reports_are_the_beads_it_names_in_that_order() {
         let bead = a_bead();
-        let page = said(&bead, 60, 60);
+        let page = said(&bead, None, 60, 60);
 
         assert_eq!(
             page.related.len(),
@@ -1875,7 +1995,7 @@ mod tests {
         );
         assert!(
             says(
-                drawn_where(&bead, &mut Show::default(), 60, 24, true),
+                drawn_where(&bead, None, &mut Show::default(), 60, 24, true),
                 "Tab, Enter to follow"
             ),
             "no keys offered where a reference can be followed"
@@ -1893,19 +2013,23 @@ mod tests {
         // Found by what the row says rather than by its number: the window is
         // centred, so a page row and a screen row are not the same count.
         let reversed = |said: &str, view: &mut Show| {
-            Painted::drawn_by(60, 24, |frame| show(frame, frame.area(), &bead, view, true))
-                .rows()
-                .iter()
-                .enumerate()
-                .find(|(_, row)| row.contains(said))
-                .map(|(at, _)| at)
-                .map(|at| {
-                    Painted::drawn_by(60, 24, |frame| show(frame, frame.area(), &bead, view, true))
-                        .row(at)
-                        .iter()
-                        .any(|run| run.style.add_modifier.contains(Modifier::REVERSED))
+            Painted::drawn_by(60, 24, |frame| {
+                show(frame, frame.area(), &bead, None, view, true)
+            })
+            .rows()
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.contains(said))
+            .map(|(at, _)| at)
+            .map(|at| {
+                Painted::drawn_by(60, 24, |frame| {
+                    show(frame, frame.area(), &bead, None, view, true)
                 })
-                .unwrap_or_else(|| panic!("{said:?} is drawn"))
+                .row(at)
+                .iter()
+                .any(|run| run.style.add_modifier.contains(Modifier::REVERSED))
+            })
+            .unwrap_or_else(|| panic!("{said:?} is drawn"))
         };
 
         assert!(
@@ -1924,11 +2048,11 @@ mod tests {
     fn stepping_on_to_a_bead_below_the_window_brings_it_into_view() {
         let bead = a_bead();
         let mut view = Show::default();
-        let page = said(&bead, 58, 60);
+        let page = said(&bead, None, 58, 60);
         let last = *page.related.last().expect("a bead names beads");
 
         view.go_to("dun-7.4");
-        let drawn = drawn_where(&bead, &mut view, 60, 8, true);
+        let drawn = drawn_where(&bead, None, &mut view, 60, 8, true);
 
         assert!(
             drawn
@@ -2011,5 +2135,126 @@ mod tests {
         view.reveal(9);
 
         assert_eq!(view.from, 0);
+    }
+
+    /// Somewhere a badge can take a reader, in the invented vocabulary the
+    /// fixtures share.
+    const SOMEWHERE: &str = "https://example.invalid/dunwich/12";
+
+    /// A bead the forest row has something to say about in every cell it
+    /// has: a linked badge and an unlinked one, two anomalies, and an agent
+    /// the join inferred rather than confirmed.
+    fn a_busy_bead() -> Node {
+        Node {
+            badges: vec![
+                Badged {
+                    key: "pr".to_string(),
+                    text: "⇢ #12".to_string(),
+                    short: None,
+                    link: Some(SOMEWHERE.to_string()),
+                    colour: None,
+                },
+                Badged {
+                    key: "waiting".to_string(),
+                    text: "⏸ waiting".to_string(),
+                    short: None,
+                    link: None,
+                    colour: None,
+                },
+            ],
+            anomalies: vec![Anomaly::StaleClaim { days: 58 }, Anomaly::StalePane],
+            agent: Some(AgentRef {
+                pane: key("w:p1"),
+                pane_status: PaneStatus::Working,
+                title: Some("lifting the mast".to_string()),
+                source: JoinSource::DisplayAgent,
+            }),
+            ..a_bead()
+        }
+    }
+
+    /// The head: the rows between the blank one the window opens on and the
+    /// blank one that opens the first section, without the border either
+    /// side of them.
+    fn head_of(drawn: &[String]) -> Vec<String> {
+        drawn
+            .iter()
+            .skip(2)
+            .map(|row| {
+                row.split_once('│')
+                    .map_or("", |(_, inside)| inside)
+                    .trim_end_matches('│')
+                    .trim_end()
+                    .to_string()
+            })
+            .take_while(|row| !row.is_empty())
+            .collect()
+    }
+
+    /// Every symbol the window drew, escapes and all, for a test about a
+    /// hyperlink — which is written into the cell the link starts on and is
+    /// not among the words a reader sees.
+    fn symbols_of(node: &Node, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
+        terminal
+            .draw(|frame| {
+                show(frame, frame.area(), node, None, &mut Show::default(), false);
+            })
+            .expect("a draw into memory");
+        let buffer = terminal.backend().buffer();
+        let mut said = String::new();
+        for y in buffer.area.top()..buffer.area.bottom() {
+            for x in buffer.area.left()..buffer.area.right() {
+                said.push_str(buffer[(x, y)].symbol());
+            }
+        }
+        said
+    }
+
+    /// `bdi-0d4p`: the head is the forest row unfolded, so everything the row
+    /// says about a bead the window says at its whole width — the agent with
+    /// its state and the join's caveat, each anomaly on a row of its own, the
+    /// badges on one row, and the fraction under them.
+    #[test]
+    fn the_head_says_what_the_forest_row_says() {
+        let drawn = drawn_with(
+            &a_busy_bead(),
+            Some(Progress {
+                closed: 3,
+                total: 7,
+            }),
+            &mut Show::default(),
+            90,
+            24,
+        );
+
+        assert_eq!(
+            head_of(&drawn),
+            vec![
+                " ◐ dun-7.1  re-point the dish",
+                "   in_progress · P2 · task · kim",
+                "   ◍ lifting the mast · working · inferred, not confirmed",
+                "   ⚠ claimed · untouched for 58 days",
+                "   ⚠ closed · its pane is still alive",
+                "   ⇢ #12  ⏸ waiting",
+                "   3/7",
+            ],
+            "{drawn:#?}"
+        );
+    }
+
+    /// A badge that opens somewhere from the forest row opens there from the
+    /// window too: a reader who opened the bead to read it in full should not
+    /// have to close it again to follow what it points at.
+    #[test]
+    fn a_badge_the_forest_links_is_a_link_in_the_head() {
+        let said = symbols_of(&a_busy_bead(), 90, 24);
+
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character")
+            ),
+            "the badge opens nowhere from the window: {said:?}"
+        );
     }
 }

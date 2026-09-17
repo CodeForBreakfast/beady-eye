@@ -8,7 +8,6 @@ use std::fmt;
 
 use serde::Deserialize;
 
-use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
 use crate::model::join::AgentRef;
 use crate::model::snapshot::{Counts, Node};
@@ -51,7 +50,9 @@ pub struct Row {
     /// both this cell and the bead's own title. Present exactly when `agent`
     /// is: they are two forms of one cell rather than two cells.
     pub agent_briefly: Option<String>,
-    pub anomalies: Option<String>,
+    /// Every anomaly rule that fired, said one at a time, because the forest
+    /// draws them in one cell and the bead window on a row each.
+    pub anomalies: Vec<String>,
     /// The work this line is shut over, where it is shut over any: the beads
     /// its fold hides, counted once each.
     ///
@@ -307,7 +308,7 @@ pub fn cells(
         progress,
         agent: node.agent.as_ref().map(agent_marker),
         agent_briefly: node.agent.as_ref().map(agent_briefly),
-        anomalies: anomaly_marker(&node.anomalies),
+        anomalies: node.anomalies.iter().map(phrase::anomaly).collect(),
         shut_over,
         notes,
     }
@@ -390,19 +391,21 @@ fn named(agent: &AgentRef, doing: &str) -> String {
     said.join(" · ")
 }
 
-/// Every rule that fired, not the first: an old claim whose agent has died is
-/// both, and the age is the part that says whether to care.
-pub fn anomaly_marker(anomalies: &[Anomaly]) -> Option<String> {
-    if anomalies.is_empty() {
-        return None;
-    }
-    let said: Vec<String> = anomalies.iter().map(phrase::anomaly).collect();
-    Some(format!("{WARNING} {}", said.join(" · ")))
+/// Every rule that fired on one cell, not the first: an old claim whose agent
+/// has died is both, and the age is the part that says whether to care.
+pub fn anomaly_marker(said: &[String]) -> Option<String> {
+    (!said.is_empty()).then(|| format!("{WARNING} {}", said.join(" · ")))
+}
+
+/// One anomaly where there is a row to give it rather than a cell to share.
+pub fn anomaly_alone(said: &str) -> String {
+    format!("{WARNING} {said}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::anomaly::Anomaly;
     use crate::model::badges::{Badged, Undrawn};
     use crate::model::join::JoinSource;
     use crate::model::types::testing::key;
@@ -581,12 +584,16 @@ mod tests {
 
     #[test]
     fn a_row_carries_every_anomaly_that_fired_rather_than_the_first() {
-        let said = anomaly_marker(&[
+        let mut odd = node("smt-4kd3p.20", Status::InProgress);
+        odd.anomalies = vec![
             Anomaly::OrphanClaim { refused: None },
             Anomaly::StaleClaim { days: 58 },
-        ])
-        .expect("two rules fired");
+        ];
 
+        let row = cells(&odd, Some(ROOT), None, None);
+        let said = anomaly_marker(&row.anomalies).expect("two rules fired");
+
+        assert_eq!(row.anomalies.len(), 2, "{:?}", row.anomalies);
         assert!(said.contains("no pane"), "{said}");
         assert!(said.contains("58"), "{said}");
     }
@@ -595,7 +602,7 @@ mod tests {
     fn a_bead_with_nothing_wrong_carries_no_marker_at_all() {
         let row = cells(&node("smt-4kd3p.20", Status::Open), Some(ROOT), None, None);
 
-        assert_eq!(row.anomalies, None);
+        assert_eq!(row.anomalies, Vec::<String>::new());
         assert_eq!(row.agent, None);
         assert_eq!(row.notes, Vec::<String>::new());
     }
