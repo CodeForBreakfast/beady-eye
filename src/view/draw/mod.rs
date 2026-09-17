@@ -7,7 +7,7 @@
 //! draws with.
 
 mod bands;
-mod bead;
+pub(in crate::view) mod bead;
 mod foot;
 mod groups;
 mod project;

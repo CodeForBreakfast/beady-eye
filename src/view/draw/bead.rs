@@ -209,8 +209,8 @@ impl Walk<'_> {
                 }
             }
             Cell::Anomalies => {
-                if let Some(anomalies) = &row.anomalies {
-                    walked.cell(Span::styled(anomalies.clone(), palette::ATTENTION));
+                if let Some(anomalies) = row::anomaly_marker(&row.anomalies) {
+                    walked.cell(Span::styled(anomalies, palette::ATTENTION));
                 }
             }
         }
@@ -314,7 +314,7 @@ impl Walked {
 /// Asked of the badge's own text rather than of the words the row goes on to
 /// draw, so the answer does not turn on how wide the row is. A badge is a
 /// link or it is not.
-fn opens_at(badge: &Badged) -> Option<&str> {
+pub(in crate::view) fn opens_at(badge: &Badged) -> Option<&str> {
     badge.link.as_deref().filter(|to| openable(&badge.text, to))
 }
 
@@ -322,7 +322,7 @@ fn opens_at(badge: &Badged) -> Option<&str> {
 /// underline carrying no colour of its own. A badge that names neither is
 /// left with a style of nothing, which is what lets the row's own tone reach
 /// it the way it reaches the title beside it.
-fn badge_style(badge: &Badged, status: &Status) -> Style {
+pub(in crate::view) fn badge_style(badge: &Badged, status: &Status) -> Style {
     let coloured = match badge.colour {
         Some(Colour::Status) => status_style(status),
         Some(Colour::Slot(slot)) => palette::slot(slot),

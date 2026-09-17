@@ -539,8 +539,9 @@ impl Shown {
     /// the reader pointed at it and arrived nowhere, and a ring left sitting
     /// on it would be a move they never asked for.
     fn clicked_bead(&mut self, screen: Rect, row: u16) -> Landed {
-        let landed =
-            show::selected(&self.forest).map(|node| show::drawn_at(screen, node, &self.show, row));
+        let landed = show::selected(&self.forest).map(|node| {
+            show::drawn_at(screen, node, show::fraction(&self.forest), &self.show, row)
+        });
         let on = match landed {
             Some(show::Drawn::Related(id)) => id.to_string(),
             Some(show::Drawn::Page) => return Landed::Nothing,
@@ -944,7 +945,14 @@ fn paint(
                 let follows = show::related(node)
                     .into_iter()
                     .any(|related| show::followable(forest, related));
-                show::show(frame, frame.area(), node, show, follows);
+                show::show(
+                    frame,
+                    frame.area(),
+                    node,
+                    show::fraction(forest),
+                    show,
+                    follows,
+                );
             }
         }
     }
