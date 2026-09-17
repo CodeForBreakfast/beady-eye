@@ -33,6 +33,21 @@ const PARENT: &str = "PARENT";
 const DEPENDS_ON: &str = "DEPENDS ON";
 const BLOCKS: &str = "BLOCKS";
 
+/// `bd show`'s own word for the person a bead is assigned to, lowercased to
+/// sit in a row of facts rather than at the head of one.
+const ASSIGNEE: &str = "assignee";
+
+/// The words the dates row says each date under, in `design.md`'s order, and
+/// the format `bd show` writes a date in.
+const CREATED: &str = "created";
+const UPDATED: &str = "updated";
+const STARTED: &str = "started";
+const CLOSED: &str = "closed";
+const DATE: &str = "%Y-%m-%d";
+
+/// How `bd show` separates one label from the next.
+const BETWEEN_LABELS: &str = ", ";
+
 /// `bd show`'s own arrows: up to the parent, out to what a bead waits on,
 /// back from what waits on it.
 const UP: char = '↑';
@@ -423,12 +438,19 @@ pub fn said(
     followable: &dyn Fn(&Related) -> bool,
 ) -> Page {
     let cells = row::cells(node, None, progress, None);
-    let name = vec![
+    let mut name = vec![
         Span::styled(cells.glyph.to_string(), status_style(&cells.status)),
         Span::raw(" "),
         Span::styled(cells.id.clone(), palette::IDENTITY),
         Span::raw(indent()),
     ];
+    if !node.labels.is_empty() {
+        name.push(Span::styled(
+            node.labels.join(BETWEEN_LABELS),
+            palette::QUIET,
+        ));
+        name.push(Span::raw(indent()));
+    }
     let where_the_title_starts = name.iter().map(Span::width).sum::<usize>();
     let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
     for line in title_of(
@@ -445,7 +467,12 @@ pub fn said(
         rows.push(row);
     }
     let mut facts = vec![format!("P{}", node.priority), node.issue_type.clone()];
-    facts.extend(node.owner.clone());
+    facts.extend(node.created_by.clone());
+    facts.extend(
+        node.assignee
+            .as_ref()
+            .map(|assignee| format!("{ASSIGNEE} {assignee}")),
+    );
     rows.push(indented(vec![
         Span::styled(
             phrase::status_word(&cells.status),
@@ -453,6 +480,9 @@ pub fn said(
         ),
         Span::raw(format!(" · {}", facts.join(" · "))),
     ]));
+    if let Some(dates) = dates(node) {
+        rows.push(indented(vec![Span::raw(dates)]));
+    }
     if let Some(agent) = &cells.agent {
         rows.push(indented(vec![Span::styled(agent.clone(), palette::AGENT)]));
     }
@@ -572,6 +602,25 @@ fn title_of(title: &str, room: usize, window: usize) -> Vec<Vec<Span<'static>>> 
         return as_written;
     }
     broken
+}
+
+/// When the bead was created, updated, started and closed, each said where
+/// the bead has it and the whole row left out where it has none.
+///
+/// `bd show` prints no closed date outside `--long`, and this says one: the
+/// head is the row unfolded rather than a transcript, and when a closed bead
+/// closed is what a reader opening it came for.
+fn dates(node: &Node) -> Option<String> {
+    let said: Vec<String> = [
+        (CREATED, node.created_at),
+        (UPDATED, node.updated_at),
+        (STARTED, node.started_at),
+        (CLOSED, node.closed_at),
+    ]
+    .into_iter()
+    .filter_map(|(word, when)| when.map(|when| format!("{word} {}", when.format(DATE))))
+    .collect();
+    (!said.is_empty()).then(|| said.join(" · "))
 }
 
 /// One row indented under a heading.
@@ -730,6 +779,7 @@ mod tests {
     use crate::model::types::testing::key;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::fitted::hyperlink;
+    use chrono::{DateTime, Utc};
     use ratatui::backend::TestBackend;
     use ratatui::style::Modifier;
     use ratatui::Terminal;
@@ -737,6 +787,16 @@ mod tests {
     use crate::view::painted::{Painted, Run};
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
+
+    /// A date as a bead carries one, from the day alone: the head says the
+    /// day and nothing finer, so the time of day is noise in a fixture.
+    fn when(day: &str) -> Option<DateTime<Utc>> {
+        Some(
+            format!("{day}T00:00:00Z")
+                .parse()
+                .expect("the day is a date"),
+        )
+    }
 
     fn related(id: &str, edge: Edge, status: Status, title: &str) -> Related {
         Related {
@@ -770,7 +830,11 @@ mod tests {
             anomalies: Vec::new(),
             description: "Point it at the new bird.\n\nThe old one is gone.".to_string(),
             notes: "The crane is booked for Tuesday.".to_string(),
-            owner: Some("kim".to_string()),
+            created_by: Some("kim".to_string()),
+            assignee: None,
+            labels: Vec::new(),
+            created_at: None,
+            updated_at: None,
             parent: Some(related(
                 "dun-7",
                 Edge::ParentChild,
@@ -864,14 +928,19 @@ mod tests {
     }
 
     /// `bd show` prints nothing for a section the bead has nothing in, and a
-    /// heading over nothing would be a claim that something was lost.
+    /// heading over nothing would be a claim that something was lost. The
+    /// same holds of the head's own rows: a bead with no name on it and no
+    /// date said of it gets neither row.
     #[test]
     fn sections_the_bead_has_nothing_for_are_left_out() {
         let bare = Node {
             agent: None,
             description: String::new(),
             notes: String::new(),
-            owner: None,
+            created_by: None,
+            assignee: None,
+            created_at: None,
+            updated_at: None,
             parent: None,
             depends_on: Vec::new(),
             blocks: Vec::new(),
@@ -888,6 +957,33 @@ mod tests {
                 "└──────────────────────────────────────────┘",
                 "",
             ]
+        );
+    }
+
+    /// A bead that has all four dates says all four, in the order the head
+    /// lists them rather than the order `bd show` prints them: created,
+    /// updated, started, closed. Asserted on the row alone, because a bead
+    /// with four dates is two columns wider than the window at its floor and
+    /// a whole frame would be a frame of a screen nobody has.
+    #[test]
+    fn the_head_says_when_a_bead_was_created_updated_started_and_closed() {
+        let closed = Node {
+            status: Status::Closed,
+            created_at: when("2026-03-14"),
+            started_at: when("2026-03-15"),
+            closed_at: when("2026-03-20"),
+            updated_at: when("2026-03-20"),
+            ..a_bead()
+        };
+
+        let rows = drawn(&closed, &mut Show::default(), 120, 40);
+
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "created 2026-03-14 · updated 2026-03-20 · started 2026-03-15 · \
+                 closed 2026-03-20"
+            )),
+            "{rows:#?}"
         );
     }
 
@@ -2367,6 +2463,12 @@ mod tests {
                 title: Some("lifting the mast".to_string()),
                 source: JoinSource::DisplayAgent,
             }),
+            labels: vec!["mast".to_string(), "weather".to_string()],
+            created_by: Some("Mira Vance".to_string()),
+            assignee: Some("Rowan Ash".to_string()),
+            created_at: when("2026-03-14"),
+            updated_at: when("2026-03-16"),
+            started_at: when("2026-03-15"),
             ..a_bead()
         }
     }
@@ -2420,6 +2522,11 @@ mod tests {
     /// says about a bead the window says at its whole width — the agent with
     /// its state and the join's caveat, each anomaly on a row of its own, the
     /// badges on one row, and the fraction under them.
+    ///
+    /// And beside them the facts the row has no width to carry: the labels
+    /// between the id and the title, the owner and the assignee by name, and
+    /// the dates on a row of their own under the facts. This is what fixes
+    /// their order, which is the one `design.md` lists.
     #[test]
     fn the_head_says_what_the_forest_row_says() {
         let drawn = drawn_with(
@@ -2436,8 +2543,9 @@ mod tests {
         assert_eq!(
             head_of(&drawn),
             vec![
-                " ◐ dun-7.1  re-point the dish",
-                "   in_progress · P2 · task · kim",
+                " ◐ dun-7.1  mast, weather  re-point the dish",
+                "   in_progress · P2 · task · Mira Vance · assignee Rowan Ash",
+                "   created 2026-03-14 · updated 2026-03-16 · started 2026-03-15",
                 "   ◍ lifting the mast · working · inferred, not confirmed",
                 "   ⚠ claimed · untouched for 58 days",
                 "   ⚠ closed · its pane is still alive",

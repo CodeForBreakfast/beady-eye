@@ -293,8 +293,18 @@ pub struct Node {
     pub description: String,
     #[serde(skip)]
     pub notes: String,
+    /// The name `bd show` prints as the bead's owner, which is the row's
+    /// `created_by` and not the address its `owner` carries.
     #[serde(skip)]
-    pub owner: Option<String>,
+    pub created_by: Option<String>,
+    #[serde(skip)]
+    pub assignee: Option<String>,
+    #[serde(skip)]
+    pub labels: Vec<String>,
+    #[serde(skip)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(skip)]
+    pub updated_at: Option<DateTime<Utc>>,
     #[serde(skip)]
     pub parent: Option<Related>,
     #[serde(skip)]
