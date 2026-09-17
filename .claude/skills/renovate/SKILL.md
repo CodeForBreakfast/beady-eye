@@ -75,8 +75,16 @@ sites. `nix flake check` is the evidence here, and it reads the whole tree.
 only one.** `nix flake check` never reads `.github/`, so running it locally
 against a sha bump proves nothing.
 
-For a change the flake can see, gate it the way `CLAUDE.md` says:
-`check-before-push`, then `read-ci-verdict` until it answers.
+For a change the flake can see, the local gate has to run on the bump's own
+tree rather than on yours. Check the head out first, and name its sha —
+`read-ci-verdict` with no argument answers for whatever `HEAD` is, which on
+your own branch is a verdict about something else entirely.
+
+```bash
+gh pr checkout <number>
+check-before-push
+read-ci-verdict "$(git rev-parse HEAD)"    # until it answers
+```
 
 ## 5. Stop rather than force
 
