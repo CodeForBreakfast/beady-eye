@@ -2210,15 +2210,17 @@ mod tests {
         )
     }
 
-    /// A grove whose first bead's description runs to `lines` lines, so the
-    /// bead is taller than any window a screen in these tests offers.
+    /// A grove whose first bead's description runs to `lines` rows, so the
+    /// bead is taller than any window a screen in these tests offers. Each
+    /// line ends in a backslash: prose reflows to the window, and a hard
+    /// break is what holds the height to the count asked for.
     fn a_grove_with_a_tall_bead(lines: usize) -> Snapshot {
         let mut snapshot = a_described_grove(6);
         let tree = Arc::make_mut(&mut snapshot.collected[0]);
         tree.beads[0].description = (1..=lines)
             .map(|n| format!("line {n} of the description"))
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\\\n");
         snapshot.trees = snapshot.collected.clone();
         snapshot
     }
