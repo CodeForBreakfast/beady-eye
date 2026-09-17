@@ -65,9 +65,13 @@ matrix ones in `release.yml`.
 
 ### cargo and nix
 
-`rangeStrategy` is `update-lockfile` for cargo, so the manifest does not move and
-`Cargo.lock` does. Read the changelog for behaviour changes, then grep the call
-sites. `nix flake check` is the evidence here, and it reads the whole tree.
+`rangeStrategy` is `update-lockfile` for cargo, which moves `Cargo.lock` alone
+only while the new version still satisfies the requirement in `Cargo.toml`. A
+major is outside that range by definition, so Renovate falls back to rewriting
+the requirement and the manifest moves too. Read the diff for both.
+
+Then read the changelog for behaviour changes and grep the call sites.
+`nix flake check` is the evidence here, and it reads the whole tree.
 
 ## 4. Gate
 
