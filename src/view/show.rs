@@ -296,10 +296,21 @@ fn window_block() -> Block<'static> {
     Block::bordered().padding(Padding::new(MARGIN, MARGIN, BLANK_ROW, 0))
 }
 
-fn lay_out(area: Rect, node: &Node, progress: Option<Progress>) -> Laid {
+fn lay_out(
+    area: Rect,
+    node: &Node,
+    progress: Option<Progress>,
+    followable: &dyn Fn(&Related) -> bool,
+) -> Laid {
     let window = show_window(area);
     let inner = window_block().inner(window);
-    let page = said(node, progress, inner.width as usize, inner.height as usize);
+    let page = said(
+        node,
+        progress,
+        inner.width as usize,
+        inner.height as usize,
+        followable,
+    );
     Laid {
         page,
         window,
@@ -331,14 +342,19 @@ pub enum Drawn<'a> {
 /// `view` is what the last frame left behind, and a frame is always drawn
 /// before a press is answered, so how far down the bead it had scrolled is
 /// how far down the reader was looking.
+///
+/// `followable` is the page's, not this answer's: a row is drawn where it is
+/// drawn whatever colour its id takes, and the page a pointer landed on is
+/// the page the reader was looking at.
 pub fn drawn_at<'a>(
     area: Rect,
     node: &'a Node,
     progress: Option<Progress>,
     view: &Show,
     row: u16,
+    followable: &dyn Fn(&Related) -> bool,
 ) -> Drawn<'a> {
-    let Laid { page, inner, .. } = lay_out(area, node, progress);
+    let Laid { page, inner, .. } = lay_out(area, node, progress, followable);
     if !(inner.y..inner.bottom()).contains(&row) {
         return Drawn::Beyond;
     }
@@ -390,7 +406,17 @@ fn show_window(area: Rect) -> Rect {
 ///
 /// `window` is what the window has room for down the screen, which the name
 /// alone is not allowed to fill — see `title_of`.
-pub fn said(node: &Node, progress: Option<Progress>, width: usize, window: usize) -> Page {
+///
+/// `followable` is whether the forest can take the reader to a bead this one
+/// names, which only the forest can say and which decides the colour of that
+/// bead's id.
+pub fn said(
+    node: &Node,
+    progress: Option<Progress>,
+    width: usize,
+    window: usize,
+    followable: &dyn Fn(&Related) -> bool,
+) -> Page {
     let cells = row::cells(node, None, progress, None);
     let name = vec![
         Span::styled(cells.glyph.to_string(), status_style(&cells.status)),
@@ -473,7 +499,7 @@ pub fn said(node: &Node, progress: Option<Progress>, width: usize, window: usize
             .iter()
             .map(|related| {
                 let mut row = vec![Span::styled(format!("{arrow} "), palette::STRUCTURE)];
-                row.extend(related_row(related));
+                row.extend(related_row(related, followable(related)));
                 indented(row)
             })
             .collect::<Vec<_>>()
@@ -560,7 +586,13 @@ fn glyph(status: &Status) -> Span<'static> {
 /// kind of edge where the arrow alone would not say. A closed one is dimmed
 /// the way `bd show` dims it, the glyph aside. A bead the answer does not
 /// hold has no glyph and no title, and says so in their place.
-fn related_row(related: &Related) -> Vec<Span<'static>> {
+///
+/// The id is drawn in `bd`'s own blue where `followable` says the forest can
+/// take the reader to the bead, and is left in the row's own tone where it
+/// cannot: blue in this window means a bead you can go to. Only a row whose
+/// id is blue is broken up to say so, so a row the reader cannot follow is
+/// the row it always was.
+fn related_row(related: &Related, followable: bool) -> Vec<Span<'static>> {
     let Some(status) = &related.status else {
         return vec![Span::raw(format!(
             "{}{}{}",
@@ -569,16 +601,27 @@ fn related_row(related: &Related) -> Vec<Span<'static>> {
             phrase::not_in_the_answer()
         ))];
     };
-    let mut said = format!(
-        " {}{}{}",
-        related.id,
+    let mut beside = format!(
+        "{}{}",
         indent(),
         related.title.as_deref().unwrap_or_default()
     );
     if let Edge::Other(kind) = &related.edge {
-        said.push_str(&format!(" · {}", phrase::edge_kind(kind)));
+        beside.push_str(&format!(" · {}", phrase::edge_kind(kind)));
     }
-    vec![glyph(status), Span::styled(said, dimmed_if_closed(status))]
+    let tone = dimmed_if_closed(status);
+    if !followable {
+        return vec![
+            glyph(status),
+            Span::styled(format!(" {}{beside}", related.id), tone),
+        ];
+    }
+    vec![
+        glyph(status),
+        Span::styled(" ", tone),
+        Span::styled(related.id.clone(), palette::IDENTITY),
+        Span::styled(beside, tone),
+    ]
 }
 
 /// A related row falls to the finished tier when the bead it names is
@@ -600,6 +643,11 @@ fn dimmed_if_closed(status: &Status) -> Style {
 /// where the bead is taller than the window the title says how far down it
 /// the reader has got. The keys are on the foot row while the window is up.
 ///
+/// `followable` is whether the forest can take the reader to a bead this one
+/// names, which only the forest can say, and the window asks it of every
+/// bead named. An id it answers for is drawn in blue and the rest keep the
+/// page's tone.
+///
 /// The bead the window is on is drawn as the forest draws the row the
 /// selection is on, and brought inside the window where the last frame left
 /// it beyond what there was room for — a ring nobody can see is a ring the
@@ -610,13 +658,13 @@ pub fn show(
     node: &Node,
     progress: Option<Progress>,
     view: &mut Show,
-    _follows: bool,
+    followable: &dyn Fn(&Related) -> bool,
 ) {
     let Laid {
         page,
         window,
         inner,
-    } = lay_out(area, node, progress);
+    } = lay_out(area, node, progress, followable);
     if window.is_empty() {
         return;
     }
@@ -740,7 +788,7 @@ mod tests {
     /// which is what a test that is not about following one wants: the title
     /// then offers no key it would be pressed for nothing.
     fn drawn(node: &Node, view: &mut Show, width: u16, height: u16) -> Vec<String> {
-        drawn_where(node, None, view, width, height, false)
+        drawn_where(node, None, view, width, height, &nothing_followable)
     }
 
     /// The same window over a bead the forest has a fraction for.
@@ -751,7 +799,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Vec<String> {
-        drawn_where(node, progress, view, width, height, false)
+        drawn_where(node, progress, view, width, height, &nothing_followable)
     }
 
     fn drawn_where(
@@ -760,10 +808,10 @@ mod tests {
         view: &mut Show,
         width: u16,
         height: u16,
-        follows: bool,
+        followable: &dyn Fn(&Related) -> bool,
     ) -> Vec<String> {
         Painted::drawn_by(width, height, |frame| {
-            show(frame, frame.area(), node, progress, view, follows)
+            show(frame, frame.area(), node, progress, view, followable)
         })
         .rows()
         .into_iter()
@@ -1106,7 +1154,8 @@ mod tests {
                         &bead,
                         None,
                         &view,
-                        drawn_on(&rows, drawn_as)
+                        drawn_on(&rows, drawn_as),
+                        &nothing_followable,
                     ),
                     Drawn::Related(id),
                     "at {height} rows the row {drawn_as:?} was drawn on names \
@@ -1132,7 +1181,8 @@ mod tests {
                     &bead,
                     None,
                     &view,
-                    drawn_on(&rows, drawn_as)
+                    drawn_on(&rows, drawn_as),
+                    &nothing_followable,
                 ),
                 Drawn::Page,
                 "the row {drawn_as:?} was drawn on is not the page: {rows:#?}"
@@ -1156,13 +1206,21 @@ mod tests {
                 &bead,
                 None,
                 &view,
-                drawn_on(&rows, "┌dun-7.1")
+                drawn_on(&rows, "┌dun-7.1"),
+                &nothing_followable,
             ),
             Drawn::Beyond,
             "the title is drawn on the page: {rows:#?}"
         );
         assert_eq!(
-            drawn_at(over(WIDE, TALL), &bead, None, &view, drawn_on(&rows, "└─")),
+            drawn_at(
+                over(WIDE, TALL),
+                &bead,
+                None,
+                &view,
+                drawn_on(&rows, "└─"),
+                &nothing_followable,
+            ),
             Drawn::Beyond,
             "the foot of the window is drawn on the page: {rows:#?}"
         );
@@ -1184,7 +1242,14 @@ mod tests {
             "the window stops above the foot: {rows:#?}"
         );
         assert_eq!(
-            drawn_at(over_a_taller_screen, &bead, None, &view, under),
+            drawn_at(
+                over_a_taller_screen,
+                &bead,
+                None,
+                &view,
+                under,
+                &nothing_followable,
+            ),
             Drawn::Beyond,
             "the foot's row is drawn on the page: {rows:#?}"
         );
@@ -1212,7 +1277,8 @@ mod tests {
                 &bead,
                 None,
                 &view,
-                drawn_on(&after, "dun-7.4  file the licence")
+                drawn_on(&after, "dun-7.4  file the licence"),
+                &nothing_followable,
             ),
             Drawn::Related("dun-7.4"),
             "the row the last reference was scrolled onto names another bead: {after:#?}"
@@ -1246,7 +1312,8 @@ mod tests {
                 &bead,
                 None,
                 &view,
-                under_the_blank_row
+                under_the_blank_row,
+                &nothing_followable,
             ),
             Drawn::Related("dun-7.3"),
             "no reference is drawn there, so this says nothing: {rows:#?}"
@@ -1257,7 +1324,8 @@ mod tests {
                 &bead,
                 None,
                 &view,
-                under_the_blank_row - 1
+                under_the_blank_row - 1,
+                &nothing_followable,
             ),
             Drawn::Beyond,
             "the blank row over the head is not the page: {rows:#?}"
@@ -1527,9 +1595,17 @@ mod tests {
             for height in 4..=26 {
                 let mut view = Show::default();
                 let painted = Painted::drawn_by(width, height, |frame| {
-                    show(frame, frame.area(), &bead, None, &mut view, false);
+                    show(
+                        frame,
+                        frame.area(),
+                        &bead,
+                        None,
+                        &mut view,
+                        &nothing_followable,
+                    );
                 });
-                let margins = painted.margins(lay_out(over(width, height), &bead, None).window);
+                let margins = painted
+                    .margins(lay_out(over(width, height), &bead, None, &nothing_followable).window);
                 read += margins.chars().count();
 
                 assert_eq!(
@@ -1557,9 +1633,46 @@ mod tests {
     }
 
     fn painted(node: &Node, width: u16, height: u16) -> Painted {
+        painted_where(node, width, height, &nothing_followable)
+    }
+
+    /// The same window over a bead some of whose references the forest
+    /// draws, which is what a test about where the blue falls wants.
+    fn painted_where(
+        node: &Node,
+        width: u16,
+        height: u16,
+        followable: &dyn Fn(&Related) -> bool,
+    ) -> Painted {
         Painted::drawn_by(width, height, |frame| {
-            show(frame, frame.area(), node, None, &mut Show::default(), false)
+            show(
+                frame,
+                frame.area(),
+                node,
+                None,
+                &mut Show::default(),
+                followable,
+            )
         })
+    }
+
+    /// A forest that draws none of them, for the tests that are not about
+    /// following one: the title then offers no key it would be pressed for
+    /// nothing, and no id is blue.
+    fn nothing_followable(_related: &Related) -> bool {
+        false
+    }
+
+    /// A forest that draws every bead the page names, for the tests that
+    /// want the keys offered and do not care which row they land on.
+    fn everything_followable(_related: &Related) -> bool {
+        true
+    }
+
+    /// The forest draws one bead of the page and not the rest, which is what
+    /// puts a followable row and an unfollowable one on the same screen.
+    fn only(id: &'static str) -> impl Fn(&Related) -> bool {
+        move |related: &Related| related.id == id
     }
 
     /// What every run of the window that answers `chosen` says, in the order
@@ -1857,6 +1970,72 @@ mod tests {
         }
     }
 
+    /// Blue means a bead you can go to. An id the forest draws takes `bd`'s
+    /// own blue for an id; one it draws nowhere keeps the page's tone, so a
+    /// reader sees which rows `Tab` will stop on before they press it.
+    #[test]
+    fn a_related_beads_id_is_blue_only_where_the_forest_can_be_gone_to_it() {
+        let painted = painted_where(&a_bead(), 44, 24, &only("dun-7"));
+
+        let drawn = painted.row(15);
+        assert_eq!(
+            run_saying(&drawn, "dun-7").style.fg,
+            palette::IDENTITY.fg,
+            "the id of a bead the forest draws: {drawn:?}"
+        );
+        assert_eq!(
+            run_saying(&drawn, "lift the ground station").style.fg,
+            palette::PAGE.fg,
+            "the title beside it: {drawn:?}"
+        );
+
+        let undrawn = painted.row(21);
+        assert_eq!(
+            run_saying(&undrawn, "dun-7.4").style.fg,
+            palette::PAGE.fg,
+            "the id of a bead the forest draws nowhere: {undrawn:?}"
+        );
+    }
+
+    /// Both things are true of a closed bead the forest draws, and the row
+    /// says both: the finished tier on its title, as a finished row of the
+    /// forest has, and the blue on its id.
+    #[test]
+    fn a_closed_bead_the_forest_draws_is_finished_toned_with_a_blue_id() {
+        let drawn = painted_where(&a_bead(), 44, 24, &only("dun-7.3")).row(18);
+
+        assert_eq!(
+            run_saying(&drawn, "dun-7.3").style.fg,
+            palette::IDENTITY.fg,
+            "{drawn:?}"
+        );
+        assert_eq!(
+            run_saying(&drawn, "lay the feeder cable").style.fg,
+            palette::TIER_FINISHED.fg,
+            "{drawn:?}"
+        );
+    }
+
+    /// A row for a bead the forest draws nowhere is the row it always was,
+    /// span for span. Two spans of one style are drawn exactly as the one
+    /// span they came from, so the screen cannot say whether a row was split
+    /// and the spans are the only place the question is answered.
+    #[test]
+    fn a_row_the_forest_cannot_be_gone_to_says_its_id_and_its_title_in_one_span() {
+        let bead = a_bead();
+        let page = said(&bead, None, 60, 60, &nothing_followable);
+
+        assert_eq!(
+            page.rows[page.related[0]],
+            vec![
+                Span::raw(indent()),
+                Span::styled(format!("{UP} "), palette::STRUCTURE),
+                Span::styled("◐", status_style(&Status::InProgress)),
+                Span::styled(" dun-7  lift the ground station", Style::new()),
+            ]
+        );
+    }
+
     /// Emphasis in the prose is by weight, not by white: a bold word keeps
     /// the page's tone under its modifier, and a code span keeps the colour
     /// markdown gives it.
@@ -1906,7 +2085,7 @@ mod tests {
     #[test]
     fn the_rows_the_page_reports_are_the_beads_it_names_in_that_order() {
         let bead = a_bead();
-        let page = said(&bead, None, 60, 60);
+        let page = said(&bead, None, 60, 60, &nothing_followable);
 
         assert_eq!(
             page.related.len(),
@@ -1982,7 +2161,14 @@ mod tests {
         // centred, so a page row and a screen row are not the same count.
         let reversed = |said: &str, view: &mut Show| {
             Painted::drawn_by(60, 24, |frame| {
-                show(frame, frame.area(), &bead, None, view, true)
+                show(
+                    frame,
+                    frame.area(),
+                    &bead,
+                    None,
+                    view,
+                    &everything_followable,
+                )
             })
             .rows()
             .iter()
@@ -1991,7 +2177,14 @@ mod tests {
             .map(|(at, _)| at)
             .map(|at| {
                 Painted::drawn_by(60, 24, |frame| {
-                    show(frame, frame.area(), &bead, None, view, true)
+                    show(
+                        frame,
+                        frame.area(),
+                        &bead,
+                        None,
+                        view,
+                        &everything_followable,
+                    )
                 })
                 .row(at)
                 .iter()
@@ -2016,11 +2209,11 @@ mod tests {
     fn stepping_on_to_a_bead_below_the_window_brings_it_into_view() {
         let bead = a_bead();
         let mut view = Show::default();
-        let page = said(&bead, None, 58, 60);
+        let page = said(&bead, None, 58, 60, &nothing_followable);
         let last = *page.related.last().expect("a bead names beads");
 
         view.go_to("dun-7.4");
-        let drawn = drawn_where(&bead, None, &mut view, 60, 8, true);
+        let drawn = drawn_where(&bead, None, &mut view, 60, 8, &everything_followable);
 
         assert!(
             drawn
@@ -2166,7 +2359,14 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
             .draw(|frame| {
-                show(frame, frame.area(), node, None, &mut Show::default(), false);
+                show(
+                    frame,
+                    frame.area(),
+                    node,
+                    None,
+                    &mut Show::default(),
+                    &nothing_followable,
+                );
             })
             .expect("a draw into memory");
         let buffer = terminal.backend().buffer();
