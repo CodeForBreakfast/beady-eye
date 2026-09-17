@@ -107,7 +107,7 @@ jobs:
       # The cache fills to its cap and is meant to. Nothing reads a superseded
       # entry or a merged pull request's scope again, and last access is the
       # order GitHub evicts in, so the cap takes the dead ones first.
-      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
         with:
           # Build results stay in this repository's own Actions cache. The
           # FlakeHub upload is a third party and an account, and it wants an
