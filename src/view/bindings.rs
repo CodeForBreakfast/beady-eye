@@ -2,7 +2,7 @@
 
 use ratatui::layout::{Constraint, Rect};
 use ratatui::text::Span;
-use ratatui::widgets::Block;
+use ratatui::widgets::{Block, Padding};
 use ratatui::Frame;
 
 use crate::view::fitted::{columns, cover, indent, Fitted, CUT, GAP};
@@ -38,6 +38,12 @@ pub fn bindings_window(area: Rect, bindings: &[(String, &str)]) -> Rect {
     )
 }
 
+/// The window's own frame: the border and the column of margin inside it on
+/// either side.
+pub(crate) fn bindings_block() -> Block<'static> {
+    Block::bordered().padding(Padding::horizontal(MARGIN))
+}
+
 /// The width the whole table would like: its longest row, the count it would
 /// draw if every binding were left off, and the title, whichever is widest.
 fn wanted_width(bindings: &[(String, &str)]) -> u16 {
@@ -54,7 +60,7 @@ fn wanted_width(bindings: &[(String, &str)]) -> u16 {
 
     u16::try_from(widest)
         .unwrap_or(u16::MAX)
-        .saturating_add(BORDERS)
+        .saturating_add(BORDERS + MARGINS)
 }
 
 /// How wide the keys are set, so that what a binding does starts in the same
@@ -87,7 +93,7 @@ pub fn key_bindings(frame: &mut Frame, area: Rect, bindings: &[(String, &str)]) 
         return;
     }
 
-    let block = Block::bordered().title(Span::styled(CLOSE_BINDINGS, palette::TITLE));
+    let block = bindings_block().title(Span::styled(CLOSE_BINDINGS, palette::TITLE));
     let inner = block.inner(window);
     cover(frame, window);
     frame.render_widget(block, window);
@@ -144,12 +150,22 @@ fn left_off(count: usize) -> String {
 /// The rows a bordered window spends on its own edges.
 const BORDERS: u16 = 2;
 
+/// The columns the window keeps clear of its border on either side, as the
+/// bead window keeps them: two windows over one forest disagreeing about
+/// their margins would be worse than either margin.
+const MARGIN: u16 = 1;
+
+/// What that costs the width: one such column at each end.
+const MARGINS: u16 = MARGIN * 2;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    use crate::view::painted::Painted;
 
     // ---- the key bindings view -------------------------------------------
 
@@ -186,11 +202,11 @@ mod tests {
         assert_eq!(
             bindings_frame(&a_few_bindings(), 60, 5),
             vec![
-                "   ┌Key bindings · press any key to close───────────────┐   ",
-                "   │  Down, j  move down one row                        │   ",
-                "   │  Enter    focus the selected bead's pane in herdr  │   ",
-                "   │  q, ^C    quit                                     │   ",
-                "   └────────────────────────────────────────────────────┘   ",
+                "  ┌Key bindings · press any key to close─────────────────┐  ",
+                "  │   Down, j  move down one row                         │  ",
+                "  │   Enter    focus the selected bead's pane in herdr   │  ",
+                "  │   q, ^C    quit                                      │  ",
+                "  └──────────────────────────────────────────────────────┘  ",
             ]
         );
     }
@@ -214,10 +230,10 @@ mod tests {
         assert_eq!(
             bindings_frame(&a_few_bindings(), 60, 4),
             vec![
-                "   ┌Key bindings · press any key to close───────────────┐   ",
-                "   │  Down, j  move down one row                        │   ",
-                "   │  … 2 more bindings · no room on a screen this short│   ",
-                "   └────────────────────────────────────────────────────┘   ",
+                "  ┌Key bindings · press any key to close─────────────────┐  ",
+                "  │   Down, j  move down one row                         │  ",
+                "  │   … 2 more bindings · no room on a screen this short │  ",
+                "  └──────────────────────────────────────────────────────┘  ",
             ]
         );
     }
@@ -251,7 +267,7 @@ mod tests {
     fn a_screen_with_one_row_spends_it_on_the_way_out() {
         assert_eq!(
             bindings_frame(&a_few_bindings(), 60, 1),
-            vec!["   ┌Key bindings · press any key to close───────────────┐   "]
+            vec!["  ┌Key bindings · press any key to close─────────────────┐  "]
         );
     }
 
@@ -263,10 +279,41 @@ mod tests {
         assert_eq!(
             bindings_frame(&a_few_bindings(), 60, 2),
             vec![
-                "   ┌Key bindings · press any key to close───────────────┐   ",
-                "   └────────────────────────────────────────────────────┘   ",
+                "  ┌Key bindings · press any key to close─────────────────┐  ",
+                "  └──────────────────────────────────────────────────────┘  ",
             ]
         );
+    }
+
+    /// The margin is the whole of what this bead asked for, and it is the one
+    /// thing a frame compared character for character cannot check: the rows
+    /// it compares are trimmed, and the right margin is trailing spaces.
+    ///
+    /// Swept over screens the window fills and screens that cut its rows,
+    /// because a cut row is drawn to the full width it is given and so is the
+    /// row that would reach a border.
+    #[test]
+    fn no_row_is_drawn_in_the_column_beside_a_border() {
+        let lines = a_table_of(8);
+        let bindings = bindings_over(&lines);
+
+        for width in [24, 40, 60, 80] {
+            for height in 3..=14 {
+                let area = Rect::new(0, 0, width, height);
+                let drawn = Painted::drawn_by(width, height, |frame| {
+                    key_bindings(frame, frame.area(), &bindings);
+                });
+                let window = bindings_window(area, &bindings);
+                let margins = drawn.margins(window);
+
+                assert_eq!(
+                    margins.trim(),
+                    "",
+                    "at {width} by {height}: {:#?}",
+                    drawn.rows()
+                );
+            }
+        }
     }
 
     /// A table of any height, shaped like the real one. Each line is distinct

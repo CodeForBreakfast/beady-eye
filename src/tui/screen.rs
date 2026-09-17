@@ -1115,7 +1115,7 @@ mod tests {
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
     use crate::tui::keys::{action, BINDINGS};
-    use crate::view::bindings::bindings_window;
+    use crate::view::bindings::{bindings_block, bindings_window};
     use crate::view::forest::Spine;
     use crate::view::lines::{Content, GroupKind};
     use crate::view::painted::{Painted, Run};
@@ -1127,7 +1127,6 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Modifier};
-    use ratatui::widgets::Block;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
@@ -1145,7 +1144,7 @@ mod tests {
         )
         .rows();
         let inner =
-            Block::bordered().inner(bindings_window(Rect::new(0, 0, width, height), &bindings()));
+            bindings_block().inner(bindings_window(Rect::new(0, 0, width, height), &bindings()));
 
         (inner.y..inner.y + inner.height)
             .map(|y| {
@@ -1372,12 +1371,12 @@ mod tests {
 
         assert_eq!(row_naming(&drawn, "q, ^C"), "  q, ^C     quit");
         assert_eq!(
-            drawn[0], "  Enter     show the selected bead, o…",
+            drawn[0], "  Enter     show the selected bead,…",
             "a line too long for forty columns, cut with the cut marked"
         );
         assert_eq!(
             row_naming(&drawn, "Right, l"),
-            "  Right, l  expand, or move to the fi…"
+            "  Right, l  expand, or move to the …"
         );
         assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
     }
@@ -2163,13 +2162,13 @@ mod tests {
         snapshot
     }
 
-    /// The rows inside the bead window's border, trimmed, with the forest
-    /// around it left out.
-    fn bead_window_inner(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
+    /// The rows of the page the bead window draws, trimmed, with the forest
+    /// around it and the blank row over the head left out.
+    fn bead_page(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
         let rows = bead_view(shown, width, height);
         let window = window_of(&rows);
         let (x, y) = (window.x as usize, window.y as usize);
-        rows[y + 1..y + window.height as usize - 1]
+        rows[y + 2..y + window.height as usize - 1]
             .iter()
             .map(|row| {
                 row.chars()
@@ -2287,9 +2286,9 @@ mod tests {
         assert_eq!(window.width, 160);
         assert!(window.height < 48, "{window:?}");
         assert_eq!(
-            bead_window_inner(&mut shown, 200, 60).len() + 2,
+            bead_page(&mut shown, 200, 60).len() + 3,
             window.height as usize,
-            "the window is as tall as the bead and its border"
+            "the window is as tall as the bead, its border and the blank row over the head"
         );
     }
 
@@ -2306,16 +2305,16 @@ mod tests {
             "the title says the bead scrolls: {:?}",
             rows[6]
         );
-        let top = bead_window_inner(&mut shown, 200, 60);
-        assert_eq!(top.len(), 46);
+        let top = bead_page(&mut shown, 200, 60);
+        assert_eq!(top.len(), 45);
 
         assert!(shown.scroll(Motion::NextRow));
-        let down_one = bead_window_inner(&mut shown, 200, 60);
+        let down_one = bead_page(&mut shown, 200, 60);
         assert_eq!(down_one[0], top[1]);
 
         assert!(shown.scroll(Motion::LastRow));
-        let bottom = bead_window_inner(&mut shown, 200, 60);
-        assert_eq!(bottom[45], "line 100 of the description");
+        let bottom = bead_page(&mut shown, 200, 60);
+        assert_eq!(bottom[44], "line 100 of the description");
         assert!(!shown.scroll(Motion::NextRow), "nothing below the last row");
     }
 
@@ -2329,7 +2328,7 @@ mod tests {
 
         assert!(shown.apply(Action::ShowBead));
 
-        let inner = bead_window_inner(&mut shown, 80, 24);
+        let inner = bead_page(&mut shown, 80, 24);
         assert_eq!(inner[0], "◐ grv-1  a bead in the grove");
         assert!(inner.contains(&"DESCRIPTION".to_string()), "{inner:#?}");
         assert!(
@@ -2379,7 +2378,7 @@ mod tests {
 
         assert!(shown.apply(Action::ShowBead));
 
-        let inner = bead_window_inner(&mut shown, 80, 24);
+        let inner = bead_page(&mut shown, 80, 24);
         assert_eq!(inner[0], "◐ grv-1  a bead in the grove");
     }
 
@@ -2416,10 +2415,10 @@ mod tests {
         let mut shown = shown(a_described_grove(6));
         let at = shown.forest.selected_line();
         assert!(shown.apply(Action::ShowBead));
-        let top = bead_window_inner(&mut shown, 80, 6);
+        let top = bead_page(&mut shown, 80, 6);
 
         assert!(shown.scroll(Motion::NextRow));
-        let down_one = bead_window_inner(&mut shown, 80, 6);
+        let down_one = bead_page(&mut shown, 80, 6);
 
         assert_ne!(down_one, top);
         assert_eq!(down_one[0], top[1]);
@@ -2553,7 +2552,7 @@ mod tests {
     #[test]
     fn a_bead_the_forest_cannot_go_to_is_still_drawn_and_still_says_so() {
         let mut shown = shown_on_the_bead_that_names_beads();
-        let inner = bead_window_inner(&mut shown, 80, 24);
+        let inner = bead_page(&mut shown, 80, 24);
 
         assert!(
             inner.iter().any(|row| row.contains("grv-404")),
@@ -2699,7 +2698,7 @@ mod tests {
         assert!(shown.apply(Action::NextRelated));
         assert!(shown.follow_related());
 
-        let inner = bead_window_inner(&mut shown, 80, 12);
+        let inner = bead_page(&mut shown, 80, 12);
 
         assert!(inner.iter().any(|row| row.contains("grv-1 ")), "{inner:#?}");
     }
@@ -2759,7 +2758,7 @@ mod tests {
         assert!(shown.apply(Action::Move(Motion::NextRow)));
         assert!(shown.apply(Action::ShowBead));
 
-        let inner = bead_window_inner(&mut shown, 80, 6);
+        let inner = bead_page(&mut shown, 80, 6);
         assert_eq!(inner[0], "◐ grv-1.1  a bead in the grove");
     }
 
@@ -2785,9 +2784,7 @@ mod tests {
 
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
         assert!(shown.bead_still_shown());
-        assert!(
-            bead_window_inner(&mut shown, 80, 24).contains(&"what grv-1.6 is about".to_string())
-        );
+        assert!(bead_page(&mut shown, 80, 24).contains(&"what grv-1.6 is about".to_string()));
     }
 
     /// A collection that drops the bead the view was opened on moves the
