@@ -110,10 +110,14 @@ struct Row {
     dependencies: Vec<RowDependency>,
     #[serde(default, deserialize_with = "text_of_each_value")]
     metadata: BTreeMap<String, String>,
+    /// The name `bd show` prints as the bead's owner. The row's `owner` is an
+    /// address and is not read: nothing draws it.
     #[serde(default)]
-    owner: Option<String>,
+    created_by: Option<String>,
     #[serde(default)]
     assignee: Option<String>,
+    #[serde(default, deserialize_with = "null_is_default")]
+    labels: Vec<String>,
     /// As `bd show` prints it. bd leaves the field out of a row that has
     /// none.
     #[serde(default)]
@@ -121,6 +125,8 @@ struct Row {
     /// Everything `bd note` has added, as one text. Left out the same way.
     #[serde(default)]
     notes: Option<String>,
+    #[serde(default)]
+    created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     updated_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -160,10 +166,12 @@ impl Row {
                 })
                 .collect(),
             metadata: row.metadata,
-            owner: row.owner,
+            created_by: row.created_by,
             assignee: row.assignee,
+            labels: row.labels,
             description: row.description,
             notes: row.notes,
+            created_at: row.created_at,
             updated_at: row.updated_at,
             started_at: row.started_at,
             closed_at: row.closed_at,
@@ -503,7 +511,7 @@ mod tests {
     /// rather than a row typed here, because a key a capture carries is a
     /// measurement of what bd writes.
     #[test]
-    fn a_captured_row_carries_the_description_the_notes_and_the_owner() {
+    fn a_captured_row_carries_the_description_the_notes_and_the_name() {
         let rows = parse_beads(JOINED).expect("the captured rows parse");
         let bead = rows
             .iter()
@@ -524,7 +532,8 @@ mod tests {
             "{:?}",
             bead.notes
         );
-        assert_eq!(bead.owner.as_deref(), Some("mira@dunwich.invalid"));
+        assert_eq!(bead.created_by.as_deref(), Some("Mira Vance"));
+        assert_eq!(bead.assignee.as_deref(), Some("Mira Vance"));
     }
 
     /// bd leaves both out of a row that has neither, and a row it writes
