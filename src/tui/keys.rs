@@ -58,8 +58,8 @@ pub(super) struct Binding {
 /// The order is least guessable first, because a screen too short for the
 /// whole table shows the top of it. A reader who cannot see the arrows will
 /// press one anyway; one who cannot see `a` will not work out that the trees
-/// they are missing are being filtered. `Esc` sits below `q`: the bead view
-/// names it in its own title, so nobody has to find it here.
+/// they are missing are being filtered. `Esc` sits below `q`: the bead
+/// window's own row under the tail names it, so nobody has to find it here.
 pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: &[alone(KeyCode::Enter, "Enter")],
@@ -333,6 +333,53 @@ pub(super) fn key_row() -> String {
         .join("   ")
 }
 
+/// The bead window's row: what each key does there, in the order the row
+/// says them.
+///
+/// The words and the order are written here rather than read off `BINDINGS`,
+/// whose order is least-guessable-first for the `?` window and whose words
+/// are the forest's. The keys are still named off `BINDINGS`, so the row
+/// cannot call a key something the mapping does not answer to.
+///
+/// `Esc` is first because a reader who cannot see how to leave is stuck in a
+/// view they may have opened by accident. The other three are the things a
+/// reader of this window cannot work out for themselves. `Tab` is the whole
+/// of it: nothing on the page says the beads it names can be stepped through.
+/// `y` copies the id, which is what a reader opens a bead to take away.
+///
+/// `Enter` is off the row for the reason `key_row` already gives for taking
+/// it off the forest's: pressing Enter on the thing under the cursor is what
+/// a reader of any list does anyway, and `Tab related` is what puts a thing
+/// under the cursor. The motion keys are off it for the reason the arrows are
+/// off the forest's, that a reader who cannot see them presses one
+/// regardless, and how far down the bead they have got is the border title's
+/// to say. `f` would overrun forty columns and does nothing on a bead with no
+/// pane, and `q` is a second way out beside `Esc`, which a row of four cannot
+/// afford.
+const IN_BEAD: &[(Action, &str)] = &[
+    (Action::Back, "back"),
+    (Action::NextRelated, "related"),
+    (Action::CopyId, "id"),
+    (Action::ShowBindings, "keys"),
+];
+
+/// The row under the tail while the bead window is up.
+pub(super) fn bead_key_row() -> String {
+    IN_BEAD
+        .iter()
+        .filter_map(|(action, word)| {
+            let named = BINDINGS
+                .iter()
+                .find(|binding| binding.action == *action)?
+                .keys
+                .first()?
+                .named;
+            Some(format!("{named} {word}"))
+        })
+        .collect::<Vec<_>>()
+        .join("   ")
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     //! The table's own tests, and the two helpers that name a keystroke.
@@ -465,6 +512,59 @@ pub(super) mod tests {
                     bound.named
                 );
             }
+        }
+    }
+
+    /// The bead window's row keeps the rule the forest's row keeps, and for
+    /// the same reason: a forty-column terminal that cannot hold the whole
+    /// row is drawn none of it.
+    #[test]
+    fn the_bead_windows_row_fits_forty_columns() {
+        let row = bead_key_row();
+
+        assert!(
+            row.chars().count() <= 40,
+            "{} columns: {row:?}",
+            row.chars().count()
+        );
+    }
+
+    /// `Esc` first, because a reader who cannot see how to leave is stuck in
+    /// a view they may have opened by accident.
+    #[test]
+    fn the_bead_windows_row_says_the_way_out_first() {
+        let row = bead_key_row();
+
+        assert!(row.starts_with("Esc back"), "{row:?}");
+    }
+
+    /// Four keys, and `?` among them: the row is full, so what is not on it
+    /// is reachable from it.
+    #[test]
+    fn the_bead_windows_row_is_four_keys_and_one_of_them_is_the_way_to_the_rest() {
+        let row = bead_key_row();
+
+        assert_eq!(row.split("   ").count(), 4, "{row:?}");
+        assert!(row.contains("? keys"), "the way to the rest: {row:?}");
+    }
+
+    /// A word in the row and no key to press for it is a row that names
+    /// nothing, and `bead_key_row` drops such an entry rather than saying so.
+    /// This is what says none was dropped.
+    #[test]
+    fn every_key_the_bead_windows_row_names_is_one_the_mapping_answers() {
+        let row = bead_key_row();
+
+        for (action, word) in IN_BEAD {
+            let binding = BINDINGS
+                .iter()
+                .find(|binding| binding.action == *action)
+                .unwrap_or_else(|| panic!("{action:?} is bound to no key"));
+            let named = binding.keys.first().expect("a key").named;
+            assert!(
+                row.contains(&format!("{named} {word}")),
+                "{named} {word} missing from {row:?}"
+            );
         }
     }
 

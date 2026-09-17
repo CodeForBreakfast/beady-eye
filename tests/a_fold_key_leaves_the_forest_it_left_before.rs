@@ -47,7 +47,7 @@ use std::time::Duration;
 use pretty_assertions::assert_eq;
 use terminal::driver::{clicked_on, Driven, GIVING_UP};
 use terminal::shims::{ShimmedHerdr, ShimmedTracker};
-use terminal::{a_socket_of_its_own, rows_drawn, ENTER_ALTERNATE_SCREEN};
+use terminal::{a_socket_of_its_own, rows_drawn, window_over, ENTER_ALTERNATE_SCREEN};
 
 const COLS: u16 = 120;
 
@@ -583,17 +583,13 @@ fn forest(bdi: &mut Driven, screen: &Screen) -> Vec<String> {
 #[track_caller]
 fn selected(bdi: &mut Driven, screen: &Screen) -> String {
     bdi.send(SHOW_IT);
-    let rows = rows_drawn(&repainted(bdi, screen));
-    let title = rows
-        .iter()
-        .find_map(|row| {
-            let (before, _) = row.split_once(" · Esc to go back")?;
-            // The forest draws to the left of the window on the row its top
-            // edge is on, so the id starts at the window's own corner rather
-            // than at the first letter of the row.
-            Some(before.rsplit('┌').next()?.to_string())
-        })
-        .unwrap_or_else(|| panic!("no bead window is up. The screen: {rows:#?}"));
+    let screen = repainted(bdi, screen);
+    let title = window_over(&screen).unwrap_or_else(|| {
+        panic!(
+            "no bead window is up. The screen: {:#?}",
+            rows_drawn(&screen)
+        )
+    });
     bdi.send(BACK);
     bdi.settle(A_SILENCE, GIVING_UP);
     title

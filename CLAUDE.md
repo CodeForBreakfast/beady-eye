@@ -39,8 +39,9 @@ screen that is rarely a bead's id. The bead window is drawn from the
 wrongly kept a window up after a collection draws it over whatever the
 selection landed on and under that bead's name — and a test looking for the
 opened bead's title to be gone finds it gone. It executes the line it is about,
-cannot observe it, and passes. What says a window is up is the words every
-window says (`Esc to go back`).
+cannot observe it, and passes. What says a window is up is `window_over`
+answering at all, and what says *which* bead it is over is the id it hands
+back.
 
 ## PR policy
 

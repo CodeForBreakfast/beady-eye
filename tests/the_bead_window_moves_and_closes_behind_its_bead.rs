@@ -16,7 +16,7 @@ mod terminal;
 use std::time::Duration;
 
 use terminal::driver::{Driven, A_NOTCH_DOWN, GIVING_UP};
-use terminal::{contains, over_the_described_subtree, THE_DESCRIBED_SUBTREE};
+use terminal::{contains, over_the_described_subtree, window_over, THE_DESCRIBED_SUBTREE};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -36,21 +36,10 @@ const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 /// `^R`, which asks every project for itself again.
 const REFRESH: &[u8] = b"\x12";
 
-/// The title of the window over that bead, from `view::show`, and the whole
-/// of it: the tree's header is `dun-0tp`, so the id alone would also be met
-/// by the window over the row above.
-const ITS_WINDOW: &[u8] = "dun-0tp.6 · Esc to go back".as_bytes();
-
-/// The part of that title every bead's window says, whichever bead it is on.
-///
-/// This is what says a window is *up*, and asserting the absence of one
-/// bead's title says nothing of the sort: the window is drawn from the
-/// selection rather than from the bead it was opened on, so a screen that
-/// wrongly kept the window after the collection draws it over whatever the
-/// selection landed on and under that bead's name. Measured: with
-/// `bead_still_shown` answering that the bead is always still there, a test
-/// looking for `ITS_WINDOW` gone found it gone and passed.
-const A_BEAD_WINDOW: &[u8] = "Esc to go back".as_bytes();
+/// The bead the window this test opens is over. `window_over` says which
+/// bead a window is on, and nothing where no window is up — which is the
+/// distinction the absence below turns on.
+const ITS_BEAD: &str = "dun-0tp.6";
 
 /// A word of the opening lines of that bead's description, and one nothing
 /// else on the screen says — the bead's own title is drawn over it and is
@@ -121,7 +110,7 @@ fn a_collection_that_drops_the_shown_bead_takes_the_window_down() {
 
     let after = repaint(&mut bdi, ROWS);
     assert!(
-        !contains(&after, A_BEAD_WINDOW),
+        window_over(&after).is_none(),
         "the tracker no longer holds that bead and a window is still up. \
          The screen it drew: {:?}\nThe screen before the refresh: {:?}\n{}",
         String::from_utf8_lossy(&after),
@@ -143,8 +132,9 @@ fn a_collection_that_keeps_the_shown_bead_leaves_the_window_up() {
     bdi.settle(A_SILENCE, LONG_ENOUGH_TO_COLLECT);
 
     let after = repaint(&mut bdi, ROWS);
-    assert!(
-        contains(&after, ITS_WINDOW),
+    assert_eq!(
+        window_over(&after).as_deref(),
+        Some(ITS_BEAD),
         "the tracker still holds that bead and its window has gone. The \
          screen it drew: {:?}\nThe screen before the refresh: {:?}\n{}",
         String::from_utf8_lossy(&after),
@@ -161,8 +151,9 @@ fn open_the_first_bead(bdi: &mut Driven) -> Vec<u8> {
     bdi.send(SHOW_THE_FIRST_BEAD);
     bdi.settle(A_SILENCE, GIVING_UP);
     let up = repaint(bdi, ROWS + 1);
-    assert!(
-        contains(&up, ITS_WINDOW),
+    assert_eq!(
+        window_over(&up).as_deref(),
+        Some(ITS_BEAD),
         "no window opened over the first bead. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&up),
         bdi.timeline()

@@ -17,7 +17,7 @@ mod terminal;
 use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
-use terminal::{contains, over_the_described_subtree};
+use terminal::{contains, over_the_described_subtree, window_over};
 
 const ROWS: u16 = 40;
 
@@ -50,10 +50,9 @@ const SEARCH_FOR_A_BEAD_NOBODY_HAS: &[u8] = b"/bdi-404\r";
 /// The prompt with that id typed into it, as `view::phrase` draws it.
 const THE_PROMPT: &[u8] = "/dun-0tp.7".as_bytes();
 
-/// The title of the window over the bead the search lands on, and the whole
-/// of it: `dun-0tp` is the tree's header, so the id alone would also be met
-/// by the window over that row.
-const THE_SEARCHED_BEADS_WINDOW: &[u8] = "dun-0tp.7 · Esc to go back".as_bytes();
+/// The bead the search lands on, which is the bead a window opened there is
+/// over.
+const THE_SEARCHED_BEAD: &str = "dun-0tp.7";
 
 /// That bead's own title, which is what says its row is drawn at all. Read
 /// rather than its id, because every bead in this tree carries the header's
@@ -111,8 +110,9 @@ fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
     bdi.send(ENTER);
     bdi.settle(A_SILENCE, GIVING_UP);
     let landed = repaint(&mut bdi, ROWS + 1);
-    assert!(
-        contains(&landed, THE_SEARCHED_BEADS_WINDOW),
+    assert_eq!(
+        window_over(&landed).as_deref(),
+        Some(THE_SEARCHED_BEAD),
         "the search did not leave the selection on the bead it named. The \
          screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&landed),

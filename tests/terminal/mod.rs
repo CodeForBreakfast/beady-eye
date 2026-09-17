@@ -353,6 +353,33 @@ pub fn rows_drawn(screen: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// The bead the bead window is over, off its border title, or nothing where
+/// no window is up.
+///
+/// The drawer is the full height above the foot row, so its title is on the
+/// top row of the screen, with whatever forest is left beside it drawn to its
+/// left. The title is the bead's id and, where the bead is taller than the
+/// window, how far down it the reader has got, so the id is what stands
+/// before the first `·`.
+///
+/// Read off the screen the stream would have drawn rather than looked for in
+/// the stream, for the reason [`row_of`] gives and one more: the border and
+/// the title are drawn in styles of their own, so the corner and the id after
+/// it never reach the wire together. Read a frame `bdi` was made to repaint
+/// whole.
+///
+/// **This is what says a window is up**, and it names the bead the window is
+/// *over* rather than the one it was opened on. The window is drawn from the
+/// selection, so a screen that wrongly kept a window up after a collection
+/// draws it over whatever the selection landed on — and a test asserting
+/// that the opened bead's id had gone would find it gone and pass.
+pub fn window_over(screen: &[u8]) -> Option<String> {
+    let top = rows_drawn(screen).into_iter().next()?;
+    let (_, title) = top.split_once('┌')?;
+    let named = title.trim_end_matches(['\u{2500}', '\u{2510}']);
+    Some(named.split(" · ").next().unwrap_or(named).to_string())
+}
+
 /// The escape that opens a control sequence.
 const CSI: &[u8] = b"\x1b[";
 
@@ -567,10 +594,9 @@ pub const THE_LOOSE_ROOTS: &str = include_str!("../fixtures/bulk_loose_roots.jso
 /// under the project, which is a bead and so has a window to name it.
 const SHOW_EVERY_ROOT: &[u8] = b"agj";
 
-/// Where that walk leaves the selection, and the whole of the window's title
-/// over it. Whole because the id of a root is a prefix of nothing else here,
-/// but the title of the window is what says a window is over *this* bead.
-pub const THE_FIRST_ROOTS_WINDOW: &str = "dun-c3 · Esc to go back";
+/// Where that walk leaves the selection, which is the bead a window opened
+/// there is over.
+pub const THE_FIRST_ROOT: &str = "dun-c3";
 
 /// A `bdi` on a pty of this size over [`THE_LOOSE_ROOTS`], with every root
 /// drawn and the selection on the first of them.

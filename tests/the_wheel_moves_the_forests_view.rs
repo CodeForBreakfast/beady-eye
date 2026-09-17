@@ -18,7 +18,7 @@ mod terminal;
 use std::time::Duration;
 
 use terminal::driver::{clicked_on, Driven, A_NOTCH_DOWN, GIVING_UP};
-use terminal::{contains, over_the_loose_roots, row_of, rows_of, THE_FIRST_ROOTS_WINDOW};
+use terminal::{over_the_loose_roots, row_of, rows_of, window_over, THE_FIRST_ROOT};
 
 /// Nine rows and ten draw the same five-row forest band, so the resize that
 /// asks for a repaint does not move the rows it is asked about.
@@ -43,7 +43,7 @@ const THREE_LINES: u16 = 3;
 const A_ROOT_THE_NOTCH_KEEPS_ON_SCREEN: &[u8] = b"dun-b1";
 
 /// The window over that root, for a click that lands on it.
-const THAT_ROOTS_WINDOW: &str = "dun-b1 · Esc to go back";
+const THAT_ROOT: &str = "dun-b1";
 
 /// The root the walk leaves the selection on, which the notch takes off the
 /// screen — the whole point of the test that names it.
@@ -119,8 +119,9 @@ fn a_notch_leaves_the_selection_on_the_bead_it_was_on() {
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let opened = repaint(&mut bdi, ROWS);
-    assert!(
-        contains(&opened, THE_FIRST_ROOTS_WINDOW.as_bytes()),
+    assert_eq!(
+        window_over(&opened).as_deref(),
+        Some(THE_FIRST_ROOT),
         "the window that opened after the notch is not the selected root's. \
          The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&opened),
@@ -158,8 +159,9 @@ fn a_click_after_the_wheel_selects_the_row_under_the_pointer() {
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let opened = repaint(&mut bdi, ROWS);
-    assert!(
-        contains(&opened, THAT_ROOTS_WINDOW.as_bytes()),
+    assert_eq!(
+        window_over(&opened).as_deref(),
+        Some(THAT_ROOT),
         "the click landed on row {top}, and the window that opened is not the \
          root drawn there. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&opened),

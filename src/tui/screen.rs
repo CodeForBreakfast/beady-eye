@@ -33,7 +33,7 @@ use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::due::due_after;
-use super::keys::{bindings, key_row};
+use super::keys::{bead_key_row, bindings, key_row};
 use super::reload::Reloaded;
 
 /// What the config settles about the drawing, as one value read from it in
@@ -1080,11 +1080,19 @@ impl View for Screen {
             Showing::Bindings => Over::Bindings,
             Showing::Bead => Over::Bead(show),
         };
+        // The window's own keys while it is up. The bindings go up over the
+        // forest rather than over a bead, and the prompt is drawn over the
+        // keys rather than beside them, so both leave the forest's row where
+        // it was.
+        let keys = match showing {
+            Showing::Bead => bead_key_row(),
+            Showing::Forest | Showing::Bindings | Showing::Searching => key_row(),
+        };
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
             prompt: sought.as_deref(),
-            keys: &key_row(),
+            keys: &keys,
         };
         let band = draw::Band {
             tail,
@@ -2196,12 +2204,13 @@ mod tests {
 
     /// The bead window's rectangle on the screen, by its corners: the title
     /// row's `┌` and `┐`, and the `└` beneath the first in the rows below.
-    /// The forest's own `└──` connectors sit elsewhere on their rows.
+    /// The forest's own `└──` connectors sit elsewhere on their rows, and it draws
+    /// no `┌` at all.
     fn window_of(rows: &[String]) -> Rect {
         let y = rows
             .iter()
-            .position(|row| row.contains("Esc to go back"))
-            .expect("the bead window's title is on the screen");
+            .position(|row| row.contains('┌'))
+            .expect("the bead window's top edge is on the screen");
         let top: Vec<char> = rows[y].chars().collect();
         let x = top.iter().position(|c| *c == '┌').unwrap();
         let right = top.iter().rposition(|c| *c == '┐').unwrap();
@@ -2300,7 +2309,8 @@ mod tests {
     }
 
     /// A bead taller than four fifths of a big screen fills that height and
-    /// scrolls for the rest, the title saying so, the same as on a small one.
+    /// scrolls for the rest, the title saying how far down it the window is,
+    /// the same as on a small one.
     #[test]
     fn a_bead_taller_than_the_window_scrolls_by_motion_on_a_big_screen() {
         let mut shown = shown(a_grove_with_a_tall_bead(100));
@@ -2308,8 +2318,8 @@ mod tests {
 
         let rows = bead_view(&mut shown, 200, 60);
         assert!(
-            rows[0].contains("j, k to scroll"),
-            "the title says the bead scrolls: {:?}",
+            rows[0].contains("1\u{2013}56 of 105"),
+            "the title says how far down the bead the window has got: {:?}",
             rows[0]
         );
         let top = bead_page(&mut shown, 200, 60);
@@ -2519,38 +2529,6 @@ mod tests {
             shown.related_key(),
             Some(bead("grove", "grv-1.2")),
             "the ring landed on the bead in the middle, which goes nowhere"
-        );
-    }
-
-    /// Only the forest can say whether a bead this one names can be gone to,
-    /// and the title offers the keys on the strength of its answer. Asserted
-    /// on the frame the screen draws rather than on the phrase, because the
-    /// phrase is told what to say and this is about who tells it.
-    #[test]
-    fn the_title_offers_the_keys_that_follow_where_the_forest_can_go_to_one() {
-        let mut shown = shown_on_the_bead_that_names_beads();
-
-        let drawn = bead_view(&mut shown, 80, 24);
-
-        assert!(
-            drawn.iter().any(|row| row.contains("Tab, Enter to follow")),
-            "{drawn:#?}"
-        );
-    }
-
-    /// And a bead whose every reference the forest draws nowhere offers
-    /// neither key: a reader told about `Tab` there presses it for nothing.
-    #[test]
-    fn the_title_offers_no_keys_where_the_forest_can_go_to_none_of_them() {
-        let mut shown = shown(a_described_grove(6));
-        shown.apply(Action::ExpandOrChild);
-        assert!(shown.apply(Action::ShowBead));
-
-        let drawn = bead_view(&mut shown, 80, 24);
-
-        assert!(
-            !drawn.iter().any(|row| row.contains("to follow")),
-            "{drawn:#?}"
         );
     }
 
