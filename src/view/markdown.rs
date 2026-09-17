@@ -353,9 +353,14 @@ impl Rendering {
     }
 
     /// A block of its own, drawn as its author laid it out: every space
-    /// kept, and a line of it a row on the screen.
+    /// kept, and a line of it a row on the screen. A block opening an item
+    /// joins the line the marker is on, as an item's paragraph does.
     fn verbatim_block(&mut self, said: &str) {
-        self.open_block();
+        if self.fresh {
+            self.fresh = false;
+        } else {
+            self.open_block();
+        }
         self.line().verbatim = true;
         self.say(said);
     }
@@ -520,6 +525,17 @@ mod tests {
         assert_eq!(
             words(&rows("- x\n\n  | a | b |\n  | - | - |", 40)),
             ["• x", "", "  | a | b |", "  | - | - |"]
+        );
+    }
+
+    /// A table is what an item is made of as readily as a paragraph is, and
+    /// an item whose first block is one keeps its marker on the table's
+    /// first row rather than on a row of its own.
+    #[test]
+    fn a_table_opening_an_item_sits_on_the_marker_row() {
+        assert_eq!(
+            words(&rows("- | a | b |\n  | - | - |", 40)),
+            ["• | a | b |", "  | - | - |"]
         );
     }
 
