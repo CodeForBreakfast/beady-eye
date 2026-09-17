@@ -2263,32 +2263,31 @@ mod tests {
     }
 
     /// `bdi-2bb.44`: the window follows the terminal rather than stopping at
-    /// eighty columns. Both sides are four fifths of the screen's, centred, so
-    /// a bigger terminal gets a bigger window and not the same box in the
-    /// middle of a bigger forest.
+    /// eighty columns. It is four fifths of the screen across, against the
+    /// right edge, and every row above the foot down, so a bigger terminal
+    /// gets a bigger window and not the same one against a wider forest.
     #[test]
-    fn the_bead_window_is_four_fifths_of_the_screen_on_either_side() {
+    fn the_bead_window_is_a_drawer_four_fifths_of_the_screen_across() {
         let mut shown = shown(a_grove_with_a_tall_bead(100));
         assert!(shown.apply(Action::ShowBead));
 
-        assert_eq!(bead_window(&mut shown, 120, 40), Rect::new(12, 4, 96, 32));
-        assert_eq!(bead_window(&mut shown, 200, 60), Rect::new(20, 6, 160, 48));
+        assert_eq!(bead_window(&mut shown, 120, 40), Rect::new(24, 0, 96, 39));
+        assert_eq!(bead_window(&mut shown, 200, 60), Rect::new(40, 0, 160, 59));
     }
 
-    /// A bead shorter than four fifths of the screen keeps a window its own
-    /// height: the room is offered, not filled with nothing.
+    /// A bead shorter than the window keeps the window's height, so a reader
+    /// moving from one bead to another reads them in a window that stays
+    /// where it was rather than one that grows and shrinks under them.
     #[test]
-    fn a_short_bead_keeps_a_short_window_on_a_tall_screen() {
+    fn a_short_bead_keeps_the_windows_height_on_a_tall_screen() {
         let mut shown = shown(a_described_grove(6));
         assert!(shown.apply(Action::ShowBead));
 
-        let window = bead_window(&mut shown, 200, 60);
-        assert_eq!(window.width, 160);
-        assert!(window.height < 48, "{window:?}");
-        assert_eq!(
-            bead_page(&mut shown, 200, 60).len() + 3,
-            window.height as usize,
-            "the window is as tall as the bead, its border and the blank row over the head"
+        assert_eq!(bead_window(&mut shown, 200, 60), Rect::new(40, 0, 160, 59));
+        let page = bead_page(&mut shown, 200, 60);
+        assert!(
+            page.last().is_some_and(String::is_empty),
+            "the bead has to run out before the window does: {page:#?}"
         );
     }
 
@@ -2301,12 +2300,12 @@ mod tests {
 
         let rows = bead_view(&mut shown, 200, 60);
         assert!(
-            rows[6].contains("j, k to scroll"),
+            rows[0].contains("j, k to scroll"),
             "the title says the bead scrolls: {:?}",
-            rows[6]
+            rows[0]
         );
         let top = bead_page(&mut shown, 200, 60);
-        assert_eq!(top.len(), 45);
+        assert_eq!(top.len(), 56);
 
         assert!(shown.scroll(Motion::NextRow));
         let down_one = bead_page(&mut shown, 200, 60);
@@ -2314,7 +2313,7 @@ mod tests {
 
         assert!(shown.scroll(Motion::LastRow));
         let bottom = bead_page(&mut shown, 200, 60);
-        assert_eq!(bottom[44], "line 100 of the description");
+        assert_eq!(bottom[55], "line 100 of the description");
         assert!(!shown.scroll(Motion::NextRow), "nothing below the last row");
     }
 
@@ -2968,16 +2967,16 @@ mod tests {
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
     }
 
-    /// A click off the page — the window's own border, or the forest round it
-    /// — is what takes the window away.
+    /// A click off the page — the window's own border, or the foot's row
+    /// beneath it — is what takes the window away.
     #[test]
     fn a_click_off_the_page_takes_the_window_away() {
         let mut shown = shown_on_the_bead_that_names_beads();
         let rows = bead_view(&mut shown, WIDE, TALL);
         let window = window_of(&rows);
-        assert!(window.y > 0, "the window has to leave a row above it");
+        assert_eq!(window.y, 0, "the window starts on the screen's first row");
 
-        for row in [window.y - 1, window.y, window.bottom() - 1] {
+        for row in [window.y, window.bottom() - 1, window.bottom()] {
             assert_eq!(
                 shown.clicked_bead(over(WIDE, TALL), row),
                 Landed::Away,
@@ -2987,7 +2986,7 @@ mod tests {
     }
 
     /// Wide enough for the window's rows to be drawn whole, and tall enough
-    /// for every section of the bead and a row of forest above it.
+    /// for every section of the bead and the foot the window stops above.
     const WIDE: u16 = 80;
     const TALL: u16 = 24;
 

@@ -1,7 +1,7 @@
 //! The bead view: the selected bead shown whole, as `bd show` shows it, in a
 //! window over the forest.
 
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Padding};
@@ -11,6 +11,7 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
+use crate::view::draw::regions;
 use crate::view::draw::tone::status_style;
 use crate::view::fitted::{cover, indent, Fitted};
 use crate::view::forest::Forest;
@@ -34,9 +35,9 @@ const UP: char = '↑';
 const OUT: char = '→';
 const BACK: char = '←';
 
-/// The share of the screen the window takes on either side: four fifths,
-/// so the forest still shows round it and a bigger terminal gets a bigger
-/// window rather than the same box in the middle of a bigger forest.
+/// The share of the screen the window takes across: four fifths, so the
+/// forest still shows beside it and a bigger terminal gets a bigger window
+/// rather than the same window against a wider forest.
 const SHARE: (u16, u16) = (4, 5);
 
 /// The rows a bordered window spends on its own edges.
@@ -58,18 +59,14 @@ const BLANK_ROW: u16 = 1;
 /// a small screen would be a cramped box for no gain.
 const FLOOR_WIDTH: u16 = 80 + MARGINS + BORDERS;
 
-/// The least the window is offered down: a classic terminal's twenty-four
-/// rows, for the same reason.
-const FLOOR_HEIGHT: u16 = 24;
-
-/// `SHARE` of `screen` or `floor`, whichever is more, and never more than
-/// the screen: a screen no bigger than the floor gives the window the whole
-/// of itself.
-fn offered(screen: u16, floor: u16) -> u16 {
+/// `SHARE` of `screen` or `FLOOR_WIDTH`, whichever is more, and never more
+/// than the screen: a screen no wider than the floor gives the window the
+/// whole of it.
+fn offered(screen: u16) -> u16 {
     let share = u32::from(screen) * u32::from(SHARE.0) / u32::from(SHARE.1);
     u16::try_from(share)
         .unwrap_or(u16::MAX)
-        .max(floor)
+        .max(FLOOR_WIDTH)
         .min(screen)
 }
 
@@ -286,28 +283,23 @@ fn window_block() -> Block<'static> {
 }
 
 fn lay_out(area: Rect, node: &Node) -> Laid {
-    let width = offered(area.width, FLOOR_WIDTH);
-    let height = offered(area.height, FLOOR_HEIGHT);
-    let page = said(
-        node,
-        width.saturating_sub(BORDERS + MARGINS) as usize,
-        height.saturating_sub(BORDERS + BLANK_ROW) as usize,
-    );
-    let window = show_window(area, width, page.rows.len());
+    let window = show_window(area);
+    let inner = window_block().inner(window);
+    let page = said(node, inner.width as usize, inner.height as usize);
     Laid {
-        inner: window_block().inner(window),
         page,
         window,
+        inner,
     }
 }
 
 /// What the window drew on one row of the screen.
 ///
 /// A row rather than a point, because a click reaches the loop as its row
-/// alone. So `Beyond` is off the page up or down the screen — above the
-/// window, below it, or on its border — and the forest showing to either
-/// side of the window, on a row the window is on, is not something this can
-/// tell from the page.
+/// alone. So `Beyond` is off the page up or down the screen — the window's
+/// own border, or the foot beneath it — and the forest showing to the left
+/// of the window, on a row the window is on, is not something this can tell
+/// from the page.
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum Drawn<'a> {
     /// One of the beads this one names, by its id.
@@ -315,7 +307,7 @@ pub enum Drawn<'a> {
     /// A row of the page that names none: the bead's own facts, its prose, a
     /// heading, a blank.
     Page,
-    /// Not the page: the window's border, or the forest round it.
+    /// Not the page: the window's border, or the foot beneath it.
     Beyond,
 }
 
@@ -338,16 +330,24 @@ pub fn drawn_at<'a>(area: Rect, node: &'a Node, view: &Show, row: u16) -> Drawn<
         .map_or(Drawn::Page, |(named, _)| Drawn::Related(&named.id))
 }
 
-/// Where the window sits: `width` across, as tall as the bead up to what
-/// the screen offers, centred over the forest.
-fn show_window(area: Rect, width: u16, rows: usize) -> Rect {
-    let wanted = u16::try_from(rows)
-        .unwrap_or(u16::MAX)
-        .saturating_add(BORDERS + BLANK_ROW);
-    area.centered(
-        Constraint::Length(width),
-        Constraint::Length(wanted.min(offered(area.height, FLOOR_HEIGHT))),
-    )
+/// Where the window sits: a drawer against the right edge, from the screen's
+/// first row down to the row above the foot, whatever height the bead is.
+///
+/// A drawer rather than a box because what a centred window leaves showing
+/// either side of it is the ends of the forest's titles — cut words on both
+/// sides of a page a reader opened to read — where the right edge leaves the
+/// spine, the glyphs and the ids, which read as structure.
+///
+/// The foot's height is asked of `regions` rather than counted here, so the
+/// row it stops above is the row the foot is actually drawn on.
+fn show_window(area: Rect) -> Rect {
+    let width = offered(area.width);
+    Rect {
+        x: area.right() - width,
+        y: area.y,
+        width,
+        height: area.height - regions(area).keys.height,
+    }
 }
 
 /// The bead, one screen row at a time, in `bd show`'s order: the bead's own
@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn the_bead_is_shown_as_bd_show_shows_it() {
         assert_eq!(
-            drawn(&a_bead(), &mut Show::default(), 44, 23),
+            drawn(&a_bead(), &mut Show::default(), 44, 24),
             vec![
                 "┌dun-7.1 · Esc to go back──────────────────┐",
                 "│                                          │",
@@ -713,6 +713,7 @@ mod tests {
                 "│ BLOCKS                                   │",
                 "│   ← ○ dun-7.4  file the licence          │",
                 "└──────────────────────────────────────────┘",
+                "",
             ]
         );
     }
@@ -733,13 +734,14 @@ mod tests {
         };
 
         assert_eq!(
-            drawn(&bare, &mut Show::default(), 44, 5),
+            drawn(&bare, &mut Show::default(), 44, 6),
             vec![
                 "┌dun-7.1 · Esc to go back──────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  re-point the dish             │",
                 "│   in_progress · P2 · task                │",
                 "└──────────────────────────────────────────┘",
+                "",
             ]
         );
     }
@@ -859,7 +861,7 @@ mod tests {
         };
 
         assert_eq!(
-            drawn(&spaced, &mut Show::default(), 44, 23)[2],
+            drawn(&spaced, &mut Show::default(), 44, 24)[2],
             "│ ◐ dun-7.1  re-point   the dish           │"
         );
     }
@@ -871,7 +873,7 @@ mod tests {
     #[test]
     fn a_window_a_wrapped_name_would_fill_cuts_the_title() {
         assert_eq!(
-            drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 6),
+            drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 7),
             vec![
                 "┌dun-7.1 · Esc to go back · j, k to scroll─┐",
                 "│                                          │",
@@ -879,6 +881,7 @@ mod tests {
                 "│   in_progress · P2 · task · kim          │",
                 "│   ◍ lifting the mast · working           │",
                 "└──────────────────────────────────────────┘",
+                "",
             ]
         );
     }
@@ -922,7 +925,7 @@ mod tests {
         };
 
         assert_eq!(
-            drawn(&named, &mut Show::default(), 24, 9),
+            drawn(&named, &mut Show::default(), 24, 10),
             vec![
                 "┌dun-7.1 · Esc to go ba┐",
                 "│                      │",
@@ -933,6 +936,7 @@ mod tests {
                 "│ PARENT               │",
                 "│   ↑ ◐ dun-7  lift t… │",
                 "└──────────────────────┘",
+                "",
             ]
         );
     }
@@ -960,10 +964,10 @@ mod tests {
     #[test]
     fn the_view_stops_at_the_last_row_of_the_bead() {
         let mut view = Show::default();
-        drawn(&a_bead(), &mut view, 44, 6);
+        drawn(&a_bead(), &mut view, 44, 7);
 
         assert!(view.scroll(Motion::LastRow));
-        let bottom = drawn(&a_bead(), &mut view, 44, 6);
+        let bottom = drawn(&a_bead(), &mut view, 44, 7);
         assert_eq!(bottom[4], "│   ← ○ dun-7.4  file the licence          │");
         assert!(!view.scroll(Motion::NextRow), "nothing below the last row");
         assert!(!view.scroll(Motion::LastRow), "already there");
@@ -971,7 +975,7 @@ mod tests {
         assert!(view.scroll(Motion::HalfScreenUp));
         assert!(view.scroll(Motion::FirstRow));
         assert_eq!(
-            drawn(&a_bead(), &mut view, 44, 6)[2],
+            drawn(&a_bead(), &mut view, 44, 7)[2],
             "│ ◐ dun-7.1  re-point the dish             │"
         );
     }
@@ -989,22 +993,31 @@ mod tests {
 
     /// Every bead the window names is named again by the row it was drawn on,
     /// which is what a pointer landing there has to be answered with.
+    ///
+    /// Over a screen the bead fills and one twice as tall, because the row a
+    /// reference lands on follows from where the window was put — and a click
+    /// worked out from a placement of its own would agree with the frame on
+    /// the first screen and answer for a window nobody drew on the second.
     #[test]
     fn the_row_a_reference_was_drawn_on_names_the_bead_it_names() {
         let bead = a_bead();
-        let mut view = Show::default();
-        let rows = drawn(&bead, &mut view, WIDE, TALL);
 
-        for (id, drawn_as) in [
-            ("dun-7", "dun-7  lift the ground station"),
-            ("dun-7.3", "dun-7.3  lay the feeder cable"),
-            ("dun-7.4", "dun-7.4  file the licence"),
-        ] {
-            assert_eq!(
-                drawn_at(over(WIDE, TALL), &bead, &view, drawn_on(&rows, drawn_as)),
-                Drawn::Related(id),
-                "the row {drawn_as:?} was drawn on names another bead: {rows:#?}"
-            );
+        for height in [TALL, TALL * 2] {
+            let mut view = Show::default();
+            let rows = drawn(&bead, &mut view, WIDE, height);
+
+            for (id, drawn_as) in [
+                ("dun-7", "dun-7  lift the ground station"),
+                ("dun-7.3", "dun-7.3  lay the feeder cable"),
+                ("dun-7.4", "dun-7.4  file the licence"),
+            ] {
+                assert_eq!(
+                    drawn_at(over(WIDE, height), &bead, &view, drawn_on(&rows, drawn_as)),
+                    Drawn::Related(id),
+                    "at {height} rows the row {drawn_as:?} was drawn on names \
+                     another bead: {rows:#?}"
+                );
+            }
         }
     }
 
@@ -1048,21 +1061,25 @@ mod tests {
         );
     }
 
-    /// And neither is a row of the screen the window is not drawn on, where
-    /// the forest shows round it.
+    /// And neither is the foot's row, which the window stops above and is
+    /// the one row of the screen it is not drawn on.
     #[test]
-    fn a_row_the_window_is_not_drawn_on_is_not_the_page() {
+    fn the_row_under_the_window_is_not_the_page() {
         let bead = a_bead();
         let mut view = Show::default();
         let over_a_taller_screen = over(WIDE, TALL * 2);
         let rows = drawn(&bead, &mut view, WIDE, TALL * 2);
 
-        let above = drawn_on(&rows, "┌dun-7.1");
-        assert!(above > 0, "the window starts at the top of the screen");
+        let under = drawn_on(&rows, "└─") + 1;
         assert_eq!(
-            drawn_at(over_a_taller_screen, &bead, &view, above - 1),
+            under,
+            TALL * 2 - 1,
+            "the window stops above the foot: {rows:#?}"
+        );
+        assert_eq!(
+            drawn_at(over_a_taller_screen, &bead, &view, under),
             Drawn::Beyond,
-            "the row above the window is drawn on the page: {rows:#?}"
+            "the foot's row is drawn on the page: {rows:#?}"
         );
     }
 
@@ -1109,7 +1126,7 @@ mod tests {
     fn a_scrolled_window_can_draw_a_reference_under_the_blank_row() {
         let bead = a_bead();
         let mut view = Show::default();
-        let barely_taller_than_the_sections = 7;
+        let barely_taller_than_the_sections = 8;
         drawn(&bead, &mut view, WIDE, barely_taller_than_the_sections);
         assert!(view.scroll(Motion::LastRow));
         let rows = drawn(&bead, &mut view, WIDE, barely_taller_than_the_sections);
@@ -1140,7 +1157,7 @@ mod tests {
     /// Wide enough for the bead's own rows to be drawn whole, and tall enough
     /// for every section of it.
     const WIDE: u16 = 44;
-    const TALL: u16 = 23;
+    const TALL: u16 = 24;
 
     /// The whole of a screen of that size.
     fn over(width: u16, height: u16) -> Rect {
@@ -1223,26 +1240,26 @@ mod tests {
     /// through a long bead lands where they expect: two rows down a
     /// four-row window, not four and not one.
     ///
-    /// Seven rows of screen are what four rows of window costs: two borders
-    /// and the blank row over the head.
+    /// Eight rows of screen are what four rows of window costs: two borders,
+    /// the blank row over the head, and the foot the window stops above.
     #[test]
     fn a_half_screen_motion_moves_the_view_half_the_window() {
         let mut view = Show::default();
-        drawn(&a_bead(), &mut view, 44, 7);
+        drawn(&a_bead(), &mut view, 44, 8);
 
         assert!(view.scroll(Motion::HalfScreenDown));
         assert_eq!(
-            drawn(&a_bead(), &mut view, 44, 7)[2],
+            drawn(&a_bead(), &mut view, 44, 8)[2],
             "│   ◍ lifting the mast · working           │"
         );
         assert!(view.scroll(Motion::HalfScreenDown));
         assert_eq!(
-            drawn(&a_bead(), &mut view, 44, 7)[2],
+            drawn(&a_bead(), &mut view, 44, 8)[2],
             "│ DESCRIPTION                              │"
         );
         assert!(view.scroll(Motion::HalfScreenUp));
         assert_eq!(
-            drawn(&a_bead(), &mut view, 44, 7)[2],
+            drawn(&a_bead(), &mut view, 44, 8)[2],
             "│   ◍ lifting the mast · working           │"
         );
     }
@@ -1275,8 +1292,8 @@ mod tests {
     }
 
     /// The window follows the terminal: on a wide screen it is four fifths of
-    /// the width, centred, and the prose wraps to that rather than to eighty
-    /// columns or to the screen's edge.
+    /// the width, against the right edge, and the prose wraps to that rather
+    /// than to eighty columns or to the screen's edge.
     #[test]
     fn on_a_wide_screen_the_window_is_four_fifths_of_it_and_the_prose_wraps_there() {
         let long = Node {
@@ -1289,8 +1306,8 @@ mod tests {
             .iter()
             .find(|row| row.contains('┌'))
             .expect("the window's top edge is drawn");
-        assert_eq!(top.chars().nth(20), Some('┌'), "{top:?}");
-        assert_eq!(top.chars().nth(179), Some('┐'), "{top:?}");
+        assert_eq!(top.chars().nth(40), Some('┌'), "{top:?}");
+        assert_eq!(top.chars().nth(199), Some('┐'), "{top:?}");
         let first = rows
             .iter()
             .find(|row| row.contains("abcde"))
@@ -1320,41 +1337,61 @@ mod tests {
             .iter()
             .find(|row| row.contains('┌'))
             .expect("the window's top edge is drawn");
-        assert_eq!(top.chars().nth(3), Some('┌'), "{top:?}");
-        assert_eq!(top.chars().nth(86), Some('┐'), "{top:?}");
+        assert_eq!(top.chars().nth(6), Some('┌'), "{top:?}");
+        assert_eq!(top.chars().nth(89), Some('┐'), "{top:?}");
     }
 
-    /// The floor holds for the height too: on a screen a little taller than
-    /// twenty-four rows, a bead taller than that gets twenty-four rows of
-    /// window rather than four fifths of the screen.
+    /// The window's three edges: the right border on the screen's last
+    /// column, the top on its first row, and the bottom on the row above the
+    /// foot. What the window gives up in the middle of the screen it gets
+    /// back at the top and the bottom.
     #[test]
-    fn a_screen_not_much_taller_than_twenty_four_rows_gives_the_window_twenty_four() {
-        let tall = Node {
-            description: (1..=40)
-                .map(|n| format!("line {n}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
+    fn the_window_is_a_drawer_against_the_right_edge_above_the_foot() {
+        let rows = drawn(&a_bead(), &mut Show::default(), 120, 40);
+
+        let top: Vec<char> = rows[0].chars().collect();
+        assert_eq!(top.iter().position(|c| *c == '┌'), Some(24), "{rows:#?}");
+        assert_eq!(top.iter().rposition(|c| *c == '┐'), Some(119), "{rows:#?}");
+        assert_eq!(drawn_on(&rows, "└─"), 38, "{rows:#?}");
+        assert_eq!(rows[39], "", "the foot's row is left clear: {rows:#?}");
+    }
+
+    /// And it is that tall whatever the bead is: a bead of four rows leaves
+    /// the rest of the page blank rather than pulling the bottom border up to
+    /// meet it, so the window a reader opens is the window they closed.
+    #[test]
+    fn a_bead_shorter_than_the_window_still_gets_the_full_height() {
+        let bare = Node {
+            agent: None,
+            notes: String::new(),
+            parent: None,
+            depends_on: Vec::new(),
+            blocks: Vec::new(),
             ..a_bead()
         };
-        let rows = drawn(&tall, &mut Show::default(), 44, 28);
-        let top = rows
+        let rows = drawn(&bare, &mut Show::default(), 120, 40);
+
+        let bottom = drawn_on(&rows, "└─");
+        let last_said = rows[..bottom as usize]
             .iter()
-            .position(|row| row.contains('┌'))
-            .expect("the window's top edge is drawn");
-        let bottom = rows
-            .iter()
-            .position(|row| row.contains('└'))
-            .expect("the window's bottom edge is drawn");
-        assert_eq!((top, bottom), (2, 25));
+            .rposition(|row| !row.trim_matches(['│', ' ']).is_empty())
+            .expect("the bead is drawn");
+        assert!(
+            last_said + 1 < bottom as usize,
+            "the bead has to end well above the border for this to be about \
+             the height: {rows:#?}"
+        );
+        assert_eq!(bottom, 38, "{rows:#?}");
     }
 
     #[test]
     fn a_window_with_no_room_inside_it_draws_nothing_inside_it() {
         assert_eq!(
-            drawn(&a_bead(), &mut Show::default(), 44, 2),
+            drawn(&a_bead(), &mut Show::default(), 44, 3),
             vec![
                 "┌dun-7.1 · Esc to go back · j, k to scroll─┐",
                 "└──────────────────────────────────────────┘",
+                "",
             ]
         );
     }
@@ -1454,7 +1491,7 @@ mod tests {
                 status: status.clone(),
                 ..a_bead()
             };
-            let top = painted(&bead, 44, 23).row(2);
+            let top = painted(&bead, 44, 24).row(2);
 
             let glyph = run_saying(&top, &status_glyph(&status).to_string());
             assert_eq!(glyph.said, status_glyph(&status).to_string(), "{top:?}");
@@ -1475,7 +1512,7 @@ mod tests {
             status: Status::Open,
             ..a_bead()
         };
-        let top = painted(&open, 44, 23).row(2);
+        let top = painted(&open, 44, 24).row(2);
 
         assert_eq!(
             run_saying(&top, "○").style.fg,
@@ -1488,7 +1525,7 @@ mod tests {
     /// the colour the forest gives it.
     #[test]
     fn the_agent_marker_is_painted_live_as_the_forest_paints_it() {
-        let marker = painted(&a_bead(), 44, 23).row(4);
+        let marker = painted(&a_bead(), 44, 24).row(4);
 
         assert_eq!(
             run_saying(&marker, "◍ lifting the mast · working").style.fg,
@@ -1501,7 +1538,7 @@ mod tests {
     /// is always this blue, whatever the status.
     #[test]
     fn the_id_is_painted_the_blue_bd_show_paints_it() {
-        let top = painted(&a_bead(), 44, 23).row(2);
+        let top = painted(&a_bead(), 44, 24).row(2);
 
         assert_eq!(
             run_saying(&top, "dun-7.1").style.fg,
@@ -1524,7 +1561,7 @@ mod tests {
                 status: status.clone(),
                 ..a_bead()
             };
-            let facts = painted(&bead, 44, 23).row(3);
+            let facts = painted(&bead, 44, 24).row(3);
 
             let word = run_saying(&facts, &phrase::status_word(&status));
             assert_eq!(
@@ -1545,7 +1582,7 @@ mod tests {
     /// the brightness of the row it sits on, which on the page is the page's.
     #[test]
     fn a_related_beads_glyph_is_painted_the_colour_of_its_status() {
-        let painted = painted(&a_bead(), 44, 23);
+        let painted = painted(&a_bead(), 44, 24);
         let depends_on = painted.row(18);
         let blocks = painted.row(21);
 
@@ -1566,7 +1603,7 @@ mod tests {
     /// the page's, as a row nobody is on is the forest's middle rung.
     #[test]
     fn a_closed_related_bead_is_dimmed_as_bd_show_dims_one() {
-        let painted = painted(&a_bead(), 44, 23);
+        let painted = painted(&a_bead(), 44, 24);
         let depends_on = painted.row(18);
         let blocks = painted.row(21);
 
@@ -1593,7 +1630,7 @@ mod tests {
     /// window draws it as `bd show` does.
     #[test]
     fn a_heading_is_bold_and_no_colour_as_bd_show_prints_one() {
-        let heading = run_saying(&painted(&a_bead(), 44, 23).row(6), DESCRIPTION);
+        let heading = run_saying(&painted(&a_bead(), 44, 24).row(6), DESCRIPTION);
 
         assert!(
             heading.style.add_modifier.contains(Modifier::BOLD),
@@ -1618,7 +1655,7 @@ mod tests {
                 )],
                 ..a_bead()
             };
-            let rows = painted(&bead, 44, 23).rows();
+            let rows = painted(&bead, 44, 24).rows();
             let glyph = status_glyph(&status).to_string();
 
             assert!(
@@ -1644,7 +1681,7 @@ mod tests {
     #[test]
     fn what_the_window_draws_at_a_weight_is_the_way_back_and_its_section_names() {
         let bead = a_bead();
-        let painted = painted(&bead, 44, 23);
+        let painted = painted(&bead, 44, 24);
 
         let own: Vec<String> = said_where(&painted, |run| {
             run.style.add_modifier.contains(Modifier::BOLD)
@@ -1672,7 +1709,7 @@ mod tests {
     /// takes a tone of its own again this list is where it turns up.
     #[test]
     fn the_only_tones_the_window_draws_are_the_ones_it_quotes() {
-        let painted = painted(&a_bead(), 44, 23);
+        let painted = painted(&a_bead(), 44, 24);
 
         let toned: Vec<String> = said_where(&painted, |run| run.style.fg != Some(Color::Reset));
 
@@ -1698,7 +1735,7 @@ mod tests {
     /// dim.
     #[test]
     fn the_page_is_drawn_at_the_terminals_own_foreground_as_the_head_is() {
-        let painted = painted(&a_bead(), 44, 23);
+        let painted = painted(&a_bead(), 44, 24);
 
         for (y, said) in [
             (7, "Point it at the new bird."),
@@ -1719,7 +1756,7 @@ mod tests {
             description: "Point it at the **new** bird, `now`.\n\nThe old one is gone.".to_string(),
             ..a_bead()
         };
-        let prose = painted(&bead, 44, 23).row(7);
+        let prose = painted(&bead, 44, 24).row(7);
 
         let bold = run_saying(&prose, "new");
         assert!(

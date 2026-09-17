@@ -58,9 +58,10 @@ const A_REFERENCE_THAT_CANNOT: &[u8] = "dun-rer.9  not in the tracker's answer".
 /// reference — where a reader aiming at it and missing lands.
 const A_ROW_OF_THE_PAGE_THAT_NAMES_NO_BEAD: &[u8] = "PARENT".as_bytes();
 
-/// The project's own line at the head of the forest, which the window is not
-/// drawn over.
-const A_ROW_THE_WINDOW_IS_NOT_ON: &[u8] = "arkham".as_bytes();
+/// The last of the key bindings along the foot, which is the one band the
+/// window is not drawn over: it runs from the screen's first row to the row
+/// above this one.
+const A_ROW_THE_WINDOW_IS_NOT_ON: &[u8] = "q quit".as_bytes();
 
 /// The title of the window over the first bead of the capture's tree, and the
 /// whole of it: the tree's header is `dun-0tp`, so the id alone would also be
@@ -118,7 +119,7 @@ fn the_rows_read_off_a_frame_are_the_rows_bdi_drew_on() {
 #[test]
 fn words_drawn_twice_are_read_off_no_row() {
     let (bdi, _tracker, page) = at_the_end_of_the_first_beads_page("ambiguous");
-    let in_the_forest_and_in_the_window = "dun-0tp  Every outside program".as_bytes();
+    let in_the_forest_and_in_the_window = "dun-0tp  Every o".as_bytes();
 
     assert_eq!(
         rows_of(&page, in_the_forest_and_in_the_window).len(),
@@ -248,7 +249,7 @@ fn a_click_off_the_window_takes_it_away() {
     let after = repaint(&mut bdi, ROWS + 2);
     assert!(
         !contains(&after, A_BEAD_WINDOW),
-        "a click on the forest round the window left the window up. The \
+        "a click on the foot beneath the window left the window up. The \
          screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
         bdi.timeline()

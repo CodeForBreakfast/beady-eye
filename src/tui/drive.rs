@@ -95,7 +95,7 @@ pub(super) enum Landed {
     Followed,
     /// The page, and nothing on it to go to.
     Nothing,
-    /// Off the page — the window's own border, or the forest round it —
+    /// Off the page — the window's own border, or the band beneath it —
     /// which is how a pointer takes the window away.
     Away,
 }
