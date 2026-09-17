@@ -89,12 +89,17 @@ pub struct Bead {
     /// dot. What a badge reads, so a field bd grows is drawable without `bdi`
     /// holding one of its own for it.
     pub values: BTreeMap<String, String>,
-    pub owner: Option<String>,
+    /// The name `bd show` prints as the bead's owner: the row's `created_by`.
+    /// The row's `owner` is an address, which no surface draws, so it is not
+    /// held.
+    pub created_by: Option<String>,
     pub assignee: Option<String>,
+    pub labels: Vec<String>,
     /// The bead's own account of itself, where it has one.
     pub description: Option<String>,
     /// Everything noted on it, as one text, where anything has been.
     pub notes: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub closed_at: Option<DateTime<Utc>>,

@@ -498,7 +498,8 @@ A row carries:
 | `parent` | the bead's own parent, as bd holds it — not a traversal's |
 | `dependencies[]` — `depends_on_id`, `type` | every edge out of the bead; `type` is `parent-child` or `blocks`, and any other value nests nothing |
 | `metadata` | the whole map, inline |
-| `updated_at`, `started_at`, `closed_at`, `owner`, `assignee` | the age rules |
+| `updated_at`, `started_at`, `closed_at`, `assignee` | the age rules, and the bead window's head |
+| `created_at`, `created_by`, `labels` | the head alone. `created_by` is the name `bd show` prints as the owner; the row's `owner` is an address and nothing reads it |
 
 Three consequences:
 
@@ -2293,8 +2294,7 @@ sections, under `bd show`'s names and in its order.
 whole width, one row each, and beside them the facts the row has no width to
 carry. In this order:
 
-- the glyph, the id, the labels where `bd show` puts them beside the id, and
-  the title
+- the glyph, the id, the labels, and the title
 - the status word, the priority, the type, the owner and the assignee, by name
   as `bd show` prints them
 - the created, updated, started and closed dates, as `bd show` prints them

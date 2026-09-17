@@ -87,7 +87,11 @@ pub fn build_tree(
                 agent,
                 description: bead.description.clone().unwrap_or_default(),
                 notes: bead.notes.clone().unwrap_or_default(),
-                owner: bead.owner.clone(),
+                created_by: bead.created_by.clone(),
+                assignee: bead.assignee.clone(),
+                labels: bead.labels.clone(),
+                created_at: bead.created_at,
+                updated_at: bead.updated_at,
                 parent: tied.parent,
                 depends_on: tied.depends_on,
                 blocks: tied.blocks,
@@ -410,7 +414,10 @@ mod tests {
     #[test]
     fn the_bead_as_bd_show_gives_it_reaches_the_node() {
         let json = r#"[
-          {"id":"dun-6","title":"root","status":"open","owner":"kim",
+          {"id":"dun-6","title":"root","status":"open",
+           "owner":"mira@dunwich.invalid","created_by":"Mira Vance",
+           "assignee":"Rowan Ash","labels":["mast","weather"],
+           "created_at":"2026-03-14T09:00:00Z","updated_at":"2026-03-16T09:00:00Z",
            "description":"lift the whole station","notes":"the crane is booked"},
           {"id":"dun-6.1","title":"waiting","status":"open",
            "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"},
@@ -434,7 +441,11 @@ mod tests {
         let root = node(&t, "dun-6");
         assert_eq!(root.description, "lift the whole station");
         assert_eq!(root.notes, "the crane is booked");
-        assert_eq!(root.owner.as_deref(), Some("kim"));
+        assert_eq!(root.created_by.as_deref(), Some("Mira Vance"));
+        assert_eq!(root.assignee.as_deref(), Some("Rowan Ash"));
+        assert_eq!(root.labels, ["mast", "weather"]);
+        assert_eq!(root.created_at, "2026-03-14T09:00:00Z".parse().ok());
+        assert_eq!(root.updated_at, "2026-03-16T09:00:00Z".parse().ok());
         assert_eq!(root.parent, None);
         assert_eq!(root.depends_on, vec![]);
         assert_eq!(root.blocks, vec![]);
@@ -442,7 +453,11 @@ mod tests {
         let waiting = node(&t, "dun-6.1");
         assert_eq!(waiting.description, "", "a row with nothing to say");
         assert_eq!(waiting.notes, "");
-        assert_eq!(waiting.owner, None);
+        assert_eq!(waiting.created_by, None);
+        assert_eq!(waiting.assignee, None);
+        assert_eq!(waiting.labels, [] as [String; 0]);
+        assert_eq!(waiting.created_at, None);
+        assert_eq!(waiting.updated_at, None);
         assert_eq!(
             waiting.parent.as_ref().map(|p| p.id.as_str()),
             Some("dun-6")
