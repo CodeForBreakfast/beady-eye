@@ -58,8 +58,8 @@ pub(super) struct Binding {
 /// The order is least guessable first, because a screen too short for the
 /// whole table shows the top of it. A reader who cannot see the arrows will
 /// press one anyway; one who cannot see `a` will not work out that the trees
-/// they are missing are being filtered. `Esc` sits below `q`: the bead view
-/// names it in its own title, so nobody has to find it here.
+/// they are missing are being filtered. `Esc` sits below `q`: the bead
+/// window's own row under the tail names it, so nobody has to find it here.
 pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: &[alone(KeyCode::Enter, "Enter")],
@@ -333,6 +333,65 @@ pub(super) fn key_row() -> String {
         .join("   ")
 }
 
+/// The bead window's row: what each key does there, in the order the row
+/// says them.
+///
+/// The words and the order are written here rather than read off `BINDINGS`,
+/// whose order is least-guessable-first for the `?` window and whose words
+/// are the forest's. The keys are still named off `BINDINGS`, so the row
+/// cannot call a key something the mapping does not answer to.
+///
+/// The order ranks them, because it is also the order the row gives them up
+/// in. `Esc` is first: a reader who cannot see how to leave is stuck in a
+/// view they may have opened by accident. `?` is second because it is the one
+/// key that reaches every key this row had to leave off, so a row down to two
+/// has still lost the reader nothing. The two left go to what a reader of
+/// this window cannot work out for themselves: nothing on the page says the
+/// beads it names can be stepped through, and taking the id away is what a
+/// reader opens a bead to do.
+///
+/// `Enter` is off the row for the reason `key_row` already gives for taking
+/// it off the forest's: pressing Enter on the thing under the cursor is what
+/// a reader of any list does anyway, and `Tab related` is what puts a thing
+/// under the cursor. The motion keys are off it for the reason the arrows
+/// are, and how far down the bead the reader has got is the border title's to
+/// say.
+const IN_BEAD: &[(Action, &str)] = &[
+    (Action::Back, "back"),
+    (Action::ShowBindings, "keys"),
+    (Action::NextRelated, "related"),
+    (Action::CopyId, "id"),
+];
+
+/// The row under the tail while the bead window is up, and every shorter form
+/// of it, fullest first.
+///
+/// The window holds four fifths of the screen, so a reader who cannot see
+/// this row has nothing left to look at: the row gives up a key at a time
+/// from the end rather than going whole, and `Esc back` is the last of them
+/// to go. The forest's row hands the foot one form and still goes whole or
+/// not at all, which is where that rule was written and is still right there
+/// — a reader in the forest is held nowhere and can look.
+pub(super) fn bead_key_rows() -> Vec<String> {
+    let named: Vec<String> = IN_BEAD
+        .iter()
+        .filter_map(|(action, word)| {
+            let named = BINDINGS
+                .iter()
+                .find(|binding| binding.action == *action)?
+                .keys
+                .first()?
+                .named;
+            Some(format!("{named} {word}"))
+        })
+        .collect();
+
+    (1..=named.len())
+        .rev()
+        .map(|kept| named[..kept].join("   "))
+        .collect()
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     //! The table's own tests, and the two helpers that name a keystroke.
@@ -466,6 +525,95 @@ pub(super) mod tests {
                 );
             }
         }
+    }
+
+    /// The bead window's row in full, which is the first form the foot is
+    /// handed.
+    fn whole_row() -> String {
+        bead_key_rows().remove(0)
+    }
+
+    /// Forty columns is what the narrowest supported terminal holds, and a
+    /// row wider than that would start every screen already giving keys up.
+    #[test]
+    fn the_bead_windows_row_fits_forty_columns() {
+        let row = whole_row();
+
+        assert!(
+            row.chars().count() <= 40,
+            "{} columns: {row:?}",
+            row.chars().count()
+        );
+    }
+
+    /// `Esc` first, because a reader who cannot see how to leave is stuck in
+    /// a view they may have opened by accident.
+    #[test]
+    fn the_bead_windows_row_says_the_way_out_first() {
+        let row = whole_row();
+
+        assert!(row.starts_with("Esc back"), "{row:?}");
+    }
+
+    /// Four keys, and `?` among them: the row is full, so what is not on it
+    /// is reachable from it.
+    #[test]
+    fn the_bead_windows_row_is_four_keys_and_one_of_them_is_the_way_to_the_rest() {
+        let row = whole_row();
+
+        assert_eq!(row.split("   ").count(), 4, "{row:?}");
+        assert!(row.contains("? keys"), "the way to the rest: {row:?}");
+    }
+
+    /// A word in the row and no key to press for it is a row that names
+    /// nothing, and `bead_key_rows` drops such an entry rather than saying
+    /// so. This is what says none was dropped.
+    #[test]
+    fn every_key_the_bead_windows_row_names_is_one_the_mapping_answers() {
+        let row = whole_row();
+
+        for (action, word) in IN_BEAD {
+            let binding = BINDINGS
+                .iter()
+                .find(|binding| binding.action == *action)
+                .unwrap_or_else(|| panic!("{action:?} is bound to no key"));
+            let named = binding.keys.first().expect("a key").named;
+            assert!(
+                row.contains(&format!("{named} {word}")),
+                "{named} {word} missing from {row:?}"
+            );
+        }
+    }
+
+    /// Each form is the one before it with its last key taken off, so a
+    /// narrowing row loses keys rather than gaining a different shape, and
+    /// what is left at the end is the way out.
+    #[test]
+    fn the_bead_windows_row_gives_up_its_keys_from_the_end() {
+        let forms = bead_key_rows();
+
+        assert_eq!(forms.len(), IN_BEAD.len(), "{forms:?}");
+        for (shorter, fuller) in forms.iter().skip(1).zip(&forms) {
+            assert!(fuller.starts_with(shorter.as_str()), "{forms:?}");
+            assert_eq!(
+                shorter.split("   ").count() + 1,
+                fuller.split("   ").count(),
+                "{forms:?}"
+            );
+        }
+        assert_eq!(forms.last().expect("a form of the row"), "Esc back");
+    }
+
+    /// `?` reaches every key the row had to leave off, so a row with room for
+    /// two keys says it rather than one of the two things this window does.
+    #[test]
+    fn the_bead_windows_row_keeps_the_way_to_the_rest_past_what_the_window_does() {
+        let forms = bead_key_rows();
+
+        assert_eq!(
+            forms.iter().rev().nth(1).expect("a form naming two keys"),
+            "Esc back   ? keys"
+        );
     }
 
     /// The row under the tail said `⏎` while the mapping said `Enter`, which

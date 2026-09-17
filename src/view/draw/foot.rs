@@ -63,6 +63,12 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// too narrow even for those, they yield from the end, so the caller's order
 /// is the order they are given up in.
 ///
+/// `keys` is the row of keys and every shorter form of it the caller will
+/// stand behind, fullest first. The row says the fullest of them that fits,
+/// which is what a notice does with its own words: a caller handing one form
+/// has a row that goes whole or not at all, and a caller handing several has
+/// one that narrows instead of vanishing.
+///
 /// How fresh the rows are is not here. It was, while it was one claim about
 /// the whole screen; it is now a project's own fact, said beside the
 /// project's name where it is exact.
@@ -96,7 +102,7 @@ pub(super) fn status_bar(
     notices: &[Notice],
     said: Option<&Said>,
     prompt: Option<&str>,
-    keys: &str,
+    keys: &[String],
     spine: Spine,
     width: usize,
 ) -> Fitted {
@@ -108,7 +114,6 @@ pub(super) fn status_bar(
         );
     }
 
-    let keys = Span::raw(keys.to_string());
     let answer: Vec<Span<'static>> = said
         .map(phrase::said)
         .or_else(|| phrase::spine(spine).map(str::to_string))
@@ -117,16 +122,31 @@ pub(super) fn status_bar(
         .collect();
 
     if notices.is_empty() {
-        return Fitted::new(vec![keys], Vec::new(), answer).state_or_nothing();
+        return Fitted::new(vec![Span::raw(fullest(keys, width))], Vec::new(), answer)
+            .state_or_nothing();
     }
 
+    let warning = warnings(notices, width);
+    let room = width.saturating_sub(columns(&[Span::raw(warning.clone())]) + GAP);
     Fitted::new(
-        vec![Span::styled(warnings(notices, width), palette::ATTENTION)],
+        vec![Span::styled(warning, palette::ATTENTION)],
         answer,
-        vec![keys],
+        vec![Span::raw(fullest(keys, room))],
     )
     .title_or_nothing()
     .state_or_nothing()
+}
+
+/// The fullest of `forms` that `room` holds, or the shortest of them where it
+/// holds none — which the row then gives up whole, since half a key name
+/// presses nothing.
+fn fullest(forms: &[String], room: usize) -> String {
+    forms
+        .iter()
+        .find(|form| columns(&[Span::raw((*form).clone())]) <= room)
+        .or_else(|| forms.last())
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// Every notice the foot carries, in the fullest words that let all of them
@@ -258,7 +278,7 @@ mod tests {
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, A_KEY_ROW, Spine::EveryCopy, 60),
+            status_bar(&[], None, None, &a_key_row(), Spine::EveryCopy, 60),
             60,
             1,
         )
@@ -278,7 +298,7 @@ mod tests {
                 &[Notice::AgentsUnknown],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 90,
             ),
@@ -304,7 +324,7 @@ mod tests {
                 &[Notice::NoInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 90,
             ),
@@ -329,7 +349,7 @@ mod tests {
                 &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 200,
             ),
@@ -356,7 +376,7 @@ mod tests {
                 &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 80,
             ),
@@ -372,6 +392,71 @@ mod tests {
         says(&drawn[0], "polled, not reported");
     }
 
+    /// The bead window's row as the loop hands it to the foot: the forms it
+    /// will stand behind, each one the last key of the one before taken off.
+    fn a_row_that_can_say_less() -> Vec<String> {
+        [
+            "Esc back   ? keys   Tab related   y id",
+            "Esc back   ? keys   Tab related",
+            "Esc back   ? keys",
+            "Esc back",
+        ]
+        .iter()
+        .map(|form| (*form).to_string())
+        .collect()
+    }
+
+    /// The bead this was written for. A window holding four fifths of the
+    /// screen leaves the reader nothing to look at, so the row that says how
+    /// to leave it must not be what a notice takes away. Eighty columns is a
+    /// supported width and a machine with no herdr raises this notice on
+    /// every frame.
+    #[test]
+    fn a_row_that_can_say_less_says_less_rather_than_going() {
+        let drawn = Painted::of(
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                &a_row_that_can_say_less(),
+                Spine::EveryCopy,
+                80,
+            ),
+            80,
+            1,
+        )
+        .rows();
+
+        assert!(
+            drawn[0].trim_end().ends_with("Esc back   ? keys"),
+            "{drawn:?}"
+        );
+    }
+
+    /// Giving up keys is not cutting them: a row narrowed to its last form
+    /// and still too wide for the columns left goes whole, like any other.
+    #[test]
+    fn a_row_too_narrow_for_even_its_shortest_form_draws_none_of_it() {
+        let drawn = Painted::of(
+            status_bar(
+                &[Notice::AgentsUnknown],
+                None,
+                None,
+                &a_row_that_can_say_less(),
+                Spine::EveryCopy,
+                60,
+            ),
+            60,
+            1,
+        )
+        .rows();
+
+        assert_eq!(
+            drawn[0].trim_end(),
+            "\u{26a0} no herdr session \u{b7} which agents are alive is unknown"
+        );
+    }
+
     // ---- what the reader just copied ---------------------------------------
 
     /// The keys stay where they are and the id joins them: a reader looking
@@ -384,7 +469,7 @@ mod tests {
                 &[],
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 80,
             ),
@@ -406,7 +491,7 @@ mod tests {
                 &[Notice::AgentsUnknown],
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 120,
             ),
@@ -434,7 +519,7 @@ mod tests {
                 &[],
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 50,
             ),
@@ -477,7 +562,7 @@ mod tests {
                 &[Notice::AgentsUnknown, Notice::NoInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 40,
             ),
@@ -500,7 +585,7 @@ mod tests {
                 &[Notice::NoInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 60,
             ),
@@ -521,7 +606,7 @@ mod tests {
                 &[Notice::NoInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 60,
             ),
@@ -552,7 +637,7 @@ mod tests {
                 &[Notice::AnotherBdiHadTheInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 100,
             ),
@@ -580,7 +665,7 @@ mod tests {
                 ],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 40,
             ),
@@ -604,7 +689,7 @@ mod tests {
                 &[Notice::AnotherBdiHadTheInboundChannel],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 100,
             ),
@@ -630,7 +715,7 @@ mod tests {
     #[test]
     fn the_rule_the_forest_starts_under_is_not_named() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, A_KEY_ROW, Spine::EveryCopy, 100),
+            status_bar(&[], None, None, &a_key_row(), Spine::EveryCopy, 100),
             100,
             1,
         )
@@ -646,7 +731,7 @@ mod tests {
     #[test]
     fn a_rule_the_reader_put_in_force_is_said_at_the_foot() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, A_KEY_ROW, Spine::Deepest, 100),
+            status_bar(&[], None, None, &a_key_row(), Spine::Deepest, 100),
             100,
             1,
         )
@@ -689,7 +774,7 @@ mod tests {
         for rule in reachable {
             let words = phrase::spine(rule).unwrap_or_else(|| panic!("{rule:?} is named"));
             let drawn =
-                Painted::of(status_bar(&[], None, None, A_KEY_ROW, rule, 100), 100, 1).rows();
+                Painted::of(status_bar(&[], None, None, &a_key_row(), rule, 100), 100, 1).rows();
 
             says(&drawn[0], words);
             said.push(words);
@@ -711,7 +796,7 @@ mod tests {
                 &[],
                 Some(&Said::Copied("dun-1".to_string())),
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::Deepest,
                 100,
             ),
@@ -738,7 +823,7 @@ mod tests {
                 &[Notice::AgentsUnknown],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::Deepest,
                 150,
             ),
@@ -772,7 +857,7 @@ mod tests {
     fn a_rule_the_row_has_no_room_for_is_dropped_whole_and_the_keys_stay() {
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[], None, None, A_KEY_ROW, Spine::Deepest, width),
+                status_bar(&[], None, None, &a_key_row(), Spine::Deepest, width),
                 width as u16,
                 1,
             )
@@ -850,7 +935,7 @@ mod tests {
                 &[Notice::AgentsUnknown],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 60,
             ),
@@ -874,7 +959,7 @@ mod tests {
                 &[Notice::AgentsUnknown],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 60,
             ),
@@ -899,7 +984,7 @@ mod tests {
                 &[Notice::AgentsUnknown],
                 None,
                 None,
-                A_KEY_ROW,
+                &a_key_row(),
                 Spine::EveryCopy,
                 40,
             ),
@@ -922,7 +1007,7 @@ mod tests {
                     &[Notice::AgentsUnknown],
                     None,
                     None,
-                    A_KEY_ROW,
+                    &a_key_row(),
                     Spine::EveryCopy,
                     width,
                 ),

@@ -160,11 +160,6 @@ impl Show {
         self.from = self.from.min(total.saturating_sub(room));
     }
 
-    /// Whether the last frame was too short for the whole bead.
-    fn scrolls(&self) -> bool {
-        self.total > self.room
-    }
-
     /// The bead this one names that the window is on.
     pub fn on(&self) -> Option<&str> {
         self.on.as_deref()
@@ -692,17 +687,15 @@ fn dimmed_if_closed(status: &Status) -> Style {
 /// Draw the bead in a window over the forest.
 ///
 /// The ground is blanked first, which is what stops the trees showing
-/// through between the rows. The way back is the border's title, so a window
-/// too short for a single row still holds it: a reader who cannot see how to
-/// leave is stuck in a view they may have opened by accident. Where the bead
-/// is taller than the window, the title says how to see the rest.
+/// through between the rows. The bead is named in the border's title, so a
+/// window too short for a single row still says which bead it is over, and
+/// where the bead is taller than the window the title says how far down it
+/// the reader has got. The keys are on the foot row while the window is up.
 ///
 /// `followable` is whether the forest can take the reader to a bead this one
 /// names, which only the forest can say, and the window asks it of every
 /// bead named. An id it answers for is drawn in blue and the rest keep the
-/// page's tone, and the title offers the keys that follow one where there is
-/// any such bead at all — a reader told about Enter on a bead whose every
-/// reference is drawn nowhere presses it for nothing.
+/// page's tone.
 ///
 /// The bead the window is on is drawn as the forest draws the row the
 /// selection is on, and brought inside the window where the last frame left
@@ -735,9 +728,8 @@ pub fn show(
     if let Some(row) = on {
         view.reveal(row);
     }
-    let follows = related(node).into_iter().any(followable);
     let block = block.title(Span::styled(
-        phrase::way_back_from_bead(&node.id, view.scrolls(), follows),
+        phrase::bead_window_title(&node.id, view.from, view.room, view.total),
         palette::TITLE,
     ));
     cover(frame, window);
@@ -899,7 +891,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead(), &mut Show::default(), 44, 24),
             vec![
-                "┌dun-7.1 · Esc to go back──────────────────┐",
+                "┌dun-7.1───────────────────────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  re-point the dish             │",
                 "│   in_progress · P2 · task · kim          │",
@@ -950,7 +942,7 @@ mod tests {
         assert_eq!(
             drawn(&bare, &mut Show::default(), 44, 6),
             vec![
-                "┌dun-7.1 · Esc to go back──────────────────┐",
+                "┌dun-7.1───────────────────────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  re-point the dish             │",
                 "│   in_progress · P2 · task                │",
@@ -1116,7 +1108,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 7),
             vec![
-                "┌dun-7.1 · Esc to go back · j, k to scroll─┐",
+                "┌dun-7.1 · 1–3 of 20───────────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  Thirty-three of thirty-four … │",
                 "│   in_progress · P2 · task · kim          │",
@@ -1168,7 +1160,7 @@ mod tests {
         assert_eq!(
             drawn(&named, &mut Show::default(), 24, 10),
             vec![
-                "┌dun-7.1 · Esc to go ba┐",
+                "┌dun-7.1───────────────┐",
                 "│                      │",
                 "│ ◐ dun-7.1  re-point  │",
                 "│            the dish  │",
@@ -1188,7 +1180,7 @@ mod tests {
     fn a_window_too_short_for_the_bead_scrolls_by_motion() {
         let mut view = Show::default();
         let top = drawn(&a_bead(), &mut view, 44, 6);
-        assert_eq!(top[0], "┌dun-7.1 · Esc to go back · j, k to scroll─┐");
+        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 20───────────────────────┐");
         assert_eq!(top[2], "│ ◐ dun-7.1  re-point the dish             │");
 
         assert!(!view.scroll(Motion::PreviousRow), "already at the top");
@@ -1461,15 +1453,15 @@ mod tests {
         u16::try_from(on).expect("no screen is that tall")
     }
 
-    /// A reader who cannot see how to leave is stuck in a view they may have
-    /// opened by accident, so the way back is the one row that survives
-    /// every cut.
+    /// A window too short for a single row of the bead still says which bead
+    /// it is over: the title is the one row that survives every cut, and a
+    /// reader shown a window naming nothing cannot tell what they opened.
     #[test]
-    fn the_way_back_is_the_windows_title_however_short_the_screen() {
+    fn the_bead_is_named_in_the_windows_title_however_short_the_screen() {
         for height in [1, 2, 3, 8] {
             let rows = drawn(&a_bead(), &mut Show::default(), 44, height);
             assert!(
-                rows[0].contains("Esc to go back"),
+                rows[0].contains("dun-7.1"),
                 "at {height} rows: {:?}",
                 rows[0]
             );
@@ -1671,7 +1663,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead(), &mut Show::default(), 44, 3),
             vec![
-                "┌dun-7.1 · Esc to go back · j, k to scroll─┐",
+                "┌dun-7.1───────────────────────────────────┐",
                 "└──────────────────────────────────────────┘",
                 "",
             ]
@@ -2001,12 +1993,12 @@ mod tests {
     }
 
     /// Weight is the whole of the window's emphasis, so what carries one is
-    /// the list of things the reader is meant to navigate by: the way out,
-    /// and the name of each section. Nothing else in the window takes it —
+    /// the list of things the reader is meant to navigate by: the border
+    /// title, and the name of each section. Nothing else in the window takes it —
     /// the bead's own title stands out by being the row the window opens on
     /// rather than by a treatment.
     #[test]
-    fn what_the_window_draws_at_a_weight_is_the_way_back_and_its_section_names() {
+    fn what_the_window_draws_at_a_weight_is_its_title_and_its_section_names() {
         let bead = a_bead();
         let painted = painted(&bead, 44, 24);
 
@@ -2017,7 +2009,7 @@ mod tests {
         assert_eq!(
             own,
             vec![
-                phrase::way_back_from_bead(&bead.id, false, false),
+                bead.id.clone(),
                 DESCRIPTION.to_string(),
                 NOTES.to_string(),
                 PARENT.to_string(),
@@ -2251,35 +2243,6 @@ mod tests {
         assert_eq!(stepped(None, 3, |_| false), None);
         assert_eq!(stepped(None, 0, all), None);
         assert_eq!(stepped(Some(1), 0, all), None);
-    }
-
-    /// The title names the keys only where a press would do something. A
-    /// reader who is told about `Tab` on a bead whose every reference is
-    /// undrawn presses it and nothing happens.
-    #[test]
-    fn the_title_offers_the_keys_that_follow_only_where_something_can_be() {
-        let bead = a_bead();
-
-        let says = |drawn: Vec<String>, said: &str| drawn.iter().any(|row| row.contains(said));
-
-        assert!(
-            !says(drawn(&bead, &mut Show::default(), 60, 24), "to follow"),
-            "keys offered over a bead nothing can be followed from"
-        );
-        assert!(
-            says(
-                drawn_where(
-                    &bead,
-                    None,
-                    &mut Show::default(),
-                    60,
-                    24,
-                    &everything_followable
-                ),
-                "Tab, Enter to follow"
-            ),
-            "no keys offered where a reference can be followed"
-        );
     }
 
     /// The row the window is on is drawn the way the forest draws the row its

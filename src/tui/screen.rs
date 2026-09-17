@@ -33,7 +33,7 @@ use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::due::due_after;
-use super::keys::{bindings, key_row};
+use super::keys::{bead_key_rows, bindings, key_row};
 use super::reload::Reloaded;
 
 /// What the config settles about the drawing, as one value read from it in
@@ -971,6 +971,18 @@ enum Over<'a> {
     Bead(&'a mut Show),
 }
 
+/// The row under the tail for whatever is up over the forest.
+///
+/// The bindings go up over the forest rather than over a bead, and the prompt
+/// is drawn over the keys rather than beside them, so both leave the forest's
+/// row where it was.
+fn keys_under(over: &Over<'_>) -> Vec<String> {
+    match over {
+        Over::Bead(_) => bead_key_rows(),
+        Over::Nothing | Over::Bindings => vec![key_row()],
+    }
+}
+
 #[cfg(panic = "abort")]
 compile_error!(
     "putting the terminal back is `Screen`'s `Drop`, and a build with \
@@ -1085,11 +1097,12 @@ impl View for Screen {
             Showing::Bindings => Over::Bindings,
             Showing::Bead => Over::Bead(show),
         };
+        let keys = keys_under(&over);
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
             prompt: sought.as_deref(),
-            keys: &key_row(),
+            keys: &keys,
         };
         let band = draw::Band {
             tail,
@@ -1132,6 +1145,7 @@ mod tests {
     use crate::view::forest::Spine;
     use crate::view::lines::{Content, GroupKind};
     use crate::view::painted::{Painted, Run};
+    use crate::view::palette;
     use crate::view::row::Cell;
     use crate::view::walk::{self, Rows};
     use crate::view::Motion;
@@ -1542,7 +1556,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        let keys = key_row();
+        let keys = keys_under(&over);
         let foot = draw::Foot {
             standing: &[],
             said: pressed.said,
@@ -2205,12 +2219,13 @@ mod tests {
 
     /// The bead window's rectangle on the screen, by its corners: the title
     /// row's `┌` and `┐`, and the `└` beneath the first in the rows below.
-    /// The forest's own `└──` connectors sit elsewhere on their rows.
+    /// The forest's own `└──` connectors sit elsewhere on their rows, and it draws
+    /// no `┌` at all.
     fn window_of(rows: &[String]) -> Rect {
         let y = rows
             .iter()
-            .position(|row| row.contains("Esc to go back"))
-            .expect("the bead window's title is on the screen");
+            .position(|row| row.contains('┌'))
+            .expect("the bead window's top edge is on the screen");
         let top: Vec<char> = rows[y].chars().collect();
         let x = top.iter().position(|c| *c == '┌').unwrap();
         let right = top.iter().rposition(|c| *c == '┐').unwrap();
@@ -2309,7 +2324,8 @@ mod tests {
     }
 
     /// A bead taller than four fifths of a big screen fills that height and
-    /// scrolls for the rest, the title saying so, the same as on a small one.
+    /// scrolls for the rest, the title saying how far down it the window is,
+    /// the same as on a small one.
     #[test]
     fn a_bead_taller_than_the_window_scrolls_by_motion_on_a_big_screen() {
         let mut shown = shown(a_grove_with_a_tall_bead(100));
@@ -2317,8 +2333,8 @@ mod tests {
 
         let rows = bead_view(&mut shown, 200, 60);
         assert!(
-            rows[0].contains("j, k to scroll"),
-            "the title says the bead scrolls: {:?}",
+            rows[0].contains("1\u{2013}56 of 105"),
+            "the title says how far down the bead the window has got: {:?}",
             rows[0]
         );
         let top = bead_page(&mut shown, 200, 60);
@@ -2479,6 +2495,93 @@ mod tests {
         snapshot
     }
 
+    /// The same grove naming one more bead: one the tracker answered for, with
+    /// a status and a title, that no tree the forest draws holds. `bd list
+    /// --all` makes that an ordinary case — the answer is the whole project
+    /// and the trees are what hangs under the roots the config names — and it
+    /// is the case `grv-404` cannot stand in for, because a bead the answer
+    /// has nothing for is drawn as a row of its own whatever the forest says.
+    fn a_grove_naming_a_bead_under_no_root() -> Snapshot {
+        let mut snapshot = a_grove_that_names_its_beads();
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                if node.id != "grv-1.1" {
+                    continue;
+                }
+                node.blocks.push(Related {
+                    id: "grv-9".to_string(),
+                    edge: Edge::Blocks,
+                    status: Some(Status::Open),
+                    title: Some("a bead under no root".to_string()),
+                });
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// Every run the bead window drew, with the forest beside it left out.
+    ///
+    /// A run is the window's when it starts at or after the window's left
+    /// edge. The forest draws a bead's id in the same blue, so a search over
+    /// the whole screen would find the forest's own row and pass whatever the
+    /// window drew.
+    fn window_runs(shown: &mut Shown, width: u16, height: u16) -> Vec<Run> {
+        let (forest, tail, show) = (&mut shown.forest, &shown.tail, &mut shown.show);
+        let painted = screen_of(forest, tail, width, height, Over::Bead(show));
+        let left = usize::from(window_of(&painted.rows()).left());
+        (0..usize::from(height))
+            .flat_map(|y| {
+                let mut at = 0;
+                painted
+                    .row(y)
+                    .into_iter()
+                    .filter_map(|run| {
+                        let starts = at;
+                        at += run.said.chars().count();
+                        (starts >= left).then_some(run)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Blue in the window means a bead you can go to, and what answers is the
+    /// forest.
+    ///
+    /// Every test of the rule itself hands the drawing a predicate written in
+    /// the test, so all of them would stay green with the production path
+    /// wired to one that always said no. This is the one that asks the real
+    /// question: two beads the same page names, one the forest draws and one
+    /// it does not, and nothing here says which is which.
+    #[test]
+    fn the_window_colours_the_id_the_forest_can_go_to_and_not_the_one_it_cannot() {
+        let mut shown = shown(a_grove_naming_a_bead_under_no_root());
+        shown.apply(Action::ExpandOrChild);
+        assert!(shown.apply(Action::ShowBead));
+
+        let runs = window_runs(&mut shown, 80, 24);
+
+        let blue = |id: &str| {
+            runs.iter()
+                .any(|run| run.said == id && run.style.fg == palette::IDENTITY.fg)
+        };
+        assert!(
+            blue("grv-1"),
+            "the forest draws the parent, and its id is not blue: {runs:#?}"
+        );
+        assert!(
+            runs.iter().any(|run| run.said.contains("grv-9")),
+            "the bead under no root is drawn on no row, so the absence below \
+             says nothing: {runs:#?}"
+        );
+        assert!(
+            !blue("grv-9"),
+            "no tree holds that bead, and its id is blue: {runs:#?}"
+        );
+    }
+
     /// The window open on `grv-1.1`, which is the bead that names the others.
     fn shown_on_the_bead_that_names_beads() -> Shown {
         let mut shown = shown(a_grove_that_names_its_beads());
@@ -2528,38 +2631,6 @@ mod tests {
             shown.related_key(),
             Some(bead("grove", "grv-1.2")),
             "the ring landed on the bead in the middle, which goes nowhere"
-        );
-    }
-
-    /// Only the forest can say whether a bead this one names can be gone to,
-    /// and the title offers the keys on the strength of its answer. Asserted
-    /// on the frame the screen draws rather than on the phrase, because the
-    /// phrase is told what to say and this is about who tells it.
-    #[test]
-    fn the_title_offers_the_keys_that_follow_where_the_forest_can_go_to_one() {
-        let mut shown = shown_on_the_bead_that_names_beads();
-
-        let drawn = bead_view(&mut shown, 80, 24);
-
-        assert!(
-            drawn.iter().any(|row| row.contains("Tab, Enter to follow")),
-            "{drawn:#?}"
-        );
-    }
-
-    /// And a bead whose every reference the forest draws nowhere offers
-    /// neither key: a reader told about `Tab` there presses it for nothing.
-    #[test]
-    fn the_title_offers_no_keys_where_the_forest_can_go_to_none_of_them() {
-        let mut shown = shown(a_described_grove(6));
-        shown.apply(Action::ExpandOrChild);
-        assert!(shown.apply(Action::ShowBead));
-
-        let drawn = bead_view(&mut shown, 80, 24);
-
-        assert!(
-            !drawn.iter().any(|row| row.contains("to follow")),
-            "{drawn:#?}"
         );
     }
 
@@ -3989,6 +4060,49 @@ mod tests {
         .rows()
         .pop()
         .expect("a screen with rows on it")
+    }
+
+    /// A grove on a machine whose herdr will not answer, which is a notice on
+    /// every frame and fifty-four of an eighty-column foot's columns.
+    fn a_grove_with_no_herdr(beads: usize) -> Snapshot {
+        Snapshot {
+            agents: a_provider(ProviderState::NotAnswering),
+            ..a_grove(beads)
+        }
+    }
+
+    /// The bead this was written for. The window holds four fifths of the
+    /// screen and its title no longer names the way out, so a notice that
+    /// took the whole row away left nothing on screen saying how to leave.
+    /// Eighty columns is a supported width, and a machine with no herdr
+    /// raises that notice on every frame rather than in a corner.
+    #[test]
+    fn the_windows_row_keeps_the_way_out_beside_a_notice() {
+        let mut shown = shown(a_grove_with_no_herdr(6));
+        assert!(shown.apply(Action::ShowBead));
+
+        let foot = bead_view(&mut shown, 80, 24)
+            .pop()
+            .expect("a screen with rows on it");
+
+        assert!(foot.contains("no herdr session"), "{foot:?}");
+        assert!(foot.trim_end().ends_with("Esc back   ? keys"), "{foot:?}");
+    }
+
+    /// The forest's row keeps the rule it was written under, which is still
+    /// right where it was written: a reader there is held nowhere and can
+    /// look, so a key they can rediscover costs them less than a fact they
+    /// never learn.
+    #[test]
+    fn the_forests_row_still_goes_whole_beside_a_notice() {
+        let mut shown = shown(a_grove_with_no_herdr(6));
+
+        let foot = foot_of(&mut shown, 80, 24);
+
+        assert_eq!(
+            foot.trim_end(),
+            "\u{26a0} no herdr session \u{b7} which agents are alive is unknown"
+        );
     }
 
     /// Nothing else on the screen changes for a copy, so the foot is where a

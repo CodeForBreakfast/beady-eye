@@ -778,30 +778,23 @@ pub fn status_word(status: &Status) -> String {
     }
 }
 
-/// The title of the bead view: the bead, the way back out, and — where the
-/// window is too short for the whole bead — how to see the rest, and — where
-/// the forest can take the reader to a bead this one names — the keys that
-/// do it. The way back comes first, because a title too long for the screen
-/// is cut from its end.
+/// The bead window's border title: which bead the reader is on, and — where
+/// the window is too short for the whole of it — how far down it they have
+/// got. The id comes first, because a title too long for the screen is cut
+/// from its end.
 ///
-/// *Back* rather than *close*: closing is what `bd close` does to a bead,
-/// and leaving this view does nothing to one. It is also the whole of what
-/// `Esc` means here now that the view can be moved through: pressed on a
-/// bead the reader followed something to, it goes back to the one they came
-/// from, and pressed on the bead they opened, out to the forest.
-///
-/// The keys are named rather than the act, because the act takes two of them
-/// and neither is guessable: a reader who cannot see that `Tab` reaches the
-/// rows will not find out that `Enter` follows one.
-pub fn way_back_from_bead(id: &str, scrolls: bool, follows: bool) -> String {
-    let mut said = format!("{id} · Esc to go back");
-    if scrolls {
-        said.push_str(" · j, k to scroll");
+/// The position is counted in rows of the bead as this window draws it,
+/// which is what the reader is looking at and what a narrower window
+/// rewraps. A bead the window holds whole says nothing about position: there
+/// is nowhere else to be. Neither does a window with no room at all, where
+/// nothing of the bead is on the screen to count.
+pub fn bead_window_title(id: &str, from: usize, room: usize, total: usize) -> String {
+    if room == 0 || total <= room {
+        return id.to_string();
     }
-    if follows {
-        said.push_str(" · Tab, Enter to follow");
-    }
-    said
+    let first = from + 1;
+    let last = from + room;
+    format!("{id} · {first}–{last} of {total}")
 }
 
 /// A bead an edge names that the tracker's answer does not hold, which is
@@ -2094,5 +2087,46 @@ mod tests {
             Some("writing the parser")
         );
         assert_eq!(pane_report(None, None), None);
+    }
+
+    /// A bead the window holds whole is named and nothing more: there is
+    /// nowhere else in it to be.
+    #[test]
+    fn the_title_of_a_bead_the_window_holds_whole_is_its_id() {
+        assert_eq!(bead_window_title("dun-7.1", 0, 24, 24), "dun-7.1");
+        assert_eq!(bead_window_title("dun-7.1", 0, 24, 9), "dun-7.1");
+    }
+
+    /// A bead taller than the window is named with the rows of it on the
+    /// screen and how many there are in all, counted from one as a reader
+    /// counts.
+    #[test]
+    fn the_title_of_a_bead_taller_than_the_window_says_how_far_down_it_the_reader_is() {
+        assert_eq!(
+            bead_window_title("dun-7.1", 0, 24, 61),
+            "dun-7.1 \u{b7} 1\u{2013}24 of 61"
+        );
+        assert_eq!(
+            bead_window_title("dun-7.1", 9, 24, 61),
+            "dun-7.1 \u{b7} 10\u{2013}33 of 61"
+        );
+    }
+
+    /// The last screenful stops at the last row of the bead rather than
+    /// counting past it. The view stops there, so a title that ran on would
+    /// be naming rows the window cannot be moved to.
+    #[test]
+    fn the_last_screenful_of_a_bead_is_counted_to_its_last_row() {
+        assert_eq!(
+            bead_window_title("dun-7.1", 37, 24, 61),
+            "dun-7.1 \u{b7} 38\u{2013}61 of 61"
+        );
+    }
+
+    /// A window with no room for a single row has shown the reader none of
+    /// the bead, so there is no position to report.
+    #[test]
+    fn a_window_with_no_room_says_the_id_alone() {
+        assert_eq!(bead_window_title("dun-7.1", 0, 0, 61), "dun-7.1");
     }
 }

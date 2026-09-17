@@ -110,7 +110,9 @@ pub struct Foot<'a> {
     pub said: Option<&'a Said>,
     /// What the reader has typed into the search prompt, while one is up.
     pub prompt: Option<&'a str>,
-    pub keys: &'a str,
+    /// The row of keys and every shorter form of it the loop will stand
+    /// behind, fullest first.
+    pub keys: &'a [String],
 }
 
 /// Draw the forest and the foot, leaving the tail's band to whoever holds a
@@ -398,6 +400,11 @@ mod tests {
     /// A key row shaped like the real one, without importing the loop's.
     pub(super) const A_KEY_ROW: &str = "Enter focus   a all   ? keys   ^R refresh   q quit";
 
+    /// It as the foot takes it: one form, so it goes whole or not at all.
+    pub(super) fn a_key_row() -> Vec<String> {
+        vec![A_KEY_ROW.to_string()]
+    }
+
     #[test]
     fn a_note_leaves_its_box_drawing_in_the_terminals_own_colour() {
         let painted = Painted::of(
@@ -586,6 +593,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
+        let keys = a_key_row();
         Painted::drawn_by(width, height, |frame| {
             draw(
                 frame,
@@ -598,7 +606,7 @@ mod tests {
                     standing,
                     said: None,
                     prompt: None,
-                    keys: A_KEY_ROW,
+                    keys: &keys,
                 },
             );
         })

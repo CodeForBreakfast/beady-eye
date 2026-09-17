@@ -16,10 +16,10 @@
 //! [`the_rows_read_off_a_frame_are_the_rows_bdi_drew_on`] is what says that
 //! reading can be trusted.
 //!
-//! What says a window is up is the words every window says, `Esc to go back`,
-//! rather than the title of a bead: the window is drawn from the *selection*,
-//! so one wrongly left up after a click draws over whatever the selection
-//! landed on and under that bead's name.
+//! What says a window is up is [`window_over`] answering at all, rather than
+//! the title of a bead: the window is drawn from the *selection*, so one
+//! wrongly left up after a click draws over whatever the selection landed on
+//! and under that bead's name.
 
 mod terminal;
 
@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use terminal::driver::{clicked_on, Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{contains, over_the_described_subtree, row_of, rows_of};
+use terminal::{over_the_described_subtree, row_of, rows_of, window_over};
 use terminal::{THE_FIRST_BEAD, THE_TREES_HEADER};
 
 const ROWS: u16 = 40;
@@ -58,23 +58,23 @@ const A_REFERENCE_THAT_CANNOT: &[u8] = "dun-rer.9  not in the tracker's answer".
 /// reference — where a reader aiming at it and missing lands.
 const A_ROW_OF_THE_PAGE_THAT_NAMES_NO_BEAD: &[u8] = "PARENT".as_bytes();
 
-/// The last of the key bindings along the foot, which is the one band the
+/// A word of the key bindings along the foot, which is the one band the
 /// window is not drawn over: it runs from the screen's first row to the row
-/// above this one.
-const A_ROW_THE_WINDOW_IS_NOT_ON: &[u8] = "q quit".as_bytes();
+/// above this one. A word of the bead window's own row, since that is the row
+/// the foot carries while a window is up, and one no bead of the capture
+/// says.
+const A_ROW_THE_WINDOW_IS_NOT_ON: &[u8] = "related".as_bytes();
 
-/// The title of the window over the first bead of the capture's tree, and the
-/// whole of it: the tree's header is `dun-0tp`, so the id alone would also be
-/// met by the window over its own root. Drawn on the window's top border,
-/// which is how this test names that row.
-const THE_FIRST_BEADS_WINDOW: &[u8] = "dun-0tp.6 · Esc to go back".as_bytes();
+/// The window's top border, which no other row of the screen draws. The id on
+/// it is drawn again in the bead's own head below, so the corner is what names
+/// the row rather than the bead.
+const THE_WINDOWS_TOP_BORDER: &[u8] = "┌".as_bytes();
 
-/// The title of the window over that bead's parent, which is the tree's root.
-const ITS_PARENTS_WINDOW: &[u8] = "dun-0tp · Esc to go back".as_bytes();
+/// The first bead of the capture's tree, which the window opens over.
+const THE_BEAD_THE_WINDOW_OPENS_ON: &str = "dun-0tp.6";
 
-/// The part of that title every bead's window says, whichever bead it is on.
-/// This is what says a window is *up*.
-const A_BEAD_WINDOW: &[u8] = "Esc to go back".as_bytes();
+/// That bead's parent, which is the tree's root.
+const ITS_PARENT: &str = "dun-0tp";
 
 /// The rows two forest lines are drawn on are the rows the harness already
 /// says they are.
@@ -150,14 +150,15 @@ fn a_click_on_a_reference_goes_to_the_bead_it_names() {
 
     let after = repaint(&mut bdi, ROWS + 2);
     assert!(
-        contains(&after, A_BEAD_WINDOW),
+        window_over(&after).is_some(),
         "the click on a reference took the window away rather than following \
          it. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
         bdi.timeline()
     );
-    assert!(
-        contains(&after, ITS_PARENTS_WINDOW),
+    assert_eq!(
+        window_over(&after).as_deref(),
+        Some(ITS_PARENT),
         "the click on the parent did not go to it. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
         bdi.timeline()
@@ -182,8 +183,9 @@ fn the_way_back_returns_to_the_bead_a_click_followed_from() {
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let back = repaint(&mut bdi, ROWS + 2);
-    assert!(
-        contains(&back, THE_FIRST_BEADS_WINDOW),
+    assert_eq!(
+        window_over(&back).as_deref(),
+        Some(THE_BEAD_THE_WINDOW_OPENS_ON),
         "the way back did not return to the bead the reference was clicked \
          in. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&back),
@@ -207,8 +209,9 @@ fn a_click_on_the_page_that_names_no_bead_leaves_the_window_alone() {
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let after = repaint(&mut bdi, ROWS + 2);
-    assert!(
-        contains(&after, THE_FIRST_BEADS_WINDOW),
+    assert_eq!(
+        window_over(&after).as_deref(),
+        Some(THE_BEAD_THE_WINDOW_OPENS_ON),
         "a click a row off a reference took the window away, or moved it. The \
          screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
@@ -227,8 +230,9 @@ fn a_click_on_a_reference_that_cannot_be_followed_leaves_the_window_alone() {
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let after = repaint(&mut bdi, ROWS + 2);
-    assert!(
-        contains(&after, THE_FIRST_BEADS_WINDOW),
+    assert_eq!(
+        window_over(&after).as_deref(),
+        Some(THE_BEAD_THE_WINDOW_OPENS_ON),
         "a click on a bead the answer does not hold took the window away, or \
          went somewhere. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
@@ -248,7 +252,7 @@ fn a_click_off_the_window_takes_it_away() {
 
     let after = repaint(&mut bdi, ROWS + 2);
     assert!(
-        !contains(&after, A_BEAD_WINDOW),
+        window_over(&after).is_none(),
         "a click on the foot beneath the window left the window up. The \
          screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
@@ -266,15 +270,15 @@ fn a_click_off_the_window_takes_it_away() {
 #[test]
 fn a_click_on_the_windows_border_takes_it_away() {
     let (mut bdi, _tracker, page) = at_the_end_of_the_first_beads_page("bordered");
-    let on = the_row(&mut bdi, &page, THE_FIRST_BEADS_WINDOW);
+    let on = the_row(&mut bdi, &page, THE_WINDOWS_TOP_BORDER);
 
     bdi.send(&clicked_on(on));
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let after = repaint(&mut bdi, ROWS + 2);
     assert!(
-        !contains(&after, A_BEAD_WINDOW),
-        "a click on the border that says how to leave left the window up. The \
+        window_over(&after).is_none(),
+        "a click on the window's own border left the window up. The \
          screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&after),
         bdi.timeline()
@@ -295,8 +299,9 @@ fn at_the_end_of_the_first_beads_page(named: &str) -> (Driven, ShimmedTracker, V
     bdi.settle(A_SILENCE, GIVING_UP);
 
     let page = repaint(&mut bdi, ROWS + 1);
-    assert!(
-        contains(&page, THE_FIRST_BEADS_WINDOW),
+    assert_eq!(
+        window_over(&page).as_deref(),
+        Some(THE_BEAD_THE_WINDOW_OPENS_ON),
         "no window opened over the first bead. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&page),
         bdi.timeline()
