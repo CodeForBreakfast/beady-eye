@@ -786,12 +786,8 @@ pub fn status_word(status: &Status) -> String {
 /// The position is counted in rows of the bead as this window draws it,
 /// which is what the reader is looking at and what a narrower window
 /// rewraps. A bead the window holds whole says nothing about position: there
-/// is nowhere else to be, and a title answering a question nobody has is a
-/// title the reader stops reading.
-///
-/// Where the window has no room at all the id stands alone too. Nothing of
-/// the bead is on the screen, and a range over rows nobody can see is a
-/// count of what the reader has not been shown.
+/// is nowhere else to be. Neither does a window with no room at all, where
+/// nothing of the bead is on the screen to count.
 ///
 /// The last screenful ends on the bead's last row rather than running past
 /// it: `Show::fit` holds the view at `total - room` before this is asked, so

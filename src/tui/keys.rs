@@ -342,20 +342,17 @@ pub(super) fn key_row() -> String {
 /// cannot call a key something the mapping does not answer to.
 ///
 /// `Esc` is first because a reader who cannot see how to leave is stuck in a
-/// view they may have opened by accident. The other three are the things a
-/// reader of this window cannot work out for themselves. `Tab` is the whole
-/// of it: nothing on the page says the beads it names can be stepped through.
-/// `y` copies the id, which is what a reader opens a bead to take away.
+/// view they may have opened by accident. After it and the way to the rest,
+/// the two left go to what a reader of this window cannot work out for
+/// themselves: nothing on the page says the beads it names can be stepped
+/// through, and taking the id away is what a reader opens a bead to do.
 ///
 /// `Enter` is off the row for the reason `key_row` already gives for taking
 /// it off the forest's: pressing Enter on the thing under the cursor is what
 /// a reader of any list does anyway, and `Tab related` is what puts a thing
-/// under the cursor. The motion keys are off it for the reason the arrows are
-/// off the forest's, that a reader who cannot see them presses one
-/// regardless, and how far down the bead they have got is the border title's
-/// to say. `f` would overrun forty columns and does nothing on a bead with no
-/// pane, and `q` is a second way out beside `Esc`, which a row of four cannot
-/// afford.
+/// under the cursor. The motion keys are off it for the reason the arrows
+/// are, and how far down the bead the reader has got is the border title's to
+/// say.
 const IN_BEAD: &[(Action, &str)] = &[
     (Action::Back, "back"),
     (Action::NextRelated, "related"),

@@ -2382,13 +2382,13 @@ The four are `Esc back   Tab related   y id   ? keys`. After the way out and
 the way to the rest, the two that are left go to what a reader of this window
 cannot work out for themselves. Nothing on the page says the beads it names
 can be stepped through, so `Tab` is the whole of that; and `y` works on every
-bead, always, and taking the id away is what a reader opens a bead to do.
+bead, where `f` does nothing on one with no pane, and taking the id away is
+what a reader opens a bead to do.
 `Enter` is off the row for the reason *Keys* gives for taking it off the
 forest's: pressing Enter on the thing under the cursor is what a reader of any
 list does anyway, and `Tab related` is what puts a thing under the cursor. The
 motion keys are off it for the reason the arrows are off the forest's, and how
-far down the bead the reader has got is the border title's to say. `f` would
-overrun forty columns and does nothing on a bead with no pane, and `q` is a
+far down the bead the reader has got is the border title's to say. `q` is a
 second way out beside `Esc`, which a row of four cannot afford.
 
 The view is the hub. From it, `Enter` and `f` focus the bead's pane in herdr,

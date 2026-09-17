@@ -369,10 +369,9 @@ pub fn rows_drawn(screen: &[u8]) -> Vec<String> {
 /// whole.
 ///
 /// **This is what says a window is up**, and it names the bead the window is
-/// *over* rather than the one it was opened on. The window is drawn from the
-/// selection, so a screen that wrongly kept a window up after a collection
-/// draws it over whatever the selection landed on — and a test asserting
-/// that the opened bead's id had gone would find it gone and pass.
+/// *over* rather than the one it was opened on. `CLAUDE.md`'s paragraph on
+/// pty tests has why that distinction is the whole of an absence assertion
+/// here.
 pub fn window_over(screen: &[u8]) -> Option<String> {
     let top = rows_drawn(screen).into_iter().next()?;
     let (_, title) = top.split_once('┌')?;
