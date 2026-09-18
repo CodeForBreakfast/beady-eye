@@ -163,6 +163,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
     use ratatui::Terminal;
 
     use crate::view::painted::Painted;
@@ -218,6 +219,34 @@ mod tests {
         let drawn = bindings_frame(&a_few_bindings(), 60, 1);
 
         assert!(drawn[0].contains("press any key to close"), "{drawn:?}");
+    }
+
+    /// And it is the window's name, so it carries the weight a window's
+    /// border title does and the table under it does not.
+    #[test]
+    fn the_way_out_is_drawn_at_a_weight_and_the_bindings_are_not() {
+        let bindings = a_few_bindings();
+        let drawn = Painted::drawn_by(60, 5, |frame| {
+            key_bindings(frame, frame.area(), &bindings);
+        });
+
+        let title = drawn
+            .row(0)
+            .into_iter()
+            .find(|run| run.said.contains(CLOSE_BINDINGS))
+            .unwrap_or_else(|| panic!("the way out is drawn: {:?}", drawn.row(0)));
+        assert!(
+            title.style.add_modifier.contains(Modifier::BOLD),
+            "{title:?}"
+        );
+        assert!(
+            drawn
+                .row(1)
+                .iter()
+                .all(|run| !run.style.add_modifier.contains(Modifier::BOLD)),
+            "{:?}",
+            drawn.row(1)
+        );
     }
 
     /// Degrade, never disappear: a list that simply stopped would read as the
