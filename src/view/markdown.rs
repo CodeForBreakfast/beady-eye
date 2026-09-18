@@ -734,6 +734,20 @@ mod tests {
         );
     }
 
+    /// And its text is somewhere to go, which an underline says wherever it
+    /// is drawn: on the link's own words and not on the prose round them.
+    #[test]
+    fn a_link_is_underlined_and_the_prose_round_it_is_not() {
+        let rows = rows("[bd](https://x.y) here", 30);
+
+        assert!(style_of(&rows, "bd")
+            .add_modifier
+            .contains(Modifier::UNDERLINED));
+        assert!(!style_of(&rows, "here")
+            .add_modifier
+            .contains(Modifier::UNDERLINED));
+    }
+
     #[test]
     fn a_rule_is_a_row_of_line() {
         assert_eq!(
