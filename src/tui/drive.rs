@@ -3236,11 +3236,13 @@ mod tests {
         );
     }
 
-    /// The reason the stamp is taken at the ask and not inherited from
-    /// whatever the project was last told about: a project reported for again
-    /// while it is being read is a new wait, and one that carried the running
-    /// collection's stamp would be drawn as having stopped answering the
-    /// moment it began.
+    /// A project reported for again while it is being read is a read of its
+    /// own, queued behind the one running and served once that comes back.
+    ///
+    /// Which projects the view is told about, and nothing about the stamps.
+    /// The loop hands `Outstanding` the clock, and two reads of it a pass
+    /// apart are equal on a clock answering at microseconds — so what the
+    /// second read is stamped with is `what_waits`'s to say.
     #[test]
     fn a_project_reported_for_again_while_it_is_read_starts_a_wait_of_its_own() {
         let mut view = Recorder::default();
@@ -3267,11 +3269,6 @@ mod tests {
             [vec![arkham()], vec![arkham(), arkham()], vec![arkham()]],
             "the one in flight, then it with the second waiting, then the \
              second alone"
-        );
-        let told = &view.awaited[1];
-        assert!(
-            told[1].asked_at > told[0].asked_at,
-            "the waiting one kept the running one's stamp: {told:?}"
         );
     }
 
@@ -4010,6 +4007,19 @@ mod tests {
             outstanding.ask(ferry(), at(35));
 
             assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (ferry(), at(5))]);
+        }
+
+        /// The other side of that rule: a project reported for again while
+        /// it is being *read* is a new wait, stamped at its own ask. One that
+        /// carried the running read's stamp would be drawn as having stopped
+        /// answering the moment it began.
+        #[test]
+        fn a_project_reported_for_again_while_it_is_read_is_stamped_at_its_own_ask() {
+            let (mut outstanding, _ask, _asked) = hung_on(arkham());
+
+            outstanding.ask(arkham(), at(5));
+
+            assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (arkham(), at(5))]);
         }
 
         /// `codex review` on this change, and it is right: a whole collection
