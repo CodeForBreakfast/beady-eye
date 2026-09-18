@@ -34,7 +34,9 @@ crates.io, if you would rather compile it yourself:
 $ cargo install beady-eye
 ```
 
-Nix, with flakes on, builds the tip of `main`:
+Nix, with flakes on, builds the tip of `main`. The flake serves Linux on
+Intel and arm64, and macOS on Apple silicon. An Intel Mac takes the Homebrew
+or release binary instead:
 
 ```console
 $ nix run github:CodeForBreakfast/beady-eye
