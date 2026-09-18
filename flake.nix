@@ -134,8 +134,12 @@
         # The package is named for the crate, the binary for the command.
         meta.mainProgram = "bdi";
       });
+      # Not eachDefaultSystem: nixpkgs unstable has dropped x86_64-darwin, so
+      # the flake cannot evaluate there. An Intel Mac takes the Release binary,
+      # which cargo builds without nix.
+      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
     in
-    flake-utils.lib.eachDefaultSystem (system:
+    flake-utils.lib.eachSystem systems (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
@@ -3420,7 +3424,7 @@ and a second line"
         };
       }
     ) // {
-      # Overlays carry no system, so this sits outside eachDefaultSystem. A
+      # Overlays carry no system, so this sits outside eachSystem. A
       # consumer adds it to nixpkgs.overlays and reaches pkgs.beady-eye.
       #
       # pkgs.beady-eye is the package above, built against this flake's own
