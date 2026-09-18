@@ -138,10 +138,11 @@ says what the row carries for it:
 | `colour` | what it is drawn in | no |
 
 `key` names a value of the bead. A field of the bead is its own name, so
-`external_ref` reads the external reference. A field holding an object is a
-value at a time, the two joined with a dot, so `metadata.jira` reads the `jira`
-key of the bead's metadata. Whatever `bd` puts on a row is readable this way,
-under the name `bd` spells it.
+`external_ref` reads the external reference, and whatever `bd` puts on a row is
+readable this way, under the name `bd` spells it. A field holding an object is
+a value at a time, the two joined with a dot. Metadata is where the names are
+yours rather than `bd`'s, and `bdi` has heard of none of them: a key you called
+`jira` is read by `metadata.jira`.
 
 The name is split once, so a metadata key of `helio.ticket` is written
 `metadata.helio.ticket` and reads as itself.
