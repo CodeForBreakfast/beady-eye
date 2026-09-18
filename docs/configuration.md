@@ -5,6 +5,17 @@ and re-reads it while running: an edit takes effect a couple of seconds later.
 A file that does not parse leaves the previous config in force and says so at
 the foot until it is fixed.
 
+A key `bdi` does not read is refused, and the refusal names the key and the
+table it was written in:
+
+```
+unknown field `refresh_second`, expected one of `refresh_seconds`, `unanswered_after_seconds`, `tail_refresh_millis`, `wheel_notch_lines`
+in `tui`
+```
+
+While running, that is a file that does not parse, and the previous config
+stays in force as above.
+
 Everything has a default except the project list:
 
 ```toml
