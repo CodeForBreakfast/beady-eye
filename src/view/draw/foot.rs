@@ -550,11 +550,6 @@ mod tests {
         assert_eq!(foot.trim_end(), A_KEY_ROW);
     }
 
-    /// The bead this was written for. On the narrowest supported screen
-    /// neither phrase fits in full, so a foot that could only cut told the
-    /// reader nothing: `NoHerdr` was severed mid-sentence and `NoInboundChannel`
-    /// never began. The mark a cut leaves is the mark any long line gets, so
-    /// there was nothing on screen to say either fact had been lost.
     #[test]
     fn the_narrowest_screen_still_says_the_view_is_polled() {
         let drawn = Painted::of(
