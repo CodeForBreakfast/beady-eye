@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::view::row::{Cell, Layout};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub projects: Vec<Project>,
@@ -212,7 +213,7 @@ impl Project {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Roots {
     /// The roots named outright, under the project whose tracker holds each.
     /// Bead prefixes are per-tracker and uncoordinated, so an id on its own
@@ -436,20 +437,20 @@ impl<'de> Deserialize<'de> for Pattern {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Anomalies {
     pub stale_claim_days: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Join {
     pub pane_key: String,
 }
 
 /// Where `bdi` listens for something saying a project's work has moved on.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Changes {
     /// The socket to listen on, rather than the one under the directory this
     /// login session owns.
@@ -476,7 +477,7 @@ pub struct Changes {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Tui {
     /// How long a project waits after one read before it asks for the next,
     /// where it polls at all. A collection is several `bd` subprocesses
@@ -559,7 +560,7 @@ pub struct Tui {
 /// What the reader's terminal is, in the one respect `bdi` can neither see
 /// nor ask.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Theme {
     pub background: Background,
 }
@@ -1314,6 +1315,75 @@ title = ["title", "badge.metadata.jira", "badges"]
             .to_string();
 
         assert!(err.contains("footer"), "got: {err}");
+    }
+
+    /// Silently ignored, a `refresh_second` would have the program refreshing
+    /// on a number the reader did not choose.
+    #[test]
+    fn a_top_level_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("project = []\n{ONE_PROJECT}"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("project"), "got: {err}");
+    }
+
+    #[test]
+    fn a_roots_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("{ONE_PROJECT}\n[roots]\nimplicit = {{}}\n"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("implicit"), "got: {err}");
+    }
+
+    #[test]
+    fn an_anomalies_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            "{ONE_PROJECT}\n[anomalies]\nstale_claim_day = 3\n"
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("stale_claim_day"), "got: {err}");
+    }
+
+    #[test]
+    fn a_join_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("{ONE_PROJECT}\n[join]\npane_keys = \"seat\"\n"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("pane_keys"), "got: {err}");
+    }
+
+    #[test]
+    fn a_changes_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!(
+            "{ONE_PROJECT}\n[changes]\nsockets = \"/run/bdi\"\n"
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("sockets"), "got: {err}");
+    }
+
+    #[test]
+    fn a_tui_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("{ONE_PROJECT}\n[tui]\nrefresh_second = 5\n"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("refresh_second"), "got: {err}");
+    }
+
+    #[test]
+    fn a_theme_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("{ONE_PROJECT}\n[theme]\nbackgound = \"light\"\n"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("backgound"), "got: {err}");
     }
 
     fn pattern(source: &str) -> Pattern {
