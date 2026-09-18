@@ -255,7 +255,7 @@ pub fn says_the_same_about_its_link(badge: &Badged, said: &str) -> bool {
 
 pub fn cells(
     node: &Node,
-    above: Option<&str>,
+    parent: Option<&str>,
     progress: Option<Progress>,
     shut_over: Option<Counts>,
 ) -> Row {
@@ -302,7 +302,7 @@ pub fn cells(
     Row {
         status: node.status.clone(),
         glyph: status_glyph(&node.status),
-        id: abbreviate(&node.id, above).to_string(),
+        id: abbreviate(&node.id, parent).to_string(),
         title: node.title.clone(),
         badges: node.badges.clone(),
         progress,
@@ -341,17 +341,18 @@ pub fn status_glyph(status: &Status) -> char {
     }
 }
 
-/// A node's id with the part the id above it already spells dropped, which is
-/// what makes a column of ids readable: walking up the rows and joining what
-/// they say gives the whole id back. A node whose parent's id is not the front
-/// of its own keeps its whole id, because a bare suffix would place it under a
-/// parent it does not belong to, and the dangling and re-parented nodes are
-/// exactly the ones that would lie. A node with nothing above it — a tree's
-/// root, or the bead a rooted forest starts at — has nothing to measure
-/// against and is drawn whole.
-pub fn abbreviate<'a>(id: &'a str, above: Option<&str>) -> &'a str {
-    above
-        .and_then(|above| id.strip_prefix(above))
+/// A node's id with the part its parent's id already spells dropped, the
+/// parent being the bead it is drawn under. That is what makes a column of ids
+/// readable: reading down from a tree's root to a node and joining what each
+/// bead on the way says gives the whole id back. A node whose parent's id is
+/// not the front of its own keeps its whole id, because a bare suffix would
+/// place it under a parent it does not belong to, and the dangling and
+/// re-parented nodes are exactly the ones that would lie. A node with no
+/// parent — a tree's root, or the bead a rooted forest starts at — has
+/// nothing to measure against and is drawn whole.
+pub fn abbreviate<'a>(id: &'a str, parent: Option<&str>) -> &'a str {
+    parent
+        .and_then(|parent| id.strip_prefix(parent))
         .filter(|rest| rest.starts_with('.'))
         .unwrap_or(id)
 }
@@ -510,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn a_node_shows_only_what_it_adds_to_the_id_above_it() {
+    fn a_node_shows_only_what_it_adds_to_its_parents_id() {
         assert_eq!(abbreviate("smt-4kd3p.20", Some(ROOT)), ".20");
         assert_eq!(abbreviate("smt-4kd3p.1.4", Some("smt-4kd3p.1")), ".4");
     }
@@ -518,13 +519,13 @@ mod tests {
     /// A dangling or re-parented node is drawn under a bead it does not descend
     /// from, and a bare suffix there would say it does.
     #[test]
-    fn a_node_that_does_not_descend_from_the_id_above_it_keeps_its_whole_id() {
+    fn a_node_that_does_not_descend_from_its_parent_keeps_its_whole_id() {
         assert_eq!(abbreviate("mdw-6qzt4.3", Some(ROOT)), "mdw-6qzt4.3");
         assert_eq!(abbreviate("smt-4kd3pX.3", Some(ROOT)), "smt-4kd3pX.3");
     }
 
     #[test]
-    fn a_node_with_nothing_above_it_keeps_its_whole_id() {
+    fn a_node_with_no_parent_keeps_its_whole_id() {
         assert_eq!(abbreviate(ROOT, None), ROOT);
     }
 
