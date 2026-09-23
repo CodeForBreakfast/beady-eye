@@ -475,7 +475,7 @@ pub fn said(
         ),
         Span::raw(format!(" · {}", facts.join(" · "))),
     ]));
-    if let Some(dates) = dates(node) {
+    for dates in dates(node) {
         rows.push(indented(vec![Span::raw(dates)]));
     }
     if let Some(agent) = &cells.agent {
@@ -599,23 +599,31 @@ fn title_of(title: &str, room: usize, window: usize) -> Vec<Vec<Span<'static>>> 
     broken
 }
 
-/// When the bead was created, updated, started and closed, each said where
-/// the bead has it and the whole row left out where it has none.
+/// When the bead was created and updated, and when it was started and
+/// closed: each said where the bead has it, on two rows rather than one so
+/// that even a bead with all four fits the window at its floor. Joined on
+/// one row the four dates need eighty-two columns, two more than the floor
+/// offers, so the row was cut and lost the last date's end. A row is left
+/// out where the half it says has no date to say.
 ///
 /// `bd show` prints no closed date outside `--long`, and this says one: the
 /// head is the row unfolded rather than a transcript, and when a closed bead
 /// closed is what a reader opening it came for.
-fn dates(node: &Node) -> Option<String> {
-    let said: Vec<String> = [
-        (CREATED, node.created_at),
-        (UPDATED, node.updated_at),
-        (STARTED, node.started_at),
-        (CLOSED, node.closed_at),
+fn dates(node: &Node) -> Vec<String> {
+    let half = |pairs: [(&str, Option<chrono::DateTime<chrono::Utc>>); 2]| {
+        let said: Vec<String> = pairs
+            .into_iter()
+            .filter_map(|(word, when)| when.map(|when| format!("{word} {}", when.format(DATE))))
+            .collect();
+        (!said.is_empty()).then(|| said.join(" · "))
+    };
+    [
+        half([(CREATED, node.created_at), (UPDATED, node.updated_at)]),
+        half([(STARTED, node.started_at), (CLOSED, node.closed_at)]),
     ]
     .into_iter()
-    .filter_map(|(word, when)| when.map(|when| format!("{word} {}", when.format(DATE))))
-    .collect();
-    (!said.is_empty()).then(|| said.join(" · "))
+    .flatten()
+    .collect()
 }
 
 /// One row indented under a heading.
@@ -952,11 +960,13 @@ mod tests {
         );
     }
 
-    /// A bead that has all four dates says all four, in the order the head
-    /// lists them rather than the order `bd show` prints them: created,
-    /// updated, started, closed. Asserted on the row alone, because a bead
-    /// with four dates is two columns wider than the window at its floor and
-    /// a whole frame would be a frame of a screen nobody has.
+    /// A bead that has all four dates says created and updated on one row
+    /// and started and closed on the next, in the order the head lists them
+    /// rather than the order `bd show` prints them. `bdi-d2ra`: joined on one
+    /// row the four dates need eighty-two columns, two more than the window
+    /// offers at its floor, so the row was cut and lost the last date's end.
+    /// Split unconditionally rather than only where the width demands it, so
+    /// a reader always finds a date on the same one of two rows.
     #[test]
     fn the_head_says_when_a_bead_was_created_updated_started_and_closed() {
         let closed = Node {
@@ -968,14 +978,21 @@ mod tests {
             ..a_bead()
         };
 
-        let rows = drawn(&closed, &mut Show::default(), 120, 40);
+        let rows = drawn(&closed, &mut Show::default(), 90, 40);
 
         assert!(
-            rows.iter().any(|row| row.contains(
-                "created 2026-03-14 · updated 2026-03-20 · started 2026-03-15 · \
-                 closed 2026-03-20"
-            )),
+            rows.iter()
+                .any(|row| row.contains("created 2026-03-14 · updated 2026-03-20")),
             "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("started 2026-03-15 · closed 2026-03-20")),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter().all(|row| !row.contains('…')),
+            "a date row was cut: {rows:#?}"
         );
     }
 
@@ -2481,8 +2498,8 @@ mod tests {
     ///
     /// And beside them the facts the row has no width to carry: the labels
     /// between the id and the title, the owner and the assignee by name, and
-    /// the dates on a row of their own under the facts. This is what fixes
-    /// their order, which is the one `design.md` lists.
+    /// the dates on two rows of their own under the facts. This is what
+    /// fixes their order, which is the one `design.md` lists.
     #[test]
     fn the_head_says_what_the_forest_row_says() {
         let drawn = drawn_with(
@@ -2501,7 +2518,8 @@ mod tests {
             vec![
                 " ◐ dun-7.1  mast, weather  re-point the dish",
                 "   in_progress · P2 · task · Mira Vance · assignee Rowan Ash",
-                "   created 2026-03-14 · updated 2026-03-16 · started 2026-03-15",
+                "   created 2026-03-14 · updated 2026-03-16",
+                "   started 2026-03-15",
                 "   ◍ lifting the mast · working · inferred, not confirmed",
                 "   ⚠ claimed · untouched for 58 days",
                 "   ⚠ closed · its pane is still alive",
