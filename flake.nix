@@ -304,6 +304,104 @@
           touch $out
         '';
 
+        # ci.yml's `on.pull_request` comment names the cost: a push and a body
+        # edit landing in the same second put two runs of the same workflow
+        # into one concurrency group, and the group cancels the older of the
+        # two. `createdAt` only carries second resolution, so the two runs
+        # tie on it, and `max_by` breaks a tie by array position rather than
+        # by which run gh happened to create first — gh's own ordering is not
+        # documented, so which one that leaves in front is not reliable
+        # either. A run's `databaseId` is assigned in creation order and
+        # never ties, so it is what breaks the tie: the later-created run of
+        # a tied pair is the one still standing, cancelled or not. Recency
+        # still decides everything else, so an old success several runs back
+        # is never preferred over a genuinely later cancellation — only ties
+        # on `createdAt` itself reach the second key.
+        pickRunPerWorkflow = ''
+          pick_run_per_workflow() {
+            $jq -c 'group_by(.workflowName) | map(max_by([.createdAt, .databaseId]))'
+          }
+        '';
+
+        # `max_by(.createdAt)` alone breaks a tie by array position, and
+        # nothing here controls what order gh hands the tied pair back in —
+        # so a fixture has to cover both orderings to show the databaseId
+        # tiebreak is what decides it, not a fixture that happens to agree
+        # with gh's usual order. This is bdi-7ao.142.12's own shape, invented
+        # here rather than captured, per this repo's rule that only invented
+        # ground goes in the tree.
+        pickRunPerWorkflowTest = pkgs.runCommand "pick-run-per-workflow-test" { } ''
+          set -u
+          jq=${pkgs.jq}/bin/jq
+          ${pickRunPerWorkflow}
+
+          fail() { echo "FAIL: $1"; echo "$got"; exit 1; }
+
+          run() {
+            printf '{"workflowName":"%s","conclusion":"%s","createdAt":"%s","databaseId":%s}' \
+              "$1" "$2" "$3" "$4"
+          }
+
+          # Tied createdAt, cancelled run listed first — the array order a
+          # naive tiebreak would already get right, so this alone would not
+          # catch a databaseId regression.
+          got="$(printf '[%s,%s]' \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+              "$(run CI in_progress 2026-09-10T10:00:00Z 2)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
+            fail "did not prefer the live sibling when it was listed second:"
+
+          # The same tie, cancelled run listed last instead — the ordering
+          # that trips a bare array-position tiebreak, since the cancelled
+          # run now sits where a naive pick would take it.
+          got="$(printf '[%s,%s]' \
+              "$(run CI in_progress 2026-09-10T10:00:00Z 2)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
+            fail "did not prefer the live sibling when it was listed first:"
+
+          # The same shape, but the sibling has already concluded rather
+          # than still running.
+          got="$(printf '[%s,%s]' \
+              "$(run CI success 2026-09-10T10:00:00Z 2)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
+            fail "did not prefer the finished sibling over the tied cancelled run:"
+
+          # An old success is not a live sibling: a genuinely later
+          # cancellation — no tie, no sibling, just a fresh run somebody
+          # killed — still reads as cancelled rather than as the stale pass.
+          got="$(printf '[%s,%s]' \
+              "$(run CI success 2026-01-01T10:00:00Z 1)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 2)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq -r '.[0].conclusion')" = cancelled ] ||
+            fail "preferred a stale old success over a genuinely later cancellation:"
+
+          # Every run in the group was cancelled, so there is no sibling to
+          # prefer, and this still answers with one of them rather than
+          # losing the group entirely.
+          got="$(printf '[%s]' "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 1 ] ||
+            fail "lost the only run when every run in the group was cancelled:"
+
+          # A second workflow's own single run on the same sha stays its own
+          # pick, unaffected by the other workflow's tied cancel/live group.
+          got="$(printf '[%s,%s,%s]' \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+              "$(run CI success 2026-09-10T10:00:00Z 2)" \
+              "$(run Release success 2026-09-10T10:00:00Z 3)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq 'length')" = 2 ] ||
+            fail "did not keep the two workflows' picks separate:"
+
+          touch $out
+        '';
+
         # `gh run list` answers with an empty list for four different reasons
         # and only one of them means "wait", so this has to tell them apart —
         # `read-ci-verdict --help` says how.
@@ -321,6 +419,7 @@
           grep=${pkgs.gnugrep}/bin/grep
 
           ${limitTheJobExceeded}
+          ${pickRunPerWorkflow}
 
           case "''${1:-}" in
             -h|--help)
@@ -461,8 +560,7 @@
             exit 1
           fi
 
-          latest="$(printf '%s' "$runs" |
-            $jq -c 'group_by(.workflowName) | map(max_by(.createdAt))')"
+          latest="$(printf '%s' "$runs" | pick_run_per_workflow)"
 
           printf '%s' "$latest" |
             $jq -r '.[] | "  \(.workflowName): \(.status)/\(if .conclusion == null or .conclusion == "" then "-" else .conclusion end)  \(.url)"'
@@ -3368,6 +3466,7 @@ and a second line"
           documentation-is-not-source = documentationIsNotSource;
           fmt = checkOf "fmt" null [ pkgs.rustfmt ] "cargo fmt --check";
           limit-the-job-exceeded-test = limitTheJobExceededTest;
+          pick-run-per-workflow-test = pickRunPerWorkflowTest;
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;

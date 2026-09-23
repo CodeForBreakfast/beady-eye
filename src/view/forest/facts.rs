@@ -15,7 +15,7 @@ use crate::model::snapshot::{Counts, Snapshot, Tree};
 use crate::model::tree::Link;
 use crate::view::lines::{facts_of, root_key, run_size, split, split_by, BeadFacts, Place};
 
-use super::handle::Handle;
+use super::handle::{root_handle, Handle};
 use super::spine::{Chosen, Spine, Stand};
 
 /// One snapshot's answers: a tree's for every tree it holds, shown or
@@ -45,9 +45,11 @@ impl Facts {
         }
         // The rule over the forest begins on every tree's root, and a rule
         // set on a line begins there instead of the one it stands under.
-        let mut beginnings: BTreeMap<Handle, Spine> = trees
-            .keys()
-            .map(|root| (Handle::Bead(Place::root(root.clone())), spine))
+        let mut beginnings: BTreeMap<Handle, Spine> = snapshot
+            .trees
+            .iter()
+            .chain(&snapshot.collected)
+            .map(|tree| (root_handle(tree), spine))
             .collect();
         beginnings.extend(
             spines

@@ -8,8 +8,9 @@
 use std::collections::BTreeMap;
 
 use crate::model::join::Conflict;
+use crate::model::snapshot::Tree;
 use crate::model::types::PaneKey;
-use crate::view::lines::{Content, GroupKind, Item, Line, Place};
+use crate::view::lines::{root_key, Content, GroupKind, Item, Line, Place};
 
 /// What a line that folds is known by, so both the fold and the selection
 /// survive a refresh that reorders or drops lines.
@@ -19,6 +20,9 @@ use crate::view::lines::{Content, GroupKind, Item, Line, Place};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Handle {
     Bead(Place),
+    /// A root whose tracker would not read, by where it stands: a line with
+    /// no bead on it.
+    Unread(Place),
     /// The run of quiet closed children under one drawn bead. A bead has at
     /// most one run per copy of it, so the copy names it.
     Elided(Place),
@@ -251,12 +255,24 @@ impl Folds {
 /// is why this is the same question as whether the selection may sit there.
 pub(super) fn handle_of(line: &Line) -> Option<Handle> {
     match &line.content {
-        Content::Bead(_) | Content::Unread(_) => line.place.clone().map(Handle::Bead),
+        Content::Bead(_) => line.place.clone().map(Handle::Bead),
+        Content::Unread(_) => line.place.clone().map(Handle::Unread),
         Content::Project(line) => Some(Handle::Project(line.project.clone())),
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
         Content::Group(group) => Some(Handle::Group(group.kind, group.project.clone())),
         Content::Item(item) => item_key(item).map(Handle::Item),
         Content::Note(_) | Content::Scoped { .. } => None,
+    }
+}
+
+/// What a tree's root line is known by. A tree with no nodes is one whose
+/// tracker would not read, and its root is a row with no bead on it.
+pub(super) fn root_handle(tree: &Tree) -> Handle {
+    let place = Place::root(root_key(tree));
+    if tree.beads.is_empty() {
+        Handle::Unread(place)
+    } else {
+        Handle::Bead(place)
     }
 }
 
@@ -268,7 +284,7 @@ pub(super) fn selectable(line: &Line) -> bool {
 /// line's own handle out.
 pub(super) fn names(line: &Line, handle: &Handle) -> bool {
     match (handle, &line.content) {
-        (Handle::Bead(place), Content::Bead(_) | Content::Unread(_)) => {
+        (Handle::Bead(place), Content::Bead(_)) | (Handle::Unread(place), Content::Unread(_)) => {
             line.place.as_ref() == Some(place)
         }
         (Handle::Project(project), Content::Project(line)) => line.project == *project,

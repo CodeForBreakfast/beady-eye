@@ -1120,7 +1120,7 @@ mod tests {
 
     /// A cascade only fails where one ran, so the sequence that can go wrong
     /// is a read that worked, a tracker that then moved, and the cascade that
-    /// move triggered failing. The working root the probe took must not
+    /// move triggered failing. The hash the probe took must not
     /// survive that: the interval after would match it, skip the cascade that
     /// recovers, and leave the project holding whatever the failure left,
     /// indefinitely.
