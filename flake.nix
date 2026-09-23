@@ -8,10 +8,13 @@
     # needs Go 1.26 and this flake's nixpkgs carries an older toolchain.
     #
     # Every check builds bd, so this pin is not maintainer-only the way it is in
-    # a repository that keeps bd out of its contributor path. It is also the
-    # schema version the maintainers' tracker was created at, so moving it moves
-    # that store — treat it as a schema decision, not a version bump.
-    beads.url = "github:gastownhall/beads/v1.2.2";
+    # a repository that keeps bd out of its contributor path. It is also the bd
+    # the maintainers' shell reads their tracker with, and a bd on a schema other
+    # than the tracker's cannot read it: an older one refuses a newer schema, and
+    # 1.3.0 fails every issue read on a v53 server for want of its `leases` table.
+    # So the pin and the tracker's schema move together — treat it as a schema
+    # decision, not a version bump.
+    beads.url = "github:gastownhall/beads/v1.3.0";
     # The dependency build is its own derivation here, and crane is what makes
     # one. It declares no inputs of its own, so it costs a lock entry and
     # nothing else.
