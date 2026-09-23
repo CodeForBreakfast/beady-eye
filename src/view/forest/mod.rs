@@ -23,7 +23,7 @@ use crate::view::{Action, Motion, Notch};
 pub use drawn::Drawn;
 use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
-use handle::{handle_of, selectable, Folds, Handle};
+use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
 pub use spine::Spine;
 
@@ -409,7 +409,7 @@ impl Forest {
     fn ancestry_of(&self, from: Option<&Handle>) -> Vec<Handle> {
         let mut chain: Vec<Handle> = from.into_iter().cloned().collect();
         let place = match from {
-            Some(Handle::Bead(place)) => place,
+            Some(Handle::Bead(place) | Handle::Unread(place)) => place,
             // A run is only ever seen from the bead it hangs under, so that
             // bead is the first forebear a lost run falls back to.
             Some(Handle::Elided(place)) => {
@@ -952,10 +952,20 @@ impl Forest {
             return false;
         }
         self.open_over(place);
-        self.cursor = Some(Handle::Bead(place.clone()));
+        let handle = self.handle_on(place);
+        self.cursor = Some(handle.clone());
         self.lay_out();
         self.reveal();
-        self.cursor.as_ref() == Some(&Handle::Bead(place.clone()))
+        self.cursor == Some(handle)
+    }
+
+    /// What the line a place stands for is known by: a bead's, or the row
+    /// of a root whose tracker would not read.
+    fn handle_on(&self, place: &Place) -> Handle {
+        match self.tree_of(place) {
+            Some(tree) if place.steps.is_empty() => root_handle(tree),
+            _ => Handle::Bead(place.clone()),
+        }
     }
 
     /// Put the selection on a bead matching what the reader typed, wherever
@@ -1240,7 +1250,7 @@ impl Forest {
     /// stays shut until something asks otherwise, and asking to be taken to a
     /// bead underneath it is asking.
     fn open_over(&mut self, place: &Place) {
-        let over = self.ancestry_of(Some(&Handle::Bead(place.clone())));
+        let over = self.ancestry_of(Some(&self.handle_on(place)));
         // Past the line itself, whose own fold is about the children under it
         // rather than about reaching it.
         for above in over.into_iter().skip(1) {
@@ -1374,7 +1384,7 @@ impl Forest {
 
     fn first_handle(&self) -> Option<Handle> {
         if let Some(tree) = self.snapshot.trees.first() {
-            return Some(Handle::Bead(Place::root(root_key(tree))));
+            return Some(root_handle(tree));
         }
         let rooted = self.rooted();
         layout::every_group(&self.snapshot)
@@ -1387,7 +1397,9 @@ impl Forest {
     /// Whether the snapshot still holds what a handle names.
     fn present(&self, handle: &Handle) -> bool {
         match handle {
-            Handle::Bead(place) | Handle::Elided(place) => self.drawn(place),
+            Handle::Bead(place) | Handle::Unread(place) | Handle::Elided(place) => {
+                self.drawn(place)
+            }
             Handle::Group(kind, project) => layout::group_drawn(
                 &self.snapshot,
                 *kind,
@@ -2536,6 +2548,56 @@ credential_command = "secret harbour"
         forest.refresh(snapshot());
 
         assert_eq!(forest.selected_line(), header, "{:#?}", sketch(&forest));
+    }
+
+    /// A root whose tracker refused has no way down for a rule to be set on,
+    /// so `s` pressed on its header puts nothing in force there.
+    #[test]
+    fn a_root_whose_tracker_refused_takes_no_rule() {
+        let mut forest = flatten(snapshot());
+        select_bead(&mut forest, "fer-2");
+        let before = forest.spine();
+
+        forest.apply(Action::CycleSpine);
+
+        assert_eq!(forest.spine(), before, "{:#?}", sketch(&forest));
+    }
+
+    /// A cursor whose tree and project have both gone falls back to the first
+    /// tree drawn, and where that is a root whose tracker refused, it lands
+    /// on its header.
+    #[test]
+    fn a_lost_cursor_falls_back_onto_the_header_of_a_root_whose_tracker_refused() {
+        let mut forest = flatten(built(Filter::All));
+        select_bead(&mut forest, "hbr-3");
+
+        forest.refresh(gather(
+            vec![Tree::tracker_unreachable(
+                "ferry",
+                "fer-2",
+                TrackerFailure::Auth,
+            )],
+            Vec::new(),
+            Filter::All,
+        ));
+
+        assert_eq!(
+            forest.place(),
+            Some(&Place::root(key("ferry", "fer-2"))),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Going back to the header of a root whose tracker refused lands on it,
+    /// as going back to any line still drawn does.
+    #[test]
+    fn going_back_to_the_header_of_a_root_whose_tracker_refused_lands_on_it() {
+        let mut forest = flatten(snapshot());
+        let header = Place::root(key("ferry", "fer-2"));
+
+        assert!(forest.go_to_place(&header), "{:#?}", sketch(&forest));
+        assert_eq!(forest.place(), Some(&header), "{:#?}", sketch(&forest));
     }
 
     /// The forest holds the trees it was handed, not copies of them. A

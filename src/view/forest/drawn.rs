@@ -132,12 +132,16 @@ impl Node {
     /// line alone so the subtree is not drawn to find out it is not.
     fn may_hold(&self, handle: &Handle) -> bool {
         match (&self.line.content, handle) {
-            (Content::Project(line), Handle::Bead(place) | Handle::Elided(place)) => {
-                place.tree.project == line.project
-            }
+            (
+                Content::Project(line),
+                Handle::Bead(place) | Handle::Unread(place) | Handle::Elided(place),
+            ) => place.tree.project == line.project,
             (Content::Project(line), Handle::Group(_, Some(project))) => *project == line.project,
             (Content::Project(_), Handle::Item(_)) => true,
-            (Content::Group(_), Handle::Bead(_) | Handle::Elided(_) | Handle::Item(_)) => true,
+            (
+                Content::Group(_),
+                Handle::Bead(_) | Handle::Unread(_) | Handle::Elided(_) | Handle::Item(_),
+            ) => true,
             (Content::Bead(_), Handle::Bead(place)) => {
                 self.line.place.as_ref().is_some_and(|own| {
                     place.tree == own.tree
