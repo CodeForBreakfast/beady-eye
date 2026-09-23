@@ -265,6 +265,12 @@ Roots come from bd, unioned and deduped:
    `(project, id)`: config lists the ids under the project, and an argument is
    written `<project>:<bead-id>` — bare where there is only one project, which
    is the whole of a zero-config run.
+
+   **A root named on the command line replaces discovery for its project.**
+   `bdi meadow:mdw-123` asks for that tree and not the others, so in a
+   project the command line names a root in, its named roots are the only
+   ones: none of the other rules runs there, and the config's roots for it
+   are not read. A project it names no root in is discovered as usual.
 4. Any bead named by a live pane's `display_agent` that the first three missed.
    This is the only root herdr contributes, and it exists so an agent working
    off-tree still appears.
@@ -379,11 +385,12 @@ where that group keeps its key — names the project being read and says that
 `--all-projects` reads every project. That is the degrade-never-disappear
 answer: the projects left out are not drawn, and the screen says so.
 
-**The positional `<project>:<bead-id>` still adds a root, and does not scope.**
+**The positional `<project>:<bead-id>` names a root, and does not scope.**
 The two arguments do different jobs: `--project` decides which trackers are
-read, the positional adds a root inside a tracker being read. Merging them
-would remove the ability to add a root while still reading everything, which
-is what the positional does from outside every configured project.
+read, the positional decides which trees one tracker being read draws.
+Merging them would remove the ability to name one project's tree while still
+reading everything, which is what the positional does from outside every
+configured project.
 
 Scoping is applied before the roots the command line names, and what a
 positional under a project the scope left out means depends on which kind of
@@ -391,7 +398,7 @@ scope it is. Against a scope the reader typed it is refused. The
 contradiction is inside one invocation — the same command line asking for
 `beta`'s root and asking not to read `beta` — and there is no reading of it
 under which both halves are meant. The other order accepts it and then draws
-nothing: `roots.explicit` is read only inside a project's own collection, so
+nothing: a project's roots are read only inside its own collection, so
 a root under a project no collection reaches is dropped with nothing said
 about it. Refusing is the degrade-never-disappear answer here rather than the
 price of it. Against a scope the directory chose there is no contradiction,

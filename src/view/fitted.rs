@@ -25,7 +25,7 @@ pub(crate) const GAP: usize = 2;
 /// The escape that opens an operating-system command naming a hyperlink, and
 /// the one that ends any such command. A URL between them makes what follows
 /// a link; nothing between them ends it.
-const OSC_8: &str = "\x1b]8;;";
+const OSC_8: &str = "\x1b]8;";
 const ST: &str = "\x1b\\";
 
 /// Whether a terminal can be told that `said` points at `to`.
@@ -47,8 +47,26 @@ pub(crate) fn openable(said: &str, to: &str) -> bool {
 /// `said`, wrapped so the terminal makes it a link to `to`. Nothing for a
 /// pair `openable` refuses, which is this program's last word before the
 /// bytes go out.
+///
+/// Carries an `id=` derived from `to`, so every drawing of one URL carries
+/// the same id and a terminal groups them together whatever else about the
+/// drawing differs.
 pub(crate) fn hyperlink(said: &str, to: &str) -> Option<String> {
-    openable(said, to).then(|| format!("{OSC_8}{to}{ST}{said}{OSC_8}{ST}"))
+    openable(said, to).then(|| {
+        let id = link_id(to);
+        format!("{OSC_8}id={id};{to}{ST}{said}{OSC_8};{ST}")
+    })
+}
+
+/// An id for `to`, the same for the same URL every time and different for a
+/// different one.
+fn link_id(to: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    to.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 /// What a cell says, with any escape sequence taken out of it.
@@ -998,6 +1016,36 @@ mod tests {
         }
     }
 
+    /// Two drawings of one URL carry the same id, and a different URL a
+    /// different one, so a terminal groups the drawings of one link the same
+    /// way whatever else differs between them.
+    #[test]
+    fn every_drawing_of_one_link_carries_the_same_id() {
+        let first = hyperlink("⇢ #12", SOMEWHERE).expect("no control character");
+        let second = hyperlink("done", SOMEWHERE).expect("no control character");
+        let elsewhere = "https://forge.invalid/dunwich/arkham/pull/13";
+        let different = hyperlink("⇢ #13", elsewhere).expect("no control character");
+
+        let id_of = |said: &str| {
+            said.split("id=")
+                .nth(1)
+                .and_then(|rest| rest.split(';').next())
+                .expect("a hyperlink carries an id")
+                .to_string()
+        };
+
+        assert_eq!(
+            id_of(&first),
+            id_of(&second),
+            "two drawings of {SOMEWHERE:?} carried different ids"
+        );
+        assert_ne!(
+            id_of(&first),
+            id_of(&different),
+            "{SOMEWHERE:?} and {elsewhere:?} carried the same id"
+        );
+    }
+
     /// A window standing on a row whose link starts outside it. The link is
     /// holding columns the window needs, and the diff cannot reach past it, so
     /// without the hand-back the window's own left edge is never sent and the
@@ -1115,7 +1163,7 @@ mod tests {
         assert!(!opened.is_empty(), "the moved link was not sent: {sent:?}");
         for said in opened {
             assert!(
-                said.ends_with(&format!("{OSC_8}{ST}")),
+                said.ends_with(&format!("{OSC_8};{ST}")),
                 "an opening sequence went without its closer: {said:?}"
             );
         }
