@@ -304,6 +304,85 @@
           touch $out
         '';
 
+        # ci.yml's `on.pull_request` comment names the cost: a push and a body
+        # edit landing in the same second put two runs of the same workflow
+        # into one concurrency group, and the group cancels the older of the
+        # two. Picking each workflow's merely-newest run cannot be trusted to
+        # tell that apart from a genuine solitary cancellation — `createdAt`
+        # only carries second resolution, gh's own ordering for a tie is not
+        # documented, and the cancellation itself can be recorded before the
+        # survivor's own run object exists. So a non-cancelled sibling is
+        # preferred outright whenever a workflow's group holds one; only a
+        # group where every run was cancelled falls back to the newest of
+        # those, which is the one case with nothing else to prefer.
+        pickRunPerWorkflow = ''
+          pick_run_per_workflow() {
+            $jq -c 'group_by(.workflowName) | map(
+              (map(select(.conclusion != "cancelled"))) as $alive |
+              if ($alive | length) > 0 then ($alive | max_by(.createdAt))
+              else max_by(.createdAt) end)'
+          }
+        '';
+
+        # A run's `createdAt` is what a naive newest-wins pick would trust,
+        # and this is the case where trusting it reads the wrong run: the
+        # cancelled one recorded a later timestamp than the sibling that
+        # replaced it. That is the shape bdi-7ao.142.12 actually hit — the
+        # bead's own measurement, invented here rather than captured, per
+        # this repo's rule that only invented ground goes in the tree.
+        pickRunPerWorkflowTest = pkgs.runCommand "pick-run-per-workflow-test" { } ''
+          set -u
+          jq=${pkgs.jq}/bin/jq
+          ${pickRunPerWorkflow}
+
+          fail() { echo "FAIL: $1"; echo "$got"; exit 1; }
+
+          run() {
+            printf '{"workflowName":"%s","conclusion":"%s","createdAt":"%s","databaseId":%s}' \
+              "$1" "$2" "$3" "$4"
+          }
+
+          # The cancelled run's own createdAt is the later of the two, so
+          # picking on createdAt alone would choose it over the sibling that
+          # is still going.
+          got="$(printf '[%s,%s]' \
+              "$(run CI cancelled 2026-09-10T10:00:01Z 1)" \
+              "$(run CI in_progress 2026-09-10T10:00:00Z 2)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
+            fail "did not prefer the live sibling over the later-created cancelled run:"
+
+          # The same shape, but the sibling has already concluded rather
+          # than still running.
+          got="$(printf '[%s,%s]' \
+              "$(run CI cancelled 2026-09-10T10:00:01Z 1)" \
+              "$(run CI success 2026-09-10T10:00:00Z 2)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
+            fail "did not prefer the finished sibling over the later-created cancelled run:"
+
+          # Every run in the group was cancelled, so there is no sibling to
+          # prefer, and this still answers with one of them rather than
+          # losing the group entirely.
+          got="$(printf '[%s]' "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 1 ] ||
+            fail "lost the only run when every run in the group was cancelled:"
+
+          # A second workflow's own single run on the same sha stays its own
+          # pick, unaffected by the other workflow's cancelled-with-a-live-
+          # sibling group.
+          got="$(printf '[%s,%s,%s]' \
+              "$(run CI cancelled 2026-09-10T10:00:01Z 1)" \
+              "$(run CI success 2026-09-10T10:00:00Z 2)" \
+              "$(run Release success 2026-09-10T10:00:00Z 3)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq 'length')" = 2 ] ||
+            fail "did not keep the two workflows' picks separate:"
+
+          touch $out
+        '';
+
         # `gh run list` answers with an empty list for four different reasons
         # and only one of them means "wait", so this has to tell them apart —
         # `read-ci-verdict --help` says how.
@@ -321,6 +400,7 @@
           grep=${pkgs.gnugrep}/bin/grep
 
           ${limitTheJobExceeded}
+          ${pickRunPerWorkflow}
 
           case "''${1:-}" in
             -h|--help)
@@ -461,8 +541,7 @@
             exit 1
           fi
 
-          latest="$(printf '%s' "$runs" |
-            $jq -c 'group_by(.workflowName) | map(max_by(.createdAt))')"
+          latest="$(printf '%s' "$runs" | pick_run_per_workflow)"
 
           printf '%s' "$latest" |
             $jq -r '.[] | "  \(.workflowName): \(.status)/\(if .conclusion == null or .conclusion == "" then "-" else .conclusion end)  \(.url)"'
@@ -3368,6 +3447,7 @@ and a second line"
           documentation-is-not-source = documentationIsNotSource;
           fmt = checkOf "fmt" null [ pkgs.rustfmt ] "cargo fmt --check";
           limit-the-job-exceeded-test = limitTheJobExceededTest;
+          pick-run-per-workflow-test = pickRunPerWorkflowTest;
           module-concerns = checkOf "module-concerns" null [ modulesStateTheirConcern ]
             "modules-state-their-concern";
           module-concerns-test = modulesStateTheirConcernTest;
