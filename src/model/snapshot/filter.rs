@@ -223,14 +223,20 @@ mod tests {
     }
 
     /// A tree with nothing in it but the numbers the order is made from.
-    fn counted(project: &str, root: &str, live_agents: usize, total: usize, closed: usize) -> Tree {
+    fn counted(
+        project: &str,
+        root: &str,
+        live_agents: usize,
+        total: usize,
+        finished: usize,
+    ) -> Tree {
         Tree {
             project: project.to_string(),
             root: root.to_string(),
             title: String::new(),
             counts: Counts {
                 total,
-                closed,
+                finished,
                 live_agents,
                 anomalies: 0,
             },

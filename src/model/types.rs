@@ -14,6 +14,7 @@ pub enum Status {
     Blocked,
     Closed,
     Deferred,
+    Pinned,
     #[serde(untagged)]
     Other(String),
 }
@@ -26,13 +27,22 @@ impl Status {
             Status::Blocked => 1,
             Status::Open => 2,
             Status::Deferred => 3,
-            Status::Closed => 4,
-            Status::Other(_) => 5,
+            Status::Pinned => 4,
+            Status::Closed => 5,
+            Status::Other(_) => 6,
         }
     }
 
+    /// Whether somebody closed it. A pinned bead is never closed.
     pub fn is_closed(&self) -> bool {
         matches!(self, Status::Closed)
+    }
+
+    /// Whether it holds no work: closed, or pinned, which bd keeps
+    /// indefinitely and leaves out of `bd ready`, `bd blocked` and its default
+    /// list, and whose dependents it never blocks.
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Status::Closed | Status::Pinned)
     }
 }
 

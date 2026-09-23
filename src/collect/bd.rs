@@ -608,13 +608,21 @@ mod tests {
 
     #[test]
     fn every_status_spelling_bd_writes_is_recognised() {
-        let spellings = ["open", "in_progress", "blocked", "closed", "deferred"];
+        let spellings = [
+            "open",
+            "in_progress",
+            "blocked",
+            "closed",
+            "deferred",
+            "pinned",
+        ];
         let expected = [
             Status::Open,
             Status::InProgress,
             Status::Blocked,
             Status::Closed,
             Status::Deferred,
+            Status::Pinned,
         ];
 
         for (spelling, want) in spellings.iter().zip(expected) {
@@ -894,6 +902,7 @@ mod tests {
             Status::Other("marinating".to_string()),
             Status::InProgress,
             Status::Deferred,
+            Status::Pinned,
             Status::Blocked,
         ];
         statuses.sort_by_key(Status::rank);
@@ -905,12 +914,29 @@ mod tests {
                 Status::Blocked,
                 Status::Open,
                 Status::Deferred,
+                Status::Pinned,
                 Status::Closed,
                 Status::Other("marinating".to_string()),
             ]
         );
         assert!(Status::Closed.is_closed());
         assert!(!Status::Open.is_closed());
+        assert!(!Status::Pinned.is_closed());
+    }
+
+    #[test]
+    fn a_pinned_bead_is_finished_without_being_closed() {
+        assert!(Status::Closed.is_finished());
+        assert!(Status::Pinned.is_finished());
+        for live in [
+            Status::Open,
+            Status::InProgress,
+            Status::Blocked,
+            Status::Deferred,
+            Status::Other("marinating".to_string()),
+        ] {
+            assert!(!live.is_finished(), "{live:?}");
+        }
     }
 
     use crate::collect::environment::CREDENTIAL_VAR;

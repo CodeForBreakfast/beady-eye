@@ -438,8 +438,8 @@ pub(crate) fn counts_beneath(tree: &Tree, at: usize, above: &[usize]) -> Counts 
     )
 }
 
-/// Whether the branch at `at` is finished: every bead in it closed, no agent
-/// anywhere in it, no anomaly anywhere in it.
+/// Whether the branch at `at` is finished: every bead in it closed or
+/// pinned, no agent anywhere in it, no anomaly anywhere in it.
 ///
 /// Asked of the whole branch rather than of its top bead, because that is the
 /// set every use of the answer stands for. A bead can be closed and unmanned
@@ -449,7 +449,7 @@ pub(crate) fn counts_beneath(tree: &Tree, at: usize, above: &[usize]) -> Counts 
 pub(crate) fn finished(tree: &Tree, at: usize, above: &[usize]) -> bool {
     std::iter::once(at)
         .chain(beneath(tree, at, above))
-        .all(|node| tree.beads[node].status.is_closed() && quiet(&tree.beads[node]))
+        .all(|node| tree.beads[node].status.is_finished() && quiet(&tree.beads[node]))
 }
 
 /// A node's children split into the ones drawn and the run that is not.
@@ -516,9 +516,9 @@ pub(crate) fn progress_of(tree: &Tree, at: usize, above: &[usize]) -> Option<Pro
     counting.extend(beneath(tree, at, above));
     Some(Progress {
         total: counting.len(),
-        closed: counting
+        finished: counting
             .into_iter()
-            .filter(|node| tree.beads[*node].status.is_closed())
+            .filter(|node| tree.beads[*node].status.is_finished())
             .count(),
     })
 }

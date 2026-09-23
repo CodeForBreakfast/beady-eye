@@ -512,7 +512,7 @@ pub fn said(
     }
     if let Some(progress) = cells.progress {
         rows.push(indented(vec![Span::raw(done(
-            progress.closed,
+            progress.finished,
             progress.total,
         ))]));
     }
@@ -2495,7 +2495,7 @@ mod tests {
         let drawn = drawn_with(
             &a_busy_bead(),
             Some(Progress {
-                closed: 3,
+                finished: 3,
                 total: 7,
             }),
             &mut Show::default(),

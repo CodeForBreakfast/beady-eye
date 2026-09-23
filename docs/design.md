@@ -71,6 +71,7 @@ coin one — and say so.**
 | completed, progress | beads (`bd swarm status`) | the finished count and the `n/m` roll-up |
 | active | beads (`bd swarm status`) | in-progress, an agent on it |
 | `○ ◐ ● ✓ ❄` | beads (`bd list`'s legend) | open, in_progress, blocked, closed, deferred — glyph for glyph, because a glyph is terminology. `?` is `bdi`'s for a status bd has no legend for |
+| `⊙` | *coined* | pinned. bd's own mark is 📌, two cells wide where every other glyph is one |
 | agent, pane, session | herdr | the worker; its terminal; the server holding them |
 | `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
 | snapshot | herdr (`herdr api snapshot`) | one poll's whole state |
@@ -219,7 +220,8 @@ of the screen says that which agents are alive is unknown.
 
 Roots come from bd, unioned and deduped:
 
-1. Every unfinished bead — `open`, `in_progress`, `blocked` or `deferred` —
+1. Every unfinished bead — `open`, `in_progress`, `blocked` or `deferred`,
+   and never `pinned`, which bd keeps indefinitely and never counts as work —
    and every unfinished wisp, walked up its `parent` ancestors. This
    uses bd's own statuses and needs no convention, and it is read off the
    `list --all` and `query ephemeral=true --all` answers the forest is drawn
@@ -1026,8 +1028,9 @@ agent is already on the row by name.
 
 **A run of finished siblings is drawn as a count where there are enough of
 them.** Three or more finished siblings collapse to one line, `✓ 13 more beads
-· closed, and nobody on them`, carrying `✓` because closed is the one state
-every member holds, and counting them and their whole subtrees. Because its
+· finished, and nobody on them`, and count them and their whole subtrees.
+Finished is closed or pinned: bd leaves a pinned bead out of `bd ready`,
+`bd blocked` and its default list, and never lets one block its dependents. Because its
 members are finished branches, its phrase is true of every bead it counts, not
 merely of the siblings it names. Fewer than three are drawn: `… 2 more` costs a
 line and saves one. The threshold was chosen against this tracker's shape
@@ -1810,7 +1813,7 @@ name to the socket after any command that wrote something.
       "project": "summit-works",
       "root": "smt-4kd3p",
       "title": "Switch larkspur's session shell from DMS to noctalia v5",
-      "counts": { "total": 21, "closed": 8, "live_agents": 3, "anomalies": 3 },
+      "counts": { "total": 21, "finished": 8, "live_agents": 3, "anomalies": 3 },
       "tracker": "ok",
       "nodes": [
         {
@@ -2014,7 +2017,7 @@ all of it at once.
   │   │   └── ○ .17  apply the two niri settings
   │   ├┄┄ ◐ .16  guard a key in both layers               ⚠ claimed · no pane
   │   ├─▸ ✓ .3   land the session shell                   2/9  3 unfinished beads beneath this
-  │   └─▸ ✓ 13 more beads · closed, and nobody on them
+  │   └─▸ ✓ 13 more beads · finished, and nobody on them
   ├─▸ 4 trees with no live agent                     a to show all
   └── ⚠ 2 unattributed panes
       ├── ◍ wCM:pD waiting at a prompt  smt-4kd3p.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
@@ -2057,7 +2060,7 @@ it draws its reason where its row would have been and carries no fold.
 
 **The glyph is the bead's own status and nothing else**, glyph for glyph with
 the legend at the foot of `bd list`'s own output: `○` open, `◐` in_progress,
-`●` blocked, `✓` closed, `❄` deferred, and `?` for a status bd has no legend
+`●` blocked, `✓` closed, `❄` deferred, `⊙` pinned, and `?` for a status bd has no legend
 for — which the row then quotes, *a status bdi does not recognise: “…”*,
 rather than swallowing. Liveness has its own cell, and one glyph meaning both
 would make neither readable. The colours are `bd`'s own 24-bit values for the

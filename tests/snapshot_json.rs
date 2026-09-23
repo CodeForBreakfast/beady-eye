@@ -226,7 +226,7 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(tree["cycles"], json!([]));
     assert_eq!(
         tree["counts"],
-        json!({"total": 5, "closed": 1, "live_agents": 2, "anomalies": 3})
+        json!({"total": 5, "finished": 1, "live_agents": 2, "anomalies": 3})
     );
 }
 

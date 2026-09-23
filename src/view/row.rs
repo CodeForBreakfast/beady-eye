@@ -27,7 +27,7 @@ pub const WARNING: char = '⚠';
 /// is the count a root already carries for a tree: one rule at every depth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Progress {
-    pub closed: usize,
+    pub finished: usize,
     pub total: usize,
 }
 
@@ -337,6 +337,7 @@ pub fn status_glyph(status: &Status) -> char {
         Status::Blocked => '●',
         Status::Closed => '✓',
         Status::Deferred => '❄',
+        Status::Pinned => '⊙',
         Status::Other(_) => '?',
     }
 }
@@ -472,6 +473,13 @@ mod tests {
         assert_eq!(status_glyph(&Status::Deferred), '❄');
     }
 
+    /// bd's own mark for a pinned bead is 📌, which is two cells wide where
+    /// every other glyph is one, and would push the id out on its row alone.
+    #[test]
+    fn a_pinned_bead_draws_a_one_cell_glyph_in_place_of_bds_emoji() {
+        assert_eq!(status_glyph(&Status::Pinned), '⊙');
+    }
+
     #[test]
     fn the_glyph_is_the_beads_own_status_and_no_two_statuses_share_one() {
         let statuses = [
@@ -479,6 +487,7 @@ mod tests {
             Status::Blocked,
             Status::Open,
             Status::Deferred,
+            Status::Pinned,
             Status::Closed,
             Status::Other("triage".into()),
         ];
@@ -741,6 +750,23 @@ mod tests {
     #[test]
     fn a_badge_with_no_link_leaves_nothing_on_the_row() {
         let row = cells(&badged("⏸ waiting", None), Some(ROOT), None, None);
+
+        assert_eq!(row.notes, Vec::<String>::new());
+    }
+
+    /// Pinned is bd's own status, so nothing on its row calls it strange. And
+    /// the note about work left beneath is said of a bead somebody closed: a
+    /// pinned bead holding open work is ordinary.
+    #[test]
+    fn a_pinned_bead_over_open_work_carries_no_note() {
+        let pinned = node("smt-4kd3p.20", Status::Pinned);
+        let shut_over = Counts {
+            total: 3,
+            finished: 1,
+            live_agents: 0,
+            anomalies: 0,
+        };
+        let row = cells(&pinned, Some(ROOT), None, Some(shut_over));
 
         assert_eq!(row.notes, Vec::<String>::new());
     }

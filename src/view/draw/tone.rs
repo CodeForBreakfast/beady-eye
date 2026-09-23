@@ -24,11 +24,11 @@ use crate::view::row::Row;
 /// third value the theme picked without reference to the other two. The step
 /// up is a weight for that reason and not for emphasis.
 ///
-/// Finished means what it means to `lines::split`: closed, no agent, no
-/// anomaly. A closed bead whose pane is still alive is exactly the row worth
+/// Finished means what it means to `lines::split`: closed or pinned, no
+/// agent, no anomaly. A closed bead whose pane is still alive is exactly the row worth
 /// looking at, and dimming it is how it would be missed.
 pub(super) fn tone(row: &Row) -> Style {
-    let finished = row.status.is_closed() && row.agent.is_none() && row.anomalies.is_empty();
+    let finished = row.status.is_finished() && row.agent.is_none() && row.anomalies.is_empty();
     if row.agent.is_some() {
         palette::TIER_STAFFED
     } else if finished {
@@ -53,6 +53,7 @@ pub(crate) fn status_style(status: &Status) -> Style {
         Status::Open => palette::STATUS_OPEN,
         // The one status `bd` has no colour for, because it has no such
         // status. It takes the colour of the note already beside it.
+        Status::Pinned => palette::STATUS_PINNED,
         Status::Other(_) => palette::ATTENTION,
     }
 }
@@ -74,12 +75,13 @@ mod tests {
 
     /// One of each status, so a loop over them covers the set. The compiler
     /// holds `status_style` total; this list is only what a test walks.
-    fn every_status() -> [Status; 6] {
+    fn every_status() -> [Status; 7] {
         [
             Status::InProgress,
             Status::Blocked,
             Status::Open,
             Status::Deferred,
+            Status::Pinned,
             Status::Closed,
             Status::Other(String::new()),
         ]
@@ -279,6 +281,30 @@ mod tests {
             painted[1].style.fg,
             Some(Color::Rgb(128, 144, 160)),
             "the glyph keeps its own status colour: {painted:?}"
+        );
+        assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
+    }
+
+    /// bd never counts a pinned bead as work, so nobody on it is a finished
+    /// row. Its glyph keeps bd's purple for it.
+    #[test]
+    fn a_pinned_row_nobody_is_on_drops_to_the_rung_a_finished_one_does() {
+        let painted = Painted::of(
+            bead_line(
+                &row(&node("smt-4kd3p.1", "a bead", Status::Pinned)),
+                BRANCH,
+                &ids(3),
+                &Layout::default(),
+            ),
+            60,
+            1,
+        )
+        .row(0);
+
+        assert_eq!(
+            painted[1].style.fg,
+            Some(Color::Rgb(210, 166, 255)),
+            "{painted:?}"
         );
         assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
     }

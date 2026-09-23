@@ -121,7 +121,7 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
     // Nothing counted means no root here read at all, and `0/0` would say the
     // opposite of what is true — that they were read and hold nothing.
     if counts.total > 0 {
-        beside(&mut said, Span::raw(done(counts.closed, counts.total)));
+        beside(&mut said, Span::raw(done(counts.finished, counts.total)));
     }
     if counts.live_agents > 0 {
         let agent = if counts.live_agents == 1 {

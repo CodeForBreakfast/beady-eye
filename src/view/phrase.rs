@@ -413,11 +413,11 @@ pub fn root_not_found() -> &'static str {
     "no such bead in this tracker · named in config or on the command line"
 }
 
-/// A run of closed siblings nobody is working, drawn as a count rather than
-/// as rows of its own.
+/// A run of finished siblings nobody is working, drawn as a count rather
+/// than as rows of its own.
 pub fn elided(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
-    format!("{count} more {bead} · closed, and nobody on them")
+    format!("{count} more {bead} · finished, and nobody on them")
 }
 
 /// Work still to do behind a closed line resting shut over it.
@@ -724,9 +724,12 @@ pub fn pane_state(state: &PaneStatus) -> String {
 /// A status outside bd's own set, said rather than swallowed.
 pub fn unrecognised_status(status: &Status) -> Option<String> {
     match status {
-        Status::Open | Status::InProgress | Status::Blocked | Status::Closed | Status::Deferred => {
-            None
-        }
+        Status::Open
+        | Status::InProgress
+        | Status::Blocked
+        | Status::Closed
+        | Status::Deferred
+        | Status::Pinned => None,
         Status::Other(status) => Some(format!(
             "a status bdi does not recognise: {}",
             quoted(status)
@@ -774,6 +777,7 @@ pub fn status_word(status: &Status) -> String {
         Status::Blocked => "blocked".to_string(),
         Status::Closed => "closed".to_string(),
         Status::Deferred => "deferred".to_string(),
+        Status::Pinned => "pinned".to_string(),
         Status::Other(status) => quoted(status),
     }
 }
@@ -2064,6 +2068,7 @@ mod tests {
             Status::Blocked,
             Status::Closed,
             Status::Deferred,
+            Status::Pinned,
         ] {
             assert_eq!(unrecognised_status(&status), None, "{status:?}");
         }
