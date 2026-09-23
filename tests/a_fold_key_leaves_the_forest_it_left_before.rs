@@ -448,8 +448,9 @@ fn a_refresh_keeps_a_fold_e_found_resting_open_open_when_the_work_under_it_finis
 }
 
 /// A search for a bead under a shut fold opens what stands over it — its
-/// forebears in its tree, the run under each of them, and the project — and
-/// no other fold.
+/// forebears in its tree, any run the way down to it goes through, and the
+/// project — and no other fold. The run under the root counts closed
+/// siblings the way down passes by, so it stays shut.
 #[test]
 fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
     let (mut bdi, _fixture) = over_every_fold_kind("searched", &TALL);
@@ -466,10 +467,7 @@ fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
-            "  │   └── ✓ 3 more beads · finished, and nobody on them",
-            "  │       ├── ✓ .4  survey the headland",
-            "  │       ├── ✓ .5  draw up the plans",
-            "  │       └── ✓ .6  clear the site",
+            "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
             "  └─▸ 1 tree with no live agent  a to show all",
         ]
     );

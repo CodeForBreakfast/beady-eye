@@ -1248,25 +1248,42 @@ impl Forest {
     }
 
     /// Open everything shut over a line: everything the line hangs under, and
-    /// the run of quiet children each forebear may be counting it in.
+    /// the run of quiet children the way down to it goes through.
     ///
-    /// The run is asked for beside each forebear rather than left to the
-    /// ancestry, which answers for a line that is drawn — and a bead inside a
-    /// run is not drawn at all, so nothing above it can name it.
+    /// The runs are asked for beside the ancestry rather than left to it,
+    /// which answers for a line that is drawn — and a bead inside a run is
+    /// not drawn at all, so nothing above it can name it.
     ///
     /// Set rather than let go of, because a fold the reader shut by hand
     /// stays shut until something asks otherwise, and asking to be taken to a
     /// bead underneath it is asking.
     fn open_over(&mut self, place: &Place) {
+        for under in self.runs_over(place) {
+            self.folds.set(Handle::Elided(under), true);
+        }
         let over = self.ancestry_of(Some(&self.handle_on(place)));
         // Past the line itself, whose own fold is about the children under it
         // rather than about reaching it.
         for above in over.into_iter().skip(1) {
-            if let Handle::Bead(under) = &above {
-                self.folds.set(Handle::Elided(under.clone()), true);
-            }
             self.folds.set(above, true);
         }
+    }
+
+    /// The forebears of a line whose run of quiet children counts the next
+    /// bead on the way down to it.
+    fn runs_over(&self, place: &Place) -> Vec<Place> {
+        let Some((tree, way)) = self.locate(place) else {
+            return Vec::new();
+        };
+        let facts = self.facts.tree(&root_key(tree));
+        place
+            .forebears()
+            .filter(|forebear| {
+                let depth = forebear.steps.len();
+                let (_, elided) = facts.split(tree, way[depth], &way[..depth]);
+                elided.iter().any(|link| link.bead == way[depth + 1])
+            })
+            .collect()
     }
 
     fn step_to(&mut self, target: Option<usize>) {
@@ -8358,6 +8375,44 @@ credential_command = "secret harbour"
         assert!(forest.go_to(&key("dunwich", "dun-7.1.1")));
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
+    }
+
+    /// `dun-7.1.1` hangs under `dun-7` by way of `dun-7.1`, not by way of the
+    /// run beside it, so landing on it leaves that run counted.
+    #[test]
+    fn a_search_leaves_shut_a_run_the_way_down_does_not_go_through() {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::CollapseForest);
+
+        assert_eq!(
+            forest.seek("dun-7.1.1"),
+            went_to("dunwich", "dun-7.1.1", 1, 1)
+        );
+
+        assert!(
+            drawn_here(&forest, "└─▸ … 3 more"),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            !drawn_here(&forest, "survey the mast"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    #[test]
+    fn a_search_opens_the_run_its_bead_is_counted_in() {
+        let mut forest = flatten(snapshot());
+        forest.apply(Action::CollapseForest);
+
+        assert_eq!(forest.seek("dun-7.2"), went_to("dunwich", "dun-7.2", 1, 1));
+
+        assert!(
+            drawn_here(&forest, "└── … 3 more"),
+            "{:#?}",
+            sketch(&forest)
+        );
     }
 
     /// A bead no tree holds is nowhere to go, and the forest is left exactly
