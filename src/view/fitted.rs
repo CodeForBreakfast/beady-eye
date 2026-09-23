@@ -571,7 +571,7 @@ mod tests {
     use ratatui::widgets::Block as Bordered;
     use ratatui::Terminal;
 
-    use crate::view::painted::Painted;
+    use crate::view::painted::{symbols, Painted};
 
     /// A row with something in all three blocks, so any painting at all shows.
     fn a_row() -> Fitted {
@@ -907,13 +907,6 @@ mod tests {
             at: 2,
             to: SOMEWHERE.to_string(),
         }])
-    }
-
-    /// Every symbol of a rendered row, run together.
-    fn symbols(buf: &Buffer) -> String {
-        (buf.area.left()..buf.area.right())
-            .map(|x| buf[(x, 0)].symbol())
-            .collect()
     }
 
     fn rendered(row: Fitted, width: u16) -> Buffer {
