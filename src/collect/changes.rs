@@ -101,18 +101,49 @@ const THE_SYSTEM: u32 = 0;
 /// wrong one right — the user is watching a forest, not a log.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Answer {
-    /// A project `bdi` watches. It will be collected for.
-    Watched(String),
+    /// A project `bdi` watches, and what the writer said of it.
+    Watched(Heard),
     /// A name `bdi` watches nothing under.
     Unwatched(String),
     /// Not a project name at all.
     Malformed,
 }
 
+/// What a writer said of a project `bdi` watches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Heard {
+    /// Its work has moved, and it is read again. A bare name says this.
+    Changed(String),
+    /// The writer is covering it and nothing has moved, so nothing is read.
+    /// [`COVERED`] and the name say this.
+    ///
+    /// A producer worth having speaks only when something changes, so over a
+    /// tracker nobody touches it has nothing to say — and without this it
+    /// reads exactly like a producer that has died.
+    Covered(String),
+}
+
+impl Heard {
+    fn project(&self) -> &str {
+        match self {
+            Heard::Changed(project) | Heard::Covered(project) => project,
+        }
+    }
+}
+
+/// The word a writer puts before a project's name to say it covers the
+/// project and nothing has moved.
+///
+/// A word before the name rather than a bare name, so a producer written
+/// before it existed still says what it always said. And a new producer
+/// talking to an older `bdi` is told `unknown covered <project>`, which is
+/// how it can tell.
+const COVERED: &str = "covered";
+
 impl fmt::Display for Answer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Answer::Watched(project) => write!(f, "ok {project}"),
+            Answer::Watched(heard) => write!(f, "ok {}", heard.project()),
             Answer::Unwatched(project) => write!(f, "unknown {project}"),
             Answer::Malformed => write!(f, "malformed"),
         }
@@ -176,10 +207,14 @@ impl Reported {
         // sent too early to be answered against, and waiting for it would
         // mean holding the lock across a search on a writer's behalf.
         let watching = Arc::clone(&self.held());
-        if watching.contains(named) {
-            Answer::Watched(named.to_string())
+        let heard = match named.split_once(char::is_whitespace) {
+            Some((COVERED, project)) => Heard::Covered(project.trim_start().to_string()),
+            _ => Heard::Changed(named.to_string()),
+        };
+        if watching.contains(heard.project()) {
+            Answer::Watched(heard)
         } else {
-            Answer::Unwatched(named.to_string())
+            Answer::Unwatched(heard.project().to_string())
         }
     }
 
@@ -375,7 +410,7 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
 pub fn listen(
     at: Option<PathBuf>,
     reported: &Reported,
-    changed: Sender<String>,
+    changed: Sender<Heard>,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
     let listener = bind(&at)?;
@@ -589,7 +624,7 @@ fn is_a_socket(at: &Path) -> bool {
 /// An accept that fails ends the channel rather than being retried: there is
 /// no error here a retry would clear, and the poll is what the view falls
 /// back to.
-fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<String>) {
+fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<Heard>) {
     for writer in listener.incoming() {
         let Ok(writer) = writer else { return };
 
@@ -603,7 +638,7 @@ fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<String>
 /// A thread of its own because a producer that connects once and speaks
 /// whenever it has something to say is the shape this channel is for, and a
 /// long quiet stretch on such a connection is not a wedge to be timed out.
-fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<String>) {
+fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<Heard>) {
     let Ok(mut answering) = writer.try_clone() else {
         return;
     };
@@ -628,8 +663,8 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<String>) {
 
         // The name goes with the signal: what a writer said changed is
         // what the collection it triggers has to read, and no more.
-        if let Answer::Watched(project) = &answer {
-            if changed.send(project.clone()).is_err() {
+        if let Answer::Watched(heard) = &answer {
+            if changed.send(heard.clone()).is_err() {
                 return;
             }
         }
@@ -691,7 +726,7 @@ mod tests {
     }
 
     /// An open channel, and the end of it the loop would be reading.
-    fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<String>) {
+    fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<Heard>) {
         let (changed, changes) = mpsc::channel();
         let socket = listen(Some(at.to_path_buf()), reported, changed).expect("the socket opens");
         (socket, changes)
@@ -780,10 +815,54 @@ mod tests {
     fn a_message_naming_a_watched_project_is_taken() {
         let reported = watching(["arkham", "ferry"]);
 
-        assert_eq!(
-            reported.take("arkham"),
-            Answer::Watched("arkham".to_string())
-        );
+        assert_eq!(reported.take("arkham"), changed("arkham"));
+    }
+
+    fn changed(project: &str) -> Answer {
+        Answer::Watched(Heard::Changed(project.to_string()))
+    }
+
+    fn covered(project: &str) -> Answer {
+        Answer::Watched(Heard::Covered(project.to_string()))
+    }
+
+    /// How a producer says it is still there without asking for a read.
+    #[test]
+    fn a_line_saying_a_watched_project_is_covered_is_taken_as_covering_it() {
+        let reported = watching(["arkham", "ferry"]);
+
+        assert_eq!(reported.take("covered arkham\n"), covered("arkham"));
+        assert_eq!(reported.take("covered\tarkham"), covered("arkham"));
+    }
+
+    /// The writer is told which name it got wrong, exactly as for a bare one,
+    /// and not the verb it put in front of it.
+    #[test]
+    fn a_line_covering_a_name_bdi_watches_nothing_under_says_the_name_back() {
+        let reported = watching(["arkham", "ferry"]);
+
+        let answer = reported.take("covered ghost");
+
+        assert_eq!(answer, Answer::Unwatched("ghost".to_string()));
+        assert_eq!(answer.to_string(), "unknown ghost");
+    }
+
+    /// A word on its own is a name, whatever the word, so a project called
+    /// `covered` is reported the way every other project is.
+    #[test]
+    fn the_verb_on_its_own_is_a_project_name() {
+        let reported = watching(["covered"]);
+
+        assert_eq!(reported.take("covered\n"), changed("covered"));
+        assert_eq!(reported.take("covered  \n"), changed("covered"));
+    }
+
+    /// The answer to a covered project is the answer to a changed one: the
+    /// writer asked whether bdi watches the name, and it does.
+    #[test]
+    fn a_covered_project_is_answered_ok_as_a_changed_one_is() {
+        assert_eq!(covered("arkham").to_string(), "ok arkham");
+        assert_eq!(changed("arkham").to_string(), "ok arkham");
     }
 
     /// The line arrives with the newline that terminated it, and a writer may
@@ -792,10 +871,7 @@ mod tests {
     fn a_name_is_taken_without_the_whitespace_around_it() {
         let reported = watching(["arkham", "ferry"]);
 
-        assert_eq!(
-            reported.take("  arkham \n"),
-            Answer::Watched("arkham".to_string())
-        );
+        assert_eq!(reported.take("  arkham \n"), changed("arkham"));
     }
 
     #[test]
@@ -817,7 +893,7 @@ mod tests {
 
         reported.now_watching(["ferry".to_string()]);
 
-        assert_eq!(reported.take("ferry"), Answer::Watched("ferry".to_string()));
+        assert_eq!(reported.take("ferry"), changed("ferry"));
         assert_eq!(
             reported.take("arkham"),
             Answer::Unwatched("arkham".to_string())
@@ -835,10 +911,7 @@ mod tests {
 
         reported.now_watching(["ferry".to_string()]);
 
-        assert_eq!(
-            held_by_a_connection.take("ferry"),
-            Answer::Watched("ferry".to_string())
-        );
+        assert_eq!(held_by_a_connection.take("ferry"), changed("ferry"));
         assert_eq!(
             held_by_a_connection.take("arkham"),
             Answer::Unwatched("arkham".to_string())
@@ -884,8 +957,24 @@ mod tests {
 
         assert_eq!(
             changes.recv_timeout(A_MOMENT).ok(),
-            Some("arkham".to_string()),
+            Some(Heard::Changed("arkham".to_string())),
             "the loop was told which project to collect"
+        );
+    }
+
+    /// Carried to the loop as covering rather than as a change, which is the
+    /// whole difference: the loop reads a changed project and does not read a
+    /// covered one.
+    #[test]
+    fn a_writer_covering_a_watched_project_tells_the_loop_it_is_covered() {
+        let at = a_socket_path("covers");
+        let (_socket, changes) = open(&at, &watching(["arkham"]));
+
+        say(&at, &[("covered arkham\n", "ok arkham")]);
+
+        assert_eq!(
+            changes.recv_timeout(A_MOMENT).ok(),
+            Some(Heard::Covered("arkham".to_string())),
         );
     }
 
@@ -979,7 +1068,7 @@ mod tests {
 
         assert_eq!(
             changes.recv_timeout(A_MOMENT).ok(),
-            Some(brink),
+            Some(Heard::Changed(brink)),
             "the loop was told to collect for the name on the boundary"
         );
     }
@@ -996,7 +1085,7 @@ mod tests {
         for said in ["arkham", "ferry"] {
             assert_eq!(
                 changes.recv_timeout(A_MOMENT).ok(),
-                Some(said.to_string()),
+                Some(Heard::Changed(said.to_string())),
                 "the channel did not carry {said} on"
             );
         }
@@ -1013,7 +1102,7 @@ mod tests {
         for said in ["arkham", "ferry"] {
             assert_eq!(
                 changes.recv_timeout(A_MOMENT).ok(),
-                Some(said.to_string()),
+                Some(Heard::Changed(said.to_string())),
                 "the channel did not carry {said} on"
             );
         }

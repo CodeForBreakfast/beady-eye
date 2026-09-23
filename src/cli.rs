@@ -245,6 +245,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
                     project.name.clone(),
                     polling.after_a_read(project, cfg.tui.refresh()),
                 )
+                .lapsing_after(cfg.changes.covered_for())
             })
             .collect()
     });

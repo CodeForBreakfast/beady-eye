@@ -172,6 +172,9 @@ struct Shown {
     /// flattenings, and the mark on a line it names turns several times
     /// inside one of them.
     collecting: Vec<Awaited>,
+    /// The projects nothing has vouched for lately, held here for the reason
+    /// `collecting` is: a project lapses between two snapshots.
+    lapsed: Vec<String>,
     /// Where the bead view is looking, while one is up. Held here and not on
     /// the forest because it is about a window over the rows, not the rows.
     show: Show,
@@ -248,6 +251,7 @@ impl Shown {
             // one before it opens the screen — and it reaches this the way
             // every one after it does, through `collecting`.
             collecting: Vec::new(),
+            lapsed: Vec::new(),
             show: Show::default(),
             viewing: None,
             trail: Vec::new(),
@@ -270,6 +274,14 @@ impl Shown {
     fn collecting(&mut self, awaited: &[Awaited]) -> bool {
         let changed = self.collecting != awaited;
         self.collecting = awaited.to_vec();
+        changed
+    }
+
+    /// Say which projects nothing has vouched for lately, reporting whether
+    /// the screen is any different for it — which being told again is not.
+    fn lapsed(&mut self, projects: &[String]) -> bool {
+        let changed = self.lapsed != projects;
+        self.lapsed = projects.to_vec();
         changed
     }
 
@@ -935,11 +947,21 @@ fn paint(
     over: Over<'_>,
     foot: draw::Foot,
     collecting: &[Awaited],
+    lapsed: &[String],
     now: DateTime<Utc>,
 ) {
     let bands = draw::regions(frame.area());
     forest.fit(bands.forest.height as usize);
-    draw::draw(frame, frame.area(), forest, layout, collecting, now, foot);
+    draw::draw(
+        frame,
+        frame.area(),
+        forest,
+        layout,
+        collecting,
+        lapsed,
+        now,
+        foot,
+    );
     draw::draw_tail(frame, bands.tail, tail);
     match over {
         Over::Nothing => {}
@@ -1012,6 +1034,10 @@ impl View for Screen {
 
     fn collecting(&mut self, awaited: &[Awaited]) -> bool {
         self.shown.collecting(awaited)
+    }
+
+    fn lapsed(&mut self, projects: &[String]) -> bool {
+        self.shown.lapsed(projects)
     }
 
     fn holds_for(&self, drawn_at: DateTime<Utc>) -> Option<Duration> {
@@ -1087,6 +1113,7 @@ impl View for Screen {
             tail,
             show,
             collecting,
+            lapsed,
             said,
             sought,
             drawing,
@@ -1117,6 +1144,7 @@ impl View for Screen {
                 over,
                 foot,
                 collecting,
+                lapsed,
                 now,
             )
         })?;
@@ -1547,12 +1575,14 @@ mod tests {
         prompt: Option<&'a str>,
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn painted(
         forest: &mut Forest,
         tail: &Tail,
         over: Over<'_>,
         pressed: Pressed<'_>,
         collecting: &[Awaited],
+        lapsed: &[String],
         width: u16,
         height: u16,
     ) -> Painted {
@@ -1575,6 +1605,7 @@ mod tests {
                 over,
                 foot,
                 collecting,
+                lapsed,
                 an_instant(),
             );
         })
@@ -1587,7 +1618,16 @@ mod tests {
         height: u16,
         over: Over<'_>,
     ) -> Painted {
-        painted(forest, tail, over, Pressed::default(), &[], width, height)
+        painted(
+            forest,
+            tail,
+            over,
+            Pressed::default(),
+            &[],
+            &[],
+            width,
+            height,
+        )
     }
 
     /// The screen with the bead view up, drawn from the view the screen is
@@ -1613,6 +1653,7 @@ mod tests {
             Over::Nothing,
             Pressed::default(),
             collecting,
+            &[],
             width,
             height,
         )
@@ -1658,6 +1699,52 @@ mod tests {
             "a collection just asked for: {:?}",
             mark(an_instant())
         );
+    }
+
+    /// On the screen a reader is looking at, a project nothing vouches for any
+    /// more is drawn as lapsed, where one something covers is drawn as read.
+    /// From one fixture, because what this guards is the two drawing alike.
+    #[test]
+    fn a_screen_says_which_of_its_projects_nothing_vouches_for() {
+        let mut snapshot = a_grove(2);
+        snapshot.read_at.insert(
+            "grove".to_string(),
+            an_instant() - chrono::TimeDelta::seconds(30),
+        );
+        let row = |lapsed: &[String]| {
+            let mut forest = forest::flatten(snapshot.clone());
+            painted(
+                &mut forest,
+                &Tail::Silent("nothing to tail"),
+                Over::Nothing,
+                Pressed::default(),
+                &[],
+                lapsed,
+                60,
+                10,
+            )
+            .rows()[0]
+                .clone()
+        };
+
+        let lapsed = row(&["grove".to_string()]);
+        assert!(lapsed.contains("? 30s ago"), "{lapsed:?}");
+        let covered = row(&[]);
+        assert!(covered.contains("✓ 30s ago"), "{covered:?}");
+    }
+
+    /// Being told again which projects have lapsed is not a change, for the
+    /// reason a collection named again is not: the frame it would put back
+    /// is the frame already there.
+    #[test]
+    fn the_projects_lapsed_are_said_once_and_until_they_change() {
+        let mut shown = shown(a_snapshot());
+        let arkham = ["arkham".to_string()];
+
+        assert!(!shown.lapsed(&[]), "nothing had lapsed to begin with");
+        assert!(shown.lapsed(&arkham));
+        assert!(!shown.lapsed(&arkham), "and it is said only once");
+        assert!(shown.lapsed(&[]), "and back to covered");
     }
 
     /// Nothing on screen shows that `^D` moved by the wrong amount, so the
@@ -4053,6 +4140,7 @@ mod tests {
                 said: shown.said.as_ref(),
                 prompt: shown.sought.as_deref(),
             },
+            &[],
             &[],
             width,
             height,

@@ -15,7 +15,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::{Asked, Awaited, Wanted};
-use crate::collect::changes::Reported;
+use crate::collect::changes::{Heard, Reported};
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Notch, Typing};
@@ -38,6 +38,9 @@ pub(super) enum Event {
     Resize,
     /// Work has moved on, and what has to be read to see it.
     Changed(Wanted),
+    /// Something outside says it covers this project and nothing in it has
+    /// moved, so there is nothing to read.
+    Covered(String),
     /// A collection has come back.
     Collected(Box<Snapshot>),
     /// The provider has said what is on a pane, or would not say.
@@ -49,6 +52,16 @@ pub(super) enum Event {
     /// synthesised 'q' arriving while that window is up would close the
     /// window and leave `bdi` running.
     Signalled,
+}
+
+/// Whatever a writer on the inbound channel said of a project it named.
+impl From<Heard> for Event {
+    fn from(heard: Heard) -> Self {
+        match heard {
+            Heard::Changed(project) => Event::Changed(Wanted::Project(project)),
+            Heard::Covered(project) => Event::Covered(project),
+        }
+    }
 }
 
 /// Every answer the provider gives reaches the loop as one of these, which is
@@ -124,6 +137,14 @@ pub(super) trait View {
     /// as outstanding as the one being served, and the projects it names have
     /// nothing else on the screen to say so.
     fn collecting(&mut self, awaited: &[Awaited]) -> bool;
+
+    /// Say which projects nothing has vouched for lately, reporting whether
+    /// the screen has changed.
+    ///
+    /// The loop knows, because it is where a read coming back and a word from
+    /// something covering a project both arrive. The view is told every pass,
+    /// and a project's line says it has lapsed until the loop says otherwise.
+    fn lapsed(&mut self, projects: &[String]) -> bool;
 
     /// How long what is drawn goes on being true with nothing happening, or
     /// nothing where it stays true however long the reader leaves it.
@@ -352,6 +373,7 @@ pub(super) fn drive(
         // look.
         let now = Utc::now();
         let told = asks_for_what_is_due(view, &mut outstanding, &mut reading.polling, now);
+        let lapsed = view.lapsed(&lapsed(&reading.polling, now));
         outstanding.sends(ask, now);
         view.reread(now);
         // A run reading a config file looks at it here; a run that found no
@@ -367,7 +389,7 @@ pub(super) fn drive(
             now,
         );
 
-        if woken || told || noticed {
+        if woken || told || lapsed || noticed {
             drawn_at = now;
             view.draw(showing, drawn_at)?;
         }
@@ -495,6 +517,15 @@ impl Reading {
     }
 }
 
+/// The projects nothing has vouched for lately, as `now` finds them.
+fn lapsed(armed: &[Armed], now: DateTime<Utc>) -> Vec<String> {
+    armed
+        .iter()
+        .filter(|project| project.lapsed(now))
+        .map(|project| project.project().to_string())
+        .collect()
+}
+
 /// Ask for whatever the projects that arm themselves are now due to ask for.
 /// Whether the screen changed for it.
 ///
@@ -527,14 +558,14 @@ fn ran_out(view: &dyn View, drawn_at: DateTime<Utc>, now: DateTime<Utc>) -> bool
 }
 
 /// How long the loop may sleep: until what is drawn stops being true, until a
-/// project asks for itself, until the read at the front is due to leave,
-/// until the band is due to read its pane again, or until the config file is
-/// due to be looked at — whichever comes first, and nothing where none of
-/// them will.
+/// project asks for itself or lapses, until the read at the front is due to
+/// leave, until the band is due to read its pane again, or until the config
+/// file is due to be looked at — whichever comes first, and nothing where
+/// none of them will.
 ///
-/// Five deadlines where there was one, and the loop tells them apart only by
-/// doing all five things when it wakes. What that costs is asking each of
-/// the five whether it is due on a wake that was one of the others'; what it
+/// Six deadlines where there was one, and the loop tells them apart only by
+/// doing all six things when it wakes. What that costs is asking each of
+/// the six whether it is due on a wake that was one of the others'; what it
 /// saves is a second way for the loop to be woken.
 ///
 /// Two instants, because the screen's deadline is about the frame on it and
@@ -563,6 +594,7 @@ fn sleeps_for(
     ]
     .into_iter()
     .chain(armed.iter().map(|project| project.asks_in(now)))
+    .chain(armed.iter().map(|project| project.lapses_in(now)))
     .flatten()
     .min()
 }
@@ -733,6 +765,13 @@ fn answered(
         Event::Scrolled(notch) => view.scrolled(notch),
         Event::Resize => true,
         Event::Changed(wanted) => asked_for(view, outstanding, wanted),
+        Event::Covered(covered) => {
+            let now = Utc::now();
+            for project in armed.iter_mut().filter(|armed| armed.project() == covered) {
+                project.covered(now);
+            }
+            false
+        }
         Event::Collected(snapshot) => {
             let now = Utc::now();
             if let Some(read) = outstanding.came_back() {
@@ -1121,6 +1160,9 @@ mod tests {
         /// a test that only counted could not tell a refresh of one project
         /// from a refresh of the lot.
         awaited: Vec<Vec<Awaited>>,
+        /// Which projects the view was told had lapsed, in the order it was
+        /// told.
+        lapsed: Vec<Vec<String>>,
         /// The instant each frame was drawn at, in the order they were drawn.
         drawn_at: Vec<DateTime<Utc>>,
         /// The instant each deadline was asked to be measured from, in the
@@ -1203,6 +1245,18 @@ mod tests {
         fn collecting(&mut self, awaited: &[Awaited]) -> bool {
             self.awaited.push(awaited.to_vec());
             true
+        }
+
+        /// Changed only when it is, as `Shown` says: the loop tells the view
+        /// every pass, and a view that redrew for each telling would make
+        /// every loop test here count frames nobody asked for.
+        fn lapsed(&mut self, projects: &[String]) -> bool {
+            let changed = self
+                .lapsed
+                .last()
+                .map_or(!projects.is_empty(), |told| told != projects);
+            self.lapsed.push(projects.to_vec());
+            changed
         }
 
         /// Nothing on this view says anything about a config, and no test
@@ -2650,7 +2704,9 @@ mod tests {
         assert_eq!(
             (reported.take("ferry"), reported.take("arkham")),
             (
-                crate::collect::changes::Answer::Watched("ferry".to_string()),
+                crate::collect::changes::Answer::Watched(crate::collect::changes::Heard::Changed(
+                    "ferry".to_string()
+                )),
                 crate::collect::changes::Answer::Unwatched("arkham".to_string())
             ),
             "the channel accepts the project the reader added and refuses \
@@ -2895,6 +2951,88 @@ mod tests {
             view.drawn(),
             2,
             "the first frame, and one for the read the keystroke landed beside"
+        );
+    }
+
+    /// A project that does not poll, last vouched for longer ago than it may
+    /// go.
+    fn lapsed_an_hour_ago() -> Armed {
+        let mut lapsed = Armed::polling("arkham".to_string(), None).lapsing_after(AN_INTERVAL);
+        lapsed.came_back(&arkham(), Utc::now() - TimeDelta::hours(1));
+        lapsed
+    }
+
+    /// With no poll behind it, a project whose producer has gone is drawn
+    /// exactly as one whose producer is covering it, unless the loop says
+    /// which it is.
+    #[test]
+    fn a_project_nothing_vouches_for_is_said_to_have_lapsed() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![Event::Key(key(KeyCode::Char('x')))]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(vec![lapsed_an_hour_ago()]),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.lapsed.last(), Some(&vec!["arkham".to_string()]));
+        assert_eq!(
+            view.drawn(),
+            2,
+            "the first frame, and one for the lapse the keystroke landed beside"
+        );
+    }
+
+    /// The word is what keeps a quiet project from lapsing, and it asks for
+    /// no read: the whole of what a producer covering a tracker nobody
+    /// touches needs to be able to say.
+    #[test]
+    fn a_word_from_something_covering_a_project_keeps_it_from_lapsing_and_reads_nothing() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![Event::Covered("arkham".to_string())]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(vec![lapsed_an_hour_ago()]),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert!(
+            view.lapsed.iter().all(Vec::is_empty),
+            "covered, so never lapsed: {:?}",
+            view.lapsed
+        );
+        assert!(view.collecting().is_empty(), "and nothing was asked for");
+        assert!(
+            asked.try_recv().is_err(),
+            "and nothing reached the collector"
+        );
+    }
+
+    /// A project lapses on the clock with nothing happening, so the loop has
+    /// to wake for it rather than wait for the next event to notice.
+    #[test]
+    fn the_loop_wakes_when_a_project_would_lapse() {
+        let now = Utc::now();
+        let mut lapsing = Armed::polling("arkham".to_string(), None).lapsing_after(AN_INTERVAL);
+        lapsing.came_back(&arkham(), now);
+
+        assert_eq!(
+            sleeps_for(&Recorder::default(), &at_once(), &[lapsing], None, now, now),
+            Some(AN_INTERVAL)
         );
     }
 

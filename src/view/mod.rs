@@ -278,6 +278,12 @@ pub enum Mark {
     Read,
     /// The last collection found a root it could not read.
     Refused,
+    /// The last collection read every root of it, and nothing has vouched
+    /// for its rows since for longer than a project that does not poll may
+    /// go: no read, and no word from anything covering it. Whatever was
+    /// covering it may have gone, and the rows would look exactly the same
+    /// if it had.
+    Lapsed,
 }
 
 impl Mark {
@@ -297,6 +303,22 @@ impl Mark {
 }
 
 impl Freshness {
+    /// The same, for a project nothing has vouched for lately.
+    ///
+    /// Only a resting `Read` gives way. It is the one mark claiming more than
+    /// is known of a lapsed project, and every other one already says
+    /// something the reader needs sooner: a read is on its way, has stopped,
+    /// or came back short.
+    pub fn lapsed(self) -> Self {
+        match self.mark {
+            Mark::Read => Freshness {
+                mark: Mark::Lapsed,
+                ..self
+            },
+            Mark::Collecting | Mark::Unanswered | Mark::Refused | Mark::Lapsed => self,
+        }
+    }
+
     /// What to say about one project: how the read of it is getting on or
     /// how the last one went, and when it was last read.
     ///
@@ -484,7 +506,8 @@ mod tests {
             Mark::Collecting => Some(Mark::Unanswered),
             Mark::Unanswered => Some(Mark::Read),
             Mark::Read => Some(Mark::Refused),
-            Mark::Refused => None,
+            Mark::Refused => Some(Mark::Lapsed),
+            Mark::Lapsed => None,
         })
     }
 
@@ -567,6 +590,37 @@ mod tests {
             .map(|it| it.mark),
             Some(Mark::Collecting)
         );
+    }
+
+    /// With no poll behind it, a project nothing has vouched for lately looks
+    /// exactly as read as one something is covering. The quiet mark is the
+    /// one that claims more than is known, so it is the one a lapse replaces,
+    /// and the age goes on saying how old the rows are.
+    #[test]
+    fn a_lapsed_project_at_rest_says_so_in_place_of_read() {
+        let read = Freshness::of(Some(at(22, 14)), None, true, at(22, 20));
+
+        assert_eq!(
+            read.map(Freshness::lapsed),
+            Some(Freshness {
+                mark: Mark::Lapsed,
+                read_at: Some(at(22, 14)),
+            })
+        );
+    }
+
+    /// A read under way, one that has stopped and one that came back short
+    /// each say something more pressing than a lapse, and each already asks
+    /// to be looked at or is about to replace the rows.
+    #[test]
+    fn a_lapse_leaves_every_other_mark_as_it_was() {
+        for mark in [Mark::Collecting, Mark::Unanswered, Mark::Refused] {
+            let fresh = Freshness {
+                mark,
+                read_at: Some(at(22, 14)),
+            };
+            assert_eq!(fresh.lapsed(), fresh, "{mark:?}");
+        }
     }
 
     /// A project several of whose roots disagree resolves to one mark, and to

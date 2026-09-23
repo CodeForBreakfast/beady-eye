@@ -42,8 +42,8 @@ use groups::{group_line, item_line, scoped_line};
 use project::{project_line, unread_line};
 
 /// What every project line's freshness is drawn from: when each project was
-/// last read, which projects have a read outstanding, and the instant this
-/// frame is being drawn at.
+/// last read, which projects have a read outstanding, which have lapsed, and
+/// the instant this frame is being drawn at.
 ///
 /// Gathered at the frame rather than held on the lines. A read being asked
 /// for and coming back changes what a project line says without changing the
@@ -56,6 +56,8 @@ pub(super) struct Reads<'a> {
     /// queued behind it — and when each was asked for. The instant is what
     /// tells a read that is getting somewhere from one that has stopped.
     collecting: &'a [Awaited],
+    /// The projects nothing has vouched for lately.
+    lapsed: &'a [String],
     now: DateTime<Utc>,
 }
 
@@ -63,11 +65,13 @@ impl<'a> Reads<'a> {
     pub(super) fn new(
         read_at: &'a BTreeMap<String, DateTime<Utc>>,
         collecting: &'a [Awaited],
+        lapsed: &'a [String],
         now: DateTime<Utc>,
     ) -> Self {
         Self {
             read_at,
             collecting,
+            lapsed,
             now,
         }
     }
@@ -86,7 +90,7 @@ impl<'a> Reads<'a> {
     /// twice over. The reader's question is how long this project's rows have
     /// been on their way, so the answer is the earliest of them.
     fn of(&self, project: &ProjectLine) -> Option<Freshness> {
-        Freshness::of(
+        let fresh = Freshness::of(
             self.read_at.get(&project.project).copied(),
             self.collecting
                 .iter()
@@ -94,7 +98,12 @@ impl<'a> Reads<'a> {
                 .min_by_key(|awaited| awaited.asked_at),
             project.every_root_read,
             self.now,
-        )
+        );
+        if self.lapsed.contains(&project.project) {
+            fresh.map(Freshness::lapsed)
+        } else {
+            fresh
+        }
     }
 }
 
@@ -117,12 +126,14 @@ pub struct Foot<'a> {
 
 /// Draw the forest and the foot, leaving the tail's band to whoever holds a
 /// tail.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
     forest: &Forest,
     layout: &Layout,
     collecting: &[Awaited],
+    lapsed: &[String],
     now: DateTime<Utc>,
     foot: Foot,
 ) {
@@ -131,7 +142,7 @@ pub fn draw(
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;
     let widths = lines.widths();
-    let reads = Reads::new(&forest.snapshot().read_at, collecting, now);
+    let reads = Reads::new(&forest.snapshot().read_at, collecting, lapsed, now);
 
     for (row, (at, line)) in lines.viewport(forest.from(), height).enumerate() {
         let drawn = fitted(line, widths, layout, &reads);
@@ -500,7 +511,7 @@ mod tests {
     static NOTHING_READ: BTreeMap<String, DateTime<Utc>> = BTreeMap::new();
 
     pub(super) fn at_rest() -> Reads<'static> {
-        Reads::new(&NOTHING_READ, &[], drawn_at())
+        Reads::new(&NOTHING_READ, &[], &[], drawn_at())
     }
 
     /// One tree of `children` open beads under an in-flight root.
@@ -601,6 +612,7 @@ mod tests {
                 forest,
                 &Layout::default(),
                 collecting,
+                &[],
                 drawn_at(),
                 Foot {
                     standing,

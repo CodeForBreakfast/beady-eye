@@ -169,6 +169,11 @@ const READ: &str = "✓";
 /// under the name are short of that root's.
 const REFUSED: &str = "⚠";
 
+/// The mark a project wears when nothing has vouched for its rows for longer
+/// than it may go. A question, because that is what the rows now are: they
+/// may be current, and nothing is saying so.
+const LAPSED: &str = "?";
+
 /// The mark a project wears when the read of it has stopped getting
 /// anywhere.
 ///
@@ -190,6 +195,7 @@ pub fn mark(freshness: Freshness, now: DateTime<Utc>) -> &'static str {
         Mark::Unanswered => UNANSWERED,
         Mark::Read => READ,
         Mark::Refused => REFUSED,
+        Mark::Lapsed => LAPSED,
     }
 }
 
@@ -1188,7 +1194,7 @@ mod tests {
             .map(|state| mark(resting_or_turning(state), an_instant()))
             .collect();
 
-        assert_eq!(said, ["⠴", "⠿", "✓", "⚠"]);
+        assert_eq!(said, ["⠴", "⠿", "✓", "⚠", "?"]);
     }
 
     /// The bead: the cell changed shape rather than content every time a
@@ -1416,7 +1422,7 @@ mod tests {
     fn a_mark_at_rest_is_the_same_glyph_a_frame_later() {
         let at_rest = every_mark().filter(|state| match state {
             Mark::Collecting => false,
-            Mark::Unanswered | Mark::Read | Mark::Refused => true,
+            Mark::Unanswered | Mark::Read | Mark::Refused | Mark::Lapsed => true,
         });
 
         for state in at_rest {

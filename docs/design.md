@@ -85,6 +85,7 @@ coin one — and say so.**
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
+| **covered** | *coined* | a project something outside `bdi` has said it is watching, with nothing changed: a `covered <project>` line on the inbound channel. A covered line, and a read of the project coming back, each vouch for its rows for `[changes] covered_for_seconds`. A project that does not poll and that nothing has vouched for in that time has **lapsed**, and its mark says so. Neither project names this: the channel is `bdi`'s own. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
 | **spine** | *coined* | the ways down a fold default opens, and the rule that chooses them. The default rule opens every way down to work a reader needs; a one-copy rule opens one of them per bead and rests the rest shut over the same work. Neither project has the concept, because neither draws a tree that reaches a bead twice. |
@@ -1730,13 +1731,24 @@ gives is a path with no such directory above it rather than a deeper name,
 which under a shared directory would be advice to walk further into it.
 
 **The protocol.** Send the name of a project whose work has moved, as one UTF-8
-line ending in `\n`. `bdi` answers each line with one line of its own:
+line ending in `\n`. Or send `covered <project>` to say you are watching that
+project and nothing in it has moved. `bdi` answers each line with one line of
+its own:
 
 | answer | meaning |
 |---|---|
-| `ok <project>` | a project `bdi` watches. That project is read again; no other is |
+| `ok <project>` | a project `bdi` watches. A bare name is read again, and no other project is. A covered one is not read |
 | `unknown <project>` | not a project this `bdi` is reading. Nothing happens |
 | `malformed` | blank, or longer than 512 bytes. Nothing happens |
+
+**A covered line is how a producer says it is alive.** A producer worth having
+speaks only when something changes, so over a tracker nobody touches it has
+nothing to say, and it reads exactly like a producer that has died. The
+covered line lets it say otherwise without costing a read. The word goes before
+the name so that a producer that only sends bare names keeps working
+unchanged. A producer that sends `covered` to a `bdi` older than the word is
+answered `unknown covered <project>`, which is how it can tell. The one cost is
+that a project whose own name begins with `covered ` cannot be reported bare.
 
 The name must match a project's `name` in the config. A connection may carry as
 many lines as you like and may stay open for the life of the writer, so a
@@ -1754,13 +1766,30 @@ and a key saying so would be exactly the coupling to a setup's organisation
 this bead exists to avoid. Instead every project starts polled; one something
 reports for has its poll stood down while messages keep arriving inside the
 refresh interval, because each message's read pushes the next poll out past
-the interval before it arrives; and a producer going quiet lets the next
-interval find the project uncovered, so the poll resumes — the view degrades to
-slow, never to stale. Selection and fallback are one mechanism with nothing to
-tune. A project whose producer you trust can turn its poll off with `poll =
-false`, which is a claim rather than a saving: nothing then covers for a
-producer that dies, and an automatic fallback would hide the failure you need
-to see. `--poll` and `--no-poll` override every project for one run.
+the interval before it arrives, and each covered line pushes it out with no
+read at all; and a producer going quiet lets the next interval find the
+project uncovered, so the poll resumes — the view degrades to slow, never to
+stale. Selection and fallback are one mechanism with nothing to tune. A
+project whose producer you trust can turn its poll off with `poll = false`,
+which is a claim rather than a saving: nothing then covers for a producer that
+dies, and an automatic fallback would hide the failure you need to see.
+`--poll` and `--no-poll` override every project for one run.
+
+**What shows that failure is the lapse.** A project that does not poll is
+vouched for by each read of it that comes back and each covered line naming
+it. Once `[changes] covered_for_seconds` passes with neither, its mark turns to
+`?` in the colour that asks to be looked at, and the age beside it goes on
+counting from its last read. A change report renews it through the read it
+causes. The next word or read puts `✓` back. A read on its way, one that has
+stopped answering and one that came back short each keep their own mark,
+since each says something the reader needs sooner. The run's first read
+starts the clock, so a producer that never starts is caught one term in. The
+term is a key of its own rather than `refresh_seconds`, which keeps meaning
+the gap between a polled project's reads. Its default of 60 seconds is three
+of the 20-second heartbeats a producer reading a Dolt event stream renews
+from, so a late heartbeat or two does not read as a producer that has gone.
+A polled project never lapses: its poll keeps it current, and that is the
+reader's choice rather than a producer failing where nobody can see.
 
 **A socket that cannot be opened is said twice, deliberately, and the two are
 not copies.** No path to put it at, or another `bdi` already listening on the
