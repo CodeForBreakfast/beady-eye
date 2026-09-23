@@ -354,7 +354,7 @@ mod tests {
     use crate::model::snapshot::Node;
     use crate::view::draw::tone::status_style;
     use crate::view::draw::{fitted, tests::*};
-    use crate::view::painted::Run;
+    use crate::view::painted::{self, Run};
 
     #[test]
     fn a_bead_line_says_its_glyph_its_id_and_its_title_in_that_order() {
@@ -1545,13 +1545,12 @@ mod tests {
         );
     }
 
-    /// Every symbol a row put in the buffer, escape bytes and all. `Painted`
-    /// reports what a reader sees, and a hyperlink is not that.
+    /// Every symbol a row put in the buffer, escape bytes and all.
     fn symbols(row: Fitted, width: u16) -> String {
         let area = Rect::new(0, 0, width, 1);
         let mut buf = Buffer::empty(area);
         row.render(area, &mut buf);
-        (0..width).map(|x| buf[(x, 0)].symbol()).collect()
+        painted::symbols(&buf)
     }
 
     /// The columns `  ├── ● .20   a bead  ⇢ #12` fills, and not one more.
