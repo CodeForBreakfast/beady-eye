@@ -307,29 +307,29 @@
         # ci.yml's `on.pull_request` comment names the cost: a push and a body
         # edit landing in the same second put two runs of the same workflow
         # into one concurrency group, and the group cancels the older of the
-        # two. Picking each workflow's merely-newest run cannot be trusted to
-        # tell that apart from a genuine solitary cancellation — `createdAt`
-        # only carries second resolution, gh's own ordering for a tie is not
-        # documented, and the cancellation itself can be recorded before the
-        # survivor's own run object exists. So a non-cancelled sibling is
-        # preferred outright whenever a workflow's group holds one; only a
-        # group where every run was cancelled falls back to the newest of
-        # those, which is the one case with nothing else to prefer.
+        # two. `createdAt` only carries second resolution, so the two runs
+        # tie on it, and `max_by` breaks a tie by array position rather than
+        # by which run gh happened to create first — gh's own ordering is not
+        # documented, so which one that leaves in front is not reliable
+        # either. A run's `databaseId` is assigned in creation order and
+        # never ties, so it is what breaks the tie: the later-created run of
+        # a tied pair is the one still standing, cancelled or not. Recency
+        # still decides everything else, so an old success several runs back
+        # is never preferred over a genuinely later cancellation — only ties
+        # on `createdAt` itself reach the second key.
         pickRunPerWorkflow = ''
           pick_run_per_workflow() {
-            $jq -c 'group_by(.workflowName) | map(
-              (map(select(.conclusion != "cancelled"))) as $alive |
-              if ($alive | length) > 0 then ($alive | max_by(.createdAt))
-              else max_by(.createdAt) end)'
+            $jq -c 'group_by(.workflowName) | map(max_by([.createdAt, .databaseId]))'
           }
         '';
 
-        # A run's `createdAt` is what a naive newest-wins pick would trust,
-        # and this is the case where trusting it reads the wrong run: the
-        # cancelled one recorded a later timestamp than the sibling that
-        # replaced it. That is the shape bdi-7ao.142.12 actually hit — the
-        # bead's own measurement, invented here rather than captured, per
-        # this repo's rule that only invented ground goes in the tree.
+        # `max_by(.createdAt)` alone breaks a tie by array position, and
+        # nothing here controls what order gh hands the tied pair back in —
+        # so a fixture has to cover both orderings to show the databaseId
+        # tiebreak is what decides it, not a fixture that happens to agree
+        # with gh's usual order. This is bdi-7ao.142.12's own shape, invented
+        # here rather than captured, per this repo's rule that only invented
+        # ground goes in the tree.
         pickRunPerWorkflowTest = pkgs.runCommand "pick-run-per-workflow-test" { } ''
           set -u
           jq=${pkgs.jq}/bin/jq
@@ -342,24 +342,44 @@
               "$1" "$2" "$3" "$4"
           }
 
-          # The cancelled run's own createdAt is the later of the two, so
-          # picking on createdAt alone would choose it over the sibling that
-          # is still going.
+          # Tied createdAt, cancelled run listed first — the array order a
+          # naive tiebreak would already get right, so this alone would not
+          # catch a databaseId regression.
           got="$(printf '[%s,%s]' \
-              "$(run CI cancelled 2026-09-10T10:00:01Z 1)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
               "$(run CI in_progress 2026-09-10T10:00:00Z 2)" \
             | pick_run_per_workflow)"
           [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
-            fail "did not prefer the live sibling over the later-created cancelled run:"
+            fail "did not prefer the live sibling when it was listed second:"
+
+          # The same tie, cancelled run listed last instead — the ordering
+          # that trips a bare array-position tiebreak, since the cancelled
+          # run now sits where a naive pick would take it.
+          got="$(printf '[%s,%s]' \
+              "$(run CI in_progress 2026-09-10T10:00:00Z 2)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
+            fail "did not prefer the live sibling when it was listed first:"
 
           # The same shape, but the sibling has already concluded rather
           # than still running.
           got="$(printf '[%s,%s]' \
-              "$(run CI cancelled 2026-09-10T10:00:01Z 1)" \
               "$(run CI success 2026-09-10T10:00:00Z 2)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
             | pick_run_per_workflow)"
           [ "$(printf '%s' "$got" | $jq '.[0].databaseId')" = 2 ] ||
-            fail "did not prefer the finished sibling over the later-created cancelled run:"
+            fail "did not prefer the finished sibling over the tied cancelled run:"
+
+          # An old success is not a live sibling: a genuinely later
+          # cancellation — no tie, no sibling, just a fresh run somebody
+          # killed — still reads as cancelled rather than as the stale pass.
+          got="$(printf '[%s,%s]' \
+              "$(run CI success 2026-01-01T10:00:00Z 1)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 2)" \
+            | pick_run_per_workflow)"
+          [ "$(printf '%s' "$got" | $jq -r '.[0].conclusion')" = cancelled ] ||
+            fail "preferred a stale old success over a genuinely later cancellation:"
 
           # Every run in the group was cancelled, so there is no sibling to
           # prefer, and this still answers with one of them rather than
@@ -370,10 +390,9 @@
             fail "lost the only run when every run in the group was cancelled:"
 
           # A second workflow's own single run on the same sha stays its own
-          # pick, unaffected by the other workflow's cancelled-with-a-live-
-          # sibling group.
+          # pick, unaffected by the other workflow's tied cancel/live group.
           got="$(printf '[%s,%s,%s]' \
-              "$(run CI cancelled 2026-09-10T10:00:01Z 1)" \
+              "$(run CI cancelled 2026-09-10T10:00:00Z 1)" \
               "$(run CI success 2026-09-10T10:00:00Z 2)" \
               "$(run Release success 2026-09-10T10:00:00Z 3)" \
             | pick_run_per_workflow)"
