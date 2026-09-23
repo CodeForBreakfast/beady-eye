@@ -8,6 +8,42 @@ use anyhow::bail;
 
 use crate::model::types::{Bead, Edge};
 
+/// Compare two ids the way a reader would: a run of digits compares by its
+/// value rather than character by character, so `t.2` sorts before `t.10`.
+/// Everything else — letters, punctuation, digit runs of equal value —
+/// compares as written.
+fn numeric_id_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        return match (a.peek(), b.peek()) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let digits = |it: &mut std::iter::Peekable<std::str::Chars>| -> String {
+                    std::iter::from_fn(|| it.next_if(char::is_ascii_digit)).collect()
+                };
+                let (a_digits, b_digits) = (digits(&mut a), digits(&mut b));
+                let (a_value, b_value): (u128, u128) = (
+                    a_digits.parse().unwrap_or(u128::MAX),
+                    b_digits.parse().unwrap_or(u128::MAX),
+                );
+                match a_value.cmp(&b_value) {
+                    std::cmp::Ordering::Equal => match a_digits.cmp(&b_digits) {
+                        std::cmp::Ordering::Equal => continue,
+                        other => other,
+                    },
+                    other => other,
+                }
+            }
+            (Some(_), Some(_)) => match a.next().cmp(&b.next()) {
+                std::cmp::Ordering::Equal => continue,
+                other => other,
+            },
+        };
+    }
+}
+
 /// One way down from a bead to a bead beneath it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
@@ -64,7 +100,8 @@ pub struct Assembled {
 pub struct Nesting<'a> {
     by_id: BTreeMap<&'a str, &'a Bead>,
     /// The beads beneath each bead, in render order: siblings sort by state,
-    /// then priority, then id.
+    /// then priority, then id in numeric order — so `.2` comes before `.10`
+    /// on an epic with more than nine children.
     children: BTreeMap<&'a str, Vec<&'a str>>,
     /// Beads naming a dependency the answer does not hold, of any kind.
     waiting_on_the_absent: BTreeSet<&'a str>,
@@ -137,7 +174,7 @@ impl<'a> Nesting<'a> {
                         .rank()
                         .cmp(&b.status.rank())
                         .then(a.priority.cmp(&b.priority))
-                        .then_with(|| a.id.cmp(&b.id))
+                        .then_with(|| numeric_id_order(&a.id, &b.id))
                 });
                 (parent, kids)
             })
@@ -1043,6 +1080,21 @@ mod tests {
         let a = assembled(json, "t");
 
         assert_eq!(ids(&a), vec!["t", "t.d", "t.f", "t.c", "t.a", "t.b", "t.e"]);
+    }
+
+    #[test]
+    fn siblings_with_the_same_state_and_priority_order_numerically_by_id() {
+        // String order puts "t.10" and "t.100" before "t.2"; a hundred-step
+        // epic wants them numeric.
+        let json = tracker(&[
+            bead("t", "open", &[]),
+            bead("t.2", "open", &[dep("t", "parent-child")]),
+            bead("t.10", "open", &[dep("t", "parent-child")]),
+            bead("t.100", "open", &[dep("t", "parent-child")]),
+        ]);
+        let a = assembled(&json, "t");
+
+        assert_eq!(ids(&a), vec!["t", "t.2", "t.10", "t.100"]);
     }
 
     #[test]
