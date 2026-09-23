@@ -105,7 +105,17 @@ jobs:
             exit 0
           fi
 
-          released() { git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; }
+          released() {
+            git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null
+            case $? in
+              0) return 0 ;;
+              2) return 1 ;;
+              *)
+                echo "::error::git ls-remote failed looking up v$version"
+                exit 1
+                ;;
+            esac
+          }
 
           if [ ! -f "RELEASE-NOTES/$version.md" ]; then
             released || {
