@@ -304,7 +304,7 @@ mod tests {
             with_findings: 0,
             held: Some(Counts {
                 total: 12,
-                closed: 4,
+                finished: 4,
                 live_agents: 2,
                 anomalies: 1,
             }),
@@ -331,7 +331,7 @@ mod tests {
             with_findings: 0,
             held: Some(Counts {
                 total: 12,
-                closed: 4,
+                finished: 4,
                 live_agents: 2,
                 anomalies: 1,
             }),
@@ -359,7 +359,7 @@ mod tests {
             with_findings: 0,
             held: Some(Counts {
                 total: 9,
-                closed: 9,
+                finished: 9,
                 live_agents: 0,
                 anomalies: 0,
             }),

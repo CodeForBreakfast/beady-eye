@@ -189,7 +189,7 @@ impl Walk<'_> {
             }
             Cell::Progress => {
                 if let Some(progress) = row.progress {
-                    walked.cell(Span::raw(done(progress.closed, progress.total)));
+                    walked.cell(Span::raw(done(progress.finished, progress.total)));
                 }
             }
             Cell::Agent => {
@@ -382,7 +382,7 @@ mod tests {
             Status::InProgress,
         ));
         epic.progress = Some(row::Progress {
-            closed: 3,
+            finished: 3,
             total: 8,
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
@@ -413,7 +413,7 @@ mod tests {
             Status::InProgress,
         ));
         epic.progress = Some(row::Progress {
-            closed: 3,
+            finished: 3,
             total: 8,
         });
         epic.agent = Some(row::agent_marker(&a_pane()));
@@ -557,7 +557,7 @@ mod tests {
             Status::InProgress,
         ));
         shut.progress = Some(row::Progress {
-            closed: 1,
+            finished: 1,
             total: 22,
         });
         shut.shut_over = Some(counts(1, 22, 4, 0));
@@ -887,7 +887,7 @@ mod tests {
         ];
         let mut epic = row(&badged);
         epic.progress = Some(row::Progress {
-            closed: 3,
+            finished: 3,
             total: 8,
         });
         epic.agent = Some(row::agent_marker(&a_pane()));

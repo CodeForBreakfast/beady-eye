@@ -213,8 +213,8 @@ fn finding(note: Note) -> (String, Style) {
 
 /// How far along something is. A tree and one epic inside it ask the same
 /// question of different scopes, so they answer it in the same words.
-pub(super) fn done(closed: usize, total: usize) -> String {
-    format!("{closed}/{total}")
+pub(super) fn done(finished: usize, total: usize) -> String {
+    format!("{finished}/{total}")
 }
 
 /// Put a cell in a row's state block, beside the ones already there.
@@ -300,14 +300,14 @@ mod tests {
     }
 
     pub(super) fn counts(
-        closed: usize,
+        finished: usize,
         total: usize,
         live_agents: usize,
         anomalies: usize,
     ) -> Counts {
         Counts {
             total,
-            closed,
+            finished,
             live_agents,
             anomalies,
         }

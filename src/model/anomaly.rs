@@ -140,6 +140,23 @@ mod tests {
         assert_eq!(got, vec![Anomaly::StalePane]);
     }
 
+    /// A stale pane is a claim that outlived the bead somebody closed. bd
+    /// keeps a pinned bead indefinitely and never closes it, so a pane on one
+    /// has outlived nothing.
+    #[test]
+    fn a_pane_on_a_pinned_bead_is_not_a_stale_pane() {
+        let got = detect(
+            &bead("pinned", YESTERDAY),
+            Some(&live()),
+            None,
+            ProviderState::Answering,
+            false,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(got, Vec::new());
+    }
+
     #[test]
     fn a_pane_that_has_finished_still_outlived_its_closed_bead() {
         let got = detect(

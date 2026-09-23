@@ -26,6 +26,9 @@ pub(crate) const STATUS_IN_PROGRESS: Style = Style::new().fg(Color::Rgb(255, 180
 pub(crate) const STATUS_BLOCKED: Style = Style::new().fg(Color::Rgb(242, 109, 120));
 pub(crate) const STATUS_CLOSED: Style = Style::new().fg(Color::Rgb(128, 144, 160));
 pub(crate) const STATUS_DEFERRED: Style = Style::new().fg(Color::Rgb(108, 118, 128));
+/// Read off `bd` 1.3.0's source rather than its output: `ColorStatusPinned`,
+/// the same value on a light background as a dark one.
+pub(crate) const STATUS_PINNED: Style = Style::new().fg(Color::Rgb(210, 166, 255));
 
 /// `bd` sends no escape at all for an open bead, and a glyph that inherits is
 /// what lets the brightness of the row it sits on reach it.

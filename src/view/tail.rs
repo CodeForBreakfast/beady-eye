@@ -281,7 +281,7 @@ mod tests {
             title: "lift the ground station".to_string(),
             counts: Counts {
                 total: 5,
-                closed: 0,
+                finished: 0,
                 live_agents: 2,
                 anomalies: 0,
             },
