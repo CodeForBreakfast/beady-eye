@@ -218,7 +218,7 @@ pub struct Readiness {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Counts {
     pub total: usize,
-    pub closed: usize,
+    pub finished: usize,
     pub live_agents: usize,
     /// Beads carrying at least one anomaly, not rules fired. Every other count
     /// here counts beads, and a header's warning count sends a reader looking
@@ -227,10 +227,10 @@ pub struct Counts {
 }
 
 impl Counts {
-    /// The beads a tree still holds a call on. A closed one is a row on the
-    /// screen and nothing anybody has left to do.
+    /// The beads a tree still holds a call on. A closed or pinned one is a
+    /// row on the screen and nothing anybody has left to do.
     pub(crate) fn unfinished(&self) -> usize {
-        self.total - self.closed
+        self.total - self.finished
     }
 
     /// What these beads add up to, each counted once.
@@ -249,7 +249,7 @@ impl Counts {
             .collect();
         Counts {
             total: once.len(),
-            closed: once.iter().filter(|n| n.status.is_closed()).count(),
+            finished: once.iter().filter(|n| n.status.is_finished()).count(),
             live_agents: once.iter().filter(|n| n.agent.is_some()).count(),
             anomalies: once.iter().filter(|n| !n.anomalies.is_empty()).count(),
         }

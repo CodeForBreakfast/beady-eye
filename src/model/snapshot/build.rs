@@ -267,7 +267,7 @@ mod tests {
             t.counts,
             Counts {
                 total: 5,
-                closed: 1,
+                finished: 1,
                 live_agents: 2,
                 anomalies: 2,
             }
@@ -848,7 +848,7 @@ render = "⇢ {repo} #{number}"
         assert_eq!(rows(&t).len(), 6, "a copy per way down");
         assert_eq!(t.beads.len(), 4, "held once each");
         assert_eq!(t.counts.total, 4);
-        assert_eq!(t.counts.closed, 1);
+        assert_eq!(t.counts.finished, 1);
     }
 
     #[test]

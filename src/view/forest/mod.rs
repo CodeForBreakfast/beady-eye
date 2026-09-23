@@ -3666,7 +3666,7 @@ credential_command = "secret harbour"
         assert_eq!(
             row_of(&forest, "dun-7.1").progress,
             Some(Progress {
-                closed: 0,
+                finished: 0,
                 total: 3
             })
         );
@@ -3683,9 +3683,46 @@ credential_command = "secret harbour"
         assert_eq!(
             progress_of(&tree, at, &above),
             Some(Progress {
-                closed: 4,
+                finished: 4,
                 total: 4
             })
+        );
+    }
+
+    /// bd keeps a pinned bead indefinitely and never counts it as work: not
+    /// ready, not blocking, out of its default list. So it is finished here,
+    /// counted on the done side of a fraction and swept into a run beside the
+    /// closed beads it sits with.
+    #[test]
+    fn a_pinned_bead_folds_and_counts_as_finished_work() {
+        const PINNED: &str = r#"[
+          {"id":"pin-1","title":"stock the depot","status":"open"},
+          {"id":"pin-1.1","title":"count the crates","status":"in_progress",
+           "dependencies":[{"depends_on_id":"pin-1","type":"parent-child"}]},
+          {"id":"pin-1.2","title":"sweep the floor","status":"closed",
+           "dependencies":[{"depends_on_id":"pin-1","type":"parent-child"}]},
+          {"id":"pin-1.3","title":"the loading rota","status":"pinned",
+           "dependencies":[{"depends_on_id":"pin-1","type":"parent-child"}]},
+          {"id":"pin-1.4","title":"oil the doors","status":"closed",
+           "dependencies":[{"depends_on_id":"pin-1","type":"parent-child"}]}
+        ]"#;
+        let tree = tree_of("dunwich", PINNED);
+
+        assert_eq!(
+            progress_of(&tree, 0, &[]),
+            Some(Progress {
+                finished: 3,
+                total: 5
+            })
+        );
+        assert_eq!(
+            sketch(&flatten(alone("dunwich", PINNED, &[]))),
+            vec![
+                "▾ dunwich",
+                "  └── ○ pin-1 stock the depot",
+                "      ├── ◐ .1 count the crates",
+                "      └─▸ … 3 more",
+            ]
         );
     }
 
@@ -3710,7 +3747,7 @@ credential_command = "secret harbour"
         assert_eq!(
             progress_of(&tree, 0, &[]),
             Some(Progress {
-                closed: 1,
+                finished: 1,
                 total: 4
             })
         );
@@ -3941,7 +3978,7 @@ credential_command = "secret harbour"
         assert_eq!(
             row_of(&forest, "cyc-1.1").progress,
             Some(Progress {
-                closed: 1,
+                finished: 1,
                 total: 2
             })
         );
@@ -4317,7 +4354,7 @@ credential_command = "secret harbour"
         assert_eq!(
             row_of(&forest, "dep-1.2").progress,
             Some(Progress {
-                closed: 4,
+                finished: 4,
                 total: 4
             })
         );
@@ -4415,7 +4452,9 @@ credential_command = "secret harbour"
 
         assert_eq!(
             row.notes,
-            vec![phrase::unfinished_beneath(progress.total - progress.closed)]
+            vec![phrase::unfinished_beneath(
+                progress.total - progress.finished
+            )]
         );
     }
 

@@ -1497,7 +1497,7 @@ mod tests {
             title: "a tree with a great many beads".to_string(),
             counts: Counts {
                 total: children.len(),
-                closed: 0,
+                finished: 0,
                 live_agents: 0,
                 anomalies: 0,
             },

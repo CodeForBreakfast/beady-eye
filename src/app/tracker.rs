@@ -306,8 +306,8 @@ fn what_no_root_reached(
 ///
 /// Unfinished rather than claimed: an effort holds the work it has left after
 /// its last seat stands down, and a rule that noticed only a claim lost the
-/// whole tree at that moment. `closed` is the only status bd stores that this
-/// leaves out, and that is the whole of the rule.
+/// whole tree at that moment. `closed` and `pinned` are the statuses bd
+/// stores that this leaves out, and that is the whole of the rule.
 ///
 /// Wisps are in the listing too, and one with no parent is a root of its own:
 /// every step of a bd molecule hangs under it, so the one rootless row is the
@@ -315,7 +315,7 @@ fn what_no_root_reached(
 fn unfinished(beads: &[Bead]) -> impl Iterator<Item = &str> {
     beads
         .iter()
-        .filter(|bead| !bead.status.is_closed())
+        .filter(|bead| !bead.status.is_finished())
         .map(|bead| bead.id.as_str())
 }
 
@@ -635,9 +635,10 @@ dunwich = ["dun-4"]
     /// The shapes this project's own tracker held on 2026-09-02, drawn from
     /// the one listing: a closed epic over open work, an epic finished whole,
     /// a deferred bead, a wisp left open under no parent, a wisp closed, and
-    /// a closed bead still carrying a `working_topic`.
+    /// a closed bead still carrying a `working_topic` — and a pinned bead,
+    /// which bd keeps indefinitely and never counts as work.
     #[test]
-    fn discovery_names_every_unfinished_bead_and_wisp_and_nothing_closed() {
+    fn discovery_names_every_unfinished_bead_and_wisp_and_nothing_finished() {
         let listing = r#"[
           {"id":"dun-7","title":"lift the ground station","status":"closed",
            "priority":1,"issue_type":"epic"},
@@ -651,6 +652,8 @@ dunwich = ["dun-4"]
            "priority":2,"issue_type":"task",
            "metadata":{"working_topic":"dunwich/v1-dun-8.1"}},
           {"id":"dun-9","title":"wait for the permit","status":"deferred",
+           "priority":3,"issue_type":"task"},
+          {"id":"dun-10","title":"the site survey notes","status":"pinned",
            "priority":3,"issue_type":"task"}
         ]"#;
         let wisps = r#"[
