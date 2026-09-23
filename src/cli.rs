@@ -36,10 +36,10 @@ const NO_TERMINAL: u8 = 2;
 #[derive(Parser)]
 #[command(name = "bdi", version, about = "A tree of work in flight")]
 struct Cli {
-    /// Draw the tree this bead roots, alongside the trees bdi discovers.
-    /// Write it as <project>:<bead-id> where bdi is reading more than one
-    /// project; a bare id means the one project being read. A root under a
-    /// project the directory left out reads that project too.
+    /// Draw the tree this bead roots, in place of every other tree of its
+    /// project. Write it as <project>:<bead-id> where bdi is reading more
+    /// than one project; a bare id means the one project being read. A root
+    /// under a project the directory left out reads that project too.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
 
@@ -712,7 +712,7 @@ detached
 
         assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("ferry".to_string(), vec!["fer-1".to_string()])])
         );
         assert!(
@@ -766,7 +766,7 @@ detached
         .config;
 
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("dunwich".to_string(), vec!["dun-7".to_string()])])
         );
 

@@ -219,6 +219,11 @@ pub struct Roots {
     /// Bead prefixes are per-tracker and uncoordinated, so an id on its own
     /// names nothing bdi can go and read.
     pub explicit: BTreeMap<String, Vec<String>>,
+    /// The roots the command line names, under the project each is in. A
+    /// project here draws these trees and no others: nothing is discovered
+    /// in it, and what `explicit` names for it is not read.
+    #[serde(skip)]
+    pub named_on_the_command_line: BTreeMap<String, Vec<String>>,
 }
 
 /// A badge opens a table, so every key written after `[[projects.badges]]`
@@ -885,18 +890,21 @@ impl Config {
         self
     }
 
-    /// Roots named on the command line join those named in config: discovery
-    /// rule 3 has two spellings and one meaning. `<project>:<bead-id>` says
-    /// whose tracker holds the bead; a bare id can only mean the one project
-    /// being read, so the terse form survives exactly as far as it is
-    /// unambiguous.
+    /// Roots named on the command line replace every other root of their
+    /// project. `<project>:<bead-id>` says whose tracker holds the bead; a
+    /// bare id can only mean the one project being read, so the terse form
+    /// survives exactly as far as it is unambiguous.
     pub fn with_roots_named_on_the_command_line(
         mut self,
         beads: &[String],
     ) -> anyhow::Result<Self> {
         for named in beads {
             let (project, id) = self.placed(named)?;
-            self.roots.explicit.entry(project).or_default().push(id);
+            self.roots
+                .named_on_the_command_line
+                .entry(project)
+                .or_default()
+                .push(id);
         }
         Ok(self)
     }
@@ -1181,6 +1189,7 @@ path = "/home/user/dev/cinder"
                     ),
                     ("kadath".to_string(), vec!["b-1".to_string()]),
                 ]),
+                named_on_the_command_line: BTreeMap::new(),
             }
         );
         assert_eq!(
@@ -1940,23 +1949,20 @@ path = "/home/user/dev/arkham-fork"
             .expect("kadath is configured");
 
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
 
     #[test]
-    fn a_root_from_the_command_line_joins_those_the_config_names() {
+    fn a_root_from_the_command_line_is_kept_apart_from_those_the_config_names() {
         let cfg = Config::from_toml(EVERY_SECTION)
             .expect("the config parses")
             .with_roots_named_on_the_command_line(&["arkham:a-3".to_string()])
             .expect("arkham is configured");
 
-        assert_eq!(
-            cfg.roots.explicit["arkham"],
-            ["a-1", "a-9", "a-3"],
-            "the command line appends rather than replacing"
-        );
+        assert_eq!(cfg.roots.explicit["arkham"], ["a-1", "a-9"]);
+        assert_eq!(cfg.roots.named_on_the_command_line["arkham"], ["a-3"]);
     }
 
     #[test]
@@ -1967,7 +1973,7 @@ path = "/home/user/dev/arkham-fork"
             .expect("there is only one project it can mean");
 
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
@@ -2128,7 +2134,7 @@ path = "/home/user/dev/inner"
 
         assert_eq!(read_by(&cfg), ["arkham", "kadath"]);
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("arkham".to_string(), vec!["a-1".to_string()])])
         );
         assert_eq!(
@@ -2150,7 +2156,7 @@ path = "/home/user/dev/inner"
             .expect("the directory leaves only kadath");
 
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
@@ -2225,7 +2231,7 @@ path = "/home/user/dev/inner"
             .expect("the scope leaves only kadath");
 
         assert_eq!(
-            cfg.roots.explicit,
+            cfg.roots.named_on_the_command_line,
             BTreeMap::from([("kadath".to_string(), vec!["b-7".to_string()])])
         );
     }
