@@ -776,7 +776,7 @@ mod tests {
     use ratatui::style::Modifier;
     use ratatui::Terminal;
 
-    use crate::view::painted::{Painted, Run};
+    use crate::view::painted::{symbols, Painted, Run};
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
 
@@ -2456,9 +2456,7 @@ mod tests {
             .collect()
     }
 
-    /// Every symbol the window drew, escapes and all, for a test about a
-    /// hyperlink — which is written into the cell the link starts on and is
-    /// not among the words a reader sees.
+    /// Every symbol the window drew, escapes and all.
     fn symbols_of(node: &Node, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
         terminal
@@ -2473,14 +2471,7 @@ mod tests {
                 );
             })
             .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        let mut said = String::new();
-        for y in buffer.area.top()..buffer.area.bottom() {
-            for x in buffer.area.left()..buffer.area.right() {
-                said.push_str(buffer[(x, y)].symbol());
-            }
-        }
-        said
+        symbols(terminal.backend().buffer())
     }
 
     /// `bdi-0d4p`: the head is the forest row unfolded, so everything the row
