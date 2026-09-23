@@ -91,8 +91,8 @@ const NO_ANSWER: [&str; 4] = [
 /// What bd says to a statement its store cannot run: `bd sql` against its
 /// embedded Dolt, which has no server for the statement to reach. Measured
 /// 2026-09-02 on bd 1.2.2: `Error: 'bd sql' is not yet supported in embedded
-/// mode`, exit 1, nothing on stdout; the same words from 1.0.4, 1.1.0 and
-/// 1.1.2.
+/// mode`, exit 1, nothing on stdout; the same words from 1.0.4, 1.1.0, 1.1.2
+/// and, on 2026-09-23, 1.3.0.
 const CANNOT_RUN: &str = "not yet supported";
 
 /// What cobra, bd's command-line parser, says to a flag or subcommand it does
