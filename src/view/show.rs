@@ -1790,12 +1790,14 @@ mod tests {
 
     /// One of each status the forest gives a colour, so a loop over them
     /// covers the palette.
-    fn every_coloured_status() -> [Status; 5] {
+    fn every_coloured_status() -> [Status; 7] {
         [
             Status::InProgress,
+            Status::Hooked,
             Status::Blocked,
             Status::Closed,
             Status::Deferred,
+            Status::Pinned,
             Status::Other("triage".into()),
         ]
     }

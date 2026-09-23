@@ -636,7 +636,8 @@ dunwich = ["dun-4"]
     /// the one listing: a closed epic over open work, an epic finished whole,
     /// a deferred bead, a wisp left open under no parent, a wisp closed, and
     /// a closed bead still carrying a `working_topic` — and a pinned bead,
-    /// which bd keeps indefinitely and never counts as work.
+    /// which bd keeps indefinitely and never counts as work, beside a hooked
+    /// one, which bd counts as work in flight.
     #[test]
     fn discovery_names_every_unfinished_bead_and_wisp_and_nothing_finished() {
         let listing = r#"[
@@ -654,7 +655,9 @@ dunwich = ["dun-4"]
           {"id":"dun-9","title":"wait for the permit","status":"deferred",
            "priority":3,"issue_type":"task"},
           {"id":"dun-10","title":"the site survey notes","status":"pinned",
-           "priority":3,"issue_type":"task"}
+           "priority":3,"issue_type":"task"},
+          {"id":"dun-11","title":"calibrate the receiver","status":"hooked",
+           "priority":2,"issue_type":"task"}
         ]"#;
         let wisps = r#"[
           {"id":"dun-wisp-a1","title":"heartbeat","status":"open",
@@ -674,8 +677,8 @@ dunwich = ["dun-4"]
         let roots: BTreeSet<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(
             roots,
-            BTreeSet::from(["dun-7", "dun-9", "dun-wisp-a1"]),
-            "the open task climbs to its closed epic; the deferred bead and the open wisp are roots of their own"
+            BTreeSet::from(["dun-7", "dun-9", "dun-11", "dun-wisp-a1"]),
+            "the open task climbs to its closed epic; the deferred bead, the hooked bead and the open wisp are roots of their own"
         );
     }
 

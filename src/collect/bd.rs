@@ -615,6 +615,7 @@ mod tests {
             "closed",
             "deferred",
             "pinned",
+            "hooked",
         ];
         let expected = [
             Status::Open,
@@ -623,6 +624,7 @@ mod tests {
             Status::Closed,
             Status::Deferred,
             Status::Pinned,
+            Status::Hooked,
         ];
 
         for (spelling, want) in spellings.iter().zip(expected) {
@@ -904,6 +906,7 @@ mod tests {
             Status::Deferred,
             Status::Pinned,
             Status::Blocked,
+            Status::Hooked,
         ];
         statuses.sort_by_key(Status::rank);
 
@@ -911,6 +914,7 @@ mod tests {
             statuses,
             vec![
                 Status::InProgress,
+                Status::Hooked,
                 Status::Blocked,
                 Status::Open,
                 Status::Deferred,
@@ -922,6 +926,7 @@ mod tests {
         assert!(Status::Closed.is_closed());
         assert!(!Status::Open.is_closed());
         assert!(!Status::Pinned.is_closed());
+        assert!(!Status::Hooked.is_closed());
     }
 
     #[test]
@@ -933,6 +938,7 @@ mod tests {
             Status::InProgress,
             Status::Blocked,
             Status::Deferred,
+            Status::Hooked,
             Status::Other("marinating".to_string()),
         ] {
             assert!(!live.is_finished(), "{live:?}");
