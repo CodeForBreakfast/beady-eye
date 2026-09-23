@@ -531,7 +531,7 @@ candidate. **The climb to a root is answered from the rows already read**:
 every `bd list` row carries the bead's own `parent`, so a closed bead above
 open work — the shape discovery never names — costs no further call.
 
-**`bd sql --json "SELECT dolt_hashof_db() AS h"` is the probe** that gates all
+**One `bd sql --json` hashing every table but `leases` is the probe** that gates all
 of the above — see *Reading a tracker only when it has changed*.
 
 What we still redo is the **rendering**. bd's text tree emits broken glyphs —
@@ -1523,25 +1523,58 @@ read ends.
 ### Reading a tracker only when it has changed
 
 Almost every poll finds nothing has moved. So a refresh asks the tracker
-whether it has before asking it anything else: one `bd sql --json "SELECT
-dolt_hashof_db() AS h"` for the **Dolt working root**, which hashes everything
-the database holds, committed or not — including the wisps, which live in
-`dolt_ignore`d tables and never move the committed head. A project whose root
-is where the last successful read left it is done there, and its freshness is
-as good as if the cascade had run: a skipped read is a successful read, and
-the project line says so. A project whose root has moved is read in full.
+whether it has before asking it anything else: one `bd sql --json` that
+answers `dolt_hashof_table` for **every base table in the Dolt working set
+except `leases`**, a row each, which `bdi` folds into one fingerprint. The
+working set holds everything the database does, committed or not — including
+the wisps, which live in `dolt_ignore`d tables and never move the committed
+head. A project whose fingerprint is where the last successful read left it
+is done there, and its freshness is as good as if the cascade had run: a
+skipped read is a successful read, and the project line says so. A project
+whose fingerprint has moved is read in full.
 
-Measured 2026-09-01 against this project's tracker with bd 1.2.2: the probe
-0.203–0.205 s against 1.53 s for the cascade; a read does not move the root
-(three probes with a full `bd list --all` and a `bd query` between them
-returned the same hash); a wisp write moves the working root and leaves the
-head identical, which is why the head was rejected as the probe; an ordinary
-bead write moves both.
+Measured 2026-09-01 against this project's tracker with bd 1.2.2, when the
+probe was the whole working root, `dolt_hashof_db()`: the probe 0.203–0.205 s
+against 1.53 s for the cascade; a read does not move the root (three probes
+with a full `bd list --all` and a `bd query` between them returned the same
+hash); a wisp write moves the working root and leaves the head identical,
+which is why the head was rejected as the probe; an ordinary bead write moves
+both.
 
-Three things it has to get right. The root is stored only after the cascade
-that followed it succeeded, or a failed read would be sticky. A tracker that
-cannot answer the probe — a SQLite-backed one has no `dolt_hashof_db` — gets
-the cascade, never "nothing changed": degrade, never disappear. Within that,
+**`leases` is left out because a heartbeat writes it and nothing else.** From
+beads 1.3.0 a claimed bead's lease lives in that table, which is
+`dolt_ignore`d, and a heartbeat is an `UPDATE leases` with no Dolt commit. It
+moved the whole working root on every heartbeat, so a tracker with a live
+claim was read in full on nearly every poll. Measured 2026-09-23 on throwaway
+1.3.0 and 1.2.2 stores, reading the whole root and this probe after each
+step:
+
+| step | whole root | this probe |
+|---|---|---|
+| idle | still | still |
+| claim | moves | moves |
+| heartbeat, twice (1.3.0) | moves each time | still |
+| wisp create | moves | moves |
+| plain update | moves | moves |
+| a full read | still | still |
+
+On a 1.2.2 tracker there is no `leases` table, and the probe moves exactly
+when the whole root does. The two cost the same to within noise. What it
+gives up is the lease itself: a 1.3.0 `bd list --json` carries
+`lease_expires_at` and `heartbeat_at` on every row, and a heartbeat changes
+them without moving the probe. `bdi` draws neither. A feature that draws a
+lease field has to put `leases` back into the probe.
+
+The hashes come back a row each rather than as one `GROUP_CONCAT`, because
+Dolt cuts that at `group_concat_max_len`, 1024 bytes by default, and ignores
+a `SET_VAR` hint raising it. A 1.3.0 tracker's hashes already come to 956
+bytes, and a cut would leave every table past it unable to move the probe.
+
+Three things it has to get right. The fingerprint is stored only after the
+cascade that followed it succeeded, or a failed read would be sticky. A
+tracker that cannot answer the probe — a SQLite-backed one has no
+`dolt_hashof_table` — gets the cascade, never "nothing changed": degrade,
+never disappear. Within that,
 a tracker that *refuses* the probe is told from a server that did not answer
 it, because the two want different next moves. bd's default store is its
 embedded Dolt, and `bd sql` there is refused with `'bd sql' is not yet
@@ -1550,11 +1583,11 @@ supported in embedded mode` on every bd from 1.0.4 to 1.2.2 (measured
 the tracker is read in full from then on with no probe process in front of
 it. A server that did not answer is asked again next refresh, so an outage
 never costs the fast path once the server is back. And where a
-producer's message arrives for a project whose root has not moved, the probe
-wins and the cascade is skipped: bd commits before it returns and a wrapper
-pings after, so a real write has already moved the root by the time the
-message lands, and an unmoved root means the write was a no-op or the producer
-was wrong.
+producer's message arrives for a project whose fingerprint has not moved, the
+probe wins and the cascade is skipped: bd commits before it returns and a
+wrapper pings after, so a real write has already moved the fingerprint by the
+time the message lands, and an unmoved fingerprint means the write was a no-op
+or the producer was wrong.
 
 `bd sql` is the one subcommand `--readonly` does not veto, so the guard the
 flag gives the rest does not reach it. What stands in its place is `bdi`'s own

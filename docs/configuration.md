@@ -546,7 +546,7 @@ whatever the row says.
 ## Telling `bdi` a project changed
 
 `bdi` polls, and most polls find nothing moved. A poll first asks the tracker
-whether anything has changed (one `bd sql` for the Dolt working root) and only
+whether anything has changed (one `bd sql` for a hash of its Dolt tables) and only
 reads in full if it has. That probe needs a Dolt server; bd's embedded store
 refuses it, and `bdi` then reads in full on every poll.
 

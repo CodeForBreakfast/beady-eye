@@ -339,7 +339,7 @@ impl Reader<'_> {
     /// general executor, bd's own help for it warns that direct database
     /// access bypasses the storage layer, and `--readonly` does not veto it —
     /// measured against this project's own tracker on 2026-09-01. What holds
-    /// there instead is `WORKING_ROOT`, a constant nothing composes, reached
+    /// there instead is `TABLE_HASHES`, a constant nothing composes, reached
     /// from one method that takes no argument.
     fn asked(&self, subcommand: &[&str]) -> Result<String, RunFailure> {
         let named = self.path.to_string_lossy();
@@ -350,29 +350,38 @@ impl Reader<'_> {
             .map_err(|failure| failure.reading(subcommand[0]))
     }
 
-    /// The tracker's Dolt working root: one hash over everything the
-    /// database holds, committed or not.
+    /// Every table's hash in the Dolt working set bar `leases`, folded into
+    /// one string: it moves when anything `bdi` reads is written, committed
+    /// or not.
     ///
     /// Not the committed head, because `bdi` reads wisps and the head cannot
     /// see them. `wisps` and `wisp_%` are in `dolt_ignore`, so they live in
     /// the working set and never reach `dolt_log` — measured against this
     /// project's own tracker on 2026-09-01, one `bd create --ephemeral` left
-    /// `hashof('HEAD')` identical either side of it and moved this. A caller
-    /// gating on the head would leave a wisp-only change off the screen until
-    /// some unrelated write moved it.
+    /// `hashof('HEAD')` identical either side of it and moved the working set.
     ///
-    /// A read does not move it: three of these with a whole cascade between
-    /// them answered the same hash, measured the same day. That is what makes
-    /// it worth asking, because a hash that moved on being read would report
-    /// a change every time and cost 0.2s to learn nothing.
-    fn working_root(&self) -> Result<String, RunFailure> {
-        let out = self.asked(&["sql", "--json", WORKING_ROOT])?;
-        let rows: Vec<HashRow> =
+    /// Not the whole working root either, because from beads 1.3.0 a lease
+    /// heartbeat writes `leases` alone, an ignored table, and so moves the
+    /// root every few minutes for as long as a bead is claimed. `bdi` draws
+    /// nothing a lease carries. Measured 2026-09-23 on throwaway 1.3.0 and
+    /// 1.2.2 stores, this held still across two heartbeats and a full read,
+    /// and moved on a claim, a wisp and a plain update.
+    ///
+    /// A row per table rather than one `GROUP_CONCAT`, because Dolt cuts that
+    /// at `group_concat_max_len`, 1024 bytes, and ignores a `SET_VAR` hint
+    /// raising it; a 1.3.0 tracker already comes to 956.
+    fn tables_hashed(&self) -> Result<String, RunFailure> {
+        let out = self.asked(&["sql", "--json", TABLE_HASHES])?;
+        let rows: Vec<TableHash> =
             serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e).reading("sql"))?;
-        rows.into_iter()
-            .next()
-            .map(|row| row.h)
-            .ok_or_else(|| RunFailure::parse("bd", "the answer holds no row").reading("sql"))
+        if rows.is_empty() {
+            return Err(RunFailure::parse("bd", "the answer holds no row").reading("sql"));
+        }
+        Ok(rows
+            .iter()
+            .map(|row| format!("{}={}", row.name, row.h))
+            .collect::<Vec<_>>()
+            .join(","))
     }
 
     /// A tracker's wisps, closed ones included.
@@ -397,7 +406,7 @@ impl Tracker for Reader<'_> {
         if self.without_a_probe.lock().unwrap().contains(&self.name) {
             return None;
         }
-        match self.working_root() {
+        match self.tables_hashed() {
             Err(failure) if failure.kind == FailureKind::Unsupported => {
                 self.without_a_probe
                     .lock()
@@ -454,17 +463,17 @@ impl Tracker for Reader<'_> {
 
 /// The whole of the SQL `bdi` writes.
 ///
-/// `dolt_hashof_db()` answers for the database bd is already connected to, as
-/// one row and one column. `SHOW VARIABLES LIKE '%_working'` reaches the same
-/// hash and is worse three ways: it answers for every attached database at
-/// once, `skip_networking` matches that pattern as well, and the `@@` form
-/// cannot be quoted through `bd sql` because a database name may hold a
-/// hyphen.
-const WORKING_ROOT: &str = "SELECT dolt_hashof_db() AS h";
+/// `database()` is the one bd is already connected to. Views are left out
+/// because they hold nothing of their own: bd's `ready_issues` and
+/// `blocked_issues` are drawn from tables this already hashes.
+const TABLE_HASHES: &str = "SELECT table_name AS name, dolt_hashof_table(table_name) AS h \
+     FROM information_schema.tables WHERE table_schema = database() \
+     AND table_type = 'BASE TABLE' AND table_name <> 'leases' ORDER BY table_name";
 
-/// The one row `WORKING_ROOT` answers with.
+/// One row `TABLE_HASHES` answers with.
 #[derive(Deserialize)]
-struct HashRow {
+struct TableHash {
+    name: String,
     h: String,
 }
 
@@ -1049,30 +1058,68 @@ mod tests {
     /// The whole invocation the probe makes, spelled out rather than built
     /// from the constant it asserts about: this is the one place `bdi` writes
     /// SQL, and a change to that statement should have to be made twice.
-    const PROBE_CALL: &str = "sql --json SELECT dolt_hashof_db() AS h";
+    const PROBE_CALL: &str =
+        "sql --json SELECT table_name AS name, dolt_hashof_table(table_name) AS h \
+         FROM information_schema.tables WHERE table_schema = database() \
+         AND table_type = 'BASE TABLE' AND table_name <> 'leases' ORDER BY table_name";
 
-    /// A working root as this tracker's Dolt server answers with one,
-    /// captured 2026-09-01.
-    const A_WORKING_ROOT: &str = "24eg8eff89bggt3t50ft6lctiu9rlpts";
+    /// An answer to the probe from a tracker holding `count` tables, with
+    /// the one at `moved` hashing differently from the rest.
+    fn tables_hashed(count: usize, moved: Option<usize>) -> String {
+        let rows: Vec<String> = (0..count)
+            .map(|at| {
+                let h = if Some(at) == moved { "b" } else { "a" }.repeat(32);
+                format!(r#"{{"name":"table_{at:02}","h":"{h}"}}"#)
+            })
+            .collect();
+        format!("[{}]", rows.join(","))
+    }
 
-    #[test]
-    fn the_working_root_is_one_hash_out_of_one_statement() {
-        let runner = FakeRunner::default().with(
-            &spelled(PROBE_CALL),
-            &format!(r#"[{{"h":"{A_WORKING_ROOT}"}}]"#),
-        );
-
-        let root = opened(&runner)
+    /// The fingerprint of a tracker that answers the probe with `answer`.
+    fn fingerprint_of(answer: &str) -> String {
+        let runner = FakeRunner::default().with(&spelled(PROBE_CALL), answer);
+        opened(&runner)
             .fingerprint()
             .expect("bd has a probe")
-            .expect("the tracker answered its working root");
+            .expect("the tracker answered its table hashes")
+    }
 
-        assert_eq!(root, A_WORKING_ROOT);
+    #[test]
+    fn the_fingerprint_is_every_tables_hash_out_of_one_statement() {
+        let runner = FakeRunner::default().with(&spelled(PROBE_CALL), &tables_hashed(2, None));
+
+        let answered = opened(&runner)
+            .fingerprint()
+            .expect("bd has a probe")
+            .expect("the tracker answered its table hashes");
+
+        assert_eq!(
+            answered,
+            fingerprint_of(&tables_hashed(2, None)),
+            "a tracker that has not moved answers the same fingerprint"
+        );
         assert_eq!(
             runner.call(&spelled(PROBE_CALL)).env,
             credentialled(),
             "the probe reaches the tracker on the project's own credential"
         );
+    }
+
+    /// Dolt cuts a `GROUP_CONCAT` at `group_concat_max_len`, 1024 bytes by
+    /// default, and ignores a `SET_VAR` hint raising it, so the hashes come
+    /// back a row each and are folded here. Forty tables is past where that
+    /// cut would fall, and the last of them still moves the fingerprint.
+    #[test]
+    fn a_move_in_any_one_table_moves_the_fingerprint_however_many_there_are() {
+        let unmoved = fingerprint_of(&tables_hashed(40, None));
+
+        for moved in [0, 20, 39] {
+            assert_ne!(
+                fingerprint_of(&tables_hashed(40, Some(moved))),
+                unmoved,
+                "table {moved} of 40 moved and the fingerprint did not"
+            );
+        }
     }
 
     /// bd's refusal of the probe on a store that cannot run it, as the runner
@@ -1164,7 +1211,7 @@ mod tests {
         let harbours_probe = format!("bd -C {} --readonly {PROBE_CALL}", harbour.path.display());
         let runner = FakeRunner::default()
             .failing(&spelled(PROBE_CALL), cannot_run_the_probe())
-            .with(&harbours_probe, &format!(r#"[{{"h":"{A_WORKING_ROOT}"}}]"#));
+            .with(&harbours_probe, &tables_hashed(2, None));
         let cli = launched_with(&runner, None);
 
         assert!(cli
@@ -1179,7 +1226,7 @@ mod tests {
             .expect("harbour's server has a probe")
             .expect("and answered it");
 
-        assert_eq!(root, A_WORKING_ROOT);
+        assert_eq!(root, fingerprint_of(&tables_hashed(2, None)));
     }
 
     /// An answer with no row is a tracker that cannot be compared against,
@@ -1197,7 +1244,7 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::Parse);
     }
 
-    /// A tracker with no `dolt_hashof_db` — a SQLite-backed one — answers
+    /// A tracker with no `dolt_hashof_table` — a SQLite-backed one — answers
     /// with something this cannot read, and that is a failure the caller has
     /// to see rather than a hash it would compare against.
     #[test]

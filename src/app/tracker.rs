@@ -77,7 +77,7 @@ impl From<RootUnread> for TrackerState {
 #[derive(Clone)]
 pub(super) struct ReadAt {
     project: Project,
-    working_root: String,
+    fingerprint: String,
     named: BTreeSet<String>,
     roots: BTreeSet<String>,
     speaks_until: Option<DateTime<Utc>>,
@@ -89,13 +89,13 @@ impl ReadAt {
     fn still_speaks_for(
         &self,
         project: &Project,
-        working_root: &str,
+        fingerprint: &str,
         named: &BTreeSet<String>,
         roots: &BTreeSet<String>,
         now: DateTime<Utc>,
     ) -> bool {
         self.project == *project
-            && self.working_root == working_root
+            && self.fingerprint == fingerprint
             && self.named == *named
             && self.roots == *roots
             && self.speaks_until.is_none_or(|until| now < until)
@@ -159,17 +159,17 @@ pub(super) fn refresh_project(
         .collect();
     let roots = roots_named(cfg, project);
 
-    if let (Some(working_root), Some(standing)) = (probed.as_deref(), standing) {
-        if standing.still_speaks_for(project, working_root, &named, &roots, now) {
+    if let (Some(fingerprint), Some(standing)) = (probed.as_deref(), standing) {
+        if standing.still_speaks_for(project, fingerprint, &named, &roots, now) {
             return Ok(Refresh::Unchanged);
         }
     }
 
     let (work, beads) = read_project(tracker.as_ref(), project, cfg, panes)?;
-    let at = probed.map(|working_root| {
+    let at = probed.map(|fingerprint| {
         Box::new(ReadAt {
             project: project.clone(),
-            working_root,
+            fingerprint,
             named,
             roots,
             speaks_until: speaks_until(&beads, now),
