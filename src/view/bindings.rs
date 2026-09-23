@@ -162,9 +162,7 @@ const MARGINS: u16 = MARGIN * 2;
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use ratatui::backend::TestBackend;
     use ratatui::style::Modifier;
-    use ratatui::Terminal;
 
     use crate::view::painted::Painted;
 
@@ -183,15 +181,14 @@ mod tests {
         ]
     }
 
+    fn painted(bindings: &[(String, &str)], width: u16, height: u16) -> Painted {
+        Painted::drawn_by(width, height, |frame| {
+            key_bindings(frame, frame.area(), bindings);
+        })
+    }
+
     fn bindings_frame(bindings: &[(String, &str)], width: u16, height: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a test backend");
-        terminal
-            .draw(|frame| key_bindings(frame, frame.area(), bindings))
-            .expect("a draw into memory");
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
+        painted(bindings, width, height).rows()
     }
 
     /// The whole view, character for character: a bordered window sized to
@@ -226,9 +223,7 @@ mod tests {
     #[test]
     fn the_way_out_is_drawn_at_a_weight_and_the_bindings_are_not() {
         let bindings = a_few_bindings();
-        let drawn = Painted::drawn_by(60, 5, |frame| {
-            key_bindings(frame, frame.area(), &bindings);
-        });
+        let drawn = painted(&bindings, 60, 5);
 
         let title = drawn
             .row(0)
@@ -437,13 +432,10 @@ mod tests {
     /// draw outside the frame.
     #[test]
     fn a_band_with_no_rows_in_it_draws_nothing() {
-        let mut terminal = Terminal::new(TestBackend::new(20, 1)).expect("a test backend");
-        terminal
-            .draw(|frame| {
-                key_bindings(frame, Rect::new(0, 0, 20, 0), &a_few_bindings());
-            })
-            .expect("a draw into memory");
+        let drawn = Painted::drawn_by(20, 1, |frame| {
+            key_bindings(frame, Rect::new(0, 0, 20, 0), &a_few_bindings());
+        });
 
-        assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), " ");
+        assert_eq!(drawn.rows()[0], " ".repeat(20));
     }
 }
