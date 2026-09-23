@@ -296,7 +296,15 @@ impl Forest {
         // a tracker that reparented it has moved the bead and not lost it.
         self.focused = self.focused.take().and_then(|place| self.rerooted(&place));
         self.spend_folds(&folded_over);
-        self.cursor = ancestry.into_iter().find(|handle| self.present(handle));
+        // A root whose tracker stopped reading, or started again, is the
+        // same line under the other kind of handle.
+        self.cursor = ancestry
+            .into_iter()
+            .map(|handle| match handle {
+                Handle::Bead(place) | Handle::Unread(place) => self.handle_on(&place),
+                other => other,
+            })
+            .find(|handle| self.present(handle));
         self.lay_out();
     }
 
@@ -2584,6 +2592,31 @@ credential_command = "secret harbour"
         assert_eq!(
             forest.place(),
             Some(&Place::root(key("ferry", "fer-2"))),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A selected root whose tracker stops reading keeps the selection on
+    /// its header, however many rows the trees above it lost meanwhile.
+    #[test]
+    fn a_selected_root_keeps_the_selection_when_its_tracker_stops_reading() {
+        let mut forest = flatten(built(Filter::All));
+        select_bead(&mut forest, "hbr-3");
+
+        forest.refresh(gather(
+            vec![
+                Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
+                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                Tree::tracker_unreachable("harbour", "hbr-3", TrackerFailure::Auth),
+            ],
+            Vec::new(),
+            Filter::All,
+        ));
+
+        assert_eq!(
+            forest.place(),
+            Some(&Place::root(key("harbour", "hbr-3"))),
             "{:#?}",
             sketch(&forest)
         );
