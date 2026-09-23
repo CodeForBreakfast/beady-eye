@@ -51,6 +51,13 @@ pub(crate) struct Armed {
     /// way — and nothing for good on a project that does not poll, or whose
     /// interval is too long to reach.
     at: Option<DateTime<Utc>>,
+    /// How long a project that does not poll is taken to be current after
+    /// something last vouched for it, or nothing where it is never said to
+    /// have lapsed.
+    covered_for: Option<Duration>,
+    /// When something last vouched for its rows: a read of it coming back,
+    /// or a word from something covering it.
+    vouched_at: Option<DateTime<Utc>>,
 }
 
 impl Armed {
@@ -66,6 +73,17 @@ impl Armed {
             project,
             every,
             at: None,
+            covered_for: None,
+            vouched_at: None,
+        }
+    }
+
+    /// This project, said to have lapsed once `covered_for` has passed with
+    /// nothing vouching for it, where it does not poll.
+    pub(crate) fn lapsing_after(self, covered_for: Duration) -> Self {
+        Self {
+            covered_for: Some(covered_for),
+            ..self
         }
     }
 
@@ -87,6 +105,7 @@ impl Armed {
     pub(super) fn still_due(self, named: Armed) -> Armed {
         Armed {
             at: named.every.and(self.at),
+            vouched_at: self.vouched_at,
             ..named
         }
     }
@@ -122,6 +141,7 @@ impl Armed {
     pub(super) fn came_back(&mut self, wanted: &Wanted, at: DateTime<Utc>) {
         if wanted.names(&self.project) {
             self.at = self.every.and_then(|every| due_after(at, every));
+            self.vouched_at = Some(at);
         }
     }
 
@@ -136,6 +156,30 @@ impl Armed {
         if self.at.is_some() {
             self.at = self.every.and_then(|every| due_after(at, every));
         }
+        self.vouched_at = Some(at);
+    }
+
+    /// Whether nothing has vouched for this project's rows for longer than
+    /// it may go. Only a project that does not poll can lapse: a polled one
+    /// is kept current by its own poll, and that is the reader's choice
+    /// rather than a producer failing where nobody can see.
+    pub(super) fn lapsed(&self, now: DateTime<Utc>) -> bool {
+        self.lapses_at().is_some_and(|lapses| lapses <= now)
+    }
+
+    /// How long until it lapses, or nothing where it is not going to: it
+    /// polls, nothing has vouched for it yet, or it has lapsed already.
+    pub(super) fn lapses_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+        self.lapses_at()
+            .and_then(|lapses| (lapses - now).to_std().ok())
+            .filter(|wait| !wait.is_zero())
+    }
+
+    fn lapses_at(&self) -> Option<DateTime<Utc>> {
+        if self.every.is_some() {
+            return None;
+        }
+        due_after(self.vouched_at?, self.covered_for?)
     }
 }
 
@@ -376,6 +420,93 @@ mod tests {
         armed.covered(at(120));
 
         assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    const COVERED_FOR: Duration = Duration::from_secs(60);
+
+    fn not_polling() -> Armed {
+        Armed::polling("arkham".to_string(), None).lapsing_after(COVERED_FOR)
+    }
+
+    /// With no poll behind it, a project whose producer has died shows rows
+    /// exactly as current-looking as one whose producer is covering it. So
+    /// once nothing has vouched for it for the term, it says it has lapsed.
+    #[test]
+    fn a_project_that_does_not_poll_lapses_a_term_after_its_last_read() {
+        let mut armed = not_polling();
+
+        armed.came_back(&arkham(), at(100));
+
+        assert!(!armed.lapsed(at(159)), "the term was not out");
+        assert_eq!(armed.lapses_in(at(100)), Some(COVERED_FOR));
+        assert!(armed.lapsed(at(160)));
+        assert_eq!(armed.lapses_in(at(160)), None, "and lapsed is not a wait");
+    }
+
+    /// The word is what keeps a quiet project from lapsing, which is the whole
+    /// of what `covered` is for.
+    #[test]
+    fn a_project_something_says_it_covers_does_not_lapse_while_it_says_so() {
+        let mut armed = not_polling();
+        armed.came_back(&arkham(), at(100));
+
+        for covered_at in [140, 180, 220] {
+            armed.covered(at(covered_at));
+            assert!(
+                !armed.lapsed(at(covered_at + 40)),
+                "covered at {covered_at}"
+            );
+        }
+
+        assert!(armed.lapsed(at(280)), "the word stopped at 220");
+    }
+
+    /// Unlike the poll, a word heard while a read is out counts: it is a
+    /// claim about the rows now, and a read that never comes back is drawn
+    /// unanswered whatever this says.
+    #[test]
+    fn a_word_heard_before_the_first_read_is_back_still_vouches() {
+        let mut armed = not_polling();
+
+        armed.covered(at(100));
+
+        assert!(!armed.lapsed(at(159)));
+        assert!(armed.lapsed(at(160)));
+    }
+
+    /// Nothing is claimed about a project nothing has read yet: the read that
+    /// started the run is on its way, and the screen already says so.
+    #[test]
+    fn a_project_nothing_has_read_or_covered_has_not_lapsed() {
+        let armed = not_polling();
+
+        assert!(!armed.lapsed(at(1_000_000)));
+        assert_eq!(armed.lapses_in(at(0)), None);
+    }
+
+    /// A polled project is kept current by its own poll, which is the
+    /// operator's choice and not a producer failing quietly.
+    #[test]
+    fn a_polled_project_never_lapses() {
+        let mut armed = polling().lapsing_after(COVERED_FOR);
+
+        armed.came_back(&arkham(), at(100));
+
+        assert!(!armed.lapsed(at(1_000_000)));
+        assert_eq!(armed.lapses_in(at(100)), None);
+    }
+
+    /// The word is a claim about now, so an edit to the config keeps it: a
+    /// project covered a moment ago is not lapsed by the reader saving a file.
+    #[test]
+    fn a_config_the_reader_writes_keeps_the_last_word() {
+        let mut standing = not_polling();
+        standing.came_back(&arkham(), at(100));
+
+        let named = standing.still_due(not_polling());
+
+        assert!(!named.lapsed(at(159)));
+        assert!(named.lapsed(at(160)));
     }
 
     /// A read of everything reads this project too, so it arms this project.

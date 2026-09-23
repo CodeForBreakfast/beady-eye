@@ -449,7 +449,7 @@ pub struct Join {
 }
 
 /// Where `bdi` listens for something saying a project's work has moved on.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Changes {
     /// The socket to listen on, rather than the one under the directory this
@@ -474,6 +474,31 @@ pub struct Changes {
     /// both read this file and derive this path. `--socket` is what one of
     /// them overrides it with.
     pub socket: Option<PathBuf>,
+    /// How long a project that does not poll is taken to be current after
+    /// its last read, or after the last word from something covering it.
+    /// Past that, nothing vouches for its rows and the screen says so.
+    ///
+    /// Its own key rather than `refresh_seconds`, which is how long a polled
+    /// project waits between reads and keeps that meaning. The default is
+    /// three of the 20-second heartbeats a producer reading a Dolt event
+    /// stream renews from, so one or two late heartbeats do not read as a
+    /// producer that has gone.
+    pub covered_for_seconds: u64,
+}
+
+impl Default for Changes {
+    fn default() -> Self {
+        Self {
+            socket: None,
+            covered_for_seconds: 60,
+        }
+    }
+}
+
+impl Changes {
+    pub fn covered_for(&self) -> Duration {
+        Duration::from_secs(self.covered_for_seconds)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1064,6 +1089,7 @@ pane_key = "herdr_pane"
 
 [changes]
 socket = "/var/folders/T/beady-eye/changes.sock"
+covered_for_seconds = 90
 
 [tui]
 refresh_seconds = 5
@@ -1186,6 +1212,7 @@ path = "/home/user/dev/cinder"
             cfg.changes.socket,
             Some(PathBuf::from("/var/folders/T/beady-eye/changes.sock"))
         );
+        assert_eq!(cfg.changes.covered_for_seconds, 90);
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
@@ -1531,6 +1558,7 @@ path = "/home/user/dev/kadath"
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
         assert_eq!(cfg.changes.socket, None);
+        assert_eq!(cfg.changes.covered_for_seconds, 60);
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);

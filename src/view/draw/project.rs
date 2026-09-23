@@ -70,7 +70,7 @@ fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'stat
         return Vec::new();
     };
     let mark = match how_fresh.mark {
-        Mark::Refused | Mark::Unanswered => palette::ATTENTION,
+        Mark::Refused | Mark::Unanswered | Mark::Lapsed => palette::ATTENTION,
         Mark::Collecting | Mark::Read => palette::QUIET,
     };
 
@@ -699,6 +699,35 @@ mod tests {
             painted
                 .iter()
                 .any(|run| run.said.contains('⠿') && run.style.fg == palette::ATTENTION.fg),
+            "{painted:?}"
+        );
+        assert!(
+            painted
+                .iter()
+                .any(|run| run.said.contains("30s ago") && run.style.fg == Some(Color::DarkGray)),
+            "{painted:?}"
+        );
+    }
+
+    /// A lapsed project's rows look exactly as they did while something was
+    /// covering them, so the mark is the only thing on the screen saying
+    /// nothing is any more — and it asks to be looked at for that reason.
+    #[test]
+    fn a_mark_saying_nothing_vouches_for_a_project_wears_the_colour_that_asks_to_be_looked_at() {
+        let painted = Painted::of(
+            line_that_is(
+                &project("summit-works", counts(8, 21, 0, 0)),
+                half_a_minute_old(Mark::Lapsed),
+            ),
+            60,
+            1,
+        )
+        .row(0);
+
+        assert!(
+            painted
+                .iter()
+                .any(|run| run.said.contains('?') && run.style.fg == palette::ATTENTION.fg),
             "{painted:?}"
         );
         assert!(
