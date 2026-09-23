@@ -275,6 +275,7 @@ pub fn bdi_on(
             .current_dir(home)
             .env("HOME", home)
             .env("TERM", "xterm-256color")
+            .env("PATH", a_path_with_no_herdr_on_it())
             .env_remove("BEADS_DIR")
             .env_remove("BDI_PROJECT")
             .env_remove("XDG_RUNTIME_DIR")
@@ -286,6 +287,22 @@ pub fn bdi_on(
             .spawn()
     }
     .expect("bdi runs")
+}
+
+/// The inherited `PATH`, minus every directory holding a `herdr` — the
+/// default [`bdi_on`] gives a run that names no `PATH` of its own, so a bare
+/// call reads no live herdr session rather than whichever machine it runs on.
+///
+/// A directory that answers for a program `bdi` doesn't shell out to is left
+/// alone: this is about which `herdr` a run can reach, not about narrowing
+/// its `PATH` to the shims.
+fn a_path_with_no_herdr_on_it() -> String {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    inherited
+        .split(':')
+        .filter(|directory| !Path::new(directory).join("herdr").exists())
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
