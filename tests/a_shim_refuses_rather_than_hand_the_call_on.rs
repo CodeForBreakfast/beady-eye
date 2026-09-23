@@ -16,7 +16,7 @@
 //! maintainer's own `.beads` from this repository and answers exit 0 —
 //! which is what decides the directory is a project. Its `sql` fall-through
 //! was deliberate rather than accidental, and refusing keeps what that
-//! decision protected: the working root is never answered, so every refresh
+//! decision protected: the probe is never answered, so every refresh
 //! reads in full.
 //!
 //! What is asserted here is the absence of a call, and an absence assertion
@@ -322,9 +322,11 @@ fn what_the_shim_has_learned_it_still_answers() {
 /// machine somebody runs the suite by hand on and on no other.
 const NAMES_NO_TRACKER: [&str; 2] = ["where", "--json"];
 
-/// The statement `bdi` asks the tracker's working root with, spelled as
+/// The statement `bdi` probes the tracker with, spelled as
 /// `src/collect/bd.rs` composes it.
-const THE_WORKING_ROOT: &str = "SELECT dolt_hashof_db() AS h";
+const THE_PROBE: &str = "SELECT table_name AS name, dolt_hashof_table(table_name) AS h \
+     FROM information_schema.tables WHERE table_schema = database() \
+     AND table_type = 'BASE TABLE' AND table_name <> 'leases' ORDER BY table_name";
 
 /// The bead: the one call that names no tracker is refused, and the bd that
 /// would have answered for the maintainer's own never hears it.
@@ -353,29 +355,26 @@ fn the_bd_call_that_names_no_tracker_is_refused_and_not_handed_on() {
 }
 
 /// `sql` is refused whatever is written down for it, and a file is exactly
-/// the hazard rather than the remedy: `bdi` asks it for the tracker's
-/// working root and skips the whole read while the answer has not moved
+/// the hazard rather than the remedy: `bdi` asks it whether the tracker has
+/// moved and skips the whole read while the answer has not
 /// (`src/app/tracker.rs`), so a constant would have the first read stand for
 /// every refresh after it.
 /// `a_collection_that_drops_the_shown_bead_takes_the_window_down` is the row
 /// that goes red when one does.
 #[test]
-fn the_working_root_is_refused_even_where_a_file_answers_it() {
+fn the_probe_is_refused_even_where_a_file_answers_it() {
     let ours = a_directory_for("bd-sql-answered");
     let stand_in = AStandIn::called("bd", &ours);
     let answers = ours.join("bd-answers");
     std::fs::create_dir_all(&answers).expect("the answers are ours to write");
     let a_constant = r#"[{"h":"a hash that never moves"}]"#;
-    std::fs::write(
-        answers.join(format!("sql --json {THE_WORKING_ROOT}")),
-        a_constant,
-    )
-    .expect("the answer is ours to write");
+    std::fs::write(answers.join(format!("sql --json {THE_PROBE}")), a_constant)
+        .expect("the answer is ours to write");
 
     let ran = stand_in
         .asking(&shim("bd"))
         .args(["-C", "/nowhere", "--readonly", "sql", "--json"])
-        .arg(THE_WORKING_ROOT)
+        .arg(THE_PROBE)
         .env("BDI_SHIM_BD_ANSWERS", &answers)
         .output()
         .expect("the shim runs");
@@ -383,7 +382,7 @@ fn the_working_root_is_refused_even_where_a_file_answers_it() {
     assert_eq!(
         stand_in.was_handed(),
         Vec::<String>::new(),
-        "the shim handed the working root to the bd it shadows"
+        "the shim handed the probe to the bd it shadows"
     );
     assert!(
         !String::from_utf8_lossy(&ran.stdout).contains("a hash that never moves"),
@@ -392,7 +391,7 @@ fn the_working_root_is_refused_even_where_a_file_answers_it() {
     );
     assert!(
         !ran.status.success(),
-        "the shim reported success for the working root, which is the one \
+        "the shim reported success for the probe, which is the one \
          answer it may never give: {ran:?}"
     );
 }

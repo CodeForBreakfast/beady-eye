@@ -158,6 +158,11 @@ yours rather than `bd`'s, and `bdi` has heard of none of them: a key you called
 The name is split once, so a metadata key of `helio.ticket` is written
 `metadata.helio.ticket` and reads as itself.
 
+A badge on `heartbeat_at` or `lease_expires_at` can lag. From beads 1.3.0 a
+heartbeat changes only those two values. `bdi` does not re-read a project for
+that, so a badge on either of them updates only when something else in the
+tracker changes.
+
 A key naming a value the bead does not hold draws no badge and says nothing. So
 does one naming a whole object rather than a value inside it, and one naming a
 list.
@@ -546,7 +551,7 @@ whatever the row says.
 ## Telling `bdi` a project changed
 
 `bdi` polls, and most polls find nothing moved. A poll first asks the tracker
-whether anything has changed (one `bd sql` for the Dolt working root) and only
+whether anything has changed (one `bd sql` for a hash of its Dolt tables) and only
 reads in full if it has. That probe needs a Dolt server; bd's embedded store
 refuses it, and `bdi` then reads in full on every poll.
 
