@@ -54,6 +54,7 @@ pane_key = "agent_pane"
 
 [changes]
 socket = "/run/user/1000/beady-eye/changes.sock"
+covered_for_seconds = 60
 
 [anomalies]
 stale_claim_days = 30
@@ -126,7 +127,8 @@ than passed on a command line, so the password never shows in `ps`.
 
 **`poll = false`** stops polling this project and relies on something
 [telling `bdi` when it changed](#telling-bdi-a-project-changed). Nothing then
-covers for a producer that dies.
+covers for a producer that dies, so the project's mark turns to `?` once
+nothing has vouched for it for `covered_for_seconds`.
 
 ## `[roots.explicit]`
 
@@ -480,6 +482,12 @@ overrides it for one run, which is how two `bdi` runs on one machine each get
 a channel. [Telling `bdi` where to listen](#telling-bdi-where-to-listen) has
 the whole of it.
 
+`covered_for_seconds` is how long a project that does not poll is taken to be
+current after its last read, or after the last `covered` line naming it. Past
+that its mark turns to `?`. The default of 60 is three of the 20-second
+heartbeats a producer reading a Dolt event stream sends, so a late heartbeat
+does not read as a producer that has gone. A polled project never lapses.
+
 ## `[anomalies]`
 
 `stale_claim_days` is how long a claim may go untouched before `bdi` flags it.
@@ -567,10 +575,17 @@ same connection:
 | `unknown <project>` | not a project this run is reading |
 | `malformed` | blank, or over 512 bytes |
 
+A producer watching a project that nothing has changed in writes
+`covered <project>` instead. It is answered `ok <project>` too, and nothing is
+read. It is how a producer that speaks only on change says it is still there,
+which matters most for a project with `poll = false`: that project's mark turns
+to `?` once nothing has vouched for it for `covered_for_seconds`. A `bdi`
+older than the word answers `unknown covered <project>`.
+
 A connection can carry as many lines as you like and stay open for as long as
 the writer does. A project that is reported for is never polled, since each
-report pushes the next poll past its interval, and one whose producer goes
-quiet is polled again from one interval later.
+report pushes the next poll past its interval, and so does each `covered`
+line. One whose producer goes quiet is polled again from one interval later.
 
 The cheapest producer is a wrapper round `bd` itself. It reads the default
 path; a `bdi` told a different one has to be told to the producer too.

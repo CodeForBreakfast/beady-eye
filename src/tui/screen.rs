@@ -1701,10 +1701,9 @@ mod tests {
         );
     }
 
-    /// `bdi-rer.5`, on the screen a reader is looking at: a project nothing
-    /// vouches for any more is drawn as lapsed, where one something covers is
-    /// drawn as read. From one fixture, because the defect was that the two
-    /// drew the same.
+    /// On the screen a reader is looking at, a project nothing vouches for any
+    /// more is drawn as lapsed, where one something covers is drawn as read.
+    /// From one fixture, because what this guards is the two drawing alike.
     #[test]
     fn a_screen_says_which_of_its_projects_nothing_vouches_for() {
         let mut snapshot = a_grove(2);

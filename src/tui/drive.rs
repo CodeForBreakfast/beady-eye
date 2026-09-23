@@ -2962,9 +2962,9 @@ mod tests {
         lapsed
     }
 
-    /// `bdi-rer.5`: with no poll behind it, a project whose producer has gone
-    /// is drawn exactly as one whose producer is covering it, unless the loop
-    /// says which it is.
+    /// With no poll behind it, a project whose producer has gone is drawn
+    /// exactly as one whose producer is covering it, unless the loop says
+    /// which it is.
     #[test]
     fn a_project_nothing_vouches_for_is_said_to_have_lapsed() {
         let mut view = Recorder::default();

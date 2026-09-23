@@ -373,10 +373,8 @@ mod tests {
         assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
-    /// What a producer's word buys a quiet project. Each report used to push
-    /// the poll out only by way of the read it caused, so a producer with
-    /// nothing to report let the poll come due however alive it was. Saying
-    /// it covers the project pushes the poll out with no read at all.
+    /// A producer with nothing to report keeps a polled project's poll stood
+    /// down by saying it covers the project, with no read at all.
     #[test]
     fn a_project_something_says_it_covers_is_not_polled_while_it_says_so() {
         let mut armed = polling();

@@ -826,9 +826,7 @@ mod tests {
         Answer::Watched(Heard::Covered(project.to_string()))
     }
 
-    /// A producer that only speaks when something changes has nothing to say
-    /// about a tracker nobody touches, and so reads exactly like one that has
-    /// died. This is how it says it is still there without asking for a read.
+    /// How a producer says it is still there without asking for a read.
     #[test]
     fn a_line_saying_a_watched_project_is_covered_is_taken_as_covering_it() {
         let reported = watching(["arkham", "ferry"]);

@@ -478,11 +478,9 @@ pub struct Changes {
     /// its last read, or after the last word from something covering it.
     /// Past that, nothing vouches for its rows and the screen says so.
     ///
-    /// Its own key rather than `refresh_seconds`, which is how long a polled
-    /// project waits between reads and keeps that meaning. The default is
-    /// three of the 20-second heartbeats a producer reading a Dolt event
-    /// stream renews from, so one or two late heartbeats do not read as a
-    /// producer that has gone.
+    /// The default is three of the 20-second heartbeats a producer reading a
+    /// Dolt event stream renews from, so one or two late heartbeats do not
+    /// read as a producer that has gone.
     pub covered_for_seconds: u64,
 }
 
