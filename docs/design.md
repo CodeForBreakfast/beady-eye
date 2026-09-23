@@ -761,6 +761,10 @@ on a node nothing fired on — never absent, never null.
 a live pane is not an anomaly — an agent parked on it is a normal state, and
 firing on it would report every waiting agent as dead.
 
+A `hooked` bead is a claim too, and neither `orphan-claim` nor `stale-claim`
+fires on it. `bd stale` leaves it out, and a hook can outlive the session of the
+agent it belongs to.
+
 `orphan-claim` has one shape in the JSON whatever its reason: `{"rule":
 "orphan-claim"}` for a claim that really did lose its agent, and the same with
 a `refused` field holding the conflict where the join refused the bead's own
