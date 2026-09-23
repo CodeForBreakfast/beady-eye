@@ -262,8 +262,27 @@ fn text_of_each(fields: serde_json::Map<String, serde_json::Value>) -> BTreeMap<
 #[derive(Deserialize)]
 struct BlockedRow {
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "each_id_written")]
     blocked_by: Vec<String>,
+}
+
+/// The ids a blocker set holds, for a value that is an array of them.
+///
+/// Anything else bd could write there — a null, a lone string, an object, an
+/// element that is not a string — is read as no blocker rather than as an
+/// error. A tracker is read whole, so the alternative is not one bead without
+/// its blockers but every blocked bead in that project, gone.
+fn each_id_written<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .filter_map(|value| match value {
+                serde_json::Value::String(id) => Some(id),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    })
 }
 
 /// bd's CLI, reaching every project's tracker through one runner.
@@ -1488,6 +1507,36 @@ mod tests {
         );
         assert_eq!(got.len(), 2);
         assert_eq!(got.get("p-1.1"), None);
+    }
+
+    /// A tracker is read whole, so a `blocked_by` in a shape bdi does not
+    /// expect would otherwise cost every row of the listing. The row keeps
+    /// the ids it can read, and every other row is untouched.
+    #[test]
+    fn a_blocked_by_in_an_unexpected_shape_keeps_the_rows_it_can_read() {
+        let out = r#"[{"id":"p-1.2","blocked_by":null},
+                      {"id":"p-1.3","blocked_by":"p-1.1"},
+                      {"id":"p-1.4","blocked_by":{"id":"p-1.1"}},
+                      {"id":"p-1.5","blocked_by":["p-1.1",7,null,"p-1.9"]},
+                      {"id":"p-1.9","blocked_by":["p-1.10"]}]"#;
+        let runner = FakeRunner::default().with(&spelled("blocked --json"), out);
+
+        let got = opened(&runner)
+            .blocked()
+            .expect("an unexpected blocked_by does not lose the listing");
+
+        let none: &[String] = &[];
+        assert_eq!(got.get("p-1.2").map(Vec::as_slice), Some(none));
+        assert_eq!(got.get("p-1.3").map(Vec::as_slice), Some(none));
+        assert_eq!(got.get("p-1.4").map(Vec::as_slice), Some(none));
+        assert_eq!(
+            got.get("p-1.5").map(Vec::as_slice),
+            Some(["p-1.1".to_string(), "p-1.9".to_string()].as_slice())
+        );
+        assert_eq!(
+            got.get("p-1.9").map(Vec::as_slice),
+            Some(["p-1.10".to_string()].as_slice())
+        );
     }
 
     #[test]
