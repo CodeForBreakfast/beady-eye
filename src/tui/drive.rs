@@ -558,14 +558,14 @@ fn ran_out(view: &dyn View, drawn_at: DateTime<Utc>, now: DateTime<Utc>) -> bool
 }
 
 /// How long the loop may sleep: until what is drawn stops being true, until a
-/// project asks for itself, until the read at the front is due to leave,
-/// until the band is due to read its pane again, or until the config file is
-/// due to be looked at — whichever comes first, and nothing where none of
-/// them will.
+/// project asks for itself or lapses, until the read at the front is due to
+/// leave, until the band is due to read its pane again, or until the config
+/// file is due to be looked at — whichever comes first, and nothing where
+/// none of them will.
 ///
-/// Five deadlines where there was one, and the loop tells them apart only by
-/// doing all five things when it wakes. What that costs is asking each of
-/// the five whether it is due on a wake that was one of the others'; what it
+/// Six deadlines where there was one, and the loop tells them apart only by
+/// doing all six things when it wakes. What that costs is asking each of
+/// the six whether it is due on a wake that was one of the others'; what it
 /// saves is a second way for the loop to be woken.
 ///
 /// Two instants, because the screen's deadline is about the frame on it and
