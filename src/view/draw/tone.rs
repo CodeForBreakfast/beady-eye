@@ -51,9 +51,10 @@ pub(crate) fn status_style(status: &Status) -> Style {
         Status::Closed => palette::STATUS_CLOSED,
         Status::Deferred => palette::STATUS_DEFERRED,
         Status::Open => palette::STATUS_OPEN,
+        Status::Pinned => palette::STATUS_PINNED,
+        Status::Hooked => palette::STATUS_HOOKED,
         // The one status `bd` has no colour for, because it has no such
         // status. It takes the colour of the note already beside it.
-        Status::Pinned => palette::STATUS_PINNED,
         Status::Other(_) => palette::ATTENTION,
     }
 }
@@ -75,9 +76,10 @@ mod tests {
 
     /// One of each status, so a loop over them covers the set. The compiler
     /// holds `status_style` total; this list is only what a test walks.
-    fn every_status() -> [Status; 7] {
+    fn every_status() -> [Status; 8] {
         [
             Status::InProgress,
+            Status::Hooked,
             Status::Blocked,
             Status::Open,
             Status::Deferred,
@@ -307,6 +309,30 @@ mod tests {
             "{painted:?}"
         );
         assert_eq!(painted[2].style.fg, Some(Color::DarkGray), "{painted:?}");
+    }
+
+    /// bd counts a hooked bead as work in flight, so nobody on it is an open
+    /// row rather than a finished one. Its glyph takes bd's blue for it.
+    #[test]
+    fn a_hooked_row_nobody_is_on_stays_on_the_open_rung() {
+        let painted = Painted::of(
+            bead_line(
+                &row(&node("smt-4kd3p.1", "a bead", Status::Hooked)),
+                BRANCH,
+                &ids(3),
+                &Layout::default(),
+            ),
+            60,
+            1,
+        )
+        .row(0);
+
+        assert_eq!(
+            painted[1].style.fg,
+            Some(Color::Rgb(89, 194, 255)),
+            "{painted:?}"
+        );
+        assert_eq!(painted[2].style.fg, Some(Color::Reset), "{painted:?}");
     }
 
     /// Exactly the row worth looking at, and dimming it is how it would be

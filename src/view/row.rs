@@ -329,6 +329,8 @@ pub fn cells(
 /// | `blocked` | `●` |
 /// | `closed` | `✓` |
 /// | `deferred` | `❄` |
+/// | `hooked` | `◇` — what `bd` draws on a hooked row, though its legend leaves it out |
+/// | `pinned` | `⊙` — `bdi`'s, because `bd`'s 📌 is two cells wide |
 /// | anything else | `?` — a status `bd` has no legend for |
 pub fn status_glyph(status: &Status) -> char {
     match status {
@@ -337,6 +339,7 @@ pub fn status_glyph(status: &Status) -> char {
         Status::Blocked => '●',
         Status::Closed => '✓',
         Status::Deferred => '❄',
+        Status::Hooked => '◇',
         Status::Pinned => '⊙',
         Status::Other(_) => '?',
     }
@@ -471,6 +474,7 @@ mod tests {
         assert_eq!(status_glyph(&Status::Blocked), '●');
         assert_eq!(status_glyph(&Status::Closed), '✓');
         assert_eq!(status_glyph(&Status::Deferred), '❄');
+        assert_eq!(status_glyph(&Status::Hooked), '◇');
     }
 
     /// bd's own mark for a pinned bead is 📌, which is two cells wide where
@@ -488,6 +492,7 @@ mod tests {
             Status::Open,
             Status::Deferred,
             Status::Pinned,
+            Status::Hooked,
             Status::Closed,
             Status::Other("triage".into()),
         ];

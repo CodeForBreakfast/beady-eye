@@ -408,6 +408,22 @@ mod tests {
         assert_eq!(got, Vec::new());
     }
 
+    /// A hooked bead is a claim, but `bd stale` leaves it out, and a hook can
+    /// outlive the session of the agent it belongs to.
+    #[test]
+    fn a_hooked_bead_with_no_pane_is_never_flagged() {
+        let got = detect(
+            &bead("hooked", SIXTY_DAYS_AGO),
+            None,
+            None,
+            ProviderState::Answering,
+            false,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(got, Vec::new());
+    }
+
     #[test]
     fn an_open_bead_is_never_flagged() {
         let got = detect(

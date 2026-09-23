@@ -729,7 +729,8 @@ pub fn unrecognised_status(status: &Status) -> Option<String> {
         | Status::Blocked
         | Status::Closed
         | Status::Deferred
-        | Status::Pinned => None,
+        | Status::Pinned
+        | Status::Hooked => None,
         Status::Other(status) => Some(format!(
             "a status bdi does not recognise: {}",
             quoted(status)
@@ -778,6 +779,7 @@ pub fn status_word(status: &Status) -> String {
         Status::Closed => "closed".to_string(),
         Status::Deferred => "deferred".to_string(),
         Status::Pinned => "pinned".to_string(),
+        Status::Hooked => "hooked".to_string(),
         Status::Other(status) => quoted(status),
     }
 }
@@ -2069,6 +2071,7 @@ mod tests {
             Status::Closed,
             Status::Deferred,
             Status::Pinned,
+            Status::Hooked,
         ] {
             assert_eq!(unrecognised_status(&status), None, "{status:?}");
         }
