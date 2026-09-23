@@ -53,8 +53,19 @@ const SHOW_EVERY_TREE: &[u8] = b"a";
 /// The escape that opens an operating-system command naming a hyperlink, and
 /// the one that ends any such command. Written out rather than read off the
 /// view, because what is under test is the bytes a terminal receives.
-const OSC_8: &str = "\x1b]8;;";
+const OSC_8: &str = "\x1b]8;";
 const ST: &str = "\x1b\\";
+
+/// The id `hyperlink` derives for a URL, reproduced here rather than read off
+/// the view, because what is under test is the bytes a terminal receives.
+fn link_id(to: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    to.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
 
 #[test]
 fn a_badge_that_names_a_url_reaches_the_terminal_as_a_hyperlink() {
@@ -67,7 +78,8 @@ fn a_badge_that_names_a_url_reaches_the_terminal_as_a_hyperlink() {
     bdi.settle(A_SILENCE, GIVING_UP);
     bdi.send(SHOW_EVERY_TREE);
 
-    let clickable =
-        format!("{OSC_8}https://forge.invalid/dunwich/arkham/pull/12{ST}⇢ #12{OSC_8}{ST}");
+    let to = "https://forge.invalid/dunwich/arkham/pull/12";
+    let id = link_id(to);
+    let clickable = format!("{OSC_8}id={id};{to}{ST}⇢ #12{OSC_8};{ST}");
     bdi.read_until(clickable.as_bytes(), GIVING_UP);
 }

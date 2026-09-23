@@ -54,8 +54,19 @@ const SHOW_EVERY_TREE: &[u8] = b"a";
 
 /// The escape that opens an operating-system command naming a hyperlink, and
 /// the one that ends any such command.
-const OSC_8: &str = "\x1b]8;;";
+const OSC_8: &str = "\x1b]8;";
 const ST: &str = "\x1b\\";
+
+/// The id `hyperlink` derives for a URL, reproduced here rather than read off
+/// the view, because what is under test is the bytes a terminal receives.
+fn link_id(to: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    to.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
 
 #[test]
 fn a_badge_on_the_external_reference_is_drawn_beside_one_on_metadata() {
@@ -68,8 +79,9 @@ fn a_badge_on_the_external_reference_is_drawn_beside_one_on_metadata() {
     bdi.settle(A_SILENCE, GIVING_UP);
     bdi.send(SHOW_EVERY_TREE);
 
-    let from_the_field =
-        format!("{OSC_8}https://jira.invalid/browse/HELIO-412{ST}HELIO-412{OSC_8}{ST}");
+    let to = "https://jira.invalid/browse/HELIO-412";
+    let id = link_id(to);
+    let from_the_field = format!("{OSC_8}id={id};{to}{ST}HELIO-412{OSC_8};{ST}");
     bdi.read_until(from_the_field.as_bytes(), GIVING_UP);
 
     // Badges are drawn in the order their config names them, so the one on
