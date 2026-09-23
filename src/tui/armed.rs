@@ -124,6 +124,19 @@ impl Armed {
             self.at = self.every.and_then(|every| due_after(at, every));
         }
     }
+
+    /// Something outside says it covers this project and nothing in it has
+    /// moved, which says of its rows what a read that found nothing would
+    /// have said. So the poll is pushed out from here as a read's return
+    /// would push it.
+    ///
+    /// Only where an ask is armed. A read still on its way arms the next ask
+    /// when it comes back, which is later than this word.
+    pub(super) fn covered(&mut self, at: DateTime<Utc>) {
+        if self.at.is_some() {
+            self.at = self.every.and_then(|every| due_after(at, every));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -314,6 +327,55 @@ mod tests {
         armed.came_back(&arkham(), at(100));
 
         assert_eq!(armed.asks(at(130)), Some(arkham()));
+    }
+
+    /// What a producer's word buys a quiet project. Each report used to push
+    /// the poll out only by way of the read it caused, so a producer with
+    /// nothing to report let the poll come due however alive it was. Saying
+    /// it covers the project pushes the poll out with no read at all.
+    #[test]
+    fn a_project_something_says_it_covers_is_not_polled_while_it_says_so() {
+        let mut armed = polling();
+        armed.came_back(&arkham(), at(100));
+
+        for covered_at in [120, 140, 160] {
+            armed.covered(at(covered_at));
+            assert_eq!(
+                armed.asks(at(covered_at + 20)),
+                None,
+                "covered again at {covered_at}, so the poll is still out"
+            );
+        }
+
+        assert_eq!(
+            armed.asks(at(190)),
+            Some(arkham()),
+            "the word stopped at 160, so the poll comes due one interval after"
+        );
+    }
+
+    /// A read on its way arms the poll when it comes back, and that is later
+    /// than any word heard while it was out. Arming on the word as well would
+    /// be a second ask behind one nobody has answered yet.
+    #[test]
+    fn a_word_heard_while_a_read_is_out_arms_nothing() {
+        let mut armed = polling();
+
+        armed.covered(at(100));
+
+        assert_eq!(armed.asks_in(at(100)), None);
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// A project that does not poll has no poll to push out.
+    #[test]
+    fn a_word_arms_nothing_for_a_project_that_does_not_poll() {
+        let mut armed = Armed::polling("arkham".to_string(), None);
+        armed.came_back(&arkham(), at(100));
+
+        armed.covered(at(120));
+
+        assert_eq!(armed.asks(at(1_000_000)), None);
     }
 
     /// A read of everything reads this project too, so it arms this project.

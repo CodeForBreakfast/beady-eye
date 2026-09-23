@@ -13,9 +13,9 @@ use std::thread;
 use ratatui::crossterm::event::{self, KeyEventKind, MouseButton, MouseEventKind};
 use signal_hook::iterator::Signals;
 
-use crate::app::{Asked, Wanted};
+use crate::app::Asked;
 use crate::collect::agents::Agents;
-use crate::collect::changes::{self, Reported, Socket};
+use crate::collect::changes::{self, Heard, Reported, Socket};
 use crate::collect::panes::{Aside, Panes};
 use crate::view::{Notch, Notice};
 
@@ -137,30 +137,31 @@ pub(super) fn wire(
 /// Each source runs on its own thread and blocks there, so the loop never
 /// sleeps until a deadline of its own.
 trait Changes: Send {
-    /// Block until there is something to collect for, and say what reading it
-    /// takes. Nothing, where the source has no more to report.
-    fn next(&mut self) -> Option<Wanted>;
+    /// Block until there is something to report, and say what it is.
+    /// Nothing, where the source has no more to report.
+    fn next(&mut self) -> Option<Event>;
 }
 
 /// The source for the projects something else reports for: it says the work
-/// has moved when a writer has said which project it moved in.
+/// has moved when a writer has said which project it moved in, and that a
+/// project is covered when a writer has said it covers it.
 struct Inbound {
-    changes: Receiver<String>,
+    changes: Receiver<Heard>,
     /// Held so the channel never runs out of writers. A source whose last
     /// writer has gone must go quiet, not report as fast as it can.
-    _open: Sender<String>,
+    _open: Sender<Heard>,
 }
 
 impl Changes for Inbound {
-    fn next(&mut self) -> Option<Wanted> {
-        self.changes.recv().ok().map(Wanted::Project)
+    fn next(&mut self) -> Option<Event> {
+        self.changes.recv().ok().map(Event::from)
     }
 }
 
 /// Report one project's changes until the loop stops listening.
 fn report(source: &mut dyn Changes, to: &Sender<Event>) {
-    while let Some(wanted) = source.next() {
-        if to.send(Event::Changed(wanted)).is_err() {
+    while let Some(event) = source.next() {
+        if to.send(event).is_err() {
             return;
         }
     }
@@ -248,6 +249,7 @@ fn incoming(read: event::Event) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Wanted;
     use crate::tui::fixtures::{arkham, A_MOMENT};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::io::Write;
@@ -258,10 +260,10 @@ mod tests {
     struct OnCue(Receiver<Wanted>);
 
     impl Changes for OnCue {
-        fn next(&mut self) -> Option<Wanted> {
+        fn next(&mut self) -> Option<Event> {
             // A test that has finished with this source drops the cue, and
             // the source goes quiet.
-            self.0.recv().ok()
+            self.0.recv().ok().map(Event::Changed)
         }
     }
 
@@ -325,13 +327,21 @@ mod tests {
         });
 
         changed
-            .send("arkham".to_string())
+            .send(Heard::Changed("arkham".to_string()))
+            .expect("the source is listening");
+        changed
+            .send(Heard::Covered("ferry".to_string()))
             .expect("the source is listening");
 
         assert_eq!(
             events.recv_timeout(A_MOMENT).ok(),
             Some(Event::Changed(arkham())),
             "the loop was told which project a writer said had moved"
+        );
+        assert_eq!(
+            events.recv_timeout(A_MOMENT).ok(),
+            Some(Event::Covered("ferry".to_string())),
+            "and which one it said it covers, which asks for no read"
         );
     }
 

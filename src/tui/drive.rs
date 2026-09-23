@@ -15,7 +15,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::{Asked, Awaited, Wanted};
-use crate::collect::changes::Reported;
+use crate::collect::changes::{Heard, Reported};
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Notch, Typing};
@@ -38,6 +38,9 @@ pub(super) enum Event {
     Resize,
     /// Work has moved on, and what has to be read to see it.
     Changed(Wanted),
+    /// Something outside says it covers this project and nothing in it has
+    /// moved, so there is nothing to read.
+    Covered(String),
     /// A collection has come back.
     Collected(Box<Snapshot>),
     /// The provider has said what is on a pane, or would not say.
@@ -49,6 +52,16 @@ pub(super) enum Event {
     /// synthesised 'q' arriving while that window is up would close the
     /// window and leave `bdi` running.
     Signalled,
+}
+
+/// Whatever a writer on the inbound channel said of a project it named.
+impl From<Heard> for Event {
+    fn from(heard: Heard) -> Self {
+        match heard {
+            Heard::Changed(project) => Event::Changed(Wanted::Project(project)),
+            Heard::Covered(project) => Event::Covered(project),
+        }
+    }
 }
 
 /// Every answer the provider gives reaches the loop as one of these, which is
@@ -733,6 +746,13 @@ fn answered(
         Event::Scrolled(notch) => view.scrolled(notch),
         Event::Resize => true,
         Event::Changed(wanted) => asked_for(view, outstanding, wanted),
+        Event::Covered(covered) => {
+            let now = Utc::now();
+            for project in armed.iter_mut().filter(|armed| armed.project() == covered) {
+                project.covered(now);
+            }
+            false
+        }
         Event::Collected(snapshot) => {
             let now = Utc::now();
             if let Some(read) = outstanding.came_back() {
@@ -2650,7 +2670,9 @@ mod tests {
         assert_eq!(
             (reported.take("ferry"), reported.take("arkham")),
             (
-                crate::collect::changes::Answer::Watched("ferry".to_string()),
+                crate::collect::changes::Answer::Watched(crate::collect::changes::Heard::Changed(
+                    "ferry".to_string()
+                )),
                 crate::collect::changes::Answer::Unwatched("arkham".to_string())
             ),
             "the channel accepts the project the reader added and refuses \
