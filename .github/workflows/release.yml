@@ -232,6 +232,11 @@ jobs:
       - name: the target's standard library
         run: rustup target add ${{ matrix.target }}
 
+      # The runner's own Rust rather than the flake's. What pins the toolchain
+      # this code is tested with is `nix flake check` below; the flake's
+      # package builds against the host platform's own glibc and has no musl
+      # path, so reaching these targets through it would mean adding one, and
+      # that is out of scope here.
       - name: build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
