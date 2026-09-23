@@ -158,6 +158,11 @@ yours rather than `bd`'s, and `bdi` has heard of none of them: a key you called
 The name is split once, so a metadata key of `helio.ticket` is written
 `metadata.helio.ticket` and reads as itself.
 
+A badge on `heartbeat_at` or `lease_expires_at` can lag. From beads 1.3.0 a
+heartbeat changes only those two values. `bdi` does not re-read a project for
+that, so a badge on either of them updates only when something else in the
+tracker changes.
+
 A key naming a value the bead does not hold draws no badge and says nothing. So
 does one naming a whole object rather than a value inside it, and one naming a
 list.

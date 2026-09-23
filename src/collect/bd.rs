@@ -362,8 +362,9 @@ impl Reader<'_> {
     ///
     /// Not the whole working root either, because from beads 1.3.0 a lease
     /// heartbeat writes `leases` alone, an ignored table, and so moves the
-    /// root every few minutes for as long as a bead is claimed. `bdi` draws
-    /// nothing a lease carries. Measured 2026-09-23 on throwaway 1.3.0 and
+    /// root every few minutes for as long as a bead is claimed. A badge on a
+    /// lease field is left to lag, as `docs/configuration.md` says. Measured
+    /// 2026-09-23 on throwaway 1.3.0 and
     /// 1.2.2 stores, this held still across two heartbeats and a full read,
     /// and moved on a claim, a wisp and a plain update.
     ///

@@ -1562,8 +1562,11 @@ On a 1.2.2 tracker there is no `leases` table, and the probe moves exactly
 when the whole root does. The two cost the same to within noise. What it
 gives up is the lease itself: a 1.3.0 `bd list --json` carries
 `lease_expires_at` and `heartbeat_at` on every row, and a heartbeat changes
-them without moving the probe. `bdi` draws neither. A feature that draws a
-lease field has to put `leases` back into the probe.
+them without moving the probe. So a `[[badges]]` key naming either one is
+redrawn only when something else in the tracker moves, and
+`configuration.md` says so. Hashing `leases` for just the projects whose
+badges name a lease field was weighed and turned down, because it is not
+worth the plumbing for an edge case.
 
 The hashes come back a row each rather than as one `GROUP_CONCAT`, because
 Dolt cuts that at `group_concat_max_len`, 1024 bytes by default, and ignores
