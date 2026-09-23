@@ -3423,9 +3423,10 @@ and a second line"
             # stops a bare bd from inheriting another project's BEADS_DIR.
             export BEADS_DIR="$main_checkout/.beads"
 
-            # Disable bd's smart remote-migrate gate. It is the only verdict
-            # that can permit an in-place schema migration of a shared server,
-            # and nothing here should ever migrate one.
+            # Disable bd's smart remote-migrate gate, the one verdict that can
+            # migrate a shared server as a side effect of opening it. The
+            # tracker's server is migrated on purpose, by `bd migrate schema`,
+            # which works with the gate off, and never on open.
             export BD_SMART_GATE=0
 
             echo "👁  beady-eye maintainer shell" >&2
