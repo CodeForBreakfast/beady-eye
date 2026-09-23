@@ -59,8 +59,19 @@ const OPEN_THE_TREE: &[u8] = b"agjlgj";
 
 /// The escape that opens an operating-system command naming a hyperlink, and
 /// the one that ends any such command.
-const OSC_8: &str = "\x1b]8;;";
+const OSC_8: &str = "\x1b]8;";
 const ST: &str = "\x1b\\";
+
+/// The id `hyperlink` derives for a URL, reproduced here rather than read off
+/// the view, because what is under test is the bytes a terminal receives.
+fn link_id(to: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    to.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
 
 /// `bd`'s own colours for the two statuses here, as the backend sends them:
 /// the foreground, and the background reset that rides with any style change.
@@ -72,7 +83,9 @@ const IN_PROGRESS: &str = "\x1b[38;2;255;180;84;49m";
 /// One badge's whole cell: the colour it is drawn in, then the link written
 /// round its words.
 fn drawn(colour: &str, ticket: &str) -> String {
-    format!("{colour}{OSC_8}https://jira.invalid/browse/{ticket}{ST}{ticket}{OSC_8}{ST}")
+    let to = format!("https://jira.invalid/browse/{ticket}");
+    let id = link_id(&to);
+    format!("{colour}{OSC_8}id={id};{to}{ST}{ticket}{OSC_8};{ST}")
 }
 
 #[test]
