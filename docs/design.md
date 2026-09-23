@@ -71,6 +71,7 @@ coin one — and say so.**
 | completed, progress | beads (`bd swarm status`) | the finished count and the `n/m` roll-up |
 | active | beads (`bd swarm status`) | in-progress, an agent on it |
 | `○ ◐ ● ✓ ❄` | beads (`bd list`'s legend) | open, in_progress, blocked, closed, deferred — glyph for glyph, because a glyph is terminology. `?` is `bdi`'s for a status bd has no legend for |
+| `◇` | beads (`format.StatusIcon`) | hooked. It is what bd draws beside a hooked row, though its printed legend leaves it out |
 | `⊙` | *coined* | pinned. bd's own mark is 📌, two cells wide where every other glyph is one |
 | agent, pane, session | herdr | the worker; its terminal; the server holding them |
 | `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
@@ -221,8 +222,8 @@ of the screen says that which agents are alive is unknown.
 
 Roots come from bd, unioned and deduped:
 
-1. Every unfinished bead — `open`, `in_progress`, `blocked` or `deferred`,
-   and never `pinned`, which bd keeps indefinitely and never counts as work —
+1. Every unfinished bead — `open`, `in_progress`, `hooked`, `blocked` or
+   `deferred`, and never `pinned`, which bd keeps indefinitely and never counts as work —
    and every unfinished wisp, walked up its `parent` ancestors. This
    uses bd's own statuses and needs no convention, and it is read off the
    `list --all` and `query ephemeral=true --all` answers the forest is drawn
@@ -760,6 +761,10 @@ on a node nothing fired on — never absent, never null.
 `orphan-claim` keys on `in_progress` alone. A bead that is `status: blocked` with
 a live pane is not an anomaly — an agent parked on it is a normal state, and
 firing on it would report every waiting agent as dead.
+
+A `hooked` bead is a claim too, and neither `orphan-claim` nor `stale-claim`
+fires on it. `bd stale` leaves it out, and a hook can outlive the session of the
+agent it belongs to.
 
 `orphan-claim` has one shape in the JSON whatever its reason: `{"rule":
 "orphan-claim"}` for a claim that really did lose its agent, and the same with
@@ -2089,7 +2094,7 @@ it draws its reason where its row would have been and carries no fold.
 
 **The glyph is the bead's own status and nothing else**, glyph for glyph with
 the legend at the foot of `bd list`'s own output: `○` open, `◐` in_progress,
-`●` blocked, `✓` closed, `❄` deferred, `⊙` pinned, and `?` for a status bd has no legend
+`●` blocked, `✓` closed, `❄` deferred, `◇` hooked, `⊙` pinned, and `?` for a status bd has no legend
 for — which the row then quotes, *a status bdi does not recognise: “…”*,
 rather than swallowing. Liveness has its own cell, and one glyph meaning both
 would make neither readable. The colours are `bd`'s own 24-bit values for the

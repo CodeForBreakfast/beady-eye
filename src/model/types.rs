@@ -15,6 +15,7 @@ pub enum Status {
     Closed,
     Deferred,
     Pinned,
+    Hooked,
     #[serde(untagged)]
     Other(String),
 }
@@ -24,12 +25,13 @@ impl Status {
     pub fn rank(&self) -> u8 {
         match self {
             Status::InProgress => 0,
-            Status::Blocked => 1,
-            Status::Open => 2,
-            Status::Deferred => 3,
-            Status::Pinned => 4,
-            Status::Closed => 5,
-            Status::Other(_) => 6,
+            Status::Hooked => 1,
+            Status::Blocked => 2,
+            Status::Open => 3,
+            Status::Deferred => 4,
+            Status::Pinned => 5,
+            Status::Closed => 6,
+            Status::Other(_) => 7,
         }
     }
 

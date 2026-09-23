@@ -10,6 +10,12 @@
 //!
 //! A test that wants only the words takes them off `rows`. The reverse is
 //! impossible, which is why the words are never what is returned.
+//!
+//! A test about what the terminal is sent rather than what a reader sees —
+//! a hyperlink's escape sequence, or proof that no other escape got through —
+//! reads the buffer's raw symbols with [`symbols`] instead. `Painted` takes
+//! every escape out of a cell, so a test that no escape reached the buffer
+//! would pass against it whatever the buffer held.
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell, CellDiffOption};
@@ -109,6 +115,11 @@ impl Painted {
             })
             .collect()
     }
+}
+
+/// Every symbol in a buffer, row after row, escape bytes and all.
+pub(crate) fn symbols(buffer: &Buffer) -> String {
+    buffer.content.iter().map(Cell::symbol).collect()
 }
 
 /// How many columns a cell answers for. A cell that reports a width its
