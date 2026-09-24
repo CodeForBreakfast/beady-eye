@@ -512,6 +512,13 @@ A row carries:
 | `updated_at`, `started_at`, `closed_at`, `assignee` | the age rules, and the bead window's head |
 | `created_at`, `created_by`, `labels` | the head alone. `created_by` is the row's own field; the row's `owner` is an address and nothing reads it |
 
+**A `depends_on_id` can name another project's bead.** bd stores a `bd dep
+add` whose target has a different prefix as an external dependency, and writes
+it into the dependent's row as a plain `depends_on_id` of type `blocks`. The
+bead it names is not among the rows, because this tracker does not hold it.
+Measured on 2026-09-24 on bd 1.1.0, README's floor, and on 1.3.0: both write
+the edge identically, in `bd list` and `bd ready` alike.
+
 Three consequences:
 
 - **`bdi` builds the tree.** `model::tree::assemble` walks the edges from each
