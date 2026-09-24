@@ -2821,15 +2821,23 @@ and a stored place in one would be wrong the moment the reader moved by hand.
 `n` asks *which match is drawn after the selection* — a question that is still
 right after both.
 
-A search opens what is folded over the bead it goes to and leaves it open.
-That is `open_over`'s standing rule — a fold shut by hand stays shut until
-something asks otherwise, and asking to be taken to a bead underneath it is
-asking — and there is no way back to want: putting the folds back would leave
-the selection on a bead no longer drawn, and `refresh`'s ancestry fallback
-would walk it up to the fold, landing the reader neither where they started
-nor where they searched. `D` is the key that tidies. Esc's rule is untouched:
-it abandons a *prompt*, with the selection where it was, because nothing was
-ever asked for.
+**What a search step opens is provisional.** A step is `n`, `N`, or the Enter
+that lands a search, and it opens whatever is folded over the bead it goes to.
+The next step puts those folds back the way they were before opening what its
+own match needs, so walking the matches leaves no trail of open branches, and
+the branches the last match needed stay open. A fold the step found open is
+put back open. A fold the reader shut stays theirs while a step has it open,
+so live work arriving under it spends it as it would any other.
+
+Any other act by the reader makes whatever is open at that moment theirs, and
+no later step shuts it. That is a move by key or by click, opening or shutting
+a fold, opening the bead window, and every other key but `/`, which only opens
+the prompt a landing is typed into. A wheel notch is not an act here, because
+it moves no fold and no selection.
+
+A search that matches nothing leaves the forest as it was, including what the
+last step opened. Esc's rule is untouched: it abandons a *prompt*, with the
+selection where it was, because nothing was ever asked for.
 
 Control held down still moves a row: a key that does not ask for control
 answers whatever modifiers are held, which is what the arrows and the letters

@@ -1064,6 +1064,10 @@ impl View for Screen {
         self.shown.pressed()
     }
 
+    fn keep_what_is_open(&mut self) {
+        self.shown.forest.keep_what_is_open();
+    }
+
     fn apply(&mut self, action: Action) -> bool {
         self.shown.apply(action)
     }
