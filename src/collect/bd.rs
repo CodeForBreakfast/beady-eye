@@ -110,8 +110,8 @@ struct Row {
     dependencies: Vec<RowDependency>,
     #[serde(default, deserialize_with = "text_of_each_value")]
     metadata: BTreeMap<String, String>,
-    /// The name `bd show` prints as the bead's owner. The row's `owner` is an
-    /// address and is not read: nothing draws it.
+    /// The row's `created_by`. The row's `owner` is an address and is not
+    /// read: nothing draws it.
     #[serde(default)]
     created_by: Option<String>,
     #[serde(default)]
