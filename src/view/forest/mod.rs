@@ -9948,6 +9948,18 @@ credential_command = "secret harbour"
         }
     }
 
+    /// Shift+F after a start with several beads named comes back to the one
+    /// the selection is under, not the first named.
+    #[test]
+    fn shift_f_after_several_named_keeps_the_bead_the_selection_is_under() {
+        let mut forest = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("harbour", "hbr-3")]);
+        select_bead(&mut forest, "hbr-3");
+
+        assert!(forest.apply(Action::FocusForest));
+
+        assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    }
+
     /// The first frame is drawn before any tracker answers, so a bead named
     /// then is focused when the collection that draws it lands.
     #[test]
