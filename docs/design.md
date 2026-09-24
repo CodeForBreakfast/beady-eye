@@ -2727,8 +2727,8 @@ The bindings are vim-like, with the arrows as aliases:
 | `S` | cycle which copy of a bead opens, across the whole forest |
 | `F` | draw the selected bead as the only root, or put the forest back |
 | `/` | find part of a bead's id or title, wherever the forest draws it |
-| `n` | go to the next bead matching the search |
-| `N` | go to the one before it |
+| `n`, `^G` | go to the next bead matching the search |
+| `N`, `^T` | go to the one before it |
 | `q`, `^C` | quit |
 | `Esc` | go back to the forest from the bead view |
 | `Tab` | move to the next bead the shown bead names; Enter follows it |
@@ -2781,8 +2781,8 @@ without giving up their folds in every other tree.
 
 ### Searching
 
-`/` opens a prompt at the foot and Enter asks for what is in it. A bead
-matches when its **id or its title holds that text**, letter case aside — part
+`/` opens a prompt at the foot, and the search moves as the reader types, as
+vim's does with `incsearch`. A bead matches when its **id or its title holds that text**, letter case aside — part
 of either, not the whole of one. That is what the reader has: the forest row
 draws a *shortened* id and `view::row::abbreviate` is the only thing in `bdi`
 that draws one, so on a long screen it is the only spelling of a bead they
@@ -2793,6 +2793,17 @@ row, so there is no result list to build — and building one would throw away
 the thing a row carries that a list cannot, which is the bead's place in the
 tree. `n` steps to the next match and `N` to the one before, coming round at
 either end.
+
+**Each keystroke at the prompt is the whole search again.** It lands on the
+first match after where the selection stood when `/` was pressed, as `n`
+would step from there, and not after wherever the last keystroke landed. So
+taking a character back widens the search from the same place it began. A
+keystroke that matches nothing, or leaves the prompt empty, puts the forest
+back as it stood at `/`. `^G` and `^T` step to the next and previous match
+while the prompt is up, as in vim, because `n` and `N` are letters of the
+text there. Enter closes the prompt and leaves the selection on the match; it
+never opens the bead. Esc puts the selection, the scroll and every fold back
+exactly as they stood when `/` was pressed.
 
 **Matches are numbered in the order the forest draws them.** Not by relevance:
 screen order is the order a reader scrolling would have met them, it is the
@@ -2821,8 +2832,8 @@ and a stored place in one would be wrong the moment the reader moved by hand.
 `n` asks *which match is drawn after the selection* — a question that is still
 right after both.
 
-**What a search step opens is provisional.** A step is `n`, `N`, or the Enter
-that lands a search, and it opens whatever is folded over the bead it goes to.
+**What a search step opens is provisional.** A step is `n`, `N`, or a
+keystroke, `^G` or `^T` at the prompt, and it opens whatever is folded over the bead it goes to.
 The next step puts those folds back the way they were before opening what its
 own match needs, so walking the matches leaves no trail of open branches, and
 the branches the last match needed stay open. A fold the step found open is
@@ -2832,16 +2843,15 @@ so live work arriving under it spends it as it would any other.
 Any other act by the reader makes whatever is open at that moment theirs, and
 no later step shuts it. That is a move by key or by click, opening or shutting
 a fold, opening the bead window, and every other key but `/`, which only opens
-the prompt a landing is typed into. A wheel notch is not an act here, because
+the prompt, and the Enter that closes it. A wheel notch is not an act here, because
 it moves no fold and no selection.
 
-A search that matches nothing leaves the forest as it was, including what the
-last step opened. Esc's rule is untouched: it abandons a *prompt*, with the
-selection where it was, because nothing was ever asked for.
+What the last step before `/` opened is still provisional when Esc puts it
+back, so the next step shuts it as it would have.
 
 Control held down still moves a row: a key that does not ask for control
 answers whatever modifiers are held, which is what the arrows and the letters
-have always done, and only `^D`, `^U`, `^R` and `^C` ask for it. That is
+have always done, and only `^D`, `^U`, `^R`, `^G`, `^T` and `^C` ask for it. That is
 inherited rather than chosen, and if it should change it is its own bead.
 
 `^R` is a notification like any other: it takes the same window and the same

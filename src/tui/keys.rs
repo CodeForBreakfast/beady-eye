@@ -116,7 +116,7 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: Some("find"),
     },
     Binding {
-        keys: &[alone(KeyCode::Char('n'), "n")],
+        keys: &[alone(KeyCode::Char('n'), "n"), ctrl('g', "^G")],
         action: Action::NextMatch,
         does: "go to the next bead matching the search",
         // No permanent word under the tail. It would cost a column on every
@@ -125,7 +125,7 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
-        keys: &[alone(KeyCode::Char('N'), "N")],
+        keys: &[alone(KeyCode::Char('N'), "N"), ctrl('t', "^T")],
         action: Action::PreviousMatch,
         does: "go to the one before it",
         hint: None,
@@ -273,12 +273,18 @@ pub(super) fn action(key: KeyEvent) -> Option<Action> {
 /// key bindings screen nobody could read, listing keys that mean this only
 /// here.
 ///
-/// Nothing for a key held with control, which is what leaves `^C` to the
+/// A key held with control is the table's. `^G` and `^T` step through the
+/// matches, since `n` and `N` are letters of the id here, and nothing else
+/// held with control is the prompt's — which is what leaves `^C` to the
 /// table: raw mode swallows it, and the key everyone reaches for to get out
 /// of a program must not be inert because a prompt is up.
 pub(super) fn typing(key: KeyEvent) -> Option<Typing> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
-        return None;
+        return match action(key) {
+            Some(Action::NextMatch) => Some(Typing::NextMatch),
+            Some(Action::PreviousMatch) => Some(Typing::PreviousMatch),
+            _ => None,
+        };
     }
     match key.code {
         KeyCode::Char(glyph) => Some(Typing::Character(glyph)),
@@ -750,6 +756,35 @@ pub(super) mod tests {
 
         assert_eq!(typing(control('c')), None, "^C is not a character of an id");
         assert_eq!(action(control('c')), Some(Action::Quit));
+    }
+
+    /// `^G` and `^T` step through the matches for what has been typed so
+    /// far, as they do in vim, since `n` and `N` are letters of it here.
+    #[test]
+    fn the_prompt_steps_through_the_matches_on_control_g_and_control_t() {
+        assert_eq!(typing(control('g')), Some(Typing::NextMatch));
+        assert_eq!(typing(control('t')), Some(Typing::PreviousMatch));
+    }
+
+    /// The bindings name `^G` and `^T` beside the keys whose steps they are.
+    #[test]
+    fn the_bindings_name_the_keys_that_step_through_matches_while_typing() {
+        let bindings = bindings();
+        let keys_for = |does: &str| {
+            bindings
+                .iter()
+                .find(|(_, said)| *said == does)
+                .map(|(keys, _)| keys.clone())
+        };
+
+        assert_eq!(
+            keys_for("go to the next bead matching the search").as_deref(),
+            Some("n, ^G")
+        );
+        assert_eq!(
+            keys_for("go to the one before it").as_deref(),
+            Some("N, ^T")
+        );
     }
 
     /// The letters that carry a binding only under control carry none on

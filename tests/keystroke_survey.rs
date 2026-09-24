@@ -21,7 +21,7 @@ use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::RealRunner;
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::{Filter, Snapshot, Tree};
-use beady_eye::view::forest::flatten;
+use beady_eye::view::forest::{flatten, Landed};
 use beady_eye::view::{Action, Motion};
 use chrono::Utc;
 
@@ -116,6 +116,39 @@ fn landing(name: &str, snapshot: &Snapshot) {
     );
 }
 
+/// What the search prompt costs a keystroke at a time: each character of
+/// `SOUGHT` searched from where the prompt went up, the `^G` steps after it,
+/// and the Esc that puts the forest back.
+fn searching(snapshot: &Snapshot) {
+    const SOUGHT: &str = "the";
+    let mut forest = flatten(snapshot.clone());
+    let origin = forest.origin();
+    println!("  search, a keystroke at a time:");
+    for typed in (1..=SOUGHT.len()).map(|end| &SOUGHT[..end]) {
+        let started = Instant::now();
+        let landed = forest.seek(typed, &origin);
+        let spent = started.elapsed();
+        let of = match landed {
+            Landed::On { of, .. } => of,
+            Landed::Nowhere(_) => 0,
+        };
+        println!("    {typed:<6} {of:>6} matching  {spent:?}");
+    }
+
+    let started = Instant::now();
+    for _ in 0..PRESSES {
+        forest.next_match(true);
+    }
+    println!(
+        "    ^G per press                 {:?}",
+        started.elapsed() / PRESSES as u32
+    );
+
+    let started = Instant::now();
+    forest.restore(&origin);
+    println!("    Esc                          {:?}", started.elapsed());
+}
+
 fn report(name: &str, snapshot: &Snapshot) {
     let (lines, per_press) = press(snapshot);
     println!("[{name}]");
@@ -134,6 +167,7 @@ fn report(name: &str, snapshot: &Snapshot) {
     println!("  rows --json writes for them      {}", emitted(snapshot));
     println!("  lines drawn                      {lines}");
     println!("  Forest::apply(Move) per press    {per_press:?}");
+    searching(snapshot);
     landing(name, snapshot);
 }
 

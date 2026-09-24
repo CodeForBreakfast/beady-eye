@@ -610,8 +610,8 @@ fn sleeps_for(
 /// Whether an event makes whatever the last search step opened the reader's,
 /// which every key and click does but a search step.
 ///
-/// `/` and the keys typed at the prompt it opens are the landing step being
-/// asked for, and a click there leaves the prompt as Esc does. A wheel notch
+/// `/` opens the prompt, every key at it is a search step or the Enter that
+/// closes it, and a click there leaves the prompt as Esc does. A wheel notch
 /// moves no fold and no selection.
 fn keeps_what_is_open(event: &Event, showing: Showing) -> bool {
     match event {
@@ -705,10 +705,9 @@ fn answered(
         // The prompt takes the keys, and it has to: the bindings screen is
         // dismissed by any key at all so that a reader who opened it by
         // accident is not trapped, and a prompt working that way could not be
-        // typed into. Esc is the way out that leaves the selection alone, and
-        // `^C` is the way out of `bdi` altogether — the one key the mapping
-        // still answers here, because raw mode swallows it and nothing else
-        // would.
+        // typed into. Esc is the way out that puts the forest back as it stood
+        // at `/`, and `^C` is the way out of `bdi` altogether — answered here
+        // by the table, because raw mode swallows it and nothing else would.
         Event::Key(key) if *showing == Showing::Searching => match typing(key) {
             Some(step @ (Typing::Sought | Typing::Abandoned)) => {
                 *showing = Showing::Forest;
@@ -767,8 +766,8 @@ fn answered(
             true
         }
         // And it leaves the prompt, which is a reader looking away from what
-        // they were typing. The selection stays where it was, as Esc leaves
-        // it: what they typed was never asked for.
+        // they were typing. The forest goes back to how it stood at `/`, as
+        // Esc puts it back: what they typed was never confirmed.
         Event::Clicked(_) | Event::Scrolled(_) if *showing == Showing::Searching => {
             *showing = Showing::Forest;
             view.typing(Typing::Abandoned);
@@ -1640,9 +1639,9 @@ mod tests {
         );
     }
 
-    /// Esc leaves the prompt, and it is the way out that asks for nothing:
+    /// Esc leaves the prompt, and it is the way out that confirms nothing:
     /// the loop hands the view `Abandoned` rather than `Sought`, so what was
-    /// typed is dropped and the selection stays where the reader left it.
+    /// typed is dropped and the forest goes back to where the reader left it.
     #[test]
     fn esc_leaves_the_prompt_without_asking_for_what_was_typed() {
         let mut view = Recorder::default();
@@ -1674,6 +1673,55 @@ mod tests {
             view.showing,
             [
                 Showing::Forest,
+                Showing::Searching,
+                Showing::Searching,
+                Showing::Forest,
+            ]
+        );
+    }
+
+    /// `^G` and `^T` step through the matches while the prompt is up, and
+    /// leave it up. They are search steps, so they keep nothing open.
+    #[test]
+    fn control_g_and_control_t_step_through_the_matches_from_the_prompt() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Char('/'))),
+            Event::Key(key(KeyCode::Char('x'))),
+            Event::Key(control('g')),
+            Event::Key(control('t')),
+            Event::Key(key(KeyCode::Enter)),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            view.typed,
+            [
+                Typing::Character('x'),
+                Typing::NextMatch,
+                Typing::PreviousMatch,
+                Typing::Sought
+            ]
+        );
+        assert_eq!(view.applied, [Action::Search]);
+        assert_eq!(view.kept, 0);
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Searching,
+                Showing::Searching,
                 Showing::Searching,
                 Showing::Searching,
                 Showing::Forest,
@@ -3993,8 +4041,8 @@ mod tests {
         assert_eq!(view.kept, 4);
     }
 
-    /// `n`, `N` and the landing Enter are the steps, and `/` and what is
-    /// typed after it ask for one. A wheel notch moves no fold and no
+    /// `n`, `N` and every key at the prompt are steps or close it, and `/`
+    /// opens it. A wheel notch moves no fold and no
     /// selection, so it is not an act on what a step opened either.
     #[test]
     fn a_search_step_and_a_wheel_notch_keep_nothing_open() {
