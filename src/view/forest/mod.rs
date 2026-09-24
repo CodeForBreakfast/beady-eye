@@ -9984,7 +9984,7 @@ credential_command = "secret harbour"
         let across = tree::Across::of([
             ("harbour", Nesting::of(&harbour)),
             ("dunwich", Nesting::of(&dunwich)),
-        ]);
+        ], []);
         let panes = panes_on(on);
         let cfg = cfg();
         let joined = join::resolve(

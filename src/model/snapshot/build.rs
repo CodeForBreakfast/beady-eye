@@ -326,7 +326,7 @@ mod tests {
         let assembled = crate::model::tree::Across::of([
             ("harbour", crate::model::tree::Nesting::of(&harbour)),
             ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
-        ])
+        ], [])
         .assemble("harbour", "hbr-1")
         .expect("the rows assemble");
 
