@@ -510,7 +510,7 @@ A row carries:
 | `dependencies[]` — `depends_on_id`, `type` | every edge out of the bead; `type` is `parent-child` or `blocks`, and any other value nests nothing |
 | `metadata` | the whole map, inline |
 | `updated_at`, `started_at`, `closed_at`, `assignee` | the age rules, and the bead window's head |
-| `created_at`, `created_by`, `labels` | the head alone. `created_by` is the name `bd show` prints as the owner; the row's `owner` is an address and nothing reads it |
+| `created_at`, `created_by`, `labels` | the head alone. `created_by` is the row's own field; the row's `owner` is an address and nothing reads it |
 
 Three consequences:
 
