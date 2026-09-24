@@ -1483,6 +1483,7 @@ mod tests {
 
     fn a_grove_of(children: Vec<usize>) -> Snapshot {
         let bead = |id: String| Node {
+            project: "grove".to_string(),
             id,
             title: "a bead in the grove".to_string(),
             status: Status::InProgress,

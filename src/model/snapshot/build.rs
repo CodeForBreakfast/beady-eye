@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
-use crate::config::Config;
+use crate::config::{Badge, Config};
 use crate::model::anomaly;
 use crate::model::badges;
 use crate::model::edges::Relations;
@@ -20,55 +20,84 @@ use super::{
     TrackerState, Tree, UnconfiguredPane,
 };
 
+/// What one project's tracker said of its beads beyond their rows.
+///
+/// `relations` is read for the whole answer rather than for one tree: what a
+/// bead blocks is found on the beads that wait on it, and those can sit in
+/// another tree.
+#[derive(Debug, Clone, Copy)]
+pub struct Said<'a> {
+    pub readiness: &'a Readiness,
+    pub relations: &'a BTreeMap<String, Relations>,
+}
+
+/// What one project said, as the only project a tree is drawn from.
+#[cfg(feature = "testing")]
+pub fn said_by<'a>(
+    project: &'a str,
+    readiness: &'a Readiness,
+    relations: &'a BTreeMap<String, Relations>,
+) -> BTreeMap<&'a str, Said<'a>> {
+    BTreeMap::from([(
+        project,
+        Said {
+            readiness,
+            relations,
+        },
+    )])
+}
+
 /// Draw one project's assembled rows as a tree, with the agents already
 /// resolved across every project.
 ///
-/// `relations` is read for the whole answer rather than for this tree: what
-/// a bead blocks is found on the beads that wait on it, and those can sit in
-/// another tree. `agents` is how the run went for panes, which the anomaly
-/// rules need: a pane the join did not award and a pane nothing was asked
-/// about are different facts, and `joined` alone reads the same for both.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "each argument is a distinct thing one tree is drawn from. Two \
-              that start travelling together — always passed as a pair, or \
-              each derived from the other — are a concept, and naming it \
-              drops the count below the threshold again."
-)]
+/// A tree can hold another project's beads, so what was `said` is by
+/// project, and each bead reads what its own project said of it. `agents`
+/// is how the run went for panes, which the anomaly rules need: a pane the
+/// join did not award and a pane nothing was asked about are different
+/// facts, and `joined` alone reads the same for both.
 pub fn build_tree(
     project: &str,
     assembled: &Assembled,
     joined: &Joined,
-    readiness: &Readiness,
-    relations: &BTreeMap<String, Relations>,
+    said: &BTreeMap<&str, Said>,
     agents: ProviderState,
     cfg: &Config,
     now: DateTime<Utc>,
 ) -> Tree {
-    let badges = cfg.badges_for_project(project);
+    let badges: BTreeMap<&str, Vec<Badge>> = std::iter::once(project)
+        .chain(assembled.external.values().map(String::as_str))
+        .map(|project| (project, cfg.badges_for_project(project)))
+        .collect();
     let beads: Vec<Node> = assembled
         .beads
         .iter()
-        .map(|bead| {
+        .enumerate()
+        .map(|(at, bead)| {
+            let own = assembled.external.get(&at).map_or(project, String::as_str);
             let key = BeadKey {
-                project: project.to_string(),
+                project: own.to_string(),
                 id: bead.id.clone(),
             };
+            let said = said.get(own);
+            let readiness = said.map(|said| said.readiness);
             let agent = joined.agents.get(&key).cloned();
             let refused = joined.refused.get(&key);
             let out_of_reach = joined.out_of_reach.contains(&key);
-            let tied = relations.get(&bead.id).cloned().unwrap_or_default();
-            let badged = badges::badges_for(bead, &badges);
+            let tied = said
+                .and_then(|said| said.relations.get(&bead.id))
+                .cloned()
+                .unwrap_or_default();
+            let badged = badges::badges_for(bead, &badges[own]);
             Node {
+                project: own.to_string(),
                 id: bead.id.clone(),
                 title: bead.title.clone(),
                 status: bead.status.clone(),
                 issue_type: bead.issue_type.clone(),
                 priority: bead.priority,
-                ready: readiness.ready.contains(&bead.id),
+                ready: readiness.is_some_and(|r| r.ready.contains(&bead.id)),
                 blocked_by: readiness
-                    .blocked_by
-                    .get(&bead.id)
+                    .and_then(|r| r.blocked_by.get(&bead.id))
                     .cloned()
                     .unwrap_or_default(),
                 started_at: bead.started_at,
@@ -276,6 +305,44 @@ mod tests {
         );
     }
 
+    /// Prefixes are uncoordinated, so a tree that reaches into another
+    /// project can hold two beads of one id, one from each. They are two
+    /// beads, and the tree counts both.
+    #[test]
+    fn a_tree_counts_two_projects_beads_of_one_id_as_two() {
+        let harbour = parse_beads(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"open",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]},
+                {"id":"x-1","title":"harbour's x-1","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]}]"#,
+        )
+        .expect("the rows parse");
+        let dunwich = parse_beads(
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
+                {"id":"x-1","title":"dunwich's x-1","status":"open",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}]"#,
+        )
+        .expect("the rows parse");
+        let assembled = crate::model::tree::Across::of([
+            ("harbour", crate::model::tree::Nesting::of(&harbour)),
+            ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
+        ])
+        .assemble("harbour", "hbr-1")
+        .expect("the rows assemble");
+
+        let t = build_tree(
+            "harbour",
+            &assembled,
+            &Joined::default(),
+            &BTreeMap::new(),
+            ProviderState::Answering,
+            &cfg(),
+            now(),
+        );
+
+        assert_eq!(t.counts.total, 4);
+    }
+
     #[test]
     fn a_bead_firing_two_rules_is_counted_once() {
         let t = tree();
@@ -304,8 +371,7 @@ mod tests {
             "dunwich",
             &assembled,
             &joined,
-            &readiness(),
-            &relations,
+            &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
             state,
             &cfg(),
             now(),
@@ -433,8 +499,7 @@ mod tests {
             "dunwich",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &relations,
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &relations),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -541,8 +606,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
             "dunwich",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &relations(&beads),
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &relations(&beads)),
             ProviderState::Answering,
             &cfg,
             now(),
@@ -611,8 +675,7 @@ render = "⏸ waiting"
             "dunwich",
             &assembled,
             &joined,
-            &readiness(),
-            &relations,
+            &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
             ProviderState::Answering,
             &cfg,
             now(),
@@ -673,8 +736,7 @@ render = "⇢ {repo} #{number}"
             "dunwich",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &relations(&beads),
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &relations(&beads)),
             ProviderState::Answering,
             &cfg,
             now(),
@@ -745,8 +807,7 @@ render = "⇢ {repo} #{number}"
             "dunwich",
             &a,
             &j,
-            &readiness(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("dunwich", &readiness(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -772,8 +833,7 @@ render = "⇢ {repo} #{number}"
             "dunwich",
             &a,
             &Joined::default(),
-            &Readiness::default(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -802,8 +862,7 @@ render = "⇢ {repo} #{number}"
             "dunwich",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -840,8 +899,7 @@ render = "⇢ {repo} #{number}"
             "dunwich",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -870,8 +928,7 @@ render = "⇢ {repo} #{number}"
             "dunwich",
             &a,
             &Joined::default(),
-            &Readiness::default(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),

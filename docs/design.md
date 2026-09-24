@@ -65,6 +65,7 @@ coin one — and say so.**
 | bead, root, epic | beads | the unit of work; the bead a tree hangs from; `issue_type: epic` |
 | tree | beads | a root and its descendants — everything that must finish before it can (see *Tree construction*) |
 | parent-child, blocks | beads (`type` on a dependency) | the two edge kinds; a nesting is drawn from either, and the elbow says which |
+| external dependency | beads (`bd dep add` across prefixes) | a dependency on another project's bead, which the bead waiting on it holds (see *Across projects*) |
 | claim | beads (`bd update --claim`) | an agent taking a bead |
 | stale | beads (`bd stale`) | in-progress with no recent activity, "may be abandoned" |
 | ready | beads (`bd ready`) | open **and** every dependency satisfied |
@@ -447,9 +448,11 @@ was never read and says nothing about that bead. A read bead naming a pane
 that sits in an excluded project is still reported, as a pane in that
 project. And reloading the config while running will have to re-derive the
 read set from the new file, so it is kept a function of config, directory and
-flags rather than a value computed once at start. Later, a reference that
-crosses trackers will need it to resolve and show a foreign bead from a
-scoped run.
+flags rather than a value computed once at start. A dependency on another
+project's bead does not reach an excluded project: it is looked for among
+the projects the run reads, and one only an excluded project holds stays
+work the answer does not hold. Reading an excluded tracker to draw one bead
+is the unseen widening rejected above.
 
 ## Conventions are configuration
 
@@ -517,7 +520,9 @@ add` whose target has a different prefix as an external dependency, and writes
 it into the dependent's row as a plain `depends_on_id` of type `blocks`. The
 bead it names is not among the rows, because this tracker does not hold it.
 Measured on 2026-09-24 on bd 1.1.0, README's floor, and on 1.3.0: both write
-the edge identically, in `bd list` and `bd ready` alike.
+the edge identically, in `bd list` and `bd ready` alike. The project that
+holds the bead answers for it in its own call, and *Across projects* under
+*Tree construction* says how the two answers meet.
 
 Three consequences:
 
@@ -901,7 +906,8 @@ whereas having children is the shape of the tree `bdi` already computes and is
 exactly the condition under which the question is askable.
 
 **Two degradations, and a cycle.** `dangling` is beads naming something they
-depend on that the answer does not hold — most often a deleted parent; each is
+depend on that no answer holds for them (see *Across projects*) — most often a
+deleted parent; each is
 still drawn, and a bead nothing in the answer nests at all is a root of its own
 (discovery rule 4), so it is drawn under its project and reported as dangling
 there rather than nowhere. `cycles` is beads whose own descendants lead back to
@@ -922,6 +928,38 @@ because nothing consumed the contract.
 
 Ordering within a level: state first (in-flight, then blocked, then open, then
 closed), priority second, id third.
+
+### Across projects
+
+**A bead waiting on another project's bead holds it, as it would a bead of
+its own project.** Its row names the other bead by id alone (see *Data
+sources*), so the id is looked for in the bead's own answer first, and only
+an id that answer lacks is looked for among the other projects the run
+reads. It is another project's bead where exactly one of them holds it. Two
+holding it is a prefix collision nothing in the row settles, and one that
+only an excluded or unreadable project holds is out of reach; either way it
+stays work the answer does not hold, and the bead is reported as dangling.
+Only a `blocks` edge crosses: a blocker hangs beneath the bead waiting on it,
+whereas a parent in another project would put this project's bead inside
+that project's trees.
+
+**The other project's bead is drawn with everything beneath it, and stays
+that project's.** The walk carries on through that project's answer, into a
+third project where one of its beads waits on one, and a loop across
+projects is cut where it comes back round like any other. Each bead is keyed
+`(project, id)` on its own project wherever it is drawn, so its readiness,
+badges, agent and anomalies are the ones it has there; a search, a fold and a
+reference in the bead window reach it as that project's bead; and a tree
+counts two projects' beads of one id as two. The other project still draws
+the bead in its own trees.
+
+**Only a tree that needs it pays for it.** Each project's read assembles its
+trees from its own answer. A bead waiting on something that answer does not
+hold is one its tree already reports as dangling, so a collection assembles
+again, across every answer read, only a tree reporting one, and a run with no
+such bead reads no answer twice. The drawing reads every project's standing
+answer, so a refresh of one project redraws what other projects' trees hold
+of it.
 
 ### Folds, elision and what rests open
 
@@ -1889,6 +1927,7 @@ name to the socket after any command that wrote something.
       "tracker": "ok",
       "nodes": [
         {
+          "project": "summit-works",
           "id": "smt-4kd3p.20",
           "title": "the daily wallpaper timer calls dms",
           "status": "blocked",
@@ -1912,6 +1951,7 @@ name to the socket after any command that wrote something.
           "anomalies": []
         },
         {
+          "project": "summit-works",
           "id": "smt-4kd3p.16",
           "title": "guard a key in both layers",
           "status": "in_progress",
@@ -1944,7 +1984,10 @@ name to the socket after any command that wrote something.
 `nodes` is pre-flattened in render order with an explicit `depth`, so a consumer
 draws it without reconstructing the tree; `edge` says which kind of edge put
 the node where it is (`parent-child` or `blocks`), and a bead reachable more
-than once is in `nodes` once per way down to it. That is the tree unrolled,
+than once is in `nodes` once per way down to it. A node's `project` is the one
+whose tracker holds the bead: the tree's own, or another project's where the
+tree reached the bead through a bead waiting on it, so a node is keyed
+`{ "project", "id" }` like every other bead here. That is the tree unrolled,
 written at emission from a model that holds each bead once (see *Tree
 construction*), so what `--json` says does not follow what the model stores. `agent.source` records which
 direction of the join resolved it, so a consumer can tell a confirmed agent

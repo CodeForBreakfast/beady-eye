@@ -245,6 +245,7 @@ mod tests {
 
     fn node(id: &str, agent: Option<AgentRef>) -> Node {
         Node {
+            project: "dunwich".to_string(),
             id: id.to_string(),
             title: "a bead in the tree".to_string(),
             status: Status::InProgress,

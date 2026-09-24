@@ -9,6 +9,7 @@
 //! What a read of one project costs, and what its failures mean, belongs to
 //! `tracker`.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -20,12 +21,13 @@ use crate::collect::worktree;
 use crate::config::{Config, Project};
 use crate::model::join::{self, Listed, ProjectRows};
 use crate::model::snapshot::{
-    self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Session, SessionState,
-    Snapshot, TrackerFailure, TrackerState, Tree,
+    self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Said, Session,
+    SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
 };
-use crate::model::types::Pane;
+use crate::model::tree::{Across, Assembled, Nesting};
+use crate::model::types::{Bead, Pane};
 
-use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh};
+use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh, RootUnread};
 
 /// What one project's tracker last said, and when it said it.
 ///
@@ -271,19 +273,35 @@ impl Collection {
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Snapshot {
+        let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
+        let drawn = reaching_across(&answered);
+
         // One resolve over every project's rows at once. A pane names its bead
         // by id alone, and only the whole set tells a match from a prefix
-        // collision.
-        let rows: Vec<ProjectRows<'_>> = self
-            .that_answered(cfg)
-            .flat_map(|(project, work)| {
-                work.roots.iter().filter_map(move |(_, read)| {
-                    read.as_ref().ok().map(|assembled| ProjectRows {
-                        project,
-                        rows: &assembled.beads,
-                    })
-                })
+        // collision. A tree that reached into another project holds beads of
+        // both, and each is that project's row.
+        let reached: Vec<(&str, Vec<Bead>)> = drawn
+            .iter()
+            .filter_map(|(project, _, read)| match read {
+                Ok(Cow::Owned(assembled)) => Some(by_project(project, assembled)),
+                _ => None,
             })
+            .flatten()
+            .collect();
+        let rows: Vec<ProjectRows<'_>> = drawn
+            .iter()
+            .filter_map(|(project, _, read)| match read {
+                Ok(Cow::Borrowed(assembled)) => Some(ProjectRows {
+                    project,
+                    rows: &assembled.beads,
+                }),
+                _ => None,
+            })
+            .chain(
+                reached
+                    .iter()
+                    .map(|(project, rows)| ProjectRows { project, rows }),
+            )
             .collect();
         let joined = &join::resolve(
             &rows,
@@ -294,22 +312,25 @@ impl Collection {
             cfg,
         );
 
-        let trees = self
-            .that_answered(cfg)
-            .flat_map(|(project, work)| {
-                work.roots.iter().map(move |(root, read)| match read {
-                    Ok(assembled) => snapshot::build_tree(
-                        project,
-                        assembled,
-                        joined,
-                        &work.readiness,
-                        &work.relations,
-                        agents.state,
-                        cfg,
-                        now,
-                    ),
-                    Err(why) => Tree::unread(project, root, TrackerState::from(why.clone())),
-                })
+        let said: BTreeMap<&str, Said> = answered
+            .iter()
+            .map(|(project, work)| {
+                (
+                    *project,
+                    Said {
+                        readiness: &work.readiness,
+                        relations: &work.relations,
+                    },
+                )
+            })
+            .collect();
+        let trees = drawn
+            .iter()
+            .map(|(project, root, read)| match read {
+                Ok(assembled) => {
+                    snapshot::build_tree(project, assembled, joined, &said, agents.state, cfg, now)
+                }
+                Err(why) => Tree::unread(project, root, TrackerState::from((*why).clone())),
             })
             .collect();
 
@@ -441,6 +462,61 @@ impl Collection {
             out_of_reach,
         )
     }
+}
+
+/// One root's tree as a collection draws it: its project, its root, and the
+/// tree, or why there is none.
+type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
+
+/// Every root's tree, reaching into another project's answer where a bead in
+/// it waits on a bead that project holds.
+///
+/// A project's read assembled its trees from its own answer alone, and a
+/// bead waiting on work that answer does not hold is one each tree already
+/// names as dangling. So only a tree naming one is assembled again, across
+/// every answer, and a run with none reads nothing twice.
+fn reaching_across<'a>(answered: &[(&'a str, &'a ProjectWork)]) -> Vec<Drawn<'a>> {
+    let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
+        read.as_ref()
+            .is_ok_and(|assembled| !assembled.dangling.is_empty())
+    };
+    let across = answered
+        .iter()
+        .any(|(_, work)| work.roots.iter().any(|(_, read)| waits_elsewhere(read)))
+        .then(|| {
+            Across::of(
+                answered
+                    .iter()
+                    .map(|(project, work)| (*project, Nesting::of(&work.beads))),
+            )
+        });
+
+    answered
+        .iter()
+        .flat_map(|&(project, work)| {
+            let across = across.as_ref();
+            work.roots.iter().map(move |(root, read)| {
+                let drawn = match read {
+                    Ok(assembled) => Ok(across
+                        .filter(|_| waits_elsewhere(read))
+                        .and_then(|across| across.assemble(project, root).ok())
+                        .map_or(Cow::Borrowed(assembled), Cow::Owned)),
+                    Err(why) => Err(why),
+                };
+                (project, root.as_str(), drawn)
+            })
+        })
+        .collect()
+}
+
+/// A tree's beads, gathered under the project whose answer holds each.
+fn by_project<'a>(project: &'a str, assembled: &'a Assembled) -> Vec<(&'a str, Vec<Bead>)> {
+    let mut rows: BTreeMap<&str, Vec<Bead>> = BTreeMap::new();
+    for (at, bead) in assembled.beads.iter().enumerate() {
+        let own = assembled.external.get(&at).map_or(project, String::as_str);
+        rows.entry(own).or_default().push(bead.clone());
+    }
+    rows.into_iter().collect()
 }
 
 /// What a failed listing says about the provider that failed it.
@@ -1887,6 +1963,48 @@ path = "{}"
             asked_of(&trackers, "dunwich") > dunwich,
             "dunwich was named, so it was read"
         );
+    }
+
+    // ---- a bead waiting on another project's bead ----------------------
+
+    /// Ferry's tracker, one bead waiting on dunwich's epic.
+    const WAITING_ON_DUNWICH: &str = r#"[
+      {"id":"fer-2","title":"moor the barge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// How many answers drawing what `trackers` said reads the edges of,
+    /// beyond the reads that asked for them.
+    ///
+    /// A project's read runs on a thread of its own and the drawing on this
+    /// one, so this thread's count is the drawing's alone.
+    fn nested_to_draw(trackers: &Fakes) -> usize {
+        let before = crate::model::tree::nestings_on_this_thread();
+        collect(
+            &mut Collection::default(),
+            &no_panes(),
+            trackers,
+            &Wanted::Everything,
+        );
+        crate::model::tree::nestings_on_this_thread() - before
+    }
+
+    /// Reaching across projects costs only a run with a bead waiting on
+    /// work its own answer does not hold. Every other run draws the trees
+    /// its reads assembled, and reads no answer's edges again.
+    #[test]
+    fn a_run_with_no_bead_waiting_elsewhere_reads_no_answer_twice() {
+        assert_eq!(nested_to_draw(&colliding_trackers()), 0);
+    }
+
+    #[test]
+    fn a_run_with_a_bead_waiting_elsewhere_reads_every_answer_once_more() {
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)));
+
+        assert_eq!(nested_to_draw(&trackers), 2);
     }
 
     /// The refresh gate reaches the trackers and stops there. A provider

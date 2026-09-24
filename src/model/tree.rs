@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::bail;
 
-use crate::model::types::{Bead, Edge};
+use crate::model::types::{Bead, Dependency, Edge};
 
 /// Compare two ids the way a reader would: a run of digits compares by its
 /// value rather than character by character, so `t.2` sorts before `t.10`.
@@ -75,6 +75,11 @@ pub struct Assembled {
     /// Every bead the root reaches, once each: the root first, then the rest
     /// in the order the walk first reaches them.
     pub beads: Vec<Bead>,
+    /// The beads another project's answer holds, by their place in `beads`,
+    /// and that project. A tree reaches them through what bd calls an
+    /// external dependency, and each is keyed on its own project wherever it
+    /// is drawn. Every other bead is the root's project's.
+    pub external: BTreeMap<usize, String>,
     /// The beads beneath each of `beads`, in render order. A bead reached
     /// several ways is linked from each of the beads that reach it.
     pub children: Vec<Vec<Link>>,
@@ -168,14 +173,7 @@ impl<'a> Nesting<'a> {
             .into_iter()
             .map(|(parent, kids)| {
                 let mut kids: Vec<&str> = kids.into_iter().collect();
-                kids.sort_by(|a, b| {
-                    let (a, b) = (by_id[a], by_id[b]);
-                    a.status
-                        .rank()
-                        .cmp(&b.status.rank())
-                        .then(a.priority.cmp(&b.priority))
-                        .then_with(|| numeric_id_order(&a.id, &b.id))
-                });
+                kids.sort_by(|a, b| render_order(by_id[a], by_id[b]));
                 (parent, kids)
             })
             .collect();
@@ -199,41 +197,23 @@ impl<'a> Nesting<'a> {
         let Some((&root, _)) = self.by_id.get_key_value(root) else {
             bail!("bd's answer holds no bead {root} to draw a tree from");
         };
+        Ok(assemble(
+            root,
+            |id| self.beneath(id),
+            |id| (self.by_id[id], None),
+            |id| self.waiting_on_the_absent.contains(id),
+        ))
+    }
 
-        let Reached {
-            order,
-            children,
-            looped,
-        } = reach(root, &self.children, &self.by_id);
-
-        // Only what this tree drew. A bead whose parent the tracker no longer
-        // holds is top of its own graph, and reporting it against a root that
-        // never reached it names it in every tree there is.
-        let dangling: Vec<String> = order
-            .iter()
-            .filter(|id| self.waiting_on_the_absent.contains(*id))
-            .map(|id| id.to_string())
-            .collect();
-
-        // A walk that found no way back up found no loop to cut, and a tree
-        // with none is what most trees are — so saying where the loops are
-        // cut costs only the trees that have any.
-        let cycles = if looped {
-            cuts(&children)
-                .into_iter()
-                .map(|bead| order[bead].to_string())
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let beads = order.iter().map(|id| self.by_id[id].clone()).collect();
-        Ok(Assembled {
-            beads,
-            children,
-            dangling,
-            cycles,
-        })
+    /// The beads beneath `id` in this answer, in render order, each with the
+    /// kind of edge that hangs it there.
+    fn beneath(&self, id: &str) -> Vec<(&'a str, Edge)> {
+        self.children
+            .get(id)
+            .into_iter()
+            .flatten()
+            .map(|&child| (child, edge_between(self.by_id[child], id)))
+            .collect()
     }
 
     /// The beads that lost the edge that would have placed them.
@@ -336,12 +316,89 @@ fn under<'a>(
 
 /// What one walk down from the root found: every bead it reached, in the
 /// order it first reached them, and the ways down between them.
-struct Reached<'a> {
-    order: Vec<&'a str>,
+struct Reached<K> {
+    order: Vec<K>,
     children: Vec<Vec<Link>>,
     /// Whether any way down led back to a bead still above it. A loop is
     /// cut there, and where this is false nothing is.
     looped: bool,
+}
+
+/// Siblings sort by state, then priority, then id in numeric order — so
+/// `.2` comes before `.10` on an epic with more than nine children.
+fn render_order(a: &Bead, b: &Bead) -> std::cmp::Ordering {
+    a.status
+        .rank()
+        .cmp(&b.status.rank())
+        .then(a.priority.cmp(&b.priority))
+        .then_with(|| numeric_id_order(&a.id, &b.id))
+}
+
+/// The kind of edge that hangs `child` beneath `over`: the parent-child edge
+/// where `child` names `over` as its parent, and otherwise the blocks edge
+/// `over` holds on it.
+fn edge_between(child: &Bead, over: &str) -> Edge {
+    if child
+        .dependencies
+        .iter()
+        .any(|d| d.on == over && d.edge == Edge::ParentChild)
+    {
+        Edge::ParentChild
+    } else {
+        Edge::Blocks
+    }
+}
+
+/// The tree under `root`, walked by `beneath`, and reported as dangling where
+/// a bead it reaches is `unheld`: waiting on something no answer holds.
+/// `held` is each bead, with its project where that is not the root's.
+fn assemble<'a, K: Copy + Ord>(
+    root: K,
+    beneath: impl Fn(K) -> Vec<(K, Edge)>,
+    held: impl Fn(K) -> (&'a Bead, Option<&'a str>),
+    unheld: impl Fn(K) -> bool,
+) -> Assembled {
+    let Reached {
+        order,
+        children,
+        looped,
+    } = reach(root, &beneath);
+    let id = |key: K| held(key).0.id.clone();
+
+    // Only what this tree drew. A bead whose parent the tracker no longer
+    // holds is top of its own graph, and reporting it against a root that
+    // never reached it names it in every tree there is.
+    let dangling: Vec<String> = order
+        .iter()
+        .filter(|key| unheld(**key))
+        .map(|key| id(*key))
+        .collect();
+
+    // A walk that found no way back up found no loop to cut, and a tree
+    // with none is what most trees are — so saying where the loops are
+    // cut costs only the trees that have any.
+    let cycles = if looped {
+        cuts(&children)
+            .into_iter()
+            .map(|bead| id(order[bead]))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let beads = order.iter().map(|key| held(*key).0.clone()).collect();
+    let external = order
+        .iter()
+        .enumerate()
+        .filter_map(|(at, key)| Some((at, held(*key).1?.to_string())))
+        .collect();
+    Assembled {
+        beads,
+        external,
+        children,
+        dangling,
+        cycles,
+    }
 }
 
 /// Walk down from the root, placing each bead the first time it is reached
@@ -351,51 +408,29 @@ struct Reached<'a> {
 /// each is drawn in. A walk that drew a bead once for every way down to it
 /// would reach nothing new on the second way, because everything under the
 /// bead was reached under it the first time or was already above it.
-fn reach<'a>(
-    root: &'a str,
-    ordered: &BTreeMap<&'a str, Vec<&'a str>>,
-    by_id: &BTreeMap<&'a str, &'a Bead>,
-) -> Reached<'a> {
+fn reach<K: Copy + Ord>(root: K, beneath: &impl Fn(K) -> Vec<(K, Edge)>) -> Reached<K> {
     let mut found = Reached {
         order: vec![root],
         children: vec![Vec::new()],
         looped: false,
     };
-    let mut placed: BTreeMap<&str, usize> = BTreeMap::from([(root, 0)]);
-    descend(
-        root,
-        0,
-        ordered,
-        by_id,
-        &mut placed,
-        &mut Vec::new(),
-        &mut found,
-    );
+    let mut placed: BTreeMap<K, usize> = BTreeMap::from([(root, 0)]);
+    descend(root, 0, beneath, &mut placed, &mut Vec::new(), &mut found);
     found
 }
 
-fn descend<'a>(
-    id: &'a str,
+fn descend<K: Copy + Ord>(
+    key: K,
     at: usize,
-    ordered: &BTreeMap<&'a str, Vec<&'a str>>,
-    by_id: &BTreeMap<&'a str, &'a Bead>,
-    placed: &mut BTreeMap<&'a str, usize>,
-    above: &mut Vec<&'a str>,
-    found: &mut Reached<'a>,
+    beneath: &impl Fn(K) -> Vec<(K, Edge)>,
+    placed: &mut BTreeMap<K, usize>,
+    above: &mut Vec<K>,
+    found: &mut Reached<K>,
 ) {
-    above.push(id);
-    for &child in ordered.get(id).into_iter().flatten() {
-        let edge = if by_id[child]
-            .dependencies
-            .iter()
-            .any(|d| d.on == id && d.edge == Edge::ParentChild)
-        {
-            Edge::ParentChild
-        } else {
-            Edge::Blocks
-        };
+    above.push(key);
+    for (child, edge) in beneath(key) {
         found.looped |= above.contains(&child);
-        let (bead, first) = match placed.get(child) {
+        let (bead, first) = match placed.get(&child) {
             Some(&bead) => (bead, false),
             None => {
                 let bead = found.order.len();
@@ -407,10 +442,123 @@ fn descend<'a>(
         };
         found.children[at].push(Link { bead, edge, first });
         if first {
-            descend(child, bead, ordered, by_id, placed, above, found);
+            descend(child, bead, beneath, placed, above, found);
         }
     }
     above.pop();
+}
+
+/// A bead in one of several projects' answers: which answer, and its id there.
+type Held<'a> = (usize, &'a str);
+
+/// Several projects' answers read as one, so that a bead waiting on another
+/// project's bead holds it beneath itself as it would a bead of its own.
+///
+/// A dependency names an id and no project, so it is looked for in the
+/// bead's own answer first, and only an id that answer lacks is looked for
+/// elsewhere — where it is another project's bead only if exactly one other
+/// answer holds it, because prefixes are uncoordinated and nothing the row
+/// says picks between two. Only a blocks edge crosses: a blocker is drawn
+/// beneath the bead waiting on it, whereas a parent in another project would
+/// put this project's bead inside that project's trees.
+pub struct Across<'a> {
+    /// The project each of `answers` is.
+    projects: Vec<&'a str>,
+    answers: Vec<Nesting<'a>>,
+    /// Which of `answers` hold a bead of each id.
+    holding: BTreeMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> Across<'a> {
+    /// Every project's answer, by its project.
+    pub fn of(answers: impl IntoIterator<Item = (&'a str, Nesting<'a>)>) -> Self {
+        let (projects, answers): (Vec<&str>, Vec<Nesting>) = answers.into_iter().unzip();
+        let mut holding: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (at, answer) in answers.iter().enumerate() {
+            for &id in answer.by_id.keys() {
+                holding.entry(id).or_default().push(at);
+            }
+        }
+        Across {
+            projects,
+            answers,
+            holding,
+        }
+    }
+
+    /// Order the answers into a tree under `project`'s bead `root`.
+    pub fn assemble(&self, project: &str, root: &str) -> anyhow::Result<Assembled> {
+        let Some(root) = self
+            .projects
+            .iter()
+            .position(|answer| *answer == project)
+            .and_then(|at| Some((at, *self.answers[at].by_id.get_key_value(root)?.0)))
+        else {
+            bail!("{project}'s answer holds no bead {root} to draw a tree from");
+        };
+        Ok(assemble(
+            root,
+            |key| self.beneath(key),
+            |(at, id)| {
+                let external = (at != root.0).then_some(self.projects[at]);
+                (self.bead((at, id)), external)
+            },
+            |key| self.unheld(key),
+        ))
+    }
+
+    fn bead(&self, (at, id): Held<'a>) -> &'a Bead {
+        self.answers[at].by_id[id]
+    }
+
+    /// The bead in another project's answer that `dependency` of a bead in
+    /// answer `at` names, where it names one.
+    fn elsewhere(&self, at: usize, dependency: &Dependency) -> Option<Held<'a>> {
+        if dependency.edge != Edge::Blocks
+            || self.answers[at].by_id.contains_key(dependency.on.as_str())
+        {
+            return None;
+        }
+        match self.holding.get(dependency.on.as_str())?.as_slice() {
+            [only] => {
+                let (&id, _) = self.answers[*only]
+                    .by_id
+                    .get_key_value(dependency.on.as_str())?;
+                Some((*only, id))
+            }
+            _ => None,
+        }
+    }
+
+    /// The beads beneath one, its own answer's and every other project's
+    /// bead it waits on, in one render order.
+    fn beneath(&self, (at, id): Held<'a>) -> Vec<(Held<'a>, Edge)> {
+        let answer = &self.answers[at];
+        let mut kids: Vec<(Held, Edge)> = answer
+            .beneath(id)
+            .into_iter()
+            .map(|(kid, edge)| ((at, kid), edge))
+            .collect();
+        let elsewhere: BTreeSet<Held> = answer.by_id[id]
+            .dependencies
+            .iter()
+            .filter_map(|dependency| self.elsewhere(at, dependency))
+            .collect();
+        if !elsewhere.is_empty() {
+            kids.extend(elsewhere.into_iter().map(|held| (held, Edge::Blocks)));
+            kids.sort_by(|(a, _), (b, _)| render_order(self.bead(*a), self.bead(*b)));
+        }
+        kids
+    }
+
+    /// Whether the bead waits on something no answer holds for it.
+    fn unheld(&self, (at, id): Held<'a>) -> bool {
+        let answer = &self.answers[at];
+        answer.by_id[id].dependencies.iter().any(|dependency| {
+            !answer.by_id.contains_key(dependency.on.as_str())
+                && self.elsewhere(at, dependency).is_none()
+        })
+    }
 }
 /// The beads at which a walk drawing every way down cuts a loop: each is
 /// reached, then reached again from beneath itself, and the second time is
@@ -1187,5 +1335,212 @@ mod tests {
     #[test]
     fn nothing_is_unrolled_from_no_tree() {
         assert!(unroll(&[]).is_empty());
+    }
+
+    // ---- across projects -----------------------------------------------
+
+    /// Each project's answer as a tracker writes it, read as one.
+    fn across<'a>(answers: &'a [(&'a str, Vec<Bead>)]) -> Across<'a> {
+        Across::of(
+            answers
+                .iter()
+                .map(|(project, beads)| (*project, Nesting::of(beads))),
+        )
+    }
+
+    fn answer<'a>(project: &'a str, beads: &[String]) -> (&'a str, Vec<Bead>) {
+        (
+            project,
+            parse_beads(&tracker(beads)).expect("the rows parse"),
+        )
+    }
+
+    /// The tree as it is drawn from a root of arkham's, each row naming the
+    /// project it is keyed on.
+    fn keyed(a: &Assembled) -> Vec<(&str, &str, u16)> {
+        unroll(&a.children)
+            .into_iter()
+            .map(|p| {
+                (
+                    a.external.get(&p.bead).map_or("arkham", String::as_str),
+                    a.beads[p.bead].id.as_str(),
+                    p.depth,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_bead_waiting_on_another_projects_bead_holds_it_and_its_subtree() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "blocks")])],
+            ),
+            answer(
+                "dunwich",
+                &[
+                    bead("dun-7", "open", &[]),
+                    bead("dun-7.1", "open", &[dep("dun-7", "parent-child")]),
+                ],
+            ),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            keyed(&a),
+            vec![
+                ("arkham", "ark-1", 0),
+                ("dunwich", "dun-7", 1),
+                ("dunwich", "dun-7.1", 2),
+            ]
+        );
+        assert_eq!(a.children[0][0].edge, Edge::Blocks);
+        assert_eq!(a.dangling, Vec::<String>::new());
+    }
+
+    /// A bead keeps its own project's answer first: an id it holds is its
+    /// own bead, whatever another tracker also holds under that id.
+    #[test]
+    fn an_id_a_beads_own_project_holds_is_its_own_projects_bead() {
+        let answers = [
+            answer(
+                "arkham",
+                &[
+                    bead("ark-1", "open", &[dep("x-1", "blocks")]),
+                    bead("x-1", "open", &[]),
+                ],
+            ),
+            answer("dunwich", &[bead("x-1", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            keyed(&a),
+            vec![("arkham", "ark-1", 0), ("arkham", "x-1", 1)]
+        );
+    }
+
+    /// Prefixes are uncoordinated, so two other trackers can hold the id. A
+    /// bead named that way is neither of theirs, and it stays work the
+    /// answer does not hold.
+    #[test]
+    fn an_id_two_other_projects_hold_is_held_by_neither() {
+        let answers = [
+            answer("arkham", &[bead("ark-1", "open", &[dep("x-1", "blocks")])]),
+            answer("dunwich", &[bead("x-1", "open", &[])]),
+            answer("ferry", &[bead("x-1", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
+        assert_eq!(a.dangling, vec!["ark-1".to_string()]);
+    }
+
+    /// The walk goes on from the other project's bead as it would from any:
+    /// a dependency it holds on a third project is followed there too.
+    #[test]
+    fn a_dependency_in_the_other_project_is_followed_into_a_third() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "blocks")])],
+            ),
+            answer(
+                "dunwich",
+                &[bead("dun-7", "open", &[dep("fer-2", "blocks")])],
+            ),
+            answer("ferry", &[bead("fer-2", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            keyed(&a),
+            vec![
+                ("arkham", "ark-1", 0),
+                ("dunwich", "dun-7", 1),
+                ("ferry", "fer-2", 2),
+            ]
+        );
+    }
+
+    /// Two projects waiting on each other are a loop like any other, and it
+    /// is cut where the walk comes back round.
+    #[test]
+    fn a_loop_across_projects_is_cut_where_it_comes_back_round() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "blocks")])],
+            ),
+            answer(
+                "dunwich",
+                &[bead("dun-7", "open", &[dep("ark-1", "blocks")])],
+            ),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            keyed(&a),
+            vec![("arkham", "ark-1", 0), ("dunwich", "dun-7", 1)]
+        );
+        assert_eq!(a.cycles, vec!["ark-1".to_string()]);
+    }
+
+    /// Only a bead's blockers cross. A parent in another project would put
+    /// this project's bead inside that project's trees, which is not the
+    /// bead waiting on it holding it.
+    #[test]
+    fn a_parent_in_another_project_is_not_held() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "parent-child")])],
+            ),
+            answer("dunwich", &[bead("dun-7", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
+        assert_eq!(a.dangling, vec!["ark-1".to_string()]);
+    }
+
+    /// Siblings from two projects take one order, as siblings from one do.
+    #[test]
+    fn another_projects_blocker_takes_its_place_among_the_siblings() {
+        let answers = [
+            answer(
+                "arkham",
+                &[
+                    bead("ark-1", "open", &[dep("dun-7", "blocks")]),
+                    bead("ark-1.1", "closed", &[dep("ark-1", "parent-child")]),
+                ],
+            ),
+            answer("dunwich", &[bead("dun-7", "in_progress", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            keyed(&a),
+            vec![
+                ("arkham", "ark-1", 0),
+                ("dunwich", "dun-7", 1),
+                ("arkham", "ark-1.1", 1),
+            ]
+        );
     }
 }

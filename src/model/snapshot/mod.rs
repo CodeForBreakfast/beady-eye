@@ -9,7 +9,9 @@
 mod build;
 mod filter;
 
-pub use build::{build, build_tree};
+#[cfg(feature = "testing")]
+pub use build::said_by;
+pub use build::{build, build_tree, Said};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -246,7 +248,7 @@ impl Counts {
         let mut counted = BTreeSet::new();
         let once: Vec<&Node> = nodes
             .into_iter()
-            .filter(|node| counted.insert(node.id.clone()))
+            .filter(|node| counted.insert(node.key()))
             .collect();
         Counts {
             total: once.len(),
@@ -265,6 +267,9 @@ impl Counts {
 /// way down.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Node {
+    /// The project whose tracker holds the bead. Its own project's, which is
+    /// not the tree's where the tree reached it through a bead waiting on it.
+    pub project: String,
     pub id: String,
     pub title: String,
     pub status: Status,
@@ -311,6 +316,21 @@ pub struct Node {
     pub depends_on: Vec<Related>,
     #[serde(skip)]
     pub blocks: Vec<Related>,
+}
+
+impl Node {
+    /// What the bead is known by wherever it is drawn.
+    pub fn key(&self) -> BeadKey {
+        BeadKey {
+            project: self.project.clone(),
+            id: self.id.clone(),
+        }
+    }
+
+    /// Whether this is the bead `key` names.
+    pub fn is(&self, key: &BeadKey) -> bool {
+        self.id == key.id && self.project == key.project
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,6 +382,7 @@ impl Serialize for Tree {
 /// the bead — where the contract puts them.
 #[derive(Serialize)]
 struct Drawn<'a> {
+    project: &'a str,
     id: &'a str,
     title: &'a str,
     status: &'a Status,
@@ -385,6 +406,7 @@ impl Tree {
             .map(|placed| {
                 let node = &self.beads[placed.bead];
                 Drawn {
+                    project: &node.project,
                     id: &node.id,
                     title: &node.title,
                     status: &node.status,
@@ -635,12 +657,16 @@ impl Snapshot {
     /// among that tree's beads. Bead ids are unique only within a tracker, so
     /// both halves of the key are matched together here and neither is ever
     /// matched alone anywhere else.
+    ///
+    /// The bead's own project's trees are asked first, then the trees of the
+    /// projects that reach it through a bead waiting on it.
     pub fn locate(&self, key: &BeadKey) -> Option<(&Tree, usize)> {
-        self.collected
-            .iter()
+        let trees = || self.collected.iter();
+        trees()
             .filter(|tree| tree.project == key.project)
+            .chain(trees().filter(|tree| tree.project != key.project))
             .find_map(|tree| {
-                let at = tree.beads.iter().position(|node| node.id == key.id)?;
+                let at = tree.beads.iter().position(|node| node.is(key))?;
                 Some((tree.as_ref(), at))
             })
     }
@@ -802,8 +828,7 @@ render = "⏸ waiting"
             "dunwich",
             &assembled,
             &joined,
-            &readiness(),
-            &relations,
+            &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -998,8 +1023,7 @@ render = "⏸ waiting"
             "ferry",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("ferry", &Readiness::default(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),
