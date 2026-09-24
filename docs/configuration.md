@@ -676,12 +676,18 @@ hard: `bdi`'s read waits behind the writes, and a read taking longer than
 
 ## Each tracker read by its own bd
 
-`bdi` never writes to a tracker, but bd does: on finding itself newer than the
-bd that last opened a tracker, bd rewrites `.beads/.local_version` and migrates
-the schema, before running whatever subcommand it was given. `--readonly` does
-not stop that, and under `--json` bd says nothing about it. So a tracker read
-with a bd that is not its project's can be moved to a schema its project's bd
-cannot open. That is why `bdi` runs each project's own `bd` through its
-environment, and refuses to fall back to its own when that fails. Upgrading a
-project's bd migrates on the first read afterwards. `design.md`'s *Reading a tracker is not leaving it alone* has the
-measurements.
+`bdi` never writes to a tracker, but a bd older than 1.3.0 does: on finding
+itself newer than the bd that last opened a tracker, it rewrites
+`.beads/.local_version` and migrates the schema, before running whatever
+subcommand it was given. `--readonly` does not stop that, and under `--json` bd
+says nothing about it. bd 1.3.0, the version the flake pins, does neither under
+`--readonly`: it leaves the file alone, and refuses a store whose schema is
+behind it until a bd run without the flag migrates it.
+
+So a tracker read with a bd that is not its project's can still be moved to a
+schema its project's bd cannot open, wherever that bd predates 1.3.0. That is
+why `bdi` runs each project's own `bd` through its environment, and refuses to
+fall back to its own when that fails. Upgrading a project's bd to another
+version older than 1.3.0 migrates its tracker on the first read afterwards.
+Upgrading it to 1.3.0 fails every read until something else migrates the store.
+`design.md`'s *Reading a tracker is not leaving it alone* has the measurements.

@@ -1287,11 +1287,11 @@ environment_command = "nix develop -c"
   The second is *Reading a tracker is not leaving it alone* below, and it is
   the one that settles it. Falling back would read that project's tracker with
   the bd on `bdi`'s own `PATH` — which is not the bd the project asked to be
-  read with — and bd rewrites `.beads/.local_version` and runs its schema
-  auto-migration on finding itself newer than the bd that last opened a
-  tracker. The decision not to gate on a bd version is taken there **on the
-  narrow ground that a tracker may be read by any version of its own project's
-  bd**, and a fallback is precisely the case that ground excludes: it reads a
+  read with — and a bd older than 1.3.0 rewrites `.beads/.local_version` and
+  runs its schema auto-migration on finding itself newer than the bd that last
+  opened a tracker, `--readonly` or not. The decision not to gate on a bd
+  version is taken there **on the narrow ground that a tracker may be read by
+  any version of its own project's bd**, and a fallback is precisely the case that ground excludes: it reads a
   project that named `nix develop -c`, or implied `direnv exec .`, with a bd
   that is not its own. A tracker cannot be put back and the migration
   announces itself nowhere; a sentence on the screen can be read and acted on.

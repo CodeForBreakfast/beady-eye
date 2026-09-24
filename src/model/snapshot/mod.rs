@@ -156,7 +156,8 @@ pub enum TrackerFailure {
     /// One of the two that are not about bd, and no bd ran for this project at
     /// all. That is deliberate rather than incidental — the bd on `bdi`'s own
     /// `PATH` is not the bd the project asked to be read with, and opening a
-    /// tracker with the wrong one migrates its schema.
+    /// tracker with the wrong one migrates its schema wherever that bd is older
+    /// than 1.3.0.
     NoEnvironment,
     /// The project's own `credential_command` would not run, so the tracker
     /// was never opened.

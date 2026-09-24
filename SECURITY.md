@@ -27,9 +27,9 @@ carry fixes.
 `bdi` issues only reads: every `bd` command line it spells is a read, and the
 pane tail it draws is output it was handed rather than a shell it runs. That is
 a property of those command lines rather than a guarantee about your tracker —
-`bd` writes on its own account when it opens one, rewriting
+a `bd` older than 1.3.0 writes on its own account when it opens one, rewriting
 `.beads/.local_version` and migrating the schema before it runs whatever it was
-asked for. [docs/configuration.md](docs/configuration.md#each-tracker-read-by-its-own-bd) has that, and it is not a
+asked for, even under `--readonly`. [docs/configuration.md](docs/configuration.md#each-tracker-read-by-its-own-bd) has that, and it is not a
 vulnerability.
 
 The places worth pointing a report at are where the reading stops being the

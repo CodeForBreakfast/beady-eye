@@ -92,12 +92,12 @@ pub fn ambient_credential() -> Option<String> {
 /// A project that asked to be entered and could not be gets no environment at
 /// all, and no bd is run for it. Falling back to `bdi`'s own would read that
 /// project's tracker with a bd it did not ask for, and reading is not free:
-/// bd rewrites `.beads/.local_version` and runs its schema auto-migration on
-/// finding itself newer than the bd that last opened a tracker, before the
-/// subcommand and whatever the subcommand is. What the reader gets instead is
-/// the project reported as having asked for an environment `bdi` could not
-/// produce, which is a sentence they can act on rather than a tracker they
-/// cannot put back.
+/// a bd older than 1.3.0 rewrites `.beads/.local_version` and runs its schema
+/// auto-migration on finding itself newer than the bd that last opened a
+/// tracker, before the subcommand and whatever the subcommand is, `--readonly`
+/// included. What the reader gets instead is the project reported as having
+/// asked for an environment `bdi` could not produce, which is a sentence they
+/// can act on rather than a tracker they cannot put back.
 ///
 /// The credential command does not run either, and the order is what says so:
 /// a project with no environment has nothing to be read, so running an
