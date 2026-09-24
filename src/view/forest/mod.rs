@@ -1020,8 +1020,7 @@ impl Forest {
         self.cursor = origin.cursor.clone();
         self.searched = origin.searched.clone();
         self.lay_out();
-        self.from = origin.from;
-        self.reveal();
+        self.from = origin.from.min(self.furthest());
     }
 
     /// Step to the next bead matching what was last searched for, or to the
@@ -8966,6 +8965,23 @@ credential_command = "secret harbour"
 
         assert_eq!(sketch(&forest), was);
         assert_eq!(forest.selected_line(), line);
+        assert_eq!(forest.from(), from);
+    }
+
+    /// A view the wheel scrolled away from the selection stays where the
+    /// reader left it.
+    #[test]
+    fn going_back_to_where_a_search_began_leaves_a_scrolled_view_where_it_was() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.scrolled(Notch::Down, 3);
+        let from = forest.from();
+        assert_ne!(from, 0, "the wheel moved nothing");
+        let origin = forest.origin();
+        forest.seek("survey the silt", &origin);
+
+        forest.restore(&origin);
+
         assert_eq!(forest.from(), from);
     }
 
