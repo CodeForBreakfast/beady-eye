@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use crate::config::{Badge, Config};
 use crate::model::anomaly;
 use crate::model::badges;
-use crate::model::edges::Relations;
+use crate::model::edges::{Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
@@ -84,10 +84,11 @@ pub fn build_tree(
             let agent = joined.agents.get(&key).cloned();
             let refused = joined.refused.get(&key);
             let out_of_reach = joined.out_of_reach.contains(&key);
-            let tied = said
+            let mut tied = said
                 .and_then(|said| said.relations.get(&bead.id))
                 .cloned()
                 .unwrap_or_default();
+            held_elsewhere(&mut tied.depends_on, assembled, at, project);
             let badged = badges::badges_for(bead, &badges[own]);
             let mut blocked_by = readiness
                 .and_then(|r| r.blocked_by.get(&bead.id))
@@ -175,6 +176,29 @@ fn blockers_elsewhere<'a>(
                 && !assembled.beads[link.bead].status.is_finished()
         })
         .map(|link| assembled.beads[link.bead].id.clone())
+}
+
+/// Name each bead the one at `at` depends on that its own project's answer
+/// does not hold as the bead the tree hangs beneath it from another project.
+///
+/// A project's relations are read from its answer alone, and the tree is
+/// what read every answer together to find the other project's bead.
+fn held_elsewhere(depends_on: &mut [Related], assembled: &Assembled, at: usize, project: &str) {
+    let own = |at: usize| assembled.external.get(&at).map_or(project, String::as_str);
+    for related in depends_on
+        .iter_mut()
+        .filter(|related| related.status.is_none())
+    {
+        let reached = assembled.children[at]
+            .iter()
+            .find(|link| assembled.beads[link.bead].id == related.id);
+        if let Some(link) = reached {
+            let bead = &assembled.beads[link.bead];
+            related.project = Some(own(link.bead).to_string());
+            related.status = Some(bead.status.clone());
+            related.title = Some(bead.title.clone());
+        }
+    }
 }
 
 /// Gather the trees into one snapshot, hiding what the filter hides and

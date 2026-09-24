@@ -268,11 +268,12 @@ Roots come from bd, unioned and deduped:
    written `<project>:<bead-id>` — bare where there is only one project, which
    is the whole of a zero-config run.
 
-   **A root named on the command line replaces discovery for its project.**
-   `bdi meadow:mdw-123` asks for that tree and not the others, so in a
-   project the command line names a root in, its named roots are the only
-   ones: none of the other rules runs there, and the config's roots for it
-   are not read. A project it names no root in is discovered as usual.
+   **A bead named on the command line is focused, and discovery still runs.**
+   `bdi meadow:mdw-123` asks to be shown that bead, and `bdi` starts as if
+   the reader had pressed `Shift+F` on it. Its tree is read beside the ones
+   the other rules find: a bead below a root is climbed to that root as a
+   pane's bead is, and one the tracker does not hold is named as a root so
+   that its tree reports it missing.
 3. Any bead named by a live pane's `display_agent` that the first two missed.
    This is the only root herdr contributes, and it exists so an agent working
    off-tree still appears.
@@ -1067,12 +1068,19 @@ away is everything a reader does not have to do in order to close the one they
 are on. Everything beneath that bead is already in the tree it is drawn in, so
 this is a change to what the layout walks rather than to what was collected,
 and the bead keeps the place it has everywhere else — which is what lets a fold
-set on it survive the key both ways. The default above rejects
+set on it survive the key both ways. The fold rule begins afresh at that bead,
+so rooting at a later copy of it draws what rooting at the first copy does. The
+default above rejects
 collapsed-except-selected and the rejection stands: the selection has no
 bearing on what is open, and it has none here either, because the mode stands
 on the bead named at the keystroke and moving about under it moves nothing.
 Pressing the key again puts the forest back, with the selection on the bead it
-was rooted at, opening whatever has been shut over that bead in the meantime. The bead leaving the collection is the one thing that ends the
+was rooted at, opening whatever has been shut over that bead in the meantime.
+The command line roots the forest the same way: `bdi <bead-id>` starts as if
+the key had been pressed on that bead, once a collection draws it. Several
+named are each drawn as a root, which is the one way the mode holds more than
+one bead; a bead named beneath another is already drawn under it. The key
+then puts the forest back as it does after any other focus. The bead leaving the collection is the one thing that ends the
 mode on its own; a bead that closes is still in the collection, so closing the
 focused bead does not, and a bead the tracker has moved is followed to where it
 moved to. Everything the mode stops drawing goes behind
@@ -2808,7 +2816,7 @@ the thing a row carries that a list cannot, which is the bead's place in the
 tree. `n` steps to the next match and `N` to the one before, coming round at
 either end.
 
-**Each keystroke at the prompt is the whole search again.** It lands on the
+**Each edit at the prompt is the whole search again.** It lands on the
 first match after where the selection stood when `/` was pressed, as `n`
 would step from there, and not after wherever the last keystroke landed. So
 taking a character back widens the search from the same place it began. A
@@ -2818,6 +2826,28 @@ while the prompt is up, as in vim, because `n` and `N` are letters of the
 text there. Enter closes the prompt and leaves the selection on the match; it
 never opens the bead. Esc puts the selection, the scroll and every fold back
 exactly as they stood when `/` was pressed.
+
+**The prompt edits its text as a shell's line editor does.** It keeps a
+cursor in the text, drawn as the terminal's own, and its keys are readline's,
+because a shell prompt is where a reader learnt what these keys do:
+
+| key | does |
+|---|---|
+| `Left`, `Right` | move one character |
+| `Home`, `^A` | move to the start |
+| `End`, `^E` | move to the end |
+| `BkSp` | delete the character before the cursor |
+| `Delete` | delete the character at the cursor |
+| `^W` | delete the word before the cursor, as far back as a space |
+| `^U` | delete everything before the cursor |
+| `^K` | delete everything from the cursor on |
+
+An edit that changes the text is a keystroke like any other, wherever in the
+text it is made. A key that only moves the cursor searches nothing. `^B` and
+`^F` are left out because the arrows are what a reader reaches for, and `^D`
+because it is half a screen in the forest and the end of input in a shell.
+The `?` window lists these after the forest's own keys, with `Enter` and `Esc`,
+each said *while searching*.
 
 **Matches are numbered in the order the forest draws them.** Not by relevance:
 screen order is the order a reader scrolling would have met them, it is the
@@ -2847,7 +2877,7 @@ and a stored place in one would be wrong the moment the reader moved by hand.
 right after both.
 
 **What a search step opens is provisional.** A step is `n`, `N`, or a
-keystroke, `^G` or `^T` at the prompt, and it opens whatever is folded over the bead it goes to.
+keystroke that changes the text, `^G` or `^T` at the prompt, and it opens whatever is folded over the bead it goes to.
 The next step puts those folds back the way they were before opening what its
 own match needs, so walking the matches leaves no trail of open branches, and
 the branches the last match needed stay open. A fold the step found open is
@@ -2857,7 +2887,7 @@ so live work arriving under it spends it as it would any other.
 Any other act by the reader makes whatever is open at that moment theirs, and
 no later step shuts it. That is a move by key or by click, opening or shutting
 a fold, opening the bead window, and every other key but `/`, which only opens
-the prompt, and the Enter that closes it. A wheel notch is not an act here, because
+the prompt, and the keys at the prompt, the Enter that closes it among them. A wheel notch is not an act here, because
 it moves no fold and no selection.
 
 What the last step before `/` opened is still provisional when Esc puts it
@@ -2865,7 +2895,8 @@ back, so the next step shuts it as it would have.
 
 Control held down still moves a row: a key that does not ask for control
 answers whatever modifiers are held, which is what the arrows and the letters
-have always done, and only `^D`, `^U`, `^R`, `^G`, `^T` and `^C` ask for it. That is
+have always done, and only `^D`, `^U`, `^R`, `^G`, `^T` and `^C` ask for it, with
+`^A`, `^E`, `^W` and `^K` at the prompt. That is
 inherited rather than chosen, and if it should change it is its own bead.
 
 `^R` is a notification like any other: it takes the same window and the same

@@ -229,15 +229,18 @@ pub fn related(node: &Node) -> Vec<&Related> {
         .collect()
 }
 
-/// The key a bead named in a section stands for: its bare id, in the project
-/// of the bead the selection is on.
+/// The key a bead named in a section stands for: its id, in the project it
+/// names, or else in the project of the bead the selection is on.
 ///
-/// `Related` carries no project and the key here is `(project, id)`. What a
-/// bead's own answer relates it to is in its own project, which is not the
-/// tree's where the tree reached the bead from another project.
+/// That is the selected bead's own project rather than the tree's, which
+/// differ where the tree reached the bead from another project.
 pub fn key_of(forest: &Forest, related: &Related) -> Option<BeadKey> {
+    let project = match &related.project {
+        Some(project) => project.clone(),
+        None => forest.place()?.key().project.clone(),
+    };
     Some(BeadKey {
-        project: forest.place()?.key().project.clone(),
+        project,
         id: related.id.clone(),
     })
 }
@@ -803,6 +806,7 @@ mod tests {
     fn related(id: &str, edge: Edge, status: Status, title: &str) -> Related {
         Related {
             id: id.to_string(),
+            project: None,
             edge,
             status: Some(status),
             title: Some(title.to_string()),
@@ -1529,6 +1533,7 @@ mod tests {
         let orphaned = Node {
             depends_on: vec![Related {
                 id: "dun-9".to_string(),
+                project: None,
                 edge: Edge::Blocks,
                 status: None,
                 title: None,

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use super::{Filter, HiddenTree, ProviderState, Snapshot, TrackerState, Tree};
+use crate::model::join::BeadKey;
 
 impl Tree {
     /// What the default filter keeps: a tree somebody is working in, a tree
@@ -111,6 +112,22 @@ impl Snapshot {
         self.filter = filter;
         self.trees = trees;
         self.hidden_trees = hidden_trees;
+    }
+
+    /// Keep, in each project a bead is named in, only the trees holding one
+    /// of those beads.
+    pub fn narrow_to(&mut self, named: &[BeadKey]) {
+        self.collected.retain(|tree| {
+            let here: Vec<&BeadKey> = named
+                .iter()
+                .filter(|key| key.project == tree.project)
+                .collect();
+            here.is_empty()
+                || here
+                    .iter()
+                    .any(|key| tree.root == key.id || tree.beads.iter().any(|bead| bead.is(key)))
+        });
+        self.refilter(self.filter);
     }
 }
 

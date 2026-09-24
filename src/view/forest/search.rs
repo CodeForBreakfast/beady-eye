@@ -61,7 +61,7 @@ impl<'a> Matches<'a> {
     pub(super) fn of(
         snapshot: &'a Snapshot,
         facts: &'a Facts,
-        rooted: Option<&Rooted>,
+        rooted: &[Rooted],
         sought: Sought,
     ) -> Self {
         let mut walks: Vec<Walk> = layout::walked(snapshot, rooted)
@@ -108,12 +108,12 @@ impl<'a> Matches<'a> {
 }
 
 /// One tree the forest draws, from the way down it starts drawing at, and
-/// leaving out the bead `layout::walked` says the mode draws elsewhere.
+/// leaving out the beads `layout::walked` says the mode draws elsewhere.
 struct Walk<'a> {
     tree: &'a Tree,
     facts: &'a TreeFacts,
     way: Vec<usize>,
-    without: Option<usize>,
+    without: Vec<usize>,
     start: Place,
     /// The matches beneath each bead, once counted, in a tree with no loop in
     /// it. A tree with one cuts it by the way down, so there two copies of a
@@ -125,7 +125,7 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(tree: &'a Tree, facts: &'a TreeFacts, way: Vec<usize>, without: Option<usize>) -> Self {
+    fn new(tree: &'a Tree, facts: &'a TreeFacts, way: Vec<usize>, without: Vec<usize>) -> Self {
         let mut start = Place::root(root_key(tree));
         for &at in way.iter().skip(1) {
             start = start.step_to(tree.beads[at].key());
@@ -166,7 +166,7 @@ impl<'a> Walk<'a> {
             .into_iter()
             .chain(elided)
             .map(|link| link.bead)
-            .filter(|bead| Some(*bead) != self.without)
+            .filter(|bead| !self.without.contains(bead))
             .collect()
     }
 

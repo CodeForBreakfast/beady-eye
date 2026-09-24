@@ -142,6 +142,7 @@ pub fn run(
     outstanding.ask(Wanted::Everything, started);
 
     let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg), started)?;
+    screen.focus_when_drawn(cfg.roots.named_beads());
     screen.collecting(outstanding.awaited());
 
     drive(
