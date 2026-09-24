@@ -340,6 +340,7 @@ mod tests {
 
     pub(super) fn node(id: &str, title: &str, status: Status) -> Node {
         Node {
+            project: "dunwich".to_string(),
             id: id.into(),
             title: title.into(),
             status,

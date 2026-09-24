@@ -421,6 +421,7 @@ mod tests {
 
     fn node(id: &str, status: Status) -> Node {
         Node {
+            project: "dunwich".to_string(),
             id: id.into(),
             title: "wallpaper timer calls dms".into(),
             status,

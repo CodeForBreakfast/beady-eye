@@ -810,6 +810,7 @@ mod tests {
     /// A bead with something in every section `bd show` prints.
     fn a_bead() -> Node {
         Node {
+            project: "dunwich".to_string(),
             id: "dun-7.1".to_string(),
             title: "re-point the dish".to_string(),
             status: Status::InProgress,
@@ -1037,6 +1038,7 @@ mod tests {
 
     fn a_bead_with_a_long_title() -> Node {
         Node {
+            project: "dunwich".to_string(),
             title: A_LONG_TITLE.to_string(),
             ..a_bead()
         }
@@ -2422,6 +2424,7 @@ mod tests {
     /// the join inferred rather than confirmed.
     fn a_busy_bead() -> Node {
         Node {
+            project: "dunwich".to_string(),
             badges: vec![
                 Badged {
                     key: "pr".to_string(),

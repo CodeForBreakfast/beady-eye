@@ -9,7 +9,9 @@
 mod build;
 mod filter;
 
-pub use build::{build, build_tree};
+pub use build::{build, build_tree, Said};
+#[cfg(feature = "testing")]
+pub use build::said_by;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -265,6 +267,9 @@ impl Counts {
 /// way down.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Node {
+    /// The project whose tracker holds the bead. Its own project's, which is
+    /// not the tree's where the tree reached it through a bead waiting on it.
+    pub project: String,
     pub id: String,
     pub title: String,
     pub status: Status,
@@ -362,6 +367,7 @@ impl Serialize for Tree {
 /// the bead — where the contract puts them.
 #[derive(Serialize)]
 struct Drawn<'a> {
+    project: &'a str,
     id: &'a str,
     title: &'a str,
     status: &'a Status,
@@ -385,6 +391,7 @@ impl Tree {
             .map(|placed| {
                 let node = &self.beads[placed.bead];
                 Drawn {
+                    project: &node.project,
                     id: &node.id,
                     title: &node.title,
                     status: &node.status,
@@ -802,8 +809,7 @@ render = "⏸ waiting"
             "dunwich",
             &assembled,
             &joined,
-            &readiness(),
-            &relations,
+            &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
             ProviderState::Answering,
             &cfg(),
             now(),
@@ -998,8 +1004,7 @@ render = "⏸ waiting"
             "ferry",
             &assembled(json),
             &Joined::default(),
-            &Readiness::default(),
-            &BTreeMap::new(),
+            &crate::model::snapshot::said_by("ferry", &Readiness::default(), &BTreeMap::new()),
             ProviderState::Answering,
             &cfg(),
             now(),

@@ -269,6 +269,7 @@ fn a_node_carries_every_field_the_contract_names() {
     assert_eq!(
         claimed,
         &json!({
+            "project": "dunwich",
             "id": "dun-7.1",
             "title": "re-point the dish",
             "status": "in_progress",

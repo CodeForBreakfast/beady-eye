@@ -21,7 +21,12 @@ use crate::model::types::{Bead, Pane, Unreadable};
 /// One project's roots in id order, each either read or unreadable, what
 /// every bead in the answer is tied to, and when the answer stops speaking
 /// for the tracker with nothing written.
+///
+/// The answer itself is kept too, for the trees of other projects: a bead
+/// waiting on one of this project's beads draws it, and everything beneath
+/// it, from here.
 pub(super) struct ProjectWork {
+    pub(super) beads: Vec<Bead>,
     pub(super) readiness: Readiness,
     pub(super) relations: BTreeMap<String, Relations>,
     pub(super) roots: Vec<(String, Result<Assembled, RootUnread>)>,
@@ -256,6 +261,7 @@ fn read_project(
         relations: edges::relations(&beads),
         roots: read,
         speaks_until: speaks_until(&beads, now),
+        beads,
     })
 }
 
