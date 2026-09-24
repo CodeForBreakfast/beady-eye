@@ -132,10 +132,15 @@ pub enum Typing {
     Character(char),
     /// Take the last character back.
     RubbedOut,
-    /// Go to the bead the typed id names.
+    /// Leave the prompt, with the selection on the match it has gone to.
     Sought,
-    /// Leave the prompt, with the selection where it was.
+    /// Leave the prompt, with the forest put back as it stood when the
+    /// prompt went up.
     Abandoned,
+    /// Go on to the next bead matching what has been typed so far.
+    NextMatch,
+    /// Go back to the bead before it.
+    PreviousMatch,
 }
 
 /// What the reader's last keystroke came to, said at the foot until their

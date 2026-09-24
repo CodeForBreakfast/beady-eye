@@ -37,12 +37,19 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// tree behind a fold and leaves the search something to open.
 const SHUT_THE_TREE: &[u8] = b"c";
 
-/// `/` and the id of a bead in that tree, without the Enter that asks for it.
+/// `/` and the id of a bead in that tree, without the Enter that closes the
+/// prompt.
 const TYPE_AN_ID: &[u8] = b"/dun-0tp.7";
 
-/// `Enter`, which asks for what is typed — and, on the forest, shows the
-/// selected bead.
+/// `Enter`, which closes the prompt — and, on the forest, shows the selected
+/// bead.
 const ENTER: &[u8] = b"\r";
+
+/// `Esc`, which leaves the prompt with the forest put back as it stood at `/`.
+const ESC: &[u8] = b"\x1b";
+
+/// The tree's header, where the walk leaves the selection.
+const THE_TREES_HEADER: &str = "dun-0tp";
 
 /// `/`, an id no tracker read holds, and Enter.
 const SEARCH_FOR_A_BEAD_NOBODY_HAS: &[u8] = b"/bdi-404\r";
@@ -76,8 +83,9 @@ const THE_ID_THAT_REACHED_NOTHING: &[u8] = "bdi-404".as_bytes();
 /// the two are the same letters otherwise.
 const THE_PROMPT_STILL_UP: &[u8] = "/bdi-404".as_bytes();
 
-/// The whole key, end to end: the prompt takes the characters, Enter takes
-/// the reader to the bead, and the fold that was over it is open.
+/// The whole key, end to end: the prompt takes the characters and takes the
+/// reader to the bead, Enter leaves them there, and the fold that was over it
+/// is open.
 #[test]
 fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
     let (mut bdi, _tracker) = over_the_described_subtree("searched", ROWS, COLS, A_SILENCE);
@@ -116,6 +124,50 @@ fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
         "the search did not leave the selection on the bead it named. The \
          screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&landed),
+        bdi.timeline()
+    );
+}
+
+/// The search moves while the prompt is still up, opening the fold over the
+/// bead the id names, and Esc shuts it again with the selection back on the
+/// header it left.
+#[test]
+fn the_search_moves_as_the_id_is_typed_and_esc_puts_the_tree_back() {
+    let (mut bdi, _tracker) = over_the_described_subtree("incsearch", ROWS, COLS, A_SILENCE);
+    bdi.send(SHUT_THE_TREE);
+    bdi.settle(A_SILENCE, GIVING_UP);
+
+    bdi.send(TYPE_AN_ID);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    let typing = repaint(&mut bdi, ROWS + 1);
+    assert!(
+        contains(&typing, THE_PROMPT) && contains(&typing, THE_SEARCHED_BEADS_TITLE),
+        "with the prompt still up, the search has not opened the fold over \
+         the bead it names. The screen it drew: {:?}\n{}",
+        String::from_utf8_lossy(&typing),
+        bdi.timeline()
+    );
+
+    bdi.send(ESC);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    let abandoned = repaint(&mut bdi, ROWS);
+    assert!(
+        !contains(&abandoned, THE_SEARCHED_BEADS_TITLE),
+        "Esc left open the fold the search opened. The screen it drew: \
+         {:?}\n{}",
+        String::from_utf8_lossy(&abandoned),
+        bdi.timeline()
+    );
+
+    bdi.send(ENTER);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    let window = repaint(&mut bdi, ROWS + 1);
+    assert_eq!(
+        window_over(&window).as_deref(),
+        Some(THE_TREES_HEADER),
+        "Esc did not put the selection back where `/` found it. The screen \
+         it drew: {:?}\n{}",
+        String::from_utf8_lossy(&window),
         bdi.timeline()
     );
 }

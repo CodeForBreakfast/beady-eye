@@ -249,6 +249,16 @@ impl Folds {
         self.stepped_open.clear();
     }
 
+    /// What the last search step opened, as it stands now.
+    pub(super) fn opened_by_the_last_step(&self) -> BTreeSet<Handle> {
+        self.stepped_open.clone()
+    }
+
+    /// Put back what a search step had opened, still that step's to shut.
+    pub(super) fn reopen_for_the_last_step(&mut self, opened: BTreeSet<Handle>) {
+        self.stepped_open = opened;
+    }
+
     /// Make whatever the last search step opened the reader's, so no later
     /// step shuts it.
     pub(super) fn keep_what_the_last_step_opened(&mut self) {
