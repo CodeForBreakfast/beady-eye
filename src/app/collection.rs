@@ -1971,6 +1971,48 @@ path = "{}"
         );
     }
 
+    // ---- a bead waiting on another project's bead ----------------------
+
+    /// Ferry's tracker, one bead waiting on dunwich's epic.
+    const WAITING_ON_DUNWICH: &str = r#"[
+      {"id":"fer-2","title":"moor the barge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// How many answers drawing what `trackers` said reads the edges of,
+    /// beyond the reads that asked for them.
+    ///
+    /// A project's read runs on a thread of its own and the drawing on this
+    /// one, so this thread's count is the drawing's alone.
+    fn nested_to_draw(trackers: &Fakes) -> usize {
+        let before = crate::model::tree::nestings_on_this_thread();
+        collect(
+            &mut Collection::default(),
+            &no_panes(),
+            trackers,
+            &Wanted::Everything,
+        );
+        crate::model::tree::nestings_on_this_thread() - before
+    }
+
+    /// Reaching across projects costs only a run with a bead waiting on
+    /// work its own answer does not hold. Every other run draws the trees
+    /// its reads assembled, and reads no answer's edges again.
+    #[test]
+    fn a_run_with_no_bead_waiting_elsewhere_reads_no_answer_twice() {
+        assert_eq!(nested_to_draw(&colliding_trackers()), 0);
+    }
+
+    #[test]
+    fn a_run_with_a_bead_waiting_elsewhere_reads_every_answer_once_more() {
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)));
+
+        assert_eq!(nested_to_draw(&trackers), 2);
+    }
+
     /// The refresh gate reaches the trackers and stops there. A provider
     /// reports on the sessions on the machine rather than on a project, so a
     /// collection asks it which sessions there are once and each session for

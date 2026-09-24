@@ -305,6 +305,44 @@ mod tests {
         );
     }
 
+    /// Prefixes are uncoordinated, so a tree that reaches into another
+    /// project can hold two beads of one id, one from each. They are two
+    /// beads, and the tree counts both.
+    #[test]
+    fn a_tree_counts_two_projects_beads_of_one_id_as_two() {
+        let harbour = parse_beads(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"open",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]},
+                {"id":"x-1","title":"harbour's x-1","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]}]"#,
+        )
+        .expect("the rows parse");
+        let dunwich = parse_beads(
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
+                {"id":"x-1","title":"dunwich's x-1","status":"open",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}]"#,
+        )
+        .expect("the rows parse");
+        let assembled = crate::model::tree::Across::of([
+            ("harbour", crate::model::tree::Nesting::of(&harbour)),
+            ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
+        ])
+        .assemble("harbour", "hbr-1")
+        .expect("the rows assemble");
+
+        let t = build_tree(
+            "harbour",
+            &assembled,
+            &Joined::default(),
+            &BTreeMap::new(),
+            ProviderState::Answering,
+            &cfg(),
+            now(),
+        );
+
+        assert_eq!(t.counts.total, 4);
+    }
+
     #[test]
     fn a_bead_firing_two_rules_is_counted_once() {
         let t = tree();

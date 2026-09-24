@@ -248,7 +248,7 @@ impl Counts {
         let mut counted = BTreeSet::new();
         let once: Vec<&Node> = nodes
             .into_iter()
-            .filter(|node| counted.insert(node.id.clone()))
+            .filter(|node| counted.insert(node.key()))
             .collect();
         Counts {
             total: once.len(),
