@@ -10785,6 +10785,38 @@ credential_command = "secret harbour"
         assert!(crate::view::show::followable(&forest, parent));
     }
 
+    /// The bead window on the bead waiting names the other project's bead it
+    /// waits on as that bead, and the reader can follow it there.
+    #[test]
+    fn the_window_on_a_bead_waiting_on_another_projects_bead_follows_it_there() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+        let waiting = lines_of(&forest, "hbr-1")[0];
+        step_onto(&mut forest, waiting);
+
+        let node = crate::view::show::selected(&forest).expect("a bead is selected");
+        let blocker = &node.depends_on[0];
+        assert_eq!(
+            (
+                blocker.id.as_str(),
+                blocker.status.as_ref(),
+                blocker.title.as_deref()
+            ),
+            (
+                "dun-7",
+                Some(&crate::model::types::Status::Open),
+                Some("lift the ground station")
+            )
+        );
+        assert!(crate::view::show::followable(&forest, blocker));
+
+        let followed = crate::view::show::key_of(&forest, blocker).expect("the bead is keyed");
+        assert!(forest.go_to(&followed));
+        assert_eq!(
+            forest.place().map(|place| place.key()),
+            Some(&key("dunwich", "dun-7"))
+        );
+    }
+
     /// A search matches every drawn copy, and the copy under the bead
     /// waiting on another project's bead is a match on that project's bead.
     #[test]
