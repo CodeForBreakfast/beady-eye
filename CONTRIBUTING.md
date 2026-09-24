@@ -125,8 +125,8 @@ Three rules the project was designed under, and a change should keep:
   organised. A convention a setup encodes in bead metadata is named in config and
   drawn without interpretation; anything that needs to know what a metadata key
   *means* belongs in config rather than in the model.
-- **Degrade, never disappear.** An unreachable tracker, a filtered tree, a
-  dangling parent — each is reported rather than silently dropped.
+- **Degrade, never disappear.** An unreachable tracker, a filtered tree, an
+  orphaned dependency — each is reported rather than silently dropped.
 
 ## Licence
 

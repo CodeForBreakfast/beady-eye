@@ -567,7 +567,7 @@ pub const THE_DESCRIBED_SUBTREE: &str = include_str!("../fixtures/bd_described_s
 const OPEN_THE_TREE: &[u8] = b"agjlgj";
 
 /// Where that walk leaves the forest, counting the rows of the screen from
-/// zero: the project, its one tree, the anomaly its dangling edges raise,
+/// zero: the project, its one tree, the anomaly its orphaned dependencies raise,
 /// and then the four beads. Whatever herdr says about this machine's panes
 /// is drawn under all of them, so these rows are the same everywhere.
 pub const THE_TREES_HEADER: u16 = 1;

@@ -3285,7 +3285,7 @@ credential_command = "secret harbour"
             vec![
                 "▾ dunwich",
                 "  ├── ◐ dun-7 lift the ground station",
-                "  │   ├── ! Dangling(1)",
+                "  │   ├── ! OrphanedDependencies(1)",
                 "  │   ├─▸ ○ .1 re-point the dish",
                 "  │   ├── ○ .7 log the survey marks",
                 "  │   ├── ✓ .4 clear the access road",
@@ -3375,7 +3375,7 @@ credential_command = "secret harbour"
             [
                 "▾ dunwich",
                 "  ├─▸ ◐ dun-7 lift the ground station",
-                "  │   └── ! Dangling(1)",
+                "  │   └── ! OrphanedDependencies(1)",
             ]
         );
     }
@@ -6204,7 +6204,7 @@ credential_command = "secret harbour"
             beneath_the_selection(&forest),
             [
                 "      └─▸ ○ hbr-9 re-deck the slipway",
-                "          └── ! Dangling(1)"
+                "          └── ! OrphanedDependencies(1)"
             ]
         );
     }
@@ -6417,7 +6417,7 @@ credential_command = "secret harbour"
     /// drawn under their project, and the ones no configured project covers.
     #[derive(Debug, Default, PartialEq, Eq)]
     struct Reported {
-        dangling: usize,
+        orphaned_dependencies: usize,
         cycles: usize,
         conflicts: usize,
         failed_projects: usize,
@@ -6442,7 +6442,7 @@ credential_command = "secret harbour"
             )
             .collect();
         Reported {
-            dangling: drawn.iter().map(|t| t.dangling.len()).sum(),
+            orphaned_dependencies: drawn.iter().map(|t| t.orphaned_dependencies.len()).sum(),
             cycles: drawn.iter().map(|t| t.cycles.len()).sum(),
             conflicts: snapshot.conflicts.len(),
             failed_projects: snapshot.failed_projects.len(),
@@ -6458,7 +6458,7 @@ credential_command = "secret harbour"
                 // Matched variant by variant so a note added later has to
                 // be decided here rather than fall through as nothing.
                 Content::Note(note) => match note {
-                    Note::Dangling(n) => found.dangling += n,
+                    Note::OrphanedDependencies(n) => found.orphaned_dependencies += n,
                     Note::Cycle(n) => found.cycles += n,
                     // A property of the drawing rather than a finding in the
                     // snapshot, so there is no count for it to reach.
@@ -9134,7 +9134,7 @@ credential_command = "secret harbour"
             vec![
                 "▾ dunwich",
                 "  ├── ◐ dun-7 lift the ground station",
-                "  │   ├── ! Dangling(1)",
+                "  │   ├── ! OrphanedDependencies(1)",
                 "  │   ├─▸ ○ .1 re-point the dish",
                 "  │   ├── ○ .7 log the survey marks",
                 "  │   ├── ✓ .4 clear the access road",
@@ -9168,7 +9168,7 @@ credential_command = "secret harbour"
             vec![
                 "▾ dunwich",
                 "  ├─▸ ○ dun-7.1 re-point the dish",
-                "  │   └── ! Dangling(1)",
+                "  │   └── ! OrphanedDependencies(1)",
                 "  ├─▸ [OutOfTheWay dunwich] 1",
                 "  └── [Unattributed dunwich] 2",
                 "▾ ferry",
@@ -9592,7 +9592,7 @@ credential_command = "secret harbour"
             vec![
                 "▾ dunwich",
                 "  ├── ○ dun-7.1 re-point the dish",
-                "  │   ├── ! Dangling(1)",
+                "  │   ├── ! OrphanedDependencies(1)",
                 "  │   ├── ○ .1 true the mount",
                 "  │   └── ○ .2 seal the feed horn",
                 "  ├─▸ [OutOfTheWay dunwich] 1",
@@ -9619,10 +9619,10 @@ credential_command = "secret harbour"
             vec![
                 "▾ dunwich",
                 "  ├─▸ ○ dun-7.1 re-point the dish",
-                "  │   └── ! Dangling(1)",
+                "  │   └── ! OrphanedDependencies(1)",
                 "  ├── [OutOfTheWay dunwich] 1",
                 "  │   └─▸ ◐ dun-7 lift the ground station",
-                "  │       └── ! Dangling(1)",
+                "  │       └── ! OrphanedDependencies(1)",
             ]
         );
     }

@@ -350,7 +350,7 @@ pub fn status_glyph(status: &Status) -> char {
 /// readable: reading down from a tree's root to a node and joining what each
 /// bead on the way says gives the whole id back. A node whose parent's id is
 /// not the front of its own keeps its whole id, because a bare suffix would
-/// place it under a parent it does not belong to, and the dangling and
+/// place it under a parent it does not belong to, and the orphaned-dependency and
 /// re-parented nodes are exactly the ones that would lie. A node with no
 /// parent — a tree's root, or the bead a rooted forest starts at — has
 /// nothing to measure against and is drawn whole.
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(abbreviate("smt-4kd3p.1.4", Some("smt-4kd3p.1")), ".4");
     }
 
-    /// A dangling or re-parented node is drawn under a bead it does not descend
+    /// An orphaned-dependency or re-parented node is drawn under a bead it does not descend
     /// from, and a bare suffix there would say it does.
     #[test]
     fn a_node_that_does_not_descend_from_its_parent_keeps_its_whole_id() {

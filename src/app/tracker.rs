@@ -740,12 +740,12 @@ dunwich = ["dun-4"]
             );
         }
         assert_eq!(
-            rooted_at(&snap, "dun-7").dangling,
+            rooted_at(&snap, "dun-7").orphaned_dependencies,
             Vec::<String>::new(),
             "the tree that never reached it does not report it"
         );
         assert_eq!(
-            rooted_at(&snap, "dun-7.9").dangling,
+            rooted_at(&snap, "dun-7.9").orphaned_dependencies,
             vec!["dun-7.9".to_string()],
             "its own tree names the work the tracker no longer holds"
         );
@@ -784,7 +784,7 @@ dunwich = ["dun-4"]
 
     /// The other half of the same rule, and the half that goes silently
     /// wrong. A parentless bead nothing nests is a root exactly as it was —
-    /// and it has no dangling edge for `what_no_root_reached` to find it by,
+    /// and it has no orphaned-dependency edge for `what_no_root_reached` to find it by,
     /// so a rule that only stopped promoting parentless beads would leave it
     /// off the screen with nothing in the foot to say so.
     #[test]
@@ -915,7 +915,7 @@ dunwich = ["dun-4"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["dun-7", "dun-2", "dun-7.9"]);
         assert_eq!(
-            rooted_at(&snap, "dun-7.9").dangling,
+            rooted_at(&snap, "dun-7.9").orphaned_dependencies,
             vec!["dun-7.9".to_string()],
             "and the parent the answer lost is still reported"
         );
@@ -1036,7 +1036,7 @@ dunwich = ["dun-c3"]
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
         assert_eq!(roots, vec!["dun-7", "dun-3"]);
         assert_eq!(
-            rooted_at(&snap, "dun-3").dangling,
+            rooted_at(&snap, "dun-3").orphaned_dependencies,
             vec!["dun-3".to_string()]
         );
     }
@@ -1073,7 +1073,7 @@ dunwich = ["dun-c3"]
             "the bead that lost its place is drawn where its surviving edge puts it"
         );
         assert_eq!(
-            component.dangling,
+            component.orphaned_dependencies,
             vec!["dun-5.1".to_string()],
             "and the tree that draws it is the one that reports it"
         );
@@ -1117,7 +1117,7 @@ dunwich = ["dun-c3"]
             vec!["dun-9".to_string()],
             "and the loop is reported where it was cut"
         );
-        assert_eq!(component.dangling, vec!["dun-9.1".to_string()]);
+        assert_eq!(component.orphaned_dependencies, vec!["dun-9.1".to_string()]);
     }
 
     /// The same again, where the bead hangs under a loop *and* under
@@ -1263,7 +1263,10 @@ dunwich = ["dun-c3"]
             vec!["dun-7"],
             "one tree draws it, so one tree reports it"
         );
-        assert_eq!(snap.trees[0].dangling, vec!["dun-7.1".to_string()]);
+        assert_eq!(
+            snap.trees[0].orphaned_dependencies,
+            vec!["dun-7.1".to_string()]
+        );
     }
 
     /// A bead the lost bead's own tree draws is not a second root either,
@@ -1289,7 +1292,7 @@ dunwich = ["dun-c3"]
             vec!["dun-3", "dun-3.1"]
         );
         assert_eq!(
-            lost.dangling,
+            lost.orphaned_dependencies,
             vec!["dun-3".to_string(), "dun-3.1".to_string()]
         );
     }

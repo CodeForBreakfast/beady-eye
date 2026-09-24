@@ -1533,7 +1533,7 @@ mod tests {
             tracker: TrackerState::Ok,
             beads,
             children: links,
-            dangling: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             cycles: Vec::new(),
         });
 

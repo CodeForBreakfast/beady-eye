@@ -139,7 +139,7 @@ pub fn build_tree(
         tracker: TrackerState::Ok,
         beads,
         children: assembled.children.clone(),
-        dangling: assembled.dangling.clone(),
+        orphaned_dependencies: assembled.orphaned_dependencies.clone(),
         cycles: assembled.cycles.clone(),
     }
 }
@@ -839,7 +839,7 @@ render = "⇢ {repo} #{number}"
             now(),
         );
 
-        assert_eq!(t.dangling, ["dun-4.2"]);
+        assert_eq!(t.orphaned_dependencies, ["dun-4.2"]);
         assert_eq!(t.counts.total, 2, "a reported bead is still drawn");
         assert_eq!(rows(&t)[1], ("dun-4.2", 1, Some(Edge::ParentChild)));
     }

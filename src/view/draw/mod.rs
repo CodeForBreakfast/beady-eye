@@ -215,7 +215,7 @@ pub(super) fn sentence(prefix: &str, said: String, style: Style) -> Fitted {
 /// `group_line` draws the hidden trees.
 fn finding(note: Note) -> (String, Style) {
     let said = match note {
-        Note::Dangling(count) => phrase::dangling(count),
+        Note::OrphanedDependencies(count) => phrase::orphaned_dependency(count),
         Note::Cycle(count) => phrase::cycle(count),
         Note::NoRoots => return (phrase::no_roots().to_string(), palette::PLAIN),
     };
@@ -333,7 +333,7 @@ mod tests {
             tracker: TrackerState::Ok,
             beads: Vec::new(),
             children: Vec::new(),
-            dangling: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             cycles: Vec::new(),
         }
     }
@@ -421,7 +421,7 @@ mod tests {
     fn a_note_leaves_its_box_drawing_in_the_terminals_own_colour() {
         let painted = Painted::of(
             fitted(
-                &under(LAST, Content::Note(Note::Dangling(2))),
+                &under(LAST, Content::Note(Note::OrphanedDependencies(2))),
                 &ids(0),
                 &Layout::default(),
                 &at_rest(),

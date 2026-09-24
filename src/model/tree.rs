@@ -86,7 +86,7 @@ pub struct Assembled {
     /// Ids in `beads` naming a bead they depend on that the answer does not
     /// hold. A bead the root does not reach is in another tree and is not
     /// reported here, however incomplete its own dependencies are.
-    pub dangling: Vec<String>,
+    pub orphaned_dependencies: Vec<String>,
     /// Ids whose own descendants lead back to them. Each is kept in `beads`,
     /// and drawn where the loop was cut.
     pub cycles: Vec<String>,
@@ -349,8 +349,9 @@ fn edge_between(child: &Bead, over: &str) -> Edge {
     }
 }
 
-/// The tree under `root`, walked by `beneath`, and reported as dangling where
-/// a bead it reaches is `unheld`: waiting on something no answer holds.
+/// The tree under `root`, walked by `beneath`, and reported as an orphaned
+/// dependency where a bead it reaches is `unheld`: waiting on something no
+/// answer holds.
 /// `held` is each bead, with its project where that is not the root's.
 fn assemble<'a, K: Copy + Ord>(
     root: K,
@@ -368,7 +369,7 @@ fn assemble<'a, K: Copy + Ord>(
     // Only what this tree drew. A bead whose parent the tracker no longer
     // holds is top of its own graph, and reporting it against a root that
     // never reached it names it in every tree there is.
-    let dangling: Vec<String> = order
+    let orphaned_dependencies: Vec<String> = order
         .iter()
         .filter(|key| unheld(**key))
         .map(|key| id(*key))
@@ -396,7 +397,7 @@ fn assemble<'a, K: Copy + Ord>(
         beads,
         external,
         children,
-        dangling,
+        orphaned_dependencies,
         cycles,
     }
 }
@@ -1193,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn a_root_depending_on_nothing_is_not_reported_as_a_dangling_parent() {
+    fn a_root_depending_on_nothing_is_not_reported_as_an_orphaned_dependency() {
         let json = r#"[
           {"id":"r","title":"root","status":"open"},
           {"id":"r.1","title":"child","status":"open",
@@ -1202,7 +1203,10 @@ mod tests {
         let a = assembled(json, ROOT);
 
         assert_eq!(a.beads[0].id, "r");
-        assert!(a.dangling.is_empty(), "the root is not a dangling parent");
+        assert!(
+            a.orphaned_dependencies.is_empty(),
+            "the root is not an orphaned dependency"
+        );
     }
 
     #[test]
@@ -1268,14 +1272,14 @@ mod tests {
             vec!["r.9"],
             "the orphan is kept, not dropped"
         );
-        assert_eq!(its_own.dangling, vec!["r.9".to_string()]);
+        assert_eq!(its_own.orphaned_dependencies, vec!["r.9".to_string()]);
         assert_eq!(depth_of(&its_own, "r.9"), 0);
         assert!(its_own.cycles.is_empty());
 
         // And `r` never named it, so `r` neither draws it nor reports it.
         let elsewhere = assembled(json, ROOT);
         assert_eq!(ids(&elsewhere), vec!["r"]);
-        assert!(elsewhere.dangling.is_empty());
+        assert!(elsewhere.orphaned_dependencies.is_empty());
     }
 
     /// The answer is the whole tracker, so "hang it off the root" hangs it off
@@ -1398,7 +1402,7 @@ mod tests {
             ]
         );
         assert_eq!(a.children[0][0].edge, Edge::Blocks);
-        assert_eq!(a.dangling, Vec::<String>::new());
+        assert_eq!(a.orphaned_dependencies, Vec::<String>::new());
     }
 
     /// A bead keeps its own project's answer first: an id it holds is its
@@ -1440,7 +1444,7 @@ mod tests {
             .expect("the rows assemble");
 
         assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
-        assert_eq!(a.dangling, vec!["ark-1".to_string()]);
+        assert_eq!(a.orphaned_dependencies, vec!["ark-1".to_string()]);
     }
 
     /// The walk goes on from the other project's bead as it would from any:
@@ -1514,7 +1518,7 @@ mod tests {
             .expect("the rows assemble");
 
         assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
-        assert_eq!(a.dangling, vec!["ark-1".to_string()]);
+        assert_eq!(a.orphaned_dependencies, vec!["ark-1".to_string()]);
     }
 
     /// Siblings from two projects take one order, as siblings from one do.
