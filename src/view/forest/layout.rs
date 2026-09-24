@@ -968,10 +968,7 @@ impl<'a> TreeLayout<'a> {
     }
 
     fn key_of(&self, link: &Link) -> BeadKey {
-        BeadKey {
-            project: self.tree.project.clone(),
-            id: self.tree.beads[link.bead].id.clone(),
-        }
+        self.tree.beads[link.bead].key()
     }
 
     /// `above` is the way down to `parent`, the parent itself included: the
@@ -1097,7 +1094,7 @@ impl<'a> TreeLayout<'a> {
         let folded = (!kids.is_empty()).then_some(open);
         let line = bead_line(
             node,
-            Some(&parent.key().id),
+            Some(parent.key()),
             place.clone(),
             trunk,
             last,
@@ -1196,7 +1193,7 @@ impl<'a> TreeLayout<'a> {
 #[allow(clippy::too_many_arguments)]
 fn bead_line(
     node: &Bead,
-    parent: Option<&str>,
+    parent: Option<&BeadKey>,
     place: Place,
     trunk: &[bool],
     last: bool,
@@ -1212,7 +1209,9 @@ fn bead_line(
         place: Some(place),
         content: Content::Bead(row::cells(
             node,
-            parent,
+            parent
+                .filter(|parent| parent.project == node.project)
+                .map(|parent| parent.id.as_str()),
             bead.progress,
             shut_over(bead.beneath.clone(), folded),
         )),
@@ -1415,10 +1414,7 @@ fn undrawn_node(
 ) -> Node {
     let at = link.bead;
     let node = &tree.beads[at];
-    let place = parent.step_to(BeadKey {
-        project: tree.project.clone(),
-        id: node.id.clone(),
-    });
+    let place = parent.step_to(node.key());
     let kids = links_below(tree, at, &[])
         .into_iter()
         .any(|link| Some(link.bead) != counted.without);
@@ -1428,7 +1424,7 @@ fn undrawn_node(
     let folded = kids.then_some(open);
     let line = bead_line(
         node,
-        Some(&parent.key().id),
+        Some(parent.key()),
         place,
         trunk,
         last,

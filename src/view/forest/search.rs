@@ -9,7 +9,6 @@
 //! worked out once per bead and added up, the way layout counts a subtree
 //! nothing draws, and a match is found by counting down to it.
 
-use crate::model::join::BeadKey;
 use crate::model::snapshot::{Snapshot, Tree};
 use crate::view::lines::{root_key, Place};
 
@@ -129,7 +128,7 @@ impl<'a> Walk<'a> {
     fn new(tree: &'a Tree, facts: &'a TreeFacts, way: Vec<usize>, without: Option<usize>) -> Self {
         let mut start = Place::root(root_key(tree));
         for &at in way.iter().skip(1) {
-            start = start.step_to(key_of(tree, at));
+            start = start.step_to(tree.beads[at].key());
         }
         Walk {
             tree,
@@ -214,7 +213,7 @@ impl<'a> Walk<'a> {
                 n -= found;
             }
             at = under.expect("the matches beneath a bead are beneath one of its children");
-            place = place.step_to(key_of(self.tree, at));
+            place = place.step_to(self.tree.beads[at].key());
         }
     }
 
@@ -232,7 +231,7 @@ impl<'a> Walk<'a> {
             above.push(at);
             let mut next = None;
             for child in children {
-                if key_of(self.tree, child) == *step {
+                if self.tree.beads[child].key() == *step {
                     next = Some(child);
                     break;
                 }
@@ -241,12 +240,5 @@ impl<'a> Walk<'a> {
             at = next?;
         }
         Some((before, sought.finds(self.tree, at)))
-    }
-}
-
-fn key_of(tree: &Tree, at: usize) -> BeadKey {
-    BeadKey {
-        project: tree.project.clone(),
-        id: tree.beads[at].id.clone(),
     }
 }
