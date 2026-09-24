@@ -130,6 +130,7 @@ pub fn build(
         mut trees,
         failed_projects,
         read_at,
+        speaks_until,
     } = collected;
     in_flight_first(&mut trees);
     let trees: Vec<Arc<Tree>> = trees.into_iter().map(Arc::new).collect();
@@ -184,6 +185,7 @@ pub fn build(
         projects_named_without_git: cfg.projects_named_without_git(),
         collected: trees,
         read_at,
+        speaks_until,
         projects: cfg.read().map(|p| p.name.clone()).collect(),
         scope: cfg.scope.clone(),
     }
@@ -979,6 +981,7 @@ render = "⇢ {repo} #{number}"
                 trees: Vec::new(),
                 failed_projects: Vec::new(),
                 read_at: std::collections::BTreeMap::new(),
+                speaks_until: std::collections::BTreeMap::new(),
             },
             &panes,
             &joined,

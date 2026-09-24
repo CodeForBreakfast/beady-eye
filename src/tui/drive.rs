@@ -781,7 +781,8 @@ fn answered(
                 // project says its tracker has stopped answering rather than
                 // being quietly polled over.
                 for project in armed.iter_mut() {
-                    project.came_back(&read, now);
+                    let speaks_until = snapshot.speaks_until.get(project.project()).copied();
+                    project.came_back(&read, now, speaks_until);
                 }
             }
             view.collected(*snapshot);
@@ -2517,7 +2518,7 @@ mod tests {
         let mut outstanding = gathering(A_LONG_WINDOW);
         outstanding.ask(arkham(), now);
         let mut sooner = Armed::polling("ferry".to_string(), Some(AN_INTERVAL));
-        sooner.came_back(&ferry(), now);
+        sooner.came_back(&ferry(), now, None);
 
         assert_eq!(
             sleeps_for(
@@ -2929,7 +2930,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Key(key(KeyCode::Char('x')))]);
         let mut overdue = Armed::polling("arkham".to_string(), Some(AN_INTERVAL));
-        overdue.came_back(&arkham(), Utc::now() - TimeDelta::hours(1));
+        overdue.came_back(&arkham(), Utc::now() - TimeDelta::hours(1), None);
 
         drive(
             &mut view,
@@ -2958,7 +2959,7 @@ mod tests {
     /// go.
     fn lapsed_an_hour_ago() -> Armed {
         let mut lapsed = Armed::polling("arkham".to_string(), None).lapsing_after(AN_INTERVAL);
-        lapsed.came_back(&arkham(), Utc::now() - TimeDelta::hours(1));
+        lapsed.came_back(&arkham(), Utc::now() - TimeDelta::hours(1), None);
         lapsed
     }
 
@@ -3028,7 +3029,7 @@ mod tests {
     fn the_loop_wakes_when_a_project_would_lapse() {
         let now = Utc::now();
         let mut lapsing = Armed::polling("arkham".to_string(), None).lapsing_after(AN_INTERVAL);
-        lapsing.came_back(&arkham(), now);
+        lapsing.came_back(&arkham(), now, None);
 
         assert_eq!(
             sleeps_for(&Recorder::default(), &at_once(), &[lapsing], None, now, now),
@@ -3038,15 +3039,29 @@ mod tests {
 
     /// One read comes back for a project that polls, and the loop is driven
     /// until that project's own ask reaches the collector.
+    fn until_arkham_asks_for_itself(view: &mut Recorder) -> Option<Wanted> {
+        until_arkham_asks_after(
+            view,
+            a_snapshot(),
+            Armed::polling("arkham".to_string(), Some(AN_INTERVAL)),
+        )
+    }
+
+    /// `collected` comes back for arkham, armed as `armed`, and the loop is
+    /// driven until arkham's own ask reaches the collector.
     ///
     /// The events channel is held open by a thread rather than drained from a
     /// list, because what is being waited on is the loop's own deadline: a
     /// list that ran out would close the channel and end the run before the
     /// interval was up.
-    fn until_arkham_asks_for_itself(view: &mut Recorder) -> Option<Wanted> {
+    fn until_arkham_asks_after(
+        view: &mut Recorder,
+        collected: Snapshot,
+        armed: Armed,
+    ) -> Option<Wanted> {
         let (ask, asked) = mpsc::channel();
         let (send, events) = mpsc::channel();
-        send.send(Event::Collected(Box::new(a_snapshot())))
+        send.send(Event::Collected(Box::new(collected)))
             .expect("the loop's end of the channel is open");
         let holding = thread::spawn(move || {
             let asked_for = asked.recv_timeout(A_MOMENT);
@@ -3059,16 +3074,33 @@ mod tests {
             &events,
             &ask,
             started(),
-            a_run_reading(vec![Armed::polling(
-                "arkham".to_string(),
-                Some(AN_INTERVAL),
-            )]),
+            a_run_reading(vec![armed]),
             &polling_every_interval(),
             nothing_watched(),
         )
         .expect("the loop runs");
 
         holding.join().expect("the thread ran").ok().map(read)
+    }
+
+    /// The instant a read stops speaking for its tracker reaches the loop on
+    /// the snapshot, and a project that does not poll asks for itself then:
+    /// a held bead falling due is the one change no producer reports.
+    #[test]
+    fn a_project_that_does_not_poll_asks_for_itself_once_its_read_stops_speaking() {
+        let mut view = Recorder::default();
+        let mut collected = a_snapshot();
+        collected
+            .speaks_until
+            .insert("arkham".to_string(), Utc::now());
+
+        let asked_for = until_arkham_asks_after(
+            &mut view,
+            collected,
+            Armed::polling("arkham".to_string(), None),
+        );
+
+        assert_eq!(asked_for, Some(arkham()));
     }
 
     /// The invariant the refresh path rests on, and neither half can see it

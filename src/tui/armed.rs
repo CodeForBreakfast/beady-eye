@@ -48,9 +48,12 @@ pub(crate) struct Armed {
     /// nothing where it does not poll at all.
     every: Option<Duration>,
     /// When it asks, or nothing while a read it is waiting on is still on its
-    /// way — and nothing for good on a project that does not poll, or whose
-    /// interval is too long to reach.
+    /// way — and nothing for good where neither the interval nor the last
+    /// read gives an instant to ask at.
     at: Option<DateTime<Utc>>,
+    /// When the last read of this project stops speaking for its tracker
+    /// with nothing written, or nothing where it holds nothing back.
+    speaks_until: Option<DateTime<Utc>>,
     /// How long a project that does not poll is taken to be current after
     /// something last vouched for it, or nothing where it is never said to
     /// have lapsed.
@@ -73,6 +76,7 @@ impl Armed {
             project,
             every,
             at: None,
+            speaks_until: None,
             covered_for: None,
             vouched_at: None,
         }
@@ -100,11 +104,18 @@ impl Armed {
     /// deadline was armed by this project's last read, and an edit anywhere
     /// in the file must not push out an ask that was already due.
     ///
-    /// A project the edit stopped polling has no deadline left at all, so it
-    /// asks no more rather than once more.
+    /// A project the edit stopped polling keeps only the instant its last
+    /// read stops speaking, which is the tracker's rather than the file's —
+    /// so it asks then, and not at all where that read holds nothing back.
     pub(super) fn still_due(self, named: Armed) -> Armed {
+        let at = if named.every.is_some() {
+            self.at
+        } else {
+            self.at.and(self.speaks_until)
+        };
         Armed {
-            at: named.every.and(self.at),
+            at,
+            speaks_until: self.speaks_until,
             vouched_at: self.vouched_at,
             ..named
         }
@@ -130,17 +141,23 @@ impl Armed {
             .map(|at| (at - now).to_std().unwrap_or(Duration::ZERO))
     }
 
-    /// A read has come back. Where it read this project, that is when the
-    /// next ask is armed from — unless the interval is too long to reach,
-    /// which arms nothing, as `due_after` says.
+    /// A read has come back. Where it read this project, the next ask is
+    /// armed at the sooner of one interval from now and `speaks_until`, the
+    /// instant that read stops speaking for its tracker.
     ///
     /// Whatever asked for it: the socket, the refresh key and this project's
     /// own last ask all arm the next one the same way, which is what makes a
     /// project something keeps reporting for one that never polls — each
     /// report's read pushes the poll out past the interval before it arrives.
-    pub(super) fn came_back(&mut self, wanted: &Wanted, at: DateTime<Utc>) {
+    pub(super) fn came_back(
+        &mut self,
+        wanted: &Wanted,
+        at: DateTime<Utc>,
+        speaks_until: Option<DateTime<Utc>>,
+    ) {
         if wanted.names(&self.project) {
-            self.at = self.every.and_then(|every| due_after(at, every));
+            self.speaks_until = speaks_until;
+            self.at = self.due_from(at);
             self.vouched_at = Some(at);
         }
     }
@@ -148,13 +165,14 @@ impl Armed {
     /// Something outside says it covers this project and nothing in it has
     /// moved, which says of its rows what a read that found nothing would
     /// have said. So the poll is pushed out from here as a read's return
-    /// would push it.
+    /// would push it — though not past the instant the last read stops
+    /// speaking, which passes with nothing written.
     ///
     /// Only where an ask is armed. A read still on its way arms the next ask
     /// when it comes back, which is later than this word.
     pub(super) fn covered(&mut self, at: DateTime<Utc>) {
         if self.at.is_some() {
-            self.at = self.every.and_then(|every| due_after(at, every));
+            self.at = self.due_from(at);
         }
         self.vouched_at = Some(at);
     }
@@ -173,6 +191,14 @@ impl Armed {
         self.lapses_at()
             .and_then(|lapses| (lapses - now).to_std().ok())
             .filter(|wait| !wait.is_zero())
+    }
+
+    /// The sooner of one interval after `from` and the instant the last read
+    /// stops speaking. An interval too long to reach is no candidate at all,
+    /// as `due_after` says.
+    fn due_from(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let polled = self.every.and_then(|every| due_after(from, every));
+        polled.into_iter().chain(self.speaks_until).min()
     }
 
     fn lapses_at(&self) -> Option<DateTime<Utc>> {
@@ -219,7 +245,7 @@ mod tests {
         let every = Duration::from_secs(seconds_to_the_end_of_time(at(100)));
         let mut armed = Armed::polling("arkham".to_string(), Some(every));
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks_in(at(100)), Some(every));
     }
@@ -233,7 +259,7 @@ mod tests {
         let every = Duration::from_secs(seconds_to_the_end_of_time(at(100)) + 1);
         let mut armed = Armed::polling("arkham".to_string(), Some(every));
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks_in(at(100)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -249,7 +275,7 @@ mod tests {
     fn a_project_whose_interval_fills_the_key_asks_no_more() {
         let mut armed = Armed::polling("arkham".to_string(), Some(Duration::from_secs(u64::MAX)));
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks_in(at(100)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -261,10 +287,144 @@ mod tests {
     fn a_project_asks_again_one_interval_after_the_read_that_answered_it() {
         let mut armed = polling();
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks(at(129)), None, "the interval was not out");
         assert_eq!(armed.asks(at(130)), Some(arkham()));
+    }
+
+    /// A read that stops speaking for its tracker before the interval is out
+    /// asks at the instant it stops, because that is when `bd ready` starts
+    /// answering differently with nothing written to say so.
+    #[test]
+    fn a_read_that_stops_speaking_before_the_interval_asks_when_it_stops() {
+        let mut armed = polling();
+
+        armed.came_back(&arkham(), at(100), Some(at(110)));
+
+        assert_eq!(armed.asks_in(at(100)), Some(Duration::from_secs(10)));
+        assert_eq!(armed.asks(at(109)), None, "the read still speaks");
+        assert_eq!(armed.asks(at(110)), Some(arkham()));
+    }
+
+    /// And one that speaks for longer than the interval leaves the interval
+    /// in charge: the poll is still what notices a producer that has died.
+    #[test]
+    fn a_read_that_speaks_past_the_interval_leaves_the_interval_in_charge() {
+        let mut armed = polling();
+
+        armed.came_back(&arkham(), at(100), Some(at(500)));
+
+        assert_eq!(armed.asks_in(at(100)), Some(EVERY));
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
+    }
+
+    /// A read that had stopped speaking by the time it came back is due at
+    /// once, and asks once: the ask disarms, as every ask does, and only the
+    /// read it brings back arms again.
+    #[test]
+    fn a_read_that_stopped_speaking_before_it_came_back_asks_once() {
+        let mut armed = polling();
+
+        armed.came_back(&arkham(), at(100), Some(at(90)));
+
+        assert_eq!(armed.asks_in(at(100)), Some(Duration::ZERO));
+        assert_eq!(armed.asks(at(100)), Some(arkham()));
+        assert_eq!(armed.asks(at(101)), None, "nothing has answered the ask");
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// The instant belongs to the read it came with. A later read that holds
+    /// nothing back leaves nothing to ask at, so a word arriving after it
+    /// cannot re-arm an instant that has already been asked for.
+    #[test]
+    fn a_later_read_that_holds_nothing_back_leaves_only_the_interval() {
+        let mut armed = polling();
+        armed.came_back(&arkham(), at(100), Some(at(110)));
+        armed.asks(at(110));
+        armed.came_back(&arkham(), at(115), None);
+
+        armed.covered(at(120));
+
+        assert_eq!(armed.asks(at(149)), None);
+        assert_eq!(armed.asks(at(150)), Some(arkham()));
+    }
+
+    /// The case the second candidate is for. A project that does not poll
+    /// leaves its changes to a producer, and a held bead falling due is the
+    /// one change no producer reports, because nothing is written.
+    #[test]
+    fn a_project_that_does_not_poll_still_asks_when_its_read_stops_speaking() {
+        let mut armed = Armed::polling("arkham".to_string(), None);
+
+        armed.came_back(&arkham(), at(100), Some(at(110)));
+
+        assert_eq!(armed.asks(at(110)), Some(arkham()));
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// An interval too long to reach is still refused, and refusing it
+    /// leaves the other candidate standing rather than disarming the project.
+    #[test]
+    fn a_project_whose_interval_outruns_time_still_asks_when_its_read_stops_speaking() {
+        let mut armed = Armed::polling("arkham".to_string(), Some(Duration::from_secs(u64::MAX)));
+
+        armed.came_back(&arkham(), at(100), Some(at(110)));
+
+        assert_eq!(armed.asks_in(at(100)), Some(Duration::from_secs(10)));
+        assert_eq!(armed.asks(at(110)), Some(arkham()));
+    }
+
+    /// A word from a producer says nothing was written, and a held bead
+    /// falls due with nothing written — so the word pushes out the interval
+    /// and leaves the instant the read stops speaking where it was.
+    #[test]
+    fn a_word_does_not_push_out_the_instant_a_read_stops_speaking() {
+        let mut armed = polling();
+        armed.came_back(&arkham(), at(100), Some(at(125)));
+
+        armed.covered(at(120));
+
+        assert_eq!(armed.asks(at(124)), None);
+        assert_eq!(armed.asks(at(125)), Some(arkham()));
+    }
+
+    /// Nor does it disarm a project that does not poll, which has only that
+    /// instant to ask at.
+    #[test]
+    fn a_word_leaves_a_project_that_does_not_poll_asking_when_its_read_stops_speaking() {
+        let mut armed = Armed::polling("arkham".to_string(), None);
+        armed.came_back(&arkham(), at(100), Some(at(125)));
+
+        armed.covered(at(120));
+
+        assert_eq!(armed.asks(at(125)), Some(arkham()));
+    }
+
+    /// When a read stops speaking is the tracker's, not the config's, so a
+    /// reader who stops a project polling leaves it asking at that instant.
+    #[test]
+    fn a_config_that_stops_a_project_polling_leaves_it_asking_when_its_read_stops_speaking() {
+        let mut standing = polling();
+        standing.came_back(&arkham(), at(100), Some(at(125)));
+
+        let mut named = standing.still_due(Armed::polling("arkham".to_string(), None));
+
+        assert_eq!(named.asks(at(125)), Some(arkham()));
+    }
+
+    /// And an edit anywhere in the file keeps it past the next word, which
+    /// otherwise re-arms from the interval alone.
+    #[test]
+    fn a_config_the_reader_writes_keeps_when_the_last_read_stops_speaking() {
+        let mut standing = polling();
+        standing.came_back(&arkham(), at(100), Some(at(125)));
+
+        let mut named = standing.still_due(polling());
+        named.covered(at(120));
+
+        assert_eq!(named.asks(at(124)), None);
+        assert_eq!(named.asks(at(125)), Some(arkham()));
     }
 
     /// A run that has read nothing has a read on its way already. Arming at
@@ -283,7 +443,7 @@ mod tests {
     fn a_project_that_does_not_poll_never_asks_for_itself() {
         let mut armed = Armed::polling("arkham".to_string(), None);
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks_in(at(100)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -295,14 +455,14 @@ mod tests {
     #[test]
     fn asking_disarms_until_another_read_comes_back() {
         let mut armed = polling();
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks(at(130)), Some(arkham()));
 
         assert_eq!(armed.asks(at(200)), None, "nothing has answered the ask");
         assert_eq!(armed.asks_in(at(200)), None);
 
-        armed.came_back(&arkham(), at(210));
+        armed.came_back(&arkham(), at(210), None);
 
         assert_eq!(armed.asks(at(240)), Some(arkham()));
     }
@@ -313,7 +473,7 @@ mod tests {
     #[test]
     fn a_project_whose_read_never_comes_back_asks_no_more() {
         let mut armed = polling();
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
         armed.asks(at(130));
 
         assert_eq!(armed.asks(at(1_000_000)), None);
@@ -328,7 +488,7 @@ mod tests {
         let mut armed = polling();
 
         for reported_at in [100, 120, 140, 160] {
-            armed.came_back(&arkham(), at(reported_at));
+            armed.came_back(&arkham(), at(reported_at), None);
             assert_eq!(
                 armed.asks(at(reported_at + 20)),
                 None,
@@ -353,8 +513,8 @@ mod tests {
         let mut has_one = Armed::polling("arkham".to_string(), None);
         let mut has_none = Armed::polling("ferry".to_string(), Some(EVERY));
 
-        has_one.came_back(&Wanted::Everything, at(100));
-        has_none.came_back(&Wanted::Everything, at(100));
+        has_one.came_back(&Wanted::Everything, at(100), None);
+        has_none.came_back(&Wanted::Everything, at(100), None);
 
         assert_eq!(has_one.asks(at(130)), None);
         assert_eq!(has_none.asks(at(130)), Some(ferry()));
@@ -368,7 +528,7 @@ mod tests {
     fn a_project_the_channel_stops_covering_is_polled_again() {
         let mut armed = polling();
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
@@ -378,7 +538,7 @@ mod tests {
     #[test]
     fn a_project_something_says_it_covers_is_not_polled_while_it_says_so() {
         let mut armed = polling();
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         for covered_at in [120, 140, 160] {
             armed.covered(at(covered_at));
@@ -413,7 +573,7 @@ mod tests {
     #[test]
     fn a_word_arms_nothing_for_a_project_that_does_not_poll() {
         let mut armed = Armed::polling("arkham".to_string(), None);
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         armed.covered(at(120));
 
@@ -433,7 +593,7 @@ mod tests {
     fn a_project_that_does_not_poll_lapses_a_term_after_its_last_read() {
         let mut armed = not_polling();
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert!(!armed.lapsed(at(159)), "the term was not out");
         assert_eq!(armed.lapses_in(at(100)), Some(COVERED_FOR));
@@ -446,7 +606,7 @@ mod tests {
     #[test]
     fn a_project_something_says_it_covers_does_not_lapse_while_it_says_so() {
         let mut armed = not_polling();
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         for covered_at in [140, 180, 220] {
             armed.covered(at(covered_at));
@@ -488,7 +648,7 @@ mod tests {
     fn a_polled_project_never_lapses() {
         let mut armed = polling().lapsing_after(COVERED_FOR);
 
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert!(!armed.lapsed(at(1_000_000)));
         assert_eq!(armed.lapses_in(at(100)), None);
@@ -499,7 +659,7 @@ mod tests {
     #[test]
     fn a_config_the_reader_writes_keeps_the_last_word() {
         let mut standing = not_polling();
-        standing.came_back(&arkham(), at(100));
+        standing.came_back(&arkham(), at(100), None);
 
         let named = standing.still_due(not_polling());
 
@@ -512,7 +672,7 @@ mod tests {
     fn a_read_of_every_project_arms_this_one() {
         let mut armed = polling();
 
-        armed.came_back(&Wanted::Everything, at(100));
+        armed.came_back(&Wanted::Everything, at(100), None);
 
         assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
@@ -522,9 +682,9 @@ mod tests {
     #[test]
     fn a_read_of_another_project_leaves_this_one_as_it_was() {
         let mut armed = polling();
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
-        armed.came_back(&ferry(), at(120));
+        armed.came_back(&ferry(), at(120), None);
 
         assert_eq!(
             armed.asks(at(130)),
@@ -542,8 +702,8 @@ mod tests {
         let mut first = Armed::polling("arkham".to_string(), Some(EVERY));
         let mut second = Armed::polling("ferry".to_string(), Some(EVERY));
 
-        first.came_back(&arkham(), at(100));
-        second.came_back(&ferry(), at(112));
+        first.came_back(&arkham(), at(100), None);
+        second.came_back(&ferry(), at(112), None);
 
         assert_eq!(first.asks_in(at(100)), Some(EVERY));
         assert_eq!(second.asks_in(at(100)), Some(Duration::from_secs(42)));
@@ -557,7 +717,7 @@ mod tests {
     #[test]
     fn an_ask_already_overdue_says_it_waits_no_longer() {
         let mut armed = polling();
-        armed.came_back(&arkham(), at(100));
+        armed.came_back(&arkham(), at(100), None);
 
         assert_eq!(armed.asks_in(at(500)), Some(Duration::ZERO));
     }

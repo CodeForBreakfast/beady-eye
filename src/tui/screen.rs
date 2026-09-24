@@ -1557,6 +1557,7 @@ mod tests {
             conflicts: Vec::new(),
             projects_named_without_git: Vec::new(),
             read_at: BTreeMap::new(),
+            speaks_until: BTreeMap::new(),
             collected: trees,
             projects: vec!["grove".to_string()],
             scope: Scope::default(),

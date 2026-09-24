@@ -67,6 +67,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         conflicts: Vec::new(),
         projects_named_without_git: Vec::new(),
         read_at: BTreeMap::new(),
+        speaks_until: BTreeMap::new(),
         collected: vec![tree],
         projects: vec!["arkham".to_string()],
         scope: Scope::default(),

@@ -328,11 +328,17 @@ impl Collection {
             .map(|(project, read)| (project.to_string(), read.at))
             .collect();
 
+        let speaks_until = self
+            .that_answered(cfg)
+            .filter_map(|(project, work)| Some((project.to_string(), work.speaks_until?)))
+            .collect();
+
         snapshot::build(
             Collected {
                 trees,
                 failed_projects,
                 read_at,
+                speaks_until,
             },
             panes,
             joined,
@@ -1487,6 +1493,127 @@ mod tests {
         );
 
         assert_eq!(asked_of(&trackers, "dunwich") - first, 1);
+    }
+
+    /// What the loop arms a project's next ask from: the instant its standing
+    /// read stops speaking for the tracker.
+    #[test]
+    fn a_collection_says_when_each_read_stops_speaking_for_its_tracker() {
+        let trackers = dunwich_with(dunwich_holding(DEFERRED_TREE));
+
+        let snap = Collection::default().collect(
+            &one_project(),
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.speaks_until,
+            BTreeMap::from([("dunwich".to_string(), when_it_is_due())])
+        );
+    }
+
+    /// A tracker with no fingerprint has no gate to skip a read at, but its
+    /// held bead still falls due with nothing written, so the loop still has
+    /// to be told when.
+    #[test]
+    fn a_tracker_with_no_fingerprint_still_says_when_its_read_stops_speaking() {
+        let trackers = dunwich_with(dunwich_holding(DEFERRED_TREE).without_a_fingerprint());
+
+        let snap = Collection::default().collect(
+            &one_project(),
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.speaks_until.get("dunwich"), Some(&when_it_is_due()));
+    }
+
+    /// A skipped read leaves the read that is standing, and that read stops
+    /// speaking when it always would have.
+    #[test]
+    fn a_skipped_read_still_says_when_the_standing_read_stops_speaking() {
+        let cfg = one_project();
+        let trackers = dunwich_with(dunwich_holding(DEFERRED_TREE));
+        let mut standing = Collection::default();
+        standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let first = asked_of(&trackers, "dunwich");
+
+        let snap = standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &dunwich_alone(),
+            Filter::All,
+            now() + TimeDelta::hours(1),
+        );
+
+        assert_eq!(
+            asked_of(&trackers, "dunwich") - first,
+            1,
+            "the read was skipped"
+        );
+        assert_eq!(snap.speaks_until.get("dunwich"), Some(&when_it_is_due()));
+    }
+
+    /// A tracker holding nothing back gives the loop nothing to ask at.
+    #[test]
+    fn a_tracker_holding_nothing_back_says_nothing_about_when_it_stops_speaking() {
+        let snap = Collection::default().collect(
+            &one_project(),
+            &panes(),
+            &dunwich(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.speaks_until, BTreeMap::new());
+    }
+
+    /// Nor does a tracker that could not be read, whatever the read before
+    /// it held back: its rows are gone, so there is nothing left to stop
+    /// speaking.
+    #[test]
+    fn a_tracker_that_could_not_be_read_says_nothing_about_when_it_stops_speaking() {
+        let cfg = one_project();
+        let mut standing = Collection::default();
+        standing.collect(
+            &cfg,
+            &panes(),
+            &dunwich_with(dunwich_holding(DEFERRED_TREE)),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        let snap = standing.collect(
+            &cfg,
+            &panes(),
+            &dunwich_with(
+                dunwich_holding(DEFERRED_TREE)
+                    .moved()
+                    .failing(Asked::All, failing(FailureKind::Auth)),
+            ),
+            &dunwich_alone(),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.speaks_until, BTreeMap::new());
     }
 
     /// A root can come from a pane rather than from the tracker, so what the

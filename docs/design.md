@@ -1536,6 +1536,11 @@ on the same tick, and a slow project delays only itself. Setting it below a
 collection is allowed and bounded, because the gap does not start until the
 read ends.
 
+A read that held a bead back asks again at the bead's `defer_until` instead,
+where that is sooner than the interval. `bd ready` starts naming the bead then
+with nothing written, so no fingerprint moves and no producer reports it. This
+applies to a project that does not poll as well.
+
 ### Reading a tracker only when it has changed
 
 Almost every poll finds nothing has moved. So a refresh asks the tracker

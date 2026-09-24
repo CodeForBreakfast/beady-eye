@@ -18,12 +18,14 @@ use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{Assembled, Nesting};
 use crate::model::types::{Bead, Pane, Unreadable};
 
-/// One project's roots in id order, each either read or unreadable, and
-/// what every bead in the answer is tied to.
+/// One project's roots in id order, each either read or unreadable, what
+/// every bead in the answer is tied to, and when the answer stops speaking
+/// for the tracker with nothing written.
 pub(super) struct ProjectWork {
     pub(super) readiness: Readiness,
     pub(super) relations: BTreeMap<String, Relations>,
     pub(super) roots: Vec<(String, Result<Assembled, RootUnread>)>,
+    pub(super) speaks_until: Option<DateTime<Utc>>,
 }
 
 /// Why a root drew no rows.
@@ -165,14 +167,14 @@ pub(super) fn refresh_project(
         }
     }
 
-    let (work, beads) = read_project(tracker.as_ref(), project, cfg, panes)?;
+    let work = read_project(tracker.as_ref(), project, cfg, panes, now)?;
     let at = probed.map(|fingerprint| {
         Box::new(ReadAt {
             project: project.clone(),
             fingerprint,
             named,
             roots,
-            speaks_until: speaks_until(&beads, now),
+            speaks_until: work.speaks_until,
         })
     });
     Ok(Refresh::Read {
@@ -181,9 +183,7 @@ pub(super) fn refresh_project(
     })
 }
 
-/// Everything one project's tracker is asked for, and every bead it said it
-/// with — the rows go back as well because what they hold decides how long
-/// this read speaks for the tracker, which is not a question about the trees.
+/// Everything one project's tracker is asked for, read at `now`.
 ///
 /// A failure before the roots are known has no root to name, so it becomes
 /// the project's own failure rather than a tree; a failure on one root
@@ -193,7 +193,8 @@ fn read_project(
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
-) -> Result<(ProjectWork, Vec<Bead>), RunFailure> {
+    now: DateTime<Utc>,
+) -> Result<ProjectWork, RunFailure> {
     let beads = tracker.all()?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
@@ -250,14 +251,12 @@ fn read_project(
     }
     read.sort_by(|(one, _), (two, _)| one.cmp(two));
 
-    Ok((
-        ProjectWork {
-            readiness,
-            relations: edges::relations(&beads),
-            roots: read,
-        },
-        beads,
-    ))
+    Ok(ProjectWork {
+        readiness,
+        relations: edges::relations(&beads),
+        roots: read,
+        speaks_until: speaks_until(&beads, now),
+    })
 }
 
 /// The beads the discovered roots left off the screen, each drawn from the
@@ -619,7 +618,7 @@ dunwich = ["dun-4"]
         let tracker = dunwich_tracker().also(beads(MAST_TREE)).also(beads(lost));
 
         let before = nestings_on_this_thread();
-        let (work, _) = read_project(&tracker, &cfg.projects[0], &cfg, &[])
+        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], now())
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
@@ -976,7 +975,7 @@ dunwich = ["dun-c3"]
         .expect("the config parses");
         let tracker = dunwich_holding(CHAIN_OF_PARENTLESS);
 
-        let (work, _) = read_project(&tracker, &cfg.projects[0], &cfg, &[])
+        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], now())
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
