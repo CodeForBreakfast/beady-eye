@@ -25,7 +25,7 @@ use crate::model::anomaly::Anomaly;
 use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
-use crate::model::tree::{self, Link};
+use crate::model::tree::{self, Link, OrphanedDependency};
 use crate::model::types::{Edge, PaneKey, PaneStatus, Status, Unreadable};
 
 /// Which agent provider this run read, and how that went.
@@ -292,6 +292,9 @@ pub struct Node {
     pub undrawn: Vec<Undrawn>,
     pub agent: Option<AgentRef>,
     pub anomalies: Vec<Anomaly>,
+    /// The blockers the bead waits on that no tracker holds a bead for, each
+    /// drawn beneath it with why.
+    pub orphaned_dependencies: Vec<OrphanedDependency>,
     /// What `bd show` says of the bead beyond its row, carried so the screen
     /// can show a bead without asking the tracker again. Not part of the JSON
     /// contract, which is the forest and not the beads' prose.
@@ -400,6 +403,7 @@ struct Drawn<'a> {
     badges: &'a [Badged],
     agent: Option<&'a AgentRef>,
     anomalies: &'a [Anomaly],
+    orphaned_dependencies: &'a [OrphanedDependency],
 }
 
 impl Tree {
@@ -424,6 +428,7 @@ impl Tree {
                     badges: &node.badges,
                     agent: node.agent.as_ref(),
                     anomalies: &node.anomalies,
+                    orphaned_dependencies: &node.orphaned_dependencies,
                 }
             })
             .collect()

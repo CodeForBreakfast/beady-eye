@@ -290,6 +290,7 @@ fn a_node_carries_every_field_the_contract_names() {
             }],
             "agent": null,
             "anomalies": [{"rule": "orphan-claim"}],
+            "orphaned_dependencies": [],
         })
     );
 }
@@ -1157,5 +1158,114 @@ fn a_bead_waiting_on_another_projects_bead_draws_it_beneath_itself() {
             .iter()
             .any(|tree| tree["project"] == "dunwich" && tree["root"] == "dun-2e7"),
         "dunwich still draws its own work"
+    );
+}
+
+/// Arkham's tracker as bd 1.3.0 wrote it, waiting on `dun-2e7`, beside
+/// `dunwich` staged as given.
+fn arkham_beside(dunwich: Fake) -> Fakes {
+    Fakes::default()
+        .with(
+            "arkham",
+            Fake::holding(beads(include_str!(
+                "fixtures/bd_1.3.0_a_dependency_on_another_project.json"
+            ))),
+        )
+        .with("dunwich", dunwich)
+}
+
+/// The orphaned dependencies `ark-43o` is drawn waiting on.
+fn orphaned_under_the_beacon(cfg: &Config, trackers: &Fakes) -> Value {
+    let emitted = emit_over(cfg, &panes(), trackers, Filter::All);
+    let arkham = emitted["trees"]
+        .as_array()
+        .expect("trees is an array")
+        .iter()
+        .find(|tree| tree["project"] == "arkham")
+        .expect("arkham draws a tree")
+        .clone();
+    assert_eq!(
+        arkham["beads_with_orphaned_dependencies"],
+        json!(["ark-43o"]),
+        "the tree still reports the bead waiting on what it cannot draw"
+    );
+    node(&arkham, "ark-43o")["orphaned_dependencies"].clone()
+}
+
+/// A bead with nothing missing beneath it says so, rather than leaving the
+/// key out.
+#[test]
+fn a_node_waiting_on_nothing_missing_carries_no_orphaned_dependency() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
+    let emitted = emit_over(&cfg, &panes(), &arkham_waiting_on_dunwich(), Filter::All);
+    let arkham = emitted["trees"]
+        .as_array()
+        .expect("trees is an array")
+        .iter()
+        .find(|tree| tree["project"] == "arkham")
+        .expect("arkham draws a tree");
+
+    assert_eq!(node(arkham, "ark-43o")["orphaned_dependencies"], json!([]));
+}
+
+/// Dunwich answered, and its beads carry the prefix `dun-2e7` does, so the
+/// bead is one dunwich's tracker does not hold.
+#[test]
+fn a_bead_waiting_on_one_the_other_tracker_does_not_hold_says_so_at_the_edge() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
+    let dunwich = Fake::holding(beads(
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+    ));
+
+    assert_eq!(
+        orphaned_under_the_beacon(&cfg, &arkham_beside(dunwich)),
+        json!([{"id": "dun-2e7", "reason": "not-held", "projects": ["dunwich"]}])
+    );
+}
+
+/// Dunwich's tracker refused its credential, so nothing says which prefix
+/// its beads carry, and the bead may be one of them.
+#[test]
+fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_names_that_project_at_the_edge() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
+    let dunwich = Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
+
+    assert_eq!(
+        orphaned_under_the_beacon(&cfg, &arkham_beside(dunwich)),
+        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
+    );
+}
+
+/// A run scoped to arkham leaves dunwich unread, and a project left out is
+/// still configured, so the bead may be dunwich's.
+#[test]
+fn a_bead_waiting_on_one_in_a_project_the_run_left_out_names_that_project_at_the_edge() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
+        .expect("the config parses")
+        .scoped_to(&["arkham".to_string()])
+        .expect("arkham is configured");
+
+    assert_eq!(
+        orphaned_under_the_beacon(&cfg, &arkham_waiting_on_dunwich()),
+        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
+    );
+}
+
+/// Arkham is the only project configured, and it answered, so the bead is
+/// in a project `bdi` was never told about.
+#[test]
+fn a_bead_waiting_on_one_in_a_project_not_configured_says_so_at_the_edge() {
+    let cfg = Config::from_toml(
+        r#"
+[[projects]]
+name = "arkham"
+path = "/srv/work/arkham"
+"#,
+    )
+    .expect("the config parses");
+
+    assert_eq!(
+        orphaned_under_the_beacon(&cfg, &arkham_waiting_on_dunwich()),
+        json!([{"id": "dun-2e7", "reason": "unconfigured"}])
     );
 }

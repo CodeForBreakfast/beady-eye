@@ -73,6 +73,7 @@ pub fn target(forest: &Forest) -> Target<'_> {
         Content::Project(_)
         | Content::Unread(_)
         | Content::Elided { .. }
+        | Content::Orphaned(_)
         | Content::Note(_)
         | Content::Group(_)
         | Content::Scoped { .. } => Target::NotABead,
@@ -259,6 +260,7 @@ mod tests {
             undrawn: Vec::new(),
             agent,
             anomalies: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             description: String::new(),
             notes: String::new(),
             created_by: None,

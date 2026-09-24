@@ -6,6 +6,7 @@ use ratatui::text::Span;
 
 use crate::config::Colour;
 use crate::model::badges::Badged;
+use crate::model::tree::OrphanedDependency;
 use crate::model::types::Status;
 use crate::view::fitted::{columns, openable, Block, Fitted, Link, Shorter, GAP};
 use crate::view::palette;
@@ -35,6 +36,27 @@ pub(super) fn elided_run(prefix: &str, count: usize) -> Fitted {
         Vec::new(),
     )
     .toned(palette::TIER_FINISHED)
+}
+
+/// A blocker no tracker holds a bead for, where it would have hung: its id
+/// in the id column, and why it is not there.
+pub(super) fn orphaned_line(
+    orphaned: &OrphanedDependency,
+    prefix: &str,
+    id_width: usize,
+) -> Fitted {
+    Fitted::new(
+        vec![
+            structure(prefix),
+            Span::styled(WARNING.to_string(), palette::ATTENTION),
+            Span::raw(format!(" {:id_width$}", orphaned.id)),
+        ],
+        vec![Span::styled(
+            phrase::unreachable(&orphaned.why),
+            palette::ATTENTION,
+        )],
+        Vec::new(),
+    )
 }
 
 /// One bead's line, under the box-drawing run its ancestors leave.

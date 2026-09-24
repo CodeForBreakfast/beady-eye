@@ -114,6 +114,7 @@ pub fn build_tree(
                     now,
                 ),
                 agent,
+                orphaned_dependencies: assembled.orphaned.get(&at).cloned().unwrap_or_default(),
                 description: bead.description.clone().unwrap_or_default(),
                 notes: bead.notes.clone().unwrap_or_default(),
                 created_by: bead.created_by.clone(),
@@ -323,10 +324,13 @@ mod tests {
                  "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}]"#,
         )
         .expect("the rows parse");
-        let assembled = crate::model::tree::Across::of([
-            ("harbour", crate::model::tree::Nesting::of(&harbour)),
-            ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
-        ])
+        let assembled = crate::model::tree::Across::of(
+            [
+                ("harbour", crate::model::tree::Nesting::of(&harbour)),
+                ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
+            ],
+            [],
+        )
         .assemble("harbour", "hbr-1")
         .expect("the rows assemble");
 

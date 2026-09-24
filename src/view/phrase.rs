@@ -20,6 +20,7 @@ use crate::model::anomaly::Anomaly;
 use crate::model::badges::Undrawn;
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
+use crate::model::tree::Unreachable;
 use crate::model::types::{PaneKey, PaneStatus, Status};
 use crate::view::forest::Spine;
 use crate::view::{Freshness, Mark, Notice, Said};
@@ -417,6 +418,22 @@ pub fn root_unread() -> &'static str {
 /// did nothing wrong, so the phrase sends the reader to what named it.
 pub fn root_not_found() -> &'static str {
     "no such bead in this tracker · named in config or on the command line"
+}
+
+/// Why a blocker a bead waits on is not drawn beneath it.
+pub fn unreachable(why: &Unreachable) -> String {
+    match why {
+        Unreachable::NotHeld { projects } => format!("no such bead in {}", projects.join(", ")),
+        Unreachable::HeldBySeveral { projects } => format!(
+            "{} projects hold a bead by this id — {} — so none is its",
+            projects.len(),
+            projects.join(", ")
+        ),
+        Unreachable::NotRead { projects } => {
+            format!("in no project bdi read · not read: {}", projects.join(", "))
+        }
+        Unreachable::Unconfigured => "in no project bdi is configured to read".to_string(),
+    }
 }
 
 /// A run of finished siblings nobody is working, drawn as a count rather
@@ -973,6 +990,9 @@ mod tests {
         }
         said.push(root_unread().to_string());
         said.push(root_not_found().to_string());
+        for why in every_unreachable() {
+            said.push(unreachable(&why));
+        }
         for count in [1, 3] {
             said.push(elided(count));
             said.push(unfinished_beneath(count));
@@ -1038,6 +1058,27 @@ mod tests {
                 Anomaly::OrphanClaim { .. } => Some(Anomaly::StalePane),
                 Anomaly::StalePane => Some(Anomaly::StaleClaim { days: 1 }),
                 Anomaly::StaleClaim { .. } => None,
+            },
+        )
+    }
+
+    /// One of every reason a blocker is not drawn, walked for the same reason
+    /// as [`every_anomaly`].
+    fn every_unreachable() -> impl Iterator<Item = Unreachable> {
+        let projects = || vec!["dunwich".to_string(), "ferry".to_string()];
+        std::iter::successors(
+            Some(Unreachable::NotHeld {
+                projects: projects(),
+            }),
+            move |why| match why {
+                Unreachable::NotHeld { .. } => Some(Unreachable::HeldBySeveral {
+                    projects: projects(),
+                }),
+                Unreachable::HeldBySeveral { .. } => Some(Unreachable::NotRead {
+                    projects: projects(),
+                }),
+                Unreachable::NotRead { .. } => Some(Unreachable::Unconfigured),
+                Unreachable::Unconfigured => None,
             },
         )
     }
@@ -1883,6 +1924,33 @@ mod tests {
     fn a_scope_the_directory_chose_names_the_project_and_the_way_to_the_rest() {
         assert!(scoped_by_the_directory("summit-works").contains("summit-works"));
         assert!(all_projects_reads_the_rest().contains("--all-projects"));
+    }
+
+    /// Each reason a blocker is not drawn sends the reader somewhere
+    /// different, so no two are said alike.
+    #[test]
+    fn each_reason_a_blocker_is_not_drawn_is_said_its_own_way() {
+        let said: std::collections::BTreeSet<String> =
+            every_unreachable().map(|why| unreachable(&why)).collect();
+
+        assert_eq!(said.len(), every_unreachable().count(), "{said:#?}");
+    }
+
+    /// The projects a blocker may be in are named, for the reader to go and
+    /// look.
+    #[test]
+    fn a_blocker_not_drawn_names_the_projects_it_may_be_in() {
+        for why in every_unreachable() {
+            let said = unreachable(&why);
+            if let Unreachable::NotHeld { projects }
+            | Unreachable::HeldBySeveral { projects }
+            | Unreachable::NotRead { projects } = &why
+            {
+                for project in projects {
+                    assert!(said.contains(project.as_str()), "{said:?}");
+                }
+            }
+        }
     }
 
     #[test]

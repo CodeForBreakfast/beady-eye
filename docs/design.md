@@ -945,6 +945,19 @@ Only a `blocks` edge crosses: a blocker hangs beneath the bead waiting on it,
 whereas a parent in another project would put this project's bead inside
 that project's trees.
 
+**A blocker no answer holds is drawn where it would hang, saying why.** A
+tracker's beads carry its prefix, the id up to its first `-` as bd reads one,
+so the prefix says whose the bead would be. The line names the projects whose
+answers carry the prefix and hold no bead by that id, or the projects that
+each hold one. Where no answer carries the prefix, it names the configured
+projects that gave no answer, whether refused, unreachable or left out of the
+run, because nothing can learn the prefix of a tracker that did not answer.
+Where every configured project answered, the bead is in a project `bdi` is
+not configured to read. A parent no answer holds gets no such line, because
+it would have been drawn above the bead rather than beneath it. The tree's
+note still counts every bead waiting on something missing, because a fold
+can hide the line.
+
 **The other project's bead is drawn with everything beneath it, and stays
 that project's.** The walk carries on through that project's answer, into a
 third project where one of its beads waits on one, and a loop across
@@ -1950,7 +1963,8 @@ name to the socket after any command that wrote something.
             "title": "shell selector + stable path",
             "source": "agent_pane"
           },
-          "anomalies": []
+          "anomalies": [],
+          "orphaned_dependencies": []
         },
         {
           "project": "summit-works",
@@ -1967,10 +1981,11 @@ name to the socket after any command that wrote something.
           "closed_at": null,
           "badges": [],
           "agent": null,
-          "anomalies": [{ "rule": "orphan-claim" }]
+          "anomalies": [{ "rule": "orphan-claim" }],
+          "orphaned_dependencies": [{ "id": "mdw-9", "reason": "not-read", "projects": ["meadow"] }]
         }
       ],
-      "beads_with_orphaned_dependencies": [],
+      "beads_with_orphaned_dependencies": ["smt-4kd3p.16"],
       "cycles": []
     }
   ],
@@ -1995,7 +2010,12 @@ construction*), so what `--json` says does not follow what the model stores. `ag
 direction of the join resolved it, so a consumer can tell a confirmed agent
 from an inferred one. `anomalies` is every rule that fired, `[]` where none
 did — never absent, never null; an `orphan-claim` the join refused carries the
-refusing conflict as `refused`, and one it did not omits the field. `agents`
+refusing conflict as `refused`, and one it did not omits the field.
+`orphaned_dependencies` is every blocker the bead waits on that no tracker
+holds, `[]` where there is none, each an `id` and a `reason`: `not-held` with
+the `projects` whose beads carry its prefix, `held-by-several` with the
+`projects` that each hold a bead by it, `not-read` with the configured
+`projects` that gave no answer, or `unconfigured` with none. `agents`
 says which agent provider was asked and how that went, so a consumer knows
 which tier it is reading and which program answered for it: `state` is
 `answering`, `not-answering` where the provider is there and did not — which

@@ -12,7 +12,7 @@ use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     Counts, FailedProject, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
 };
-use crate::model::tree::{self, Link};
+use crate::model::tree::{self, Link, OrphanedDependency};
 use crate::model::types::Edge;
 use crate::view::row::{Progress, Row};
 
@@ -141,6 +141,9 @@ pub enum Content {
         /// the fold is known by.
         under: Place,
     },
+    /// A blocker the bead above waits on that no tracker holds a bead for,
+    /// drawn where the blocker would hang.
+    Orphaned(OrphanedDependency),
     /// Something true of the tree above rather than of any one bead in it.
     Note(Note),
     /// One of the groups.

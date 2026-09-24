@@ -302,7 +302,7 @@ pub(super) fn handle_of(line: &Line) -> Option<Handle> {
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
         Content::Group(group) => Some(Handle::Group(group.kind, group.project.clone())),
         Content::Item(item) => item_key(item).map(Handle::Item),
-        Content::Note(_) | Content::Scoped { .. } => None,
+        Content::Orphaned(_) | Content::Note(_) | Content::Scoped { .. } => None,
     }
 }
 

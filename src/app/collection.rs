@@ -274,7 +274,13 @@ impl Collection {
         now: DateTime<Utc>,
     ) -> Snapshot {
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
-        let drawn = reaching_across(&answered);
+        let not_read: Vec<&str> = cfg
+            .projects
+            .iter()
+            .map(|project| project.name.as_str())
+            .filter(|project| !answered.iter().any(|(answering, _)| answering == project))
+            .collect();
+        let drawn = reaching_across(&answered, &not_read);
 
         // One resolve over every project's rows at once. A pane names its bead
         // by id alone, and only the whole set tells a match from a prefix
@@ -474,8 +480,12 @@ type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
 /// A project's read assembled its trees from its own answer alone, and a
 /// bead waiting on work that answer does not hold is one each tree already
 /// names as an orphaned dependency. So only a tree naming one is assembled again, across
-/// every answer, and a run with none reads nothing twice.
-fn reaching_across<'a>(answered: &[(&'a str, &'a ProjectWork)]) -> Vec<Drawn<'a>> {
+/// every answer, and a run with none reads nothing twice. `not_read` is the
+/// configured projects that gave no answer, whichever bead they might hold.
+fn reaching_across<'a>(
+    answered: &[(&'a str, &'a ProjectWork)],
+    not_read: &[&'a str],
+) -> Vec<Drawn<'a>> {
     let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
         read.as_ref()
             .is_ok_and(|assembled| !assembled.orphaned_dependencies.is_empty())
@@ -488,6 +498,7 @@ fn reaching_across<'a>(answered: &[(&'a str, &'a ProjectWork)]) -> Vec<Drawn<'a>
                 answered
                     .iter()
                     .map(|(project, work)| (*project, Nesting::of(&work.beads))),
+                not_read.iter().copied(),
             )
         });
 
