@@ -413,6 +413,20 @@ mod tests {
         assert_eq!(named.asks(at(125)), Some(arkham()));
     }
 
+    /// And an edit anywhere in the file keeps it past the next word, which
+    /// otherwise re-arms from the interval alone.
+    #[test]
+    fn a_config_the_reader_writes_keeps_when_the_last_read_stops_speaking() {
+        let mut standing = polling();
+        standing.came_back(&arkham(), at(100), Some(at(125)));
+
+        let mut named = standing.still_due(polling());
+        named.covered(at(120));
+
+        assert_eq!(named.asks(at(124)), None);
+        assert_eq!(named.asks(at(125)), Some(arkham()));
+    }
+
     /// A run that has read nothing has a read on its way already. Arming at
     /// the start would ask a second time for what is being collected.
     #[test]
