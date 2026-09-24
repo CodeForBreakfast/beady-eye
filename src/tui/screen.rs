@@ -2460,7 +2460,7 @@ mod tests {
 
         let rows = bead_view(&mut shown, 200, 60);
         assert!(
-            rows[0].contains("1\u{2013}56 of 105"),
+            rows[0].contains("1\u{2013}56 of 106"),
             "the title says how far down the bead the window has got: {:?}",
             rows[0]
         );

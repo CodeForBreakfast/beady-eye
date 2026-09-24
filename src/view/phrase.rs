@@ -807,6 +807,19 @@ pub fn status_word(status: &Status) -> String {
     }
 }
 
+/// Whether a bead is ready, or what it is blocked by, in the words `bd ready`
+/// and `bd list` use. A bead that is neither, such as a deferred one or a
+/// closed one, has nothing said of it.
+pub fn readiness(ready: bool, blocked_by: &[String]) -> Option<String> {
+    if ready {
+        Some("ready".to_string())
+    } else if blocked_by.is_empty() {
+        None
+    } else {
+        Some(format!("blocked by: {}", blocked_by.join(", ")))
+    }
+}
+
 /// The bead window's border title: which bead the reader is on, and — where
 /// the window is too short for the whole of it — how far down it they have
 /// got. The id comes first, because a title too long for the screen is cut

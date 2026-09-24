@@ -10609,6 +10609,17 @@ credential_command = "secret harbour"
         roots: &[(&str, &str)],
         on: &[&str],
     ) -> Snapshot {
+        harbour_and_dunwich_ready(harbour, dunwich, roots, on, &[])
+    }
+
+    /// The same, with the beads `bd` answers `ready` with named.
+    fn harbour_and_dunwich_ready(
+        harbour: &str,
+        dunwich: &str,
+        roots: &[(&str, &str)],
+        on: &[&str],
+        ready: &[&str],
+    ) -> Snapshot {
         let harbour = parse_beads(harbour).expect("the rows parse");
         let dunwich = parse_beads(dunwich).expect("the rows parse");
         let across = tree::Across::of(
@@ -10634,7 +10645,10 @@ credential_command = "secret harbour"
             Listed::all(&panes),
             &cfg,
         );
-        let readiness = Readiness::default();
+        let readiness = Readiness {
+            ready: ready.iter().map(|id| (*id).to_string()).collect(),
+            ..Readiness::default()
+        };
         let relations = [
             ("harbour", crate::model::edges::relations(&harbour)),
             ("dunwich", crate::model::edges::relations(&dunwich)),
@@ -10679,6 +10693,59 @@ credential_command = "secret harbour"
             Filter::All,
             now(),
         )
+    }
+
+    /// Harbour's epic over a task `bd` calls ready, which waits on dunwich's
+    /// `dun-7` in the status given.
+    fn a_task_bd_calls_ready_waiting_on_dunwich(status: &str) -> Snapshot {
+        harbour_and_dunwich_ready(
+            r#"[{"id":"hbr-0","title":"open the harbour","status":"open","issue_type":"epic"},
+                {"id":"hbr-1","title":"clear the berth","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-0","type":"parent-child"},
+                                 {"depends_on_id":"dun-7","type":"blocks"}]}]"#,
+            &format!(r#"[{{"id":"dun-7","title":"lift the ground station","status":"{status}"}}]"#),
+            &[("harbour", "hbr-0"), ("dunwich", "dun-7")],
+            &[],
+            &["hbr-1"],
+        )
+    }
+
+    /// Ready work opens the folds over it, and a bead waiting on another
+    /// project's open bead is not ready, whatever `bd` says. Once that bead
+    /// closes, `bd`'s answer stands and the fold opens.
+    #[test]
+    fn a_bead_waiting_on_another_projects_open_bead_opens_no_fold_as_ready_work() {
+        let waiting = flatten(a_task_bd_calls_ready_waiting_on_dunwich("open"));
+        let free = flatten(a_task_bd_calls_ready_waiting_on_dunwich("closed"));
+
+        assert!(
+            lines_of(&waiting, "hbr-1").is_empty(),
+            "{:#?}",
+            sketch(&waiting)
+        );
+        assert!(!lines_of(&free, "hbr-1").is_empty(), "{:#?}", sketch(&free));
+    }
+
+    /// The window on a bead waiting on another project's open bead says it is
+    /// blocked by that bead, and leaves out the finished one it also waits on.
+    #[test]
+    fn the_window_on_a_bead_waiting_on_another_projects_open_bead_says_what_blocks_it() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+        let waiting = lines_of(&forest, "hbr-1")[0];
+        step_onto(&mut forest, waiting);
+
+        let node = crate::view::show::selected(&forest).expect("a bead is selected");
+        let page = crate::view::show::said(node, None, 80, 40, &|_| false);
+        let said: Vec<String> = page
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+
+        assert!(
+            said.iter().any(|row| row.trim() == "blocked by: dun-7"),
+            "{said:#?}"
+        );
     }
 
     /// Another project's bead is its own project's wherever it is drawn: the

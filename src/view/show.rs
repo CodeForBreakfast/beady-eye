@@ -474,6 +474,9 @@ pub fn said(
         ),
         Span::raw(format!(" · {}", facts.join(" · "))),
     ]));
+    if let Some(readiness) = phrase::readiness(node.ready, &node.blocked_by) {
+        rows.push(indented(vec![Span::raw(readiness)]));
+    }
     for dates in dates(node) {
         rows.push(indented(vec![Span::raw(dates)]));
     }
@@ -958,6 +961,39 @@ mod tests {
                 "└──────────────────────────────────────────┘",
                 "",
             ]
+        );
+    }
+
+    /// Under the status, the window says whether the bead is ready, and what
+    /// it is blocked by where it is not, in the words `bd ready` and
+    /// `bd list` use. A bead that is neither says neither.
+    #[test]
+    fn the_head_says_whether_the_bead_is_ready_and_what_blocks_it() {
+        let head = |node: &Node| drawn(node, &mut Show::default(), 44, 24)[4].clone();
+        let bead = || Node {
+            status: Status::Open,
+            agent: None,
+            ..a_bead()
+        };
+
+        assert_eq!(
+            head(&Node {
+                ready: true,
+                ..bead()
+            }),
+            "│   ready                                  │"
+        );
+        assert_eq!(
+            head(&Node {
+                blocked_by: vec!["dun-9".to_string(), "hbr-2".to_string()],
+                ..bead()
+            }),
+            "│   blocked by: dun-9, hbr-2               │"
+        );
+        assert_eq!(
+            head(&bead()),
+            "│                                          │",
+            "the blank row over the description"
         );
     }
 
