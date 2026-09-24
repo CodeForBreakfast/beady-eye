@@ -10070,6 +10070,39 @@ credential_command = "secret harbour"
         assert!(drawn_here(&forest, "seal the feed horn"));
     }
 
+    /// The rule begins afresh where the moved bead now stands, so the forest
+    /// draws what rooting there after the move would have drawn.
+    #[test]
+    fn a_collection_that_moved_the_focused_bead_roots_the_forest_where_it_moved_to() {
+        let moved = || {
+            let moved = edited(
+                DUNWICH,
+                r#""seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7.1""#,
+                r#""seal the feed horn","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7""#,
+            );
+            gather(
+                vec![
+                    tree_of("dunwich", &moved),
+                    Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                    tree_of("harbour", HARBOUR),
+                ],
+                Vec::new(),
+                Filter::LiveAgents,
+            )
+        };
+        let mut followed = flatten(snapshot());
+        toggle_fold_of(&mut followed, "dun-7.1");
+        focus_on(&mut followed, "dun-7.1.2");
+        followed.refresh(moved());
+
+        let mut rooted_there = flatten(moved());
+        focus_on(&mut rooted_there, "dun-7.1.2");
+
+        assert_eq!(sketch(&followed), sketch(&rooted_there));
+    }
+
     /// Pressing the key to come back out changes what is on the screen, so the
     /// press says so. A press the loop reads as changing nothing leaves the
     /// rooted forest drawn over a forest that has been put back.

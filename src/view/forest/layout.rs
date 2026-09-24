@@ -941,14 +941,16 @@ impl<'a> TreeLayout<'a> {
                 .expect("a way down follows the tree's own links");
             place = place.step_to(self.key_of(link));
         }
-        (over, self.begins_at(&rooted.place))
+        let stand = self
+            .begun(&rooted.place)
+            .expect("the rule begins where the forest is rooted");
+        (over, stand)
     }
 
-    /// Where the bead a walk starts from stands: where the rule begins, set
-    /// on its own line, in force over the forest at a tree's root, or begun
-    /// where the forest is rooted.
-    fn begins_at(&self, start: &Place) -> Stand {
-        self.begun(start).unwrap_or_else(Stand::over_nothing)
+    /// Where a tree's root stands: where the rule begins, set on the root's
+    /// own line or in force over the forest.
+    fn begins_at(&self, root: &Place) -> Stand {
+        self.begun(root).unwrap_or_else(Stand::over_nothing)
     }
 
     /// Where the child at `place` stands, reached by `link` from the bead at
