@@ -41,6 +41,15 @@ const SHUT_THE_TREE: &[u8] = b"c";
 /// prompt.
 const TYPE_AN_ID: &[u8] = b"/dun-0tp.7";
 
+/// `/` and the end of that id, which the start is typed in front of.
+const TYPE_THE_END_OF_THE_ID: &[u8] = b"/0tp.7";
+
+/// `Home`, as a terminal sends it.
+const HOME: &[u8] = b"\x1b[H";
+
+/// The start of the id, which with the end makes `dun-0tp.7`.
+const TYPE_THE_START_OF_THE_ID: &[u8] = b"dun-";
+
 /// `Enter`, which closes the prompt — and, on the forest, shows the selected
 /// bead.
 const ENTER: &[u8] = b"\r";
@@ -168,6 +177,36 @@ fn the_search_moves_as_the_id_is_typed_and_esc_puts_the_tree_back() {
         "Esc did not put the selection back where `/` found it. The screen \
          it drew: {:?}\n{}",
         String::from_utf8_lossy(&window),
+        bdi.timeline()
+    );
+}
+
+/// The prompt edits at a position, as a shell's does. The end of the id is
+/// typed first, then Home, then its start: a prompt that took Home as nothing
+/// searches for `0tp.7dun-`, which no bead holds, and leaves the selection on
+/// the header.
+#[test]
+fn home_puts_what_is_typed_next_at_the_start_of_the_id() {
+    let (mut bdi, _tracker) = over_the_described_subtree("home", ROWS, COLS, A_SILENCE);
+    bdi.send(SHUT_THE_TREE);
+    bdi.settle(A_SILENCE, GIVING_UP);
+
+    bdi.send(TYPE_THE_END_OF_THE_ID);
+    bdi.send(HOME);
+    bdi.send(TYPE_THE_START_OF_THE_ID);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(ENTER);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(ENTER);
+    bdi.settle(A_SILENCE, GIVING_UP);
+
+    let landed = repaint(&mut bdi, ROWS + 1);
+    assert_eq!(
+        window_over(&landed).as_deref(),
+        Some(THE_SEARCHED_BEAD),
+        "what was typed after Home did not go in at the start of the id. The \
+         screen it drew: {:?}\n{}",
+        String::from_utf8_lossy(&landed),
         bdi.timeline()
     );
 }

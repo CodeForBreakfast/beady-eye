@@ -7,7 +7,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::view::{Action, Motion, Typing};
+use crate::view::{Action, Edit, Motion, Typing};
 
 /// One key a reader can press, and the word for it they can read.
 ///
@@ -251,34 +251,112 @@ pub(super) const BINDINGS: &[Binding] = &[
 
 /// The action a key asks for, or nothing where it is bound to none.
 pub(super) fn action(key: KeyEvent) -> Option<Action> {
-    let control = key.modifiers.contains(KeyModifiers::CONTROL);
-
     BINDINGS
         .iter()
-        .find(|binding| {
-            binding
-                .keys
-                .iter()
-                .any(|bound| bound.code == key.code && bound.control == control)
-        })
+        .find(|binding| answers(binding.keys, key))
         .map(|binding| binding.action)
 }
+
+/// Whether `key` is one of `keys`.
+fn answers(keys: &[Key], key: KeyEvent) -> bool {
+    let control = key.modifiers.contains(KeyModifiers::CONTROL);
+    keys.iter()
+        .any(|bound| bound.code == key.code && bound.control == control)
+}
+
+/// One thing the search prompt does: the keys that ask for it, and what to
+/// call it.
+pub(super) struct AtThePrompt {
+    pub(super) keys: &'static [Key],
+    pub(super) typing: Typing,
+    /// What pressing it does, for the key bindings view.
+    pub(super) does: &'static str,
+}
+
+/// Every key the search prompt takes but the characters of the query.
+///
+/// A table of its own beside `BINDINGS` rather than more rows in it, because
+/// these keys mean something else once the prompt is down: Enter shows a
+/// bead, `^U` moves half a screen.
+///
+/// The editing keys are readline's, which is what a reader has pressed at
+/// every shell prompt. `^B` and `^F` are left out because the arrows are what
+/// a reader reaches for, and `^D` because it is half a screen here and the end
+/// of input in a shell. Nothing is taken that searching has: `^G` and `^T`
+/// are the table's.
+pub(super) const AT_THE_PROMPT: &[AtThePrompt] = &[
+    AtThePrompt {
+        keys: &[alone(KeyCode::Enter, "Enter")],
+        typing: Typing::Sought,
+        does: "while searching, stay on the bead the search has gone to",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::Esc, "Esc")],
+        typing: Typing::Abandoned,
+        does: "while searching, stop and put the forest back",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::Left, "Left")],
+        typing: Typing::Edit(Edit::Back),
+        does: "while searching, move back one character",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::Right, "Right")],
+        typing: Typing::Edit(Edit::Forward),
+        does: "while searching, move on one character",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::Home, "Home"), ctrl('a', "^A")],
+        typing: Typing::Edit(Edit::Start),
+        does: "while searching, move to the start",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::End, "End"), ctrl('e', "^E")],
+        typing: Typing::Edit(Edit::End),
+        does: "while searching, move to the end",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::Backspace, "BkSp")],
+        typing: Typing::Edit(Edit::RubOut),
+        does: "while searching, delete the character before the cursor",
+    },
+    AtThePrompt {
+        keys: &[alone(KeyCode::Delete, "Delete")],
+        typing: Typing::Edit(Edit::Delete),
+        does: "while searching, delete the character at the cursor",
+    },
+    AtThePrompt {
+        keys: &[ctrl('w', "^W")],
+        typing: Typing::Edit(Edit::RubOutWord),
+        does: "while searching, delete the word before the cursor",
+    },
+    AtThePrompt {
+        keys: &[ctrl('u', "^U")],
+        typing: Typing::Edit(Edit::RubOutToStart),
+        does: "while searching, delete everything before the cursor",
+    },
+    AtThePrompt {
+        keys: &[ctrl('k', "^K")],
+        typing: Typing::Edit(Edit::DeleteToEnd),
+        does: "while searching, delete everything from the cursor on",
+    },
+];
 
 /// What a keystroke does to the search prompt, or nothing where the prompt
 /// has no use for it.
 ///
-/// A mapping of its own beside the table rather than more rows in it. The
-/// table is the keys that do something, and while the prompt is up almost
-/// every key is a character of an id instead — so a row per letter would be a
-/// key bindings screen nobody could read, listing keys that mean this only
-/// here.
+/// Any other character is a character of the query, so a row per letter
+/// would be a key bindings screen nobody could read.
 ///
-/// A key held with control is the table's. `^G` and `^T` step through the
-/// matches, since `n` and `N` are letters of the id here, and nothing else
-/// held with control is the prompt's — which is what leaves `^C` to the
-/// table: raw mode swallows it, and the key everyone reaches for to get out
-/// of a program must not be inert because a prompt is up.
+/// Of the rest of the keys held with control, `^G` and `^T` step through the
+/// matches, since `n` and `N` are letters of the query here, and nothing else
+/// is the prompt's — which is what leaves `^C` to the table: raw mode
+/// swallows it, and the key everyone reaches for to get out of a program must
+/// not be inert because a prompt is up.
 pub(super) fn typing(key: KeyEvent) -> Option<Typing> {
+    if let Some(row) = AT_THE_PROMPT.iter().find(|row| answers(row.keys, key)) {
+        return Some(row.typing);
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return match action(key) {
             Some(Action::NextMatch) => Some(Typing::NextMatch),
@@ -287,31 +365,30 @@ pub(super) fn typing(key: KeyEvent) -> Option<Typing> {
         };
     }
     match key.code {
-        KeyCode::Char(glyph) => Some(Typing::Character(glyph)),
-        KeyCode::Backspace => Some(Typing::RubbedOut),
-        KeyCode::Enter => Some(Typing::Sought),
-        KeyCode::Esc => Some(Typing::Abandoned),
+        KeyCode::Char(glyph) => Some(Typing::Edit(Edit::Character(glyph))),
         _ => None,
     }
 }
 
 /// Every binding named for a reader: the keys to press, and what pressing
 /// them does.
+///
+/// The prompt's own keys come last. Every one of them is a key a reader
+/// already presses at a shell prompt, so they are the most guessable of all.
 pub(super) fn bindings() -> Vec<(String, &'static str)> {
     BINDINGS
         .iter()
-        .map(|binding| {
-            (
-                binding
-                    .keys
-                    .iter()
-                    .map(|key| key.named)
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                binding.does,
-            )
-        })
+        .map(|binding| (binding.keys, binding.does))
+        .chain(AT_THE_PROMPT.iter().map(|row| (row.keys, row.does)))
+        .map(|(keys, does)| (named(keys), does))
         .collect()
+}
+
+fn named(keys: &[Key]) -> String {
+    keys.iter()
+        .map(|key| key.named)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The row under the tail: the handful of bindings worth a permanent line,
@@ -737,22 +814,54 @@ pub(super) mod tests {
         for glyph in ('!'..='~').chain([' ']) {
             assert_eq!(
                 typing(key(KeyCode::Char(glyph))),
-                Some(Typing::Character(glyph)),
+                Some(Typing::Edit(Edit::Character(glyph))),
                 "{glyph:?} is not a character of an id"
             );
         }
     }
 
-    /// The four keys that are not a character of an id, and the one that is
-    /// not the prompt's at all: `^C` leaves `bdi` from the prompt as it does
-    /// from everywhere else, because raw mode swallows it and the table's
-    /// alias is the whole of what answers it.
+    /// Every key the prompt takes but a character of the query, each written
+    /// out rather than read off the table, so a row wired to the wrong edit
+    /// fails here. `^U` is half a screen up in the forest and deletes to the
+    /// start here, which is what a shell reader expects of it.
     #[test]
-    fn the_prompt_answers_the_keys_that_work_a_prompt_and_leaves_control_alone() {
-        assert_eq!(typing(key(KeyCode::Backspace)), Some(Typing::RubbedOut));
-        assert_eq!(typing(key(KeyCode::Enter)), Some(Typing::Sought));
-        assert_eq!(typing(key(KeyCode::Esc)), Some(Typing::Abandoned));
+    fn the_prompt_answers_the_keys_that_edit_a_line() {
+        let taken = [
+            (key(KeyCode::Enter), Typing::Sought),
+            (key(KeyCode::Esc), Typing::Abandoned),
+            (key(KeyCode::Left), Typing::Edit(Edit::Back)),
+            (key(KeyCode::Right), Typing::Edit(Edit::Forward)),
+            (key(KeyCode::Home), Typing::Edit(Edit::Start)),
+            (control('a'), Typing::Edit(Edit::Start)),
+            (key(KeyCode::End), Typing::Edit(Edit::End)),
+            (control('e'), Typing::Edit(Edit::End)),
+            (key(KeyCode::Backspace), Typing::Edit(Edit::RubOut)),
+            (key(KeyCode::Delete), Typing::Edit(Edit::Delete)),
+            (control('w'), Typing::Edit(Edit::RubOutWord)),
+            (control('u'), Typing::Edit(Edit::RubOutToStart)),
+            (control('k'), Typing::Edit(Edit::DeleteToEnd)),
+        ];
+
+        for (pressed, expected) in taken {
+            assert_eq!(typing(pressed), Some(expected), "for {pressed:?}");
+        }
+        assert_eq!(
+            AT_THE_PROMPT
+                .iter()
+                .map(|row| row.keys.len())
+                .sum::<usize>(),
+            taken.len(),
+            "a key in the table that no line above presses"
+        );
+    }
+
+    /// And the ones it leaves: a motion is not typing, and `^C` leaves `bdi`
+    /// from the prompt as it does from everywhere else, because raw mode
+    /// swallows it and the table's alias is the whole of what answers it.
+    #[test]
+    fn the_prompt_leaves_the_motions_and_control_c_alone() {
         assert_eq!(typing(key(KeyCode::Up)), None, "a motion is not typing");
+        assert_eq!(typing(control('d')), None, "^D is not the prompt's");
 
         assert_eq!(typing(control('c')), None, "^C is not a character of an id");
         assert_eq!(action(control('c')), Some(Action::Quit));

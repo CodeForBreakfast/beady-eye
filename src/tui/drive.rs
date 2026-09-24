@@ -610,8 +610,8 @@ fn sleeps_for(
 /// Whether an event makes whatever the last search step opened the reader's,
 /// which every key and click does but a search step.
 ///
-/// `/` opens the prompt, every key at it is a search step or the Enter that
-/// closes it, and a click there leaves the prompt as Esc does. A wheel notch
+/// `/` opens the prompt, every key at it edits the search, steps it or closes
+/// it, and a click there leaves the prompt as Esc does. A wheel notch
 /// moves no fold and no selection.
 fn keeps_what_is_open(event: &Event, showing: Showing) -> bool {
     match event {
@@ -1133,6 +1133,7 @@ mod tests {
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
     use crate::view::phrase;
+    use crate::view::Edit;
     use ratatui::crossterm::event::KeyCode;
     use std::cell::RefCell;
     use std::sync::mpsc;
@@ -1617,8 +1618,8 @@ mod tests {
         assert_eq!(
             view.typed,
             [
-                Typing::Character('a'),
-                Typing::Character('j'),
+                Typing::Edit(Edit::Character('a')),
+                Typing::Edit(Edit::Character('j')),
                 Typing::Sought
             ]
         );
@@ -1666,7 +1667,7 @@ mod tests {
 
         assert_eq!(
             view.typed,
-            [Typing::Character('x'), Typing::Abandoned],
+            [Typing::Edit(Edit::Character('x')), Typing::Abandoned],
             "Esc asked for the id it was leaving behind"
         );
         assert_eq!(
@@ -1708,7 +1709,7 @@ mod tests {
         assert_eq!(
             view.typed,
             [
-                Typing::Character('x'),
+                Typing::Edit(Edit::Character('x')),
                 Typing::NextMatch,
                 Typing::PreviousMatch,
                 Typing::Sought
@@ -1755,7 +1756,7 @@ mod tests {
         )
         .expect("the loop runs");
 
-        assert_eq!(view.typed, [Typing::Character('q')]);
+        assert_eq!(view.typed, [Typing::Edit(Edit::Character('q'))]);
         assert_eq!(
             view.showing,
             [Showing::Forest, Showing::Searching, Showing::Searching],

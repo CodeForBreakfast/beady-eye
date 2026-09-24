@@ -25,6 +25,7 @@ use crate::view::bindings::key_bindings;
 use crate::view::forest::{self, Forest};
 use crate::view::lines::Place;
 use crate::view::phrase;
+use crate::view::query::{Edited, Query};
 use crate::view::row::Layout;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
@@ -600,22 +601,23 @@ impl Shown {
     /// out of it, and an answer about the empty id would be an answer to a
     /// question nobody put.
     ///
-    /// Every keystroke but Enter and Esc is a search step, so the selection
-    /// moves as the reader types, as vim's does with `incsearch`. Enter
-    /// leaves it where the last step put it, and Esc puts the forest back as
-    /// it stood when the prompt went up.
+    /// Every edit that changes the query is a search step, so the selection
+    /// moves as the reader types, as vim's does with `incsearch`. One that
+    /// only moves the cursor redraws the prompt and searches nothing. Enter
+    /// leaves the selection where the last step put it, and Esc puts the
+    /// forest back as it stood when the prompt went up.
     fn typing(&mut self, typing: Typing) -> bool {
         let Some(prompt) = self.sought.as_mut() else {
             return false;
         };
         match typing {
-            Typing::Character(glyph) => {
-                prompt.typed.push(glyph);
-                self.seek()
-            }
-            Typing::RubbedOut => prompt.typed.pop().is_some() && self.seek(),
+            Typing::Edit(edit) => match prompt.query.edit(edit) {
+                Edited::Changed => self.seek(),
+                Edited::Moved => true,
+                Edited::Nothing => false,
+            },
             Typing::NextMatch | Typing::PreviousMatch => {
-                !prompt.typed.is_empty() && self.step_match(typing == Typing::NextMatch)
+                !prompt.query.typed().is_empty() && self.step_match(typing == Typing::NextMatch)
             }
             Typing::Abandoned => {
                 if let Some(prompt) = self.sought.take() {
@@ -652,11 +654,13 @@ impl Shown {
         let Some(prompt) = &self.sought else {
             return false;
         };
-        if prompt.typed.is_empty() {
+        if prompt.query.typed().is_empty() {
             self.forest.restore(&prompt.origin);
             self.said = None;
         } else {
-            self.said = Some(said_of(self.forest.seek(&prompt.typed, &prompt.origin)));
+            self.said = Some(said_of(
+                self.forest.seek(prompt.query.typed(), &prompt.origin),
+            ));
         }
         self.moved(true)
     }
@@ -725,7 +729,7 @@ impl Shown {
         // character of an id rather than the binding the same key carries.
         if action == Action::Search {
             self.sought = Some(Prompt {
-                typed: String::new(),
+                query: Query::default(),
                 origin: self.forest.origin(),
             });
             return true;
@@ -956,7 +960,7 @@ impl Screen {
 /// The search prompt: what has been typed into it, and where the search
 /// began.
 struct Prompt {
-    typed: String,
+    query: Query,
     origin: forest::Origin,
 }
 
@@ -1165,7 +1169,7 @@ impl View for Screen {
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
-            prompt: sought.as_ref().map(|prompt| prompt.typed.as_str()),
+            prompt: sought.as_ref().map(|prompt| &prompt.query),
             keys: &keys,
         };
         let band = draw::Band {
@@ -1205,7 +1209,7 @@ mod tests {
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
-    use crate::tui::keys::{action, BINDINGS};
+    use crate::tui::keys::{action, AT_THE_PROMPT, BINDINGS};
     use crate::view::bindings::{bindings_block, bindings_window};
     use crate::view::forest::Spine;
     use crate::view::lines::{Content, GroupKind};
@@ -1213,6 +1217,7 @@ mod tests {
     use crate::view::palette;
     use crate::view::row::Cell;
     use crate::view::walk::{self, Rows};
+    use crate::view::Edit;
     use crate::view::Motion;
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     use chrono::Utc;
@@ -1270,11 +1275,15 @@ mod tests {
     /// asserted against the table rather than against a list beside it.
     #[test]
     fn the_key_bindings_view_names_every_binding_the_mapping_holds() {
-        let drawn = window_inner(100, BINDINGS.len() as u16 + 2);
+        let tables = BINDINGS
+            .iter()
+            .map(|binding| (binding.keys, binding.does))
+            .chain(AT_THE_PROMPT.iter().map(|row| (row.keys, row.does)))
+            .collect::<Vec<_>>();
+        let drawn = window_inner(100, tables.len() as u16 + 2);
 
-        for binding in BINDINGS {
-            let named = binding
-                .keys
+        for (keys, does) in tables {
+            let named = keys
                 .iter()
                 .map(|bound| bound.named)
                 .collect::<Vec<_>>()
@@ -1282,9 +1291,8 @@ mod tests {
             assert!(
                 drawn
                     .iter()
-                    .any(|row| row.contains(&named) && row.contains(binding.does)),
-                "{named} ({}) has no line in {drawn:#?}",
-                binding.does
+                    .any(|row| row.contains(&named) && row.contains(does)),
+                "{named} ({does}) has no line in {drawn:#?}",
             );
         }
     }
@@ -1306,7 +1314,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 25 more bindings · no room on a screen this short",
+                "  … 36 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1438,6 +1446,17 @@ mod tests {
                 "  ^U, PgUp  move up half a screen",
                 "  Home, g   move to the first row",
                 "  End, G    move to the last row",
+                "  Enter     while searching, stay on the bead the search has gone to",
+                "  Esc       while searching, stop and put the forest back",
+                "  Left      while searching, move back one character",
+                "  Right     while searching, move on one character",
+                "  Home, ^A  while searching, move to the start",
+                "  End, ^E   while searching, move to the end",
+                "  BkSp      while searching, delete the character before the cursor",
+                "  Delete    while searching, delete the character at the cursor",
+                "  ^W        while searching, delete the word before the cursor",
+                "  ^U        while searching, delete everything before the cursor",
+                "  ^K        while searching, delete everything from the cursor on",
             ]
         );
     }
@@ -1470,7 +1489,11 @@ mod tests {
             row_naming(&drawn, "Right, l"),
             "  Right, l  expand, or move to the …"
         );
-        assert_eq!(drawn.len(), BINDINGS.len(), "a narrow screen loses no rows");
+        assert_eq!(
+            drawn.len(),
+            bindings().len(),
+            "a narrow screen loses no rows"
+        );
     }
 
     /// The one drawn row whose keys are the ones named, whichever row that
@@ -1611,7 +1634,7 @@ mod tests {
     #[derive(Default)]
     struct Pressed<'a> {
         said: Option<&'a Said>,
-        prompt: Option<&'a str>,
+        prompt: Option<&'a Query>,
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3953,7 +3976,7 @@ mod tests {
     fn search_for(shown: &mut Shown, id: &str) {
         press(shown, KeyCode::Char('/'));
         for glyph in id.chars() {
-            shown.typing(Typing::Character(glyph));
+            shown.typing(Typing::Edit(Edit::Character(glyph)));
         }
         shown.typing(Typing::Sought);
     }
@@ -3967,7 +3990,7 @@ mod tests {
     /// Type into the prompt a key at a time.
     fn type_into_prompt(shown: &mut Shown, text: &str) {
         for glyph in text.chars() {
-            at_prompt(shown, Typing::Character(glyph));
+            at_prompt(shown, Typing::Edit(Edit::Character(glyph)));
         }
     }
 
@@ -4095,7 +4118,7 @@ mod tests {
         type_into_prompt(&mut shown, "g");
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
 
-        assert!(at_prompt(&mut shown, Typing::RubbedOut));
+        assert!(at_prompt(&mut shown, Typing::Edit(Edit::RubOut)));
 
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
         assert_eq!(forest_band(&mut shown, 60, 24), was);
@@ -4112,7 +4135,7 @@ mod tests {
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/");
 
         for glyph in "grv-1.3".chars() {
-            shown.typing(Typing::Character(glyph));
+            shown.typing(Typing::Edit(Edit::Character(glyph)));
         }
 
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.3");
@@ -4126,19 +4149,63 @@ mod tests {
         let mut shown = shown(a_grove(6));
         press(&mut shown, KeyCode::Char('/'));
         for glyph in "grv".chars() {
-            shown.typing(Typing::Character(glyph));
+            shown.typing(Typing::Edit(Edit::Character(glyph)));
         }
 
-        assert!(shown.typing(Typing::RubbedOut));
+        assert!(shown.typing(Typing::Edit(Edit::RubOut)));
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/gr");
 
-        assert!(shown.typing(Typing::RubbedOut));
-        assert!(shown.typing(Typing::RubbedOut));
+        assert!(shown.typing(Typing::Edit(Edit::RubOut)));
+        assert!(shown.typing(Typing::Edit(Edit::RubOut)));
         assert!(
-            !shown.typing(Typing::RubbedOut),
+            !shown.typing(Typing::Edit(Edit::RubOut)),
             "an empty prompt gave a character back"
         );
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/");
+    }
+
+    /// An edit in the middle of the query is searched afresh, as a keystroke
+    /// at its end is, and a move of the cursor alone searches nothing.
+    #[test]
+    fn an_edit_at_the_cursor_is_searched_and_a_move_is_not() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "rv-1.3x");
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+
+        assert!(at_prompt(&mut shown, Typing::Edit(Edit::Back)));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+
+        assert!(at_prompt(&mut shown, Typing::Edit(Edit::Delete)));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/rv-1.3");
+    }
+
+    /// A move leaves the selection where a step through the matches put it,
+    /// which it would not if it searched again from where `/` found it.
+    #[test]
+    fn moving_the_cursor_leaves_the_selection_on_the_match_stepped_to() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "grv-1.");
+        at_prompt(&mut shown, Typing::NextMatch);
+        let stepped_to = cursor(&shown).cloned();
+        assert_ne!(stepped_to.as_ref(), Some(&bead("grove", "grv-1.1")));
+
+        assert!(at_prompt(&mut shown, Typing::Edit(Edit::Start)));
+        assert_eq!(cursor(&shown).cloned(), stepped_to);
+    }
+
+    /// A key that neither changes the query nor moves the cursor asks for no
+    /// frame.
+    #[test]
+    fn an_edit_that_does_nothing_asks_for_no_frame() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "grv");
+
+        assert!(!at_prompt(&mut shown, Typing::Edit(Edit::End)));
+        assert!(!at_prompt(&mut shown, Typing::Edit(Edit::DeleteToEnd)));
     }
 
     /// The selection moves onto the bead and the foot names it whole, even
@@ -4238,7 +4305,7 @@ mod tests {
 
         press(&mut shown, KeyCode::Char('/'));
         for glyph in "grv-1.3".chars() {
-            shown.typing(Typing::Character(glyph));
+            shown.typing(Typing::Edit(Edit::Character(glyph)));
         }
         assert!(shown.typing(Typing::Abandoned));
 
@@ -4320,7 +4387,7 @@ mod tests {
             Over::Nothing,
             Pressed {
                 said: shown.said.as_ref(),
-                prompt: shown.sought.as_ref().map(|prompt| prompt.typed.as_str()),
+                prompt: shown.sought.as_ref().map(|prompt| &prompt.query),
             },
             &[],
             &[],
