@@ -15,6 +15,7 @@ pub mod lines;
 pub mod markdown;
 pub mod palette;
 pub mod phrase;
+pub mod query;
 pub mod row;
 pub mod sgr;
 pub mod show;
@@ -128,10 +129,8 @@ pub enum Action {
 /// that does something — and `Action` is the list of keys that do something.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Typing {
-    /// One character of the id.
-    Character(char),
-    /// Take the last character back.
-    RubbedOut,
+    /// A change to what has been typed, or to where the cursor stands in it.
+    Edit(Edit),
     /// Leave the prompt, with the selection on the match it has gone to.
     Sought,
     /// Leave the prompt, with the forest put back as it stood when the
@@ -141,6 +140,36 @@ pub enum Typing {
     NextMatch,
     /// Go back to the bead before it.
     PreviousMatch,
+}
+
+/// One edit to the search prompt's query, each named for what readline does
+/// with the key a shell reader presses for it.
+///
+/// Rubbing out takes what is before the cursor and deleting takes what is at
+/// it and after, which is the split readline makes between Backspace and
+/// Delete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edit {
+    /// One character of the query, put in at the cursor.
+    Character(char),
+    /// Move the cursor one character back.
+    Back,
+    /// Move the cursor one character on.
+    Forward,
+    /// Move the cursor to the start of the query.
+    Start,
+    /// Move the cursor to the end of the query.
+    End,
+    /// Take back the character before the cursor.
+    RubOut,
+    /// Take away the character at the cursor.
+    Delete,
+    /// Take back the word before the cursor, as far back as a space.
+    RubOutWord,
+    /// Take back everything before the cursor.
+    RubOutToStart,
+    /// Take away everything from the cursor on.
+    DeleteToEnd,
 }
 
 /// What the reader's last keystroke came to, said at the foot until their

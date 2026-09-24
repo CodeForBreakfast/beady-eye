@@ -17,7 +17,7 @@ pub(crate) mod tone;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::Frame;
@@ -29,6 +29,7 @@ use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine};
 use crate::view::palette;
 use crate::view::phrase;
+use crate::view::query::Query;
 use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
@@ -117,8 +118,9 @@ pub struct Foot<'a> {
     /// What the reader's last keystroke came to, until their next key or
     /// click.
     pub said: Option<&'a Said>,
-    /// What the reader has typed into the search prompt, while one is up.
-    pub prompt: Option<&'a str>,
+    /// What the reader has typed into the search prompt and where their
+    /// cursor stands in it, while one is up.
+    pub prompt: Option<&'a Query>,
     /// The row of keys and every shorter form of it the loop will stand
     /// behind, fullest first.
     pub keys: &'a [String],
@@ -165,13 +167,27 @@ pub fn draw(
         status_bar(
             &notices(forest.snapshot(), foot.standing),
             foot.said,
-            foot.prompt,
+            foot.prompt.map(Query::typed),
             foot.keys,
             forest.spine(),
             bands.keys.width as usize,
         ),
         bands.keys,
     );
+    if let Some(query) = foot.prompt {
+        frame.set_cursor_position(prompt_cursor(query, bands.keys));
+    }
+}
+
+/// Where the terminal's cursor goes while the prompt is up: in the query where
+/// the reader is typing, and never past the last column of the row.
+fn prompt_cursor(query: &Query, row: Rect) -> Position {
+    let into = phrase::prompt("").chars().count() + query.columns_before_cursor();
+    let last = row.width.saturating_sub(1);
+    Position {
+        x: row.x + u16::try_from(into).unwrap_or(u16::MAX).min(last),
+        y: row.y,
+    }
 }
 
 /// One line of the forest, whatever kind it is.
@@ -276,7 +292,7 @@ mod tests {
     use crate::model::types::{Edge, Status};
     use crate::view::forest::flatten;
     use crate::view::row::{self, Row};
-    use crate::view::{Action, Motion};
+    use crate::view::{Action, Edit, Motion};
     use chrono::{DateTime, TimeZone, Utc};
 
     pub(super) use crate::view::painted::Painted;
@@ -663,6 +679,78 @@ mod tests {
                 },
             );
         })
+    }
+
+    /// Where the terminal's cursor stands once a frame with the prompt up is
+    /// drawn, `width` columns wide.
+    fn cursor_over(query: &Query, width: u16) -> Position {
+        let forest = opened(&snapshot(
+            vec![grove(2)],
+            Vec::new(),
+            ProviderState::NotAnswering,
+        ));
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 10))
+            .expect("a test backend");
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    frame.area(),
+                    &forest,
+                    &Layout::default(),
+                    &[],
+                    &[],
+                    drawn_at(),
+                    Foot {
+                        standing: &[],
+                        said: None,
+                        prompt: Some(query),
+                        keys: &a_key_row(),
+                    },
+                );
+            })
+            .expect("a draw into memory");
+        terminal.get_cursor_position().expect("a cursor")
+    }
+
+    fn a_query(typed: &str, edits: &[Edit]) -> Query {
+        let mut query = Query::default();
+        for edit in typed
+            .chars()
+            .map(Edit::Character)
+            .chain(edits.iter().copied())
+        {
+            query.edit(edit);
+        }
+        query
+    }
+
+    /// The cursor is drawn where the reader is typing, on the foot, behind
+    /// the `/` and the part of the query before it.
+    #[test]
+    fn the_prompt_draws_the_cursor_where_the_reader_is_typing() {
+        let foot = 9;
+        assert_eq!(
+            cursor_over(&a_query("grv-1", &[]), 60),
+            Position::new(6, foot)
+        );
+        assert_eq!(
+            cursor_over(&a_query("grv-1", &[Edit::Start]), 60),
+            Position::new(1, foot)
+        );
+        assert_eq!(
+            cursor_over(&a_query("grv-1", &[Edit::Back, Edit::Back]), 60),
+            Position::new(4, foot)
+        );
+    }
+
+    /// A query longer than the row keeps its cursor on the row.
+    #[test]
+    fn the_cursor_stays_on_the_row_past_its_last_column() {
+        assert_eq!(
+            cursor_over(&a_query("a query longer than the row", &[]), 12),
+            Position::new(11, 9)
+        );
     }
 
     /// The whole screen, character for character: five rows of forest, four of
