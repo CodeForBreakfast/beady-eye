@@ -1,0 +1,7 @@
+# Flipping a `+` to `-` where words_of slices past a terminator can move the
+# slice backwards, and then the loop never ends: the String it builds grows
+# until the machine runs out of memory. No test timeout this suite can afford
+# beats that, and a memory cap kills the test binary so cargo-mutants records
+# the mutant as caught. Only a line number tells the two `+`s apart, and a line
+# number moves, so both are excluded.
+exclude_re = ['^src/view/fitted\.rs:\d+:\d+: replace \+ with - in words_of$']
