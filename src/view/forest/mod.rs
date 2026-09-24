@@ -8529,6 +8529,59 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A reader resting below the last bead on the screen stands past every
+    /// match, so stepping back reaches the last one drawn.
+    #[test]
+    fn stepping_back_from_below_the_last_bead_reaches_the_last_match() {
+        let mut forest = flatten(snapshot());
+        forest.seek("7.1");
+        let last = forest.lines().len() - 1;
+        step_onto(&mut forest, last);
+
+        assert_eq!(
+            forest.next_match(false),
+            Some(went_to("dunwich", "dun-7.1.2", 3, 3))
+        );
+    }
+
+    #[test]
+    fn stepping_on_from_below_the_last_bead_comes_round_to_the_first_match() {
+        let mut forest = flatten(snapshot());
+        forest.seek("7.1");
+        let last = forest.lines().len() - 1;
+        step_onto(&mut forest, last);
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("dunwich", "dun-7.1", 1, 3))
+        );
+    }
+
+    /// A reader standing on a bead that does not match has not seen the next
+    /// match yet, so stepping on lands on it rather than the one after.
+    #[test]
+    fn stepping_on_from_a_bead_that_does_not_match_lands_on_the_next_match() {
+        let mut forest = flatten(snapshot());
+        forest.seek("7.1");
+        assert!(forest.go_to(&key("dunwich", "dun-7")));
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("dunwich", "dun-7.1", 1, 3))
+        );
+    }
+
+    #[test]
+    fn stepping_back_through_a_search_matching_nothing_goes_nowhere() {
+        let mut forest = flatten(snapshot());
+        forest.seek("dun-404");
+
+        assert_eq!(
+            forest.next_match(false),
+            Some(Landed::Nowhere("dun-404".into()))
+        );
+    }
+
     /// Stepping asks where the selection is now rather than where the last
     /// step left it, so a reader who has moved by hand between presses
     /// carries on from where they are standing.
@@ -8559,6 +8612,22 @@ credential_command = "secret harbour"
         assert_eq!(forest.seek("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-6.2")));
+    }
+
+    #[test]
+    fn a_whole_id_lands_on_its_own_bead_whatever_its_letter_case() {
+        let mut forest = flatten(alone("dunwich", NAMED_IN_A_TITLE, &[]));
+
+        assert_eq!(forest.seek("DUN-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
+    }
+
+    /// `dun-6.2.1` holds `dun-6.2` in its id and is drawn first, under
+    /// `dun-6.1`, but it is not the bead the whole id names.
+    #[test]
+    fn a_whole_id_lands_past_a_longer_id_drawn_above_it() {
+        let mut forest = flatten(alone("dunwich", NAMED_INSIDE_A_LONGER_ID, &[]));
+
+        assert_eq!(forest.seek("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 3));
     }
 
     /// Search counts the way vim does, since `bdi-7ao.136`: every drawn copy
@@ -8997,6 +9066,21 @@ credential_command = "secret harbour"
        "priority":2,"issue_type":"task"},
       {"id":"dun-6.2","title":"cure the base","status":"open",
        "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    const NAMED_INSIDE_A_LONGER_ID: &str = r#"[
+      {"id":"dun-6","title":"re-site the mast","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"dun-6.1","title":"pour the footing","status":"open",
+       "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"},
+                       {"depends_on_id":"dun-6.2.1","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"dun-6.2","title":"cure the base","status":"open",
+       "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"dun-6.2.1","title":"strike the formwork","status":"open",
+       "dependencies":[{"depends_on_id":"dun-6.2","type":"parent-child"}],
        "priority":2,"issue_type":"task"}
     ]"#;
 
