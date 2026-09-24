@@ -10824,6 +10824,50 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A run of finished children stays last, after the line saying which
+    /// blocker is missing, whether the bead was opened by its fold or with
+    /// the rest of the forest.
+    #[test]
+    fn a_missing_blocker_is_drawn_above_the_run_of_finished_children() {
+        let snapshot = || {
+            harbour_and_dunwich(
+                r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked"},
+                    {"id":"hbr-1.1","title":"sound the channel","status":"blocked",
+                     "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"},
+                                     {"depends_on_id":"dun-404","type":"blocks"}]},
+                    {"id":"hbr-1.1.1","title":"take the soundings","status":"closed",
+                     "dependencies":[{"depends_on_id":"hbr-1.1","type":"parent-child"}]},
+                    {"id":"hbr-1.1.2","title":"chart the shoal","status":"closed",
+                     "dependencies":[{"depends_on_id":"hbr-1.1","type":"parent-child"}]},
+                    {"id":"hbr-1.1.3","title":"buoy the channel","status":"closed",
+                     "dependencies":[{"depends_on_id":"hbr-1.1","type":"parent-child"}]}]"#,
+                r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+                &[("harbour", "hbr-1")],
+                &[],
+            )
+        };
+        let mut folded = flatten(snapshot());
+        toggle_fold_of(&mut folded, "hbr-1");
+        toggle_fold_of(&mut folded, "hbr-1.1");
+        let mut expanded = flatten(snapshot());
+        expanded.apply(Action::ExpandForest);
+
+        for forest in [&folded, &expanded] {
+            let under = sketch_under(forest, "hbr-1.1");
+            assert_eq!(
+                under[1],
+                "          ├┄┄ ⚠ dun-404 NotHeld { projects: [\"dunwich\"] }",
+                "{:#?}",
+                sketch(forest)
+            );
+            assert!(
+                under[2].starts_with("          └") && under[2].ends_with("… 3 more"),
+                "{:#?}",
+                sketch(forest)
+            );
+        }
+    }
+
     /// Drawn on reaching in, the lines saying which blockers are missing
     /// follow the blockers that are drawn, and only the last of them closes
     /// the arm.
