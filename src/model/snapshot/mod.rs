@@ -318,6 +318,21 @@ pub struct Node {
     pub blocks: Vec<Related>,
 }
 
+impl Node {
+    /// What the bead is known by wherever it is drawn.
+    pub fn key(&self) -> BeadKey {
+        BeadKey {
+            project: self.project.clone(),
+            id: self.id.clone(),
+        }
+    }
+
+    /// Whether this is the bead `key` names.
+    pub fn is(&self, key: &BeadKey) -> bool {
+        self.id == key.id && self.project == key.project
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tree {
     pub project: String,

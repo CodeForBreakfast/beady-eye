@@ -963,10 +963,7 @@ impl<'a> TreeLayout<'a> {
     }
 
     fn key_of(&self, link: &Link) -> BeadKey {
-        BeadKey {
-            project: self.tree.project.clone(),
-            id: self.tree.beads[link.bead].id.clone(),
-        }
+        self.tree.beads[link.bead].key()
     }
 
     /// `above` is the way down to `parent`, the parent itself included: the
@@ -1410,10 +1407,7 @@ fn undrawn_node(
 ) -> Node {
     let at = link.bead;
     let node = &tree.beads[at];
-    let place = parent.step_to(BeadKey {
-        project: tree.project.clone(),
-        id: node.id.clone(),
-    });
+    let place = parent.step_to(node.key());
     let kids = links_below(tree, at, &[])
         .into_iter()
         .any(|link| Some(link.bead) != counted.without);

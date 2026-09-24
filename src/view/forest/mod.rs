@@ -89,10 +89,7 @@ fn step_down(
     let Some(node) = tree.beads.get(at) else {
         return;
     };
-    let key = BeadKey {
-        project: tree.project.clone(),
-        id: node.id.clone(),
-    };
+    let key = node.key();
     if !listed.insert(key.clone()) {
         return;
     }
@@ -381,10 +378,7 @@ impl Forest {
                 tree.beads
                     .iter()
                     .filter(|bead| !quiet(bead))
-                    .map(|bead| BeadKey {
-                        project: tree.project.clone(),
-                        id: bead.id.clone(),
-                    })
+                    .map(|bead| bead.key())
             })
             .collect()
     }
@@ -397,10 +391,7 @@ impl Forest {
         beneath(tree, *at, above)
             .into_iter()
             .filter(|node| !quiet(&tree.beads[*node]))
-            .map(|node| BeadKey {
-                project: tree.project.clone(),
-                id: tree.beads[node].id.clone(),
-            })
+            .map(|node| tree.beads[node].key())
             .collect()
     }
 
@@ -1207,15 +1198,16 @@ impl Forest {
     /// enumerates in, so the copy a count named is the copy landed on.
     ///
     /// What the forest is rooted at is asked first, because a way down the
-    /// tree answers with can be a row the mode draws nowhere.
+    /// tree answers with can be a row the mode draws nowhere. Then the
+    /// bead's own project's trees, and only then the trees of the projects
+    /// that reach it through a bead waiting on it.
     fn place_of(&self, key: &BeadKey) -> Option<Place> {
         self.drawn_at_the_root(key).or_else(|| {
-            self.snapshot
-                .trees
-                .iter()
-                .chain(&self.snapshot.collected)
+            let trees = || self.snapshot.trees.iter().chain(&self.snapshot.collected);
+            trees()
                 .filter(|tree| tree.project == key.project)
-                .find_map(|tree| way_to(tree, self.facts.tree(&root_key(tree)), &key.id))
+                .chain(trees().filter(|tree| tree.project != key.project))
+                .find_map(|tree| way_to(tree, self.facts.tree(&root_key(tree)), key))
         })
     }
 
@@ -1232,15 +1224,12 @@ impl Forest {
         if focused.steps.last().unwrap_or(&focused.tree) == key {
             return Some(focused.clone());
         }
-        if focused.tree.project != key.project {
-            return None;
-        }
         let (tree, way) = self.locate(focused)?;
         let (at, above) = way.split_last()?;
         stepped_to(
             tree,
             self.facts.tree(&root_key(tree)),
-            &key.id,
+            key,
             *at,
             above,
             focused,
@@ -1453,12 +1442,12 @@ impl Forest {
 /// The walk carries the beads it came through, which is what cuts a loop: a
 /// way down that comes back to a bead it came through stops there, so a
 /// cyclic tree is walked once rather than for ever.
-fn way_to(tree: &Tree, facts: &TreeFacts, id: &str) -> Option<Place> {
+fn way_to(tree: &Tree, facts: &TreeFacts, key: &BeadKey) -> Option<Place> {
     let root = Place::root(root_key(tree));
-    if tree.beads.first()?.id == id {
+    if tree.beads.first()?.is(key) {
         return Some(root);
     }
-    stepped_to(tree, facts, id, 0, &[], &root)
+    stepped_to(tree, facts, key, 0, &[], &root)
 }
 
 /// The first way down from `at` that reaches a bead, given the beads stepped
@@ -1473,7 +1462,7 @@ fn way_to(tree: &Tree, facts: &TreeFacts, id: &str) -> Option<Place> {
 fn stepped_to(
     tree: &Tree,
     facts: &TreeFacts,
-    id: &str,
+    key: &BeadKey,
     at: usize,
     above: &[usize],
     place: &Place,
@@ -1482,14 +1471,11 @@ fn stepped_to(
     way.push(at);
     let (shown, elided) = facts.split(tree, at, above);
     shown.into_iter().chain(elided).find_map(|link| {
-        let stepped = place.step_to(BeadKey {
-            project: tree.project.clone(),
-            id: tree.beads[link.bead].id.clone(),
-        });
-        if tree.beads[link.bead].id == id {
+        let stepped = place.step_to(tree.beads[link.bead].key());
+        if tree.beads[link.bead].is(key) {
             return Some(stepped);
         }
-        stepped_to(tree, facts, id, link.bead, &way, &stepped)
+        stepped_to(tree, facts, key, link.bead, &way, &stepped)
     })
 }
 
@@ -1604,10 +1590,7 @@ fn reaching(tree: &Tree, arrived: &BTreeSet<BeadKey>) -> Vec<bool> {
         .iter()
         .map(|bead| {
             arrived
-                .contains(&BeadKey {
-                    project: tree.project.clone(),
-                    id: bead.id.clone(),
-                })
+                .contains(&bead.key())
                 .then_some(true)
         })
         .collect();
@@ -9866,5 +9849,276 @@ credential_command = "secret harbour"
             panic!("nothing matched: {landed:?}")
         };
         assert_eq!(found, key("dunwich", "dun-7"));
+    }
+
+    // ---- another project's bead ----------------------------------------
+
+    /// Harbour's bead waiting on dunwich's, with a pane working the task
+    /// under dunwich's bead, drawn as a collection draws both projects.
+    fn harbour_waiting_on_dunwich() -> Snapshot {
+        harbour_waiting_on_dunwich_staffed(&["dun-7.1"])
+    }
+
+    /// The same, with a pane on each of `on`. Harbour's bead also waits on a
+    /// finished dunwich bead that no tree of dunwich's own draws.
+    fn harbour_waiting_on_dunwich_staffed(on: &[&str]) -> Snapshot {
+        let harbour = parse_beads(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"blocks"},
+                                 {"depends_on_id":"dun-8","type":"blocks"}]}]"#,
+        )
+        .expect("the rows parse");
+        let dunwich = parse_beads(
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
+                {"id":"dun-7.1","title":"re-point the dish","status":"open",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
+                {"id":"dun-8","title":"survey the mast","status":"closed"}]"#,
+        )
+        .expect("the rows parse");
+        let across = tree::Across::of([
+            ("harbour", Nesting::of(&harbour)),
+            ("dunwich", Nesting::of(&dunwich)),
+        ]);
+        let panes = panes_on(on);
+        let cfg = cfg();
+        let joined = join::resolve(
+            &[
+                ProjectRows {
+                    project: "harbour",
+                    rows: &harbour,
+                },
+                ProjectRows {
+                    project: "dunwich",
+                    rows: &dunwich,
+                },
+            ],
+            Listed::all(&panes),
+            &cfg,
+        );
+        let readiness = Readiness::default();
+        let relations = [
+            ("harbour", crate::model::edges::relations(&harbour)),
+            ("dunwich", crate::model::edges::relations(&dunwich)),
+        ];
+        let said = relations
+            .iter()
+            .map(|(project, relations)| {
+                (
+                    *project,
+                    snapshot::Said {
+                        readiness: &readiness,
+                        relations,
+                    },
+                )
+            })
+            .collect();
+        let trees = [("dunwich", "dun-7"), ("harbour", "hbr-1")]
+            .into_iter()
+            .map(|(project, root)| {
+                build_tree(
+                    project,
+                    &across.assemble(project, root).expect("the rows assemble"),
+                    &joined,
+                    &said,
+                    ProviderState::Answering,
+                    &cfg,
+                    now(),
+                )
+            })
+            .collect();
+        snapshot::build(
+            Collected {
+                trees,
+                failed_projects: Vec::new(),
+                read_at: every_project_read(),
+                speaks_until: BTreeMap::new(),
+            },
+            &panes,
+            &joined,
+            &cfg,
+            a_provider(ProviderState::Answering),
+            Filter::All,
+            now(),
+        )
+    }
+
+    /// Another project's bead is its own project's wherever it is drawn: the
+    /// line under the bead waiting on it names the same bead as the line in
+    /// its own project's tree.
+    #[test]
+    fn another_projects_bead_is_keyed_on_its_own_project_under_the_bead_waiting_on_it() {
+        let forest = flatten(harbour_waiting_on_dunwich());
+
+        let keys: Vec<&BeadKey> = lines_of(&forest, "dun-7.1")
+            .into_iter()
+            .filter_map(|at| forest.lines()[at].bead())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![&key("dunwich", "dun-7.1"); 2],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A live agent on another project's bead opens the spine down to it
+    /// from the bead waiting on it, as one on a bead of its own would.
+    #[test]
+    fn a_live_agent_on_another_projects_bead_opens_the_bead_waiting_on_it() {
+        let forest = flatten(harbour_waiting_on_dunwich());
+
+        let waiting = lines_of(&forest, "hbr-1")[0];
+        assert_eq!(
+            forest.lines()[waiting].folded,
+            Some(true),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The bead window on another project's bead names that project's beads,
+    /// so the reader can follow its parent from the copy under the bead
+    /// waiting on it.
+    #[test]
+    fn the_window_on_another_projects_bead_follows_its_own_projects_parent() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+        let under_the_waiting_bead = lines_of(&forest, "dun-7.1")[1];
+        step_onto(&mut forest, under_the_waiting_bead);
+
+        let node = crate::view::show::selected(&forest).expect("a bead is selected");
+        let parent = node.parent.as_ref().expect("dun-7.1 names its parent");
+        assert_eq!(
+            crate::view::show::key_of(&forest, parent),
+            Some(key("dunwich", "dun-7"))
+        );
+        assert!(crate::view::show::followable(&forest, parent));
+    }
+
+    /// The beads a search can take the reader to are each bead once, so
+    /// another project's bead drawn under a bead waiting on it is the bead
+    /// its own tree draws rather than a second one.
+    #[test]
+    fn another_projects_bead_is_drawn_once_among_the_beads_a_search_can_reach() {
+        let forest = flatten(harbour_waiting_on_dunwich());
+
+        let drawn: Vec<BeadKey> = forest
+            .beads_drawn()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(
+            drawn,
+            vec![
+                key("dunwich", "dun-7"),
+                key("dunwich", "dun-7.1"),
+                key("harbour", "hbr-1"),
+                key("dunwich", "dun-8"),
+            ]
+        );
+    }
+
+    /// A scope the reader shut over the bead waiting on another project's
+    /// bead is spent along the way down to an agent arriving on that
+    /// project's work, as it would be for work of its own project.
+    #[test]
+    fn a_scope_shut_over_another_projects_bead_is_spent_down_to_what_arrived_there() {
+        let mut forest = flatten(harbour_waiting_on_dunwich_staffed(&["dun-7"]));
+        select_bead(&mut forest, "hbr-1");
+        forest.apply(Action::CollapseSubtree);
+        assert_eq!(lines_of(&forest, "dun-7").len(), 1, "{:#?}", sketch(&forest));
+
+        forest.refresh(harbour_waiting_on_dunwich_staffed(&["dun-7", "dun-7.1"]));
+
+        assert_eq!(
+            lines_of(&forest, "dun-7.1").len(),
+            2,
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The same, with the scope the reader shut being harbour's own line.
+    #[test]
+    fn a_project_shut_over_another_projects_bead_is_spent_down_to_what_arrived_there() {
+        let mut forest = flatten(harbour_waiting_on_dunwich_staffed(&["dun-7"]));
+        let harbour = forest
+            .lines()
+            .iter()
+            .position(|line| matches!(&line.content, Content::Project(line) if line.project == "harbour"))
+            .expect("harbour has a line");
+        step_onto(&mut forest, harbour);
+        forest.apply(Action::CollapseSubtree);
+        assert!(lines_of(&forest, "hbr-1").is_empty(), "{:#?}", sketch(&forest));
+
+        forest.refresh(harbour_waiting_on_dunwich_staffed(&["dun-7", "dun-7.1"]));
+
+        assert_eq!(
+            lines_of(&forest, "dun-7.1").len(),
+            2,
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A bead only another project's tree draws is still somewhere to go:
+    /// the forest takes the reader to it under the bead waiting on it.
+    #[test]
+    fn going_to_a_bead_only_another_projects_tree_draws_lands_on_it() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+
+        assert!(forest.go_to(&key("dunwich", "dun-8")), "{:#?}", sketch(&forest));
+        assert_eq!(
+            forest.place().map(Place::key),
+            Some(&key("dunwich", "dun-8"))
+        );
+    }
+
+    /// An id is a bead only within its project, so a bead of this project
+    /// is not found at another project's bead of the same id that this
+    /// project's tree happens to draw.
+    #[test]
+    fn going_to_a_bead_does_not_land_on_another_projects_bead_of_the_same_id() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+
+        assert!(!forest.go_to(&key("harbour", "dun-7")), "{:#?}", sketch(&forest));
+    }
+
+    /// Focused on the bead waiting on another project's bead, going to that
+    /// bead lands beneath the focus rather than in the other project's tree.
+    #[test]
+    fn going_to_another_projects_bead_from_a_focus_over_it_lands_beneath_the_focus() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+        focus_on(&mut forest, "hbr-1");
+
+        assert!(forest.go_to(&key("dunwich", "dun-7.1")), "{:#?}", sketch(&forest));
+        let place = forest.place().expect("the selection is on a bead");
+        assert_eq!(
+            (&place.tree, place.key()),
+            (&key("harbour", "hbr-1"), &key("dunwich", "dun-7.1"))
+        );
+    }
+
+    /// Focused on another project's bead under the bead waiting on it, every
+    /// line beneath the focus is still that project's.
+    #[test]
+    fn a_focus_on_another_projects_bead_keeps_what_it_draws_that_projects() {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+        let under_the_waiting_bead = lines_of(&forest, "dun-7")[1];
+        step_onto(&mut forest, under_the_waiting_bead);
+        assert!(forest.apply(Action::FocusForest), "{:#?}", sketch(&forest));
+        toggle_fold_of(&mut forest, "dun-7");
+        toggle_fold_of(&mut forest, "dun-7");
+
+        let keys: Vec<&BeadKey> = forest
+            .lines()
+            .iter()
+            .filter_map(Line::bead)
+            .filter(|key| key.id.starts_with("dun-"))
+            .collect();
+        assert!(!keys.is_empty(), "{:#?}", sketch(&forest));
+        assert!(
+            keys.iter().all(|key| key.project == "dunwich"),
+            "{keys:#?}"
+        );
     }
 }

@@ -230,15 +230,14 @@ pub fn related(node: &Node) -> Vec<&Related> {
 }
 
 /// The key a bead named in a section stands for: its bare id, in the project
-/// the selection is in.
+/// of the bead the selection is on.
 ///
-/// `Related` carries no project and the key here is `(project, id)`. Within
-/// one tracker the project is the source bead's, which is the project of the
-/// tree the selection was drawn in — a tree does not span projects. A
-/// dependency naming another tracker is `bdi-0gf` and is not this.
+/// `Related` carries no project and the key here is `(project, id)`. What a
+/// bead's own answer relates it to is in its own project, which is not the
+/// tree's where the tree reached the bead from another project.
 pub fn key_of(forest: &Forest, related: &Related) -> Option<BeadKey> {
     Some(BeadKey {
-        project: forest.place()?.tree.project.clone(),
+        project: forest.place()?.key().project.clone(),
         id: related.id.clone(),
     })
 }
