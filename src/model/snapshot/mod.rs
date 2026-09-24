@@ -759,7 +759,7 @@ render = "⏸ waiting"
     pub(super) fn assembled(json: &str) -> Assembled {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        Nesting::of("dunwich", &beads)
+        Nesting::of(&beads)
             .assemble(&root)
             .expect("the rows assemble")
     }

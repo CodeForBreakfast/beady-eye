@@ -216,7 +216,7 @@ fn read_project(
     // The edges are read before discovery rather than after it, because a
     // bead with no parent is a root only where nothing nests it, and nothing
     // outside the edges can say whether anything does.
-    let nesting = Nesting::of(&project.name, &beads);
+    let nesting = Nesting::of(&beads);
     let discovering = discovers(cfg, project);
 
     let mut roots = roots_named(cfg, project);

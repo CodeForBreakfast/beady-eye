@@ -480,7 +480,7 @@ mod tests {
     fn rows(json: &str) -> Vec<Bead> {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        Nesting::of("dunwich", &beads)
+        Nesting::of(&beads)
             .assemble(&root)
             .expect("the rows assemble")
             .beads
