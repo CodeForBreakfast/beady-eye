@@ -254,7 +254,7 @@ Roots come from bd, unioned and deduped:
    Two consequences worth stating, because both look like defects cold. **A
    closed bead can be the root of a drawn tree**: the answer's edges hold
    every bead, and a parentless bead placed only by a closed one has to be
-   drawn from that closed bead or from nowhere — which is rule 5's behaviour,
+   drawn from that closed bead or from nowhere — which is rule 4's behaviour,
    reached by a bead that lost nothing. And **the bead being worked is no
    longer near the top of the forest**: it sits at its own depth, kept on
    screen by the fold, which rests every line above something live open.
@@ -271,10 +271,10 @@ Roots come from bd, unioned and deduped:
    project the command line names a root in, its named roots are the only
    ones: none of the other rules runs there, and the config's roots for it
    are not read. A project it names no root in is discovered as usual.
-4. Any bead named by a live pane's `display_agent` that the first three missed.
+3. Any bead named by a live pane's `display_agent` that the first two missed.
    This is the only root herdr contributes, and it exists so an agent working
    off-tree still appears.
-5. Any bead the answer holds that the first four leave no way down to: a
+4. Any bead the answer holds that the first three leave no way down to: a
    dependency that would have nested it names work the tracker no longer
    holds, and no surviving edge nests it under anything. Such a bead is the
    top of its own graph. A tree reports the beads it drew, so a bead no tree
@@ -896,7 +896,7 @@ exactly the condition under which the question is askable.
 **Two degradations, and a cycle.** `dangling` is beads naming something they
 depend on that the answer does not hold — most often a deleted parent; each is
 still drawn, and a bead nothing in the answer nests at all is a root of its own
-(discovery rule 5), so it is drawn under its project and reported as dangling
+(discovery rule 4), so it is drawn under its project and reported as dangling
 there rather than nowhere. `cycles` is beads whose own descendants lead back to
 them — a bead blocked by one of its own forebears, which beads permits — each
 still drawn, where the loop was cut. The cut is the way down: a walk that
