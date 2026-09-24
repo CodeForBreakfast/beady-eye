@@ -111,8 +111,8 @@ what a metadata key *means*, it belongs in config, not in the model.
 
 **The key is `(project, id)`.** Bead prefixes are per-tracker and uncoordinated.
 
-**Degrade, never disappear.** An unreachable tracker, a filtered tree, a
-dangling parent — each is reported, never silently dropped.
+**Degrade, never disappear.** An unreachable tracker, a filtered tree, an
+orphaned dependency — each is reported, never silently dropped.
 
 ## The tracker
 

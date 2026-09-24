@@ -28,7 +28,7 @@ const COLS: u16 = 120;
 const A_SILENCE: Duration = Duration::from_millis(300);
 
 /// From the tree's header down onto the first bead, and Enter, which shows
-/// it. One motion rather than two: the anomaly the tree's dangling edges
+/// it. One motion rather than two: the anomaly the tree's orphaned dependencies
 /// raise is drawn between the two rows and a motion passes over it.
 const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 
