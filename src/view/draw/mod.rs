@@ -37,7 +37,7 @@ pub use bands::{line_at, regions};
 pub(crate) use bead::identity_widths;
 pub use tail::{draw_tail, Band};
 
-use bead::{bead_line, elided_run};
+use bead::{bead_line, elided_run, orphaned_line};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
 use project::{project_line, unread_line};
@@ -204,6 +204,7 @@ pub(super) fn fitted(
         Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
         Content::Bead(row) => bead_line(row, &line.prefix, widths, layout),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
+        Content::Orphaned(orphaned) => orphaned_line(orphaned, &line.prefix, widths.of(&Cell::Id)),
         Content::Note(note) => {
             let (said, style) = finding(*note);
             sentence(&line.prefix, said, style)
@@ -370,6 +371,7 @@ mod tests {
             undrawn: Vec::new(),
             agent: None,
             anomalies: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             description: String::new(),
             notes: String::new(),
             created_by: None,
@@ -431,6 +433,43 @@ mod tests {
     /// It as the foot takes it: one form, so it goes whole or not at all.
     pub(super) fn a_key_row() -> Vec<String> {
         vec![A_KEY_ROW.to_string()]
+    }
+
+    /// A blocker no tracker holds is drawn as its id and why, as a root that
+    /// would not read is, on the arm the blocker would have hung on.
+    #[test]
+    fn a_blocker_no_tracker_holds_is_drawn_as_its_id_and_why() {
+        let orphaned = crate::model::tree::OrphanedDependency {
+            id: "dun-404".into(),
+            why: crate::model::tree::Unreachable::NotRead {
+                projects: vec!["ferry".into()],
+            },
+        };
+        let painted = Painted::of(
+            fitted(
+                &under("└┄┄ ", Content::Orphaned(orphaned)),
+                &ids(7),
+                &Layout::default(),
+                &at_rest(),
+            ),
+            96,
+            1,
+        )
+        .row(0);
+        let said: String = painted.iter().map(|cell| cell.said.as_str()).collect();
+
+        assert!(
+            said.starts_with("└┄┄ ⚠ dun-404 ") && said.contains("not read: ferry"),
+            "{said:?}"
+        );
+        assert_eq!(painted[0].style.fg, Some(Color::Reset));
+        assert!(
+            painted
+                .iter()
+                .any(|cell| cell.said.contains("not read: ferry")
+                    && cell.style.fg == palette::ATTENTION.fg),
+            "{painted:?}"
+        );
     }
 
     #[test]

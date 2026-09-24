@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::bail;
+use serde::Serialize;
 
 use crate::model::types::{Bead, Dependency, Edge};
 
@@ -87,9 +88,50 @@ pub struct Assembled {
     /// hold. A bead the root does not reach is in another tree and is not
     /// reported here, however incomplete its own dependencies are.
     pub orphaned_dependencies: Vec<String>,
+    /// The blockers no answer holds a bead for, beneath each of `beads`
+    /// waiting on one, by its place in `beads`. Each is drawn where the
+    /// blocker would have hung, saying why it is not there.
+    pub orphaned: BTreeMap<usize, Vec<OrphanedDependency>>,
     /// Ids whose own descendants lead back to them. Each is kept in `beads`,
     /// and drawn where the loop was cut.
     pub cycles: Vec<String>,
+}
+
+/// A blocker a bead waits on that no answer holds a bead for, beads' orphaned
+/// dependency, and why it is not there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OrphanedDependency {
+    pub id: String,
+    #[serde(flatten)]
+    pub why: Unreachable,
+}
+
+/// Why no answer holds the bead an orphaned dependency names.
+///
+/// A dependency names an id and no project, and a tracker's beads carry its
+/// prefix — the id up to its first `-`, as bd reads one — so the prefix is
+/// what says whose the bead would be. A tracker that gave no answer carries
+/// a prefix nothing here can learn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+pub enum Unreachable {
+    /// The trackers whose beads carry the id's prefix answered, and none of
+    /// them holds it.
+    NotHeld { projects: Vec<String> },
+    /// More than one tracker holds a bead by the id, and nothing in the row
+    /// picks between them.
+    HeldBySeveral { projects: Vec<String> },
+    /// No tracker that answered carries the id's prefix, and these
+    /// configured projects gave no answer.
+    NotRead { projects: Vec<String> },
+    /// No tracker that answered carries the id's prefix, and every
+    /// configured project answered.
+    Unconfigured,
+}
+
+/// The prefix a tracker gives the ids of its beads, read as bd reads it.
+fn prefix_of(id: &str) -> &str {
+    id.find('-').map_or("", |dash| &id[..=dash])
 }
 
 /// What one answer's edges do, read once for every tree drawn from it: the
@@ -193,6 +235,10 @@ impl<'a> Nesting<'a> {
     /// is a property of a way down rather than of a bead, and is counted by
     /// whoever walks the tree rather than taken from bd, which flattens it
     /// under `--max-depth`.
+    ///
+    /// Why a blocker is missing takes every project's answer to say, which
+    /// `Across` reads, so a tree assembled from one answer draws no orphaned
+    /// dependency beneath a bead.
     pub fn assemble(&self, root: &str) -> anyhow::Result<Assembled> {
         let Some((&root, _)) = self.by_id.get_key_value(root) else {
             bail!("bd's answer holds no bead {root} to draw a tree from");
@@ -202,6 +248,7 @@ impl<'a> Nesting<'a> {
             |id| self.beneath(id),
             |id| (self.by_id[id], None),
             |id| self.waiting_on_the_absent.contains(id),
+            |_| Vec::new(),
         ))
     }
 
@@ -352,12 +399,14 @@ fn edge_between(child: &Bead, over: &str) -> Edge {
 /// The tree under `root`, walked by `beneath`, and reported as an orphaned
 /// dependency where a bead it reaches is `unheld`: waiting on something no
 /// answer holds.
-/// `held` is each bead, with its project where that is not the root's.
+/// `held` is each bead, with its project where that is not the root's, and
+/// `orphaned` the blockers no answer holds beneath it.
 fn assemble<'a, K: Copy + Ord>(
     root: K,
     beneath: impl Fn(K) -> Vec<(K, Edge)>,
     held: impl Fn(K) -> (&'a Bead, Option<&'a str>),
     unheld: impl Fn(K) -> bool,
+    orphaned: impl Fn(K) -> Vec<OrphanedDependency>,
 ) -> Assembled {
     let Reached {
         order,
@@ -387,6 +436,13 @@ fn assemble<'a, K: Copy + Ord>(
         Vec::new()
     };
 
+    let orphaned = order
+        .iter()
+        .enumerate()
+        .map(|(at, key)| (at, orphaned(*key)))
+        .filter(|(_, beneath)| !beneath.is_empty())
+        .collect();
+
     let beads = order.iter().map(|key| held(*key).0.clone()).collect();
     let external = order
         .iter()
@@ -398,6 +454,7 @@ fn assemble<'a, K: Copy + Ord>(
         external,
         children,
         orphaned_dependencies,
+        orphaned,
         cycles,
     }
 }
@@ -468,22 +525,34 @@ pub struct Across<'a> {
     answers: Vec<Nesting<'a>>,
     /// Which of `answers` hold a bead of each id.
     holding: BTreeMap<&'a str, Vec<usize>>,
+    /// Which of `answers` hold a bead carrying each prefix.
+    carrying: BTreeMap<&'a str, BTreeSet<usize>>,
+    /// The configured projects that gave no answer.
+    not_read: Vec<String>,
 }
 
 impl<'a> Across<'a> {
-    /// Every project's answer, by its project.
-    pub fn of(answers: impl IntoIterator<Item = (&'a str, Nesting<'a>)>) -> Self {
+    /// Every project's answer, by its project, and the configured projects
+    /// that gave none.
+    pub fn of(
+        answers: impl IntoIterator<Item = (&'a str, Nesting<'a>)>,
+        not_read: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
         let (projects, answers): (Vec<&str>, Vec<Nesting>) = answers.into_iter().unzip();
         let mut holding: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut carrying: BTreeMap<&str, BTreeSet<usize>> = BTreeMap::new();
         for (at, answer) in answers.iter().enumerate() {
             for &id in answer.by_id.keys() {
                 holding.entry(id).or_default().push(at);
+                carrying.entry(prefix_of(id)).or_default().insert(at);
             }
         }
         Across {
             projects,
             answers,
             holding,
+            carrying,
+            not_read: not_read.into_iter().map(str::to_string).collect(),
         }
     }
 
@@ -505,6 +574,7 @@ impl<'a> Across<'a> {
                 (self.bead((at, id)), external)
             },
             |key| self.unheld(key),
+            |key| self.orphaned(key),
         ))
     }
 
@@ -559,6 +629,52 @@ impl<'a> Across<'a> {
             !answer.by_id.contains_key(dependency.on.as_str())
                 && self.elsewhere(at, dependency).is_none()
         })
+    }
+
+    /// The blockers the bead waits on that no answer holds for it, in id
+    /// order, each with why.
+    fn orphaned(&self, (at, id): Held<'a>) -> Vec<OrphanedDependency> {
+        let answer = &self.answers[at];
+        let absent: BTreeSet<&str> = answer.by_id[id]
+            .dependencies
+            .iter()
+            .filter(|dependency| {
+                dependency.edge == Edge::Blocks
+                    && !answer.by_id.contains_key(dependency.on.as_str())
+                    && self.elsewhere(at, dependency).is_none()
+            })
+            .map(|dependency| dependency.on.as_str())
+            .collect();
+        let mut orphaned: Vec<OrphanedDependency> = absent
+            .into_iter()
+            .map(|id| OrphanedDependency {
+                id: id.to_string(),
+                why: self.unreachable(id),
+            })
+            .collect();
+        orphaned.sort_by(|a, b| numeric_id_order(&a.id, &b.id));
+        orphaned
+    }
+
+    /// Why no answer holds a bead by `id` for the bead waiting on it.
+    fn unreachable(&self, id: &str) -> Unreachable {
+        let named = |answers: &mut dyn Iterator<Item = usize>| {
+            answers.map(|at| self.projects[at].to_string()).collect()
+        };
+        if let Some(holders) = self.holding.get(id).filter(|holders| holders.len() > 1) {
+            return Unreachable::HeldBySeveral {
+                projects: named(&mut holders.iter().copied()),
+            };
+        }
+        match self.carrying.get(prefix_of(id)) {
+            Some(carriers) => Unreachable::NotHeld {
+                projects: named(&mut carriers.iter().copied()),
+            },
+            None if self.not_read.is_empty() => Unreachable::Unconfigured,
+            None => Unreachable::NotRead {
+                projects: self.not_read.clone(),
+            },
+        }
     }
 }
 /// The beads at which a walk drawing every way down cuts a loop: each is
@@ -1343,13 +1459,219 @@ mod tests {
 
     // ---- across projects -----------------------------------------------
 
-    /// Each project's answer as a tracker writes it, read as one.
+    /// Each project's answer as a tracker writes it, read as one, with every
+    /// configured project among them.
     fn across<'a>(answers: &'a [(&'a str, Vec<Bead>)]) -> Across<'a> {
+        across_without(answers, &[])
+    }
+
+    /// The same, with configured projects whose trackers gave no answer.
+    fn across_without<'a>(answers: &'a [(&'a str, Vec<Bead>)], not_read: &[&'a str]) -> Across<'a> {
         Across::of(
             answers
                 .iter()
                 .map(|(project, beads)| (*project, Nesting::of(beads))),
+            not_read.iter().copied(),
         )
+    }
+
+    /// The orphaned dependencies drawn beneath `id`.
+    fn orphaned_beneath<'a>(a: &'a Assembled, id: &str) -> &'a [OrphanedDependency] {
+        a.orphaned.get(&index_of(a, id)).map_or(&[], Vec::as_slice)
+    }
+
+    fn orphaned(id: &str, why: Unreachable) -> OrphanedDependency {
+        OrphanedDependency {
+            id: id.to_string(),
+            why,
+        }
+    }
+
+    fn projects(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    /// A tracker holds the beads carrying its prefix, so an id carrying one
+    /// that a tracker answered with and holding no bead there is a bead
+    /// that tracker does not hold.
+    #[test]
+    fn a_blocker_another_answer_should_hold_and_does_not_is_drawn_as_not_held_there() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-404", "blocks")])],
+            ),
+            answer("dunwich", &[bead("dun-7", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "dun-404",
+                Unreachable::NotHeld {
+                    projects: projects(&["dunwich"])
+                }
+            )]
+        );
+        assert_eq!(a.orphaned_dependencies, vec!["ark-1".to_string()]);
+    }
+
+    /// The bead's own tracker is one of the answers like any other.
+    #[test]
+    fn a_blocker_its_own_tracker_does_not_hold_is_drawn_as_not_held_there() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("ark-9", "blocks")])],
+        )];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "ark-9",
+                Unreachable::NotHeld {
+                    projects: projects(&["arkham"])
+                }
+            )]
+        );
+    }
+
+    /// Several missing blockers are in id order, the way beads are.
+    #[test]
+    fn missing_blockers_are_in_id_order() {
+        let answers = [answer(
+            "arkham",
+            &[bead(
+                "ark-1",
+                "open",
+                &[dep("ark-10", "blocks"), dep("ark-9", "blocks")],
+            )],
+        )];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1")
+                .iter()
+                .map(|orphaned| orphaned.id.as_str())
+                .collect::<Vec<_>>(),
+            ["ark-9", "ark-10"]
+        );
+    }
+
+    /// A prefix no answer carries belongs to a project bdi was not given,
+    /// when every project it was given answered.
+    #[test]
+    fn a_blocker_whose_prefix_no_project_carries_is_drawn_as_unconfigured() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("inn-4", "blocks")])],
+            ),
+            answer("dunwich", &[bead("dun-7", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned("inn-4", Unreachable::Unconfigured)]
+        );
+    }
+
+    /// A tracker that gave no answer carries a prefix nothing can learn, so
+    /// a prefix no answer carries may be its.
+    #[test]
+    fn a_blocker_whose_prefix_no_answer_carries_names_the_projects_not_read() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("fer-2", "blocks")])],
+        )];
+        let a = across_without(&answers, &["ferry"])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "fer-2",
+                Unreachable::NotRead {
+                    projects: projects(&["ferry"])
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn a_blocker_two_other_projects_hold_is_drawn_as_held_by_both() {
+        let answers = [
+            answer("arkham", &[bead("ark-1", "open", &[dep("x-1", "blocks")])]),
+            answer("dunwich", &[bead("x-1", "open", &[])]),
+            answer("ferry", &[bead("x-1", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "x-1",
+                Unreachable::HeldBySeveral {
+                    projects: projects(&["dunwich", "ferry"])
+                }
+            )]
+        );
+    }
+
+    /// A missing parent would have been drawn above the bead rather than
+    /// beneath it, so it has no edge beneath the bead to be drawn at.
+    #[test]
+    fn a_parent_no_answer_holds_is_reported_but_not_drawn_beneath_the_bead() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("inn-4", "parent-child")])],
+        )];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(orphaned_beneath(&a, "ark-1"), []);
+        assert_eq!(a.orphaned_dependencies, vec!["ark-1".to_string()]);
+    }
+
+    /// Every copy of the bead waiting on it draws the report, beneath
+    /// whichever bead it is drawn under.
+    #[test]
+    fn a_blocker_no_answer_holds_is_drawn_beneath_a_bead_deep_in_the_tree() {
+        let answers = [answer(
+            "arkham",
+            &[
+                bead("ark-1", "open", &[]),
+                bead(
+                    "ark-1.1",
+                    "open",
+                    &[dep("ark-1", "parent-child"), dep("inn-4", "blocks")],
+                ),
+            ],
+        )];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(orphaned_beneath(&a, "ark-1"), []);
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1.1"),
+            [orphaned("inn-4", Unreachable::Unconfigured)]
+        );
     }
 
     fn answer<'a>(project: &'a str, beads: &[String]) -> (&'a str, Vec<Bead>) {

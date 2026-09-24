@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::config;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Node as Bead, Snapshot, Tree};
-use crate::model::tree::Link;
+use crate::model::tree::{Link, OrphanedDependency};
 use crate::model::types::Edge;
 use crate::view::draw::identity_widths;
 use crate::view::lines::{
@@ -41,6 +41,8 @@ enum Child<'a> {
     Note(Note),
     /// One way down from the parent to a bead beneath it.
     Node(&'a Link),
+    /// A blocker the parent waits on that no tracker holds a bead for.
+    Orphaned(&'a OrphanedDependency),
     /// The children a run stands for, in render order. Whose they are is the
     /// parent the entries were drawn under, so it is not repeated here.
     Elided(Vec<&'a Link>),
@@ -1003,6 +1005,9 @@ impl<'a> TreeLayout<'a> {
                     },
                     Vec::new(),
                 )),
+                Child::Orphaned(orphaned) => {
+                    drawn.push(orphaned_node(orphaned, trunk, last, depth));
+                }
                 Child::Elided(members) => {
                     let handle = Handle::Elided(parent.clone());
                     // A run rests as the count it was drawn to be.
@@ -1149,8 +1154,9 @@ impl<'a> TreeLayout<'a> {
         )
     }
 
-    /// A node's children as they are drawn: the ones worth a line each, then
-    /// one line for the run that is not.
+    /// A node's children as they are drawn: the ones worth a line each, the
+    /// blockers no tracker holds, then one line for the run that is not
+    /// worth a line.
     fn children_entries<'b>(&'b self, at: usize, above: &[usize]) -> Vec<Child<'b>> {
         let (drawn, elided) = self.facts.split(self.tree, at, above);
         let mut entries: Vec<Child> = drawn
@@ -1158,6 +1164,12 @@ impl<'a> TreeLayout<'a> {
             .filter(|link| self.draws(link))
             .map(Child::Node)
             .collect();
+        entries.extend(
+            self.tree.beads[at]
+                .orphaned_dependencies
+                .iter()
+                .map(Child::Orphaned),
+        );
         let elided: Vec<&Link> = elided.into_iter().filter(|link| self.draws(link)).collect();
         if !elided.is_empty() {
             entries.push(Child::Elided(elided));
@@ -1187,6 +1199,20 @@ impl<'a> TreeLayout<'a> {
             None => self.facts.run_size(self.tree, members, above),
         }
     }
+}
+
+/// The line saying why a blocker is not drawn, where it would have hung.
+fn orphaned_node(orphaned: &OrphanedDependency, trunk: &[bool], last: bool, depth: u16) -> Node {
+    Node::drawn(
+        Line {
+            prefix: prefix(trunk, last, false, Some(&Edge::Blocks)),
+            depth,
+            folded: None,
+            place: None,
+            content: Content::Orphaned(orphaned.clone()),
+        },
+        Vec::new(),
+    )
 }
 
 /// A bead's line, from what the walk decided about it.
@@ -1291,13 +1317,15 @@ fn count(
         ..
     } = counted;
     let (drawn, elided) = split_without(answers, tree, at, without);
-    let kids = !drawn.is_empty() || !elided.is_empty();
+    let orphaned = tree.beads[at].orphaned_dependencies.len();
+    let kids = !drawn.is_empty() || !elided.is_empty() || orphaned > 0;
     let open = kids && forced.unwrap_or(stand.rests_open(answers.bead(at)));
     let mut total = Count {
         rows: 1,
         widths: Widths::default(),
     };
     if open || beneath_shut {
+        total.rows += orphaned;
         for link in &drawn {
             total.add(count_child(
                 kept,
@@ -1415,9 +1443,10 @@ fn undrawn_node(
     let at = link.bead;
     let node = &tree.beads[at];
     let place = parent.step_to(node.key());
-    let kids = links_below(tree, at, &[])
-        .into_iter()
-        .any(|link| Some(link.bead) != counted.without);
+    let kids = !node.orphaned_dependencies.is_empty()
+        || links_below(tree, at, &[])
+            .into_iter()
+            .any(|link| Some(link.bead) != counted.without);
     let bead = answers.bead(at);
     let rests_open = counted.stand.rests_open(bead);
     let open = kids && counted.forced.unwrap_or(rests_open);
@@ -1461,7 +1490,8 @@ pub(super) fn beneath_bead(ground: &Ground, node: &Node, undrawn: &Undrawn) -> V
     let (tree, answers) = ground_of(ground, &counted);
     let parent = node.line.place.as_ref().expect("a bead's line has a place");
     let (drawn, elided) = split_without(answers, tree, counted.at, counted.without);
-    let count = drawn.len() + usize::from(!elided.is_empty());
+    let orphaned = &tree.beads[counted.at].orphaned_dependencies;
+    let count = drawn.len() + orphaned.len() + usize::from(!elided.is_empty());
     let depth = node.line.depth + 1;
     let mut children: Vec<Node> = drawn
         .iter()
@@ -1480,6 +1510,10 @@ pub(super) fn beneath_bead(ground: &Ground, node: &Node, undrawn: &Undrawn) -> V
             )
         })
         .collect();
+    children.extend(orphaned.iter().enumerate().map(|(n, orphaned)| {
+        let last = drawn.len() + n + 1 == count;
+        orphaned_node(orphaned, &undrawn.trunk, last, depth)
+    }));
     if !elided.is_empty() {
         let open = counted.forced.unwrap_or(false);
         let rows = ground

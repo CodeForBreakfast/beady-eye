@@ -828,6 +828,7 @@ mod tests {
                 source: JoinSource::AgentPane,
             }),
             anomalies: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             description: "Point it at the new bird.\n\nThe old one is gone.".to_string(),
             notes: "The crane is booked for Tuesday.".to_string(),
             created_by: Some("kim".to_string()),
