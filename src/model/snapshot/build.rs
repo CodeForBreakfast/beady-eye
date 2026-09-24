@@ -12,7 +12,7 @@ use crate::model::badges;
 use crate::model::edges::Relations;
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
-use crate::model::types::{Pane, PaneKey};
+use crate::model::types::{Edge, Pane, PaneKey};
 
 use super::filter::{in_flight_first, partition};
 use super::{
@@ -68,12 +68,13 @@ pub fn build_tree(
         .chain(assembled.external.values().map(String::as_str))
         .map(|project| (project, cfg.badges_for_project(project)))
         .collect();
+    let project_of = |at: usize| assembled.external.get(&at).map_or(project, String::as_str);
     let beads: Vec<Node> = assembled
         .beads
         .iter()
         .enumerate()
         .map(|(at, bead)| {
-            let own = assembled.external.get(&at).map_or(project, String::as_str);
+            let own = project_of(at);
             let key = BeadKey {
                 project: own.to_string(),
                 id: bead.id.clone(),
@@ -88,6 +89,16 @@ pub fn build_tree(
                 .cloned()
                 .unwrap_or_default();
             let badged = badges::badges_for(bead, &badges[own]);
+            let mut blocked_by = readiness
+                .and_then(|r| r.blocked_by.get(&bead.id))
+                .cloned()
+                .unwrap_or_default();
+            let unseen_by_bd: Vec<String> = blockers_elsewhere(assembled, &project_of, at)
+                .filter(|id| !blocked_by.contains(id))
+                .collect();
+            let ready =
+                readiness.is_some_and(|r| r.ready.contains(&bead.id)) && unseen_by_bd.is_empty();
+            blocked_by.extend(unseen_by_bd);
             Node {
                 project: own.to_string(),
                 id: bead.id.clone(),
@@ -95,11 +106,8 @@ pub fn build_tree(
                 status: bead.status.clone(),
                 issue_type: bead.issue_type.clone(),
                 priority: bead.priority,
-                ready: readiness.is_some_and(|r| r.ready.contains(&bead.id)),
-                blocked_by: readiness
-                    .and_then(|r| r.blocked_by.get(&bead.id))
-                    .cloned()
-                    .unwrap_or_default(),
+                ready,
+                blocked_by,
                 started_at: bead.started_at,
                 closed_at: bead.closed_at,
                 badges: badged.drawn,
@@ -143,6 +151,30 @@ pub fn build_tree(
         orphaned_dependencies: assembled.orphaned_dependencies.clone(),
         cycles: assembled.cycles.clone(),
     }
+}
+
+/// The ids of the beads in another project that the bead at `at` waits on and
+/// that still block it, by bd's own rule: a finished blocker blocks nothing,
+/// and a finished bead waits on nothing.
+///
+/// bd reads no edge to another project's bead, so its answer never names
+/// these. A tree assembled across projects hangs each beneath the bead
+/// waiting on it, so every tree drawing the bead finds the same ones.
+fn blockers_elsewhere<'a>(
+    assembled: &'a Assembled,
+    project_of: &'a impl Fn(usize) -> &'a str,
+    at: usize,
+) -> impl Iterator<Item = String> + 'a {
+    let waiting = !assembled.beads[at].status.is_finished();
+    assembled.children[at]
+        .iter()
+        .filter(move |link| {
+            waiting
+                && link.edge == Edge::Blocks
+                && project_of(link.bead) != project_of(at)
+                && !assembled.beads[link.bead].status.is_finished()
+        })
+        .map(|link| assembled.beads[link.bead].id.clone())
 }
 
 /// Gather the trees into one snapshot, hiding what the filter hides and
@@ -345,6 +377,42 @@ mod tests {
         );
 
         assert_eq!(t.counts.total, 4);
+    }
+
+    /// bd names no blocker against a finished bead, and neither does the edge
+    /// bd cannot read.
+    #[test]
+    fn a_finished_bead_is_blocked_by_nothing_in_another_project() {
+        let harbour = parse_beads(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"closed",
+                 "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]}]"#,
+        )
+        .expect("the rows parse");
+        let dunwich = parse_beads(
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"in_progress"}]"#,
+        )
+        .expect("the rows parse");
+        let assembled = crate::model::tree::Across::of(
+            [
+                ("harbour", crate::model::tree::Nesting::of(&harbour)),
+                ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
+            ],
+            [],
+        )
+        .assemble("harbour", "hbr-1")
+        .expect("the rows assemble");
+
+        let t = build_tree(
+            "harbour",
+            &assembled,
+            &Joined::default(),
+            &BTreeMap::new(),
+            ProviderState::Answering,
+            &cfg(),
+            now(),
+        );
+
+        assert!(node(&t, "hbr-1").blocked_by.is_empty());
     }
 
     #[test]
