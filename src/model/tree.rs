@@ -104,6 +104,12 @@ pub struct OrphanedDependency {
     pub id: String,
     #[serde(flatten)]
     pub why: Unreachable,
+    /// Whether the blocker may be an unfinished bead: one a project that gave
+    /// no answer may hold, or one of several holders that is not finished.
+    /// A blocker no configured tracker holds blocks nothing, as a dependency
+    /// on a bead that does not exist blocks nothing in bd.
+    #[serde(skip)]
+    pub may_block: bool,
 }
 
 /// Why no answer holds the bead an orphaned dependency names.
@@ -647,9 +653,20 @@ impl<'a> Across<'a> {
             .collect();
         let mut orphaned: Vec<OrphanedDependency> = absent
             .into_iter()
-            .map(|id| OrphanedDependency {
-                id: id.to_string(),
-                why: self.unreachable(id),
+            .map(|id| {
+                let why = self.unreachable(id);
+                let may_block = match why {
+                    Unreachable::NotRead { .. } => true,
+                    Unreachable::HeldBySeveral { .. } => self.holding[id]
+                        .iter()
+                        .any(|&holder| !self.answers[holder].by_id[id].status.is_finished()),
+                    Unreachable::NotHeld { .. } | Unreachable::Unconfigured => false,
+                };
+                OrphanedDependency {
+                    id: id.to_string(),
+                    why,
+                    may_block,
+                }
             })
             .collect();
         orphaned.sort_by(|a, b| numeric_id_order(&a.id, &b.id));
@@ -1480,10 +1497,16 @@ mod tests {
         a.orphaned.get(&index_of(a, id)).map_or(&[], Vec::as_slice)
     }
 
+    /// An orphaned dependency whose holders, where it has several, are open.
     fn orphaned(id: &str, why: Unreachable) -> OrphanedDependency {
+        let may_block = matches!(
+            why,
+            Unreachable::NotRead { .. } | Unreachable::HeldBySeveral { .. }
+        );
         OrphanedDependency {
             id: id.to_string(),
             why,
+            may_block,
         }
     }
 

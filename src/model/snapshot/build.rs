@@ -154,9 +154,10 @@ pub fn build_tree(
     }
 }
 
-/// The ids of the beads in another project that the bead at `at` waits on and
-/// that still block it, by bd's own rule: a finished blocker blocks nothing,
-/// and a finished bead waits on nothing.
+/// The ids of the blockers outside the bead at `at`'s own answer that may
+/// still block it: each bead in another project it waits on that is not
+/// finished, by bd's own rule, and each blocker no answer holds that may be
+/// such a bead. A finished bead waits on nothing.
 ///
 /// bd reads no edge to another project's bead, so its answer never names
 /// these. A tree assembled across projects hangs each beneath the bead
@@ -166,16 +167,23 @@ fn blockers_elsewhere<'a>(
     project_of: &'a impl Fn(usize) -> &'a str,
     at: usize,
 ) -> impl Iterator<Item = String> + 'a {
-    let waiting = !assembled.beads[at].status.is_finished();
-    assembled.children[at]
+    let held = assembled.children[at]
         .iter()
         .filter(move |link| {
-            waiting
-                && link.edge == Edge::Blocks
+            link.edge == Edge::Blocks
                 && project_of(link.bead) != project_of(at)
                 && !assembled.beads[link.bead].status.is_finished()
         })
-        .map(|link| assembled.beads[link.bead].id.clone())
+        .map(|link| assembled.beads[link.bead].id.clone());
+    let unheld = assembled
+        .orphaned
+        .get(&at)
+        .into_iter()
+        .flatten()
+        .filter(|orphaned| orphaned.may_block)
+        .map(|orphaned| orphaned.id.clone());
+    let waiting = !assembled.beads[at].status.is_finished();
+    held.chain(unheld).filter(move |_| waiting)
 }
 
 /// Name each bead the one at `at` depends on that its own project's answer

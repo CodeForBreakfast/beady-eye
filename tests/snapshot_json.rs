@@ -1286,8 +1286,15 @@ fn arkham_calling_the_beacon_ready_beside(dunwich: Fake) -> Fakes {
 
 /// `ark-43o` as the arkham tree draws it.
 fn the_beacon(trackers: &Fakes) -> Value {
-    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
-    let emitted = emit_over(&cfg, &panes(), trackers, Filter::All);
+    the_beacon_under(
+        &Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses"),
+        trackers,
+    )
+}
+
+/// `ark-43o` as the arkham tree draws it, in a run `cfg` configures.
+fn the_beacon_under(cfg: &Config, trackers: &Fakes) -> Value {
+    let emitted = emit_over(cfg, &panes(), trackers, Filter::All);
     let arkham = emitted["trees"]
         .as_array()
         .expect("trees is an array")
@@ -1332,6 +1339,116 @@ fn a_bead_whose_blocker_in_another_project_is_pinned_is_as_ready_as_bd_says() {
     let beacon = the_beacon(&arkham_calling_the_beacon_ready_beside(Fake::holding(
         beads(pinned),
     )));
+
+    assert_eq!(beacon["ready"], true);
+    assert_eq!(beacon["blocked_by"], json!([]));
+}
+
+/// Dunwich's tracker refused its credential, so its bead may be the blocker
+/// and may be open. A bead whose blocker nothing could check is not ready.
+#[test]
+fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_is_blocked_by_it() {
+    let dunwich = Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
+    let beacon = the_beacon(&arkham_calling_the_beacon_ready_beside(dunwich));
+
+    assert_eq!(beacon["ready"], false);
+    assert_eq!(beacon["blocked_by"], json!(["dun-2e7"]));
+}
+
+/// A project the run left out is not read either, so the same holds.
+#[test]
+fn a_bead_waiting_on_one_in_a_project_the_run_left_out_is_blocked_by_it() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
+        .expect("the config parses")
+        .scoped_to(&["arkham".to_string()])
+        .expect("arkham is configured");
+    let beacon = the_beacon_under(
+        &cfg,
+        &arkham_calling_the_beacon_ready_beside(Fake::holding(beads(WAITED_ON))),
+    );
+
+    assert_eq!(beacon["ready"], false);
+    assert_eq!(beacon["blocked_by"], json!(["dun-2e7"]));
+}
+
+/// Dunwich answered and holds no `dun-2e7`. bd holds a dependency on a bead
+/// that does not exist as blocking nothing, and so does `bdi`.
+#[test]
+fn a_bead_waiting_on_one_the_other_tracker_does_not_hold_is_as_ready_as_bd_says() {
+    let dunwich = Fake::holding(beads(
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+    ));
+    let beacon = the_beacon(&arkham_calling_the_beacon_ready_beside(dunwich));
+
+    assert_eq!(beacon["ready"], true);
+    assert_eq!(beacon["blocked_by"], json!([]));
+}
+
+/// Every configured project answered and none carries the prefix, so no
+/// read `bdi` could make would find the blocker.
+#[test]
+fn a_bead_waiting_on_one_in_a_project_not_configured_is_as_ready_as_bd_says() {
+    let cfg = Config::from_toml(
+        r#"
+[[projects]]
+name = "arkham"
+path = "/srv/work/arkham"
+"#,
+    )
+    .expect("the config parses");
+    let beacon = the_beacon_under(
+        &cfg,
+        &arkham_calling_the_beacon_ready_beside(Fake::holding(beads(WAITED_ON))),
+    );
+
+    assert_eq!(beacon["ready"], true);
+    assert_eq!(beacon["blocked_by"], json!([]));
+}
+
+/// Arkham and dunwich, and innsmouth, whose tracker also holds a `dun-2e7`.
+const ARKHAM_DUNWICH_AND_INNSMOUTH: &str = r#"
+[[projects]]
+name = "arkham"
+path = "/srv/work/arkham"
+
+[[projects]]
+name = "dunwich"
+path = "/srv/work/dunwich"
+
+[[projects]]
+name = "innsmouth"
+path = "/srv/work/innsmouth"
+"#;
+
+/// `ark-43o` where dunwich and innsmouth each hold a `dun-2e7`, dunwich's in
+/// `dunwich_status` and innsmouth's closed.
+fn the_beacon_where_two_hold_its_blocker(dunwich_status: &str) -> Value {
+    let dunwich = format!(
+        r#"[{{"id":"dun-2e7","title":"calibrate the receiver","status":"{dunwich_status}"}}]"#
+    );
+    let innsmouth = r#"[{"id":"dun-2e7","title":"dredge the reef","status":"closed",
+                         "closed_at":"2026-09-24T12:00:00Z"}]"#;
+    the_beacon_under(
+        &Config::from_toml(ARKHAM_DUNWICH_AND_INNSMOUTH).expect("the config parses"),
+        &arkham_calling_the_beacon_ready_beside(Fake::holding(beads(&dunwich)))
+            .with("innsmouth", Fake::holding(beads(innsmouth))),
+    )
+}
+
+/// Nothing in the row says which of two holders is the blocker, and one of
+/// them is still open, so the bead may be waiting on it.
+#[test]
+fn a_bead_waiting_on_an_id_two_trackers_hold_is_blocked_by_it_while_either_is_open() {
+    let beacon = the_beacon_where_two_hold_its_blocker("in_progress");
+
+    assert_eq!(beacon["ready"], false);
+    assert_eq!(beacon["blocked_by"], json!(["dun-2e7"]));
+}
+
+/// Whichever of two holders is the blocker, it is finished.
+#[test]
+fn a_bead_waiting_on_an_id_two_trackers_hold_is_as_ready_as_bd_says_once_both_are_finished() {
+    let beacon = the_beacon_where_two_hold_its_blocker("pinned");
 
     assert_eq!(beacon["ready"], true);
     assert_eq!(beacon["blocked_by"], json!([]));

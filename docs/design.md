@@ -981,6 +981,15 @@ bd's answer is second-guessed, so once the other bead finishes, bd's answer
 stands again. The forest, the bead window and the JSON all read this one
 answer.
 
+**A blocker no answer holds counts where it may be unfinished work.** Where
+the blocker may be in a project that gave no answer, or several projects hold
+a bead by its id and one of those beads is not finished, the bead is not ready,
+and `blocked_by` names the blocker: nothing `bdi` read can say the bead is
+free to start. Where the projects carrying its prefix answered and hold no
+such bead, or no configured project carries it, bd's answer stands. bd holds a
+dependency on a bead that does not exist as blocking nothing, and no later
+read would find one.
+
 **Only a tree that needs it pays for it.** Each project's read assembles its
 trees from its own answer. A bead waiting on something that answer does not
 hold is one its tree already reports as an orphaned dependency, so a collection assembles
