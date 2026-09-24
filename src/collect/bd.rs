@@ -351,8 +351,8 @@ impl Reader<'_> {
     /// than 1.3.0 also rewrites `.beads/.local_version` and runs its schema
     /// auto-migration on finding itself newer than the bd that last opened that
     /// tracker, before the subcommand runs and whatever the subcommand is,
-    /// `--readonly` included. `docs/design.md`'s
-    /// *Reading a tracker is not leaving it alone* carries the measurement.
+    /// `--readonly` included. `docs/design.md`'s *Reading a tracker is not
+    /// leaving it alone* carries the measurement.
     /// `--readonly` vetoes bd's mutating subcommands,
     /// so a mutating call arriving here later is refused rather than run — a
     /// guard on the next edit, and a veto over subcommands rather than a
