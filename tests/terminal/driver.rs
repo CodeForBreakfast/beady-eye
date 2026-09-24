@@ -41,8 +41,8 @@ use super::{a_pty, bdi_on, ENTER_ALTERNATE_SCREEN};
 /// asserted against: every wait that ends here panics with what it was
 /// waiting for.
 ///
-/// The harness above the suite is cargo-mutants, which allows a test run
-/// five times its baseline and no less than twenty seconds, and scores a run
+/// The harness above the suite is cargo-mutants, which this crate's config
+/// allows 180 seconds a test run, and scores a run
 /// that outlives that as `Timeout` — a third answer on the tally, which the
 /// count cannot tell from a kill. A wait longer than that floor can never
 /// fail inside it, so a mutant that leaves `bdi` silent is recorded as a

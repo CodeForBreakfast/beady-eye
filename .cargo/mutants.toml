@@ -5,3 +5,26 @@
 # the mutant as caught. Only a line number tells the two `+`s apart, and a line
 # number moves, so both are excluded.
 exclude_re = ['^src/view/fitted\.rs:\d+:\d+: replace \+ with - in words_of$']
+
+# A test that runs longer than 180 seconds is killed and scored as a timeout.
+# cargo-mutants has no key for a fixed timeout: it takes the larger of the
+# minimum and the baseline test run times the multiplier, so a multiplier of
+# zero leaves the minimum as the whole of it.
+#
+# The default is five times the baseline, and this suite's baseline is 84
+# seconds because the pty tests spend it waiting on a terminal rather than
+# computing, so the derived number came out at 424. That multiplier is slack
+# for a loaded machine rather than a claim that a test might honestly need five
+# times as long, and a mutant allocating at the rate the words_of one does
+# reaches tens of gigabytes inside it.
+#
+# 180 is that 84 with room for a machine running three seats. A legitimate test
+# that times out here is a test that has got slower, and the answer is to find
+# out which one rather than to raise this. `--timeout` raises it for one run
+# while you do.
+#
+# This bounds the mutants and not the baseline, and a run with the baseline
+# skipped gets cargo-mutants' own 300 seconds instead, since there is then no
+# baseline for the multiplier to scale.
+minimum_test_timeout = 180
+timeout_multiplier = 0.0
