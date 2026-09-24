@@ -1037,7 +1037,6 @@ mod tests {
 
     fn a_bead_with_a_long_title() -> Node {
         Node {
-            project: "dunwich".to_string(),
             title: A_LONG_TITLE.to_string(),
             ..a_bead()
         }
@@ -2423,7 +2422,6 @@ mod tests {
     /// the join inferred rather than confirmed.
     fn a_busy_bead() -> Node {
         Node {
-            project: "dunwich".to_string(),
             badges: vec![
                 Badged {
                     key: "pr".to_string(),

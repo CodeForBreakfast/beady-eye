@@ -1094,7 +1094,7 @@ impl<'a> TreeLayout<'a> {
         let folded = (!kids.is_empty()).then_some(open);
         let line = bead_line(
             node,
-            Some(&parent.key().id),
+            Some(parent.key()),
             place.clone(),
             trunk,
             last,
@@ -1193,7 +1193,7 @@ impl<'a> TreeLayout<'a> {
 #[allow(clippy::too_many_arguments)]
 fn bead_line(
     node: &Bead,
-    parent: Option<&str>,
+    parent: Option<&BeadKey>,
     place: Place,
     trunk: &[bool],
     last: bool,
@@ -1209,7 +1209,9 @@ fn bead_line(
         place: Some(place),
         content: Content::Bead(row::cells(
             node,
-            parent,
+            parent
+                .filter(|parent| parent.project == node.project)
+                .map(|parent| parent.id.as_str()),
             bead.progress,
             shut_over(bead.beneath.clone(), folded),
         )),
@@ -1422,7 +1424,7 @@ fn undrawn_node(
     let folded = kids.then_some(open);
     let line = bead_line(
         node,
-        Some(&parent.key().id),
+        Some(parent.key()),
         place,
         trunk,
         last,

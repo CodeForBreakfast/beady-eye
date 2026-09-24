@@ -134,10 +134,7 @@ fn stands_on<'a>(snapshot: &'a Snapshot, place: &Place) -> Option<(&'a Tree, usi
         .iter()
         .chain(&snapshot.collected)
         .find(|tree| root_key(tree) == place.tree)?;
-    let at = tree
-        .beads
-        .iter()
-        .position(|bead| bead.id == place.key().id)?;
+    let at = tree.beads.iter().position(|bead| bead.is(place.key()))?;
     Some((tree, at))
 }
 

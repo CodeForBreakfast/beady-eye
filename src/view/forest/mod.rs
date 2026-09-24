@@ -9958,19 +9958,29 @@ credential_command = "secret harbour"
     /// The same, with a pane on each of `on`. Harbour's bead also waits on a
     /// finished dunwich bead that no tree of dunwich's own draws.
     fn harbour_waiting_on_dunwich_staffed(on: &[&str]) -> Snapshot {
-        let harbour = parse_beads(
+        harbour_and_dunwich(
             r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked",
                  "dependencies":[{"depends_on_id":"dun-7","type":"blocks"},
                                  {"depends_on_id":"dun-8","type":"blocks"}]}]"#,
-        )
-        .expect("the rows parse");
-        let dunwich = parse_beads(
             r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
                 {"id":"dun-7.1","title":"re-point the dish","status":"open",
                  "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
                 {"id":"dun-8","title":"survey the mast","status":"closed"}]"#,
+            &[("dunwich", "dun-7"), ("harbour", "hbr-1")],
+            on,
         )
-        .expect("the rows parse");
+    }
+
+    /// Harbour's rows and dunwich's, drawn as a collection draws both
+    /// projects, from the roots named and with a pane on each of `on`.
+    fn harbour_and_dunwich(
+        harbour: &str,
+        dunwich: &str,
+        roots: &[(&str, &str)],
+        on: &[&str],
+    ) -> Snapshot {
+        let harbour = parse_beads(harbour).expect("the rows parse");
+        let dunwich = parse_beads(dunwich).expect("the rows parse");
         let across = tree::Across::of([
             ("harbour", Nesting::of(&harbour)),
             ("dunwich", Nesting::of(&dunwich)),
@@ -10008,9 +10018,9 @@ credential_command = "secret harbour"
                 )
             })
             .collect();
-        let trees = [("dunwich", "dun-7"), ("harbour", "hbr-1")]
-            .into_iter()
-            .map(|(project, root)| {
+        let trees = roots
+            .iter()
+            .map(|&(project, root)| {
                 build_tree(
                     project,
                     &across.assemble(project, root).expect("the rows assemble"),
@@ -10262,5 +10272,73 @@ credential_command = "secret harbour"
             searched.iter().all(|key| key.project == "dunwich"),
             "{searched:#?}"
         );
+    }
+
+    /// Harbour's tree holding a bead of harbour's and a bead of dunwich's
+    /// under one id. Harbour's `dun-2` is a leaf drawn first; dunwich's is
+    /// reached through `dun-9` and has two halves waiting on the agent's
+    /// bead beneath it. Harbour's bead also waits on a dunwich bead whose id
+    /// runs on from its own.
+    fn one_id_in_two_projects() -> Snapshot {
+        harbour_and_dunwich(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked",
+                 "dependencies":[{"depends_on_id":"dun-9","type":"blocks"},
+                                 {"depends_on_id":"hbr-1.1","type":"blocks"}]},
+                {"id":"dun-2","title":"moor the tender","status":"open","priority":1,
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]}]"#,
+            r#"[{"id":"dun-9","title":"rig the sheerlegs","status":"open","priority":2,
+                 "dependencies":[{"depends_on_id":"dun-2","type":"blocks"}]},
+                {"id":"dun-2","title":"step the derrick","status":"open","priority":1},
+                {"id":"dun-2.1","title":"seat the shoe","status":"open","priority":2,
+                 "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"},
+                                 {"depends_on_id":"dun-1","type":"blocks"}]},
+                {"id":"dun-2.2","title":"trim the stay","status":"open","priority":2,
+                 "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"},
+                                 {"depends_on_id":"dun-1","type":"blocks"}]},
+                {"id":"dun-1","title":"turn the pintle","status":"open","priority":2},
+                {"id":"dun-1.1","title":"ream the pintle","status":"open","priority":2,
+                 "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]},
+                {"id":"hbr-1.1","title":"sound the channel","status":"open","priority":3}]"#,
+            &[("harbour", "hbr-1")],
+            &["dun-1.1"],
+        )
+    }
+
+    /// A rule set on another project's bead chooses among that bead's ways
+    /// down, not those of the bead of the same id its tree holds first.
+    #[test]
+    fn a_rule_set_on_another_projects_bead_chooses_among_its_own_ways_down() {
+        let mut forest = flatten(one_id_in_two_projects());
+        let dunwichs = forest
+            .lines()
+            .iter()
+            .position(|line| line.bead() == Some(&key("dunwich", "dun-2")))
+            .expect("dunwich's dun-2 is drawn");
+        step_onto(&mut forest, dunwichs);
+        assert_eq!(
+            lines_of(&forest, "dun-1").len(),
+            2,
+            "{:#?}",
+            sketch(&forest)
+        );
+
+        put_in_force(&mut forest, Spine::Deepest, Action::CycleSpine);
+
+        assert_eq!(
+            lines_of(&forest, "dun-1").len(),
+            1,
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Another project's bead keeps its whole id under a bead whose id its
+    /// own runs on from, because a bare suffix would place it in the other
+    /// project.
+    #[test]
+    fn another_projects_bead_keeps_its_whole_id_under_a_bead_its_id_runs_on_from() {
+        let forest = flatten(one_id_in_two_projects());
+
+        assert_eq!(row_of(&forest, "hbr-1.1").id, "hbr-1.1");
     }
 }
