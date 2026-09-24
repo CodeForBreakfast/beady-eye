@@ -259,6 +259,7 @@ mod tests {
             undrawn: Vec::new(),
             agent,
             anomalies: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             description: String::new(),
             notes: String::new(),
             created_by: None,

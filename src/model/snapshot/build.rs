@@ -114,6 +114,7 @@ pub fn build_tree(
                     now,
                 ),
                 agent,
+                orphaned_dependencies: assembled.orphaned.get(&at).cloned().unwrap_or_default(),
                 description: bead.description.clone().unwrap_or_default(),
                 notes: bead.notes.clone().unwrap_or_default(),
                 created_by: bead.created_by.clone(),
