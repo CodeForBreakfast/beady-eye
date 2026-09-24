@@ -8,6 +8,12 @@
 //! a stand rests open, and it keys what it counts on the stand. Each answer
 //! is the rule's, so a rule is a variant here and an arm in each question.
 //!
+//! A rule begins at a tree's root, on a line a reader set a rule on, and on
+//! the bead the forest is rooted at. Rooting begins it afresh there, under
+//! whichever rule is in force over the bead, so rooting at a later copy of
+//! a bead opens its subtree as rooting at the first copy does: a reader
+//! cannot tell the two apart.
+//!
 //! A one-copy rule works the tree beneath the line it begins on out once, and
 //! layout keeps that answer beside the stands that read it. What the rule
 //! works out is one way down per bead — which is why a stand can stay a few

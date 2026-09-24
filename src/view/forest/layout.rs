@@ -927,12 +927,12 @@ impl<'a> TreeLayout<'a> {
     /// down stands. The beads above it are drawn behind the line the mode
     /// holds the rest back with, and a scope set on one of them still stands
     /// over it — so they are read on the way down to it, as the walk that
-    /// drew them would have read them.
+    /// drew them would have read them. Where it stands is not read on the
+    /// way down: the rule begins afresh at the bead itself.
     fn over_rooted(&self, rooted: &Rooted) -> (Option<&'a Scope>, Stand) {
         let folds: &'a Folds = self.layout.folds;
         let mut over = self.over;
         let mut place = Place::root(root_key(self.tree));
-        let mut stand = self.begins_at(&place);
         for step in rooted.way.windows(2) {
             over = folds.beneath(&Handle::Bead(place.clone()), over);
             let link = self.tree.children[step[0]]
@@ -940,8 +940,10 @@ impl<'a> TreeLayout<'a> {
                 .find(|link| link.bead == step[1])
                 .expect("a way down follows the tree's own links");
             place = place.step_to(self.key_of(link));
-            stand = self.stand_at(&place, stand, step[0], link);
         }
+        let stand = self
+            .begun(&rooted.place)
+            .expect("the rule begins where the forest is rooted");
         (over, stand)
     }
 
