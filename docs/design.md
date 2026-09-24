@@ -1402,63 +1402,82 @@ depend on it.
 
 ### Reading a tracker is not leaving it alone
 
-bd writes to a tracker on its own account, and which subcommand asked is no
-part of it. The write happens in bd's `PersistentPreRun`, before the subcommand
-runs at all: a `bd sql` that failed with *not yet supported in embedded mode*,
-exit 1, had already done it.
+bd does work on its own account when it opens a tracker, and which subcommand
+asked is no part of it. The work happens before the subcommand runs at all: a
+`bd sql` refused with *'bd sql' is not yet supported in embedded mode*, exit 1,
+had already done its share.
 
-What arms it is a version change. bd records the version that last opened a
-tracker in `.beads/.local_version`, a plain gitignored file, and on finding
-itself newer it rewrites that file and runs its schema auto-migration.
-`--readonly` stops neither, because the flag is a veto list over bd's mutating
-subcommands and never reaches the storage layer.
+What that work is turns on `--readonly`, which every command line `bdi` spells
+against a tracker carries. bd records the version that last opened a tracker in
+`.beads/.local_version`, a plain gitignored file. Without the flag, a bd that
+finds a different version there rewrites the file, and runs its schema
+auto-migration on a store whose schema is behind it. With the flag it does
+neither: it opens the store read-only, and refuses a store whose schema is
+behind it rather than migrate it.
 
-Measured 2026-09-04 on bd 1.2.2, against a throwaway embedded store in a
-temporary directory and never against a live tracker, with `BEADS_DIR` unset so
-that only `-C` resolved it. It is bd's behaviour that decides every figure
-below, not any `bdi` commit, so the event that dates this table is a bd
-upgrade and nothing in this repository — and a bd that stopped doing it would
-retire the section rather than correct it:
+Measured 2026-09-24 on bd 1.3.0, the version the flake pins, against throwaway
+embedded stores in a temporary directory and never against a live tracker. The
+environment held only `PATH` and a throwaway `HOME`, so that `-C` alone
+resolved the tracker. It is bd's behaviour that decides every figure below, not
+any `bdi` commit, so the event that dates this table is a bd upgrade and nothing
+in this repository. *The reads* are `bdi`'s own `list`, `query`, `ready` and
+`blocked` calls, each under `--readonly`:
 
-| what was asked | `.beads/.local_version` | bd's auto-migration |
+| what was asked | `.beads/.local_version` | the schema |
 |---|---|---|
-| `--readonly list --json`, recorded version `1.1.2` | `1.1.2` → `1.2.2` | entered |
-| `--readonly list --json`, recorded version `1.2.2` | untouched | not entered |
-| `--readonly list --json`, recorded version `1.9.9` | `1.9.9` → `1.2.2` | not entered |
-| `--readonly ready --json`, `--readonly sql`, plain `list --json` | all rewrote it | — |
-| `bd --version`, `bd version`, either under `-C` | all untouched | not entered |
-| `bd where --json`, the one call naming no tracker | untouched | not entered |
+| the reads, on a store 1.3.0 built | untouched | untouched |
+| the reads, on a store 1.3.0 built, `.local_version` seeded to `1.2.2` or to `1.9.9` | untouched | untouched |
+| the reads, on a store 1.2.2 built | untouched | refused at v53, exit 1 |
+| `list --json` without `--readonly`, `.local_version` seeded to `1.2.2` or to `1.9.9` | rewritten to `1.3.0` | already current |
+| `list --json` without `--readonly`, on a store 1.2.2 built | rewritten to `1.3.0` | migrated v53 → v66, exit 0 |
+| `bd --version`, `bd version`, `bd where --json` | untouched | untouched |
 
-The third row is bd migrating on an upgrade and not on a downgrade, and it
-still rewrites the file either way. With the two versions equal the read cost
-the tracker nothing at all: every file under `.beads/`, sha256 each,
-byte-identical over two consecutive reads. How many files that is belongs to
-the store rather than to the reading — two stores built the same way an hour
-apart held 23 and 19 — so the count is not the measurement and is left out of
-it.
+A refused read says so on stderr, with stdout empty:
 
-That measurement watched the gate open rather than a migration finish — the
-throwaway kept its database where bd's auto-migration did not look. The other
-half is meadow's, measured 2026-09-01 on their own throwaway stores: a tracker
-at schema 52 with a genuine pending migration, opened by bd 1.2.2 with
-`--readonly`, came back at 53, exit 0, no error and no warning.
+    Error: failed to open database: schema version mismatch: database is at v53, binary expects v66, and the read-only open cannot migrate it; run any bd write command in that workspace to migrate, or set BD_IGNORE_SCHEMA_SKEW=1 to read anyway (queries touching newer schema may fail)
+
+`bdi` sets no such variable. `bd sql` is refused on an embedded store, so on
+a throwaway the hash probe measures no further than its refusal. On a
+store whose schema is behind, that refusal is the schema one above, which comes
+first.
+
+With the versions equal, the reads left the tracker as they found it: every
+file in the project bar `.git`, sha256 each, byte-identical over two passes of
+every read. Two things sit outside that.
+
+**Opening the store leaves two lock files.** A read that opens the store,
+whether it answers or is refused, creates `.beads.gate.lock` beside `.beads/`
+in the project root and `.beads/embeddeddolt.gate.lock` inside it. Both are
+empty, and a later read creates them again if they are deleted. `bd --version`,
+`bd version` and `bd where --json` create neither. The `.gitignore` that bd
+1.3.0's `init` writes covers both with `*.gate.lock*`. A project whose
+`.gitignore` lacks that pattern shows `.beads.gate.lock` as untracked in
+`git status` from the first read on.
+
+**Every call queues a usage event on the reader's machine.** Each read, and
+`bd where --json` with them, writes one file under `~/.beads/eventsData`, bd's
+queue of anonymous usage metrics. That is the reader's home rather than the
+tracker, and after `bd metrics off` the same calls queued nothing.
 
 Three things follow, and what `bdi` claims is built on all three.
 
-**The exposure is one-shot per version change, not per read.** The read that
-spends it leaves the tracker at the new version, so every read after it — and
-every bd command a person runs afterwards — is quiet. Damage a migration did is
-invisible from the moment after it happened, which is how the incident behind
-this stood four weeks unnoticed.
+**A `bdi` read on the pinned bd migrates nothing.** A tracker whose schema is
+behind is refused until something else migrates it, and it degrades in the
+meantime like any tracker whose read fails.
 
-**Nothing announces it.** Under `--json` bd suppresses its own upgrade notice
-on stdout and stderr both: stdout is the answer and parses, stderr carries only
-unrelated warnings. There is no signal in bd's output for `bdi` to read.
+**The migration is still silent and still one-shot, but it is no longer
+`bdi`'s to spend.** What migrated the store was the next bd run without
+`--readonly`: a plain `list --json`, exit 0, stdout parsing, nothing on stderr.
+It leaves the tracker at the new version, so every read after it is quiet, and
+damage a migration did is invisible from the moment after it happened.
 
-**`bdi` is the client most exposed to it**, because it links no bd and reads
-every tracker its config names. Which bd answers is whatever each project's
-environment resolves — a per-machine fact this project does not constrain — and
-one run reaches every tracker at once.
+**A bd older than 1.3.0 still migrates under `--readonly`.** bd 1.2.2, reading
+with `--readonly` a throwaway store that bd 1.0.0 built, took it from schema
+v23 to v53 and rewrote `.beads/.local_version`, exit 0, with nothing on stderr.
+`bdi` links no bd and reads each tracker with whatever that project's
+environment resolves, a per-machine fact this project does not constrain. So a
+project whose own bd predates 1.3.0 has its tracker migrated by the first `bdi`
+read after that bd is upgraded, and one run reaches every tracker at once.
 
 **`bdi` does not gate on a bd version, and that is a decision rather than an
 oversight.** The gate is a plain file, so `bdi` could read
@@ -1470,8 +1489,8 @@ what entering that project's directory yields — by the command its config
 names, or by the `direnv exec .` its own `.envrc` implies — and a project
 neither names one for nor implies one is read with whatever the shell `bdi`
 was launched from resolves.
-So the table is a known hazard rather than an unnoticed one, and reopening it
-means changing that decision rather than measuring it again.
+So a bd older than 1.3.0 is a known hazard rather than an unnoticed one, and
+reopening it means changing that decision rather than measuring it again.
 
 **That ground is also why a project `bdi` could not enter is refused rather
 than read ambient.** The ground holds only while every tracker is read by its
@@ -1487,17 +1506,17 @@ Reopening the fallback and reopening the gate are therefore one question. The
 gate is the shape that gives up least — `bdi` could fall back wherever reading
 `.beads/.local_version` said no migration would fire — and what is unmeasured
 there is whether that file exists for a server-backed tracker at all. The
-measurements above were taken against a throwaway embedded store, and this one
+measurements above were taken against throwaway embedded stores, and this one
 cannot be taken against a live tracker.
 
 So `bdi` claims what it can hold: every command line it spells is a read. It
-does not claim a tracker comes back unchanged, because that is bd's to decide
-and no property of a command line reaches it. Nothing holds a tracker still,
-either: the trigger compares the bd running against the bd that ran last, so an
-in-place upgrade of a single bd arms it as surely as a second version would.
-What one bd per tracker buys is that the tracker moves forward once, at an
-upgrade somebody chose — the operator's arrangement rather than `bdi`'s
-guarantee.
+does not claim a tracker comes back unchanged. The pinned bd leaves its lock
+files behind even on a read it answers, and a bd older than 1.3.0 migrates
+whatever the command line says. Nothing holds a tracker still, either: the
+trigger compares the bd running against the bd that ran last, so an in-place
+upgrade of a single bd arms it as surely as a second version would. What one bd
+per tracker buys is that the tracker moves forward once, at an upgrade somebody
+chose — the operator's arrangement rather than `bdi`'s guarantee.
 
 ### Degradation is the rule either way
 
