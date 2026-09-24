@@ -588,13 +588,22 @@ report pushes the next poll past its interval, and so does each `covered`
 line. One whose producer goes quiet is polled again from one interval later.
 
 The cheapest producer is a wrapper round `bd` itself. It reads the default
-path; a `bdi` told a different one has to be told to the producer too.
+path; a `bdi` told a different one has to be told to the producer too. It
+writes with socat, or with OpenBSD netcat where socat is absent, and says so
+when it has neither rather than lose the report.
 
 ```bash
 bdi_changed() {
   local sock="$XDG_RUNTIME_DIR/beady-eye/changes.sock"
   [ -S "$sock" ] || return 0
-  printf '%s\n' "$1" | socat - UNIX-CONNECT:"$sock" >/dev/null 2>&1
+  if command -v socat >/dev/null; then
+    printf '%s\n' "$1" | socat - UNIX-CONNECT:"$sock" >/dev/null 2>&1
+  elif command -v nc >/dev/null; then
+    printf '%s\n' "$1" | nc -N -U "$sock" >/dev/null 2>&1
+  else
+    echo "bdi_changed: no socat or nc, so $1 was not reported" >&2
+    return 1
+  fi
 }
 
 bd() {
@@ -605,9 +614,8 @@ bd() {
 }
 ```
 
-`nc -N -U "$sock"` does the same with OpenBSD netcat. A Dolt trigger, a git
-hook, a systemd path unit or a cron job comparing a head hash all work equally
-well; `bdi` provides the socket and cannot tell them apart.
+A Dolt trigger, a git hook, a systemd path unit or a cron job comparing a head
+hash all work equally well; `bdi` provides the socket and cannot tell them apart.
 
 `--poll` and `--no-poll` override every project's `poll` setting for one run,
 which is how to find out whether a suspect producer was the only thing wrong.
