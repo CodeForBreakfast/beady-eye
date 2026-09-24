@@ -10824,6 +10824,37 @@ credential_command = "secret harbour"
         );
     }
 
+    /// Drawn on reaching in, the lines saying which blockers are missing
+    /// follow the blockers that are drawn, and only the last of them closes
+    /// the arm.
+    #[test]
+    fn a_bead_opened_with_the_forest_draws_its_missing_blockers_after_the_rest() {
+        let mut forest = flatten(harbour_and_dunwich(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked"},
+                {"id":"hbr-1.1","title":"sound the channel","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"},
+                                 {"depends_on_id":"dun-7","type":"blocks"},
+                                 {"depends_on_id":"dun-404","type":"blocks"},
+                                 {"depends_on_id":"dun-405","type":"blocks"}]}]"#,
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+            &[("harbour", "hbr-1")],
+            &[],
+        ));
+        forest.apply(Action::ExpandForest);
+
+        assert_eq!(
+            sketch_under(&forest, "hbr-1.1")[1..],
+            [
+                "          ├┄┄ ○ dun-7 lift the ground station",
+                "          ├┄┄ ⚠ dun-404 NotHeld { projects: [\"dunwich\"] }",
+                "          └┄┄ ⚠ dun-405 NotHeld { projects: [\"dunwich\"] }",
+            ]
+            .map(String::from),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
     /// A bead whose one blocker is missing has something beneath it, so it
     /// folds, and the line is drawn when it opens.
     #[test]
