@@ -2284,7 +2284,7 @@ credential_command = "secret harbour"
     fn assembled(json: &str) -> Assembled {
         let beads = parse_beads(json).expect("the rows parse");
         let root = root_row(&beads);
-        Nesting::of(&beads)
+        Nesting::of("dunwich", &beads)
             .assemble(&root)
             .expect("the rows assemble")
     }

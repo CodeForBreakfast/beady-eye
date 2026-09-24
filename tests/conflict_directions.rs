@@ -99,7 +99,7 @@ fn read(dunwich_rows: &str, agents: &str) -> Reading {
                 .clone();
             (
                 project,
-                Nesting::of(&beads)
+                Nesting::of(project, &beads)
                     .assemble(&root)
                     .expect("the rows assemble"),
             )

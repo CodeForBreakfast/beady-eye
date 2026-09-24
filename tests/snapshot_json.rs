@@ -1052,3 +1052,105 @@ fn a_pane_id_two_sessions_hold_is_a_conflict_naming_the_sessions() {
         ]
     );
 }
+
+/// Dunwich's side of a dependency another project holds on it: the bead
+/// arkham's captured row waits on, with a pane on it and a task under it.
+const WAITED_ON: &str = r#"[
+  {"id":"dun-2e7","title":"calibrate the receiver","status":"in_progress",
+   "priority":1,"issue_type":"epic","metadata":{"agent_pane":"w:p1"}},
+  {"id":"dun-2e7.1","title":"swap the feed horn","status":"open","parent":"dun-2e7",
+   "dependencies":[{"depends_on_id":"dun-2e7","type":"parent-child"}],
+   "priority":2,"issue_type":"task","metadata":{"blocked_on":"human"}}
+]"#;
+
+/// Each project draws a waiting bead in its own words, so a badge drawn from
+/// the wrong project's config names the wrong project.
+const ARKHAM_AND_DUNWICH: &str = r#"
+[[projects]]
+name = "arkham"
+path = "/srv/work/arkham"
+
+[[projects.badges]]
+key    = "metadata.blocked_on"
+match  = "human"
+render = "⏸ ask the archivist"
+
+[[projects]]
+name = "dunwich"
+path = "/srv/work/dunwich"
+
+[[projects.badges]]
+key    = "metadata.blocked_on"
+match  = "human"
+render = "⏸ ask the ground station"
+"#;
+
+/// Arkham's tracker as bd 1.3.0 wrote it — one bead, waiting on `dun-2e7` —
+/// beside the dunwich tracker that holds that bead.
+fn arkham_waiting_on_dunwich() -> Fakes {
+    Fakes::default()
+        .with(
+            "arkham",
+            Fake::holding(beads(include_str!(
+                "fixtures/bd_1.3.0_a_dependency_on_another_project.json"
+            ))),
+        )
+        .with(
+            "dunwich",
+            Fake::holding(beads(WAITED_ON)).ready(["dun-2e7.1"]),
+        )
+}
+
+/// A bead waiting on another project's bead holds it beneath itself, with its
+/// subtree, as it would a bead of its own project. Each of those beads is
+/// still the other project's: its id, its readiness, its badges and its agent
+/// are the ones it has there.
+#[test]
+fn a_bead_waiting_on_another_projects_bead_draws_it_beneath_itself() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
+    let emitted = emit_over(&cfg, &panes(), &arkham_waiting_on_dunwich(), Filter::All);
+
+    let trees = emitted["trees"].as_array().expect("trees is an array");
+    let arkham = trees
+        .iter()
+        .find(|tree| tree["project"] == "arkham")
+        .expect("arkham draws a tree");
+    assert_eq!(arkham["root"], "ark-43o");
+
+    let drawn: Vec<(&str, &str, u64)> = arkham["nodes"]
+        .as_array()
+        .expect("nodes is an array")
+        .iter()
+        .map(|node| {
+            (
+                node["project"].as_str().expect("a project"),
+                node["id"].as_str().expect("an id"),
+                node["depth"].as_u64().expect("a depth"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        drawn,
+        vec![
+            ("arkham", "ark-43o", 0),
+            ("dunwich", "dun-2e7", 1),
+            ("dunwich", "dun-2e7.1", 2),
+        ]
+    );
+    assert_eq!(node(arkham, "dun-2e7")["edge"], "blocks");
+    assert_eq!(arkham["dangling"], json!([]), "the bead it waits on is held");
+
+    assert_eq!(node(arkham, "dun-2e7")["agent"]["pane"]["id"], "w:p1");
+    assert_eq!(node(arkham, "dun-2e7.1")["ready"], true);
+    assert_eq!(
+        node(arkham, "dun-2e7.1")["badges"][0]["text"],
+        "⏸ ask the ground station"
+    );
+
+    assert!(
+        trees
+            .iter()
+            .any(|tree| tree["project"] == "dunwich" && tree["root"] == "dun-2e7"),
+        "dunwich still draws its own work"
+    );
+}
