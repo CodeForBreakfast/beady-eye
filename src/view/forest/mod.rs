@@ -250,7 +250,11 @@ impl Forest {
         //
         // Found again by the bead rather than by the way down to it, because
         // a tracker that reparented it has moved the bead and not lost it.
-        self.focused = self.focused.take().and_then(|place| self.rerooted(&place));
+        let focused = self.focused.take();
+        self.focused = focused.as_ref().and_then(|place| self.rerooted(place));
+        if self.focused != focused {
+            self.answer();
+        }
         self.spend_folds(&folded_over);
         // A root whose tracker stopped reading, or started again, is the
         // same line under the other kind of handle.
@@ -567,6 +571,7 @@ impl Forest {
     /// from a bead that is not there.
     fn focus_forest(&mut self) {
         if let Some(place) = self.focused.take() {
+            self.answer();
             let on = Handle::Bead(place.clone());
             // Drawn again first, so what is shut over the bead is asked of
             // the forest the reader is coming back to rather than of the one
@@ -590,6 +595,7 @@ impl Forest {
         };
         if self.locate(&place).is_some() {
             self.focused = Some(place);
+            self.answer();
         }
     }
 
@@ -688,8 +694,17 @@ impl Forest {
 
     /// Answer what layout reads of the snapshot in hand, here and not per
     /// keystroke.
+    ///
+    /// The bead the forest is rooted at is where the rule in force over it
+    /// begins, as a rule set on its line would.
     fn answer(&mut self) {
-        self.facts = Arc::new(Facts::of(&self.snapshot, self.spine, &self.spines));
+        let mut spines = self.spines.clone();
+        if let Some(place) = &self.focused {
+            spines
+                .entry(Handle::Bead(place.clone()))
+                .or_insert_with(|| self.spine_on(place));
+        }
+        self.facts = Arc::new(Facts::of(&self.snapshot, self.spine, &spines));
     }
 
     /// `e` and `c`: point every fold in the selected node's subtree, at every
@@ -10342,34 +10357,38 @@ credential_command = "secret harbour"
         );
     }
 
-    /// Rooting the forest at a copy does not begin the rule afresh there.
-    /// The mode draws one bead where a root goes, and the way down to it is
-    /// the way down it has everywhere else — so a later copy goes on standing
-    /// where it stood, and the subtree that rests shut under it on the whole
-    /// forest rests shut here too.
+    /// Rooting the forest at a copy begins the rule afresh there, under
+    /// whichever rule is in force: a reader cannot tell a first copy from a
+    /// later one, so rooting at either draws the same forest.
     #[test]
-    fn rooting_the_forest_at_a_later_copy_keeps_where_that_copy_stands() {
-        let mut forest = flatten(deep_bead_drawn_twice_in_one_tree());
-        let [upper, lower] = copies_of(&forest, "dun-6");
-        assert_eq!(
-            forest.lines()[upper].folded,
-            Some(true),
-            "the first copy opens onto the work: {:#?}",
-            sketch(&forest)
-        );
+    fn rooting_the_forest_at_a_later_copy_draws_what_rooting_at_the_first_does() {
+        for rule in Spine::EVERY {
+            let rooted_at = |copy: usize| {
+                let mut forest = flatten(deep_bead_drawn_twice_in_one_tree());
+                put_in_force(&mut forest, *rule, Action::CycleSpineForest);
+                // A one-copy rule rests the later copy's way shut.
+                let guying = lines_of(&forest, "dun-3.2")[0];
+                step_onto(&mut forest, guying);
+                forest.apply(Action::ExpandOrChild);
+                let at = copies_of(&forest, "dun-6")[copy];
+                step_onto(&mut forest, at);
+                assert!(forest.apply(Action::FocusForest));
+                forest
+                    .lines()
+                    .iter()
+                    .map(|line| format!("{}{} {:?}", line.prefix, said(&line.content), line.folded))
+                    .collect::<Vec<_>>()
+            };
 
-        step_onto(&mut forest, lower);
-        assert!(forest.apply(Action::FocusForest));
-
-        let [milling] = lines_of(&forest, "dun-6.1")[..] else {
-            panic!("the copy's own child is drawn once: {:#?}", sketch(&forest));
-        };
-        assert_eq!(
-            forest.lines()[milling].folded,
-            Some(false),
-            "{:#?}",
-            sketch(&forest)
-        );
+            let first = rooted_at(0);
+            assert!(
+                first
+                    .iter()
+                    .any(|line| line.contains("bore the bolt holes")),
+                "{rule:?}: the first copy opens onto the work: {first:#?}"
+            );
+            assert_eq!(rooted_at(1), first, "{rule:?}");
+        }
     }
 
     /// And everything only that copy reaches. The first way down to one of

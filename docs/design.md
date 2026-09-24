@@ -1055,7 +1055,9 @@ away is everything a reader does not have to do in order to close the one they
 are on. Everything beneath that bead is already in the tree it is drawn in, so
 this is a change to what the layout walks rather than to what was collected,
 and the bead keeps the place it has everywhere else — which is what lets a fold
-set on it survive the key both ways. The default above rejects
+set on it survive the key both ways. The fold rule begins afresh at that bead,
+so rooting at a later copy of it draws what rooting at the first copy does. The
+default above rejects
 collapsed-except-selected and the rejection stands: the selection has no
 bearing on what is open, and it has none here either, because the mode stands
 on the bead named at the keystroke and moving about under it moves nothing.
