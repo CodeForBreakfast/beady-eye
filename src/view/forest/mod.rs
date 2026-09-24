@@ -475,7 +475,9 @@ impl Forest {
 
     /// The focused bead a place is at or beneath, where it is.
     fn focused_over(&self, place: &Place) -> Option<&Place> {
-        self.focused.iter().find(|focused| at_or_beneath(place, focused))
+        self.focused
+            .iter()
+            .find(|focused| at_or_beneath(place, focused))
     }
 
     fn hidden(&self, root: &BeadKey) -> bool {
@@ -1513,12 +1515,9 @@ impl Forest {
             Handle::Bead(place) | Handle::Unread(place) | Handle::Elided(place) => {
                 self.drawn(place)
             }
-            Handle::Group(kind, project) => layout::group_drawn(
-                &self.snapshot,
-                *kind,
-                project.as_deref(),
-                &self.rooted(),
-            ),
+            Handle::Group(kind, project) => {
+                layout::group_drawn(&self.snapshot, *kind, project.as_deref(), &self.rooted())
+            }
             Handle::Item(key) => layout::group_holding(&self.snapshot, key).is_some(),
             Handle::Project(project) => layout::project_drawn(&self.snapshot, project),
         }
@@ -9783,6 +9782,199 @@ credential_command = "secret harbour"
             "focusing {id} changed nothing: {:#?}",
             sketch(forest)
         );
+    }
+
+    /// Start the forest as `bdi` naming these beads on the command line does.
+    fn named_on_the_command_line(beads: &[(&str, &str)]) -> Forest {
+        let mut forest = flatten(snapshot());
+        forest.focus_when_drawn(beads.iter().map(|(project, id)| key(project, id)).collect());
+        forest
+    }
+
+    /// A bead named on the command line starts the forest exactly where
+    /// Shift+F on it would have put it: a root, a bead under one, and a root
+    /// the filter is holding back.
+    #[test]
+    fn naming_a_bead_starts_the_forest_as_focusing_it_does() {
+        for (project, id) in [
+            ("dunwich", "dun-7"),
+            ("dunwich", "dun-7.1"),
+            ("harbour", "hbr-3"),
+        ] {
+            let mut focused = flatten(snapshot());
+            if project == "harbour" {
+                select_hidden_tree(&mut focused);
+            } else {
+                select_bead(&mut focused, id);
+            }
+            assert!(focused.apply(Action::FocusForest));
+
+            let named = named_on_the_command_line(&[(project, id)]);
+
+            assert_eq!(sketch(&named), sketch(&focused), "named {id}");
+            assert_eq!(cursor(&named), cursor(&focused), "named {id}");
+        }
+    }
+
+    /// Several named are each drawn as a root, and everything else goes
+    /// behind the lines focus draws.
+    #[test]
+    fn naming_several_beads_draws_each_as_a_root() {
+        let forest = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("harbour", "hbr-3")]);
+
+        assert_eq!(
+            sketch(&forest)
+                .into_iter()
+                .filter(|row| !row.contains("── - "))
+                .collect::<Vec<String>>(),
+            vec![
+                "▾ dunwich",
+                "  ├─▸ ○ dun-7.1 re-point the dish",
+                "  │   └── ! OrphanedDependencies(1)",
+                "  ├─▸ [OutOfTheWay dunwich] 1",
+                "  └── [Unattributed dunwich] 2",
+                "▾ ferry",
+                "  ├─▸ [OutOfTheWay ferry] 1",
+                "  └── [Unattributed ferry] 1",
+                "▾ harbour",
+                "  └─▸ ○ hbr-3 dredge the channel",
+                "▸ [FailedProjects] 1",
+                "▾ [Unconfigured] 1",
+                "▾ [Conflicts] 1",
+            ]
+        );
+    }
+
+    /// Two named in one tree are both drawn as roots, and the root above them
+    /// goes behind the line without either.
+    #[test]
+    fn naming_two_beads_in_one_tree_draws_both_and_holds_back_the_rest() {
+        let mut forest =
+            named_on_the_command_line(&[("dunwich", "dun-7.1"), ("dunwich", "dun-7.7")]);
+
+        open_the_line_holding_roots_back(&mut forest, "dunwich");
+
+        assert_eq!(
+            sketch(&forest)
+                .into_iter()
+                .filter(|row| !row.contains("── - "))
+                .collect::<Vec<String>>(),
+            vec![
+                "▾ dunwich",
+                "  ├─▸ ○ dun-7.1 re-point the dish",
+                "  │   └── ! OrphanedDependencies(1)",
+                "  ├── ○ dun-7.7 log the survey marks",
+                "  │   └── ! OrphanedDependencies(1)",
+                "  ├── [OutOfTheWay dunwich] 1",
+                "  │   └─▸ ◐ dun-7 lift the ground station",
+                "  │       └── ! OrphanedDependencies(1)",
+                "  └── [Unattributed dunwich] 2",
+                "▾ ferry",
+                "  ├─▸ [OutOfTheWay ferry] 1",
+                "  └── [Unattributed ferry] 1",
+                "▾ harbour",
+                "  └─▸ [OutOfTheWay harbour] 1",
+                "▸ [FailedProjects] 1",
+                "▾ [Unconfigured] 1",
+                "▾ [Conflicts] 1",
+            ]
+        );
+
+        let behind = *lines_of(&forest, "dun-7")
+            .first()
+            .expect("dun-7 is behind the line");
+        step_onto(&mut forest, behind);
+        assert!(forest.apply(Action::ExpandOrChild));
+        let copies_of = |id: &str| {
+            forest
+                .lines()
+                .iter()
+                .filter(|line| {
+                    line.place
+                        .as_ref()
+                        .is_some_and(|place| place.key().id == id)
+                })
+                .count()
+        };
+        assert_eq!(
+            copies_of("dun-7.4"),
+            1,
+            "dun-7 opened: {:#?}",
+            sketch(&forest)
+        );
+        assert_eq!(
+            (copies_of("dun-7.1"), copies_of("dun-7.7")),
+            (1, 1),
+            "the root behind the line draws neither named bead again: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A bead named beneath another named bead is already drawn under it.
+    #[test]
+    fn a_bead_named_beneath_another_named_bead_adds_no_root() {
+        let both = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("dunwich", "dun-7")]);
+
+        let one = named_on_the_command_line(&[("dunwich", "dun-7")]);
+
+        assert_eq!(sketch(&both), sketch(&one));
+    }
+
+    /// After a start with beads named, Shift+F is as it is after any other
+    /// focus: the mode goes, and the forest is the one an unnamed start draws.
+    #[test]
+    fn shift_f_after_a_named_start_draws_the_unnamed_forest() {
+        let unnamed = sketch(&flatten(snapshot()));
+        for named in [
+            vec![("dunwich", "dun-7.1")],
+            vec![("dunwich", "dun-7.1"), ("harbour", "hbr-3")],
+        ] {
+            let mut forest = named_on_the_command_line(&named);
+
+            assert!(forest.apply(Action::FocusForest));
+
+            assert_eq!(sketch(&forest), unnamed, "named {named:?}");
+        }
+    }
+
+    /// The first frame is drawn before any tracker answers, so a bead named
+    /// then is focused when the collection that draws it lands.
+    #[test]
+    fn a_bead_named_before_anything_is_read_is_focused_when_it_is_drawn() {
+        let mut named = flatten(Snapshot::awaiting(
+            vec![
+                "dunwich".to_string(),
+                "ferry".to_string(),
+                "harbour".to_string(),
+            ],
+            Vec::new(),
+            A_PROVIDER,
+            Scope::Everything,
+            Filter::LiveAgents,
+            now(),
+        ));
+        named.focus_when_drawn(vec![key("dunwich", "dun-7.1")]);
+
+        named.refresh(snapshot());
+
+        assert_eq!(
+            sketch(&named),
+            sketch(&named_on_the_command_line(&[("dunwich", "dun-7.1")]))
+        );
+        assert_eq!(cursor(&named), Some(&key("dunwich", "dun-7.1")));
+    }
+
+    /// A bead its project's tracker was read without is not waited for: the
+    /// tracker says it is missing where its tree would be.
+    #[test]
+    fn a_named_bead_its_project_was_read_without_focuses_nothing() {
+        let mut forest = named_on_the_command_line(&[("dunwich", "dun-404")]);
+        let unnamed = sketch(&flatten(snapshot()));
+        assert_eq!(sketch(&forest), unnamed);
+
+        forest.refresh(snapshot());
+
+        assert_eq!(sketch(&forest), unnamed);
     }
 
     /// Every root but the one focused goes, and so does every other project's

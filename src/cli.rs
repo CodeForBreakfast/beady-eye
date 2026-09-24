@@ -36,10 +36,10 @@ const NO_TERMINAL: u8 = 2;
 #[derive(Parser)]
 #[command(name = "bdi", version, about = "A tree of work in flight")]
 struct Cli {
-    /// Draw the tree this bead roots, in place of every other tree of its
-    /// project. Write it as <project>:<bead-id> where bdi is reading more
-    /// than one project; a bare id means the one project being read. A root
-    /// under a project the directory left out reads that project too.
+    /// Start focused on this bead, as Shift+F on it would. Write it as
+    /// <project>:<bead-id> where bdi is reading more than one project; a bare
+    /// id means the one project being read. A bead under a project the
+    /// directory left out reads that project too.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
 

@@ -72,7 +72,10 @@ impl Ground {
 }
 
 /// The beads a counted subtree leaves out: its tree's, where it leaves any.
-pub(super) fn left_out<'k>(by_tree: &'k HashMap<usize, Vec<usize>>, counted: &Counted) -> &'k [usize] {
+pub(super) fn left_out<'k>(
+    by_tree: &'k HashMap<usize, Vec<usize>>,
+    counted: &Counted,
+) -> &'k [usize] {
     match by_tree.get(&counted.tree) {
         Some(beads) if counted.without => beads,
         _ => &[],

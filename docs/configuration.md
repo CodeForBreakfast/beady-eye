@@ -84,7 +84,8 @@ it reads all of them.
 `--all-projects` reads every configured project from anywhere. `--project NAME`
 (repeatable) reads only those, from anywhere. A bead named on the command line
 as `PROJECT:ID` adds its tree to the run, and reads that project if the
-directory would have left it out.
+directory would have left it out. `bdi` starts focused on that bead, as
+`Shift+F` on it would.
 
 Without a config, the one project is named after the repository's `origin`
 remote, or its directory if there is no remote or no git. `BDI_PROJECT` in the

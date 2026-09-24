@@ -219,9 +219,9 @@ pub struct Roots {
     /// Bead prefixes are per-tracker and uncoordinated, so an id on its own
     /// names nothing bdi can go and read.
     pub explicit: BTreeMap<String, Vec<String>>,
-    /// The roots the command line names, under the project each is in. A
-    /// project here draws these trees and no others: nothing is discovered
-    /// in it, and what `explicit` names for it is not read.
+    /// The beads the command line names, under the project each is in. Each
+    /// one's tree is read beside the ones discovery finds, and the view
+    /// starts focused on the bead.
     #[serde(skip)]
     pub named_on_the_command_line: BTreeMap<String, Vec<String>>,
 }
@@ -890,8 +890,8 @@ impl Config {
         self
     }
 
-    /// Roots named on the command line replace every other root of their
-    /// project. `<project>:<bead-id>` says whose tracker holds the bead; a
+    /// Beads named on the command line, which the view starts focused on.
+    /// `<project>:<bead-id>` says whose tracker holds the bead; a
     /// bare id can only mean the one project being read, so the terse form
     /// survives exactly as far as it is unambiguous.
     pub fn with_roots_named_on_the_command_line(
