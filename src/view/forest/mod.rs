@@ -81,6 +81,12 @@ fn matching(drawn: &[(Place, String)], query: &str) -> Vec<usize> {
 /// forest is rooted at — which is one place asked for twice rather than a
 /// bead reached twice, and the second ask is the one `listed` stops.
 ///
+/// `without` is the bead the mode draws elsewhere, by its place among the
+/// tree's beads, where this walk is the root behind the line — `layout`'s own
+/// `TreeLayout::draws` reads it the same way, and every copy of that bead is
+/// left out here for the reason `drawn_at_the_root` gives: the mode draws it
+/// where the forest is rooted, not here as well.
+///
 /// The children come from `Facts::split` and not from `links_below`, because
 /// a parent with enough finished children to make a run draws the unfinished
 /// ones first and the run after them — so the tracker's own order is not the
@@ -88,12 +94,14 @@ fn matching(drawn: &[(Place, String)], query: &str) -> Vec<usize> {
 /// Both halves are walked: a bead inside a run is drawn nowhere until the run
 /// is opened, and a search opens it, so leaving the run out would put beads
 /// beyond reach of the key that exists to reach them.
+#[allow(clippy::too_many_arguments)]
 fn step_down(
     tree: &Tree,
     facts: &TreeFacts,
     at: usize,
     above: &[usize],
     place: Place,
+    without: Option<usize>,
     listed: &mut BTreeSet<Place>,
     drawn: &mut Vec<(Place, String)>,
 ) {
@@ -107,7 +115,11 @@ fn step_down(
     let mut way = above.to_vec();
     way.push(at);
     let (shown, elided) = facts.split(tree, at, above);
-    for link in shown.into_iter().chain(elided) {
+    for link in shown
+        .into_iter()
+        .chain(elided)
+        .filter(|link| Some(link.bead) != without)
+    {
         let child = BeadKey {
             project: tree.project.clone(),
             id: tree.beads[link.bead].id.clone(),
@@ -118,6 +130,7 @@ fn step_down(
             link.bead,
             &way,
             place.step_to(child),
+            without,
             listed,
             drawn,
         );
@@ -1208,7 +1221,7 @@ impl Forest {
     fn beads_drawn(&self) -> Vec<(Place, String)> {
         let mut drawn = Vec::new();
         let mut listed = BTreeSet::new();
-        for (tree, way) in layout::walked(&self.snapshot, self.rooted().as_ref()) {
+        for (tree, way, without) in layout::walked(&self.snapshot, self.rooted().as_ref()) {
             let place = place_of_way(tree, &way);
             let (at, above) = way.split_last().expect("a way down ends somewhere");
             step_down(
@@ -1217,6 +1230,7 @@ impl Forest {
                 *at,
                 above,
                 place,
+                without,
                 &mut listed,
                 &mut drawn,
             );
@@ -8654,6 +8668,25 @@ credential_command = "secret harbour"
         assert_eq!(
             forest.next_match(true),
             Some(went_to("dunwich", "dun-9.1", 4, 4))
+        );
+    }
+
+    /// Rooted at one copy of a bead the tree also reaches another way, the
+    /// root behind the line leaves out every copy of it, since the mode draws
+    /// it where the forest is rooted instead — `drawn_at_the_root` already
+    /// says so for a single jump, and a search must agree: the other copy and
+    /// what only it reaches are rows nothing draws.
+    #[test]
+    fn rooting_at_one_copy_excludes_the_others_from_the_root_behind_the_line() {
+        let mut forest = flatten(drawn_twice_in_one_tree());
+        let [_, lower] = copies_of(&forest, "dun-9");
+        step_onto(&mut forest, lower);
+        assert!(forest.apply(Action::FocusForest));
+
+        assert_eq!(forest.seek("dun-9"), went_to("dunwich", "dun-9", 1, 2));
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("dunwich", "dun-9.1", 2, 2))
         );
     }
 
