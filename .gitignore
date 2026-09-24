@@ -28,6 +28,9 @@ CLAUDE.local.md
 .dolt/
 *.db
 
+# bd 1.3.0 leaves this behind after a read.
+/.beads.gate.lock
+
 # A seat's worktree is a checkout of this repository, not a source file.
 .claude/worktrees/
 
