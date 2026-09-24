@@ -601,6 +601,39 @@ mod tests {
         );
     }
 
+    /// `bd dep add` across prefixes, captured on the oldest bd README
+    /// supports and on the one this flake pins. Each tracker holds only
+    /// `ark-`, and its one row depends on a `dun-` bead held somewhere else.
+    const ACROSS_PROJECTS: [(&str, &str, &str); 2] = [
+        (
+            "1.1.0",
+            include_str!("../../tests/fixtures/bd_1.1.0_a_dependency_on_another_project.json"),
+            "dun-6hi",
+        ),
+        (
+            "1.3.0",
+            include_str!("../../tests/fixtures/bd_1.3.0_a_dependency_on_another_project.json"),
+            "dun-2e7",
+        ),
+    ];
+
+    #[test]
+    fn a_dependency_on_another_projects_bead_is_read_as_any_other_edge() {
+        for (bd, capture, theirs) in ACROSS_PROJECTS {
+            let beads = parse_beads(capture).expect("the captured rows parse");
+
+            assert_eq!(beads.len(), 1, "bd {bd}: the tracker holds only ark's bead");
+            assert_eq!(
+                beads[0].dependencies,
+                vec![Dependency {
+                    on: theirs.to_string(),
+                    edge: Edge::Blocks,
+                }],
+                "bd {bd}"
+            );
+        }
+    }
+
     #[test]
     fn statuses_map_onto_the_enum() {
         assert_eq!(row("bdi-r5l").status, Status::InProgress);
