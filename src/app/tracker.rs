@@ -161,7 +161,7 @@ pub(super) fn refresh_project(
     let tracker = trackers.of(project)?;
 
     let probed = tracker.fingerprint().and_then(Result::ok);
-    let named: BTreeSet<String> = panes_naming_a_bead_here(panes, project, cfg)
+    let named: BTreeSet<String> = beads_named_here(panes, project, cfg)
         .map(str::to_string)
         .collect();
     let roots = roots_named(cfg, project);
@@ -222,24 +222,29 @@ fn read_project(
     // bead with no parent is a root only where nothing nests it, and nothing
     // outside the edges can say whether anything does.
     let nesting = Nesting::of(&beads);
-    let discovering = discovers(cfg, project);
 
     let mut roots = roots_named(cfg, project);
-    if discovering {
-        let mut ancestors: BTreeMap<String, Climbed> = BTreeMap::new();
-        let mut climbed: BTreeSet<Climbed> = BTreeSet::new();
-        for bead in unfinished(&beads) {
-            climbed.extend(root_of(bead, &parents, &mut ancestors));
-        }
-        for named in panes_naming_a_bead_here(panes, project, cfg) {
-            climbed.extend(root_of(named, &parents, &mut ancestors));
-        }
-        roots.extend(
-            climbed
-                .into_iter()
-                .flat_map(|end| drawn_from(end, &nesting)),
-        );
+    let mut ancestors: BTreeMap<String, Climbed> = BTreeMap::new();
+    let mut climbed: BTreeSet<Climbed> = BTreeSet::new();
+    for bead in unfinished(&beads) {
+        climbed.extend(root_of(bead, &parents, &mut ancestors));
     }
+    for named in beads_named_here(panes, project, cfg) {
+        climbed.extend(root_of(named, &parents, &mut ancestors));
+    }
+    roots.extend(
+        climbed
+            .into_iter()
+            .flat_map(|end| drawn_from(end, &nesting)),
+    );
+    // The view focuses a bead the command line names, and one the tracker
+    // does not hold has no tree to be focused in. It is named as a root so
+    // that its tree reports it missing.
+    roots.extend(
+        on_the_command_line(cfg, project)
+            .filter(|id| !parents.contains_key(id))
+            .map(str::to_string),
+    );
 
     // A root the answer does not hold is one config or the command line
     // named: every other root came out of the answer itself, so a tree
@@ -251,9 +256,7 @@ fn read_project(
             (root, read)
         })
         .collect();
-    if discovering {
-        read.extend(what_no_root_reached(&nesting, &read));
-    }
+    read.extend(what_no_root_reached(&nesting, &read));
     read.sort_by(|(one, _), (two, _)| one.cmp(two));
 
     Ok(ProjectWork {
@@ -328,8 +331,8 @@ fn unfinished(beads: &[Bead]) -> impl Iterator<Item = &str> {
         .map(|bead| bead.id.as_str())
 }
 
-/// The trees named for this project: the command line's where it names any,
-/// and otherwise the config's, drawn beside the ones discovery finds.
+/// The trees the config names for this project, drawn beside the ones
+/// discovery finds.
 ///
 /// One place, because a refresh compares what it would read against what the
 /// standing read was taken under: two readings of the same table would agree
@@ -337,21 +340,33 @@ fn unfinished(beads: &[Bead]) -> impl Iterator<Item = &str> {
 /// never reads again or one that never skips.
 fn roots_named(cfg: &Config, project: &Project) -> BTreeSet<String> {
     cfg.roots
-        .named_on_the_command_line
+        .explicit
         .get(&project.name)
-        .or_else(|| cfg.roots.explicit.get(&project.name))
         .into_iter()
         .flatten()
         .cloned()
         .collect()
 }
 
-/// Whether discovery finds this project's roots. A root the command line
-/// names asks for that tree and not the others.
-fn discovers(cfg: &Config, project: &Project) -> bool {
-    !cfg.roots
+/// The beads the command line names in this project, which the view starts
+/// focused on.
+fn on_the_command_line<'a>(cfg: &'a Config, project: &Project) -> impl Iterator<Item = &'a str> {
+    cfg.roots
         .named_on_the_command_line
-        .contains_key(&project.name)
+        .get(&project.name)
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+}
+
+/// The beads named in this project that discovery climbs to the root of: the
+/// ones the live panes name and the ones the command line does.
+fn beads_named_here<'a>(
+    panes: &'a [Pane],
+    project: &'a Project,
+    cfg: &'a Config,
+) -> impl Iterator<Item = &'a str> {
+    panes_naming_a_bead_here(panes, project, cfg).chain(on_the_command_line(cfg, project))
 }
 
 /// What the live panes in this project's directory name. A pane placed in no
@@ -1483,75 +1498,92 @@ dunwich = ["bdi-404"]
             .collect()
     }
 
-    /// `bdi dunwich:dun-4` asks for that tree and not the others, so the
-    /// epic discovery would find in the same tracker is not drawn.
+    /// `bdi dunwich:dun-4` asks to be shown that tree, and the view focuses
+    /// it. The read is the one an unnamed start makes, with the named tree in
+    /// it even where nothing is open in it for discovery to find.
     #[test]
-    fn a_root_named_on_the_command_line_is_the_only_tree_its_project_draws() {
+    fn a_root_named_on_the_command_line_is_read_beside_the_ones_discovery_finds() {
         let cfg = with_roots_on_the_command_line(one_project(), &["dunwich:dun-4"]);
         let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
-        assert_eq!(drawn_roots(&snap), vec![("dunwich", "dun-4")]);
+        assert_eq!(
+            drawn_roots(&snap),
+            vec![("dunwich", "dun-7"), ("dunwich", "dun-4")]
+        );
     }
 
     /// The bare form is the same root where only one project is read.
     #[test]
-    fn a_bare_root_named_on_the_command_line_is_the_only_tree_its_project_draws() {
+    fn a_bare_root_named_on_the_command_line_is_read_as_the_qualified_one_is() {
         let cfg = with_roots_on_the_command_line(one_project(), &["dun-4"]);
         let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
 
         let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
-        assert_eq!(drawn_roots(&snap), vec![("dunwich", "dun-4")]);
+        assert_eq!(
+            drawn_roots(&snap),
+            vec![("dunwich", "dun-7"), ("dunwich", "dun-4")]
+        );
     }
 
-    /// The config's own roots are a standing preference, and naming a root
-    /// on the command line is asking for that tree instead.
+    /// The config's own roots are still read, so leaving the focus the named
+    /// root starts in puts back the forest an unnamed start draws.
     #[test]
-    fn a_root_named_on_the_command_line_replaces_the_roots_the_config_names() {
+    fn a_root_named_on_the_command_line_leaves_the_roots_the_config_names() {
         let cfg = with_roots_on_the_command_line(one_project_with_a_root_named(), &["dun-4"]);
         let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
+        let unnamed = run(
+            &one_project_with_a_root_named(),
+            &panes(),
+            &trackers,
+            Filter::All,
+            now(),
+        );
 
         let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
-        assert_eq!(drawn_roots(&snap), vec![("dunwich", "dun-4")]);
+        let mut expected = drawn_roots(&unnamed);
+        expected.push(("dunwich", "dun-4"));
+        expected.sort();
+        let mut drawn = drawn_roots(&snap);
+        drawn.sort();
+        assert_eq!(drawn, expected);
     }
 
-    /// A pane naming a bead is discovery too, and adds no tree beside the
-    /// one the reader asked for.
+    /// A bead below a root is focused where its root draws it, so what is read
+    /// is the tree it is in rather than a second tree starting at the bead.
     #[test]
-    fn a_bead_a_pane_names_adds_no_tree_beside_a_root_named_on_the_command_line() {
-        let cfg = with_roots_on_the_command_line(one_project(), &["dun-7"]);
-        let panes = Provider::holding(vec![named(
-            pane("w:p4", DUNWICH, PaneStatus::Working),
-            "dun-4",
-        )]);
-        let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
-
-        let snap = run(&cfg, &panes, &trackers, Filter::All, now());
-
-        assert_eq!(drawn_roots(&snap), vec![("dunwich", "dun-7")]);
-    }
-
-    /// A bead no root reaches is drawn so that some tree reports it. With a
-    /// root named, the reader asked for that tree alone.
-    #[test]
-    fn a_bead_no_root_reaches_adds_no_tree_beside_a_root_named_on_the_command_line() {
-        let cfg = with_roots_on_the_command_line(one_project(), &["dun-7"]);
-        let lost = r#"[{"id":"dun-3","title":"its parent was deleted","status":"closed",
-                        "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
-                        "priority":2,"issue_type":"task"}]"#;
-        let trackers = dunwich_with(dunwich_tracker().also(beads(lost)));
+    fn a_bead_below_a_root_named_on_the_command_line_reads_the_tree_it_is_in() {
+        let cfg = with_roots_on_the_command_line(one_project(), &["dun-7.1"]);
+        let trackers = dunwich_with(dunwich_tracker());
 
         let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
 
         assert_eq!(drawn_roots(&snap), vec![("dunwich", "dun-7")]);
     }
 
-    /// Discovery is replaced only in the project the root is named under.
+    /// A bead the tracker does not hold has no tree to focus, and is reported
+    /// where its tree would be rather than dropped.
     #[test]
-    fn a_project_the_command_line_names_no_root_in_keeps_discovery() {
+    fn a_root_named_on_the_command_line_that_the_tracker_lacks_is_reported() {
+        let cfg = with_roots_on_the_command_line(one_project(), &["dun-404"]);
+        let trackers = dunwich_with(dunwich_tracker());
+
+        let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
+
+        assert_eq!(
+            rooted_at(&snap, "dun-404").tracker,
+            TrackerState::RootNotFound
+        );
+        assert!(drawn_roots(&snap).contains(&("dunwich", "dun-7")));
+    }
+
+    /// A root named under one project changes nothing about how another is
+    /// read.
+    #[test]
+    fn a_project_the_command_line_names_no_root_in_is_read_as_before() {
         let cfg = with_roots_on_the_command_line(two_projects(), &["dunwich:dun-4"]);
         let trackers = Fakes::default()
             .with("dunwich", dunwich_tracker().also(beads(MAST_TREE)))
@@ -1561,7 +1593,7 @@ dunwich = ["bdi-404"]
 
         assert_eq!(
             drawn_roots(&snap),
-            vec![("dunwich", "dun-4"), ("ferry", "x-1")]
+            vec![("dunwich", "dun-7"), ("dunwich", "dun-4"), ("ferry", "x-1")]
         );
     }
 
