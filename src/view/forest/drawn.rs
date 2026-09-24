@@ -46,20 +46,37 @@ pub(super) struct Ground {
     pub(super) beads: HashMap<Counted, Count>,
     /// Every run counted, by the bead copy it hangs under.
     pub(super) runs: HashMap<Counted, Count>,
+    /// The beads each tree drawn behind the line leaves out, by the tree's
+    /// index, because the forest is rooted at them.
+    pub(super) left_out: HashMap<usize, Vec<usize>>,
     /// Whether what a shut fold hides is drawn as well.
     pub(super) beneath_shut: bool,
 }
 
 /// What a subtree left undrawn is counted from: a bead copy, where it
 /// stands on the spine, which way the scope over it points every fold that
-/// rests, and the bead the walk leaves out.
+/// rests, and whether the walk leaves out the beads its tree is rooted at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Counted {
     pub(super) tree: usize,
     pub(super) at: usize,
     pub(super) stand: Stand,
     pub(super) forced: Option<bool>,
-    pub(super) without: Option<usize>,
+    pub(super) without: bool,
+}
+
+impl Ground {
+    pub(super) fn left_out(&self, counted: &Counted) -> &[usize] {
+        left_out(&self.left_out, counted)
+    }
+}
+
+/// The beads a counted subtree leaves out: its tree's, where it leaves any.
+pub(super) fn left_out<'k>(by_tree: &'k HashMap<usize, Vec<usize>>, counted: &Counted) -> &'k [usize] {
+    match by_tree.get(&counted.tree) {
+        Some(beads) if counted.without => beads,
+        _ => &[],
+    }
 }
 
 /// What a subtree adds up to: its rows, and how wide each identity cell

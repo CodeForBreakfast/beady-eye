@@ -87,13 +87,17 @@ pub struct Forest {
     room: usize,
     lines: Drawn,
     selected: usize,
-    /// The bead the forest is rooted at, where the reader has asked for one.
+    /// The beads the forest is rooted at, where the reader has asked for any:
+    /// the one Shift+F was pressed on, or the ones the command line named.
     ///
     /// The line they asked on rather than the bead standing on it, so a bead
     /// drawn more than once roots the forest at the copy they were on. Held
     /// rather than derived, because the selection moves afterwards and the
-    /// mode does not move with it.
-    focused: Option<Place>,
+    /// mode does not move with it. None is at or beneath another.
+    focused: Vec<Place>,
+    /// The beads the command line named that no collection has drawn yet,
+    /// each focused as one does.
+    named: Vec<BeadKey>,
     /// What was last searched for, which `n` and `N` step through.
     ///
     /// The text and not the matches it found. A match set held between
@@ -122,7 +126,8 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         room: 0,
         lines: Drawn::default(),
         selected: 0,
-        focused: None,
+        focused: Vec::new(),
+        named: Vec::new(),
         searched: None,
         layout: row::Layout::default(),
     };
@@ -250,8 +255,14 @@ impl Forest {
         //
         // Found again by the bead rather than by the way down to it, because
         // a tracker that reparented it has moved the bead and not lost it.
-        let focused = self.focused.take();
-        self.focused = focused.as_ref().and_then(|place| self.rerooted(place));
+        let focused = std::mem::take(&mut self.focused);
+        self.focused = outermost(
+            focused
+                .iter()
+                .filter_map(|place| self.rerooted(place))
+                .collect(),
+        );
+        let first_focused = self.focus_the_named();
         if self.focused != focused {
             self.answer();
         }
@@ -265,7 +276,43 @@ impl Forest {
                 other => other,
             })
             .find(|handle| self.present(handle));
+        if let Some(place) = first_focused {
+            self.cursor = Some(Handle::Bead(place));
+        }
         self.lay_out();
+    }
+
+    /// Start focused on the beads the command line named, as Shift+F on each
+    /// would: now for the ones this snapshot draws, and for the rest when a
+    /// collection draws them.
+    pub fn focus_when_drawn(&mut self, beads: Vec<BeadKey>) {
+        self.named = beads;
+        if let Some(place) = self.focus_the_named() {
+            self.answer();
+            self.cursor = Some(Handle::Bead(place));
+            self.lay_out();
+        }
+    }
+
+    /// Focus each named bead the snapshot draws, and give up on one whose
+    /// project has been read without it: its tracker reports it missing
+    /// where its tree would be. The selection goes to the first bead focused
+    /// where nothing was, as it is where Shift+F was pressed, and that bead
+    /// comes back.
+    fn focus_the_named(&mut self) -> Option<Place> {
+        if self.named.is_empty() {
+            return None;
+        }
+        let was_rooted = !self.focused.is_empty();
+        for key in std::mem::take(&mut self.named) {
+            match self.place_of(&key) {
+                Some(place) => self.focused.push(place),
+                None if !self.snapshot.read_at.contains_key(&key.project) => self.named.push(key),
+                None => {}
+            }
+        }
+        self.focused = outermost(std::mem::take(&mut self.focused));
+        self.focused.first().filter(|_| !was_rooted).cloned()
     }
 
     /// The live work each fold the user shut is currently shut over.
@@ -306,7 +353,7 @@ impl Forest {
             &self.snapshot,
             &self.facts,
             &self.folds,
-            None,
+            &[],
             &[],
             &self.layout,
         );
@@ -423,9 +470,12 @@ impl Forest {
     /// is: the mode draws the bead where a root is drawn and stops there, so
     /// the beads above it are behind the line the other roots are behind.
     fn held_back(&self, place: &Place) -> bool {
-        self.focused.as_ref().is_some_and(|focused| {
-            focused.tree != place.tree || !place.steps.starts_with(&focused.steps)
-        })
+        !self.focused.is_empty() && self.focused_over(place).is_none()
+    }
+
+    /// The focused bead a place is at or beneath, where it is.
+    fn focused_over(&self, place: &Place) -> Option<&Place> {
+        self.focused.iter().find(|focused| at_or_beneath(place, focused))
     }
 
     fn hidden(&self, root: &BeadKey) -> bool {
@@ -560,17 +610,29 @@ impl Forest {
     }
 
     /// Root the forest at the selected bead, or put it back where it is
-    /// already rooted at one.
+    /// already rooted.
     ///
     /// Putting it back leaves the selection on the bead the reader rooted it
     /// at, wherever they had walked to under the mode: they asked to finish
     /// that bead, and the forest they came back to is the one they left.
+    /// Rooted at several, that is the one the selection is under, or the
+    /// first where it is under none.
     ///
     /// A line carrying no bead roots the forest at nothing. A root whose
     /// tracker refused holds a place but no node, and there is no tree to draw
     /// from a bead that is not there.
+    ///
+    /// Either way the beads the command line named and no collection has
+    /// drawn yet are let go of: the reader has taken the mode in hand.
     fn focus_forest(&mut self) {
-        if let Some(place) = self.focused.take() {
+        self.named.clear();
+        if !self.focused.is_empty() {
+            let under = match &self.cursor {
+                Some(Handle::Bead(on)) => self.focused_over(on).cloned(),
+                _ => None,
+            };
+            let focused = std::mem::take(&mut self.focused);
+            let place = under.unwrap_or_else(|| focused[0].clone());
             self.answer();
             let on = Handle::Bead(place.clone());
             // Drawn again first, so what is shut over the bead is asked of
@@ -594,7 +656,7 @@ impl Forest {
             return;
         };
         if self.locate(&place).is_some() {
-            self.focused = Some(place);
+            self.focused = vec![place];
             self.answer();
         }
     }
@@ -617,19 +679,23 @@ impl Forest {
         self.place_of(place.steps.last().unwrap_or(&place.tree))
     }
 
-    /// Where the forest is rooted, where the reader has rooted it at a bead
-    /// the snapshot in hand still draws.
+    /// Where the forest is rooted, at each focused bead the snapshot in hand
+    /// still draws.
     ///
     /// Resolved against that snapshot on every layout rather than kept, so a
-    /// collection that moved the bead is followed and one that dropped it
-    /// ends the mode.
-    fn rooted(&self) -> Option<Rooted> {
-        let place = self.focused.as_ref()?;
-        let (_, way) = self.locate(place)?;
-        Some(Rooted {
-            place: place.clone(),
-            way,
-        })
+    /// collection that moved a bead is followed and one that dropped it
+    /// lets it go.
+    fn rooted(&self) -> Vec<Rooted> {
+        self.focused
+            .iter()
+            .filter_map(|place| {
+                let (_, way) = self.locate(place)?;
+                Some(Rooted {
+                    place: place.clone(),
+                    way,
+                })
+            })
+            .collect()
     }
 
     /// `s`: put the rule after the one in force at the selection in force
@@ -695,11 +761,11 @@ impl Forest {
     /// Answer what layout reads of the snapshot in hand, here and not per
     /// keystroke.
     ///
-    /// The bead the forest is rooted at is where the rule in force over it
+    /// Each bead the forest is rooted at is where the rule in force over it
     /// begins, as a rule set on its line would.
     fn answer(&mut self) {
         let mut spines = self.spines.clone();
-        if let Some(place) = &self.focused {
+        for place in &self.focused {
             spines
                 .entry(Handle::Bead(place.clone()))
                 .or_insert_with(|| self.spine_on(place));
@@ -819,7 +885,7 @@ impl Forest {
             &self.snapshot,
             &self.facts,
             &self.folds,
-            rooted.as_ref(),
+            &rooted,
             also,
             &self.layout,
         )
@@ -1149,7 +1215,7 @@ impl Forest {
                 &self.snapshot,
                 group.kind,
                 group.project.as_deref(),
-                self.rooted().as_ref(),
+                &self.rooted(),
             )
             .and_then(|key| self.place_of(&key)),
             _ => None,
@@ -1196,7 +1262,7 @@ impl Forest {
     /// A bead reachable more than once is drawn more than once and counted
     /// once per way down to it.
     fn matches(&self, sought: Sought) -> Matches<'_> {
-        Matches::of(&self.snapshot, &self.facts, self.rooted().as_ref(), sought)
+        Matches::of(&self.snapshot, &self.facts, &self.rooted(), sought)
     }
 
     /// Whether the forest can take the reader to a bead: whether any tree it
@@ -1249,20 +1315,21 @@ impl Forest {
     /// the line — so the first way down to that bead, and to everything only
     /// it reaches, is a way down to a row nothing draws.
     fn drawn_at_the_root(&self, key: &BeadKey) -> Option<Place> {
-        let focused = self.focused.as_ref()?;
-        if focused.steps.last().unwrap_or(&focused.tree) == key {
-            return Some(focused.clone());
-        }
-        let (tree, way) = self.locate(focused)?;
-        let (at, above) = way.split_last()?;
-        stepped_to(
-            tree,
-            self.facts.tree(&root_key(tree)),
-            key,
-            *at,
-            above,
-            focused,
-        )
+        self.focused.iter().find_map(|focused| {
+            if focused.steps.last().unwrap_or(&focused.tree) == key {
+                return Some(focused.clone());
+            }
+            let (tree, way) = self.locate(focused)?;
+            let (at, above) = way.split_last()?;
+            stepped_to(
+                tree,
+                self.facts.tree(&root_key(tree)),
+                key,
+                *at,
+                above,
+                focused,
+            )
+        })
     }
 
     /// Open everything shut over a line: everything the line hangs under, and
@@ -1370,7 +1437,7 @@ impl Forest {
             &self.snapshot,
             &self.facts,
             &self.folds,
-            rooted.as_ref(),
+            &rooted,
             &self.layout,
         );
         let was = std::mem::replace(&mut self.lines, drawn);
@@ -1435,7 +1502,7 @@ impl Forest {
         let rooted = self.rooted();
         layout::every_group(&self.snapshot)
             .find(|(kind, project)| {
-                layout::group_drawn(&self.snapshot, *kind, project.as_deref(), rooted.as_ref())
+                layout::group_drawn(&self.snapshot, *kind, project.as_deref(), &rooted)
             })
             .map(|(kind, project)| Handle::Group(kind, project))
     }
@@ -1450,7 +1517,7 @@ impl Forest {
                 &self.snapshot,
                 *kind,
                 project.as_deref(),
-                self.rooted().as_ref(),
+                &self.rooted(),
             ),
             Handle::Item(key) => layout::group_holding(&self.snapshot, key).is_some(),
             Handle::Project(project) => layout::project_drawn(&self.snapshot, project),
@@ -1682,6 +1749,25 @@ fn beneath_the_line(place: &Place, handle: &Handle) -> bool {
     under.tree == place.tree
         && under.steps.len() > place.steps.len()
         && under.steps.starts_with(&place.steps)
+}
+
+/// Whether the line at `place` is the one at `over` or beneath it.
+fn at_or_beneath(place: &Place, over: &Place) -> bool {
+    place.tree == over.tree && place.steps.starts_with(&over.steps)
+}
+
+/// The places given, less any at or beneath another: rooted at a bead, the
+/// forest already draws everything under it there.
+fn outermost(places: Vec<Place>) -> Vec<Place> {
+    let mut kept: Vec<Place> = Vec::with_capacity(places.len());
+    for place in places {
+        if kept.iter().any(|over| at_or_beneath(&place, over)) {
+            continue;
+        }
+        kept.retain(|under| !at_or_beneath(under, &place));
+        kept.push(place);
+    }
+    kept
 }
 
 #[cfg(test)]
@@ -4122,7 +4208,7 @@ credential_command = "secret harbour"
                     &forest.snapshot,
                     &forest.facts,
                     &forest.folds,
-                    forest.rooted().as_ref(),
+                    &forest.rooted(),
                 );
                 assert_eq!(
                     forest.lines(),
@@ -6501,7 +6587,7 @@ credential_command = "secret harbour"
         handles.extend(
             layout::every_group(&snapshot)
                 .filter(|(kind, project)| {
-                    layout::group_drawn(&snapshot, *kind, project.as_deref(), None)
+                    layout::group_drawn(&snapshot, *kind, project.as_deref(), &[])
                 })
                 .map(|(kind, project)| Handle::Group(kind, project)),
         );
