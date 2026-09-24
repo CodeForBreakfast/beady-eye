@@ -1228,11 +1228,25 @@ fn a_bead_waiting_on_one_the_other_tracker_does_not_hold_says_so_at_the_edge() {
 #[test]
 fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_names_that_project_at_the_edge() {
     let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
-    let dunwich =
-        Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
+    let dunwich = Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
 
     assert_eq!(
         orphaned_under_the_beacon(&cfg, &arkham_beside(dunwich)),
+        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
+    );
+}
+
+/// A run scoped to arkham leaves dunwich unread, and a project left out is
+/// still configured, so the bead may be dunwich's.
+#[test]
+fn a_bead_waiting_on_one_in_a_project_the_run_left_out_names_that_project_at_the_edge() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
+        .expect("the config parses")
+        .scoped_to(&["arkham".to_string()])
+        .expect("arkham is configured");
+
+    assert_eq!(
+        orphaned_under_the_beacon(&cfg, &arkham_waiting_on_dunwich()),
         json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }
