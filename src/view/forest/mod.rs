@@ -10389,6 +10389,71 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A bead the forest opens on its own, for an agent beneath it, draws the
+    /// line after the blocker it opened for, as the last thing beneath it.
+    #[test]
+    fn a_bead_opened_for_an_agent_draws_its_missing_blocker_last_beneath_it() {
+        let forest = flatten(harbour_and_dunwich(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked"},
+                {"id":"hbr-1.1","title":"sound the channel","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"},
+                                 {"depends_on_id":"dun-404","type":"blocks"},
+                                 {"depends_on_id":"dun-7","type":"blocks"}]},
+                {"id":"hbr-1.2","title":"moor the tender","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]}]"#,
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+            &[("harbour", "hbr-1")],
+            &["dun-7"],
+        ));
+
+        assert_eq!(
+            sketch_under(&forest, "hbr-1"),
+            vec![
+                "  └── ● hbr-1 clear the berth".to_string(),
+                "      ├── ! OrphanedDependencies(1)".to_string(),
+                "      ├── ○ .1 sound the channel".to_string(),
+                "      │   ├┄┄ ○ dun-7 lift the ground station".to_string(),
+                "      │   └┄┄ ⚠ dun-404 NotHeld { projects: [\"dunwich\"] }".to_string(),
+                "      └── ○ .2 moor the tender".to_string(),
+            ],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A bead whose one blocker is missing, opened with the rest of the
+    /// forest rather than by a fold of its own, is counted with the line
+    /// beneath it. What is drawn on reaching in is exactly what was counted.
+    #[test]
+    fn a_bead_opened_with_the_forest_counts_the_line_saying_its_blocker_is_missing() {
+        let mut forest = flatten(harbour_and_dunwich(
+            r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked"},
+                {"id":"hbr-1.1","title":"sound the channel","status":"open",
+                 "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"},
+                                 {"depends_on_id":"dun-404","type":"blocks"}]}]"#,
+            r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+            &[("harbour", "hbr-1")],
+            &[],
+        ));
+        forest.apply(Action::ExpandForest);
+        let drawn = forest.lines();
+        let mut lines = 0;
+        for top in drawn.top() {
+            drawn.visit(top, &mut |_| {
+                lines += 1;
+                true
+            });
+        }
+
+        assert_eq!(lines, drawn.len(), "{:#?}", sketch(&forest));
+        assert_eq!(
+            sketch_under(&forest, "hbr-1.1")[1..],
+            ["          └┄┄ ⚠ dun-404 NotHeld { projects: [\"dunwich\"] }".to_string()],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
     /// A bead whose one blocker is missing has something beneath it, so it
     /// folds, and the line is drawn when it opens.
     #[test]

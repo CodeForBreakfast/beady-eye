@@ -1466,10 +1466,7 @@ mod tests {
     }
 
     /// The same, with configured projects whose trackers gave no answer.
-    fn across_without<'a>(
-        answers: &'a [(&'a str, Vec<Bead>)],
-        not_read: &[&'a str],
-    ) -> Across<'a> {
+    fn across_without<'a>(answers: &'a [(&'a str, Vec<Bead>)], not_read: &[&'a str]) -> Across<'a> {
         Across::of(
             answers
                 .iter()
@@ -1480,9 +1477,7 @@ mod tests {
 
     /// The orphaned dependencies drawn beneath `id`.
     fn orphaned_beneath<'a>(a: &'a Assembled, id: &str) -> &'a [OrphanedDependency] {
-        a.orphaned
-            .get(&index_of(a, id))
-            .map_or(&[], Vec::as_slice)
+        a.orphaned.get(&index_of(a, id)).map_or(&[], Vec::as_slice)
     }
 
     fn orphaned(id: &str, why: Unreachable) -> OrphanedDependency {
@@ -1502,7 +1497,10 @@ mod tests {
     #[test]
     fn a_blocker_another_answer_should_hold_and_does_not_is_drawn_as_not_held_there() {
         let answers = [
-            answer("arkham", &[bead("ark-1", "open", &[dep("dun-404", "blocks")])]),
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-404", "blocks")])],
+            ),
             answer("dunwich", &[bead("dun-7", "open", &[])]),
         ];
         let a = across(&answers)
@@ -1544,12 +1542,39 @@ mod tests {
         );
     }
 
+    /// Several missing blockers are in id order, the way beads are.
+    #[test]
+    fn missing_blockers_are_in_id_order() {
+        let answers = [answer(
+            "arkham",
+            &[bead(
+                "ark-1",
+                "open",
+                &[dep("ark-10", "blocks"), dep("ark-9", "blocks")],
+            )],
+        )];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1")
+                .iter()
+                .map(|orphaned| orphaned.id.as_str())
+                .collect::<Vec<_>>(),
+            ["ark-9", "ark-10"]
+        );
+    }
+
     /// A prefix no answer carries belongs to a project bdi was not given,
     /// when every project it was given answered.
     #[test]
     fn a_blocker_whose_prefix_no_project_carries_is_drawn_as_unconfigured() {
         let answers = [
-            answer("arkham", &[bead("ark-1", "open", &[dep("inn-4", "blocks")])]),
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("inn-4", "blocks")])],
+            ),
             answer("dunwich", &[bead("dun-7", "open", &[])]),
         ];
         let a = across(&answers)

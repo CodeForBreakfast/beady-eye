@@ -324,10 +324,13 @@ mod tests {
                  "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}]"#,
         )
         .expect("the rows parse");
-        let assembled = crate::model::tree::Across::of([
-            ("harbour", crate::model::tree::Nesting::of(&harbour)),
-            ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
-        ], [])
+        let assembled = crate::model::tree::Across::of(
+            [
+                ("harbour", crate::model::tree::Nesting::of(&harbour)),
+                ("dunwich", crate::model::tree::Nesting::of(&dunwich)),
+            ],
+            [],
+        )
         .assemble("harbour", "hbr-1")
         .expect("the rows assemble");
 
