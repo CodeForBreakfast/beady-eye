@@ -666,6 +666,15 @@ impl Shown {
     }
 
     fn apply(&mut self, action: Action) -> bool {
+        // A search step, and the `/` that opens the prompt a landing is typed
+        // into, are the only presses that leave what the last step opened for
+        // the next one to shut.
+        if !matches!(
+            action,
+            Action::NextMatch | Action::PreviousMatch | Action::Search
+        ) {
+            self.forest.keep_what_is_open();
+        }
         // Asking for the selected bead's pane to be brought to the front
         // changes nothing on this screen, and a row with no pane is a no-op:
         // there is nothing to focus and nothing has gone wrong. What the
@@ -1482,10 +1491,53 @@ mod tests {
     }
 
     fn a_grove_of(children: Vec<usize>) -> Snapshot {
-        let bead = |id: String| Node {
+        let mut beads = vec![a_grove_bead("grv-1", "a bead in the grove")];
+        beads.extend(
+            children
+                .iter()
+                .map(|n| a_grove_bead(&format!("grv-1.{n}"), "a bead in the grove")),
+        );
+        let mut links = vec![(1..beads.len())
+            .map(|bead| Link {
+                bead,
+                edge: Edge::ParentChild,
+                first: true,
+            })
+            .collect()];
+        links.resize(beads.len(), Vec::new());
+        a_grove_linked(beads, links)
+    }
+
+    /// A grove whose root has two branches, each holding one leaf, so a
+    /// search for `leaf` has to open a different branch for each match.
+    fn a_grove_of_two_branches() -> Snapshot {
+        let beads = vec![
+            a_grove_bead("grv-1", "a bead in the grove"),
+            a_grove_bead("grv-1.1", "a branch"),
+            a_grove_bead("grv-1.1.1", "a leaf"),
+            a_grove_bead("grv-1.2", "a branch"),
+            a_grove_bead("grv-1.2.1", "a leaf"),
+        ];
+        let child = |bead| Link {
+            bead,
+            edge: Edge::ParentChild,
+            first: true,
+        };
+        let links = vec![
+            vec![child(1), child(3)],
+            vec![child(2)],
+            Vec::new(),
+            vec![child(4)],
+            Vec::new(),
+        ];
+        a_grove_linked(beads, links)
+    }
+
+    fn a_grove_bead(id: &str, title: &str) -> Node {
+        Node {
             project: "grove".to_string(),
-            id,
-            title: "a bead in the grove".to_string(),
+            id: id.to_string(),
+            title: title.to_string(),
             status: Status::InProgress,
             issue_type: "task".to_string(),
             priority: 2,
@@ -1507,25 +1559,16 @@ mod tests {
             parent: None,
             depends_on: Vec::new(),
             blocks: Vec::new(),
-        };
+        }
+    }
 
-        let mut beads = vec![bead("grv-1".to_string())];
-        beads.extend(children.iter().map(|n| bead(format!("grv-1.{n}"))));
-        let mut links = vec![(1..beads.len())
-            .map(|bead| Link {
-                bead,
-                edge: Edge::ParentChild,
-                first: true,
-            })
-            .collect()];
-        links.resize(beads.len(), Vec::new());
-
+    fn a_grove_linked(beads: Vec<Node>, links: Vec<Vec<Link>>) -> Snapshot {
         let tree = Arc::new(Tree {
             project: "grove".to_string(),
             root: "grv-1".to_string(),
             title: "a tree with a great many beads".to_string(),
             counts: Counts {
-                total: children.len(),
+                total: beads.len() - 1,
                 finished: 0,
                 live_agents: 0,
                 anomalies: 0,
@@ -4012,6 +4055,33 @@ mod tests {
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
+    }
+
+    /// Opening the bead window is the reader's act, so what the search step
+    /// under it opened is theirs from then on and the next step leaves it
+    /// open. Without the window, the same step shuts it.
+    #[test]
+    fn opening_the_bead_window_keeps_open_what_a_search_step_opened() {
+        let first_leaf = bead("grove", "grv-1.1.1");
+        for window in [false, true] {
+            let mut shown = shown(a_grove_of_two_branches());
+            shown.apply(Action::CollapseForest);
+            search_for(&mut shown, "leaf");
+            assert_eq!(cursor(&shown), Some(&first_leaf));
+            if window {
+                assert!(shown.apply(Action::ShowBead));
+            }
+
+            press(&mut shown, KeyCode::Char('n'));
+
+            assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2.1")));
+            let drawn = shown
+                .forest
+                .lines()
+                .iter()
+                .any(|line| line.bead() == Some(&first_leaf));
+            assert_eq!(drawn, window, "with the window open: {window}");
+        }
     }
 
     /// `n` before anything has been searched for has nothing to step through.

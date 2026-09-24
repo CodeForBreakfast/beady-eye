@@ -78,7 +78,13 @@ pub(super) fn item_key(item: &Item) -> Option<ItemKey> {
 /// The map itself never leaves: a fold is asked which way it points, pointed,
 /// or let go of, and nothing else.
 #[derive(Default)]
-pub(super) struct Folds(BTreeMap<Handle, Fold>);
+pub(super) struct Folds {
+    lines: BTreeMap<Handle, Fold>,
+    /// The folds the last search step opened, each with the way its own fold
+    /// went before the step, until the next step puts them back or the reader
+    /// keeps them.
+    stepped_open: Vec<(Handle, Option<Way>)>,
+}
 
 /// What the reader set on one line.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -125,7 +131,7 @@ impl Folds {
     /// caller knows the tree a line came from, so it says where the line
     /// rests rather than being asked to re-derive it here.
     pub(super) fn pointed(&self, handle: &Handle, over: Option<&Scope>) -> Option<bool> {
-        match self.0.get(handle).and_then(|fold| fold.line) {
+        match self.lines.get(handle).and_then(|fold| fold.line) {
             Some(Way::Open) => return Some(true),
             Some(Way::Shut) => return Some(false),
             Some(Way::Rests) => return None,
@@ -141,7 +147,7 @@ impl Folds {
         handle: &Handle,
         over: Option<&'a Scope>,
     ) -> Option<&'a Scope> {
-        self.0
+        self.lines
             .get(handle)
             .and_then(|fold| fold.scope.as_ref())
             .or(over)
@@ -150,27 +156,27 @@ impl Folds {
     /// Point one fold the way the user asked.
     pub(super) fn set(&mut self, handle: Handle, open: bool) {
         let way = if open { Way::Open } else { Way::Shut };
-        self.0.entry(handle).or_default().line = Some(way);
+        self.lines.entry(handle).or_default().line = Some(way);
     }
 
     /// Point a line and every fold beneath it one way. Whatever the reader
     /// had set beneath it goes: the scope is what they are asking for now.
     pub(super) fn set_over(&mut self, handle: Handle, open: bool, beneath: &[Handle]) {
         for under in beneath {
-            self.0.remove(under);
+            self.lines.remove(under);
         }
         let scope = Some(Scope::Points { open });
-        self.0.insert(handle, Fold { line: None, scope });
+        self.lines.insert(handle, Fold { line: None, scope });
     }
 
     /// Hand a line and everything beneath it back to the default, and hold
     /// it there against whatever scope stands over it.
     pub(super) fn let_go(&mut self, handle: Handle, beneath: &[Handle]) {
         for under in beneath {
-            self.0.remove(under);
+            self.lines.remove(under);
         }
         let scope = Some(Scope::Rests);
-        self.0.insert(handle, Fold { line: None, scope });
+        self.lines.insert(handle, Fold { line: None, scope });
     }
 
     /// Hand one line's own fold back to the default, and hold it there
@@ -178,14 +184,14 @@ impl Folds {
     /// stays: `d` by the line puts back each line it drew and no more, and
     /// the lines it did not draw go on answering from that scope.
     pub(super) fn put_back(&mut self, handle: Handle) {
-        self.0.entry(handle).or_default().line = Some(Way::Rests);
+        self.lines.entry(handle).or_default().line = Some(Way::Rests);
     }
 
     /// The folds the user has shut, which are the only ones that can be
     /// spent: a fold left open holds nothing back. A scope that shut is one
     /// of them, on the line it was set on.
     pub(super) fn shut(&self) -> impl Iterator<Item = &Handle> {
-        self.0
+        self.lines
             .iter()
             .filter(|(_, fold)| fold.holds_shut())
             .map(|(handle, _)| handle)
@@ -197,7 +203,7 @@ impl Folds {
     /// with it, and the scope goes on standing over the rest.
     pub(super) fn spend(&mut self, handle: &Handle, path: impl IntoIterator<Item = Handle>) {
         let scope_shut = matches!(
-            self.0.get(handle),
+            self.lines.get(handle),
             Some(Fold {
                 scope: Some(Scope::Points { open: false }),
                 ..
@@ -215,7 +221,7 @@ impl Folds {
     /// opened by hand stays as they opened it: it holds nothing back, so
     /// nothing arriving beneath it spends it.
     fn rest(&mut self, handle: Handle) {
-        let fold = self.0.entry(handle).or_default();
+        let fold = self.lines.entry(handle).or_default();
         if fold.line != Some(Way::Open) {
             fold.line = Some(Way::Rests);
         }
@@ -223,14 +229,43 @@ impl Folds {
 
     /// Let go of every fold at once.
     pub(super) fn clear(&mut self) {
-        self.0.clear();
+        self.lines.clear();
+        self.stepped_open.clear();
+    }
+
+    /// Open one fold for a search step, until the next step puts it back the
+    /// way it went before.
+    pub(super) fn open_for_a_step(&mut self, handle: Handle) {
+        let fold = self.lines.entry(handle.clone()).or_default();
+        self.stepped_open.push((handle, fold.line));
+        fold.line = Some(Way::Open);
+    }
+
+    /// Put every fold the last search step opened back the way it went
+    /// before the step.
+    pub(super) fn shut_what_the_last_step_opened(&mut self) {
+        for (handle, was) in self.stepped_open.drain(..).rev() {
+            let Some(fold) = self.lines.get_mut(&handle) else {
+                continue;
+            };
+            fold.line = was;
+            if *fold == Fold::default() {
+                self.lines.remove(&handle);
+            }
+        }
+    }
+
+    /// Make whatever the last search step opened the reader's, so no later
+    /// step shuts it.
+    pub(super) fn keep_what_the_last_step_opened(&mut self) {
+        self.stepped_open.clear();
     }
 
     /// Every line the folds name: the ones with an entry. A line named
     /// nowhere here answers from the scope over it alone, and so does
     /// everything beneath it.
     pub(super) fn mentioned(&self) -> impl Iterator<Item = &Handle> {
-        self.0.keys()
+        self.lines.keys()
     }
 
     /// Which way every fold under a scope answers, where nothing nearer
@@ -244,7 +279,7 @@ impl Folds {
 
     #[cfg(test)]
     pub(super) fn entries(&self) -> impl Iterator<Item = (&Handle, &Fold)> {
-        self.0.iter()
+        self.lines.iter()
     }
 }
 

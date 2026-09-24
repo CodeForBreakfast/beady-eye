@@ -462,6 +462,7 @@ impl Forest {
     /// holds, and the draw is skipped: a key that moves only the selection
     /// answers at once on a forest of any size.
     pub fn apply(&mut self, action: Action) -> bool {
+        self.keep_what_is_open();
         let selected = self.selected;
         // The rule in force is on the screen as well as in the rows, and a
         // forest whose every fold is set by hand draws the same rows under
@@ -861,6 +862,7 @@ impl Forest {
     /// pointer named that line and not the one below it. Which lines those
     /// are is the keyboard's question, asked here in the keyboard's words.
     pub fn select_line(&mut self, at: usize) -> bool {
+        self.keep_what_is_open();
         let was = self.selected;
         let mut revealed = false;
         if self.lines.get(at).is_some_and(selectable) {
@@ -893,10 +895,35 @@ impl Forest {
     /// been folded over it since. Reports whether the selection is on it now,
     /// which it is not where the snapshot has stopped drawing that line.
     pub fn go_to_place(&mut self, place: &Place) -> bool {
+        self.keep_what_is_open();
         if !self.drawn(place) {
             return false;
         }
         self.open_over(place);
+        self.select_place(place)
+    }
+
+    /// Put the selection on a match for a search step, shutting what the
+    /// last step opened before opening what this one needs. Reports whether
+    /// the selection is on it now.
+    fn step_to_place(&mut self, place: &Place) -> bool {
+        if !self.drawn(place) {
+            return false;
+        }
+        self.folds.shut_what_the_last_step_opened();
+        for over in self.folds_over(place) {
+            self.folds.open_for_a_step(over);
+        }
+        self.select_place(place)
+    }
+
+    /// Make whatever the last search step opened the reader's, so no later
+    /// step shuts it. Every act of the reader's but a search step does.
+    pub fn keep_what_is_open(&mut self) {
+        self.folds.keep_what_the_last_step_opened();
+    }
+
+    fn select_place(&mut self, place: &Place) -> bool {
         let handle = self.handle_on(place);
         self.cursor = Some(handle.clone());
         self.lay_out();
@@ -1076,7 +1103,7 @@ impl Forest {
     /// is two places since `bdi-7ao.136`, and the one counted is the one
     /// landed on.
     fn land_on(&mut self, found: Option<Place>, at: usize, of: usize, query: &str) -> Landed {
-        let Some(place) = found.filter(|place| self.go_to_place(place)) else {
+        let Some(place) = found.filter(|place| self.step_to_place(place)) else {
             return Landed::Nowhere(query.to_string());
         };
         Landed::On {
@@ -1184,15 +1211,18 @@ impl Forest {
     /// stays shut until something asks otherwise, and asking to be taken to a
     /// bead underneath it is asking.
     fn open_over(&mut self, place: &Place) {
-        for under in self.runs_over(place) {
-            self.folds.set(Handle::Elided(under), true);
+        for over in self.folds_over(place) {
+            self.folds.set(over, true);
         }
+    }
+
+    /// Every fold that has to be open for a line to be drawn.
+    fn folds_over(&self, place: &Place) -> Vec<Handle> {
+        let runs = self.runs_over(place).into_iter().map(Handle::Elided);
         let over = self.ancestry_of(Some(&self.handle_on(place)));
         // Past the line itself, whose own fold is about the children under it
         // rather than about reaching it.
-        for above in over.into_iter().skip(1) {
-            self.folds.set(above, true);
-        }
+        runs.chain(over.into_iter().skip(1)).collect()
     }
 
     /// The forebears of a line whose run of quiet children counts the next
@@ -8578,6 +8608,266 @@ credential_command = "secret harbour"
             forest.next_match(true),
             Some(went_to("dunwich", "dun-7.1.2", 3, 3))
         );
+    }
+
+    /// One way through the matches for `survey`, from `dun-7.7`, which is
+    /// drawn and is where the search lands.
+    ///
+    /// The other two rest shut: `dun-7.2` in the run of finished branches and
+    /// `hbr-3.1` in the group of hidden trees. So each step opens one of them
+    /// — the run first going on, the group first going back.
+    struct SurveyWalk {
+        forward: bool,
+        /// The lines resting shut over the first step's match, outermost
+        /// first.
+        first_folds: &'static [&'static str],
+        /// The first step's match.
+        first: &'static str,
+        /// The second step's match, and where that step lands.
+        second: &'static str,
+        second_landed: Landed,
+    }
+
+    fn both_ways_through_the_survey() -> [SurveyWalk; 2] {
+        [
+            SurveyWalk {
+                forward: true,
+                first_folds: &["… 3 more"],
+                first: "survey the mast",
+                second: "survey the silt",
+                second_landed: went_to("harbour", "hbr-3.1", 3, 3),
+            },
+            SurveyWalk {
+                forward: false,
+                first_folds: &["[HiddenTrees harbour]", "hbr-3 dredge the channel"],
+                first: "survey the silt",
+                second: "survey the mast",
+                second_landed: went_to("dunwich", "dun-7.2", 2, 3),
+            },
+        ]
+    }
+
+    /// What a search step opens is the step's, and the next step shuts it
+    /// again.
+    #[test]
+    fn a_search_step_shuts_what_the_step_before_it_opened() {
+        for walk in both_ways_through_the_survey() {
+            let mut forest = flatten(snapshot());
+            forest.seek("survey");
+            forest.next_match(walk.forward);
+            assert!(drawn_here(&forest, walk.first), "{:#?}", sketch(&forest));
+
+            assert_eq!(forest.next_match(walk.forward), Some(walk.second_landed));
+
+            assert!(
+                !drawn_here(&forest, walk.first),
+                "forward {}: {:#?}",
+                walk.forward,
+                sketch(&forest)
+            );
+        }
+    }
+
+    #[test]
+    fn the_branches_the_last_match_needed_stay_open() {
+        for walk in both_ways_through_the_survey() {
+            let mut forest = flatten(snapshot());
+            forest.seek("survey");
+            forest.next_match(walk.forward);
+
+            forest.next_match(walk.forward);
+
+            assert!(
+                drawn_here(&forest, walk.second),
+                "forward {}: {:#?}",
+                walk.forward,
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// The Enter that lands a search is a step as well, so the step after it
+    /// shuts what it opened.
+    #[test]
+    fn a_search_step_shuts_what_the_landing_opened() {
+        for forward in [true, false] {
+            let mut forest = flatten(snapshot());
+            assert_eq!(
+                forest.seek("survey the"),
+                went_to("dunwich", "dun-7.2", 1, 2)
+            );
+
+            assert_eq!(
+                forest.next_match(forward),
+                Some(went_to("harbour", "hbr-3.1", 2, 2))
+            );
+
+            assert!(
+                !drawn_here(&forest, "survey the mast"),
+                "forward {forward}: {:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_shuts_what_the_step_before_it_opened() {
+        let mut forest = flatten(snapshot());
+        forest.seek("survey the mast");
+
+        forest.seek("survey the silt");
+
+        assert!(
+            !drawn_here(&forest, "survey the mast"),
+            "{:#?}",
+            sketch(&forest)
+        );
+        assert!(
+            drawn_here(&forest, "survey the silt"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `dun-7.1.1` and `dun-7.1.2` both hang under `dun-7.1`, which rests
+    /// shut. The step between them shuts it and opens it again, so it stays.
+    #[test]
+    fn a_search_step_leaves_open_what_its_own_match_needs() {
+        for forward in [true, false] {
+            let mut forest = flatten(snapshot());
+            assert!(!drawn_here(&forest, "true the mount"));
+            forest.seek("dun-7.1.");
+
+            assert_eq!(
+                forest.next_match(forward),
+                Some(went_to("dunwich", "dun-7.1.2", 2, 2))
+            );
+
+            assert!(
+                drawn_here(&forest, "true the mount"),
+                "forward {forward}: {:#?}",
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// A search matching nothing leaves the forest as it was, and that
+    /// includes what the step before it opened.
+    #[test]
+    fn a_search_matching_nothing_leaves_open_what_the_step_before_it_opened() {
+        let mut forest = flatten(snapshot());
+        forest.seek("survey the mast");
+
+        assert_eq!(forest.seek("dun-404"), Landed::Nowhere("dun-404".into()));
+
+        assert!(
+            drawn_here(&forest, "survey the mast"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Moving by hand makes whatever is open the reader's, so no later step
+    /// shuts it. The move is a row further the way the walk goes, which
+    /// leaves the next step landing where it would have.
+    #[test]
+    fn moving_by_hand_keeps_open_what_a_search_step_opened() {
+        for walk in both_ways_through_the_survey() {
+            let mut forest = flatten(snapshot());
+            forest.seek("survey");
+            forest.next_match(walk.forward);
+            let further = if walk.forward {
+                Motion::NextRow
+            } else {
+                Motion::PreviousRow
+            };
+            forest.apply(Action::Move(further));
+
+            assert_eq!(forest.next_match(walk.forward), Some(walk.second_landed));
+
+            assert!(
+                drawn_here(&forest, walk.first),
+                "forward {}: {:#?}",
+                walk.forward,
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// A click is a move by hand as much as a key is.
+    #[test]
+    fn a_click_keeps_open_what_a_search_step_opened() {
+        for walk in both_ways_through_the_survey() {
+            let mut forest = flatten(snapshot());
+            forest.seek("survey");
+            forest.next_match(walk.forward);
+            let further = if walk.forward {
+                forest.selected_line() + 1
+            } else {
+                forest.selected_line() - 1
+            };
+            assert!(forest.select_line(further));
+
+            assert_eq!(forest.next_match(walk.forward), Some(walk.second_landed));
+
+            assert!(
+                drawn_here(&forest, walk.first),
+                "forward {}: {:#?}",
+                walk.forward,
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// Following a reference goes to a bead, and so does coming back from
+    /// one. Either is the reader's act, even onto the bead they are on.
+    #[test]
+    fn going_to_a_bead_keeps_open_what_a_search_step_opened() {
+        for walk in both_ways_through_the_survey() {
+            let mut forest = flatten(snapshot());
+            forest.seek("survey");
+            forest.next_match(walk.forward);
+            let on = forest.place().cloned().expect("the step landed on a bead");
+            assert!(forest.go_to_place(&on));
+
+            assert_eq!(forest.next_match(walk.forward), Some(walk.second_landed));
+
+            assert!(
+                drawn_here(&forest, walk.first),
+                "forward {}: {:#?}",
+                walk.forward,
+                sketch(&forest)
+            );
+        }
+    }
+
+    /// A fold the reader opened is theirs. A step landing under it opened
+    /// nothing there, so the next step has nothing there to shut.
+    #[test]
+    fn a_fold_the_reader_opened_survives_the_search_steps_past_it() {
+        for walk in both_ways_through_the_survey() {
+            let mut forest = flatten(snapshot());
+            for fold in walk.first_folds {
+                let at = sketch(&forest)
+                    .iter()
+                    .position(|row| row.contains(fold))
+                    .unwrap_or_else(|| panic!("no {fold}: {:#?}", sketch(&forest)));
+                step_onto(&mut forest, at);
+                forest.apply(Action::ToggleFold);
+            }
+            assert!(drawn_here(&forest, walk.first), "{:#?}", sketch(&forest));
+            forest.seek("survey");
+            forest.next_match(walk.forward);
+
+            assert_eq!(forest.next_match(walk.forward), Some(walk.second_landed));
+
+            assert!(
+                drawn_here(&forest, walk.first),
+                "forward {}: {:#?}",
+                walk.forward,
+                sketch(&forest)
+            );
+        }
     }
 
     /// A whole id lands on its own bead however many rows above it match. An
