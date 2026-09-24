@@ -1852,7 +1852,8 @@ dunwich = ["bdi-404"]
     /// Every other row above is a program that ran and would not answer. Here
     /// nothing ran: `bdi` would have had to reach for the bd on its own
     /// `PATH`, which is not the bd this project asked to be read with, and
-    /// opening a tracker with the wrong bd migrates its schema. So the
+    /// opening a tracker with the wrong bd migrates its schema wherever that bd
+    /// is older than 1.3.0. So the
     /// project keeps its place on the screen with the one fact its reader can
     /// act on, and none of the seven sentences that would send them to bd.
     #[test]

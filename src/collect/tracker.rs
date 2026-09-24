@@ -49,10 +49,11 @@ pub enum OpenFailure {
     ///
     /// Nothing is opened and no bd is run for that project, which is the whole
     /// of why this is a failure rather than a fallback. The bd on `bdi`'s own
-    /// `PATH` is not the bd the project asked to be read with, and bd rewrites
-    /// `.beads/.local_version` and runs its schema auto-migration on finding
-    /// itself newer than the bd that last opened a tracker — before the
-    /// subcommand, whatever the subcommand is, and `--readonly` stops neither.
+    /// `PATH` is not the bd the project asked to be read with, and a bd older
+    /// than 1.3.0 rewrites `.beads/.local_version` and runs its schema
+    /// auto-migration on finding itself newer than the bd that last opened a
+    /// tracker — before the subcommand, whatever the subcommand is, and
+    /// `--readonly` stops neither. From 1.3.0 `--readonly` stops both.
     /// `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
     /// measurement and the decision this rests on.
     NoEnvironment,

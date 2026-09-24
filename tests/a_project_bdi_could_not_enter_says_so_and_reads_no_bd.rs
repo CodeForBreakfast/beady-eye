@@ -11,10 +11,10 @@
 //! Falling back to `bdi`'s own environment would read the project's tracker
 //! with the bd on `bdi`'s `PATH`, which is not the bd the project asked to be
 //! read with — and `docs/design.md`'s *Reading a tracker is not leaving it
-//! alone* measured what that costs: bd rewrites `.beads/.local_version` and
-//! runs its schema auto-migration on finding itself newer than the bd that
-//! last opened a tracker, before the subcommand, whatever the subcommand is,
-//! and `--readonly` stops neither. A tracker cannot be put back; a sentence
+//! alone* measured what that costs: a bd older than 1.3.0 rewrites
+//! `.beads/.local_version` and runs its schema auto-migration on finding
+//! itself newer than the bd that last opened a tracker, before the subcommand,
+//! whatever the subcommand is, and `--readonly` stops neither. A tracker cannot be put back; a sentence
 //! can be read.
 //!
 //! The cases here run the binary because what is under test crosses every
