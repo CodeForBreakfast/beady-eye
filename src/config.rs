@@ -11,6 +11,7 @@ use ratatui::style::Color;
 use regex_lite::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 
+use crate::model::join::BeadKey;
 use crate::view::row::{Cell, Layout};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -224,6 +225,21 @@ pub struct Roots {
     /// starts focused on the bead.
     #[serde(skip)]
     pub named_on_the_command_line: BTreeMap<String, Vec<String>>,
+}
+
+impl Roots {
+    /// The beads the command line names, each under its project.
+    pub fn named_beads(&self) -> Vec<BeadKey> {
+        self.named_on_the_command_line
+            .iter()
+            .flat_map(|(project, ids)| {
+                ids.iter().map(|id| BeadKey {
+                    project: project.clone(),
+                    id: id.clone(),
+                })
+            })
+            .collect()
+    }
 }
 
 /// A badge opens a table, so every key written after `[[projects.badges]]`

@@ -39,7 +39,8 @@ struct Cli {
     /// Start focused on this bead, as Shift+F on it would. Write it as
     /// <project>:<bead-id> where bdi is reading more than one project; a bare
     /// id means the one project being read. A bead under a project the
-    /// directory left out reads that project too.
+    /// directory left out reads that project too. Under --json, a project
+    /// with a bead named in it writes only the trees those beads are in.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
 
@@ -208,13 +209,14 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Filter::LiveAgents
     };
     if cli.json {
-        let snapshot = crate::app::run(
+        let mut snapshot = crate::app::run(
             &cfg,
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
             &bd::Cli::new(&RealRunner),
             filter,
             Utc::now(),
         );
+        snapshot.narrow_to(&cfg.roots.named_beads());
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
         return Ok(ExitCode::SUCCESS);
     }

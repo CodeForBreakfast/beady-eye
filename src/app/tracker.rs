@@ -1597,6 +1597,40 @@ dunwich = ["bdi-404"]
         );
     }
 
+    /// `--json` has no focus to start in, so it writes only the trees the
+    /// named beads are in, where the root or a bead beneath it is named. A
+    /// named bead the tracker lacks keeps the tree reporting it missing, and
+    /// a project named nowhere is written as an unnamed run reads it.
+    #[test]
+    fn narrowing_to_the_named_beads_keeps_only_the_trees_they_are_in() {
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker().also(beads(MAST_TREE)))
+            .with("ferry", colliding_tracker());
+        for (named, kept) in [
+            (
+                vec!["dunwich:dun-4", "dunwich:dun-404"],
+                vec![
+                    ("dunwich", "dun-4"),
+                    ("dunwich", "dun-404"),
+                    ("ferry", "x-1"),
+                ],
+            ),
+            (
+                vec!["dunwich:dun-7.1"],
+                vec![("dunwich", "dun-7"), ("ferry", "x-1")],
+            ),
+        ] {
+            let cfg = with_roots_on_the_command_line(two_projects(), &named);
+            let mut snap = run(&cfg, &no_panes(), &trackers, Filter::All, now());
+
+            snap.narrow_to(&cfg.roots.named_beads());
+
+            let mut drawn = drawn_roots(&snap);
+            drawn.sort();
+            assert_eq!(drawn, kept, "named {named:?}");
+        }
+    }
+
     /// `--project` decides which trackers are read and names no root, so the
     /// project it keeps is discovered as it always was.
     #[test]

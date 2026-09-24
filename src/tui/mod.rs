@@ -15,7 +15,6 @@ use crate::app::{Asked, Wanted};
 use crate::collect::agents::Agents;
 use crate::collect::changes::Reported;
 use crate::config::Config;
-use crate::model::join::BeadKey;
 use crate::model::snapshot::{Filter, Snapshot};
 use crate::view::Notice;
 
@@ -143,18 +142,7 @@ pub fn run(
     outstanding.ask(Wanted::Everything, started);
 
     let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg), started)?;
-    screen.focus_when_drawn(
-        cfg.roots
-            .named_on_the_command_line
-            .iter()
-            .flat_map(|(project, ids)| {
-                ids.iter().map(|id| BeadKey {
-                    project: project.clone(),
-                    id: id.clone(),
-                })
-            })
-            .collect(),
-    );
+    screen.focus_when_drawn(cfg.roots.named_beads());
     screen.collecting(outstanding.awaited());
 
     drive(
