@@ -209,6 +209,14 @@ pub(super) trait View {
     /// reader's next press has to go on their next press.
     fn pressed(&mut self) -> bool;
 
+    /// Make whatever the last search step opened the reader's, so no later
+    /// step shuts it.
+    ///
+    /// The loop's to ask for the reason `pressed` is: `?`, `^R` and the key
+    /// that closes the bindings are acts of the reader's that never reach
+    /// `apply`.
+    fn keep_what_is_open(&mut self);
+
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
 
@@ -599,6 +607,24 @@ fn sleeps_for(
     .min()
 }
 
+/// Whether an event makes whatever the last search step opened the reader's,
+/// which every key and click does but a search step.
+///
+/// `/` and the keys typed at the prompt it opens are the landing step being
+/// asked for, and a click there leaves the prompt as Esc does. A wheel notch
+/// moves no fold and no selection.
+fn keeps_what_is_open(event: &Event, showing: Showing) -> bool {
+    match event {
+        Event::Key(_) | Event::Clicked(_) if showing == Showing::Searching => false,
+        Event::Key(key) => !matches!(
+            action(*key),
+            Some(Action::NextMatch | Action::PreviousMatch | Action::Search)
+        ),
+        Event::Clicked(_) => true,
+        _ => false,
+    }
+}
+
 /// Answer one event, reporting whether the screen has changed — or nothing
 /// where it was the event that ends the run.
 fn answered(
@@ -614,6 +640,9 @@ fn answered(
         event,
         Event::Key(_) | Event::Clicked(_) | Event::Scrolled(_)
     ) && view.pressed();
+    if keeps_what_is_open(&event, *showing) {
+        view.keep_what_is_open();
+    }
     let changed = match event {
         // Any key at all, because a reader who opened the bindings by
         // accident must not have to find the one key that closes them.
@@ -1182,6 +1211,9 @@ mod tests {
         /// is counted, because a click and a notch are presses that reach no
         /// action at all.
         pressed_after: Vec<usize>,
+        /// How many times the loop made what a search step opened the
+        /// reader's.
+        kept: usize,
         /// How long this view says it is from reading its pane again, for
         /// the tests about the band's own clock. Nothing, as a band with no
         /// pane says.
@@ -1302,6 +1334,10 @@ mod tests {
             self.pressed_after
                 .push(self.applied.len() + self.clicked.len() + self.notched.len());
             self.pressing_changes
+        }
+
+        fn keep_what_is_open(&mut self) {
+            self.kept += 1;
         }
 
         fn apply(&mut self, action: Action) -> bool {
@@ -3927,6 +3963,75 @@ mod tests {
             view.pressed_after,
             [0, 1, 2, 3],
             "a press is heard before the action it turns out to be"
+        );
+    }
+
+    /// Every key and click the reader presses makes what a search step opened
+    /// theirs, the ones that never reach `apply` included: `?` opens the
+    /// bindings and the key after it only closes them.
+    #[test]
+    fn a_press_that_is_not_a_search_step_keeps_what_is_open() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Key(key(KeyCode::Char('y'))),
+                Event::Key(key(KeyCode::Char('?'))),
+                Event::Key(key(KeyCode::Char('j'))),
+                Event::Clicked(3),
+            ]),
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.kept, 4);
+    }
+
+    /// `n`, `N` and the landing Enter are the steps, and `/` and what is
+    /// typed after it ask for one. A wheel notch moves no fold and no
+    /// selection, so it is not an act on what a step opened either.
+    #[test]
+    fn a_search_step_and_a_wheel_notch_keep_nothing_open() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+
+        drive(
+            &mut view,
+            &waiting(vec![
+                Event::Key(key(KeyCode::Char('n'))),
+                Event::Key(key(KeyCode::Char('N'))),
+                Event::Key(key(KeyCode::Char('/'))),
+                Event::Key(key(KeyCode::Char('x'))),
+                Event::Clicked(3),
+                Event::Key(key(KeyCode::Char('/'))),
+                Event::Key(key(KeyCode::Char('x'))),
+                Event::Key(key(KeyCode::Enter)),
+                Event::Scrolled(Notch::Down),
+            ]),
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.kept, 0);
+        assert_eq!(
+            view.applied,
+            [
+                Action::NextMatch,
+                Action::PreviousMatch,
+                Action::Search,
+                Action::Search
+            ],
+            "every key reached the loop"
         );
     }
 

@@ -3658,6 +3658,22 @@ credential_command = "secret harbour"
         );
     }
 
+    /// A search step opening a fold the reader shut leaves it theirs to be
+    /// spent, so the step after cannot shut it back over what arrived.
+    #[test]
+    fn a_fold_shut_by_hand_is_spent_by_what_arrives_while_a_search_step_has_it_open() {
+        let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
+        select(&mut forest, &key("dunwich", "tow-1.1"));
+        forest.apply(Action::ToggleFold);
+        forest.seek("tow-1.1.1");
+        forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.1.1"]));
+
+        forest.seek("tow-1.2");
+
+        assert_eq!(cursor(&forest), Some(&key("dunwich", "tow-1.2")));
+        assert_eq!(fold_of(&forest, "tow-1.1"), Some(true));
+    }
+
     /// The default reads the agents, not which trees are drawn, so dropping
     /// the filter adds trees below and changes no fold above.
     #[test]

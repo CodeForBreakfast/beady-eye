@@ -2806,7 +2806,8 @@ that lands a search, and it opens whatever is folded over the bead it goes to.
 The next step puts those folds back the way they were before opening what its
 own match needs, so walking the matches leaves no trail of open branches, and
 the branches the last match needed stay open. A fold the step found open is
-put back open.
+put back open. A fold the reader shut stays theirs while a step has it open,
+so live work arriving under it spends it as it would any other.
 
 Any other act by the reader makes whatever is open at that moment theirs, and
 no later step shuts it. That is a move by key or by click, opening or shutting

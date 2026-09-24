@@ -5,7 +5,7 @@
 //! a fold, laying out asks which way one points, and neither reaches past the
 //! other to do it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::Conflict;
 use crate::model::snapshot::Tree;
@@ -80,10 +80,13 @@ pub(super) fn item_key(item: &Item) -> Option<ItemKey> {
 #[derive(Default)]
 pub(super) struct Folds {
     lines: BTreeMap<Handle, Fold>,
-    /// The folds the last search step opened, each with the way its own fold
-    /// went before the step, until the next step puts them back or the reader
-    /// keeps them.
-    stepped_open: Vec<(Handle, Option<Way>)>,
+    /// The folds the last search step opened, whatever their lines say, until
+    /// the next step shuts them again or the reader keeps them.
+    ///
+    /// Apart from the lines rather than written over them, so a fold the
+    /// reader shut is still theirs underneath, and live work arriving under
+    /// it spends it as it would have with no search in the way.
+    stepped_open: BTreeSet<Handle>,
 }
 
 /// What the reader set on one line.
@@ -131,6 +134,9 @@ impl Folds {
     /// caller knows the tree a line came from, so it says where the line
     /// rests rather than being asked to re-derive it here.
     pub(super) fn pointed(&self, handle: &Handle, over: Option<&Scope>) -> Option<bool> {
+        if self.stepped_open.contains(handle) {
+            return Some(true);
+        }
         match self.lines.get(handle).and_then(|fold| fold.line) {
             Some(Way::Open) => return Some(true),
             Some(Way::Shut) => return Some(false),
@@ -233,39 +239,29 @@ impl Folds {
         self.stepped_open.clear();
     }
 
-    /// Open one fold for a search step, until the next step puts it back the
-    /// way it went before.
+    /// Open one fold for a search step, until the next step shuts it again.
     pub(super) fn open_for_a_step(&mut self, handle: Handle) {
-        let fold = self.lines.entry(handle.clone()).or_default();
-        self.stepped_open.push((handle, fold.line));
-        fold.line = Some(Way::Open);
+        self.stepped_open.insert(handle);
     }
 
-    /// Put every fold the last search step opened back the way it went
-    /// before the step.
+    /// Hand every fold the last search step opened back to its line.
     pub(super) fn shut_what_the_last_step_opened(&mut self) {
-        for (handle, was) in self.stepped_open.drain(..).rev() {
-            let Some(fold) = self.lines.get_mut(&handle) else {
-                continue;
-            };
-            fold.line = was;
-            if *fold == Fold::default() {
-                self.lines.remove(&handle);
-            }
-        }
+        self.stepped_open.clear();
     }
 
     /// Make whatever the last search step opened the reader's, so no later
     /// step shuts it.
     pub(super) fn keep_what_the_last_step_opened(&mut self) {
-        self.stepped_open.clear();
+        for handle in std::mem::take(&mut self.stepped_open) {
+            self.set(handle, true);
+        }
     }
 
-    /// Every line the folds name: the ones with an entry. A line named
-    /// nowhere here answers from the scope over it alone, and so does
-    /// everything beneath it.
+    /// Every line the folds name: the ones with an entry, and the ones a
+    /// search step opened. A line named nowhere here answers from the scope
+    /// over it alone, and so does everything beneath it.
     pub(super) fn mentioned(&self) -> impl Iterator<Item = &Handle> {
-        self.lines.keys()
+        self.lines.keys().chain(&self.stepped_open)
     }
 
     /// Which way every fold under a scope answers, where nothing nearer
