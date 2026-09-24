@@ -444,6 +444,7 @@ mod tests {
             why: crate::model::tree::Unreachable::NotRead {
                 projects: vec!["ferry".into()],
             },
+            may_block: true,
         };
         let painted = Painted::of(
             fitted(

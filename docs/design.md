@@ -548,7 +548,8 @@ on, not whether those dependencies are satisfied, and beads already answers
 that. `bd swarm status` shows Ready as a first-class state alongside Completed,
 Active and Blocked, so a viewer that collapsed Ready into plain "open" would be
 throwing away a distinction beads makes. One call each per project, intersected
-with the tree's ids.
+with the tree's ids. bd reads no edge to another project's bead, and that is
+the one place `bdi` adds to its answer: see *Across projects*.
 
 **`bd list --all --limit 0 --json` and `bd query ephemeral=true --all --limit
 0 --json` supply discovery**: every unfinished row of either is a root
@@ -969,6 +970,26 @@ reference in the bead window reach it as that project's bead; and a tree
 counts two projects' beads of one id as two. The other project still draws
 the bead in its own trees.
 
+**A bead waiting on another project's unfinished bead is not ready, whatever
+bd says.** bd records the edge but reads no edge to another project's bead
+when it decides what is blocked, so `bd ready` lists such a bead. `bdi` reads
+both trackers, so it takes bd's readiness and blocker set and adds to them each
+blocker in another project that is not finished. The bead is not ready, and
+that blocker joins its `blocked_by`. Finished is bd's own rule for a blocker,
+closed or pinned, and a finished bead waits on nothing. Nothing else about
+bd's answer is second-guessed, so once the other bead finishes, bd's answer
+stands again. The forest, the bead window and the JSON all read this one
+answer.
+
+**A blocker no answer holds counts where it may be unfinished work.** Where
+the blocker may be in a project that gave no answer, or several projects hold
+a bead by its id and one of those beads is not finished, the bead is not ready,
+and `blocked_by` names the blocker: nothing `bdi` read can say the bead is
+free to start. Where the projects carrying its prefix answered and hold no
+such bead, or no configured project carries it, bd's answer stands. bd holds a
+dependency on a bead that does not exist as blocking nothing, and no later
+read would find one.
+
 **Only a tree that needs it pays for it.** Each project's read assembles its
 trees from its own answer. A bead waiting on something that answer does not
 hold is one its tree already reports as an orphaned dependency, so a collection assembles
@@ -991,9 +1012,9 @@ rule yields, and it yields because they asked by name.
 
 **The default: open the spine to the work a reader needs on the first screen,
 and nothing else.** A line rests open exactly when something beneath it is a
-live agent, an anomaly, or a bead `bd` calls ready. Nothing else opens a fold:
+live agent, an anomaly, or a ready bead. Nothing else opens a fold:
 unfinished work that is blocked or deferred does not, because readiness is
-`bd`'s own answer and not a status test. The bead that earns the fold does not
+`bd`'s own answer, with *Across projects*' one addition, and not a status test. The bead that earns the fold does not
 open its own; only its forebears open, so the screen is that work and the spine
 down to it. Not full expansion, which is a wall of closed work; not
 collapsed-except-selected, which was never built — the selection has no bearing
@@ -2484,6 +2505,8 @@ carry. In this order:
 - the glyph, the id, the labels, and the title
 - the status word, the priority, the type, the owner and the assignee, by name
   as `bd show` prints them
+- `ready`, or `blocked by:` and the blockers, as `bd ready` and `bd list` say
+  them; a bead that is neither, such as a deferred or closed one, gets no row
 - the created, updated, started and closed dates, as `bd show` prints them
 - the agent, with its state and its join caveat, as the forest's agent cell
   says them
