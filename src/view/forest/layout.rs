@@ -235,10 +235,15 @@ pub(super) fn first_bead_of(
 /// in that chain, so going to a bead opens the project over it exactly as it
 /// opens the folds. An order that left those trees out would be an order a
 /// search could not use.
+///
+/// The third of each triple is `Behind::without`: the bead, by its place
+/// among the tree's beads, that the root behind the line leaves out because
+/// the mode draws it where the forest is rooted instead. `None` everywhere
+/// else, since only that one root ever holds one back.
 pub(super) fn walked<'a>(
     snapshot: &'a Snapshot,
     rooted: Option<&Rooted>,
-) -> Vec<(&'a Tree, Vec<usize>)> {
+) -> Vec<(&'a Tree, Vec<usize>, Option<usize>)> {
     let mut drawn = Vec::new();
     for project in &snapshot.projects {
         if !project_drawn(snapshot, project) {
@@ -250,12 +255,12 @@ pub(super) fn walked<'a>(
                     .trees
                     .iter()
                     .filter(|tree| tree.project == *project)
-                    .map(|tree| (Arc::as_ref(tree), vec![0])),
+                    .map(|tree| (Arc::as_ref(tree), vec![0], None)),
             );
             drawn.extend(
                 hidden_trees(snapshot, Some(project))
                     .into_iter()
-                    .map(|tree| (Arc::as_ref(tree), vec![0])),
+                    .map(|tree| (Arc::as_ref(tree), vec![0], None)),
             );
             continue;
         };
@@ -263,13 +268,13 @@ pub(super) fn walked<'a>(
             drawn.extend(
                 snapshot
                     .tree(&rooted.place.tree)
-                    .map(|tree| (tree, rooted.way.clone())),
+                    .map(|tree| (tree, rooted.way.clone(), None)),
             );
         }
         drawn.extend(
             out_of_the_way(snapshot, Some(project), Some(rooted))
                 .into_iter()
-                .map(|root| (Arc::as_ref(root.tree), vec![0])),
+                .map(|root| (Arc::as_ref(root.tree), vec![0], root.without)),
         );
     }
     drawn

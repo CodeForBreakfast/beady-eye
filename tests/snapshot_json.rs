@@ -1139,7 +1139,11 @@ fn a_bead_waiting_on_another_projects_bead_draws_it_beneath_itself() {
         ]
     );
     assert_eq!(node(arkham, "dun-2e7")["edge"], "blocks");
-    assert_eq!(arkham["dangling"], json!([]), "the bead it waits on is held");
+    assert_eq!(
+        arkham["dangling"],
+        json!([]),
+        "the bead it waits on is held"
+    );
 
     assert_eq!(node(arkham, "dun-2e7")["agent"]["pane"]["id"], "w:p1");
     assert_eq!(node(arkham, "dun-2e7.1")["ready"], true);

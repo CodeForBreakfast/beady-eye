@@ -144,7 +144,11 @@ fn read(dunwich_rows: &str, agents: &str) -> Reading {
                     project,
                     a,
                     &joined,
-                    &beady_eye::model::snapshot::said_by(project, &Readiness::default(), &BTreeMap::new()),
+                    &beady_eye::model::snapshot::said_by(
+                        project,
+                        &Readiness::default(),
+                        &BTreeMap::new(),
+                    ),
                     ProviderState::Answering,
                     &cfg,
                     now(),

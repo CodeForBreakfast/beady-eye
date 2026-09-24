@@ -415,14 +415,7 @@ fn reach<K: Copy + Ord>(root: K, beneath: &impl Fn(K) -> Vec<(K, Edge)>) -> Reac
         looped: false,
     };
     let mut placed: BTreeMap<K, usize> = BTreeMap::from([(root, 0)]);
-    descend(
-        root,
-        0,
-        beneath,
-        &mut placed,
-        &mut Vec::new(),
-        &mut found,
-    );
+    descend(root, 0, beneath, &mut placed, &mut Vec::new(), &mut found);
     found
 }
 
@@ -1380,7 +1373,10 @@ mod tests {
     #[test]
     fn a_bead_waiting_on_another_projects_bead_holds_it_and_its_subtree() {
         let answers = [
-            answer("arkham", &[bead("ark-1", "open", &[dep("dun-7", "blocks")])]),
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "blocks")])],
+            ),
             answer(
                 "dunwich",
                 &[
@@ -1452,8 +1448,14 @@ mod tests {
     #[test]
     fn a_dependency_in_the_other_project_is_followed_into_a_third() {
         let answers = [
-            answer("arkham", &[bead("ark-1", "open", &[dep("dun-7", "blocks")])]),
-            answer("dunwich", &[bead("dun-7", "open", &[dep("fer-2", "blocks")])]),
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "blocks")])],
+            ),
+            answer(
+                "dunwich",
+                &[bead("dun-7", "open", &[dep("fer-2", "blocks")])],
+            ),
             answer("ferry", &[bead("fer-2", "open", &[])]),
         ];
         let a = across(&answers)
@@ -1475,8 +1477,14 @@ mod tests {
     #[test]
     fn a_loop_across_projects_is_cut_where_it_comes_back_round() {
         let answers = [
-            answer("arkham", &[bead("ark-1", "open", &[dep("dun-7", "blocks")])]),
-            answer("dunwich", &[bead("dun-7", "open", &[dep("ark-1", "blocks")])]),
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "blocks")])],
+            ),
+            answer(
+                "dunwich",
+                &[bead("dun-7", "open", &[dep("ark-1", "blocks")])],
+            ),
         ];
         let a = across(&answers)
             .assemble("arkham", "ark-1")
@@ -1495,7 +1503,10 @@ mod tests {
     #[test]
     fn a_parent_in_another_project_is_not_held() {
         let answers = [
-            answer("arkham", &[bead("ark-1", "open", &[dep("dun-7", "parent-child")])]),
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-7", "parent-child")])],
+            ),
             answer("dunwich", &[bead("dun-7", "open", &[])]),
         ];
         let a = across(&answers)

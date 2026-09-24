@@ -327,15 +327,9 @@ impl Collection {
         let trees = drawn
             .iter()
             .map(|(project, root, read)| match read {
-                Ok(assembled) => snapshot::build_tree(
-                    project,
-                    assembled,
-                    joined,
-                    &said,
-                    agents.state,
-                    cfg,
-                    now,
-                ),
+                Ok(assembled) => {
+                    snapshot::build_tree(project, assembled, joined, &said, agents.state, cfg, now)
+                }
                 Err(why) => Tree::unread(project, root, TrackerState::from((*why).clone())),
             })
             .collect();
