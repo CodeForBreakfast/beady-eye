@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Filter, Snapshot, Tree};
+use crate::model::snapshot::{Filter, Snapshot, TrackerState, Tree};
 use crate::view::lines::{beneath, links_below, quiet, root_key, Content, GroupKind, Line, Place};
 use crate::view::row;
 use crate::view::{Action, Motion, Notch};
@@ -294,9 +294,10 @@ impl Forest {
         }
     }
 
-    /// Focus each named bead the snapshot draws, and give up on one whose
-    /// project has been read without it: its tracker reports it missing
-    /// where its tree would be.
+    /// Focus each named bead the snapshot draws, and give up on one its
+    /// tracker has reported missing, where its tree would be. Any other is
+    /// waited for: a tracker that failed to answer has not said the bead is
+    /// not there.
     ///
     /// Hands back the first bead focused where nothing was, for the
     /// selection to go to, as it would be on the bead Shift+F was pressed on.
@@ -308,12 +309,21 @@ impl Forest {
         for key in std::mem::take(&mut self.named) {
             match self.place_of(&key) {
                 Some(place) => self.focused.push(place),
-                None if !self.snapshot.read_at.contains_key(&key.project) => self.named.push(key),
-                None => {}
+                None if self.reported_missing(&key) => {}
+                None => self.named.push(key),
             }
         }
         self.focused = outermost(std::mem::take(&mut self.focused));
         self.focused.first().filter(|_| !was_rooted).cloned()
+    }
+
+    /// Whether the bead's tracker answered without it.
+    fn reported_missing(&self, key: &BeadKey) -> bool {
+        self.snapshot.collected.iter().any(|tree| {
+            tree.project == key.project
+                && tree.root == key.id
+                && tree.tracker == TrackerState::RootNotFound
+        })
     }
 
     /// The live work each fold the user shut is currently shut over.
@@ -9965,17 +9975,49 @@ credential_command = "secret harbour"
         assert_eq!(cursor(&named), Some(&key("dunwich", "dun-7.1")));
     }
 
-    /// A bead its project's tracker was read without is not waited for: the
-    /// tracker says it is missing where its tree would be.
+    /// A tracker that failed to answer has not said the named bead is not
+    /// there, so it is focused once a later collection draws it.
     #[test]
-    fn a_named_bead_its_project_was_read_without_focuses_nothing() {
-        let mut forest = named_on_the_command_line(&[("dunwich", "dun-404")]);
-        let unnamed = sketch(&flatten(snapshot()));
-        assert_eq!(sketch(&forest), unnamed);
+    fn a_bead_named_while_its_tracker_fails_is_focused_once_it_answers() {
+        let mut forest = flatten(gather(
+            vec![
+                Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
+                tree_of("harbour", HARBOUR),
+            ],
+            Vec::new(),
+            Filter::LiveAgents,
+        ));
+        forest.focus_when_drawn(vec![key("dunwich", "dun-7.1")]);
 
         forest.refresh(snapshot());
 
-        assert_eq!(sketch(&forest), unnamed);
+        assert_eq!(
+            sketch(&forest),
+            sketch(&named_on_the_command_line(&[("dunwich", "dun-7.1")]))
+        );
+    }
+
+    /// A bead its tracker reports missing is not waited for: the forest is
+    /// the unnamed one, with the missing root reported where it would be.
+    #[test]
+    fn a_named_bead_its_tracker_reports_missing_is_let_go() {
+        let missing = || {
+            gather(
+                vec![
+                    tree_of("dunwich", DUNWICH),
+                    Tree::unread("dunwich", "dun-404", TrackerState::RootNotFound),
+                    tree_of("harbour", HARBOUR),
+                ],
+                Vec::new(),
+                Filter::LiveAgents,
+            )
+        };
+        let mut forest = flatten(missing());
+
+        forest.focus_when_drawn(vec![key("dunwich", "dun-404")]);
+
+        assert_eq!(sketch(&forest), sketch(&flatten(missing())));
+        assert!(forest.named.is_empty(), "still waiting: {:?}", forest.named);
     }
 
     /// Every root but the one focused goes, and so does every other project's
