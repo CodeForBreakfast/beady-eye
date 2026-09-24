@@ -13,7 +13,7 @@ use crate::model::types::{Bead, Dependency, Edge};
 /// value rather than character by character, so `t.2` sorts before `t.10`.
 /// Everything else — letters, punctuation, digit runs of equal value —
 /// compares as written.
-fn numeric_id_order(a: &str, b: &str) -> std::cmp::Ordering {
+pub(crate) fn numeric_id_order(a: &str, b: &str) -> std::cmp::Ordering {
     let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
     loop {
         return match (a.peek(), b.peek()) {
