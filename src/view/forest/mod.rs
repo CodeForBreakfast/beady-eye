@@ -8465,7 +8465,10 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         forest.apply(Action::CollapseForest);
 
-        assert_eq!(forest.seek_here("dun-7.2"), went_to("dunwich", "dun-7.2", 1, 1));
+        assert_eq!(
+            forest.seek_here("dun-7.2"),
+            went_to("dunwich", "dun-7.2", 1, 1)
+        );
 
         assert!(
             drawn_here(&forest, "└── … 3 more"),
@@ -8521,7 +8524,10 @@ credential_command = "secret harbour"
     fn a_search_matches_part_of_an_id() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek_here("7.1.1"), went_to("dunwich", "dun-7.1.1", 1, 1));
+        assert_eq!(
+            forest.seek_here("7.1.1"),
+            went_to("dunwich", "dun-7.1.1", 1, 1)
+        );
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
         assert!(
@@ -8544,14 +8550,20 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         let drawn = row_of(&forest, "dun-7.1").id.clone();
 
-        assert_eq!(forest.seek_here(&drawn), went_to("dunwich", "dun-7.1", 1, 4));
+        assert_eq!(
+            forest.seek_here(&drawn),
+            went_to("dunwich", "dun-7.1", 1, 4)
+        );
     }
 
     #[test]
     fn a_search_matches_part_of_a_title() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek_here("mount"), went_to("dunwich", "dun-7.1.1", 1, 1));
+        assert_eq!(
+            forest.seek_here("mount"),
+            went_to("dunwich", "dun-7.1.1", 1, 1)
+        );
     }
 
     /// A title is prose and the reader is retyping a word they read off a
@@ -8561,7 +8573,10 @@ credential_command = "secret harbour"
     fn a_search_ignores_letter_case() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek_here("MoUnT"), went_to("dunwich", "dun-7.1.1", 1, 1));
+        assert_eq!(
+            forest.seek_here("MoUnT"),
+            went_to("dunwich", "dun-7.1.1", 1, 1)
+        );
     }
 
     /// Matches are numbered in the order the forest draws them, which is the
@@ -8825,7 +8840,10 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         forest.seek_here("survey the mast");
 
-        assert_eq!(forest.seek_here("dun-404"), Landed::Nowhere("dun-404".into()));
+        assert_eq!(
+            forest.seek_here("dun-404"),
+            Landed::Nowhere("dun-404".into())
+        );
 
         assert!(
             drawn_here(&forest, "survey the mast"),
@@ -8884,6 +8902,30 @@ credential_command = "secret harbour"
         assert_eq!(
             forest.seek("survey", &origin),
             went_to("dunwich", "dun-7.2", 2, 3)
+        );
+    }
+
+    /// A keystroke is a search step, so the keystroke after it shuts what it
+    /// opened.
+    #[test]
+    fn the_next_keystroke_shuts_what_a_keystroke_opened() {
+        let mut forest = flatten(snapshot());
+        let origin = forest.origin();
+        assert_eq!(
+            forest.seek("survey the ", &origin),
+            went_to("dunwich", "dun-7.2", 1, 2)
+        );
+        assert!(drawn_here(&forest, "survey the mast"));
+
+        assert_eq!(
+            forest.seek("survey the s", &origin),
+            went_to("harbour", "hbr-3.1", 1, 1)
+        );
+
+        assert!(
+            !drawn_here(&forest, "survey the mast"),
+            "{:#?}",
+            sketch(&forest)
         );
     }
 
@@ -9083,7 +9125,10 @@ credential_command = "secret harbour"
     fn a_whole_id_lands_on_its_own_bead_however_many_rows_above_it_match() {
         let mut forest = flatten(alone("dunwich", NAMED_IN_A_TITLE, &[]));
 
-        assert_eq!(forest.seek_here("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
+        assert_eq!(
+            forest.seek_here("dun-6.2"),
+            went_to("dunwich", "dun-6.2", 2, 2)
+        );
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-6.2")));
     }
@@ -9092,7 +9137,10 @@ credential_command = "secret harbour"
     fn a_whole_id_lands_on_its_own_bead_whatever_its_letter_case() {
         let mut forest = flatten(alone("dunwich", NAMED_IN_A_TITLE, &[]));
 
-        assert_eq!(forest.seek_here("DUN-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
+        assert_eq!(
+            forest.seek_here("DUN-6.2"),
+            went_to("dunwich", "dun-6.2", 2, 2)
+        );
     }
 
     /// `dun-6.2.1` holds `dun-6.2` in its id and is drawn first, under
@@ -9101,7 +9149,10 @@ credential_command = "secret harbour"
     fn a_whole_id_lands_past_a_longer_id_drawn_above_it() {
         let mut forest = flatten(alone("dunwich", NAMED_INSIDE_A_LONGER_ID, &[]));
 
-        assert_eq!(forest.seek_here("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 3));
+        assert_eq!(
+            forest.seek_here("dun-6.2"),
+            went_to("dunwich", "dun-6.2", 2, 3)
+        );
     }
 
     /// Search counts the way vim does, since `bdi-7ao.136`: every drawn copy
@@ -9221,7 +9272,10 @@ credential_command = "secret harbour"
     fn a_bead_the_filter_hid_is_one_a_search_still_reaches() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek_here("hbr-3.1"), went_to("harbour", "hbr-3.1", 1, 1));
+        assert_eq!(
+            forest.seek_here("hbr-3.1"),
+            went_to("harbour", "hbr-3.1", 1, 1)
+        );
 
         assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3.1")));
     }
@@ -9234,7 +9288,10 @@ credential_command = "secret harbour"
         let was = sketch(&forest);
         let selected = forest.selected_line();
 
-        assert_eq!(forest.seek_here("dun-404"), Landed::Nowhere("dun-404".into()));
+        assert_eq!(
+            forest.seek_here("dun-404"),
+            Landed::Nowhere("dun-404".into())
+        );
 
         assert_eq!(sketch(&forest), was);
         assert_eq!(forest.selected_line(), selected);
@@ -9500,7 +9557,10 @@ credential_command = "secret harbour"
     fn a_run_of_finished_children_is_walked_where_the_screen_draws_it() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek_here("dun-7."), went_to("dunwich", "dun-7.1", 1, 8));
+        assert_eq!(
+            forest.seek_here("dun-7."),
+            went_to("dunwich", "dun-7.1", 1, 8)
+        );
         // `.1`'s own children, drawn under it and above its siblings, then
         // `.7`, which the sibling sort already puts above the closed ones.
         forest.next_match(true);

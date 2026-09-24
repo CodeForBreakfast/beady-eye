@@ -151,12 +151,12 @@ struct Shown {
     /// a moment after the key would otherwise take the one line that says it
     /// fired off before anyone had read it.
     said: Option<Said>,
-    /// What the reader has typed into the search prompt, while one is up.
+    /// The search prompt, while one is up.
     ///
     /// Held here and not on the forest for the reason the bead view's `Show`
     /// is: it is about a prompt over the rows, not about the rows. The loop
     /// holds that a prompt is up; this is what is in it.
-    sought: Option<String>,
+    sought: Option<Prompt>,
     /// What the collection in flight is reading and when it was asked for,
     /// where one is running. Every project line it names says its own rows
     /// are about to be replaced, and the rest of the screen carries on saying
@@ -584,8 +584,12 @@ impl Shown {
     /// anything. The reader's next press is what takes it off, whatever the
     /// press turns out to mean — it was feedback on a keystroke, not a fact
     /// about the screen.
+    ///
+    /// While the prompt is up the foot is the prompt's, so nothing said is on
+    /// it to take. What the search has come to is kept for when Enter gives
+    /// the foot back.
     fn pressed(&mut self) -> bool {
-        self.said.take().is_some()
+        self.sought.is_none() && self.said.take().is_some()
     }
 
     /// Take one keystroke into the search prompt, reporting whether the screen
@@ -595,33 +599,41 @@ impl Shown {
     /// who opened the prompt and changed their mind has pressed the other way
     /// out of it, and an answer about the empty id would be an answer to a
     /// question nobody put.
+    ///
+    /// Every keystroke but Enter and Esc is a search step, so the selection
+    /// moves as the reader types, as vim's does with `incsearch`. Enter
+    /// leaves it where the last step put it, and Esc puts the forest back as
+    /// it stood when the prompt went up.
     fn typing(&mut self, typing: Typing) -> bool {
-        let Some(sought) = self.sought.as_mut() else {
+        let Some(prompt) = self.sought.as_mut() else {
             return false;
         };
         match typing {
             Typing::Character(glyph) => {
-                sought.push(glyph);
-                true
+                prompt.typed.push(glyph);
+                self.seek()
             }
-            Typing::RubbedOut => sought.pop().is_some(),
+            Typing::RubbedOut => prompt.typed.pop().is_some() && self.seek(),
+            Typing::NextMatch | Typing::PreviousMatch => {
+                !prompt.typed.is_empty() && self.step_match(typing == Typing::NextMatch)
+            }
             Typing::Abandoned => {
-                self.sought = None;
-                true
+                if let Some(prompt) = self.sought.take() {
+                    self.forest.restore(&prompt.origin);
+                }
+                self.said = None;
+                self.moved(true)
             }
             Typing::Sought => {
-                let id = std::mem::take(sought);
                 self.sought = None;
-                if !id.is_empty() {
-                    self.seek(&id);
-                }
                 true
             }
         }
     }
 
-    /// Go to a bead matching what the reader typed, and say at the foot what
-    /// they cannot see for themselves.
+    /// Go to a bead matching what has been typed into the prompt, counting
+    /// from where the prompt went up, and have ready for the foot what the
+    /// reader cannot see for themselves.
     ///
     /// Which is both halves now, on every landing. A search takes part of an
     /// id or part of a title, so the reader has typed a fragment rather than
@@ -633,9 +645,20 @@ impl Shown {
     /// the foot spoke up only when a second tracker held the same id. That is
     /// two facts a count says at once, so it says them and the special case
     /// goes.
-    fn seek(&mut self, query: &str) {
-        self.said = Some(said_of(self.forest.seek(query, &self.forest.origin())));
-        self.moved(true);
+    ///
+    /// With nothing typed there is nothing to go to, and the forest goes back
+    /// to where the prompt went up.
+    fn seek(&mut self) -> bool {
+        let Some(prompt) = &self.sought else {
+            return false;
+        };
+        if prompt.typed.is_empty() {
+            self.forest.restore(&prompt.origin);
+            self.said = None;
+        } else {
+            self.said = Some(said_of(self.forest.seek(&prompt.typed, &prompt.origin)));
+        }
+        self.moved(true)
     }
 
     /// Step to the next bead matching what was last searched for, or to the
@@ -701,7 +724,10 @@ impl Shown {
         // that it is up is the loop's, which is what makes a keystroke mean a
         // character of an id rather than the binding the same key carries.
         if action == Action::Search {
-            self.sought = Some(String::new());
+            self.sought = Some(Prompt {
+                typed: String::new(),
+                origin: self.forest.origin(),
+            });
             return true;
         }
 
@@ -927,6 +953,13 @@ impl Screen {
 /// `^U` are the part of that agreement nothing on screen would show was
 /// broken. A window goes on last because it sits over the forest rather
 /// than in place of it.
+/// The search prompt: what has been typed into it, and where the search
+/// began.
+struct Prompt {
+    typed: String,
+    origin: forest::Origin,
+}
+
 /// What the foot says about where a search got to.
 ///
 /// The forest reports what it did and this decides what to say about it, so
@@ -1132,7 +1165,7 @@ impl View for Screen {
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
-            prompt: sought.as_deref(),
+            prompt: sought.as_ref().map(|prompt| prompt.typed.as_str()),
             keys: &keys,
         };
         let band = draw::Band {
@@ -1384,8 +1417,8 @@ mod tests {
                 "  S         cycle which copy of a bead opens, across the whole forest",
                 "  F         draw the selected bead as the only root, or put the forest back",
                 "  /         find part of a bead's id or title, wherever the forest draws it",
-                "  n         go to the next bead matching the search",
-                "  N         go to the one before it",
+                "  n, ^G     go to the next bead matching the search",
+                "  N, ^T     go to the one before it",
                 "  q, ^C     quit",
                 "  Esc       go back to the forest from the bead view",
                 "  Tab       move to the next bead the shown bead names; Enter follows it",
@@ -3925,6 +3958,149 @@ mod tests {
         shown.typing(Typing::Sought);
     }
 
+    /// Hand the prompt one key, heard first as the loop hears every press.
+    fn at_prompt(shown: &mut Shown, typing: Typing) -> bool {
+        shown.pressed();
+        shown.typing(typing)
+    }
+
+    /// Type into the prompt a key at a time.
+    fn type_into_prompt(shown: &mut Shown, text: &str) {
+        for glyph in text.chars() {
+            at_prompt(shown, Typing::Character(glyph));
+        }
+    }
+
+    /// A grove whose root rests shut over every bead in it, with the
+    /// selection on the root.
+    fn a_shut_grove() -> Shown {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char(' '));
+        assert!(!forest_band(&mut shown, 60, 24)
+            .iter()
+            .any(|row| row.contains("grv-1.1")));
+        shown
+    }
+
+    /// Each keystroke moves the selection onto the first match for what has
+    /// been typed so far, before Enter is pressed.
+    #[test]
+    fn typing_moves_the_selection_onto_the_first_match_so_far() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+
+        type_into_prompt(&mut shown, "grv-1.");
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+
+        type_into_prompt(&mut shown, "4");
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+    }
+
+    #[test]
+    fn typing_counts_from_where_the_selection_stood_when_the_prompt_went_up() {
+        let mut shown = shown(a_grove(6));
+        for _ in 0..3 {
+            press(&mut shown, KeyCode::Char('j'));
+        }
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
+        press(&mut shown, KeyCode::Char('/'));
+
+        type_into_prompt(&mut shown, "grv-1.");
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+    }
+
+    #[test]
+    fn control_g_and_control_t_step_through_the_matches_while_typing() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "grv-1.");
+
+        assert!(at_prompt(&mut shown, Typing::NextMatch));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2")));
+        assert!(at_prompt(&mut shown, Typing::NextMatch));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
+        assert!(at_prompt(&mut shown, Typing::PreviousMatch));
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2")));
+        assert_eq!(
+            foot_of(&mut shown, 80, 24).trim_end(),
+            "/grv-1.",
+            "the prompt went down"
+        );
+    }
+
+    /// Enter leaves the selection on the match it stood on and says which of
+    /// how many it is, now the prompt has given the foot back.
+    #[test]
+    fn enter_leaves_the_selection_on_the_match_and_says_which_of_how_many() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "grv-1.");
+        at_prompt(&mut shown, Typing::NextMatch);
+
+        assert!(at_prompt(&mut shown, Typing::Sought));
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2")));
+        assert!(
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.2 — 2 of 6 matching"),
+            "{:?}",
+            foot_of(&mut shown, 80, 24)
+        );
+    }
+
+    /// Esc puts the selection and every fold back as they stood when the
+    /// prompt went up, whatever the keystrokes since opened.
+    #[test]
+    fn esc_puts_the_selection_and_the_folds_back_as_they_stood() {
+        let mut shown = a_shut_grove();
+        let was = forest_band(&mut shown, 60, 24);
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "grv-1.3");
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
+
+        assert!(at_prompt(&mut shown, Typing::Abandoned));
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+        assert_eq!(forest_band(&mut shown, 60, 24), was);
+    }
+
+    /// A keystroke matching nothing goes back to where the prompt went up,
+    /// shutting what the keystroke before it opened, and Enter then says so.
+    #[test]
+    fn a_keystroke_matching_nothing_goes_back_to_where_the_prompt_went_up() {
+        let mut shown = a_shut_grove();
+        let was = forest_band(&mut shown, 60, 24);
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "grv-1.3");
+
+        type_into_prompt(&mut shown, "x");
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+        assert_eq!(forest_band(&mut shown, 60, 24), was);
+        at_prompt(&mut shown, Typing::Sought);
+        assert!(
+            foot_of(&mut shown, 100, 24).contains("nothing matching \"grv-1.3x\""),
+            "{:?}",
+            foot_of(&mut shown, 100, 24)
+        );
+    }
+
+    /// Rubbing the prompt out to nothing asks for nothing, so the forest goes
+    /// back to where the prompt went up.
+    #[test]
+    fn rubbing_the_prompt_out_goes_back_to_where_it_went_up() {
+        let mut shown = a_shut_grove();
+        let was = forest_band(&mut shown, 60, 24);
+        press(&mut shown, KeyCode::Char('/'));
+        type_into_prompt(&mut shown, "g");
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
+
+        assert!(at_prompt(&mut shown, Typing::RubbedOut));
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
+        assert_eq!(forest_band(&mut shown, 60, 24), was);
+    }
+
     /// The prompt takes the foot for as long as it is up, and what the reader
     /// types appears in it behind the key they opened it with — which is how
     /// every terminal they have searched in draws one.
@@ -4144,7 +4320,7 @@ mod tests {
             Over::Nothing,
             Pressed {
                 said: shown.said.as_ref(),
-                prompt: shown.sought.as_deref(),
+                prompt: shown.sought.as_ref().map(|prompt| prompt.typed.as_str()),
             },
             &[],
             &[],
