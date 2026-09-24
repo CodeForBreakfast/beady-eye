@@ -519,7 +519,7 @@ fn reaching_across<'a>(answered: &[(&'a str, &'a ProjectWork)]) -> Vec<Drawn<'a>
 fn by_project<'a>(project: &'a str, assembled: &'a Assembled) -> Vec<(&'a str, Vec<Bead>)> {
     let mut rows: BTreeMap<&str, Vec<Bead>> = BTreeMap::new();
     for (at, bead) in assembled.beads.iter().enumerate() {
-        let own = assembled.foreign.get(&at).map_or(project, String::as_str);
+        let own = assembled.external.get(&at).map_or(project, String::as_str);
         rows.entry(own).or_default().push(bead.clone());
     }
     rows.into_iter().collect()

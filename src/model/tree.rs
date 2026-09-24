@@ -76,10 +76,10 @@ pub struct Assembled {
     /// in the order the walk first reaches them.
     pub beads: Vec<Bead>,
     /// The beads another project's answer holds, by their place in `beads`,
-    /// and that project. A tree reaches them through a bead waiting on one,
-    /// and each is keyed on its own project wherever it is drawn. Every
-    /// other bead is the root's project's.
-    pub foreign: BTreeMap<usize, String>,
+    /// and that project. A tree reaches them through what bd calls an
+    /// external dependency, and each is keyed on its own project wherever it
+    /// is drawn. Every other bead is the root's project's.
+    pub external: BTreeMap<usize, String>,
     /// The beads beneath each of `beads`, in render order. A bead reached
     /// several ways is linked from each of the beads that reach it.
     pub children: Vec<Vec<Link>>,
@@ -387,14 +387,14 @@ fn assemble<'a, K: Copy + Ord>(
     };
 
     let beads = order.iter().map(|key| held(*key).0.clone()).collect();
-    let foreign = order
+    let external = order
         .iter()
         .enumerate()
         .filter_map(|(at, key)| Some((at, held(*key).1?.to_string())))
         .collect();
     Assembled {
         beads,
-        foreign,
+        external,
         children,
         dangling,
         cycles,
@@ -507,8 +507,8 @@ impl<'a> Across<'a> {
             root,
             |key| self.beneath(key),
             |(at, id)| {
-                let foreign = (at != root.0).then_some(self.projects[at]);
-                (self.bead((at, id)), foreign)
+                let external = (at != root.0).then_some(self.projects[at]);
+                (self.bead((at, id)), external)
             },
             |key| self.unheld(key),
         ))
@@ -1369,7 +1369,7 @@ mod tests {
             .into_iter()
             .map(|p| {
                 (
-                    a.foreign.get(&p.bead).map_or("arkham", String::as_str),
+                    a.external.get(&p.bead).map_or("arkham", String::as_str),
                     a.beads[p.bead].id.as_str(),
                     p.depth,
                 )

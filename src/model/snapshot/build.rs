@@ -65,7 +65,7 @@ pub fn build_tree(
     now: DateTime<Utc>,
 ) -> Tree {
     let badges: BTreeMap<&str, Vec<Badge>> = std::iter::once(project)
-        .chain(assembled.foreign.values().map(String::as_str))
+        .chain(assembled.external.values().map(String::as_str))
         .map(|project| (project, cfg.badges_for_project(project)))
         .collect();
     let beads: Vec<Node> = assembled
@@ -73,7 +73,7 @@ pub fn build_tree(
         .iter()
         .enumerate()
         .map(|(at, bead)| {
-            let own = assembled.foreign.get(&at).map_or(project, String::as_str);
+            let own = assembled.external.get(&at).map_or(project, String::as_str);
             let key = BeadKey {
                 project: own.to_string(),
                 id: bead.id.clone(),
