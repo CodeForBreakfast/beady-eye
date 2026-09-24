@@ -200,7 +200,7 @@ pub struct Unread {
 /// this tool exists to avoid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Note {
-    Dangling(usize),
+    OrphanedDependencies(usize),
     Cycle(usize),
     /// Every tracker answered and none of them had a root to draw, so the
     /// forest is empty. Under no tree, because there is none: it is the only
@@ -226,7 +226,7 @@ pub struct Group {
     /// How many of the things this group holds carry findings the screen is
     /// not drawing, because the group holds them rather than showing them.
     ///
-    /// Only a hidden tree has any: the filter took its dangling and looping
+    /// Only a hidden tree has any: the filter took its orphaned dependencies and looping
     /// counts and its anomalies out of the forest with it, and that choice
     /// should hold — but a group that says only how many trees it hides
     /// reads like "nothing to see" when some of them are broken.
@@ -334,8 +334,8 @@ pub(crate) fn prefix(trunk: &[bool], last: bool, shut: bool, edge: Option<&Edge>
 
 pub(crate) fn notes_of(tree: &Tree) -> Vec<Note> {
     let mut notes = Vec::new();
-    if !tree.dangling.is_empty() {
-        notes.push(Note::Dangling(tree.dangling.len()));
+    if !tree.orphaned_dependencies.is_empty() {
+        notes.push(Note::OrphanedDependencies(tree.orphaned_dependencies.len()));
     }
     if !tree.cycles.is_empty() {
         notes.push(Note::Cycle(tree.cycles.len()));

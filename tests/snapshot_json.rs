@@ -222,7 +222,7 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(tree["root"], "dun-7");
     assert_eq!(tree["title"], "lift the ground station");
     assert_eq!(tree["tracker"], "ok");
-    assert_eq!(tree["dangling"], json!([]));
+    assert_eq!(tree["beads_with_orphaned_dependencies"], json!([]));
     assert_eq!(tree["cycles"], json!([]));
     assert_eq!(
         tree["counts"],
@@ -1140,7 +1140,7 @@ fn a_bead_waiting_on_another_projects_bead_draws_it_beneath_itself() {
     );
     assert_eq!(node(arkham, "dun-2e7")["edge"], "blocks");
     assert_eq!(
-        arkham["dangling"],
+        arkham["beads_with_orphaned_dependencies"],
         json!([]),
         "the bead it waits on is held"
     );

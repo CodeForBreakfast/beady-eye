@@ -29,7 +29,7 @@ const LONG_ENOUGH_TO_COLLECT: Duration = Duration::from_secs(10);
 
 /// From the tree's header, where the walk leaves the selection, down onto the
 /// first bead — and Enter, which shows it. One press rather than two: the
-/// anomaly the tree's dangling edges raise is drawn between the two rows and
+/// anomaly the tree's orphaned dependencies raise is drawn between the two rows and
 /// a motion passes over it, because nothing about it is a thing to select.
 const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 

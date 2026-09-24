@@ -242,7 +242,7 @@ impl Counts {
     /// count here is a count of beads: a line over the rows would name more
     /// work than the tracker holds and send a reader hunting for copies. That
     /// holds over one tree's nodes and over a project's trees alike — a root's
-    /// dangling children stand in every tree of its project, so a project line
+    /// orphaned-dependency children stand in every tree of its project, so a project line
     /// that added its trees' counts would name them once per tree.
     pub fn over<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> Self {
         let mut counted = BTreeSet::new();
@@ -351,7 +351,7 @@ pub struct Tree {
     /// Ids in `beads` naming work the tracker's answer does not hold — most
     /// often a parent that was deleted. A bead this tree does not draw is not
     /// reported here, whatever its own dependencies are missing.
-    pub dangling: Vec<String>,
+    pub orphaned_dependencies: Vec<String>,
     /// Ids whose own descendants lead back to them. Each is still in
     /// `beads`, drawn where the loop was cut.
     pub cycles: Vec<String>,
@@ -371,7 +371,10 @@ impl Serialize for Tree {
         tree.serialize_field("counts", &self.counts)?;
         tree.serialize_field("tracker", &self.tracker)?;
         tree.serialize_field("nodes", &self.unrolled())?;
-        tree.serialize_field("dangling", &self.dangling)?;
+        tree.serialize_field(
+            "beads_with_orphaned_dependencies",
+            &self.orphaned_dependencies,
+        )?;
         tree.serialize_field("cycles", &self.cycles)?;
         tree.end()
     }
@@ -695,7 +698,7 @@ impl Tree {
             tracker,
             beads: Vec::new(),
             children: Vec::new(),
-            dangling: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             cycles: Vec::new(),
         }
     }

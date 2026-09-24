@@ -577,10 +577,10 @@ git commit -m "feat: parse bd dependency-tree JSON into typed rows"
 - Consumes: `model::types::{Bead, Status}` from Task 3.
 - Produces:
   - `model::tree::Placed { bead: Bead, depth: u16 }`
-  - `model::tree::Assembled { rows: Vec<Placed>, dangling: Vec<String> }`
+  - `model::tree::Assembled { rows: Vec<Placed>, orphaned_dependencies: Vec<String> }`
   - `model::tree::assemble(beads: Vec<Bead>) -> Assembled`
 
-Siblings sort by `(status.rank(), priority, id)`. Depth is recomputed from the parent chain rather than trusted from bd. A bead whose `parent_id` names a bead not in the input is placed at depth 1 under the root and its id recorded in `dangling` — reported, never dropped. A parent cycle is broken by a visited set so assembly always terminates.
+Siblings sort by `(status.rank(), priority, id)`. Depth is recomputed from the parent chain rather than trusted from bd. A bead whose `parent_id` names a bead not in the input is placed at depth 1 under the root and its id recorded in `orphaned_dependencies` — reported, never dropped. A parent cycle is broken by a visited set so assembly always terminates.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -601,7 +601,7 @@ pub struct Placed {
 pub struct Assembled {
     pub rows: Vec<Placed>,
     /// Ids whose declared parent was not present in the input.
-    pub dangling: Vec<String>,
+    pub orphaned_dependencies: Vec<String>,
 }
 
 /// Order a flat set of bd rows into render order.
@@ -616,7 +616,7 @@ pub fn assemble(beads: Vec<Bead>) -> Assembled {
         .find(|b| b.parent_id.is_none())
         .map(|b| b.id.clone());
 
-    let mut dangling = Vec::new();
+    let mut orphaned_dependencies = Vec::new();
     let mut children: BTreeMap<String, Vec<Bead>> = BTreeMap::new();
     let mut root: Option<Bead> = None;
 
@@ -627,7 +627,7 @@ pub fn assemble(beads: Vec<Bead>) -> Assembled {
                 children.entry(parent.clone()).or_default().push(bead);
             }
             Some(_) => {
-                dangling.push(bead.id.clone());
+                orphaned_dependencies.push(bead.id.clone());
                 if let Some(r) = &root_id {
                     children.entry(r.clone()).or_default().push(bead);
                 }
@@ -651,8 +651,8 @@ pub fn assemble(beads: Vec<Bead>) -> Assembled {
         walk(root, 0, &children, &mut seen, &mut rows);
     }
 
-    dangling.sort();
-    Assembled { rows, dangling }
+    orphaned_dependencies.sort();
+    Assembled { rows, orphaned_dependencies }
 }
 
 fn walk(
@@ -745,7 +745,7 @@ mod tests {
         ]"#;
         let a = assemble(parse_dep_tree(json).unwrap());
 
-        assert_eq!(a.dangling, vec!["smt-1.9".to_string()]);
+        assert_eq!(a.orphaned_dependencies, vec!["smt-1.9".to_string()]);
         assert_eq!(a.rows.len(), 2, "the orphan is kept, not dropped");
         assert_eq!(a.rows[1].depth, 1, "the orphan is placed under the root");
     }
@@ -1434,7 +1434,7 @@ pub struct Tree {
     pub tracker: TrackerState,
     pub nodes: Vec<Node>,
     /// Ids whose declared parent was absent from the tracker's answer.
-    pub dangling: Vec<String>,
+    pub orphaned_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1511,7 +1511,7 @@ pub fn build_tree(
         counts,
         tracker: TrackerState::Ok,
         nodes,
-        dangling: assembled.dangling,
+        orphaned_dependencies: assembled.orphaned_dependencies,
     }
 }
 
@@ -2089,7 +2089,7 @@ fn unreachable_tree(project: &str, error: &str) -> Tree {
         counts: Counts { total: 0, closed: 0, live_agents: 0, anomalies: 0 },
         tracker: TrackerState::Unreachable { error: error.to_string() },
         nodes: Vec::new(),
-        dangling: Vec::new(),
+        orphaned_dependencies: Vec::new(),
     }
 }
 ```

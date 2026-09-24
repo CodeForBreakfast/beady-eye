@@ -1489,7 +1489,7 @@ mod tests {
     /// holds is still listed, with the one thing the answer had of it.
     #[test]
     fn a_related_bead_the_answer_does_not_hold_is_named_as_such() {
-        let dangling = Node {
+        let orphaned = Node {
             depends_on: vec![Related {
                 id: "dun-9".to_string(),
                 edge: Edge::Blocks,
@@ -1498,7 +1498,7 @@ mod tests {
             }],
             ..a_bead()
         };
-        let rows = drawn(&dangling, &mut Show::default(), 50, 24);
+        let rows = drawn(&orphaned, &mut Show::default(), 50, 24);
 
         assert!(
             rows.contains(&"│   → dun-9  not in the tracker's answer         │".to_string()),

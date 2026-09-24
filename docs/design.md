@@ -66,6 +66,7 @@ coin one — and say so.**
 | tree | beads | a root and its descendants — everything that must finish before it can (see *Tree construction*) |
 | parent-child, blocks | beads (`type` on a dependency) | the two edge kinds; a nesting is drawn from either, and the elbow says which |
 | external dependency | beads (`bd dep add` across prefixes) | a dependency on another project's bead, which the bead waiting on it holds (see *Across projects*) |
+| orphaned dependency | beads (`bd doctor`'s "Orphaned Dependencies" check) | a dependency on a bead no configured project holds |
 | claim | beads (`bd update --claim`) | an agent taking a bead |
 | stale | beads (`bd stale`) | in-progress with no recent activity, "may be abandoned" |
 | ready | beads (`bd ready`) | open **and** every dependency satisfied |
@@ -373,7 +374,7 @@ emptiness test.
 
 **Scoping by `--project` is silent, and this is a deviation from *degrade,
 never disappear*.** That principle governs a tree `bdi` could not draw: an
-unreachable tracker, a dangling parent. A project the reader excluded on the
+unreachable tracker, an orphaned dependency. A project the reader excluded on the
 command line is not a failure to report, and a standing line about it would
 be noise on every run of a flag whose whole purpose is a smaller screen. The
 reader typed the scope; the screen does not need to tell them what they typed.
@@ -905,12 +906,12 @@ interpreting what a field means, which this project's rules push into config,
 whereas having children is the shape of the tree `bdi` already computes and is
 exactly the condition under which the question is askable.
 
-**Two degradations, and a cycle.** `dangling` is beads naming something they
-depend on that no answer holds for them (see *Across projects*) — most often a
-deleted parent; each is
+**Two degradations, and a cycle.** An *orphaned dependency* is beads naming
+something they depend on that no answer holds for them (see *Across
+projects*) — most often a deleted parent; each is
 still drawn, and a bead nothing in the answer nests at all is a root of its own
-(discovery rule 4), so it is drawn under its project and reported as dangling
-there rather than nowhere. `cycles` is beads whose own descendants lead back to
+(discovery rule 4), so it is drawn under its project and reported as an
+orphaned dependency there rather than nowhere. `cycles` is beads whose own descendants lead back to
 them — a bead blocked by one of its own forebears, which beads permits — each
 still drawn, where the loop was cut. The cut is the way down: a walk that
 comes back to a bead it came down through stops there, so the tree holds the
@@ -938,7 +939,8 @@ an id that answer lacks is looked for among the other projects the run
 reads. It is another project's bead where exactly one of them holds it. Two
 holding it is a prefix collision nothing in the row settles, and one that
 only an excluded or unreadable project holds is out of reach; either way it
-stays work the answer does not hold, and the bead is reported as dangling.
+stays work the answer does not hold, and the bead is reported as an orphaned
+dependency.
 Only a `blocks` edge crosses: a blocker hangs beneath the bead waiting on it,
 whereas a parent in another project would put this project's bead inside
 that project's trees.
@@ -955,7 +957,7 @@ the bead in its own trees.
 
 **Only a tree that needs it pays for it.** Each project's read assembles its
 trees from its own answer. A bead waiting on something that answer does not
-hold is one its tree already reports as dangling, so a collection assembles
+hold is one its tree already reports as an orphaned dependency, so a collection assembles
 again, across every answer read, only a tree reporting one, and a run with no
 such bead reads no answer twice. The drawing reads every project's standing
 answer, so a refresh of one project redraws what other projects' trees hold
@@ -1968,7 +1970,7 @@ name to the socket after any command that wrote something.
           "anomalies": [{ "rule": "orphan-claim" }]
         }
       ],
-      "dangling": [],
+      "beads_with_orphaned_dependencies": [],
       "cycles": []
     }
   ],
@@ -2008,8 +2010,9 @@ and names nothing on its own. A tree's
 `tracker` is `ok`, `{ "unreachable": <reason> }` where its tracker could not
 be read, or `root-not-found` where the tracker answered and holds no bead of
 that id — which only a root named in config or on the command line can be,
-since every other root came out of the tracker's own answers. `dangling` and
-`cycles` name ids that are still in `nodes`. `hidden_trees` is never
+since every other root came out of the tracker's own answers.
+`beads_with_orphaned_dependencies` and `cycles` name ids that are still in
+`nodes`. `hidden_trees` is never
 empty-by-omission — a filtered tree is reported, not dropped. A reason is
 `{ "reason": <kind> }`, tagged inside its own object the way an anomaly's
 `rule` and a conflict's `conflict` are, so every reason reads the same way and
@@ -2187,7 +2190,7 @@ glyph.
 **An id is shown as what it adds to its parent's id**, the parent being the
 bead it is drawn under: `.20` for `smt-4kd3p.20` drawn under `smt-4kd3p`. It is
 kept whole where its parent's id followed by a dot is not the front of its own
-— the dangling and re-parented nodes — because a bare suffix would place it
+— the orphaned-dependency and re-parented nodes — because a bare suffix would place it
 under a parent it does not belong to, and kept whole with no parent — a tree's
 root, or the bead a rooted forest starts at — because there is nothing to
 measure it against. The rule holds at every depth, so reading down from a
@@ -2644,7 +2647,7 @@ rests shut whatever is beneath it, where the same tree shown under its project
 rests open onto the work a reader could start; a fold the reader opens on it is
 theirs, and survives a refresh and `a` alike.
 
-Per-tree findings are not groups: a tree's dangling beads, its cycles and the
+Per-tree findings are not groups: a tree's orphaned-dependency beads, its cycles and the
 nodes the tracker stopped at are drawn as note lines directly under its root's
 row, whether that root is folded or not, so folding the root cannot lose one.
 

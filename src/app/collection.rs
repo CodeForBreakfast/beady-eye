@@ -473,12 +473,12 @@ type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
 ///
 /// A project's read assembled its trees from its own answer alone, and a
 /// bead waiting on work that answer does not hold is one each tree already
-/// names as dangling. So only a tree naming one is assembled again, across
+/// names as an orphaned dependency. So only a tree naming one is assembled again, across
 /// every answer, and a run with none reads nothing twice.
 fn reaching_across<'a>(answered: &[(&'a str, &'a ProjectWork)]) -> Vec<Drawn<'a>> {
     let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
         read.as_ref()
-            .is_ok_and(|assembled| !assembled.dangling.is_empty())
+            .is_ok_and(|assembled| !assembled.orphaned_dependencies.is_empty())
     };
     let across = answered
         .iter()

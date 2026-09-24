@@ -584,7 +584,7 @@ pub fn unconfigured(count: usize) -> String {
 
 /// Beads naming something they depend on that this tree does not hold. One
 /// left with nowhere else to sit hangs off the root.
-pub fn dangling(count: usize) -> String {
+pub fn orphaned_dependency(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
     format!(
         "{count} {bead} waiting on work outside this tree · no bead by the id each names is in it"
@@ -987,8 +987,8 @@ mod tests {
             said.push(unconfigured(count));
         }
         said.push(claim_refused().to_string());
-        said.push(dangling(1));
-        said.push(dangling(3));
+        said.push(orphaned_dependency(1));
+        said.push(orphaned_dependency(3));
         said.push(cycle(1));
         said.push(cycle(3));
         said.push(scoped_by_the_directory("summit-works"));
@@ -1888,7 +1888,7 @@ mod tests {
     #[test]
     fn one_of_a_thing_is_not_described_in_the_plural() {
         for said in [
-            dangling(1),
+            orphaned_dependency(1),
             cycle(1),
             elided(1),
             unfinished_beneath(1),

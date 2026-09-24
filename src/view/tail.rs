@@ -307,7 +307,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             ],
-            dangling: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             cycles: Vec::new(),
         });
 

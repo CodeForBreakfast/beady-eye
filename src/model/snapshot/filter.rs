@@ -95,7 +95,7 @@ impl HiddenTree {
             root: tree.root.clone(),
             title: tree.title.clone(),
             reason: "no-live-agent",
-            findings: !tree.dangling.is_empty()
+            findings: !tree.orphaned_dependencies.is_empty()
                 || !tree.cycles.is_empty()
                 || tree.counts.anomalies > 0,
         }
@@ -240,7 +240,7 @@ mod tests {
             tracker: TrackerState::Ok,
             beads: Vec::new(),
             children: Vec::new(),
-            dangling: Vec::new(),
+            orphaned_dependencies: Vec::new(),
             cycles: Vec::new(),
         }
     }
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn a_hidden_tree_waiting_on_a_bead_bd_never_returned_has_a_finding() {
         let mut waiting = quiet("dun-2", "quiet work");
-        waiting.dangling = vec!["dun-2.9".to_string()];
+        waiting.orphaned_dependencies = vec!["dun-2.9".to_string()];
         let snap = snapshot(vec![tree(), waiting]);
 
         assert!(snap.hidden_trees[0].findings);
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn a_hidden_tree_whose_only_finding_is_an_anomaly_has_a_finding() {
         let claimed = claimed_with_no_pane();
-        assert!(claimed.dangling.is_empty() && claimed.cycles.is_empty());
+        assert!(claimed.orphaned_dependencies.is_empty() && claimed.cycles.is_empty());
         assert_eq!(claimed.counts.anomalies, 1);
 
         assert!(HiddenTree::of(&claimed).findings);
@@ -529,7 +529,7 @@ mod tests {
             &quiet_with_reports(),
             "what a filter hid it must be able to show again"
         );
-        assert_eq!(back.dangling, ["dun-6.2"]);
+        assert_eq!(back.orphaned_dependencies, ["dun-6.2"]);
         assert_eq!(back.cycles, ["dun-6"]);
     }
 
