@@ -226,7 +226,7 @@ impl<'a> Walk<'a> {
         let (mut at, mut above) = self.begins()?;
         let mut before = 0usize;
         for step in &place.steps[self.start.steps.len()..] {
-            before += usize::from(sought.finds(self.tree, at));
+            before = before.saturating_add(usize::from(sought.finds(self.tree, at)));
             let children = self.children(at, &above);
             above.push(at);
             let mut next = None;

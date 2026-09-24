@@ -996,7 +996,7 @@ impl Forest {
             return if forward { 0 } else { of - 1 };
         };
         if forward {
-            let after = before + usize::from(on_a_match);
+            let after = before.saturating_add(usize::from(on_a_match));
             if after < of {
                 after
             } else {
@@ -8657,6 +8657,32 @@ credential_command = "secret harbour"
         assert_eq!(
             forest.next_match(true),
             Some(went_to("dunwich", "dun-50.40", 1, copies))
+        );
+    }
+
+    /// Seventy nested diamonds draw more matches than a `usize` holds, so the
+    /// counts saturate. A place under the west pier comes after everything
+    /// the east pier holds, and counting on past that still saturates, so
+    /// stepping on from there comes round to the first.
+    #[test]
+    fn a_count_past_what_a_usize_holds_saturates() {
+        let mut forest = flatten(nested_diamonds(70));
+        let under_the_west_pier = Place::root(key("dunwich", "dun-50.0"))
+            .step_to(key("dunwich", "dun-50.0.2"))
+            .step_to(key("dunwich", "dun-50.1"));
+        let mut matched = forest.matches(Sought::holding("the"));
+
+        assert_eq!(matched.len(), usize::MAX);
+        assert_eq!(
+            matched.before(&under_the_west_pier),
+            Some((usize::MAX, true))
+        );
+
+        forest.seek("the");
+        assert!(forest.go_to_place(&under_the_west_pier));
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("dunwich", "dun-50.0", 1, usize::MAX))
         );
     }
 
