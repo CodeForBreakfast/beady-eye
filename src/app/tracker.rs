@@ -1570,7 +1570,7 @@ dunwich = ["bdi-404"]
         assert_eq!(drawn_roots(&snap), vec![("dunwich", "dun-7")]);
     }
 
-    // ---- discovery rule 4: a root only a live pane names ----------------
+    // ---- discovery rule 3: a root only a live pane names ----------------
 
     /// The only root a pane contributes, and the reason it exists: an agent
     /// working off-tree still appears, on a bead no bd status and no
@@ -1621,7 +1621,7 @@ dunwich = ["bdi-404"]
             "a mislabelled pane is not a tracker outage"
         );
         let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["dun-7"], "rules 1 to 3 are untouched");
+        assert_eq!(roots, vec!["dun-7"], "rules 1 and 2 are untouched");
         let loose: Vec<&str> = snap
             .unattributed
             .iter()

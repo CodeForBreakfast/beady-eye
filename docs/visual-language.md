@@ -927,34 +927,28 @@ the only slots near the top of a theme's range are 7 and 15, and (b)'s own
 blind spot is that those vanish on a light theme. There is nowhere for a top
 slot to go.
 
-The resolution is to stop counting three rungs. **A staffed row is the
+The resolution is to stop counting three colours. **An ordinary row is the
 ground** — untreated, the terminal's default foreground, no colour spent on it
-at all — and the scale is the two rungs *below* it. Then:
+at all — and the scale is one rung on each side of it: a staffed row steps up
+by a weight, and a finished row steps down to the theme's colour 8. Then:
 
-- there is nothing above the ground, which is not a limitation but the reason
-  `bdi-sw4` could not find a colour to put there;
-- the intervals to bound are ground-to-unstaffed and unstaffed-to-finished,
-  which are exactly the two `bdi-kbd2` must size;
-- and both of them are measured downward from a single reference, so neither
-  is an interval between two values the terminal picked independently.
+- there is no colour above the ground, which is not a limitation but the reason
+  `bdi-sw4` could not find one to put there, so the step up is a weight on the
+  default foreground, the one treatment whose size no theme can move — see (c);
+- and the one colour interval to bound is ground-to-finished, measured downward
+  from a single reference rather than between two values the terminal picked
+  independently.
 
-`bdi` already draws it this way. What was missing is the account of *why* that
-is the right shape rather than an accident of `bdi-sw4`'s fix.
+`bdi` draws it this way: `TIER_STAFFED`, `TIER_OPEN` and `TIER_FINISHED` in
+`src/view/palette.rs` are the three tiers.
 
-**Bold is ruled out here, and `bdi-kbd2` should only reach for it by
-overturning answer 1 deliberately.** Two separate arguments land on it: the
-channel assignment says weight is structural, and `bdi-sw4` measured the step
-at a fifth of the one that works.
-
-What this section adds is narrower, and it belongs on the record either way:
-those two numbers were compared on one axis and are not the same kind of
-quantity. 63.1% is a step that goes to zero when the theme changes, and on this
-project's own theme it has, twice. 14.9% is a step no theme can move — only the
-font, and only because there is no real Bold face at that variant. **A small
-step with a floor and a large step with none are different offers**, and
-nothing in the decision weighed that, because the table measured ink. If
-`bdi-kbd2` finds the bottom interval still short, that is the trade to put in
-front of Graeme — with the channel collision named, not buried.
+**Bold is the top rung, and `bdi-kbd2` overturned answer 1 deliberately to put
+it there.** Two arguments stood against it: the channel assignment said weight
+is structural, and `bdi-sw4` measured the step at a fifth of the one that
+works. The assignment now gives weight on the forest a second reading as the
+top of the liveness scale, and names the cost. The measurement compared a small
+step with a floor against a large step with none, on one axis — the trade (c)
+describes.
 
 **One rule falls out of all of it and is worth stating on its own:**
 
@@ -1177,11 +1171,11 @@ reasoning — *"a theme's default is already the brightest thing on its page"*
 — is the argument for the default being the **ground**, not for it being the
 top rung.
 
-Read as the ground, three things stop being puzzles: there is nothing above it
-because there is nothing above a reference; `bdi` has two rungs rather than
-three, which is what the routes above find is the portable number; and both
-intervals are measured downward from one value rather than between two the
-terminal chose separately.
+Read as the ground, three things stop being puzzles: there is no colour above
+it because there is nothing above a reference; `bdi` has two rungs rather than
+three, which is what the routes above find is the portable number; and the
+colour interval is measured downward from one value rather than between two
+the terminal chose separately, while the step up is a weight no theme can move.
 
 Two smaller things are **not** in the spec at all and so are not
 contradictions, only new:
