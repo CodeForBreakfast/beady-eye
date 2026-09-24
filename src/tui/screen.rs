@@ -2626,6 +2626,7 @@ mod tests {
         let mut snapshot = a_described_grove(6);
         let names = |id: &str, edge: Edge, status: Option<Status>| Related {
             id: id.to_string(),
+            project: None,
             edge,
             status,
             title: Some("a bead in the grove".to_string()),
@@ -2661,6 +2662,7 @@ mod tests {
                 }
                 node.blocks.push(Related {
                     id: "grv-9".to_string(),
+                    project: None,
                     edge: Edge::Blocks,
                     status: Some(Status::Open),
                     title: Some("a bead under no root".to_string()),
@@ -2894,6 +2896,7 @@ mod tests {
                 node.parent = None;
                 node.depends_on = vec![Related {
                     id: "grv-1.2".to_string(),
+                    project: None,
                     edge: Edge::Blocks,
                     status: Some(Status::InProgress),
                     title: Some("a bead in the grove".to_string()),

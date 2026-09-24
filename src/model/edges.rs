@@ -15,6 +15,9 @@ use crate::model::types::{Bead, Edge, Status};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Related {
     pub id: String,
+    /// The project whose bead this is, where that is not the project of the
+    /// bead naming it.
+    pub project: Option<String>,
     pub edge: Edge,
     pub status: Option<Status>,
     pub title: Option<String>,
@@ -40,6 +43,7 @@ pub fn relations(beads: &[Bead]) -> BTreeMap<String, Relations> {
         let row = by_id.get(id);
         Related {
             id: id.to_string(),
+            project: None,
             edge,
             status: row.map(|bead| bead.status.clone()),
             title: row.map(|bead| bead.title.clone()),
@@ -100,6 +104,7 @@ mod tests {
     fn held(id: &str, edge: Edge, status: Status, title: &str) -> Related {
         Related {
             id: id.to_string(),
+            project: None,
             edge,
             status: Some(status),
             title: Some(title.to_string()),
@@ -142,6 +147,7 @@ mod tests {
             tied()["dun-3.2"].depends_on,
             vec![Related {
                 id: "dun-9".to_string(),
+                project: None,
                 edge: Edge::Blocks,
                 status: None,
                 title: None,
