@@ -268,11 +268,12 @@ Roots come from bd, unioned and deduped:
    written `<project>:<bead-id>` — bare where there is only one project, which
    is the whole of a zero-config run.
 
-   **A root named on the command line replaces discovery for its project.**
-   `bdi meadow:mdw-123` asks for that tree and not the others, so in a
-   project the command line names a root in, its named roots are the only
-   ones: none of the other rules runs there, and the config's roots for it
-   are not read. A project it names no root in is discovered as usual.
+   **A bead named on the command line is focused, and discovery still runs.**
+   `bdi meadow:mdw-123` asks to be shown that bead, and `bdi` starts as if
+   the reader had pressed `Shift+F` on it. Its tree is read beside the ones
+   the other rules find: a bead below a root is climbed to that root as a
+   pane's bead is, and one the tracker does not hold is named as a root so
+   that its tree reports it missing.
 3. Any bead named by a live pane's `display_agent` that the first two missed.
    This is the only root herdr contributes, and it exists so an agent working
    off-tree still appears.
@@ -1062,7 +1063,12 @@ collapsed-except-selected and the rejection stands: the selection has no
 bearing on what is open, and it has none here either, because the mode stands
 on the bead named at the keystroke and moving about under it moves nothing.
 Pressing the key again puts the forest back, with the selection on the bead it
-was rooted at, opening whatever has been shut over that bead in the meantime. The bead leaving the collection is the one thing that ends the
+was rooted at, opening whatever has been shut over that bead in the meantime.
+The command line roots the forest the same way: `bdi <bead-id>` starts as if
+the key had been pressed on that bead, once a collection draws it. Several
+named are each drawn as a root, which is the one way the mode holds more than
+one bead; a bead named beneath another is already drawn under it. The key
+then puts the forest back as it does after any other focus. The bead leaving the collection is the one thing that ends the
 mode on its own; a bead that closes is still in the collection, so closing the
 focused bead does not, and a bead the tracker has moved is followed to where it
 moved to. Everything the mode stops drawing goes behind

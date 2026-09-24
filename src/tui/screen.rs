@@ -947,6 +947,12 @@ impl Screen {
 
         Ok(screen)
     }
+
+    /// Start focused on the beads the command line named, each once a
+    /// collection draws it.
+    pub(super) fn focus_when_drawn(&mut self, beads: Vec<BeadKey>) {
+        self.shown.forest.focus_when_drawn(beads);
+    }
 }
 
 /// One frame: the forest, the tail beneath it, the height the forest is told
