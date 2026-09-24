@@ -293,8 +293,7 @@ pub struct Node {
     pub description: String,
     #[serde(skip)]
     pub notes: String,
-    /// The name `bd show` prints as the bead's owner, which is the row's
-    /// `created_by` and not the address its `owner` carries.
+    /// The row's `created_by`, and not the address its `owner` carries.
     #[serde(skip)]
     pub created_by: Option<String>,
     #[serde(skip)]
