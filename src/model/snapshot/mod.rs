@@ -421,6 +421,7 @@ pub struct Collected {
     pub trees: Vec<Tree>,
     pub failed_projects: Vec<FailedProject>,
     pub read_at: BTreeMap<String, DateTime<Utc>>,
+    pub speaks_until: BTreeMap<String, DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -520,6 +521,15 @@ pub struct Snapshot {
     /// nothing else, so `generated_at` answers this for a consumer.
     #[serde(skip)]
     pub read_at: BTreeMap<String, DateTime<Utc>>,
+    /// When each project's standing read stops speaking for its tracker with
+    /// nothing written — the soonest `defer_until` it held back — for the
+    /// projects whose read holds one back.
+    ///
+    /// Carried for the loop, which asks for a project again at this instant
+    /// where it is sooner than the poll would. Not part of the JSON contract:
+    /// a `--json` consumer is handed the `defer_until`s themselves.
+    #[serde(skip)]
+    pub speaks_until: BTreeMap<String, DateTime<Utc>>,
     /// Every project the config names, in the order it names them —
     /// including the ones no collection has reached yet.
     ///
@@ -583,6 +593,7 @@ impl Snapshot {
             projects_named_without_git,
             collected: Vec::new(),
             read_at: BTreeMap::new(),
+            speaks_until: BTreeMap::new(),
             projects,
             scope,
         }
