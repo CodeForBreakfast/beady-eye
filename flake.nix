@@ -979,8 +979,8 @@
         '';
 
         # A mutant that does not terminate ends a run in one of two ways, and
-        # only one of them leaves a verdict behind, so the timeout beside this
-        # and the cap here are both needed.
+        # only one of them leaves a verdict behind, so the timeout in
+        # .cargo/mutants.toml and the cap here are both needed.
         #
         # The timeout is what produces the honest word: cargo-mutants kills the
         # test that exceeds it, records TIMEOUT, and goes on to the next
@@ -1118,10 +1118,10 @@
         '';
 
         # The count above only reaches a seat that runs it, so this is the
-        # command to run in place of cargo-mutants: it scopes the run to the
-        # change, gives it an output directory of its own and says which
-        # before the run starts, and refuses one that scored nothing.
-        # Everything else passes through.
+        # command to score a change with: it scopes the run to the change,
+        # gives it an output directory of its own and says which before the
+        # run starts, and refuses one that scored nothing. Everything else
+        # passes through.
         #
         # The fetch is the one read-ci-verdict needs, for the same reason.
         # Three dots take the merge base, so a stale origin/main takes an older
@@ -1130,25 +1130,6 @@
         # for a ref another worktree is moving, which is no reason to abandon
         # the run, so this names the commit it resolved rather than insisting
         # on one.
-        #
-        # The test timeout is fixed rather than derived. cargo-mutants derives
-        # one at five times the baseline test run, and this suite's baseline is
-        # 84 seconds because the pty tests spend it waiting on a terminal
-        # rather than computing — so the derived number came out at 424
-        # seconds. That multiplier is slack for a loaded machine rather than a
-        # claim that a test might honestly need five times as long, and a
-        # mutant allocating at the rate the words_of one does reaches tens of
-        # gigabytes inside it.
-        #
-        # 180 is that 84 with room for a machine running three seats. A
-        # legitimate test that times out here is a test that has got slower,
-        # and the answer is to find out which one rather than to raise this.
-        # MUTATION_TEST_TIMEOUT raises it for one run while you do — it is an
-        # environment variable rather than a flag because cargo-mutants
-        # refuses `--timeout` twice, so a caller's own would collide with this
-        # one rather than override it.
-        mutationTestTimeout = "180";
-
         mutationTestThisChange =
           pkgs.writeShellScriptBin "mutation-test-this-change" ''
           set -u
@@ -1170,11 +1151,7 @@
           name_the_runs_directory
           scope_to_the_change origin/main "$run/change.diff"
 
-          timeout="''${MUTATION_TEST_TIMEOUT:-${mutationTestTimeout}}"
-          echo "Timing out any test that runs longer than ''${timeout}s."
-
           ${pkgs.cargo-mutants}/bin/cargo-mutants mutants \
-            --timeout "$timeout" \
             --in-diff "$run/change.diff" --output "$run" "$@"
           status=$?
 
@@ -1187,79 +1164,87 @@
 
         # The command above bounds the run it starts and cannot reach a seat
         # that never types its name, and the tool's own name is the one a seat
-        # reaches for first. So the shell answers that name with this instead
-        # of with cargo-mutants. `cargo mutants` arrives here too, because
-        # cargo resolves a subcommand by looking for `cargo-<name>` on PATH.
+        # reaches for first. So the shell answers that name with this, which
+        # bounds the run the same way and passes it on. `cargo mutants` arrives
+        # here too, because cargo resolves a subcommand by looking for
+        # `cargo-<name>` on PATH.
         #
-        # It refuses rather than bounding the run and passing it on. A cap
-        # with no timeout beside it is the arrangement that records a mutant
-        # `caught` when the kernel killed the test binary, which is the
-        # finding boundTheMachine is written around; and carrying the timeout
-        # as well would make this the command above with its scoping taken
-        # out.
-        refuseTheToolsOwnName = pkgs.writeShellScriptBin "cargo-mutants" ''
-          echo "This is not cargo-mutants. An unbounded mutation run is how a"
-          echo "machine goes out of memory rather than timing out, so this"
-          echo "shell carries a refusal at that name."
-          echo
-          echo "Run mutation-test-this-change instead. It bounds the run,"
-          echo "scopes it to your diff, gives it an output directory of its"
-          echo "own, refuses one that scored nothing, and forwards every flag"
-          echo "you pass it."
-          echo
-          echo "The one run it cannot express is one that is not scoped to"
-          echo "your diff. Ask for that rather than reaching past this."
-          exit 1
+        # A cap with no timeout beside it records a mutant `caught` when the
+        # kernel killed the test binary, which is the finding boundTheMachine
+        # is written around. The timeout is in .cargo/mutants.toml, which
+        # cargo-mutants reads however it is started.
+        boundTheToolsOwnName = pkgs.writeShellScriptBin "cargo-mutants" ''
+          set -u
+
+          ${boundTheMachine}
+
+          bound_the_machine "$0" "$@"
+
+          exec ${pkgs.cargo-mutants}/bin/cargo-mutants "$@"
         '';
 
-        # A guard on what a shell does not carry reads the same when what
-        # replaced it is missing too, so the first assertion names the store
-        # path the refusal has to resolve to and the control at the end runs
-        # cargo-mutants itself.
-        #
         # The PATH is built from rustTools rather than from a list retyped
         # here. That is what makes putting the package back a red instead of a
         # silent regression, and it is what ties this to the shell a
-        # contributor actually gets.
-        refuseTheToolsOwnNameTest =
-          pkgs.runCommand "refuse-the-tools-own-name-test" { } ''
+        # contributor actually gets. The systemd-run in front of it is the
+        # stand-in boundTheMachineTest describes.
+        boundTheToolsOwnNameTest =
+          pkgs.runCommand "bound-the-tools-own-name-test" { } ''
           set -u
 
           fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
 
           export HOME="$TMPDIR"
           export CARGO_HOME="$TMPDIR/cargo"
-          export PATH="${pkgs.lib.makeBinPath rustTools}"
+
+          mkdir -p "$TMPDIR/bin"
+          {
+            echo '#!${pkgs.bash}/bin/bash'
+            echo 'printf "%s\n" "$@" > "$TMPDIR/asked"'
+            echo 'while [ "$1" != "--" ]; do shift; done'
+            echo 'shift'
+            echo 'exec "$@"'
+          } > "$TMPDIR/bin/systemd-run"
+          chmod +x "$TMPDIR/bin/systemd-run"
+
+          export PATH="$TMPDIR/bin:${pkgs.lib.makeBinPath rustTools}"
 
           output="$( command -v cargo-mutants || true )"
-          [ "$output" = "${refuseTheToolsOwnName}/bin/cargo-mutants" ] ||
-            fail "the shell's cargo-mutants is not the refusal:"
+          [ "$output" = "${boundTheToolsOwnName}/bin/cargo-mutants" ] ||
+            fail "the shell's cargo-mutants is not the bounded one:"
+
+          reached_the_tool_bounded() {
+            case "$output" in
+              *"cargo-mutants ${pkgs.cargo-mutants.version}"*) ;;
+              *) fail "$1 did not reach cargo-mutants:" ;;
+            esac
+            case "$(< "$TMPDIR/asked")" in
+              *MemoryMax=8G*) ;;
+              *) output="$(< "$TMPDIR/asked")"; fail "$1 ran without the memory bound:" ;;
+            esac
+            ${pkgs.coreutils}/bin/rm "$TMPDIR/asked"
+          }
 
           # What a seat types.
-          output="$( cargo-mutants 2>&1 )" &&
-            fail "the tool's own name started a run:"
-          case "$output" in
-            *mutation-test-this-change*) ;;
-            *) fail "the refusal did not name the command to run instead:" ;;
-          esac
+          output="$( cargo-mutants mutants --version 2>&1 )" ||
+            fail "the tool's own name refused the run:"
+          reached_the_tool_bounded "the tool's own name"
 
           # What a reader of the cargo book types, which is the same script
           # reached through cargo's subcommand dispatch.
-          output="$( cargo mutants 2>&1 )" &&
-            fail "cargo's subcommand dispatch started a run:"
-          case "$output" in
-            *mutation-test-this-change*) ;;
-            *) fail "cargo mutants did not name the command to run instead:" ;;
-          esac
+          output="$( cargo mutants --version 2>&1 )" ||
+            fail "cargo's subcommand dispatch refused the run:"
+          reached_the_tool_bounded "cargo mutants"
 
-          # The control: the same name on a PATH that carries the tool. It
-          # answers, and it says nothing about the wrapper. Without this, a
-          # refusal that was really bash finding no such command would satisfy
-          # every case above.
-          output="$( PATH="${pkgs.cargo-mutants}/bin:$PATH" cargo-mutants mutants --version 2>&1 )" ||
-            fail "the control could not run cargo-mutants itself:"
+          # The control: a machine with nothing to bound the run with. The
+          # name refuses there, so the runs above went through the bound
+          # rather than around it.
+          ${pkgs.coreutils}/bin/rm "$TMPDIR/bin/systemd-run"
+          output="$( cargo-mutants mutants --version 2>&1 )" &&
+            fail "the tool's own name ran unbounded where nothing could bound it:"
           case "$output" in
-            *mutation-test-this-change*) fail "the control ran the refusal:" ;;
+            *"cargo-mutants ${pkgs.cargo-mutants.version}"*)
+              fail "it refused and ran cargo-mutants anyway:" ;;
           esac
 
           # PATH above is the shell's own and nothing else, so the last
@@ -3342,7 +3327,7 @@ and a second line"
           pkgs.rustfmt
           pkgs.clippy
           pkgs.rust-analyzer
-          refuseTheToolsOwnName
+          boundTheToolsOwnName
           pkgs.watchexec
           rerunBdiOnChange
           checkBeforePush
@@ -3499,7 +3484,7 @@ and a second line"
           release-notes-wrap-test = releaseNotesAreUnwrappedTest;
 
           refuse-a-run-that-scored-nothing-test = refuseARunThatScoredNothingTest;
-          refuse-the-tools-own-name-test = refuseTheToolsOwnNameTest;
+          bound-the-tools-own-name-test = boundTheToolsOwnNameTest;
           scope-to-the-change-test = scopeToTheChangeTest;
           name-the-runs-directory-test = nameTheRunsDirectoryTest;
           bound-the-machine-test = boundTheMachineTest;
