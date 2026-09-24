@@ -255,7 +255,7 @@ impl<'a> Nesting<'a> {
     /// This is how far the roots rule goes, and the line is that it goes
     /// exactly as far as the damage. It climbs only from a bead the answer
     /// left with no way down to it, so a component holding no such bead is
-    /// drawn only where discovery named a root in it — rules 1 to 4 still say
+    /// drawn only where discovery named a root in it — rules 1 to 3 still say
     /// what unfinished work is. Stopping instead at "is anything nesting it"
     /// left whole components off the screen: a bead that lost one placing
     /// edge and kept another is nested, and the bead that kept it lost
