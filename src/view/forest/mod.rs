@@ -296,9 +296,10 @@ impl Forest {
 
     /// Focus each named bead the snapshot draws, and give up on one whose
     /// project has been read without it: its tracker reports it missing
-    /// where its tree would be. The selection goes to the first bead focused
-    /// where nothing was, as it is where Shift+F was pressed, and that bead
-    /// comes back.
+    /// where its tree would be.
+    ///
+    /// Hands back the first bead focused where nothing was, for the
+    /// selection to go to, as it would be on the bead Shift+F was pressed on.
     fn focus_the_named(&mut self) -> Option<Place> {
         if self.named.is_empty() {
             return None;
@@ -464,9 +465,9 @@ impl Forest {
     }
 
     /// Whether the mode is holding a line back, which it is for every line but
-    /// the bead the forest is rooted at and the ones beneath it.
+    /// the beads the forest is rooted at and the ones beneath them.
     ///
-    /// The rest of that bead's own root is held back as much as another root
+    /// The rest of such a bead's own root is held back as much as another root
     /// is: the mode draws the bead where a root is drawn and stops there, so
     /// the beads above it are behind the line the other roots are behind.
     fn held_back(&self, place: &Place) -> bool {
