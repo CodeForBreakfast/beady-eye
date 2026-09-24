@@ -48,6 +48,19 @@ pub enum Landed {
     On { key: BeadKey, at: usize, of: usize },
 }
 
+/// Where a search began: what abandoning it puts back, and where each of
+/// its keystrokes counts the matches from.
+///
+/// A place among the beads rather than a line, so a collection landing while
+/// the reader types still leaves each keystroke counting from the same bead.
+pub struct Origin {
+    cursor: Option<Handle>,
+    from: usize,
+    opened_by_the_last_step: BTreeSet<Handle>,
+    searched: Option<String>,
+    standing: Option<(Place, bool)>,
+}
+
 /// One snapshot's lines in render order, with the fold state and the selection
 /// that decide which of them are visible and which one is current.
 pub struct Forest {
@@ -955,23 +968,60 @@ impl Forest {
     /// type. It answers with beads, each already a whole `(project, id)`,
     /// and the reader steps through them.
     ///
-    /// **Where it lands** is the one thing the whole id decides: on the bead
-    /// whose id is exactly what was typed if one matched, and on the first
-    /// match otherwise. An id is the one thing a reader can have meant
-    /// exactly, and a row merely *titled* after a bead must not shadow it —
-    /// that promise is older than this widening. The numbering below is not
-    /// touched by it.
-    pub fn seek(&mut self, query: &str) -> Landed {
-        self.searched = Some(query.to_string());
+    /// **Where it lands** is on the bead whose id is exactly what was typed
+    /// if one matched, and otherwise on the first match after `origin`, as
+    /// `n` would step from there. An id is the one thing a reader can have
+    /// meant exactly, and a row merely *titled* after a bead must not shadow
+    /// it — that promise is older than this widening. The numbering below is
+    /// not touched by it.
+    ///
+    /// Counted from where the search began rather than from where the
+    /// selection is, because the reader's last keystroke has moved it: each
+    /// keystroke is the whole search again, from the same place. Where
+    /// nothing matches, the forest goes back to how it stood there.
+    pub fn seek(&mut self, query: &str, origin: &Origin) -> Landed {
         let mut matched = self.matches(Sought::holding(query));
+        let of = matched.len();
         let at = self
             .matches(Sought::named(query))
             .nth(0)
             .and_then(|named| matched.before(&named))
-            .map_or(0, |(before, _)| before);
-        let found = matched.nth(at);
-        let of = matched.len();
-        self.land_on(found, at, of, query)
+            .map(|(before, _)| before)
+            .or_else(|| (of > 0).then(|| Self::past(origin.standing.clone(), &mut matched, true)));
+        let found = at.and_then(|at| matched.nth(at));
+        let landed = self.land_on(found, at.unwrap_or(0), of, query);
+        if let Landed::Nowhere(_) = landed {
+            self.restore(origin);
+        }
+        self.searched = Some(query.to_string());
+        landed
+    }
+
+    /// Where a search beginning now would count from, and what abandoning it
+    /// would put back.
+    pub fn origin(&self) -> Origin {
+        Origin {
+            cursor: self.cursor.clone(),
+            from: self.from,
+            opened_by_the_last_step: self.folds.opened_by_the_last_step(),
+            searched: self.searched.clone(),
+            standing: self.standing_at(),
+        }
+    }
+
+    /// Put the selection, the scroll, what the last search step opened and
+    /// what was last searched for back as they stood at `origin`.
+    ///
+    /// The step's opens come back as that step's, so the step after this
+    /// still shuts them.
+    pub fn restore(&mut self, origin: &Origin) {
+        self.folds
+            .reopen_for_the_last_step(origin.opened_by_the_last_step.clone());
+        self.cursor = origin.cursor.clone();
+        self.searched = origin.searched.clone();
+        self.lay_out();
+        self.from = origin.from;
+        self.reveal();
     }
 
     /// Step to the next bead matching what was last searched for, or to the
@@ -987,16 +1037,17 @@ impl Forest {
         if of == 0 {
             return Some(Landed::Nowhere(query));
         }
-        let at = self.past_selection(&mut matched, forward);
+        let at = Self::past(self.standing_at(), &mut matched, forward);
         let found = matched.nth(at);
         Some(self.land_on(found, at, of, &query))
     }
 
-    /// Which match to step to: the first one drawn after the selection, or
-    /// the last one drawn before it, coming round at either end.
+    /// Which match to step to from where the reader stands, as `standing_at`
+    /// answers it: the first one drawn after them, or the last one drawn
+    /// before them, coming round at either end.
     ///
-    /// Asked of where the selection is *now* rather than of where the last
-    /// step left it. So a reader who has moved by hand between presses
+    /// `n` asks it of where the selection is *now* rather than of where the
+    /// last step left it. So a reader who has moved by hand between presses
     /// carries on from where they are standing, and a collection that has
     /// moved every bead under them costs the walk nothing — there is no
     /// place in a list to have gone stale, only a question asked again.
@@ -1013,9 +1064,9 @@ impl Forest {
     /// order and a reader standing on the second is past the first without
     /// being past the second. `standing_at` finds the one the selection is
     /// actually on, so this never has to guess which copy that was.
-    fn past_selection(&self, matched: &mut Matches, forward: bool) -> usize {
+    fn past(standing: Option<(Place, bool)>, matched: &mut Matches, forward: bool) -> usize {
         let of = matched.len();
-        let standing = self.standing_at().and_then(|(place, past_it)| {
+        let standing = standing.and_then(|(place, past_it)| {
             let (before, on_a_match) = matched.before(&place)?;
             Some((before, on_a_match && !past_it))
         });
@@ -3665,10 +3716,10 @@ credential_command = "secret harbour"
         let mut forest = flatten(tower_staffed(&["tow-1.1.1.1"]));
         select(&mut forest, &key("dunwich", "tow-1.1"));
         forest.apply(Action::ToggleFold);
-        forest.seek("tow-1.1.1");
+        forest.seek_here("tow-1.1.1");
         forest.refresh(tower_staffed(&["tow-1.1.1.1", "tow-1.1.1"]));
 
-        forest.seek("tow-1.2");
+        forest.seek_here("tow-1.2");
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "tow-1.2")));
         assert_eq!(fold_of(&forest, "tow-1.1"), Some(true));
@@ -8393,7 +8444,7 @@ credential_command = "secret harbour"
         forest.apply(Action::CollapseForest);
 
         assert_eq!(
-            forest.seek("dun-7.1.1"),
+            forest.seek_here("dun-7.1.1"),
             went_to("dunwich", "dun-7.1.1", 1, 1)
         );
 
@@ -8414,7 +8465,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         forest.apply(Action::CollapseForest);
 
-        assert_eq!(forest.seek("dun-7.2"), went_to("dunwich", "dun-7.2", 1, 1));
+        assert_eq!(forest.seek_here("dun-7.2"), went_to("dunwich", "dun-7.2", 1, 1));
 
         assert!(
             drawn_here(&forest, "└── … 3 more"),
@@ -8470,7 +8521,7 @@ credential_command = "secret harbour"
     fn a_search_matches_part_of_an_id() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("7.1.1"), went_to("dunwich", "dun-7.1.1", 1, 1));
+        assert_eq!(forest.seek_here("7.1.1"), went_to("dunwich", "dun-7.1.1", 1, 1));
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
         assert!(
@@ -8493,14 +8544,14 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         let drawn = row_of(&forest, "dun-7.1").id.clone();
 
-        assert_eq!(forest.seek(&drawn), went_to("dunwich", "dun-7.1", 1, 4));
+        assert_eq!(forest.seek_here(&drawn), went_to("dunwich", "dun-7.1", 1, 4));
     }
 
     #[test]
     fn a_search_matches_part_of_a_title() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("mount"), went_to("dunwich", "dun-7.1.1", 1, 1));
+        assert_eq!(forest.seek_here("mount"), went_to("dunwich", "dun-7.1.1", 1, 1));
     }
 
     /// A title is prose and the reader is retyping a word they read off a
@@ -8510,7 +8561,7 @@ credential_command = "secret harbour"
     fn a_search_ignores_letter_case() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("MoUnT"), went_to("dunwich", "dun-7.1.1", 1, 1));
+        assert_eq!(forest.seek_here("MoUnT"), went_to("dunwich", "dun-7.1.1", 1, 1));
     }
 
     /// Matches are numbered in the order the forest draws them, which is the
@@ -8521,7 +8572,7 @@ credential_command = "secret harbour"
     fn matches_are_numbered_in_the_order_the_forest_draws_them() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("7.1"), went_to("dunwich", "dun-7.1", 1, 3));
+        assert_eq!(forest.seek_here("7.1"), went_to("dunwich", "dun-7.1", 1, 3));
         assert_eq!(
             forest.next_match(true),
             Some(went_to("dunwich", "dun-7.1.1", 2, 3))
@@ -8537,7 +8588,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_past_the_last_match_comes_round_to_the_first() {
         let mut forest = flatten(snapshot());
-        forest.seek("7.1");
+        forest.seek_here("7.1");
         forest.next_match(true);
         forest.next_match(true);
 
@@ -8550,7 +8601,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_back_walks_the_matches_the_other_way() {
         let mut forest = flatten(snapshot());
-        forest.seek("7.1");
+        forest.seek_here("7.1");
 
         assert_eq!(
             forest.next_match(false),
@@ -8563,7 +8614,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_back_from_below_the_last_bead_reaches_the_last_match() {
         let mut forest = flatten(snapshot());
-        forest.seek("7.1");
+        forest.seek_here("7.1");
         let last = forest.lines().len() - 1;
         step_onto(&mut forest, last);
 
@@ -8576,7 +8627,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_on_from_below_the_last_bead_comes_round_to_the_first_match() {
         let mut forest = flatten(snapshot());
-        forest.seek("7.1");
+        forest.seek_here("7.1");
         let last = forest.lines().len() - 1;
         step_onto(&mut forest, last);
 
@@ -8591,7 +8642,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_on_from_a_bead_that_does_not_match_lands_on_the_next_match() {
         let mut forest = flatten(snapshot());
-        forest.seek("7.1");
+        forest.seek_here("7.1");
         assert!(forest.go_to(&key("dunwich", "dun-7")));
 
         assert_eq!(
@@ -8603,7 +8654,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_back_through_a_search_matching_nothing_goes_nowhere() {
         let mut forest = flatten(snapshot());
-        forest.seek("dun-404");
+        forest.seek_here("dun-404");
 
         assert_eq!(
             forest.next_match(false),
@@ -8617,7 +8668,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_carries_on_from_where_the_reader_has_moved_to() {
         let mut forest = flatten(snapshot());
-        forest.seek("7.1");
+        forest.seek_here("7.1");
         assert!(forest.go_to(&key("dunwich", "dun-7.1.1")));
 
         assert_eq!(
@@ -8669,7 +8720,7 @@ credential_command = "secret harbour"
     fn a_search_step_shuts_what_the_step_before_it_opened() {
         for walk in both_ways_through_the_survey() {
             let mut forest = flatten(snapshot());
-            forest.seek("survey");
+            forest.seek_here("survey");
             forest.next_match(walk.forward);
             assert!(drawn_here(&forest, walk.first), "{:#?}", sketch(&forest));
 
@@ -8688,7 +8739,7 @@ credential_command = "secret harbour"
     fn the_branches_the_last_match_needed_stay_open() {
         for walk in both_ways_through_the_survey() {
             let mut forest = flatten(snapshot());
-            forest.seek("survey");
+            forest.seek_here("survey");
             forest.next_match(walk.forward);
 
             forest.next_match(walk.forward);
@@ -8709,7 +8760,7 @@ credential_command = "secret harbour"
         for forward in [true, false] {
             let mut forest = flatten(snapshot());
             assert_eq!(
-                forest.seek("survey the"),
+                forest.seek_here("survey the"),
                 went_to("dunwich", "dun-7.2", 1, 2)
             );
 
@@ -8729,9 +8780,9 @@ credential_command = "secret harbour"
     #[test]
     fn a_search_shuts_what_the_step_before_it_opened() {
         let mut forest = flatten(snapshot());
-        forest.seek("survey the mast");
+        forest.seek_here("survey the mast");
 
-        forest.seek("survey the silt");
+        forest.seek_here("survey the silt");
 
         assert!(
             !drawn_here(&forest, "survey the mast"),
@@ -8752,7 +8803,7 @@ credential_command = "secret harbour"
         for forward in [true, false] {
             let mut forest = flatten(snapshot());
             assert!(!drawn_here(&forest, "true the mount"));
-            forest.seek("dun-7.1.");
+            forest.seek_here("dun-7.1.");
 
             assert_eq!(
                 forest.next_match(forward),
@@ -8772,14 +8823,147 @@ credential_command = "secret harbour"
     #[test]
     fn a_search_matching_nothing_leaves_open_what_the_step_before_it_opened() {
         let mut forest = flatten(snapshot());
-        forest.seek("survey the mast");
+        forest.seek_here("survey the mast");
 
-        assert_eq!(forest.seek("dun-404"), Landed::Nowhere("dun-404".into()));
+        assert_eq!(forest.seek_here("dun-404"), Landed::Nowhere("dun-404".into()));
 
         assert!(
             drawn_here(&forest, "survey the mast"),
             "{:#?}",
             sketch(&forest)
+        );
+    }
+
+    impl Forest {
+        /// A search begun from wherever the selection is now.
+        fn seek_here(&mut self, query: &str) -> Landed {
+            let origin = self.origin();
+            self.seek(query, &origin)
+        }
+    }
+
+    /// A search lands on the first match after where it began, as `n` would
+    /// step to, so a match the selection already stood on is behind it.
+    #[test]
+    fn a_search_lands_on_the_first_match_after_where_it_began() {
+        let mut forest = flatten(snapshot());
+        assert!(forest.go_to(&key("dunwich", "dun-7.7")));
+        let origin = forest.origin();
+
+        assert_eq!(
+            forest.seek("survey", &origin),
+            went_to("dunwich", "dun-7.2", 2, 3)
+        );
+    }
+
+    #[test]
+    fn a_search_begun_past_the_last_match_comes_round_to_the_first() {
+        let mut forest = flatten(snapshot());
+        assert!(forest.go_to(&key("harbour", "hbr-3.1")));
+        let origin = forest.origin();
+
+        assert_eq!(
+            forest.seek("survey", &origin),
+            went_to("dunwich", "dun-7.7", 1, 3)
+        );
+    }
+
+    /// Each keystroke searches again from where the search began rather than
+    /// from where the last keystroke landed. Taking a character back widens
+    /// the search, and it lands on the first match after the beginning.
+    #[test]
+    fn each_keystroke_counts_from_where_the_search_began() {
+        let mut forest = flatten(snapshot());
+        assert!(forest.go_to(&key("dunwich", "dun-7.7")));
+        let origin = forest.origin();
+        assert_eq!(
+            forest.seek("survey the s", &origin),
+            went_to("harbour", "hbr-3.1", 1, 1)
+        );
+
+        assert_eq!(
+            forest.seek("survey", &origin),
+            went_to("dunwich", "dun-7.2", 2, 3)
+        );
+    }
+
+    /// A keystroke matching nothing puts the selection and the folds back as
+    /// they stood when the search began, shutting what the keystroke before
+    /// it opened.
+    #[test]
+    fn a_keystroke_matching_nothing_goes_back_to_where_the_search_began() {
+        let mut forest = flatten(snapshot());
+        let origin = forest.origin();
+        let (line, was) = (forest.selected_line(), sketch(&forest));
+        forest.seek("survey the m", &origin);
+        assert!(drawn_here(&forest, "survey the mast"));
+
+        assert_eq!(
+            forest.seek("survey the mx", &origin),
+            Landed::Nowhere("survey the mx".into())
+        );
+
+        assert_eq!(sketch(&forest), was);
+        assert_eq!(forest.selected_line(), line);
+    }
+
+    /// Going back to where a search began puts back the selection, the scroll
+    /// and every fold as they stood, what an earlier step opened included.
+    #[test]
+    fn going_back_to_where_a_search_began_puts_the_forest_back_as_it_stood() {
+        let mut forest = flatten(snapshot());
+        forest.fit(4);
+        forest.seek_here("survey the mast");
+        let origin = forest.origin();
+        let (line, from, was) = (forest.selected_line(), forest.from(), sketch(&forest));
+        forest.seek("survey the silt", &origin);
+        assert_ne!(sketch(&forest), was);
+        assert_ne!(forest.from(), from, "the search never scrolled the band");
+
+        forest.restore(&origin);
+
+        assert_eq!(sketch(&forest), was);
+        assert_eq!(forest.selected_line(), line);
+        assert_eq!(forest.from(), from);
+    }
+
+    /// What an earlier step opened comes back as that step's, so the next
+    /// step still shuts it.
+    #[test]
+    fn going_back_to_where_a_search_began_leaves_an_earlier_steps_opens_its_own() {
+        let mut forest = flatten(snapshot());
+        forest.seek_here("survey the mast");
+        let origin = forest.origin();
+        forest.seek("survey the silt", &origin);
+        forest.restore(&origin);
+        assert!(drawn_here(&forest, "survey the mast"));
+
+        forest.seek_here("survey the silt");
+
+        assert!(
+            !drawn_here(&forest, "survey the mast"),
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// `n` after going back steps through what was searched for before the
+    /// search that was abandoned.
+    #[test]
+    fn going_back_to_where_a_search_began_steps_through_the_search_before_it() {
+        let mut forest = flatten(snapshot());
+        assert_eq!(
+            forest.seek_here("survey"),
+            went_to("dunwich", "dun-7.7", 1, 3)
+        );
+        let origin = forest.origin();
+        forest.seek("dun-7.1.", &origin);
+
+        forest.restore(&origin);
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("dunwich", "dun-7.2", 2, 3))
         );
     }
 
@@ -8790,7 +8974,7 @@ credential_command = "secret harbour"
     fn moving_by_hand_keeps_open_what_a_search_step_opened() {
         for walk in both_ways_through_the_survey() {
             let mut forest = flatten(snapshot());
-            forest.seek("survey");
+            forest.seek_here("survey");
             forest.next_match(walk.forward);
             let further = if walk.forward {
                 Motion::NextRow
@@ -8815,7 +8999,7 @@ credential_command = "secret harbour"
     fn a_click_keeps_open_what_a_search_step_opened() {
         for walk in both_ways_through_the_survey() {
             let mut forest = flatten(snapshot());
-            forest.seek("survey");
+            forest.seek_here("survey");
             forest.next_match(walk.forward);
             let further = if walk.forward {
                 forest.selected_line() + 1
@@ -8841,7 +9025,7 @@ credential_command = "secret harbour"
     fn going_to_a_bead_keeps_open_what_a_search_step_opened() {
         for walk in both_ways_through_the_survey() {
             let mut forest = flatten(snapshot());
-            forest.seek("survey");
+            forest.seek_here("survey");
             forest.next_match(walk.forward);
             let on = forest.place().cloned().expect("the step landed on a bead");
             assert!(forest.go_to_place(&on));
@@ -8872,7 +9056,8 @@ credential_command = "secret harbour"
                 forest.apply(Action::ToggleFold);
             }
             assert!(drawn_here(&forest, walk.first), "{:#?}", sketch(&forest));
-            forest.seek("survey");
+            forest.apply(Action::Move(Motion::FirstRow));
+            forest.seek_here("survey");
             forest.next_match(walk.forward);
 
             assert_eq!(forest.next_match(walk.forward), Some(walk.second_landed));
@@ -8898,7 +9083,7 @@ credential_command = "secret harbour"
     fn a_whole_id_lands_on_its_own_bead_however_many_rows_above_it_match() {
         let mut forest = flatten(alone("dunwich", NAMED_IN_A_TITLE, &[]));
 
-        assert_eq!(forest.seek("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
+        assert_eq!(forest.seek_here("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
 
         assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-6.2")));
     }
@@ -8907,7 +9092,7 @@ credential_command = "secret harbour"
     fn a_whole_id_lands_on_its_own_bead_whatever_its_letter_case() {
         let mut forest = flatten(alone("dunwich", NAMED_IN_A_TITLE, &[]));
 
-        assert_eq!(forest.seek("DUN-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
+        assert_eq!(forest.seek_here("DUN-6.2"), went_to("dunwich", "dun-6.2", 2, 2));
     }
 
     /// `dun-6.2.1` holds `dun-6.2` in its id and is drawn first, under
@@ -8916,7 +9101,7 @@ credential_command = "secret harbour"
     fn a_whole_id_lands_past_a_longer_id_drawn_above_it() {
         let mut forest = flatten(alone("dunwich", NAMED_INSIDE_A_LONGER_ID, &[]));
 
-        assert_eq!(forest.seek("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 3));
+        assert_eq!(forest.seek_here("dun-6.2"), went_to("dunwich", "dun-6.2", 2, 3));
     }
 
     /// Search counts the way vim does, since `bdi-7ao.136`: every drawn copy
@@ -8927,7 +9112,7 @@ credential_command = "secret harbour"
     fn every_drawn_copy_of_a_bead_is_its_own_match() {
         let mut forest = flatten(drawn_twice_in_one_tree());
 
-        assert_eq!(forest.seek("dun-9"), went_to("dunwich", "dun-9", 1, 4));
+        assert_eq!(forest.seek_here("dun-9"), went_to("dunwich", "dun-9", 1, 4));
         assert_eq!(
             forest.next_match(true),
             Some(went_to("dunwich", "dun-9.1", 2, 4))
@@ -8953,7 +9138,7 @@ credential_command = "secret harbour"
         let copies = 1 << 40;
 
         assert_eq!(
-            forest.seek("keystone"),
+            forest.seek_here("keystone"),
             went_to("dunwich", "dun-50.40", 1, copies)
         );
         assert_eq!(
@@ -8984,7 +9169,7 @@ credential_command = "secret harbour"
             Some((usize::MAX, true))
         );
 
-        forest.seek("the");
+        forest.seek_here("the");
         assert!(forest.go_to_place(&under_the_west_pier));
         assert_eq!(
             forest.next_match(true),
@@ -9004,7 +9189,7 @@ credential_command = "secret harbour"
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
 
-        assert_eq!(forest.seek("dun-9"), went_to("dunwich", "dun-9", 1, 2));
+        assert_eq!(forest.seek_here("dun-9"), went_to("dunwich", "dun-9", 1, 2));
         assert_eq!(
             forest.next_match(true),
             Some(went_to("dunwich", "dun-9.1", 2, 2))
@@ -9018,7 +9203,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_forward_from_a_later_copy_never_lowers_the_ordinal() {
         let mut forest = flatten(drawn_twice_in_one_tree());
-        forest.seek("dun-9");
+        forest.seek_here("dun-9");
         let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
 
@@ -9036,7 +9221,7 @@ credential_command = "secret harbour"
     fn a_bead_the_filter_hid_is_one_a_search_still_reaches() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("hbr-3.1"), went_to("harbour", "hbr-3.1", 1, 1));
+        assert_eq!(forest.seek_here("hbr-3.1"), went_to("harbour", "hbr-3.1", 1, 1));
 
         assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3.1")));
     }
@@ -9049,7 +9234,7 @@ credential_command = "secret harbour"
         let was = sketch(&forest);
         let selected = forest.selected_line();
 
-        assert_eq!(forest.seek("dun-404"), Landed::Nowhere("dun-404".into()));
+        assert_eq!(forest.seek_here("dun-404"), Landed::Nowhere("dun-404".into()));
 
         assert_eq!(sketch(&forest), was);
         assert_eq!(forest.selected_line(), selected);
@@ -9064,7 +9249,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(two_trackers_holding_one_id());
 
         assert_eq!(
-            forest.seek("dun-7.1.1"),
+            forest.seek_here("dun-7.1.1"),
             went_to("dunwich", "dun-7.1.1", 1, 2)
         );
         assert_eq!(
@@ -9103,7 +9288,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_from_a_row_that_is_not_a_bead_carries_on_from_there() {
         let mut forest = flatten(two_trackers_holding_one_id());
-        forest.seek("dun-7");
+        forest.seek_here("dun-7");
         walk::until(
             &mut forest,
             |forest| {
@@ -9184,7 +9369,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_from_a_shut_group_goes_into_the_matches_it_hides() {
         let mut forest = flatten(a_group_shut_over_matches());
-        forest.seek("the");
+        forest.seek_here("the");
         rest_on_the_shut_group(&mut forest);
 
         assert_eq!(
@@ -9201,7 +9386,7 @@ credential_command = "secret harbour"
     #[test]
     fn stepping_back_from_a_shut_group_reaches_the_match_above_it() {
         let mut forest = flatten(a_group_shut_over_matches());
-        forest.seek("the");
+        forest.seek_here("the");
         rest_on_the_shut_group(&mut forest);
 
         assert_eq!(
@@ -9315,7 +9500,7 @@ credential_command = "secret harbour"
     fn a_run_of_finished_children_is_walked_where_the_screen_draws_it() {
         let mut forest = flatten(snapshot());
 
-        assert_eq!(forest.seek("dun-7."), went_to("dunwich", "dun-7.1", 1, 8));
+        assert_eq!(forest.seek_here("dun-7."), went_to("dunwich", "dun-7.1", 1, 8));
         // `.1`'s own children, drawn under it and above its siblings, then
         // `.7`, which the sibling sort already puts above the closed ones.
         forest.next_match(true);
@@ -9342,7 +9527,7 @@ credential_command = "secret harbour"
 
         // `dunwich` is named first by the config and read second here.
         assert_eq!(
-            forest.seek("dun-7.1.1"),
+            forest.seek_here("dun-7.1.1"),
             went_to("dunwich", "dun-7.1.1", 1, 2)
         );
         assert_eq!(
@@ -9812,7 +9997,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         focus_on(&mut forest, "dun-7.1");
 
-        let first = forest.seek("the");
+        let first = forest.seek_here("the");
         let Landed::On { of, .. } = first else {
             panic!("nothing matched: {first:?}")
         };
@@ -10168,8 +10353,9 @@ credential_command = "secret harbour"
         ));
         assert!(forest.go_to(&key("dunwich", "hbr-3.1")), "no such bead");
         assert!(forest.apply(Action::FocusForest));
+        forest.apply(Action::Move(Motion::FirstRow));
 
-        let landed = forest.seek("the");
+        let landed = forest.seek_here("the");
 
         let Landed::On { key: found, at, .. } = landed else {
             panic!("nothing matched: {landed:?}")
@@ -10185,7 +10371,7 @@ credential_command = "secret harbour"
     fn stepping_from_the_shut_line_carries_on_into_the_roots_behind_it() {
         let mut forest = flatten(snapshot());
         focus_on(&mut forest, "dun-7.1");
-        forest.seek("the");
+        forest.seek_here("the");
         let at = the_line_holding_roots_back(&forest, "dunwich");
         step_onto(&mut forest, at);
         assert_eq!(
@@ -10218,7 +10404,7 @@ credential_command = "secret harbour"
             Filter::LiveAgents,
         ));
         focus_on(&mut forest, "dun-7.1");
-        forest.seek("the");
+        forest.seek_here("the");
         let at = the_line_holding_roots_back(&forest, "dunwich");
         step_onto(&mut forest, at);
 
@@ -10306,7 +10492,7 @@ credential_command = "secret harbour"
         let mut forest = flatten(snapshot());
         focus_on(&mut forest, "dun-7.1");
 
-        let landed = forest.seek("lift the ground station");
+        let landed = forest.seek_here("lift the ground station");
 
         let Landed::On { key: found, .. } = landed else {
             panic!("nothing matched: {landed:?}")

@@ -634,7 +634,7 @@ impl Shown {
     /// two facts a count says at once, so it says them and the special case
     /// goes.
     fn seek(&mut self, query: &str) {
-        self.said = Some(said_of(self.forest.seek(query)));
+        self.said = Some(said_of(self.forest.seek(query, &self.forest.origin())));
         self.moved(true);
     }
 
