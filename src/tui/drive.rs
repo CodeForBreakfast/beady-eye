@@ -781,7 +781,7 @@ fn answered(
                 // project says its tracker has stopped answering rather than
                 // being quietly polled over.
                 for project in armed.iter_mut() {
-                    project.came_back(&read, now);
+                    project.came_back(&read, now, None);
                 }
             }
             view.collected(*snapshot);
@@ -2517,7 +2517,7 @@ mod tests {
         let mut outstanding = gathering(A_LONG_WINDOW);
         outstanding.ask(arkham(), now);
         let mut sooner = Armed::polling("ferry".to_string(), Some(AN_INTERVAL));
-        sooner.came_back(&ferry(), now);
+        sooner.came_back(&ferry(), now, None);
 
         assert_eq!(
             sleeps_for(
@@ -2929,7 +2929,7 @@ mod tests {
         let (ask, _asked) = mpsc::channel();
         let events = waiting(vec![Event::Key(key(KeyCode::Char('x')))]);
         let mut overdue = Armed::polling("arkham".to_string(), Some(AN_INTERVAL));
-        overdue.came_back(&arkham(), Utc::now() - TimeDelta::hours(1));
+        overdue.came_back(&arkham(), Utc::now() - TimeDelta::hours(1), None);
 
         drive(
             &mut view,
@@ -2958,7 +2958,7 @@ mod tests {
     /// go.
     fn lapsed_an_hour_ago() -> Armed {
         let mut lapsed = Armed::polling("arkham".to_string(), None).lapsing_after(AN_INTERVAL);
-        lapsed.came_back(&arkham(), Utc::now() - TimeDelta::hours(1));
+        lapsed.came_back(&arkham(), Utc::now() - TimeDelta::hours(1), None);
         lapsed
     }
 
@@ -3028,7 +3028,7 @@ mod tests {
     fn the_loop_wakes_when_a_project_would_lapse() {
         let now = Utc::now();
         let mut lapsing = Armed::polling("arkham".to_string(), None).lapsing_after(AN_INTERVAL);
-        lapsing.came_back(&arkham(), now);
+        lapsing.came_back(&arkham(), now, None);
 
         assert_eq!(
             sleeps_for(&Recorder::default(), &at_once(), &[lapsing], None, now, now),
