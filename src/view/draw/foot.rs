@@ -91,6 +91,10 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// newer of the two, and a rule they set is still in force a keystroke
 /// later.
 ///
+/// `focused` is whether the forest is drawn from the beads the reader
+/// focused. It is the whole screen's, so it is said here once, beside the
+/// rule and under the same answer.
+///
 /// `width` is what this row will be drawn into. Choosing which words to say
 /// is a different job from cutting the words chosen, and only the first of
 /// them belongs here.
@@ -104,6 +108,7 @@ pub(super) fn status_bar(
     prompt: Option<&str>,
     keys: &[String],
     spine: Spine,
+    focused: bool,
     width: usize,
 ) -> Fitted {
     if let Some(typed) = prompt {
@@ -116,7 +121,7 @@ pub(super) fn status_bar(
 
     let answer: Vec<Span<'static>> = said
         .map(phrase::said)
-        .or_else(|| phrase::spine(spine).map(str::to_string))
+        .or_else(|| in_force(spine, focused))
         .map(Span::raw)
         .into_iter()
         .collect();
@@ -135,6 +140,17 @@ pub(super) fn status_bar(
     )
     .title_or_nothing()
     .state_or_nothing()
+}
+
+/// What the reader has put in force over the whole screen, where they have
+/// put anything there.
+fn in_force(spine: Spine, focused: bool) -> Option<String> {
+    let said: Vec<&str> = focused
+        .then(phrase::focused)
+        .into_iter()
+        .chain((spine != Spine::default()).then(|| phrase::spine(spine)))
+        .collect();
+    (!said.is_empty()).then(|| said.join(" · "))
 }
 
 /// The fullest of `forms` that `room` holds, or the shortest of them where it
@@ -278,7 +294,7 @@ mod tests {
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, &a_key_row(), Spine::EveryCopy, 60),
+            status_bar(&[], None, None, &a_key_row(), Spine::default(), false, 60),
             60,
             1,
         )
@@ -299,7 +315,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 90,
             ),
             90,
@@ -325,7 +342,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 90,
             ),
             90,
@@ -350,7 +368,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 200,
             ),
             200,
@@ -377,7 +396,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 80,
             ),
             80,
@@ -419,7 +439,8 @@ mod tests {
                 None,
                 None,
                 &a_row_that_can_say_less(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 80,
             ),
             80,
@@ -443,7 +464,8 @@ mod tests {
                 None,
                 None,
                 &a_row_that_can_say_less(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -470,7 +492,8 @@ mod tests {
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 80,
             ),
             80,
@@ -492,7 +515,8 @@ mod tests {
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 120,
             ),
             120,
@@ -520,7 +544,8 @@ mod tests {
                 Some(&Said::Copied("grv-1".to_string())),
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 50,
             ),
             50,
@@ -558,7 +583,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 40,
             ),
             40,
@@ -581,7 +607,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -602,7 +629,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -633,7 +661,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 100,
             ),
             100,
@@ -661,7 +690,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 40,
             ),
             40,
@@ -685,7 +715,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 100,
             ),
             100,
@@ -703,14 +734,14 @@ mod tests {
 
     // ---- which rule opens the spine ----------------------------------------
 
-    /// The rule the forest starts under opens every way down to a bead, which
-    /// is the screen this program drew before there was a rule to name. There
-    /// is nothing in front of the reader to account for, so the foot accounts
-    /// for nothing and the row stays the keys.
+    /// The rule the forest starts under is the screen a reader opens `bdi` on
+    /// and has pressed nothing to get. There is nothing they asked for to
+    /// account for, so the foot accounts for nothing and the row stays the
+    /// keys.
     #[test]
     fn the_rule_the_forest_starts_under_is_not_named() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, &a_key_row(), Spine::EveryCopy, 100),
+            status_bar(&[], None, None, &a_key_row(), Spine::default(), false, 100),
             100,
             1,
         )
@@ -726,14 +757,14 @@ mod tests {
     #[test]
     fn a_rule_the_reader_put_in_force_is_said_at_the_foot() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, &a_key_row(), Spine::Deepest, 100),
+            status_bar(&[], None, None, &a_key_row(), Spine::Shallowest, false, 100),
             100,
             1,
         )
         .rows();
 
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
-        says(&drawn[0], "opening the deepest copy of each bead");
+        says(&drawn[0], "opening the shallowest copy of each bead");
     }
 
     /// The foot reads the rule off the forest rather than being handed one,
@@ -750,10 +781,7 @@ mod tests {
 
         let foot = frame_of(&forest, 100, 4).rows().remove(3);
 
-        says(
-            &foot,
-            phrase::spine(forest.spine()).expect("a rule a reader can reach is named"),
-        );
+        says(&foot, phrase::spine(forest.spine()));
     }
 
     /// Every rule a reader can reach accounts for its own screen. Two of them
@@ -767,9 +795,13 @@ mod tests {
             .copied()
             .filter(|rule| *rule != Spine::default());
         for rule in reachable {
-            let words = phrase::spine(rule).unwrap_or_else(|| panic!("{rule:?} is named"));
-            let drawn =
-                Painted::of(status_bar(&[], None, None, &a_key_row(), rule, 100), 100, 1).rows();
+            let words = phrase::spine(rule);
+            let drawn = Painted::of(
+                status_bar(&[], None, None, &a_key_row(), rule, false, 100),
+                100,
+                1,
+            )
+            .rows();
 
             says(&drawn[0], words);
             said.push(words);
@@ -779,6 +811,36 @@ mod tests {
         said.sort_unstable();
         said.dedup();
         assert_eq!(said.len(), every, "two rules share an account: {said:?}");
+    }
+
+    /// A focused forest is the whole screen's, so the foot says so, beside a
+    /// rule in force rather than in its place: the reader put both there.
+    #[test]
+    fn a_focused_forest_is_said_at_the_foot_beside_any_rule() {
+        let row = |spine| {
+            Painted::of(
+                status_bar(&[], None, None, &a_key_row(), spine, true, 120),
+                120,
+                1,
+            )
+            .rows()
+            .remove(0)
+        };
+
+        assert!(
+            row(Spine::default())
+                .trim_end()
+                .ends_with("  the forest is focused"),
+            "{:?}",
+            row(Spine::default())
+        );
+        assert!(
+            row(Spine::Shallowest)
+                .trim_end()
+                .ends_with("  the forest is focused · opening the shallowest copy of each bead"),
+            "{:?}",
+            row(Spine::Shallowest)
+        );
     }
 
     /// Both the answer and the rule are the screen telling the reader what is
@@ -792,7 +854,8 @@ mod tests {
                 Some(&Said::Copied("dun-1".to_string())),
                 None,
                 &a_key_row(),
-                Spine::Deepest,
+                Spine::Shallowest,
+                false,
                 100,
             ),
             100,
@@ -802,7 +865,7 @@ mod tests {
 
         assert!(drawn[0].trim_end().ends_with("copied dun-1"), "{drawn:?}");
         assert!(
-            !drawn[0].contains("deepest"),
+            !drawn[0].contains("shallowest"),
             "the rule and the answer were both said: {drawn:?}"
         );
     }
@@ -819,7 +882,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::Deepest,
+                Spine::Shallowest,
+                false,
                 150,
             ),
             150,
@@ -831,15 +895,15 @@ mod tests {
             drawn[0].trim_end(),
             format!(
                 "⚠ no herdr session · which agents are alive is unknown  \
-                 opening the deepest copy of each bead{}{A_KEY_ROW}",
-                " ".repeat(150 - 54 - 2 - 37 - A_KEY_ROW.chars().count())
+                 opening the shallowest copy of each bead{}{A_KEY_ROW}",
+                " ".repeat(150 - 54 - 2 - 40 - A_KEY_ROW.chars().count())
             )
         );
         assert!(
             painted
                 .row(0)
                 .iter()
-                .any(|run| run.said.contains("deepest") && run.style.fg != palette::ATTENTION.fg),
+                .any(|run| run.said.contains("shallowest") && run.style.fg != palette::ATTENTION.fg),
             "a rule the reader asked for was painted as a warning: {:?}",
             painted.row(0)
         );
@@ -852,14 +916,22 @@ mod tests {
     fn a_rule_the_row_has_no_room_for_is_dropped_whole_and_the_keys_stay() {
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[], None, None, &a_key_row(), Spine::Deepest, width),
+                status_bar(
+                    &[],
+                    None,
+                    None,
+                    &a_key_row(),
+                    Spine::Shallowest,
+                    false,
+                    width,
+                ),
                 width as u16,
                 1,
             )
             .rows()
             .remove(0)
         };
-        let rule = "opening the deepest copy of each bead";
+        let rule = "opening the shallowest copy of each bead";
         let fits = A_KEY_ROW.chars().count() + GAP + rule.chars().count();
 
         assert_eq!(row(fits), format!("{A_KEY_ROW}  {rule}"));
@@ -931,7 +1003,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -955,7 +1028,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -980,7 +1054,8 @@ mod tests {
                 None,
                 None,
                 &a_key_row(),
-                Spine::EveryCopy,
+                Spine::default(),
+                false,
                 40,
             ),
             40,
@@ -1003,7 +1078,8 @@ mod tests {
                     None,
                     None,
                     &a_key_row(),
-                    Spine::EveryCopy,
+                    Spine::default(),
+                    false,
                     width,
                 ),
                 width as u16,

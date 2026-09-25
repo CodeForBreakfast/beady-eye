@@ -416,6 +416,31 @@ pub(super) fn key_row() -> String {
         .join("   ")
 }
 
+/// The forest's row, and every shorter form of it, fullest first.
+///
+/// While the forest is focused the row offers the key that puts it back,
+/// ahead of the rest. A row with no room for it is the row the forest always
+/// has.
+pub(super) fn forest_key_rows(focused: bool) -> Vec<String> {
+    let row = key_row();
+    let whole = first_key_for(Action::FocusForest)
+        .filter(|_| focused)
+        .map(|named| format!("{named} whole forest   {row}"));
+    whole.into_iter().chain([row]).collect()
+}
+
+/// The name of the first key that reaches `action`.
+fn first_key_for(action: Action) -> Option<&'static str> {
+    Some(
+        BINDINGS
+            .iter()
+            .find(|binding| binding.action == action)?
+            .keys
+            .first()?
+            .named,
+    )
+}
+
 /// The bead window's row: what each key does there, in the order the row
 /// says them.
 ///
@@ -458,15 +483,7 @@ const IN_BEAD: &[(Action, &str)] = &[
 pub(super) fn bead_key_rows() -> Vec<String> {
     let named: Vec<String> = IN_BEAD
         .iter()
-        .filter_map(|(action, word)| {
-            let named = BINDINGS
-                .iter()
-                .find(|binding| binding.action == *action)?
-                .keys
-                .first()?
-                .named;
-            Some(format!("{named} {word}"))
-        })
+        .filter_map(|(action, word)| Some(format!("{} {word}", first_key_for(*action)?)))
         .collect();
 
     (1..=named.len())
@@ -714,6 +731,18 @@ pub(super) mod tests {
             );
         }
         assert!(row.contains("? keys"), "the way to the rest: {row:?}");
+    }
+
+    /// The key that puts a focused forest back is offered while there is a
+    /// forest to put back, and a row with no room for it is the row there
+    /// always was.
+    #[test]
+    fn the_forests_row_offers_the_whole_forest_only_while_it_is_focused() {
+        assert_eq!(forest_key_rows(false), vec![key_row()]);
+        assert_eq!(
+            forest_key_rows(true),
+            vec![format!("F whole forest   {}", key_row()), key_row()]
+        );
     }
 
     /// A binding added as a match arm rather than to the table would answer a

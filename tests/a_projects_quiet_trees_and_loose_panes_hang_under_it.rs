@@ -12,7 +12,7 @@
 //! 0 ▾ arkham
 //! 1   ├── ○ ark-1  raise the beacon
 //! 2   │   └── ◐ .1  trim the wick          ◍ wT:p2 working
-//! 3   ├─▸ 1 tree with no live agent        a to show all
+//! 3   ├─▸ 1 tree with no live agent
 //! 4   └── ⚠ 1 unattributed pane
 //! 5       └── ◍ wT:p3 idle                 <the project's path>
 //! 6 ▸ ⚠ 1 project whose tracker could not be read

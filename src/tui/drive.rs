@@ -35,6 +35,8 @@ pub(super) enum Event {
     Clicked(u16),
     /// A wheel notch, and which way it turned.
     Scrolled(Notch),
+    /// Text the reader pasted, all of it.
+    Pasted(String),
     Resize,
     /// Work has moved on, and what has to be read to see it.
     Changed(Wanted),
@@ -228,6 +230,13 @@ pub(super) trait View {
     /// have: what a keystroke means is the loop's, and what is on the screen
     /// for it is the view's.
     fn typing(&mut self, typing: Typing) -> bool;
+
+    /// Put text the reader pasted into the search prompt, reporting whether
+    /// the screen has changed.
+    ///
+    /// All of it at once rather than a keystroke per character, because each
+    /// keystroke is a search step and a paste is one thing to search for.
+    fn pasted(&mut self, text: &str) -> bool;
 
     /// Move the bead view by one motion, reporting whether the screen has
     /// changed. The selection under it does not move: the view is what the
@@ -758,6 +767,10 @@ fn answered(
             Some(action) => view.apply(action),
             None => false,
         },
+        // Anywhere but the prompt a paste is dropped rather than read as a
+        // run of keys, any of which could be a binding.
+        Event::Pasted(text) if *showing == Showing::Searching => view.pasted(&text),
+        Event::Pasted(_) => false,
         // A click or a notch takes the bindings away and does no more,
         // for the same reason a key does: the window is over the forest,
         // so the rows under the pointer are rows nobody can see.
@@ -1157,6 +1170,10 @@ mod tests {
         /// actions, because the whole question is which of the two a key
         /// reached.
         typed: Vec<Typing>,
+        /// What each paste into the search prompt carried, apart from the
+        /// keystrokes, because the whole question is whether a paste reached
+        /// it as one.
+        pasted: Vec<String>,
         /// The rows a click over the bead window asked about, apart from the
         /// forest's, because the whole question is which of the two the loop
         /// sent one to.
@@ -1327,6 +1344,11 @@ mod tests {
         /// only which keystrokes reached it and in what order.
         fn typing(&mut self, typing: Typing) -> bool {
             self.typed.push(typing);
+            true
+        }
+
+        fn pasted(&mut self, text: &str) -> bool {
+            self.pasted.push(text.to_string());
             true
         }
 
@@ -1762,6 +1784,61 @@ mod tests {
             [Showing::Forest, Showing::Searching, Showing::Searching],
             "^C ended the run, so nothing after it was drawn"
         );
+    }
+
+    /// A paste reaches the prompt as one step carrying the whole of it, so
+    /// the prompt searches once for the whole id rather than once for each
+    /// character of it.
+    #[test]
+    fn a_paste_reaches_the_prompt_whole() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Char('/'))),
+            Event::Pasted("dun-0tp.7".to_string()),
+            Event::Key(key(KeyCode::Enter)),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(view.pasted, ["dun-0tp.7"]);
+        assert_eq!(view.typed, [Typing::Sought]);
+    }
+
+    /// Away from the prompt a paste is not a run of keystrokes: the `q` in
+    /// this one would have ended the run, and the `j` after it would never
+    /// have moved the selection.
+    #[test]
+    fn a_paste_away_from_the_prompt_presses_nothing() {
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Pasted("q".to_string()),
+            Event::Key(key(KeyCode::Char('j'))),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert!(view.pasted.is_empty());
+        assert_eq!(view.applied, [Action::Move(Motion::NextRow)]);
     }
 
     /// A click or a notch leaves the prompt, as it leaves the bindings: the

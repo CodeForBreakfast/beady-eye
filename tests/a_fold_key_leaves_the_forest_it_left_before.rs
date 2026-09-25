@@ -13,7 +13,8 @@
 //! under the root make a run, and a blocker with a child of its own, hung
 //! under the two beads it blocks as well as under its parent, is one bead on
 //! three rows with its subtree under each copy. What the binary draws of it
-//! before any key is pressed, counting the rows of the screen from the top:
+//! once `S` has put every copy of a bead on the spine, counting the rows of
+//! the screen from the top:
 //!
 //! ```text
 //! 0 ▾ arkham  ✓ 1s ago                                   3/10  1 agent
@@ -25,7 +26,7 @@
 //! 6   │   ├── ○ .3       mount the lens                          0/3
 //! 7   │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath
 //! 8   │   └─▸ ✓ 3 more beads · finished, and nobody on them
-//! 9   └─▸ 1 tree with no live agent                    a to show all
+//! 9   └─▸ 1 tree with no live agent
 //! ```
 //!
 //! Two things on a row are not the fold's, and are taken out before a row is
@@ -109,6 +110,7 @@ const SHOW_EVERY_TREE: &[u8] = b"a";
 const REFRESH: &[u8] = b"\x12";
 const SHOW_IT: &[u8] = b"\r";
 const BACK: &[u8] = b"\x1b";
+const NEXT_RULE_OVER_THE_FOREST: &[u8] = b"S";
 
 /// Rows of the first screen, counted from the top, that the tests select.
 const RAISE_THE_KADATH: u16 = 1;
@@ -116,7 +118,22 @@ const GLAZE_THE_LANTERN: u16 = 4;
 const THE_COPY_UNDER_IT: u16 = 5;
 const MOUNT_THE_LENS: u16 = 6;
 
-/// The forest as the first screen draws it, in the words the assertions use.
+/// The forest as a fresh `bdi` draws it, under the deepest rule: one copy of
+/// the blocker is opened to and the other two rest shut over the same work.
+const FRESH: &[&str] = &[
+    "▾ arkham  ✓ <age> ago  3/10  1 agent",
+    "  ├── ○ ark-1  raise the beacon  3/8",
+    "  │   ├─▸ ○ .1  cast the bracket  0/2  ◍ 1 agent beneath",
+    "  │   ├── ○ .2  glaze the lantern  0/3",
+    "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
+    "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
+    "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
+    "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+    "  └─▸ 1 tree with no live agent",
+];
+
+/// The forest at rest once every copy of a bead is on the spine, in the
+/// words the assertions use.
 const AT_REST: &[&str] = &[
     "▾ arkham  ✓ <age> ago  3/10  1 agent",
     "  ├── ○ ark-1  raise the beacon  3/8",
@@ -127,7 +144,7 @@ const AT_REST: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-    "  └─▸ 1 tree with no live agent  a to show all",
+    "  └─▸ 1 tree with no live agent",
 ];
 
 /// The forest with every fold open: the run's members, the subtree under each
@@ -147,7 +164,7 @@ const EVERYTHING_OPEN: &[&str] = &[
     "  │       ├── ✓ .4  survey the headland",
     "  │       ├── ✓ .5  draw up the plans",
     "  │       └── ✓ .6  clear the site",
-    "  └── 1 tree with no live agent  a to show all",
+    "  └── 1 tree with no live agent",
     "      └── ○ ark-2  dredge the harbour  0/2",
     "          └── ○ .1  survey the silt",
 ];
@@ -165,7 +182,7 @@ const GLAZE_THE_LANTERN_SHUT: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-    "  └─▸ 1 tree with no live agent  a to show all",
+    "  └─▸ 1 tree with no live agent",
 ];
 
 /// The forest with the copy of the blocker under `glaze the lantern` open,
@@ -181,8 +198,19 @@ const THE_COPY_OPEN: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-    "  └─▸ 1 tree with no live agent  a to show all",
+    "  └─▸ 1 tree with no live agent",
 ];
+
+/// A fresh `bdi` opens each bead's deepest copy before the reader presses
+/// anything, and one `S` puts every copy on the spine.
+#[test]
+fn a_fresh_bdi_opens_each_beads_deepest_copy() {
+    let (mut bdi, _fixture) = launched("fresh", &TALL);
+    assert_eq!(forest(&mut bdi, &TALL), FRESH);
+
+    bdi.send(NEXT_RULE_OVER_THE_FOREST);
+    assert_eq!(forest(&mut bdi, &TALL), AT_REST);
+}
 
 /// `E` opens every fold there is, `C` shuts every fold there is, and `D`
 /// hands every one of them back to where it rests.
@@ -361,7 +389,7 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-            "  └─▸ 1 tree with no live agent  a to show all",
+            "  └─▸ 1 tree with no live agent",
         ]
     );
 
@@ -384,7 +412,7 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   │   ├── ◐ .1  grind the glass  ◍ wT:p3 · working",
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-            "  └─▸ 1 tree with no live agent  a to show all",
+            "  └─▸ 1 tree with no live agent",
         ]
     );
 }
@@ -468,7 +496,7 @@ fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-            "  └─▸ 1 tree with no live agent  a to show all",
+            "  └─▸ 1 tree with no live agent",
         ]
     );
     assert_eq!(selected(&mut bdi, &TALL), "ark-1.1.1");
@@ -513,13 +541,22 @@ impl Fixture {
     }
 }
 
+/// A `launched` `bdi` with every copy of a bead on the spine: the screen the
+/// fold keys are pinned against.
+fn over_every_fold_kind(named: &str, screen: &Screen) -> (Driven, Fixture) {
+    let (mut bdi, fixture) = launched(named, screen);
+    bdi.send(NEXT_RULE_OVER_THE_FOREST);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    (bdi, fixture)
+}
+
 /// A `bdi` on a pty of this height over the tracker at the top of this
 /// file, drawn and settled, with the selection where a run leaves it: on
 /// the project's line.
 ///
 /// `bdi` is started in `HOME` itself, which is not the project's directory,
 /// so the directory chooses no scope.
-fn over_every_fold_kind(named: &str, screen: &Screen) -> (Driven, Fixture) {
+fn launched(named: &str, screen: &Screen) -> (Driven, Fixture) {
     let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     let arkham = home.join("arkham");
     std::fs::create_dir_all(&arkham).expect("the directory is ours to make");

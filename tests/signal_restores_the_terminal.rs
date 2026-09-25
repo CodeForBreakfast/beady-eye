@@ -35,6 +35,10 @@ const MOUSE_OFF: [(&str, &[u8]); 5] = [
     ("SGR coordinates", b"\x1b[?1006l"),
 ];
 
+/// A terminal left taking pastes bracketed hands whatever runs next the
+/// markers around every paste as text.
+const BRACKETED_PASTE_OFF: &[u8] = b"\x1b[?2004l";
+
 /// Long enough for a process that is going to die to have died.
 const LONG_ENOUGH_TO_DIE: Duration = Duration::from_secs(10);
 
@@ -76,6 +80,10 @@ fn assert_restored_after(signal: i32, named: &str) {
             "{named} left the terminal reporting the mouse ({mode}): {said:?}"
         );
     }
+    assert!(
+        contains(&restoring, BRACKETED_PASTE_OFF),
+        "{named} left the terminal taking pastes bracketed: {said:?}"
+    );
 }
 
 /// A refresh interval no test here will ever reach, so the only collection is
