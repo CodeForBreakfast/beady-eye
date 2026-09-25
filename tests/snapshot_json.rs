@@ -1587,7 +1587,10 @@ fn a_bead_reached_several_ways_is_listed_once() {
 
     let listed = listing(&trackers);
 
-    assert_eq!(ids_listed(&listed), ["dun-7", "dun-7.1", "dun-8", "dun-8.1"]);
+    assert_eq!(
+        ids_listed(&listed),
+        ["dun-7", "dun-7.1", "dun-8", "dun-8.1"]
+    );
 }
 
 /// bd calls `ark-43o` ready, and `bdi` reads dunwich's tracker too. Dunwich's
@@ -1627,8 +1630,10 @@ fn the_listing_names_the_projects_it_could_not_read() {
 /// whatever was meant to be beneath it is missing, and the listing says so.
 #[test]
 fn the_listing_names_the_roots_that_drew_nothing() {
-    let cfg = Config::from_toml(&format!("{CONFIG}\n[roots.explicit]\ndunwich = [\"dun-404\"]\n"))
-        .expect("the config parses");
+    let cfg = Config::from_toml(&format!(
+        "{CONFIG}\n[roots.explicit]\ndunwich = [\"dun-404\"]\n"
+    ))
+    .expect("the config parses");
 
     let listed = listing_over(&cfg, &panes(), &dunwich());
 

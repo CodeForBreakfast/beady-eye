@@ -19,7 +19,7 @@ use crate::collect::discovery;
 use crate::collect::herdr;
 use crate::collect::run::{RealRunner, Runner};
 use crate::config::Config;
-use crate::model::snapshot::Filter;
+use crate::model::snapshot::{Filter, Listing};
 use crate::tui::{Armed, Arming, Reload, CHECKED_EVERY};
 
 /// Where the config lives when nothing says otherwise.
@@ -64,6 +64,12 @@ struct Cli {
     /// Emit the snapshot as JSON.
     #[arg(long)]
     json: bool,
+
+    /// Emit each unfinished bead once as JSON: whether it is ready, what
+    /// blocks it in its own project or another, and the agent on it. Beads
+    /// with no live agent in their tree are listed too.
+    #[arg(long = "beads", conflicts_with_all = ["json", "all", "beads"])]
+    each_bead: bool,
 
     /// Draw every tree, including those with no live agent.
     #[arg(long)]
@@ -208,16 +214,24 @@ pub fn run() -> anyhow::Result<ExitCode> {
     } else {
         Filter::LiveAgents
     };
-    if cli.json {
-        let mut snapshot = crate::app::run(
+    let collected = |filter| {
+        crate::app::run(
             &cfg,
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
             &bd::Cli::new(&RealRunner),
             filter,
             Utc::now(),
-        );
+        )
+    };
+    if cli.json {
+        let mut snapshot = collected(filter);
         snapshot.narrow_to(&cfg.roots.named_beads());
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+    if cli.each_bead {
+        let snapshot = collected(Filter::All);
+        println!("{}", serde_json::to_string_pretty(&Listing::of(&snapshot))?);
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -1014,6 +1028,20 @@ detached
 
         assert!(cli.all);
         assert_eq!(Reading::asked_for(&cli), Reading::WhereBdiWasStarted);
+    }
+
+    /// `--beads` is a document of its own rather than a way of drawing the
+    /// forest, so the forest's options contradict it.
+    #[test]
+    fn beads_stands_apart_from_the_forests_options() {
+        assert!(Cli::parse_from(["bdi", "--beads"]).each_bead);
+        for forest in [&["--json"][..], &["--all"], &["dun-7"]] {
+            let asked = [&["bdi", "--beads"][..], forest].concat();
+            assert!(
+                Cli::try_parse_from(asked).is_err(),
+                "--beads with {forest:?} was taken"
+            );
+        }
     }
 
     /// The run says nothing about polling unless it is asked to, and each

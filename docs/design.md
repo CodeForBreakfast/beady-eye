@@ -2103,6 +2103,53 @@ re-derived, because a consumer working it out of `conflicts` for itself could
 come to disagree with the screen about a pane the screen has already spoken
 for.
 
+### Each bead once
+
+`bdi --beads` writes the beads with the forest taken out, for a reader
+choosing what to start rather than drawing a tree:
+
+```json
+{
+  "generated_at": "2026-08-30T10:22:14Z",
+  "agents": { "provider": "herdr", "state": "answering", "sessions": [ { "name": "default", "state": "answering" } ] },
+  "beads": [
+    {
+      "project": "summit-works",
+      "id": "smt-4kd3p.16",
+      "title": "guard a key in both layers",
+      "status": "open",
+      "issue_type": "task",
+      "priority": 2,
+      "ready": false,
+      "blocked_by": ["smt-4kd3p.13", "mdw-9"],
+      "agent": null,
+      "badges": []
+    }
+  ],
+  "failed_projects": [ { "project": "meadow", "tracker": { "reason": "auth" } } ],
+  "unread_trees": [ { "project": "summit-works", "root": "smt-9zz", "tracker": "root-not-found" } ]
+}
+```
+
+`beads` is every unfinished bead in every tree the run read, keyed
+`{ "project", "id" }` and written once however many ways down or trees reach
+it, sorted by project and then by id. The live-agent filter does not apply,
+so it cannot be combined with `--all`, `--json` or a bead named on the command
+line, while `--project` and `--all-projects` choose the projects as they do
+for any run. Its size follows the beads listed rather than the unrolled
+forest's.
+
+Each field is the one its tree's node carries, so `--beads` and the screen
+cannot disagree. `ready` and `blocked_by` are bd's answer with the blockers
+in other projects added, as *Across projects* says. So for a project with no
+dependency on another project's bead, the beads with `ready` true are what
+`bd ready` names. A blocked bead is listed too, because what blocks it is
+what says which work is next.
+
+A list that is short says so. `failed_projects` is the forest's, and
+`unread_trees` names each root whose tracker gave no rows, with the `tracker`
+state its tree would carry, since the beads beneath it are missing.
+
 ### Facts, not the words the screen makes of them
 
 There is no `notices` array here. A notice is the sentence the status bar makes

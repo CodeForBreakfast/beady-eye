@@ -102,6 +102,11 @@ Keys to start with. `?` lists the lot.
 is also what to reach for when stdout is not a terminal; `bdi | cat` says so and
 exits.
 
+`bdi --beads` writes each unfinished bead once instead of the forest: whether
+it is ready, what blocks it, and the agent on it. Unlike `bd ready`, it counts
+a blocker in another project, so `bdi --beads | jq '.beads[] | select(.ready)'`
+is the work that waits on nothing.
+
 ## Several trackers
 
 A config file opens the eye on all of them:
