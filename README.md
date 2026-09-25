@@ -15,8 +15,8 @@ Something old has opened an eye over both.
 
 ![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-The arkham project is made up. Three of its beads have a live agent beside
-them, and the band at the foot is what the selected one's pane is saying.
+Three of arkham's beads have a live agent beside them, and the band at the
+foot is what the selected one's pane is saying.
 `ark-5` is what else falls out of watching both at once: beads says an agent
 claimed it, herdr has no pane for that agent, and the eye says so. It has seen
 a pane die on a Tuesday before.
