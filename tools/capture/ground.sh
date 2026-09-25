@@ -44,7 +44,7 @@ TOML
 
 # The tracker. Twelve beads over two roots: a payments epic whose refund
 # strand is being worked, and a search bug. Three are closed, three name a
-# pane, and arkham-5 names one that no session reports — the drift the caption
+# pane, and ark-5 names one that no session reports — the drift the caption
 # points at.
 python3 - "$answers" "$arkham" <<'PY'
 import json, sys
@@ -70,23 +70,23 @@ def bead(id, title, status, kind, parent=None, blocked_by=None, pane=None):
     return row
 
 rows = [
-    bead("arkham-1", "Payments move to the new gateway", "open", "epic"),
-    bead("arkham-2", "Pin the gateway client version", "open", "task", "arkham-1"),
-    bead("arkham-3", "The refund path calls the gateway", "in_progress", "task",
-         "arkham-1", pane="wG:p2"),
-    bead("arkham-4", "Backfill the refund ledger", "open", "task", "arkham-3"),
-    bead("arkham-5", "Retire the old refund worker", "in_progress", "task",
-         "arkham-3", pane="wG:p9"),
-    bead("arkham-6", "Cut the live keys over", "open", "task", "arkham-1",
-         blocked_by="arkham-2"),
-    bead("arkham-7", "Webhook retries are not idempotent", "in_progress", "bug",
-         "arkham-1", pane="wG:p4"),
-    bead("arkham-8", "Reconcile the settlement report", "closed", "task", "arkham-1"),
-    bead("arkham-9", "Drop the gateway shim", "closed", "task", "arkham-1"),
-    bead("arkham-10", "Search returns stale results after an edit", "open", "bug"),
-    bead("arkham-11", "Invalidate the index on write", "in_progress", "task",
-         "arkham-10", pane="wG:p6"),
-    bead("arkham-12", "Measure the reindex cost", "closed", "task", "arkham-10"),
+    bead("ark-1", "Payments move to the new gateway", "open", "epic"),
+    bead("ark-2", "Pin the gateway client version", "open", "task", "ark-1"),
+    bead("ark-3", "The refund path calls the gateway", "in_progress", "task",
+         "ark-1", pane="wG:p2"),
+    bead("ark-4", "Backfill the refund ledger", "open", "task", "ark-3"),
+    bead("ark-5", "Retire the old refund worker", "in_progress", "task",
+         "ark-3", pane="wG:p9"),
+    bead("ark-6", "Cut the live keys over", "open", "task", "ark-1",
+         blocked_by="ark-2"),
+    bead("ark-7", "Webhook retries are not idempotent", "in_progress", "bug",
+         "ark-1", pane="wG:p4"),
+    bead("ark-8", "Reconcile the settlement report", "closed", "task", "ark-1"),
+    bead("ark-9", "Drop the gateway shim", "closed", "task", "ark-1"),
+    bead("ark-10", "Search returns stale results after an edit", "open", "bug"),
+    bead("ark-11", "Invalidate the index on write", "in_progress", "task",
+         "ark-10", pane="wG:p6"),
+    bead("ark-12", "Measure the reindex cost", "closed", "task", "ark-10"),
 ]
 
 UNFINISHED = "open,in_progress,blocked,deferred"
@@ -111,7 +111,7 @@ with open(f"{answers}/where --json", "w") as f:
 PY
 
 # The session. Six panes in the project's directory: the three the beads name,
-# and three more working there that no bead claims. arkham-5's pane is not
+# and three more working there that no bead claims. ark-5's pane is not
 # among them, so the claim it carries has nothing behind it.
 cat >"$ground/herdr-sessions.json" <<JSON
 {"sessions":[{"default":true,"name":"default","running":true,
