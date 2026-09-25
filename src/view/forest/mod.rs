@@ -2627,6 +2627,14 @@ credential_command = "secret harbour"
 
     /// Press `key` until the rule named is in force, which is what a reader
     /// does and what keeps a test off the order of the cycle.
+    /// A forest with every copy of each bead on the spine: the screen a test
+    /// of what one copy of a bead does beside another is read against.
+    fn under_every_copy(snapshot: Snapshot) -> Forest {
+        let mut forest = flatten(snapshot);
+        put_in_force(&mut forest, Spine::EveryCopy, Action::CycleSpineForest);
+        forest
+    }
+
     fn put_in_force(forest: &mut Forest, rule: Spine, key: Action) {
         for _ in Spine::EVERY {
             if forest.spine() == rule {
@@ -2855,7 +2863,7 @@ credential_command = "secret harbour"
     /// give one of them the other's answer.
     #[test]
     fn folding_one_copy_of_a_bead_drawn_twice_in_one_tree_leaves_the_other_alone() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
 
         step_onto(&mut forest, lower);
@@ -2878,7 +2886,7 @@ credential_command = "secret harbour"
     /// shut, so the subtree is drawn once however many ways there are into it.
     #[test]
     fn a_bead_drawn_twice_in_one_tree_rests_open_on_the_first_line_and_shut_on_the_second() {
-        let forest = flatten(drawn_twice_in_one_tree());
+        let forest = under_every_copy(drawn_twice_in_one_tree());
         let [upper, lower] = copies_of(&forest, "dun-9");
 
         assert_eq!(
@@ -2893,7 +2901,7 @@ credential_command = "secret harbour"
     /// opening it draws the subtree there too.
     #[test]
     fn the_second_line_of_a_bead_drawn_twice_opens_onto_the_same_subtree() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
         assert_eq!(
             lines_of(&forest, "dun-9.1").len(),
@@ -2917,7 +2925,7 @@ credential_command = "secret harbour"
     /// line gets it back the way `bdi` would have drawn it.
     #[test]
     fn letting_go_of_the_folds_shuts_a_second_line_a_reader_opened() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         forest.apply(Action::ToggleFold);
@@ -2934,13 +2942,13 @@ credential_command = "secret harbour"
     }
 
     /// The rule that opens the spine begins afresh at the node a scope is set
-    /// on. Under the one rule there is, a second copy of a bead rests shut
+    /// on. Under every copy, a second copy of a bead rests shut
     /// because the way down to it is not the first; a scope set on that copy
     /// makes it the first the rule has seen, and it rests open as the upper
     /// one does.
     #[test]
     fn a_rule_scoped_to_a_second_copy_of_a_bead_begins_afresh_there() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
         let scoped = forest.lines()[lower]
             .place
@@ -2968,12 +2976,11 @@ credential_command = "secret harbour"
 
     // ---- which copy of a bead the fold default opens ------------------------
 
-    /// The rule as it has always stood puts every copy of a bead on the
-    /// spine, so a bead both halves of an epic wait on is drawn under each of
+    /// Every copy puts every copy of a bead on the spine, so a bead both halves of an epic wait on is drawn under each of
     /// them and the work beneath it is drawn under the first.
     #[test]
     fn every_copy_of_a_bead_two_siblings_wait_on_is_opened_to() {
-        let forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
+        let forest = under_every_copy(a_blocker_both_halves_wait_on("dun-1.1"));
 
         assert_eq!(
             lines_of(&forest, "dun-1").len(),
@@ -3034,8 +3041,8 @@ credential_command = "secret harbour"
     /// the way it chose: the bead that waits on it in fewest steps under
     /// shallowest, the earlier of the two siblings under first reached, its
     /// own parent under parent-child, and the bead that waits on it furthest
-    /// down under deepest. The rule the forest starts under opens all four at
-    /// once, which is the screen the one-copy rules were written against.
+    /// down under deepest. Every copy opens all four at once, which is the
+    /// screen the one-copy rules were written against.
     #[test]
     fn each_rule_opens_the_way_down_it_chose_and_rests_the_others_shut() {
         for (rule, open) in [
@@ -3069,6 +3076,38 @@ credential_command = "secret harbour"
                 sketch(&forest)
             );
         }
+    }
+
+    /// A fresh forest is under deepest before the reader presses anything,
+    /// so the one copy of a bead it opens is the one furthest down.
+    #[test]
+    fn a_fresh_forest_opens_each_beads_deepest_copy() {
+        let forest = flatten(four_ways_to_the_agent());
+
+        assert_eq!(forest.spine(), Spine::Deepest);
+        assert_eq!(
+            resting_open(&forest),
+            ["bel-1", "bel-1.1", "bel-1.1.3", "bel-1.1.3.1"],
+            "{:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// Starting under deepest takes no rule out of the reader's reach: `s`
+    /// comes round to every one of them and back to deepest.
+    #[test]
+    fn cycling_from_the_rule_a_forest_starts_under_reaches_every_rule() {
+        let mut forest = flatten(four_ways_to_the_agent());
+        let mut reached = Vec::new();
+
+        for _ in Spine::EVERY {
+            forest.apply(Action::CycleSpineForest);
+            reached.push(forest.spine());
+        }
+
+        assert_eq!(reached.last(), Some(&Spine::Deepest));
+        reached.sort_by_key(|rule| Spine::EVERY.iter().position(|each| each == rule));
+        assert_eq!(reached, Spine::EVERY);
     }
 
     /// Parent-child falls back to the way the walk placed a bead on where the
@@ -3141,7 +3180,7 @@ credential_command = "secret harbour"
         // its own down: the rule is set in the first, so nothing here is in
         // the subtree it was set on.
         let other = |forest: &Forest| sketch(forest)[lines_of(forest, "dun-8")[0]..].to_vec();
-        let mut forest = flatten(two_roots());
+        let mut forest = under_every_copy(two_roots());
         let elsewhere = other(&forest);
 
         let at = lines_of(&forest, "dun-2")[0];
@@ -3208,7 +3247,7 @@ credential_command = "secret harbour"
     /// the folds and what the forest rests as is the new rule's.
     #[test]
     fn cycling_the_rule_moves_no_fold_the_reader_set_by_hand() {
-        let mut forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
+        let mut forest = under_every_copy(a_blocker_both_halves_wait_on("dun-1.1"));
         forest.apply(Action::CollapseForest);
         let shut = sketch(&forest);
 
@@ -3230,7 +3269,7 @@ credential_command = "secret harbour"
     /// foot would have gone on naming the rule the reader had just left.
     #[test]
     fn cycling_the_rule_asks_for_the_screen_back_where_no_row_moves() {
-        let mut forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
+        let mut forest = under_every_copy(a_blocker_both_halves_wait_on("dun-1.1"));
         forest.apply(Action::CollapseForest);
         let shut = sketch(&forest);
 
@@ -3245,7 +3284,7 @@ credential_command = "secret harbour"
     /// force under says that rule, and a node outside it says the forest's.
     #[test]
     fn the_rule_in_force_is_the_one_set_on_the_nearest_line_at_or_above_the_selection() {
-        let mut forest = flatten(a_blocker_both_halves_wait_on("dun-1.1"));
+        let mut forest = under_every_copy(a_blocker_both_halves_wait_on("dun-1.1"));
         let at = lines_of(&forest, "dun-2.1")[0];
         step_onto(&mut forest, at);
         forest.apply(Action::CycleSpine);
@@ -4863,7 +4902,7 @@ credential_command = "secret harbour"
     /// hunting for a second agent that is not there.
     #[test]
     fn one_agent_reached_two_ways_down_is_counted_once() {
-        let mut forest = flatten(alone("dunwich", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
+        let mut forest = under_every_copy(alone("dunwich", SHARED_IN_A_RUN, &panes_on(&["lck-2"])));
         assert_eq!(
             lines_of(&forest, "lck-2").len(),
             2,
@@ -9363,7 +9402,7 @@ credential_command = "secret harbour"
     /// what only it reaches are rows nothing draws.
     #[test]
     fn rooting_at_one_copy_excludes_the_others_from_the_root_behind_the_line() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
@@ -9381,7 +9420,7 @@ credential_command = "secret harbour"
     /// the ordinal never drops except at the wrap.
     #[test]
     fn stepping_forward_from_a_later_copy_never_lowers_the_ordinal() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         forest.seek_here("dun-9");
         let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
@@ -10711,7 +10750,7 @@ credential_command = "secret harbour"
     /// it is drawn at rather than to the first way down to it.
     #[test]
     fn going_to_the_focused_bead_reaches_the_copy_it_is_rooted_at() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
@@ -10762,7 +10801,7 @@ credential_command = "secret harbour"
     /// answering with it would count a bead it could not land on.
     #[test]
     fn going_to_a_bead_under_the_focused_copy_reaches_it() {
-        let mut forest = flatten(drawn_twice_in_one_tree());
+        let mut forest = under_every_copy(drawn_twice_in_one_tree());
         let [_, lower] = copies_of(&forest, "dun-9");
         step_onto(&mut forest, lower);
         assert!(forest.apply(Action::FocusForest));
@@ -11428,7 +11467,7 @@ credential_command = "secret harbour"
     /// down, not those of the bead of the same id its tree holds first.
     #[test]
     fn a_rule_set_on_another_projects_bead_chooses_among_its_own_ways_down() {
-        let mut forest = flatten(one_id_in_two_projects());
+        let mut forest = under_every_copy(one_id_in_two_projects());
         let dunwichs = forest
             .lines()
             .iter()
