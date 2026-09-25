@@ -91,6 +91,10 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// newer of the two, and a rule they set is still in force a keystroke
 /// later.
 ///
+/// `focused` is whether the forest is drawn from the beads the reader
+/// focused. It is the whole screen's, so it is said here once, beside the
+/// rule and under the same answer.
+///
 /// `width` is what this row will be drawn into. Choosing which words to say
 /// is a different job from cutting the words chosen, and only the first of
 /// them belongs here.
@@ -104,6 +108,7 @@ pub(super) fn status_bar(
     prompt: Option<&str>,
     keys: &[String],
     spine: Spine,
+    focused: bool,
     width: usize,
 ) -> Fitted {
     if let Some(typed) = prompt {
@@ -116,7 +121,7 @@ pub(super) fn status_bar(
 
     let answer: Vec<Span<'static>> = said
         .map(phrase::said)
-        .or_else(|| (spine != Spine::default()).then(|| phrase::spine(spine).to_string()))
+        .or_else(|| in_force(spine, focused))
         .map(Span::raw)
         .into_iter()
         .collect();
@@ -135,6 +140,17 @@ pub(super) fn status_bar(
     )
     .title_or_nothing()
     .state_or_nothing()
+}
+
+/// What the reader has put in force over the whole screen, where they have
+/// put anything there.
+fn in_force(spine: Spine, focused: bool) -> Option<String> {
+    let said: Vec<&str> = focused
+        .then(phrase::focused)
+        .into_iter()
+        .chain((spine != Spine::default()).then(|| phrase::spine(spine)))
+        .collect();
+    (!said.is_empty()).then(|| said.join(" · "))
 }
 
 /// The fullest of `forms` that `room` holds, or the shortest of them where it
@@ -278,7 +294,7 @@ mod tests {
     #[test]
     fn the_foot_of_the_screen_shows_the_keys_it_is_handed() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, &a_key_row(), Spine::default(), 60),
+            status_bar(&[], None, None, &a_key_row(), Spine::default(), false, 60),
             60,
             1,
         )
@@ -300,6 +316,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 90,
             ),
             90,
@@ -326,6 +343,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 90,
             ),
             90,
@@ -351,6 +369,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 200,
             ),
             200,
@@ -378,6 +397,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 80,
             ),
             80,
@@ -420,6 +440,7 @@ mod tests {
                 None,
                 &a_row_that_can_say_less(),
                 Spine::default(),
+                false,
                 80,
             ),
             80,
@@ -444,6 +465,7 @@ mod tests {
                 None,
                 &a_row_that_can_say_less(),
                 Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -471,6 +493,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 80,
             ),
             80,
@@ -493,6 +516,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 120,
             ),
             120,
@@ -521,6 +545,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 50,
             ),
             50,
@@ -559,6 +584,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 40,
             ),
             40,
@@ -582,6 +608,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -603,6 +630,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -634,6 +662,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 100,
             ),
             100,
@@ -662,6 +691,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 40,
             ),
             40,
@@ -686,6 +716,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 100,
             ),
             100,
@@ -710,7 +741,7 @@ mod tests {
     #[test]
     fn the_rule_the_forest_starts_under_is_not_named() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, &a_key_row(), Spine::default(), 100),
+            status_bar(&[], None, None, &a_key_row(), Spine::default(), false, 100),
             100,
             1,
         )
@@ -726,7 +757,7 @@ mod tests {
     #[test]
     fn a_rule_the_reader_put_in_force_is_said_at_the_foot() {
         let drawn = Painted::of(
-            status_bar(&[], None, None, &a_key_row(), Spine::Shallowest, 100),
+            status_bar(&[], None, None, &a_key_row(), Spine::Shallowest, false, 100),
             100,
             1,
         )
@@ -765,8 +796,12 @@ mod tests {
             .filter(|rule| *rule != Spine::default());
         for rule in reachable {
             let words = phrase::spine(rule);
-            let drawn =
-                Painted::of(status_bar(&[], None, None, &a_key_row(), rule, 100), 100, 1).rows();
+            let drawn = Painted::of(
+                status_bar(&[], None, None, &a_key_row(), rule, false, 100),
+                100,
+                1,
+            )
+            .rows();
 
             says(&drawn[0], words);
             said.push(words);
@@ -776,6 +811,36 @@ mod tests {
         said.sort_unstable();
         said.dedup();
         assert_eq!(said.len(), every, "two rules share an account: {said:?}");
+    }
+
+    /// A focused forest is the whole screen's, so the foot says so, beside a
+    /// rule in force rather than in its place: the reader put both there.
+    #[test]
+    fn a_focused_forest_is_said_at_the_foot_beside_any_rule() {
+        let row = |spine| {
+            Painted::of(
+                status_bar(&[], None, None, &a_key_row(), spine, true, 120),
+                120,
+                1,
+            )
+            .rows()
+            .remove(0)
+        };
+
+        assert!(
+            row(Spine::default())
+                .trim_end()
+                .ends_with("  the forest is focused"),
+            "{:?}",
+            row(Spine::default())
+        );
+        assert!(
+            row(Spine::Shallowest)
+                .trim_end()
+                .ends_with("  the forest is focused · opening the shallowest copy of each bead"),
+            "{:?}",
+            row(Spine::Shallowest)
+        );
     }
 
     /// Both the answer and the rule are the screen telling the reader what is
@@ -790,6 +855,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::Shallowest,
+                false,
                 100,
             ),
             100,
@@ -817,6 +883,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::Shallowest,
+                false,
                 150,
             ),
             150,
@@ -849,7 +916,15 @@ mod tests {
     fn a_rule_the_row_has_no_room_for_is_dropped_whole_and_the_keys_stay() {
         let row = |width: usize| {
             Painted::of(
-                status_bar(&[], None, None, &a_key_row(), Spine::Shallowest, width),
+                status_bar(
+                    &[],
+                    None,
+                    None,
+                    &a_key_row(),
+                    Spine::Shallowest,
+                    false,
+                    width,
+                ),
                 width as u16,
                 1,
             )
@@ -929,6 +1004,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -953,6 +1029,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 60,
             ),
             60,
@@ -978,6 +1055,7 @@ mod tests {
                 None,
                 &a_key_row(),
                 Spine::default(),
+                false,
                 40,
             ),
             40,
@@ -1001,6 +1079,7 @@ mod tests {
                     None,
                     &a_key_row(),
                     Spine::default(),
+                    false,
                     width,
                 ),
                 width as u16,

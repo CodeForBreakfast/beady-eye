@@ -212,7 +212,7 @@ project's collapse to one line under it, so nothing disappears silently and
 everything beneath a project is still under its one node:
 
 ```
-  ├─▸ 4 trees with no live agent             a to show all
+  ├─▸ 4 trees with no live agent
 ```
 
 `a` toggles to the unfiltered set, and the choice is the reader's: it survives
@@ -1113,10 +1113,10 @@ them is reached by the keys that reach any bead, the line opening to let the
 selection in, so looking a bead up in another root is not paid for with the
 put-back key. A search offers what it can take the reader to, which under this
 mode is every bead the forest holds: the ones beneath the focused bead, and the
-ones behind the line, which it opens on the way. It names the key
-that brings them back, because it is the line a reader is looking at when they
-want them back, and a row with no room for that hint gives it up whole rather
-than cutting it to a key nobody can press.
+ones behind the line, which it opens on the way. The key that brings them
+back acts on the whole screen, so the line does not name it: while the forest is
+focused the foot offers `F` among its keys and says the forest is focused, once
+however many projects keep such a line, and both go when it is put back.
 
 **A finished branch draws as one line and rests shut.** Its glyph, its
 fraction and its fold marker already say *finished, and holds more*; opening it
@@ -2234,7 +2234,7 @@ all of it at once.
   │   ├┄┄ ◐ .16  guard a key in both layers               ⚠ claimed · no pane
   │   ├─▸ ✓ .3   land the session shell                   2/9  3 unfinished beads beneath this
   │   └─▸ ✓ 13 more beads · finished, and nobody on them
-  ├─▸ 4 trees with no live agent                     a to show all
+  ├─▸ 4 trees with no live agent
   └── ⚠ 2 unattributed panes
       ├── ◍ wCM:pD waiting at a prompt  smt-4kd3p.5 · asleep: waiting on switch  /tmp/bdi-ground/summit-works
       └── ◍ wCM:pE idle                              /tmp/bdi-ground/summit-works
@@ -2728,8 +2728,10 @@ failed projects, hidden trees — rests shut, and hidden trees in particular
 holds trees hidden *because* nothing live is in them, so opening it would
 contradict the rule it exists to serve. Hidden trees is a group nothing went
 wrong in — the filter put them there and a key takes them back out — so it is
-drawn without a warning and it names that key: *a to show all*. The roots
-`Shift+F` puts out of the way are the other group read that way. A group that said only how many trees it hides
+drawn without a warning. It does not name that key: a project's line says only
+what is so of that project, and a key that acts on the whole screen is offered
+once, among the foot's keys. The roots `Shift+F` puts out of the way are the
+other group read that way. A group that said only how many trees it hides
 would read as "nothing to see here" while hiding broken ones, so it also says
 how many of them carry findings: *4 trees with no live agent · 1 with
 findings*. The findings stay hidden — the reader asked for that — but the group

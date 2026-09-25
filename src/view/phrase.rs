@@ -544,6 +544,12 @@ pub fn spine(spine: Spine) -> &'static str {
     }
 }
 
+/// That the forest is drawn from the beads the reader focused, with the rest
+/// behind a line in each project.
+pub fn focused() -> &'static str {
+    "the forest is focused"
+}
+
 /// How to see the projects a scope the directory chose left out.
 pub fn all_projects_reads_the_rest() -> &'static str {
     "--all-projects reads every project"

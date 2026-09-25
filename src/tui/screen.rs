@@ -9,7 +9,9 @@ use std::io;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use ratatui::crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
 use ratatui::layout::Rect;
@@ -29,12 +31,12 @@ use crate::view::query::{Edited, Query};
 use crate::view::row::Layout;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
+use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Typing};
 
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::due::due_after;
-use super::keys::{bead_key_rows, bindings, key_row};
+use super::keys::{bead_key_rows, bindings, forest_key_rows};
 use super::reload::Reloaded;
 
 /// What the config settles about the drawing, as one value read from it in
@@ -633,6 +635,22 @@ impl Shown {
         }
     }
 
+    /// Put a paste into the prompt at the cursor and search once for what
+    /// the prompt then holds.
+    ///
+    /// The prompt is one line and no id has a control character in it, so
+    /// the line break a copied line usually ends in is left out.
+    fn pasted(&mut self, text: &str) -> bool {
+        let Some(prompt) = self.sought.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        for glyph in text.chars().filter(|glyph| !glyph.is_control()) {
+            changed |= prompt.query.edit(Edit::Character(glyph)) == Edited::Changed;
+        }
+        changed && self.seek()
+    }
+
     /// Go to a bead matching what has been typed into the prompt, counting
     /// from where the prompt went up, and have ready for the foot what the
     /// reader cannot see for themselves.
@@ -934,6 +952,7 @@ impl Screen {
         // grabbed. So what is given up is drag-selection inside one pane,
         // and what is bought is the pointer working at all.
         execute!(io::stdout(), EnableMouseCapture)?;
+        execute!(io::stdout(), EnableBracketedPaste)?;
 
         // Nothing above has erased anything: entering the alternate screen is
         // the terminal's business, and the first frame writes only the cells
@@ -1041,10 +1060,10 @@ enum Over<'a> {
 /// The bindings go up over the forest rather than over a bead, and the prompt
 /// is drawn over the keys rather than beside them, so both leave the forest's
 /// row where it was.
-fn keys_under(over: &Over<'_>) -> Vec<String> {
+fn keys_under(over: &Over<'_>, forest: &Forest) -> Vec<String> {
     match over {
         Over::Bead(_) => bead_key_rows(),
-        Over::Nothing | Over::Bindings => vec![key_row()],
+        Over::Nothing | Over::Bindings => forest_key_rows(forest.is_focused()),
     }
 }
 
@@ -1065,7 +1084,7 @@ impl Drop for Screen {
         // Every way the run can end comes through here — the loop returning
         // on 'q', a panic unwinding, and a signal, which the loop answers by
         // returning.
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -1117,6 +1136,10 @@ impl View for Screen {
 
     fn typing(&mut self, typing: Typing) -> bool {
         self.shown.typing(typing)
+    }
+
+    fn pasted(&mut self, text: &str) -> bool {
+        self.shown.pasted(text)
     }
 
     fn scroll(&mut self, motion: Motion) -> bool {
@@ -1171,7 +1194,7 @@ impl View for Screen {
             Showing::Bindings => Over::Bindings,
             Showing::Bead => Over::Bead(show),
         };
-        let keys = keys_under(&over);
+        let keys = keys_under(&over, forest);
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
@@ -1215,7 +1238,7 @@ mod tests {
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
-    use crate::tui::keys::{action, AT_THE_PROMPT, BINDINGS};
+    use crate::tui::keys::{action, key_row, AT_THE_PROMPT, BINDINGS};
     use crate::view::bindings::{bindings_block, bindings_window};
     use crate::view::forest::Spine;
     use crate::view::lines::{Content, GroupKind};
@@ -1223,7 +1246,6 @@ mod tests {
     use crate::view::palette;
     use crate::view::row::Cell;
     use crate::view::walk::{self, Rows};
-    use crate::view::Edit;
     use crate::view::Motion;
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     use chrono::Utc;
@@ -1655,7 +1677,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        let keys = keys_under(&over);
+        let keys = keys_under(&over, forest);
         let foot = draw::Foot {
             standing: &[],
             said: pressed.said,
@@ -4029,6 +4051,33 @@ mod tests {
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
     }
 
+    /// A paste goes into the prompt whole and is searched for once, landing
+    /// the selection on what the whole of it matches.
+    #[test]
+    fn a_paste_is_searched_for_whole() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+
+        assert!(shown.pasted("grv-1.4"));
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.4");
+    }
+
+    /// A line copied from a terminal usually carries its line break. The
+    /// prompt is one line and no id has a break in it, so what is searched
+    /// for is the paste without it.
+    #[test]
+    fn a_paste_leaves_its_line_break_out_of_the_prompt() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+
+        shown.pasted("grv-1.4\n");
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.4");
+    }
+
     #[test]
     fn typing_counts_from_where_the_selection_stood_when_the_prompt_went_up() {
         let mut shown = shown(a_grove(6));
@@ -4386,6 +4435,81 @@ mod tests {
         press(&mut shown, KeyCode::Char('C'));
 
         assert!(press(&mut shown, KeyCode::Char('S')));
+    }
+
+    /// The same grove read from two projects, so a screen holding it has a
+    /// line per project for whatever a key put behind one.
+    fn two_groves(filter: Filter) -> Snapshot {
+        let grove = a_grove(3).trees[0].clone();
+        let mut copse = (*grove).clone();
+        copse.project = "copse".to_string();
+        for bead in &mut copse.beads {
+            bead.project = "copse".to_string();
+        }
+        let both = vec![grove, Arc::new(copse)];
+
+        let mut snapshot = Snapshot {
+            collected: both,
+            projects: vec!["grove".to_string(), "copse".to_string()],
+            ..a_snapshot_of(Vec::new())
+        };
+        snapshot.refilter(filter);
+        snapshot
+    }
+
+    /// The rows of a line over roots a key put behind it, whichever key.
+    fn lines_holding_roots_back(shown: &mut Shown) -> Vec<String> {
+        let rows = forest_band(shown, 100, 24);
+        shown
+            .forest
+            .lines()
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                matches!(&line.content, Content::Group(group)
+                    if matches!(group.kind, GroupKind::OutOfTheWay | GroupKind::HiddenTrees))
+            })
+            .map(|(at, _)| rows[at].trim_end().to_string())
+            .collect()
+    }
+
+    /// Only what is so of one project goes on that project's lines. The key
+    /// that puts a focused forest back acts on the whole screen, so the foot
+    /// offers it once, with the fact that the forest is focused, rather than
+    /// every project's line offering it again.
+    #[test]
+    fn a_focused_forest_is_said_once_at_the_foot_and_not_on_every_project() {
+        let mut shown = shown(two_groves(Filter::All));
+        shown
+            .forest
+            .focus_when_drawn(vec![bead("grove", "grv-1.1")]);
+
+        assert_eq!(
+            lines_holding_roots_back(&mut shown),
+            vec!["  └─▸ 1 other tree", "  └─▸ 1 other tree"]
+        );
+        let foot = foot_of(&mut shown, 100, 24);
+        assert!(foot.contains("F whole forest"), "{foot:?}");
+        assert!(foot.contains("the forest is focused"), "{foot:?}");
+
+        press(&mut shown, KeyCode::Char('F'));
+
+        assert_eq!(foot_of(&mut shown, 100, 24).trim_end(), key_row());
+    }
+
+    /// The filter is the whole screen's too, and `a` already stands in the
+    /// foot's keys whatever the forest holds.
+    #[test]
+    fn the_key_that_lifts_the_filter_is_on_no_projects_line() {
+        let mut shown = shown(two_groves(Filter::LiveAgents));
+
+        assert_eq!(
+            lines_holding_roots_back(&mut shown),
+            vec![
+                "  └─▸ 1 tree with no live agent",
+                "  └─▸ 1 tree with no live agent"
+            ]
+        );
     }
 
     /// The row at the foot of a frame of this screen, as drawn.

@@ -170,6 +170,7 @@ pub fn draw(
             foot.prompt.map(Query::typed),
             foot.keys,
             forest.spine(),
+            forest.is_focused(),
             bands.keys.width as usize,
         ),
         bands.keys,
