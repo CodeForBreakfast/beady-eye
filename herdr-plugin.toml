@@ -1,0 +1,26 @@
+id = "codeforbreakfast.beady-eye"
+name = "beady-eye"
+version = "0.16.0"
+min_herdr_version = "0.9.1"
+platforms = ["linux", "macos"]
+description = "A tree of work in flight: bead graphs annotated with the live agents working them."
+
+# Fetches this version's released bdi into bin/, so installing needs no Rust
+# toolchain. `herdr plugin link` skips it: a linked checkout runs it by hand.
+[[build]]
+command = ["sh", "herdr/fetch.sh"]
+
+# The pane starts in the focused pane's directory rather than the plugin root,
+# so bdi is named by absolute path. bdi's own error is all that says why it
+# refused to start, so a failed start holds the pane until the reader has read it.
+[[panes]]
+id = "eye"
+title = "bdi"
+placement = "split"
+command = ["sh", "-c", "\"$HERDR_PLUGIN_ROOT/bin/bdi\" || { printf '\\nbdi exited %s. Press Enter to close.' \"$?\"; read -r _; }"]
+
+[[actions]]
+id = "open"
+title = "beady-eye: open"
+contexts = ["pane", "workspace"]
+command = ["sh", "herdr/open.sh"]
