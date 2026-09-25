@@ -6,7 +6,7 @@ use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::{FailureKind, RunFailure};
 use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
-use beady_eye::model::snapshot::Filter;
+use beady_eye::model::snapshot::{Filter, Listing};
 use beady_eye::model::types::Bead;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -1452,4 +1452,193 @@ fn a_bead_waiting_on_an_id_two_trackers_hold_is_as_ready_as_bd_says_once_both_ar
 
     assert_eq!(beacon["ready"], true);
     assert_eq!(beacon["blocked_by"], json!([]));
+}
+
+/// The listing of the collection a run over `cfg` makes of `trackers`, under
+/// the default filter, which hides every tree with no live agent.
+fn listing_over(cfg: &Config, runner: &Canned, trackers: &Fakes) -> Value {
+    let snapshot = beady_eye::app::run(
+        cfg,
+        &Herdr::new(runner),
+        trackers,
+        Filter::LiveAgents,
+        now(),
+    );
+    serde_json::to_value(Listing::of(&snapshot)).expect("the listing serialises")
+}
+
+/// The one project's listing.
+fn listing(trackers: &Fakes) -> Value {
+    listing_over(&cfg(), &panes(), trackers)
+}
+
+/// Every entry the listing holds for `project`'s `id`.
+fn every_entry_for<'a>(listing: &'a Value, project: &str, id: &str) -> Vec<&'a Value> {
+    listing["beads"]
+        .as_array()
+        .expect("beads is an array")
+        .iter()
+        .filter(|bead| bead["project"] == project && bead["id"] == id)
+        .collect()
+}
+
+/// The one entry the listing holds for `project`'s `id`.
+fn listed_once<'a>(listing: &'a Value, project: &str, id: &str) -> &'a Value {
+    match every_entry_for(listing, project, id).as_slice() {
+        [bead] => bead,
+        several => panic!("{project}:{id} is listed {} times", several.len()),
+    }
+}
+
+/// The ids the listing holds, in the order it holds them.
+fn ids_listed(listing: &Value) -> Vec<&str> {
+    listing["beads"]
+        .as_array()
+        .expect("beads is an array")
+        .iter()
+        .map(|bead| bead["id"].as_str().expect("an id"))
+        .collect()
+}
+
+/// Where no dependency crosses projects, what the listing calls ready is
+/// what `bd ready` answered, and what blocks a bead is what bd said.
+#[test]
+fn the_listing_is_ready_where_bd_ready_says_and_blocked_by_what_bd_says() {
+    let listed = listing(&dunwich());
+
+    let ready: Vec<&str> = listed["beads"]
+        .as_array()
+        .expect("beads is an array")
+        .iter()
+        .filter(|bead| bead["ready"] == true)
+        .map(|bead| bead["id"].as_str().expect("an id"))
+        .collect();
+    assert_eq!(ready, ["dun-7.4"]);
+    assert_eq!(
+        listed_once(&listed, "dunwich", "dun-7.1")["blocked_by"],
+        json!(["dun-9"])
+    );
+    assert_eq!(
+        listed_once(&listed, "dunwich", "dun-7.4")["blocked_by"],
+        json!([])
+    );
+}
+
+/// The live-agent filter is the screen's, and a bead nobody is working on is
+/// the one a reader picking work is looking for.
+#[test]
+fn the_listing_holds_the_beads_the_live_agent_filter_hides() {
+    let nobody = Canned::default().herdr_holding(r#"{"result":{"agents":[]}}"#);
+
+    let listed = listing_over(
+        &cfg(),
+        &nobody,
+        &dunwich_with(dunwich_holding(UNSTAFFED_TREE)),
+    );
+
+    assert_eq!(listed_once(&listed, "dunwich", "dun-7.4")["ready"], true);
+}
+
+/// A closed bead is nothing anybody has left to pick up.
+#[test]
+fn the_listing_leaves_finished_beads_out() {
+    let listed = listing(&dunwich());
+
+    assert_eq!(
+        ids_listed(&listed),
+        ["dun-7", "dun-7.1", "dun-7.3", "dun-7.4"]
+    );
+}
+
+/// Each bead carries the agent `bdi` joins to it and the badges its
+/// project's config draws, as its tree does.
+#[test]
+fn a_listed_bead_carries_its_agent_and_its_badges() {
+    let listed = listing(&dunwich());
+
+    assert_eq!(
+        listed_once(&listed, "dunwich", "dun-7")["agent"]["pane"],
+        json!({"session": "default", "id": "w:p1"})
+    );
+    assert_eq!(
+        listed_once(&listed, "dunwich", "dun-7.4")["agent"],
+        Value::Null
+    );
+    assert_eq!(
+        listed_once(&listed, "dunwich", "dun-7.1")["badges"][0]["text"],
+        "⏸ waiting"
+    );
+}
+
+/// `dun-7.1` is drawn under its parent in one tree and under the bead it
+/// blocks in another, and is one bead to pick up.
+#[test]
+fn a_bead_reached_several_ways_is_listed_once() {
+    let rows = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"open","issue_type":"epic"},
+      {"id":"dun-7.1","title":"re-point the dish","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
+      {"id":"dun-8","title":"open the observatory","status":"open","issue_type":"epic"},
+      {"id":"dun-8.1","title":"take first light","status":"open","parent":"dun-8",
+       "dependencies":[{"depends_on_id":"dun-8","type":"parent-child"},
+                       {"depends_on_id":"dun-7.1","type":"blocks"}]}
+    ]"#;
+    let trackers = dunwich_with(Fake::holding(beads(rows)).ready(["dun-7.1"]));
+
+    let listed = listing(&trackers);
+
+    assert_eq!(
+        ids_listed(&listed),
+        ["dun-7", "dun-7.1", "dun-8", "dun-8.1"]
+    );
+}
+
+/// bd calls `ark-43o` ready, and `bdi` reads dunwich's tracker too. Dunwich's
+/// bead is drawn in arkham's tree and in its own, and is listed once.
+#[test]
+fn a_bead_waiting_on_another_projects_open_bead_is_listed_not_ready_blocked_by_it() {
+    let listed = listing_over(
+        &Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses"),
+        &panes(),
+        &arkham_calling_the_beacon_ready_beside(Fake::holding(beads(WAITED_ON))),
+    );
+
+    let beacon = listed_once(&listed, "arkham", "ark-43o");
+    assert_eq!(beacon["ready"], false);
+    assert_eq!(beacon["blocked_by"], json!(["dun-2e7"]));
+    listed_once(&listed, "dunwich", "dun-2e7");
+}
+
+/// A project whose tracker could not be read lists nothing, and says so
+/// rather than leaving the list short with nothing to show for it.
+#[test]
+fn the_listing_names_the_projects_it_could_not_read() {
+    let trackers = across_two_projects_with(
+        Fake::holding(beads(HARBOUR_TREE)).failing(Asked::All, refused(FailureKind::Auth)),
+    );
+
+    let listed = listing_over(&two_projects(), &panes_across(), &trackers);
+
+    assert_eq!(
+        listed["failed_projects"],
+        json!([{"project": "harbour", "tracker": {"reason": "auth"}}])
+    );
+    assert!(every_entry_for(&listed, "harbour", "dun-7").is_empty());
+}
+
+/// A root the config names and the tracker does not hold drew nothing, so
+/// whatever was meant to be beneath it is missing, and the listing says so.
+#[test]
+fn the_listing_names_the_roots_that_drew_nothing() {
+    let cfg = Config::from_toml(&format!(
+        "{CONFIG}\n[roots.explicit]\ndunwich = [\"dun-404\"]\n"
+    ))
+    .expect("the config parses");
+
+    let listed = listing_over(&cfg, &panes(), &dunwich());
+
+    assert_eq!(
+        listed["unread_trees"],
+        json!([{"project": "dunwich", "root": "dun-404", "tracker": "root-not-found"}])
+    );
 }
