@@ -29,7 +29,6 @@ use crate::view::lines::{quiet, BeadFacts};
 pub enum Spine {
     /// Every copy of a bead is on the spine, and the first copy the walk
     /// reaches opens while every later copy rests shut.
-    #[default]
     EveryCopy,
     /// One copy of each bead is on the spine: the one the walk placed the
     /// bead on, which is the first way down it reaches.
@@ -43,6 +42,7 @@ pub enum Spine {
     ParentChild,
     /// One copy of each bead is on the spine: the one at the end of the
     /// longest way down to it.
+    #[default]
     Deepest,
 }
 

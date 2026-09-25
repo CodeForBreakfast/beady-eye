@@ -533,20 +533,14 @@ pub fn scoped_by_the_directory(project: &str) -> String {
     format!("reading {project}, where bdi was started")
 }
 
-/// Which rule opens the spine, where it is one the reader put in force.
-///
-/// The rule the forest starts under says nothing. It opens every way down to
-/// a bead, which is what the screen drew before there was a rule to name, so
-/// a reader under it has nothing in front of them to account for. A one-copy
-/// rule draws a bead in one of the places it stands and rests the others
-/// shut, and that is the screen they would otherwise have to work out.
-pub fn spine(spine: Spine) -> Option<&'static str> {
+/// Which rule opens the spine.
+pub fn spine(spine: Spine) -> &'static str {
     match spine {
-        Spine::EveryCopy => None,
-        Spine::FirstReached => Some("opening the first copy of each bead"),
-        Spine::Shallowest => Some("opening the shallowest copy of each bead"),
-        Spine::ParentChild => Some("opening each bead under its own parent"),
-        Spine::Deepest => Some("opening the deepest copy of each bead"),
+        Spine::EveryCopy => "opening every copy of each bead",
+        Spine::FirstReached => "opening the first copy of each bead",
+        Spine::Shallowest => "opening the shallowest copy of each bead",
+        Spine::ParentChild => "opening each bead under its own parent",
+        Spine::Deepest => "opening the deepest copy of each bead",
     }
 }
 

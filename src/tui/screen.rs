@@ -4404,15 +4404,14 @@ mod tests {
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
     }
 
-    /// A rule the reader puts in force accounts for a screen that draws one
-    /// copy of a bead where it used to draw every one, so it stands at the
-    /// foot until they put it back. The rule the forest starts under is the
-    /// screen they have always had and is named nowhere.
+    /// A rule the reader puts in force accounts for a screen they asked for,
+    /// so it stands at the foot until they put it back. The rule the forest
+    /// starts under is the screen they pressed nothing to get and is named
+    /// nowhere.
     #[test]
     fn s_puts_the_rule_it_left_the_forest_under_on_the_foot() {
         let mut shown = shown(a_grove(6));
-        let first =
-            phrase::spine(Spine::default().next()).expect("a rule a reader can reach is named");
+        let first = phrase::spine(Spine::default().next());
 
         press(&mut shown, KeyCode::Char('S'));
         assert!(
