@@ -38,7 +38,7 @@ key    = "metadata.delivery_pr"
 render = "⇢ kadath/{}"
 
 [roots.explicit]
-arkham = ["arkham-1", "arkham-10"]
+arkham = ["ark-1", "ark-10"]
 
 [[badges]]
 key    = "metadata.delivery_pr"

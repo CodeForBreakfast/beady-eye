@@ -5,17 +5,21 @@
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
 tracker you point it at. It draws each tracker's work as a tree, and beside
 every bead an agent has claimed, the live [herdr](https://herdr.dev) pane that
-agent is sitting in.
+agent is sitting in. Select a bead and the tail of its pane is drawn under the
+forest, so what the agent is doing is read off the same screen as the work it
+is doing it to.
 
-beads knows the work. herdr knows the agents. Neither has heard of the other,
-so neither can tell you that `arkham-5` was claimed by a pane that died on
-Tuesday. Something old has opened an eye over both, and it can.
+Run a few agents through one backlog and this is the view you wanted. beads
+knows the work. herdr knows the agents. Neither has heard of the other.
+Something old has opened an eye over both.
 
 ![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-The arkham project is made up. `arkham-5` is the Tuesday case: beads says an
-agent claimed it, herdr has no pane for that agent, and only something looking
-at both can tell you.
+The arkham project is made up. Three of its beads have a live agent beside
+them, and the band at the foot is what the selected one's pane is saying.
+`ark-5` is what else falls out of watching both at once: beads says an agent
+claimed it, herdr has no pane for that agent, and the eye says so. It has seen
+a pane die on a Tuesday before.
 
 The eye only looks. It never writes to a tracker. Changing the work is still
 `bd`'s job, and the eye finds this arrangement acceptable.
