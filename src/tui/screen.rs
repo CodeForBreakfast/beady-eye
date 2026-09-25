@@ -36,7 +36,7 @@ use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Ty
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::due::due_after;
-use super::keys::{bead_key_rows, bindings, key_row};
+use super::keys::{bead_key_rows, bindings, forest_key_rows};
 use super::reload::Reloaded;
 
 /// What the config settles about the drawing, as one value read from it in
@@ -1060,10 +1060,10 @@ enum Over<'a> {
 /// The bindings go up over the forest rather than over a bead, and the prompt
 /// is drawn over the keys rather than beside them, so both leave the forest's
 /// row where it was.
-fn keys_under(over: &Over<'_>) -> Vec<String> {
+fn keys_under(over: &Over<'_>, forest: &Forest) -> Vec<String> {
     match over {
         Over::Bead(_) => bead_key_rows(),
-        Over::Nothing | Over::Bindings => vec![key_row()],
+        Over::Nothing | Over::Bindings => forest_key_rows(forest.is_focused()),
     }
 }
 
@@ -1194,7 +1194,7 @@ impl View for Screen {
             Showing::Bindings => Over::Bindings,
             Showing::Bead => Over::Bead(show),
         };
-        let keys = keys_under(&over);
+        let keys = keys_under(&over, forest);
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
@@ -1238,7 +1238,7 @@ mod tests {
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
-    use crate::tui::keys::{action, AT_THE_PROMPT, BINDINGS};
+    use crate::tui::keys::{action, key_row, AT_THE_PROMPT, BINDINGS};
     use crate::view::bindings::{bindings_block, bindings_window};
     use crate::view::forest::Spine;
     use crate::view::lines::{Content, GroupKind};
@@ -1677,7 +1677,7 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Painted {
-        let keys = keys_under(&over);
+        let keys = keys_under(&over, forest);
         let foot = draw::Foot {
             standing: &[],
             said: pressed.said,
@@ -4436,6 +4436,81 @@ mod tests {
         press(&mut shown, KeyCode::Char('C'));
 
         assert!(press(&mut shown, KeyCode::Char('S')));
+    }
+
+    /// The same grove read from two projects, so a screen holding it has a
+    /// line per project for whatever a key put behind one.
+    fn two_groves(filter: Filter) -> Snapshot {
+        let grove = a_grove(3).trees[0].clone();
+        let mut copse = (*grove).clone();
+        copse.project = "copse".to_string();
+        for bead in &mut copse.beads {
+            bead.project = "copse".to_string();
+        }
+        let both = vec![grove, Arc::new(copse)];
+
+        let mut snapshot = Snapshot {
+            collected: both,
+            projects: vec!["grove".to_string(), "copse".to_string()],
+            ..a_snapshot_of(Vec::new())
+        };
+        snapshot.refilter(filter);
+        snapshot
+    }
+
+    /// The rows of a line over roots a key put behind it, whichever key.
+    fn lines_holding_roots_back(shown: &mut Shown) -> Vec<String> {
+        let rows = forest_band(shown, 100, 24);
+        shown
+            .forest
+            .lines()
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                matches!(&line.content, Content::Group(group)
+                    if matches!(group.kind, GroupKind::OutOfTheWay | GroupKind::HiddenTrees))
+            })
+            .map(|(at, _)| rows[at].trim_end().to_string())
+            .collect()
+    }
+
+    /// Only what is so of one project goes on that project's lines. The key
+    /// that puts a focused forest back acts on the whole screen, so the foot
+    /// offers it once, with the fact that the forest is focused, rather than
+    /// every project's line offering it again.
+    #[test]
+    fn a_focused_forest_is_said_once_at_the_foot_and_not_on_every_project() {
+        let mut shown = shown(two_groves(Filter::All));
+        shown
+            .forest
+            .focus_when_drawn(vec![bead("grove", "grv-1.1")]);
+
+        assert_eq!(
+            lines_holding_roots_back(&mut shown),
+            vec!["  └─▸ 1 other tree", "  └─▸ 1 other tree"]
+        );
+        let foot = foot_of(&mut shown, 100, 24);
+        assert!(foot.contains("F whole forest"), "{foot:?}");
+        assert!(foot.contains("the forest is focused"), "{foot:?}");
+
+        press(&mut shown, KeyCode::Char('F'));
+
+        assert_eq!(foot_of(&mut shown, 100, 24).trim_end(), key_row());
+    }
+
+    /// The filter is the whole screen's too, and `a` already stands in the
+    /// foot's keys whatever the forest holds.
+    #[test]
+    fn the_key_that_lifts_the_filter_is_on_no_projects_line() {
+        let mut shown = shown(two_groves(Filter::LiveAgents));
+
+        assert_eq!(
+            lines_holding_roots_back(&mut shown),
+            vec![
+                "  └─▸ 1 tree with no live agent",
+                "  └─▸ 1 tree with no live agent"
+            ]
+        );
     }
 
     /// The row at the foot of a frame of this screen, as drawn.

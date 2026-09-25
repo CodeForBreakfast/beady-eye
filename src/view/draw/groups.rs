@@ -11,13 +11,6 @@ use crate::view::row::{AGENT, WARNING};
 
 use super::{beside, pane_marker, sentence};
 
-/// What lifts the live-agent filter, said beside the trees it is holding back.
-const SHOW_ALL: &str = "a to show all";
-
-/// What brings back the roots that rooting the forest at one bead put behind
-/// a line.
-const WHOLE_FOREST: &str = "F for the whole forest";
-
 /// The line a group is drawn as. Two of them hold roots nothing went wrong in
 /// — a key put them there and a key takes them back out — so those two are
 /// the ones drawn without a warning.
@@ -37,41 +30,23 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         (format!("{WARNING} {said}"), palette::ATTENTION)
     };
     let state = match group.kind {
-        GroupKind::HiddenTrees => vec![Span::styled(SHOW_ALL, palette::QUIET)],
-        GroupKind::OutOfTheWay => out_of_the_way_state(group),
+        GroupKind::OutOfTheWay => out_of_the_way_counts(group),
         _ => Vec::new(),
     };
 
-    let line = Fitted::new(
+    Fitted::new(
         vec![Span::raw(prefix.to_string()), Span::styled(said, style)],
         Vec::new(),
         state,
-    );
-    match group.kind {
-        GroupKind::OutOfTheWay => {
-            line.briefly(out_of_the_way_counts(group), Vec::new(), Vec::new())
-        }
-        _ => line,
-    }
+    )
 }
 
 /// What a line standing over the beads the mode put out of the way says
-/// beside itself: the seats in there, the beads wanting looking at, and the
-/// key that brings them back.
+/// beside itself: the seats in there and the beads wanting looking at.
 ///
 /// The reader asked for one bead, so the rest go; what they did not ask for
 /// was to be told there is nobody on them. Said in the words a line resting
 /// shut over the same things already uses.
-fn out_of_the_way_state(group: &Group) -> Vec<Span<'static>> {
-    let mut said = out_of_the_way_counts(group);
-    beside(&mut said, Span::styled(WHOLE_FOREST, palette::QUIET));
-    said
-}
-
-/// The same, where the row cannot afford the key as well.
-///
-/// The hint goes first and goes whole, because `F for th…` names no key while
-/// the counts are the part of this line a reader can read nowhere else.
 fn out_of_the_way_counts(group: &Group) -> Vec<Span<'static>> {
     let mut said = Vec::new();
     let Some(counts) = &group.held else {
@@ -194,7 +169,6 @@ mod tests {
     use crate::model::snapshot::{a_provider, build, Collected, LoosePane, UnconfiguredPane};
     use crate::model::types::testing::{key as pane_key, A_SESSION};
     use crate::model::types::PaneStatus;
-    use crate::view::fitted::CUT;
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
@@ -234,11 +208,11 @@ mod tests {
 
         assert_eq!(
             Painted::of(group_line(SHUT, &quiet), 64, 1).rows(),
-            vec!["▸ 4 trees with no live agent                       a to show all"]
+            vec!["▸ 4 trees with no live agent                                    "]
         );
         assert_eq!(
             Painted::of(group_line(SHUT, &broken), 64, 1).rows(),
-            vec!["▸ 4 trees with no live agent · 2 with findings     a to show all"]
+            vec!["▸ 4 trees with no live agent · 2 with findings                  "]
         );
     }
 
@@ -314,38 +288,9 @@ mod tests {
 
         assert!(drawn[0].contains("3 other trees"), "{drawn:?}");
         assert!(
-            drawn[0].contains("2 agents beneath  ⚠ 1 bead beneath  F for the whole forest"),
+            drawn[0].ends_with("2 agents beneath  ⚠ 1 bead beneath"),
             "{drawn:?}"
         );
-    }
-
-    /// A row with no room for the way out says the counts without it. The
-    /// counts are what a reader can read nowhere else on the screen, and a
-    /// key named in part is a key they cannot press.
-    #[test]
-    fn a_row_too_narrow_for_the_way_out_still_says_what_is_back_there() {
-        let group = Group {
-            kind: GroupKind::OutOfTheWay,
-            project: Some("summit-works".into()),
-            count: 3,
-            with_findings: 0,
-            held: Some(Counts {
-                total: 12,
-                finished: 4,
-                live_agents: 2,
-                anomalies: 1,
-            }),
-        };
-
-        let drawn = Painted::of(group_line(SHUT, &group), 64, 1).rows();
-
-        assert!(drawn[0].contains("3 other trees"), "{drawn:?}");
-        assert!(
-            drawn[0].contains("2 agents beneath  ⚠ 1 bead beneath"),
-            "{drawn:?}"
-        );
-        assert!(!drawn[0].contains("F for"), "{drawn:?}");
-        assert!(!drawn[0].contains(CUT), "{drawn:?}");
     }
 
     /// And says neither where there is neither. A nought said is a column
@@ -367,9 +312,7 @@ mod tests {
 
         let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
 
-        assert!(drawn[0].contains("1 other tree"), "{drawn:?}");
-        assert!(!drawn[0].contains("beneath"), "{drawn:?}");
-        assert!(drawn[0].contains("F for the whole forest"), "{drawn:?}");
+        assert_eq!(drawn[0].trim_end(), "▸ 1 other tree");
     }
 
     /// A group holding something that went wrong is marked as such. The two
