@@ -44,6 +44,13 @@ const TYPE_AN_ID: &[u8] = b"/dun-0tp.7";
 /// `/` and the end of that id, which the start is typed in front of.
 const TYPE_THE_END_OF_THE_ID: &[u8] = b"/0tp.7";
 
+/// `/` alone, which opens the prompt for the paste below.
+const OPEN_THE_PROMPT: &[u8] = b"/";
+
+/// The id of a bead in that tree pasted, as a terminal sends a paste once
+/// the program has asked for it bracketed.
+const PASTE_AN_ID: &[u8] = b"\x1b[200~dun-0tp.7\x1b[201~";
+
 /// `Home`, as a terminal sends it.
 const HOME: &[u8] = b"\x1b[H";
 
@@ -132,6 +139,32 @@ fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
         Some(THE_SEARCHED_BEAD),
         "the search did not leave the selection on the bead it named. The \
          screen it drew: {:?}\n{}",
+        String::from_utf8_lossy(&landed),
+        bdi.timeline()
+    );
+}
+
+/// A paste reaches the prompt as the id it carries, and takes the reader to
+/// that bead as typing it would.
+#[test]
+fn an_id_pasted_into_the_prompt_takes_the_reader_to_that_bead() {
+    let (mut bdi, _tracker) = over_the_described_subtree("pasted", ROWS, COLS, A_SILENCE);
+    bdi.send(SHUT_THE_TREE);
+    bdi.settle(A_SILENCE, GIVING_UP);
+
+    bdi.send(OPEN_THE_PROMPT);
+    bdi.send(PASTE_AN_ID);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(ENTER);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(ENTER);
+    bdi.settle(A_SILENCE, GIVING_UP);
+
+    let landed = repaint(&mut bdi, ROWS + 1);
+    assert_eq!(
+        window_over(&landed).as_deref(),
+        Some(THE_SEARCHED_BEAD),
+        "the pasted id did not reach the prompt. The screen it drew: {:?}\n{}",
         String::from_utf8_lossy(&landed),
         bdi.timeline()
     );

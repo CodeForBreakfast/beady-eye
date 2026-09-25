@@ -9,7 +9,9 @@ use std::io;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use ratatui::crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
 use ratatui::layout::Rect;
@@ -29,7 +31,7 @@ use crate::view::query::{Edited, Query};
 use crate::view::row::Layout;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Freshness, Motion, Notch, Notice, Said, Typing};
+use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Typing};
 
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
@@ -633,6 +635,22 @@ impl Shown {
         }
     }
 
+    /// Put a paste into the prompt at the cursor and search once for what
+    /// the prompt then holds.
+    ///
+    /// The prompt is one line and no id has a control character in it, so
+    /// the line break a copied line usually ends in is left out.
+    fn pasted(&mut self, text: &str) -> bool {
+        let Some(prompt) = self.sought.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        for glyph in text.chars().filter(|glyph| !glyph.is_control()) {
+            changed |= prompt.query.edit(Edit::Character(glyph)) == Edited::Changed;
+        }
+        changed && self.seek()
+    }
+
     /// Go to a bead matching what has been typed into the prompt, counting
     /// from where the prompt went up, and have ready for the foot what the
     /// reader cannot see for themselves.
@@ -934,6 +952,7 @@ impl Screen {
         // grabbed. So what is given up is drag-selection inside one pane,
         // and what is bought is the pointer working at all.
         execute!(io::stdout(), EnableMouseCapture)?;
+        execute!(io::stdout(), EnableBracketedPaste)?;
 
         // Nothing above has erased anything: entering the alternate screen is
         // the terminal's business, and the first frame writes only the cells
@@ -1065,7 +1084,7 @@ impl Drop for Screen {
         // Every way the run can end comes through here — the loop returning
         // on 'q', a panic unwinding, and a signal, which the loop answers by
         // returning.
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -1117,6 +1136,10 @@ impl View for Screen {
 
     fn typing(&mut self, typing: Typing) -> bool {
         self.shown.typing(typing)
+    }
+
+    fn pasted(&mut self, text: &str) -> bool {
+        self.shown.pasted(text)
     }
 
     fn scroll(&mut self, motion: Motion) -> bool {
@@ -1223,7 +1246,6 @@ mod tests {
     use crate::view::palette;
     use crate::view::row::Cell;
     use crate::view::walk::{self, Rows};
-    use crate::view::Edit;
     use crate::view::Motion;
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     use chrono::Utc;
@@ -4027,6 +4049,33 @@ mod tests {
 
         type_into_prompt(&mut shown, "4");
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+    }
+
+    /// A paste goes into the prompt whole and is searched for once, landing
+    /// the selection on what the whole of it matches.
+    #[test]
+    fn a_paste_is_searched_for_whole() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+
+        assert!(shown.pasted("grv-1.4"));
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.4");
+    }
+
+    /// A line copied from a terminal usually carries its line break. The
+    /// prompt is one line and no id has a break in it, so what is searched
+    /// for is the paste without it.
+    #[test]
+    fn a_paste_leaves_its_line_break_out_of_the_prompt() {
+        let mut shown = shown(a_grove(6));
+        press(&mut shown, KeyCode::Char('/'));
+
+        shown.pasted("grv-1.4\n");
+
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
+        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.4");
     }
 
     #[test]

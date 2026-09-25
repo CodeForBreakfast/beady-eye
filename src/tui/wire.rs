@@ -236,6 +236,7 @@ fn incoming(read: event::Event) -> Option<Event> {
     match read {
         event::Event::Key(key) if key.kind == KeyEventKind::Press => Some(Event::Key(key)),
         event::Event::Resize(..) => Some(Event::Resize),
+        event::Event::Paste(text) => Some(Event::Pasted(text)),
         event::Event::Mouse(mouse) => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => Some(Event::Clicked(mouse.row)),
             MouseEventKind::ScrollUp => Some(Event::Scrolled(Notch::Up)),
@@ -476,6 +477,16 @@ mod tests {
         assert_eq!(incoming(event::Event::Resize(80, 24)), Some(Event::Resize));
         assert_eq!(incoming(event::Event::FocusGained), None);
         assert_eq!(incoming(event::Event::FocusLost), None);
+    }
+
+    /// A paste reaches the loop as the one event carrying all of it, not as
+    /// a keystroke for each character in it.
+    #[test]
+    fn a_paste_is_one_event_carrying_the_whole_of_it() {
+        assert_eq!(
+            incoming(event::Event::Paste("dun-0tp.7".to_string())),
+            Some(Event::Pasted("dun-0tp.7".to_string()))
+        );
     }
 
     /// A directory of this test's own, so a test that binds a socket does not
