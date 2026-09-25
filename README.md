@@ -9,9 +9,10 @@ agent is sitting in. Select a bead and the tail of its pane is drawn under the
 forest, so what the agent is doing is read off the same screen as the work it
 is doing it to.
 
-Run a few agents through one backlog and this is the view you wanted. beads
-knows the work. herdr knows the agents. Neither has heard of the other.
-Something old has opened an eye over both.
+Run a few agents through one backlog and this is the view you wanted, and
+not one the agents were going to volunteer. beads knows the work. herdr knows
+the agents. Neither has heard of the other. Something old has opened an eye
+over both.
 
 ![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
@@ -167,8 +168,8 @@ Hand it over, and let it fold the lines into whatever it already obeys.
 
 ## Status
 
-Released, and gazed into daily by the people who wrote it. The design is in
-[docs/design.md](docs/design.md).
+Released, and gazed into daily by the people who wrote it. It has not yet
+gazed back. The design is in [docs/design.md](docs/design.md).
 
 Versions are `0.x`, and a breaking change bumps the minor. Pin a tag. `1.0.0`
 arrives when the shape has settled, not when something breaks.
