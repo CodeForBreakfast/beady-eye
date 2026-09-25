@@ -39,6 +39,26 @@ crates.io, if you would rather compile it yourself:
 $ cargo install beady-eye
 ```
 
+herdr, as a plugin that fetches the released binary for your platform:
+
+```console
+$ herdr plugin install CodeForBreakfast/beady-eye
+```
+
+That puts nothing on screen by itself, because herdr has no command palette.
+Bind a key to the plugin's action in `~/.config/herdr/config.toml`, and that
+key opens the eye in a split beside the focused pane, on that pane's project:
+
+```toml
+[[keys.command]]
+key = "prefix+i"
+type = "plugin_action"
+command = "codeforbreakfast.beady-eye.open"
+```
+
+The plugin keeps its `bdi` to itself. To run `bdi` anywhere else, install it
+another way as well.
+
 Nix, with flakes on, builds the tip of `main`. The flake serves Linux on
 Intel and arm64, and macOS on Apple silicon. An Intel Mac takes the Homebrew
 or release binary instead:
@@ -161,6 +181,15 @@ Hand it over, and let it fold the lines into whatever it already obeys.
 - **herdr, for the agents.** Without it you get the trees and the claims, and
   every tree is drawn. With it you get the point: which claim has a live pane
   behind it, which pane toils on nothing any bead has heard of, and the tail.
+  With `bdi` on your `PATH`, a binding in herdr's config opens it as a popup
+  on the focused pane's project, and `q` puts it away again:
+
+  ```toml
+  [[keys.command]]
+  key = "prefix+shift+i"
+  type = "popup"
+  command = "bdi"
+  ```
 - **git, for worktrees.** Without it the project is named after its directory
   and a pane cannot be placed by worktree.
 - **A terminal that honours OSC 52**, for `y`. Terminal.app does not, and says
