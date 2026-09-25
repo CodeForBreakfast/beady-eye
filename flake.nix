@@ -1946,10 +1946,10 @@
           touch $out
         '';
 
-        # The version is written in three places and two of them are held to
+        # The version is written in four places and two of them are held to
         # the crate: `flake.nix` reads it out of `Cargo.toml`, and `cargo
         # publish --locked` refuses a `Cargo.lock` that disagrees. README's
-        # flake example is the third, and a bump that forgets it lands green —
+        # flake example is a third, and a bump that forgets it lands green —
         # then the release ships a page telling a reader to pin the tag before
         # the one being released.
         #
@@ -2056,6 +2056,76 @@
           readme "$unpinned
 $pinned"
           accepts "an unpinned reference was read as a pin:"
+
+          touch $out
+        '';
+
+        # The herdr plugin manifest is the fourth. Its version is the release
+        # herdr/fetch.sh downloads, so a bump that forgets it installs the
+        # previous release under the new one's name.
+        pluginDeclaresTheVersion = pkgs.writeShellScriptBin "plugin-declares-the-version" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+
+          version="$(awk -F'"' '
+            /^\[/ { package = ($0 == "[package]") }
+            package && /^version *=/ { print $2; exit }
+          ' Cargo.toml)"
+
+          declared="$(awk -F'"' '
+            /^\[/ { exit }
+            /^version *=/ { print $2; exit }
+          ' herdr-plugin.toml)"
+
+          if [ "$declared" != "$version" ]; then
+            echo "herdr-plugin.toml declares a version the crate does not."
+            echo
+            echo "Cargo.toml declares $version."
+            echo "herdr-plugin.toml declares ''${declared:-no version}."
+            echo
+            echo "herdr/fetch.sh installs the release the manifest names, so it"
+            echo "reads version = \"$version\"."
+            exit 1
+          fi
+        '';
+
+        pluginDeclaresTheVersionTest = pkgs.runCommand "plugin-declares-the-version-test"
+          { nativeBuildInputs = [ pluginDeclaresTheVersion ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree"
+          printf '[package]\nname = "beady-eye"\nversion = "0.2.0"\n' > "$tree/Cargo.toml"
+
+          manifest() {
+            printf '%s\n' "id = \"example.plugin\"" "$1" "" \
+              '[[panes]]' 'id = "eye"' 'version = "0.2.0"' > "$tree/herdr-plugin.toml"
+          }
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          manifest 'version = "0.2.0"'
+          output="$( plugin-declares-the-version "$tree" 2>&1 )" ||
+            fail "it refused a manifest declaring the version the crate declares:"
+
+          # The bump that forgets the manifest, which is the whole of this.
+          manifest 'version = "0.1.0"'
+          if output="$( plugin-declares-the-version "$tree" 2>&1 )"; then
+            fail "it accepted a manifest declaring another version:"
+          fi
+          case "$output" in
+            *"declares 0.1.0"*"version = \"0.2.0\""*) ;;
+            *) fail "the refusal did not name both versions:" ;;
+          esac
+
+          # A version under a table belongs to that entry, not the plugin, so a
+          # manifest whose top level has none is refused rather than read as
+          # matching.
+          manifest ""
+          if output="$( plugin-declares-the-version "$tree" 2>&1 )"; then
+            fail "it read a table's version as the plugin's:"
+          fi
 
           touch $out
         '';
@@ -3462,6 +3532,14 @@ and a second line"
           palette = checkOf "palette" null [ coloursComeFromThePalette ]
             "colours-come-from-the-palette";
           palette-test = coloursComeFromThePaletteTest;
+
+          # A source of its own for the same reason readme-pin has one.
+          plugin-version = pkgs.runCommand "plugin-version"
+            { nativeBuildInputs = [ pluginDeclaresTheVersion ]; } ''
+            plugin-declares-the-version ${sourceOf [ ./herdr-plugin.toml ./Cargo.toml ]}
+            touch $out
+          '';
+          plugin-version-test = pluginDeclaresTheVersionTest;
 
           # A source of its own, holding the two files this reads. It cannot be
           # a `checkOf` entry the way the scans above are: those are built from
