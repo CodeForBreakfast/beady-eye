@@ -747,6 +747,12 @@ impl Forest {
         }
     }
 
+    /// Whether the forest is rooted at the beads the reader focused, rather
+    /// than drawn whole.
+    pub fn is_focused(&self) -> bool {
+        !self.focused.is_empty()
+    }
+
     /// The rule in force on one line: the one set on it, the one set on the
     /// nearest line above it, or the forest's.
     fn spine_on(&self, place: &Place) -> Spine {

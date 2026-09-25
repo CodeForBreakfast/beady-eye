@@ -25,7 +25,7 @@
 //! 6   │   ├── ○ .3       mount the lens                          0/3
 //! 7   │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath
 //! 8   │   └─▸ ✓ 3 more beads · finished, and nobody on them
-//! 9   └─▸ 1 tree with no live agent                    a to show all
+//! 9   └─▸ 1 tree with no live agent
 //! ```
 //!
 //! Two things on a row are not the fold's, and are taken out before a row is
@@ -127,7 +127,7 @@ const AT_REST: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-    "  └─▸ 1 tree with no live agent  a to show all",
+    "  └─▸ 1 tree with no live agent",
 ];
 
 /// The forest with every fold open: the run's members, the subtree under each
@@ -147,7 +147,7 @@ const EVERYTHING_OPEN: &[&str] = &[
     "  │       ├── ✓ .4  survey the headland",
     "  │       ├── ✓ .5  draw up the plans",
     "  │       └── ✓ .6  clear the site",
-    "  └── 1 tree with no live agent  a to show all",
+    "  └── 1 tree with no live agent",
     "      └── ○ ark-2  dredge the harbour  0/2",
     "          └── ○ .1  survey the silt",
 ];
@@ -165,7 +165,7 @@ const GLAZE_THE_LANTERN_SHUT: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-    "  └─▸ 1 tree with no live agent  a to show all",
+    "  └─▸ 1 tree with no live agent",
 ];
 
 /// The forest with the copy of the blocker under `glaze the lantern` open,
@@ -181,7 +181,7 @@ const THE_COPY_OPEN: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-    "  └─▸ 1 tree with no live agent  a to show all",
+    "  └─▸ 1 tree with no live agent",
 ];
 
 /// `E` opens every fold there is, `C` shuts every fold there is, and `D`
@@ -361,7 +361,7 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-            "  └─▸ 1 tree with no live agent  a to show all",
+            "  └─▸ 1 tree with no live agent",
         ]
     );
 
@@ -384,7 +384,7 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   │   ├── ◐ .1  grind the glass  ◍ wT:p3 · working",
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-            "  └─▸ 1 tree with no live agent  a to show all",
+            "  └─▸ 1 tree with no live agent",
         ]
     );
 }
@@ -468,7 +468,7 @@ fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
             "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
-            "  └─▸ 1 tree with no live agent  a to show all",
+            "  └─▸ 1 tree with no live agent",
         ]
     );
     assert_eq!(selected(&mut bdi, &TALL), "ark-1.1.1");
