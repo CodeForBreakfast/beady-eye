@@ -1916,9 +1916,9 @@ reader's choice rather than a producer failing where nobody can see.
 **A socket that cannot be opened is said twice, deliberately, and the two are
 not copies.** No path to put it at, or another `bdi` already listening on the
 one it has, and this one polls everything exactly as it did before. The notice
-at the foot says what it costs the reader — *nothing can tell bdi a project
-changed · every project is polled instead*, or *another bdi held the inbound
-channel* where that is the cause, since that one names a process the reader can
+at the foot says what it costs the reader — *bdi cannot hear about changes ·
+every project is polled instead*, or *another bdi is already listening for
+changes* where that is the cause, since that one names a process the reader can
 close. The `stderr` line names the path and the `io::Error` under it, and the
 remedy: a process to close where there is one, and where there is not, the flag
 and the key that name a path — a reader with no runtime directory has none to

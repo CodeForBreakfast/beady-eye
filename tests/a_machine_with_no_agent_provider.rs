@@ -27,8 +27,8 @@ const THE_TRACKER: &str = include_str!("fixtures/bd_list.json");
 /// is on the screen only because a run with no panes draws every tree.
 const THE_ROOT: &[u8] = "bdi-2bb".as_bytes();
 
-/// One word of the foot notice, *no herdr session · which agents are alive is
-/// unknown*, that nothing else `bdi` writes says. One word rather than the
+/// One word of the foot notice, *no herdr session · agents are not shown*,
+/// that nothing else `bdi` writes says. One word rather than the
 /// phrase, because a repaint reaches the wire a word at a time with a cursor
 /// move where each space would be.
 ///
@@ -38,11 +38,10 @@ const THE_ROOT: &[u8] = "bdi-2bb".as_bytes();
 /// screen, so it is in what a test reads back on every machine with no
 /// `XDG_RUNTIME_DIR`. That is the build sandbox and not this one, so the
 /// wrong word passed here and failed there.
-const A_WORD_OF_THE_NOTICE: &[u8] = "unknown".as_bytes();
+const A_WORD_OF_THE_NOTICE: &[u8] = "shown".as_bytes();
 
-/// The same for the tail band's *no agent provider · bdi is reading beads
-/// alone*.
-const A_WORD_OF_THE_BAND: &[u8] = "provider".as_bytes();
+/// The same for the tail band's *no agents to show · reading beads only*.
+const A_WORD_OF_THE_BAND: &[u8] = "only".as_bytes();
 
 /// A `bdi` run against a tracker holding the capture, in `environment`.
 fn drawn_by(bdi: &mut Driven) -> Vec<u8> {
@@ -100,7 +99,7 @@ fn a_run_with_no_provider_installed_draws_every_tree_and_is_not_warned() {
     );
     assert!(
         contains(&drawn, A_WORD_OF_THE_BAND),
-        "nothing said why there is no pane to read: {}",
+        "nothing said why there is no pane to show: {}",
         bdi.timeline()
     );
 }

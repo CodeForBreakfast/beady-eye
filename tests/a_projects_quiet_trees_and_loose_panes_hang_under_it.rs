@@ -13,9 +13,9 @@
 //! 1   ├── ○ ark-1  raise the beacon
 //! 2   │   └── ◐ .1  trim the wick          ◍ wT:p2 working
 //! 3   ├─▸ 1 tree with no live agent
-//! 4   └── ⚠ 1 unattributed pane
+//! 4   └── ⚠ 1 unclaimed pane
 //! 5       └── ◍ wT:p3 idle                 <the project's path>
-//! 6 ▸ ⚠ 1 project whose tracker could not be read
+//! 6 ▸ ⚠ 1 project could not be read
 //! ```
 //!
 //! The rows are read by what a click on them does, because a repaint reaches
@@ -78,7 +78,7 @@ const ON_THE_LOOSE_PANE: &str = "moored at the quay\n";
 const A_WORD_ON_IT: &[u8] = b"moored";
 
 /// The word the line over the loose panes says, from `view::phrase`.
-const NO_BEAD_CLAIMS_THEM: &[u8] = b"unattributed";
+const NO_BEAD_CLAIMS_THEM: &[u8] = b"unclaimed";
 
 /// Where the rows are, counting from the top of the screen, before and after
 /// the quiet trees are opened.

@@ -54,9 +54,9 @@ const THE_TRACKER: &str = include_str!("fixtures/bd_list.json");
 const A_WORD_OF_THE_KEY_ROW: &[u8] = "all".as_bytes();
 
 /// The line the band would draw beneath its rule on a machine with no agent
-/// provider — one word of *no agent provider · bdi is reading beads alone*,
+/// provider — one word of *no agents to show · reading beads only*,
 /// by the same rule as above.
-const THE_SILENT_LINE: &[u8] = "provider".as_bytes();
+const THE_SILENT_LINE: &[u8] = "only".as_bytes();
 
 /// The line the band would draw beneath its rule while herdr is still
 /// answering, from `view::phrase`. Whole rather than one word, because a band
@@ -72,7 +72,7 @@ const LAST_ROW: &[u8] = b"G";
 /// so the group the key above aims at. The collection has to have come back
 /// before that key has a row to land on, and `bdi` opens its screen before
 /// its first collection returns.
-const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
+const A_PANE_ROW_HAS_ARRIVED: &[u8] = "every configured project".as_bytes();
 
 /// The shorter of the two heights where the band is one row: a forest of two
 /// rows, the band, and the keys.

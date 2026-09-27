@@ -39,7 +39,7 @@ const LAST_ROW: &[u8] = b"G";
 /// Part of the heading over the panes working outside every configured
 /// project, from `view::phrase` — the group the one shimmed pane sits in, and
 /// so the group the key above aims at.
-const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
+const A_PANE_ROW_HAS_ARRIVED: &[u8] = "every configured project".as_bytes();
 
 /// What is on that pane when the band first reads it, and what is on it when
 /// the band next looks. One word of each is what the test waits for, because

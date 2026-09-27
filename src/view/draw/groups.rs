@@ -288,7 +288,7 @@ mod tests {
 
         assert!(drawn[0].contains("3 other trees"), "{drawn:?}");
         assert!(
-            drawn[0].ends_with("2 agents beneath  ⚠ 1 bead beneath"),
+            drawn[0].ends_with("2 agents beneath  ⚠ 1 bead to check"),
             "{drawn:?}"
         );
     }

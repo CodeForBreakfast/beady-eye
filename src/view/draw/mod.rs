@@ -777,7 +777,7 @@ mod tests {
                 "                                                            ",
                 "                                                            ",
                 "                                                            ",
-                "⚠ no herdr session · which agents are alive is unknown      ",
+                "⚠ no herdr session · agents are not shown                   ",
             ]
         );
     }
@@ -847,7 +847,7 @@ mod tests {
                 "                                                                                ",
                 "                                                                                ",
                 "                                                                                ",
-                "⚠ nothing can tell bdi a project changed · every project is polled instead      ",
+                "⚠ bdi cannot hear about changes · every project is polled instead               ",
             ]
         );
     }
@@ -960,7 +960,7 @@ mod tests {
             [
                 "▾ summit-works  ⚠ 30s ago                                                    ",
                 "  ├── ⚠ smt-4kd3p  the tracker did not answer                                ",
-                "  └── ⚠ 1 unattributed pane                                                  ",
+                "  └── ⚠ 1 unclaimed pane                                                     ",
                 "      └── ◍ wCM:p9 working  /tmp/bdi-ground/summit-works                     ",
             ]
         );

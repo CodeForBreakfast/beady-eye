@@ -764,8 +764,8 @@ impl Config {
             .is_some()
         {
             anyhow::bail!(
-                "[roots] metadata_keys is gone: every unfinished bead is a root, so a key \
-                 could name nothing bd's statuses do not; remove it"
+                "[roots] metadata_keys is no longer used, because every unfinished bead is \
+                 now a root; remove it"
             );
         }
         let cfg: Config = table.try_into()?;
@@ -775,8 +775,7 @@ impl Config {
         let repeated = cfg.names_borne_by_more_than_one_project();
         if !repeated.is_empty() {
             anyhow::bail!(
-                "a project's name is how bdi tells its beads from another tracker's, so \
-                 two projects cannot answer to one; repeated: {}",
+                "each project needs a name of its own, and these are used more than once: {}",
                 repeated.join(", ")
             );
         }
@@ -786,17 +785,15 @@ impl Config {
                 .is_some_and(Command::names_no_program)
         }) {
             anyhow::bail!(
-                "{} names an environment_command with no program in it; bdi appends its own \
-                 probe to what you write, so an empty one would read the project in bdi's \
-                 environment while saying it was read in its own",
+                "{}'s environment_command is empty; name a program, or remove the setting",
                 project.name
             );
         }
         for (named, ids) in &cfg.roots.explicit {
             if !cfg.is_configured(named) {
                 anyhow::bail!(
-                    "[roots.explicit] gives {} to {named}, which is no project of this \
-                     config; bdi is reading {}",
+                    "[roots.explicit] lists {} under {named}, but there is no project called \
+                     {named}; the configured projects are {}",
                     ids.join(", "),
                     names_of(&cfg.projects).join(", ")
                 );
@@ -804,9 +801,7 @@ impl Config {
         }
         let mut named: HashSet<&Cell> = HashSet::new();
         if let Some(twice) = cfg.row.cells().find(|cell| !named.insert(cell)) {
-            anyhow::bail!(
-                "[row] names {twice} twice; a cell is drawn in one place, so name it in one list"
-            );
+            anyhow::bail!("[row] names {twice} twice; name it in only one list");
         }
         let configured: BTreeSet<String> = cfg
             .projects
@@ -820,8 +815,8 @@ impl Config {
             .find(|cell| matches!(cell, Cell::Badge(key) if !configured.contains(key)))
         {
             anyhow::bail!(
-                "[row] names {unconfigured}, which no [[badges]] or [[projects.badges]] entry \
-                 configures, so it would draw nothing on any row"
+                "[row] names {unconfigured}, but no [[badges]] or [[projects.badges]] entry \
+                 defines it"
             );
         }
         Ok(cfg)
@@ -868,8 +863,8 @@ impl Config {
             .collect();
         if !unknown.is_empty() {
             anyhow::bail!(
-                "--project names {}, which is no project of this config; bdi is \
-                 configured for {}",
+                "--project names {}, which is not a configured project; the configured \
+                 projects are {}",
                 unknown.join(", "),
                 names_of(&self.projects).join(", ")
             );
@@ -938,8 +933,8 @@ impl Config {
             return match reading.as_slice() {
                 [only] => Ok((only.name.clone(), named.to_string())),
                 several => anyhow::bail!(
-                    "{named} names no project, and bdi is reading {}; write it as \
-                     <project>:{named}",
+                    "{named} does not say which project it is in, and bdi is reading {}; \
+                     write it as <project>:{named}",
                     several
                         .iter()
                         .map(|p| p.name.as_str())
@@ -953,8 +948,8 @@ impl Config {
         }
         if !self.is_configured(project) {
             anyhow::bail!(
-                "{named} gives {id} to {project}, which is not among the projects \
-                 bdi is configured for: {}",
+                "{named}: {project} is not a configured project; the configured \
+                 projects are {}",
                 names_of(&self.projects).join(", ")
             );
         }
@@ -962,8 +957,7 @@ impl Config {
             match &mut self.scope {
                 Scope::Directory { widened, .. } => widened.push(project.to_string()),
                 Scope::Asked(_) | Scope::Everything => anyhow::bail!(
-                    "{named} gives {id} to {project}, which is not among the projects \
-                     bdi is reading: {}",
+                    "{named}: bdi is not reading {project}; it is reading {}",
                     self.read()
                         .map(|p| p.name.as_str())
                         .collect::<Vec<_>>()
@@ -2277,7 +2271,7 @@ metadata_keys = ["working_topic"]
         )
         .unwrap_err();
         assert!(err.to_string().contains("metadata_keys"), "got: {err}");
-        assert!(err.to_string().contains("gone"), "got: {err}");
+        assert!(err.to_string().contains("no longer used"), "got: {err}");
     }
 
     #[test]

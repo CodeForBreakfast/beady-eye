@@ -52,7 +52,7 @@ const A_REFERENCE_THAT_CAN_BE_FOLLOWED: &[u8] = "↑".as_bytes();
 
 /// A bead the capture's answer does not hold, which is drawn saying so and
 /// which `Tab` passes over.
-const A_REFERENCE_THAT_CANNOT: &[u8] = "dun-rer.9  not in the tracker's answer".as_bytes();
+const A_REFERENCE_THAT_CANNOT: &[u8] = "dun-rer.9  not found in the tracker".as_bytes();
 
 /// The heading over the parent, which is the row immediately above the
 /// reference — where a reader aiming at it and missing lands.

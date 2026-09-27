@@ -22,8 +22,8 @@ use terminal::{contains, over_the_described_subtree, window_over};
 const ROWS: u16 = 40;
 
 /// Wider than the eighty columns most of these tests use. This machine has no
-/// herdr, so its foot already carries the notice saying which agents are
-/// alive is unknown — and the foot gives up what it said back to a keystroke
+/// herdr, so its foot already carries the notice saying agents are not
+/// shown — and the foot gives up what it said back to a keystroke
 /// whole rather than cut it, before it gives up a notice. At a hundred and
 /// twenty columns the notice, the answer and the keys do not all fit, and the
 /// answer is the one that goes.

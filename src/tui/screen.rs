@@ -4124,7 +4124,7 @@ mod tests {
 
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2")));
         assert!(
-            foot_of(&mut shown, 80, 24).contains("grove · grv-1.2 — 2 of 6 matching"),
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.2 · match 2 of 6"),
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
@@ -4161,7 +4161,7 @@ mod tests {
         assert_eq!(forest_band(&mut shown, 60, 24), was);
         at_prompt(&mut shown, Typing::Sought);
         assert!(
-            foot_of(&mut shown, 100, 24).contains("nothing matching \"grv-1.3x\""),
+            foot_of(&mut shown, 100, 24).contains("nothing matches \"grv-1.3x\""),
             "{:?}",
             foot_of(&mut shown, 100, 24)
         );
@@ -4282,7 +4282,7 @@ mod tests {
 
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
         assert!(
-            foot_of(&mut shown, 80, 24).contains("grove · grv-1.3 — the only match"),
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.3 · the only match"),
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
@@ -4298,7 +4298,7 @@ mod tests {
         search_for(&mut shown, "grv-1.");
 
         assert!(
-            foot_of(&mut shown, 80, 24).contains("grove · grv-1.1 — 1 of 6 matching"),
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.1 · match 1 of 6"),
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
@@ -4314,7 +4314,7 @@ mod tests {
 
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.2")));
         assert!(
-            foot_of(&mut shown, 80, 24).contains("grove · grv-1.2 — 2 of 6 matching"),
+            foot_of(&mut shown, 80, 24).contains("grove · grv-1.2 · match 2 of 6"),
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
@@ -4347,8 +4347,7 @@ mod tests {
 
         assert_eq!(cursor(&shown).cloned(), was);
         assert!(
-            foot_of(&mut shown, 80, 24)
-                .contains("nothing matching \"grv-404\" in any tracker read"),
+            foot_of(&mut shown, 80, 24).contains("nothing matches \"grv-404\""),
             "{:?}",
             foot_of(&mut shown, 80, 24)
         );
@@ -4397,7 +4396,7 @@ mod tests {
     fn the_readers_next_press_takes_a_searchs_answer_off_the_foot() {
         let mut shown = shown(a_grove(6));
         search_for(&mut shown, "grv-404");
-        assert!(foot_of(&mut shown, 80, 24).contains("nothing matching \"grv-404\""));
+        assert!(foot_of(&mut shown, 80, 24).contains("nothing matches \"grv-404\""));
 
         assert!(shown.pressed());
 
@@ -4490,7 +4489,7 @@ mod tests {
         );
         let foot = foot_of(&mut shown, 100, 24);
         assert!(foot.contains("F whole forest"), "{foot:?}");
-        assert!(foot.contains("the forest is focused"), "{foot:?}");
+        assert!(foot.contains("showing focused beads"), "{foot:?}");
 
         press(&mut shown, KeyCode::Char('F'));
 
@@ -4533,7 +4532,7 @@ mod tests {
     }
 
     /// A grove on a machine whose herdr will not answer, which is a notice on
-    /// every frame and fifty-four of an eighty-column foot's columns.
+    /// every frame and forty-one of the foot's columns.
     fn a_grove_with_no_herdr(beads: usize) -> Snapshot {
         Snapshot {
             agents: a_provider(ProviderState::NotAnswering),
@@ -4544,14 +4543,14 @@ mod tests {
     /// The bead this was written for. The window holds four fifths of the
     /// screen and its title no longer names the way out, so a notice that
     /// took the whole row away left nothing on screen saying how to leave.
-    /// Eighty columns is a supported width, and a machine with no herdr
-    /// raises that notice on every frame rather than in a corner.
+    /// A machine with no herdr raises that notice on every frame rather than
+    /// in a corner, and at this width it leaves no room for every key.
     #[test]
     fn the_windows_row_keeps_the_way_out_beside_a_notice() {
         let mut shown = shown(a_grove_with_no_herdr(6));
         assert!(shown.apply(Action::ShowBead));
 
-        let foot = bead_view(&mut shown, 80, 24)
+        let foot = bead_view(&mut shown, 67, 24)
             .pop()
             .expect("a screen with rows on it");
 
@@ -4567,11 +4566,11 @@ mod tests {
     fn the_forests_row_still_goes_whole_beside_a_notice() {
         let mut shown = shown(a_grove_with_no_herdr(6));
 
-        let foot = foot_of(&mut shown, 80, 24);
+        let foot = foot_of(&mut shown, 67, 24);
 
         assert_eq!(
             foot.trim_end(),
-            "\u{26a0} no herdr session \u{b7} which agents are alive is unknown"
+            "\u{26a0} no herdr session \u{b7} agents are not shown"
         );
     }
 

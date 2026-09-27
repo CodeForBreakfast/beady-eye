@@ -34,7 +34,7 @@ Where two beads name one pane, `bdi` awards the key's claim to neither. The
 refusal is reported as a conflict, and nothing errors. What the pane says about
 itself then stands alone: a `display_agent` naming exactly one of those beads
 keeps that bead's agent, and one naming nothing drops your pane among the
-unattributed panes below the trees, reading exactly like an agent that never
+unclaimed panes below the trees, reading exactly like an agent that never
 registered. Working on two beads at once, name your pane on one of them.
 
 ## Clear the key when you stop

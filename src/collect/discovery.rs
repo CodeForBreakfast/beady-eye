@@ -39,7 +39,7 @@ pub fn from_the_current_directory(
             ) {
                 return Err(failure.into());
             }
-            anyhow::bail!("{} is not in anything beads tracks", cwd.display());
+            anyhow::bail!("{} is not inside a beads project", cwd.display());
         }
     };
 
