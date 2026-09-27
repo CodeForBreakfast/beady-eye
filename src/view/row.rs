@@ -615,7 +615,7 @@ mod tests {
         let said = anomaly_marker(&row.anomalies).expect("two rules fired");
 
         assert_eq!(row.anomalies.len(), 2, "{:?}", row.anomalies);
-        assert!(said.contains("no pane"), "{said}");
+        assert!(said.contains("no live pane"), "{said}");
         assert!(said.contains("58"), "{said}");
     }
 

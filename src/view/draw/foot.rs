@@ -324,10 +324,7 @@ mod tests {
         )
         .rows();
 
-        says(
-            &drawn[0],
-            "no herdr session · which agents are alive is unknown",
-        );
+        says(&drawn[0], "no herdr session · agents are not shown");
     }
 
     /// The bead this row was built for: a `bdi` that could not open its
@@ -353,7 +350,7 @@ mod tests {
 
         says(
             &drawn[0],
-            "nothing can tell bdi a project changed · every project is polled instead",
+            "bdi cannot hear about changes · every project is polled instead",
         );
     }
 
@@ -378,8 +375,8 @@ mod tests {
         .rows();
 
         for words in [
-            "no herdr session · which agents are alive is unknown",
-            "nothing can tell bdi a project changed · every project is polled instead",
+            "no herdr session · agents are not shown",
+            "bdi cannot hear about changes · every project is polled instead",
         ] {
             says(&drawn[0], words);
         }
@@ -405,11 +402,8 @@ mod tests {
         )
         .rows();
 
-        says(
-            &drawn[0],
-            "no herdr session · which agents are alive is unknown",
-        );
-        says(&drawn[0], "polled, not reported");
+        says(&drawn[0], "no herdr session · agents are not shown");
+        says(&drawn[0], "polling for changes");
     }
 
     /// The bead window's row as the loop hands it to the foot: the forms it
@@ -428,9 +422,8 @@ mod tests {
 
     /// The bead this was written for. A window holding four fifths of the
     /// screen leaves the reader nothing to look at, so the row that says how
-    /// to leave it must not be what a notice takes away. Eighty columns is a
-    /// supported width and a machine with no herdr raises this notice on
-    /// every frame.
+    /// to leave it must not be what a notice takes away. A machine with no
+    /// herdr raises this notice on every frame.
     #[test]
     fn a_row_that_can_say_less_says_less_rather_than_going() {
         let drawn = Painted::of(
@@ -441,9 +434,9 @@ mod tests {
                 &a_row_that_can_say_less(),
                 Spine::default(),
                 false,
-                80,
+                67,
             ),
-            80,
+            67,
             1,
         )
         .rows();
@@ -466,16 +459,16 @@ mod tests {
                 &a_row_that_can_say_less(),
                 Spine::default(),
                 false,
-                60,
+                47,
             ),
-            60,
+            47,
             1,
         )
         .rows();
 
         assert_eq!(
             drawn[0].trim_end(),
-            "\u{26a0} no herdr session \u{b7} which agents are alive is unknown"
+            "\u{26a0} no herdr session \u{b7} agents are not shown"
         );
     }
 
@@ -527,8 +520,8 @@ mod tests {
         assert_eq!(
             drawn[0].trim_end(),
             format!(
-                "⚠ no herdr session · which agents are alive is unknown  copied grv-1{}{A_KEY_ROW}",
-                " ".repeat(120 - 54 - 2 - 12 - A_KEY_ROW.chars().count())
+                "⚠ no herdr session · agents are not shown  copied grv-1{}{A_KEY_ROW}",
+                " ".repeat(120 - 41 - 2 - 12 - A_KEY_ROW.chars().count())
             )
         );
     }
@@ -592,7 +585,7 @@ mod tests {
         )
         .rows();
 
-        assert_eq!(drawn[0], "⚠ agents unknown  ⚠ polled, not reported");
+        assert_eq!(drawn[0], "⚠ agents unknown  ⚠ polling for changes ");
     }
 
     /// A second `bdi` on a machine whose herdr is well: one notice, and in
@@ -616,7 +609,7 @@ mod tests {
         )
         .rows();
 
-        assert!(drawn[0].starts_with("⚠ polled, not reported"), "{drawn:?}");
+        assert!(drawn[0].starts_with("⚠ polling for changes"), "{drawn:?}");
     }
 
     /// A notice is drawn in the colour that asks to be looked at, and saying
@@ -641,7 +634,7 @@ mod tests {
         assert!(
             painted
                 .iter()
-                .any(|run| run.said.contains("polled, not reported")
+                .any(|run| run.said.contains("polling for changes")
                     && run.style.fg == palette::ATTENTION.fg),
             "{painted:?}"
         );
@@ -672,7 +665,7 @@ mod tests {
 
         says(
             &drawn[0],
-            "another bdi held the inbound channel · every project is polled instead",
+            "another bdi is already listening for changes · every project is polled instead",
         );
     }
 
@@ -701,7 +694,7 @@ mod tests {
 
         assert_eq!(
             drawn[0].trim_end(),
-            "⚠ agents unknown  ⚠ another bdi had it"
+            "⚠ agents unknown  ⚠ another bdi running"
         );
     }
 
@@ -830,14 +823,14 @@ mod tests {
         assert!(
             row(Spine::default())
                 .trim_end()
-                .ends_with("  the forest is focused"),
+                .ends_with("  showing focused beads"),
             "{:?}",
             row(Spine::default())
         );
         assert!(
             row(Spine::Shallowest)
                 .trim_end()
-                .ends_with("  the forest is focused · opening the shallowest copy of each bead"),
+                .ends_with("  showing focused beads · opening the shallowest copy of each bead"),
             "{:?}",
             row(Spine::Shallowest)
         );
@@ -894,9 +887,9 @@ mod tests {
         assert_eq!(
             drawn[0].trim_end(),
             format!(
-                "⚠ no herdr session · which agents are alive is unknown  \
+                "⚠ no herdr session · agents are not shown  \
                  opening the shallowest copy of each bead{}{A_KEY_ROW}",
-                " ".repeat(150 - 54 - 2 - 40 - A_KEY_ROW.chars().count())
+                " ".repeat(150 - 41 - 2 - 40 - A_KEY_ROW.chars().count())
             )
         );
         assert!(
@@ -1039,7 +1032,7 @@ mod tests {
 
         assert_eq!(
             drawn[0].trim_end(),
-            "⚠ no herdr session · which agents are alive is unknown"
+            "⚠ no herdr session · agents are not shown"
         );
     }
 
@@ -1069,7 +1062,7 @@ mod tests {
     /// Whole where it fits, and the column under that is the whole difference.
     #[test]
     fn the_key_row_is_drawn_whole_at_the_first_width_that_holds_it() {
-        let notice = "⚠ no herdr session · which agents are alive is unknown";
+        let notice = "⚠ no herdr session · agents are not shown";
         let fits = notice.chars().count() + GAP + A_KEY_ROW.chars().count();
         let row = |width: usize| {
             Painted::of(

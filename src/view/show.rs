@@ -1543,7 +1543,7 @@ mod tests {
         let rows = drawn(&orphaned, &mut Show::default(), 50, 24);
 
         assert!(
-            rows.contains(&"│   → dun-9  not in the tracker's answer         │".to_string()),
+            rows.contains(&"│   → dun-9  not found in the tracker            │".to_string()),
             "{rows:#?}"
         );
     }
@@ -2564,7 +2564,7 @@ mod tests {
                 "   started 2026-03-15",
                 "   ◍ lifting the mast · working · inferred, not confirmed",
                 "   ⚠ claimed · untouched for 58 days",
-                "   ⚠ closed · its pane is still alive",
+                "   ⚠ closed · its pane is still open",
                 "   ⇢ #12  ⏸ waiting",
                 "   3/7",
             ],

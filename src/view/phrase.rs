@@ -66,21 +66,21 @@ pub fn tracker_failure(failure: &TrackerFailure) -> String {
 fn redacted(failure: &TrackerFailure) -> &'static str {
     match failure {
         TrackerFailure::NoEnvironment => concat!(
-            "asked for an environment bdi could not produce · nothing was read, ",
-            "because the bd here is not the one this project asked for"
+            "could not set up this project's environment · ",
+            "nothing was read"
         ),
         TrackerFailure::NoCredential => concat!(
-            "the credential command this project names would not run · nothing ",
-            "was read, and no bd was asked for this project"
+            "this project's credential command failed · ",
+            "nothing was read"
         ),
-        TrackerFailure::Auth => "the tracker refused the credential it was given",
+        TrackerFailure::Auth => "the tracker rejected the credential",
         TrackerFailure::Unavailable => "the tracker did not answer",
         TrackerFailure::NotInstalled => "bd is not installed",
         TrackerFailure::Unstartable => "bd could not be started",
-        TrackerFailure::InstalledUnstartable => "bd is installed and could not be started",
-        TrackerFailure::Parse(_) => "bd answered with something bdi cannot read",
+        TrackerFailure::InstalledUnstartable => "bd is installed but could not be started",
+        TrackerFailure::Parse(_) => "bdi could not understand bd's answer",
         TrackerFailure::UnknownFlag => concat!(
-            "bd does not know a flag bdi uses · bdi needs bd ",
+            "bd rejected a flag bdi uses · bdi needs bd ",
             bd_floor!(),
             " or newer"
         ),
@@ -93,21 +93,22 @@ fn redacted(failure: &TrackerFailure) -> &'static str {
 /// they can no longer see, or how stale what they are looking at may be.
 pub fn notice(notice: &Notice) -> String {
     match notice {
-        Notice::AgentsUnknown => "no herdr session · which agents are alive is unknown".to_string(),
+        Notice::AgentsUnknown => "no herdr session · agents are not shown".to_string(),
         Notice::SessionUnanswered(session) => {
-            format!("herdr session {session} did not answer · which agents are in it is unknown")
+            format!("herdr session {session} did not answer · its agents are not shown")
         }
         Notice::NoInboundChannel => {
-            "nothing can tell bdi a project changed · every project is polled instead".to_string()
+            "bdi cannot hear about changes · every project is polled instead".to_string()
         }
         Notice::AnotherBdiHadTheInboundChannel => {
-            "another bdi held the inbound channel · every project is polled instead".to_string()
+            "another bdi is already listening for changes · every project is polled instead"
+                .to_string()
         }
         Notice::ConfigWouldNotReload => {
-            "the config would not load · bdi is still on the one before the edit".to_string()
+            "the edited config has an error · still using the previous one".to_string()
         }
         Notice::ProjectNamedWithoutGit => {
-            "git could not be run · this project is named after its directory · set BDI_PROJECT"
+            "git could not be run · project name guessed from its directory · set BDI_PROJECT"
                 .to_string()
         }
     }
@@ -125,12 +126,12 @@ pub fn brief_notice(notice: &Notice) -> String {
         Notice::AgentsUnknown => "agents unknown".to_string(),
         // The session's name is what survives the cut: which session's
         // agents are unknown is the whole of what the reader can act on.
-        Notice::SessionUnanswered(session) => format!("{session} unanswered"),
-        Notice::NoInboundChannel => "polled, not reported".to_string(),
+        Notice::SessionUnanswered(session) => format!("{session} not answering"),
+        Notice::NoInboundChannel => "polling for changes".to_string(),
         // The cause is what survives the cut, not the cost. A reader who
         // keeps only *polled* has what the notice this one replaced already
         // gave them, and still nothing to do about it.
-        Notice::AnotherBdiHadTheInboundChannel => "another bdi had it".to_string(),
+        Notice::AnotherBdiHadTheInboundChannel => "another bdi running".to_string(),
         // What survives the cut is that the edit did not take, because that
         // is the half the reader cannot see: their editor is still showing
         // them the text they wrote.
@@ -320,7 +321,7 @@ pub fn failed_project(failed: &FailedProject) -> String {
 pub fn anomaly(anomaly: &Anomaly) -> String {
     match anomaly {
         Anomaly::OrphanClaim { refused } => orphan_claim(refused.as_ref()),
-        Anomaly::StalePane => "closed · its pane is still alive".to_string(),
+        Anomaly::StalePane => "closed · its pane is still open".to_string(),
         Anomaly::StaleClaim { days } => {
             let day = if *days == 1 { "day" } else { "days" };
             format!("claimed · untouched for {days} {day}")
@@ -342,16 +343,16 @@ fn orphan_claim(refused: Option<&Conflict>) -> String {
             pane_project.as_deref().unwrap_or("no configured project")
         ),
         Some(Conflict::SeveralBeadsNameOnePane { beads, .. }) => {
-            format!("claimed · {} beads name its pane", beads.len())
+            format!("claimed · {} beads claim its pane", beads.len())
         }
         Some(Conflict::PaneIdInSeveralSessions { sessions, .. }) => {
-            format!("claimed · {} sessions hold its pane id", sessions.len())
+            format!("claimed · its pane id is in {} sessions", sessions.len())
         }
         // Neither of these ever gets here. A refusal sends the reader to the
         // disagreement's row to find the pane the claim was for, and these two
         // name no one pane, so `join::resolve` refuses no claim with either.
         Some(Conflict::BeadAndPaneDisagree { .. } | Conflict::SeveralPanesNameOneBead { .. })
-        | None => "claimed · no pane".to_string(),
+        | None => "claimed · no live pane".to_string(),
     }
 }
 
@@ -362,13 +363,13 @@ pub fn conflict(conflict: &Conflict) -> String {
             named_by_bead,
             named_by_pane,
         } => format!(
-            "{}: the bead names pane {}, and pane {} names the bead",
+            "{}: the bead names pane {}, but pane {} claims it",
             bead_key(bead),
             pane_key(named_by_bead),
             pane_key(named_by_pane)
         ),
         Conflict::SeveralPanesNameOneBead { bead, panes } => format!(
-            "{}: {} panes name this bead — {} — so none holds it",
+            "{}: claimed by {} panes: {} · none is shown on it",
             bead_key(bead),
             panes.len(),
             panes.iter().map(pane_key).collect::<Vec<_>>().join(", ")
@@ -378,7 +379,7 @@ pub fn conflict(conflict: &Conflict) -> String {
             caption,
             beads,
         } => format!(
-            "pane {}{}: {} beads name it — {} — so none holds it",
+            "pane {}{} is claimed by {} beads: {} · none is shown on it",
             pane_key(pane),
             caption.as_deref().map(saying).unwrap_or_default(),
             beads.len(),
@@ -389,7 +390,7 @@ pub fn conflict(conflict: &Conflict) -> String {
             pane,
             pane_project,
         } => format!(
-            "{}: pane {} is working in {}, so it joins nothing here",
+            "{}: its pane {} is in {}, not this project",
             bead_key(bead),
             pane_key(pane),
             pane_project.as_deref().unwrap_or("no configured project")
@@ -399,7 +400,7 @@ pub fn conflict(conflict: &Conflict) -> String {
             pane_id,
             sessions,
         } => format!(
-            "{}: the bead names pane {pane_id}, which {} sessions each hold — {} — so none is its",
+            "{}: pane {pane_id} is in {} sessions: {} · cannot tell which is meant",
             bead_key(bead),
             sessions.len(),
             sessions.join(", ")
@@ -411,13 +412,13 @@ pub fn conflict(conflict: &Conflict) -> String {
 /// reach this, and a root that quietly left the screen would be the one kind
 /// of wrong answer `bdi` exists to prevent.
 pub fn root_unread() -> &'static str {
-    "this root drew no rows, and nothing said why"
+    "this tree could not be drawn, for no known reason"
 }
 
 /// A root the tracker was asked to draw and holds no bead for. The tracker
 /// did nothing wrong, so the phrase sends the reader to what named it.
 pub fn root_not_found() -> &'static str {
-    "no such bead in this tracker · named in config or on the command line"
+    "no such bead in this tracker · check the config or command line"
 }
 
 /// Why a blocker a bead waits on is not drawn beneath it.
@@ -425,14 +426,14 @@ pub fn unreachable(why: &Unreachable) -> String {
     match why {
         Unreachable::NotHeld { projects } => format!("no such bead in {}", projects.join(", ")),
         Unreachable::HeldBySeveral { projects } => format!(
-            "{} projects hold a bead by this id — {} — so none is its",
+            "{} projects have a bead with this id: {} · cannot tell which is meant",
             projects.len(),
             projects.join(", ")
         ),
         Unreachable::NotRead { projects } => {
-            format!("in no project bdi read · not read: {}", projects.join(", "))
+            format!("not found · projects not read: {}", projects.join(", "))
         }
-        Unreachable::Unconfigured => "in no project bdi is configured to read".to_string(),
+        Unreachable::Unconfigured => "not in any configured project".to_string(),
     }
 }
 
@@ -440,7 +441,7 @@ pub fn unreachable(why: &Unreachable) -> String {
 /// than as rows of its own.
 pub fn elided(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
-    format!("{count} more {bead} · finished, and nobody on them")
+    format!("{count} more finished {bead} with no agent")
 }
 
 /// Work still to do behind a closed line resting shut over it.
@@ -477,20 +478,20 @@ pub fn agents_beneath(count: usize) -> String {
 /// that opening this is worth it.
 pub fn anomalies_beneath(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
-    format!("{count} {bead} beneath")
+    format!("{count} {bead} to check")
 }
 
 /// Projects whose tracker could not be read at all, so they have no root to
 /// hang anything on.
 pub fn failed_projects(count: usize) -> String {
     let project = if count == 1 { "project" } else { "projects" };
-    format!("{count} {project} whose tracker could not be read")
+    format!("{count} {project} could not be read")
 }
 
 /// Beads and panes that name each other in ways that cannot all be true.
 pub fn conflicts(count: usize) -> String {
-    let conflict = if count == 1 { "conflict" } else { "conflicts" };
-    format!("{count} {conflict} nothing could settle")
+    let claim = if count == 1 { "claim" } else { "claims" };
+    format!("{count} conflicting {claim}")
 }
 
 /// The trees the forest is not drawing because the reader rooted it at one
@@ -547,7 +548,7 @@ pub fn spine(spine: Spine) -> &'static str {
 /// That the forest is drawn from the beads the reader focused, with the rest
 /// behind a line in each project.
 pub fn focused() -> &'static str {
-    "the forest is focused"
+    "showing focused beads"
 }
 
 /// How to see the projects a scope the directory chose left out.
@@ -586,7 +587,7 @@ pub fn claim_refused() -> &'static str {
 /// Live panes that resolved to no bead.
 pub fn unattributed(count: usize) -> String {
     let pane = if count == 1 { "pane" } else { "panes" };
-    format!("{count} unattributed {pane}")
+    format!("{count} unclaimed {pane}")
 }
 
 /// Live panes working somewhere `bdi` was never told about. The finding is
@@ -594,27 +595,25 @@ pub fn unattributed(count: usize) -> String {
 /// each directory below it is the one a `[[projects]]` entry would name.
 pub fn unconfigured(count: usize) -> String {
     if count == 1 {
-        return "1 pane in a directory no configured project covers".to_string();
+        return "1 pane working outside every configured project".to_string();
     }
-    format!("{count} panes in directories no configured project covers")
+    format!("{count} panes working outside every configured project")
 }
 
 /// Beads naming something they depend on that this tree does not hold. One
 /// left with nowhere else to sit hangs off the root.
 pub fn orphaned_dependency(count: usize) -> String {
-    let bead = if count == 1 { "bead" } else { "beads" };
-    format!(
-        "{count} {bead} waiting on work outside this tree · no bead by the id each names is in it"
-    )
+    if count == 1 {
+        return "1 bead depends on a bead not in this tree".to_string();
+    }
+    format!("{count} beads depend on beads not in this tree")
 }
 
 /// Beads whose own descendants lead back to them, each drawn where the loop
 /// was cut.
 pub fn cycle(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
-    format!(
-        "{count} {bead} that must finish before themselves · a chain of dependencies that loops"
-    )
+    format!("{count} {bead} in a dependency loop")
 }
 
 /// Why the whole forest is empty. `bd` is asked for unfinished work and
@@ -624,7 +623,7 @@ pub fn cycle(count: usize) -> String {
 /// own. The clause after the separator is the point: it says the trackers
 /// answered, which is what a reader must not mistake a blank screen for.
 pub fn no_roots() -> &'static str {
-    "no unfinished work anywhere · every tracker answered, and none of them had a root to draw"
+    "no unfinished work · every tracker was read"
 }
 
 /// Why the tail is showing no pane, where the selection points at none.
@@ -641,7 +640,7 @@ pub fn no_agent_to_tail() -> &'static str {
 }
 
 pub fn no_session_to_tail() -> &'static str {
-    "no herdr session · there is no pane to read"
+    "no herdr session · no pane to show"
 }
 
 /// That nothing on this machine provides agents at all, which is the ordinary
@@ -651,7 +650,7 @@ pub fn no_session_to_tail() -> &'static str {
 /// they do not recognise would read as something broken. What it says instead
 /// is what the run is, which is a whole answer rather than a loss.
 pub fn no_provider_to_tail() -> &'static str {
-    "no agent provider · bdi is reading beads alone"
+    "no agents to show · reading beads only"
 }
 
 /// That the pane the selection points at is being read and has not answered
@@ -702,10 +701,10 @@ pub fn said(said: &Said) -> String {
     match said {
         Said::Copied(id) => format!("copied {id}"),
         Said::NothingMatched(sought) => {
-            format!("nothing matching \"{sought}\" in any tracker read")
+            format!("nothing matches \"{sought}\"")
         }
-        Said::Matched { key, of: 1, .. } => format!("{} — the only match", bead_key(key)),
-        Said::Matched { key, at, of } => format!("{} — {at} of {of} matching", bead_key(key)),
+        Said::Matched { key, of: 1, .. } => format!("{} · the only match", bead_key(key)),
+        Said::Matched { key, at, of } => format!("{} · match {at} of {of}", bead_key(key)),
     }
 }
 
@@ -768,10 +767,10 @@ pub fn unrecognised_status(status: &Status) -> Option<String> {
 pub fn undrawn(undrawn: &Undrawn) -> String {
     match undrawn {
         Undrawn::Link { key } => {
-            format!("no link for {key}: this value leaves part of it unfilled")
+            format!("no link for {key}: its value does not fit the link template")
         }
         Undrawn::Short { key } => {
-            format!("no short form for {key}: this value leaves part of it unfilled")
+            format!("no short form for {key}: its value does not fit the template")
         }
     }
 }
@@ -842,7 +841,7 @@ pub fn bead_window_title(id: &str, from: usize, room: usize, total: usize) -> St
 /// A bead an edge names that the tracker's answer does not hold, which is
 /// all the answer can say of it.
 pub fn not_in_the_answer() -> &'static str {
-    "not in the tracker's answer"
+    "not found in the tracker"
 }
 
 /// A kind of edge outside the two `bdi` knows, said as bd's word for it.
@@ -1596,7 +1595,7 @@ mod tests {
     fn an_answer_that_would_not_parse_says_which_read_broke_and_where() {
         let said = tracker_failure(&TrackerFailure::Parse(an_unreadable()));
 
-        says(&said, "bdi cannot read");
+        says(&said, "could not understand");
         says(&said, "bd list");
         says(&said, "expected a string");
         says(&said, "line 1 column 25");
@@ -1666,7 +1665,7 @@ mod tests {
         );
         says(
             redacted(&TrackerFailure::InstalledUnstartable),
-            "is installed and could not be started",
+            "is installed but could not be started",
         );
     }
 
@@ -1708,7 +1707,7 @@ mod tests {
     fn a_project_with_no_environment_is_not_reported_as_a_fault_in_bd() {
         let said = redacted(&TrackerFailure::NoEnvironment);
 
-        says(said, "asked for an environment");
+        says(said, "environment");
         says(said, "nothing was read");
         assert!(
             !said.contains("bd is") && !said.contains("bd could"),
@@ -1879,7 +1878,7 @@ mod tests {
         });
 
         says(&said, "summit-works");
-        says(&said, "the tracker refused the credential it was given");
+        says(&said, "the tracker rejected the credential");
     }
 
     /// bdi-9vm: every claimed bead on a live screen read `claimed · no pane`
@@ -2047,7 +2046,7 @@ mod tests {
             .find("rebuild the installer image")
             .expect("the pane's own words are in the sentence");
         let claims = said
-            .find("beads name it")
+            .find("claimed by")
             .expect("so is the roll of claims on it");
 
         assert!(words < claims, "{said}");

@@ -37,7 +37,7 @@ const THE_FIRST_FRAME: &[u8] = "arkham".as_bytes();
 /// The notice, from `view::phrase`. Its first words rather than the whole
 /// line: the foot is drawn as a difference from the frame before, so a phrase
 /// that lands where another had letters reaches the wire in pieces.
-const WOULD_NOT_LOAD: &[u8] = "the config would not load".as_bytes();
+const WOULD_NOT_LOAD: &[u8] = "the edited config has an error".as_bytes();
 
 /// The same row, read off a later frame, where it says `bdi` is still
 /// drawing a forest: a broken config does not take it down and does not

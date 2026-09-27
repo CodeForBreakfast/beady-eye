@@ -46,7 +46,7 @@ const BEING_READ: &[u8] = "reading that pane".as_bytes();
 /// than the first frame: the collection has to have come back before the key
 /// below has a pane row to land on, and `bdi` opens its screen before its
 /// first collection returns.
-const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
+const A_PANE_ROW_HAS_ARRIVED: &[u8] = "every configured project".as_bytes();
 /// One word of what the shimmed herdr says is on the pane, from
 /// `ShimmedHerdr`, and a word that is on the screen nowhere else.
 ///

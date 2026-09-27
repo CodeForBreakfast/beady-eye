@@ -493,7 +493,7 @@ mod tests {
         )
         .rows();
 
-        says(&drawn[0], "2 beads beneath");
+        says(&drawn[0], "2 beads to check");
     }
 
     /// A count of nought is left out rather than drawn, exactly as the
@@ -548,7 +548,7 @@ mod tests {
             "{painted:?}"
         );
         assert_eq!(
-            colour_of("2 beads beneath"),
+            colour_of("2 beads to check"),
             palette::ATTENTION.fg,
             "{painted:?}"
         );

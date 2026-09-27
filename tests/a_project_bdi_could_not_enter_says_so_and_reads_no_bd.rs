@@ -48,7 +48,7 @@ const THE_TRACKER: &str = include_str!("fixtures/bd_list.json");
 /// word at a time with a cursor move where each space would be: the phrase as
 /// written is never in the bytes, and a test looking for it would fail on a
 /// screen that says it.
-const A_WORD_OF_IT: &[u8] = "produce".as_bytes();
+const A_WORD_OF_IT: &[u8] = "environment".as_bytes();
 
 /// How long a keystroke gets before waiting for it is called stalling.
 const LONG_ENOUGH_TO_ANSWER: Duration = Duration::from_secs(10);

@@ -450,9 +450,9 @@ says its anomalies:
 
 | what the badge met | what the row says |
 |---|---|
-| a value that left part of the `link` unfilled | `no link for delivery_pr: this value leaves part of it unfilled` |
+| a value that left part of the `link` unfilled | `no link for delivery_pr: its value does not fit the link template` |
 | a link holding a control character | `no link for delivery_pr: it holds a control character` |
-| a value that left part of the `short` unfilled | `no short form for delivery_pr: this value leaves part of it unfilled` |
+| a value that left part of the `short` unfilled | `no short form for delivery_pr: its value does not fit the template` |
 | a `short` holding a control character, on a badge with a `link` | `no short form for delivery_pr: it holds a control character` |
 
 The first `short` row holds whether or not the badge has a `link`. The second is

@@ -266,7 +266,7 @@ impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "nothing can tell bdi a project changed, so every project is polled: "
+            "bdi cannot hear about changes, so every project is polled: "
         )?;
         match self {
             // The refusal a machine can be in for ever, so the one whose
@@ -280,7 +280,7 @@ impl fmt::Display for Refused {
             Refused::NoRuntimeDirectory => {
                 write!(
                     f,
-                    "this session has no {RUNTIME_DIRECTORY} to put the socket in — name a path with --socket, or with socket under [changes] in the config, and bdi listens there"
+                    "this session has no {RUNTIME_DIRECTORY} to put the socket in; choose a path with --socket, or with socket under [changes] in the config"
                 )
             }
             // The one refusal a reader answers by closing something, so the
@@ -306,7 +306,7 @@ impl fmt::Display for Refused {
             Refused::AlreadyListening(at) => {
                 write!(
                     f,
-                    "another bdi is listening on {}; ss -lxp or lsof -U names which — close it and restart bdi to get the channel",
+                    "another bdi is listening on {}; find it with ss -lxp or lsof -U, close it, then restart bdi",
                     at.display()
                 )
             }
@@ -318,7 +318,7 @@ impl fmt::Display for Refused {
             Refused::NotASocket(at) => {
                 write!(
                     f,
-                    "{} is not a socket and bdi will not take it — name another path with --socket, or with socket under [changes] in the config",
+                    "{} is not a socket, so bdi will not use it; choose another path with --socket, or with socket under [changes] in the config",
                     at.display()
                 )
             }
@@ -330,7 +330,7 @@ impl fmt::Display for Refused {
             Refused::NameOthersMayTake(directory) => {
                 write!(
                     f,
-                    "another user may take a name in {} — name a socket path with no such directory above it, with --socket or with socket under [changes] in the config",
+                    "other users can create files in {}, so bdi will not put its socket there; choose a path outside it with --socket, or with socket under [changes] in the config",
                     directory.display()
                 )
             }
@@ -1416,7 +1416,7 @@ mod tests {
 
         assert!(said.contains("another bdi"), "{said}");
         assert!(said.contains("/run/user/1000/x.sock"), "{said}");
-        assert!(said.contains("ss -lxp or lsof -U names which"), "{said}");
+        assert!(said.contains("find it with ss -lxp or lsof -U"), "{said}");
     }
 
     /// The remedy is two steps and the second one is the one a reader would

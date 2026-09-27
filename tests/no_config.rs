@@ -305,7 +305,7 @@ fn a_directory_with_no_tracker_and_no_config_says_so() {
 
     assert!(!out.status.success(), "bdi exited {}: {said}", out.status);
     assert!(said.contains(&cwd.display().to_string()), "got: {said}");
-    assert!(said.contains("beads tracks"), "got: {said}");
+    assert!(said.contains("not inside a beads project"), "got: {said}");
     assert!(
         said.contains(".config/beady-eye/config.toml"),
         "the config it looked for is not named: {said}"

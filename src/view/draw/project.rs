@@ -837,7 +837,10 @@ mod tests {
         .rows();
 
         says(&drawn[0], "smt-4kd3p");
-        says(&drawn[0], "this root drew no rows, and nothing said why");
+        says(
+            &drawn[0],
+            "this tree could not be drawn, for no known reason",
+        );
     }
 
     /// The identity of a root outlasts everything else on its line: a reader

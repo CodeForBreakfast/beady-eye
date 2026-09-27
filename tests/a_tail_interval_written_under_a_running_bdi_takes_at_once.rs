@@ -42,7 +42,7 @@ const LAST_ROW: &[u8] = b"G";
 
 /// Part of the heading over the panes working outside every configured
 /// project, which is the group the one shimmed pane sits in.
-const A_PANE_ROW_HAS_ARRIVED: &[u8] = "no configured project".as_bytes();
+const A_PANE_ROW_HAS_ARRIVED: &[u8] = "every configured project".as_bytes();
 
 /// What is on the pane, and the word of it the band draws that this waits
 /// for. The band draws a pane in the pane's own colours, so its rows reach

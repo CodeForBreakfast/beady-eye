@@ -50,11 +50,9 @@ const THE_TRACKER: &str = include_str!("fixtures/bd_list.json");
 /// screen that happens to hold it, and the two other phrases about a
 /// credential are exactly the ones this failure must not be confused with.
 ///
-/// The clause rather than the whole sentence, because the sentence is longer
-/// than the row: it is drawn under a tree prefix at 120 columns and the tail
-/// of it is cut. This is what fits, and it is the half that says which
+/// The clause rather than the whole sentence: it is the half that says which
 /// command.
-const THE_CLAUSE: &[u8] = "the credential command this project names would not run".as_bytes();
+const THE_CLAUSE: &[u8] = "this project's credential command failed".as_bytes();
 
 /// How long a keystroke gets before waiting for it is called stalling.
 const LONG_ENOUGH_TO_ANSWER: Duration = Duration::from_secs(10);

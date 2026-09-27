@@ -25,7 +25,7 @@
 //! 5   │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath
 //! 6   │   ├── ○ .3       mount the lens                          0/3
 //! 7   │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath
-//! 8   │   └─▸ ✓ 3 more beads · finished, and nobody on them
+//! 8   │   └─▸ ✓ 3 more finished beads with no agent
 //! 9   └─▸ 1 tree with no live agent
 //! ```
 //!
@@ -128,7 +128,7 @@ const FRESH: &[&str] = &[
     "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
     "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
-    "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+    "  │   └─▸ ✓ 3 more finished beads with no agent",
     "  └─▸ 1 tree with no live agent",
 ];
 
@@ -143,7 +143,7 @@ const AT_REST: &[&str] = &[
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
-    "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+    "  │   └─▸ ✓ 3 more finished beads with no agent",
     "  └─▸ 1 tree with no live agent",
 ];
 
@@ -160,7 +160,7 @@ const EVERYTHING_OPEN: &[&str] = &[
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
     "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
-    "  │   └── ✓ 3 more beads · finished, and nobody on them",
+    "  │   └── ✓ 3 more finished beads with no agent",
     "  │       ├── ✓ .4  survey the headland",
     "  │       ├── ✓ .5  draw up the plans",
     "  │       └── ✓ .6  clear the site",
@@ -181,7 +181,7 @@ const GLAZE_THE_LANTERN_SHUT: &[&str] = &[
     "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
-    "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+    "  │   └─▸ ✓ 3 more finished beads with no agent",
     "  └─▸ 1 tree with no live agent",
 ];
 
@@ -197,7 +197,7 @@ const THE_COPY_OPEN: &[&str] = &[
     "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
     "  │   ├── ○ .3  mount the lens  0/3",
     "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
-    "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+    "  │   └─▸ ✓ 3 more finished beads with no agent",
     "  └─▸ 1 tree with no live agent",
 ];
 
@@ -341,7 +341,7 @@ fn a_moves_the_hidden_tree_and_leaves_the_folds_alone() {
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
             "  │   ├── ○ .3  mount the lens  0/3",
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
-            "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+            "  │   └─▸ ✓ 3 more finished beads with no agent",
             "  └─▸ ○ ark-2  dredge the harbour  0/2",
         ]
     );
@@ -388,7 +388,7 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   ├── ○ .2  glaze the lantern  0/3",
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
-            "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+            "  │   └─▸ ✓ 3 more finished beads with no agent",
             "  └─▸ 1 tree with no live agent",
         ]
     );
@@ -411,7 +411,7 @@ fn a_refresh_lets_a_fold_go_when_live_work_arrives_under_it() {
             "  │   ├── ○ .3  mount the lens  0/4",
             "  │   │   ├── ◐ .1  grind the glass  ◍ wT:p3 · working",
             "  │   │   └┄▸ ○ ark-1.1  cast the bracket  0/2  ◍ 1 agent beneath",
-            "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+            "  │   └─▸ ✓ 3 more finished beads with no agent",
             "  └─▸ 1 tree with no live agent",
         ]
     );
@@ -441,7 +441,7 @@ fn a_refresh_keeps_a_fold_e_found_resting_open_open_when_the_work_under_it_finis
             "  │   ├── ○ .3  mount the lens  0/3",
             "  │   │   └┄┄ ○ ark-1.1  cast the bracket  0/2",
             "  │   │       └── ◐ .1  pour the iron  ◍ wT:p2 · working",
-            "  │   └── ✓ 3 more beads · finished, and nobody on them",
+            "  │   └── ✓ 3 more finished beads with no agent",
             "  │       ├── ✓ .4  survey the headland",
             "  │       ├── ✓ .5  draw up the plans",
             "  │       └── ✓ .6  clear the site",
@@ -466,7 +466,7 @@ fn a_refresh_keeps_a_fold_e_found_resting_open_open_when_the_work_under_it_finis
             "  │   ├── ○ .3  mount the lens  1/3",
             "  │   │   └┄┄ ○ ark-1.1  cast the bracket  1/2",
             "  │   │       └── ✓ .1  pour the iron",
-            "  │   └── ✓ 3 more beads · finished, and nobody on them",
+            "  │   └── ✓ 3 more finished beads with no agent",
             "  │       ├── ✓ .4  survey the headland",
             "  │       ├── ✓ .5  draw up the plans",
             "  │       └── ✓ .6  clear the site",
@@ -495,7 +495,7 @@ fn a_search_opens_the_folds_over_the_bead_it_lands_on() {
             "  │   │   └── ◐ .1  pour the iron  ◍ wT:p2 · working",
             "  │   ├─▸ ○ .2  glaze the lantern  0/3  ◍ 1 agent beneath",
             "  │   ├─▸ ○ .3  mount the lens  0/3  ◍ 1 agent beneath",
-            "  │   └─▸ ✓ 3 more beads · finished, and nobody on them",
+            "  │   └─▸ ✓ 3 more finished beads with no agent",
             "  └─▸ 1 tree with no live agent",
         ]
     );

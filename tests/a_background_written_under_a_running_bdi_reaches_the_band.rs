@@ -47,7 +47,7 @@ const COLS: u16 = 120;
 /// so a sentence is in no run of the stream. The foot says something of its
 /// own about herdr, and this is the half of the band's sentence that is the
 /// band's alone.
-const NO_PANE_TO_READ: &[u8] = "there is no pane to read".as_bytes();
+const NO_PANE_TO_READ: &[u8] = "no pane to show".as_bytes();
 
 /// The dim attribute, which is the whole of the dark background's answer for
 /// the band and is asked for nowhere else on the screen.
