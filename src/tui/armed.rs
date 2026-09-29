@@ -243,6 +243,28 @@ mod tests {
         Armed::polling("arkham".to_string(), Some(EVERY))
     }
 
+    #[test]
+    fn the_projects_armed_unread_are_the_ones_the_config_names_and_the_run_does_not_read() {
+        let cfg = Config::from_toml(
+            "[[projects]]\nname = \"arkham\"\npath = \"/srv/work/arkham\"\n\n\
+             [[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n",
+        )
+        .expect("the config parses")
+        .scoped_to_the_project_holding(std::path::Path::new("/srv/work/arkham"));
+        let arms: Arming = Box::new(|cfg: &Config| {
+            cfg.read()
+                .map(|project| Armed::polling(project.name.clone(), Some(EVERY)))
+                .collect()
+        });
+
+        let unread: Vec<String> = armed_unread(&arms, &cfg)
+            .iter()
+            .map(|armed| armed.project().to_string())
+            .collect();
+
+        assert_eq!(unread, ["ferry"]);
+    }
+
     /// The largest whole number of seconds — the unit `refresh_seconds` is
     /// read in — that still lands inside the range an instant can hold, read
     /// off chrono's own last instant rather than quoted from its

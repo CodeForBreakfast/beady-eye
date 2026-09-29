@@ -108,28 +108,46 @@ impl ShimmedTracker {
     /// It holds no wisps, and reports nothing ready and nothing blocked,
     /// until a test that needs one of those says otherwise.
     pub fn holds(&self, capture: &str) {
+        self.holds_in(&self.answers, capture);
+    }
+
+    /// The same, for the tracker at a directory whose last component is
+    /// `tracker` alone, so that projects a run reads together can hold
+    /// different beads.
+    pub fn holds_for(&self, tracker: &str, capture: &str) {
+        self.holds_in(&self.answers.join(tracker), capture);
+    }
+
+    fn holds_in(&self, answers: &Path, capture: &str) {
         let rows: Vec<serde_json::Value> =
             serde_json::from_str(capture).expect("a capture of bd list --json");
-        std::fs::create_dir_all(&self.answers).expect("the answers are ours to write");
+        std::fs::create_dir_all(answers).expect("the answers are ours to write");
+        let answer = |asked: &str, with: &[serde_json::Value]| {
+            std::fs::write(
+                answers.join(asked),
+                serde_json::to_string(with).expect("rows serialise"),
+            )
+            .expect("the answer is ours to write");
+        };
 
-        self.answers("list --all --limit 0 --json", &rows);
+        answer("list --all --limit 0 --json", &rows);
         let unfinished: Vec<serde_json::Value> = rows
             .iter()
             .filter(|row| row["status"] != "closed")
             .cloned()
             .collect();
-        self.answers(
+        answer(
             &format!("list --status {UNFINISHED} --limit 0 --json"),
             &unfinished,
         );
         for row in &rows {
             let id = row["id"].as_str().expect("a bd row names its bead");
-            self.answers(&format!("show {id} --json"), std::slice::from_ref(row));
+            answer(&format!("show {id} --json"), std::slice::from_ref(row));
         }
-        self.answers("query ephemeral=true --limit 0 --json", &[]);
-        self.answers("query ephemeral=true --all --limit 0 --json", &[]);
-        self.answers("ready --limit 0 --json", &[]);
-        self.answers("blocked --json", &[]);
+        answer("query ephemeral=true --limit 0 --json", &[]);
+        answer("query ephemeral=true --all --limit 0 --json", &[]);
+        answer("ready --limit 0 --json", &[]);
+        answer("blocked --json", &[]);
     }
 
     /// Say `path` is a directory beads tracks, which is what a `bdi` given no
@@ -147,10 +165,6 @@ impl ShimmedTracker {
                 beads.display()
             ),
         );
-    }
-
-    fn answers(&self, asked: &str, with: &[serde_json::Value]) {
-        self.answers_with(asked, &serde_json::to_string(with).expect("rows serialise"));
     }
 
     fn answers_with(&self, asked: &str, text: &str) {

@@ -451,10 +451,15 @@ that sits in an excluded project is still reported, as a pane in that
 project. And reloading the config while running will have to re-derive the
 read set from the new file, so it is kept a function of config, directory and
 flags rather than a value computed once at start. A dependency on another
-project's bead does not reach an excluded project: it is looked for among
-the projects the run reads, and one only an excluded project holds stays
-work the answer does not hold. Reading an excluded tracker to draw one bead
-is the unseen widening rejected above.
+project's bead is looked for among the projects the run reads. Where the
+directory chose the scope and a project it left out states the blocker's
+prefix, the run widens to read that project, as a root on the command line
+widens it, and goes on reading it from then on: the reader typed nothing the
+widening overrides, and the project's line on the screen shows it was added.
+Nothing else is read to find a bead, so a project nothing drawn needs stays
+unread. Against a scope the reader typed, a bead only an excluded project
+holds stays work the answer does not hold, because reading that tracker is
+the unseen widening rejected above.
 
 ## Conventions are configuration
 
@@ -954,8 +959,11 @@ answers carry the prefix and hold no bead by that id, or the projects that
 each hold one. Where no answer carries the prefix, it falls to the configured
 projects that gave no answer, whether refused, unreachable or left out of the
 run, because nothing can learn the prefix of a tracker that did not answer.
-Only a project's config can state it. Where one of them states the prefix,
-the line says the bead is in that project, which was not read. Otherwise it
+Only a project's config can state it. Where one of them states the prefix
+and the directory chose the scope, that project is read and the bead drawn,
+as *The excluded projects stay known to the run* says. Where the reader typed
+the scope, the line says the bead is in that project, which was not read.
+Otherwise it
 names the ones that may hold it: those stating the prefix, or failing any,
 those stating none. Where no configured project may hold it, the bead is in a
 project `bdi` is not configured to read. A parent no answer holds gets no such

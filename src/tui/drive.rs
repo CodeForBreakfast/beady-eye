@@ -370,13 +370,9 @@ pub(super) fn drive(
             // each of them does about the screen it says below.
             Waited::Aged => ran_out(view, drawn_at, Utc::now()),
             Waited::Event(event) => {
-                let Some(changed) = answered(
-                    view,
-                    &mut outstanding,
-                    &mut reading,
-                    &mut showing,
-                    event,
-                ) else {
+                let Some(changed) =
+                    answered(view, &mut outstanding, &mut reading, &mut showing, event)
+                else {
                     return Ok(());
                 };
                 changed
@@ -541,15 +537,21 @@ impl Reading {
         if gained.is_empty() {
             return Vec::new();
         }
-        let names = gained.iter().map(|project| project.project().to_string()).collect();
+        let names = gained
+            .iter()
+            .map(|project| project.project().to_string())
+            .collect();
         self.polling.extend(gained);
         self.accept_what_polls();
         names
     }
 
     fn accept_what_polls(&self) {
-        self.accepted
-            .now_watching(self.polling.iter().map(|project| project.project().to_string()));
+        self.accepted.now_watching(
+            self.polling
+                .iter()
+                .map(|project| project.project().to_string()),
+        );
     }
 
     /// The projects a config the reader has written names, as what the run

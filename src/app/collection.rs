@@ -156,8 +156,8 @@ pub struct Collection {
     /// answer can place the id a silent session was holding. What it last
     /// answered with can.
     panes_last_answered: BTreeMap<String, BTreeSet<String>>,
-    /// The projects the scope left out that a drawn bead's blocker was held
-    /// by, each read from the collection that needed it onwards. Kept here
+    /// The projects the scope left out that held a drawn bead's blocker. Each
+    /// is read from the collection that needed it onwards. Kept here
     /// rather than written into a config, so a config the reader rewrites
     /// does not stop them being read.
     read_on_demand: BTreeSet<String>,
@@ -185,14 +185,26 @@ impl Collection {
         let (panes, provider, out_of_reach) = self.every_pane(agents);
 
         let mut reading = self.widened(cfg);
-        self.read(&reading, trackers, &|project| wanted.names(project), &panes, now);
+        self.read(
+            &reading,
+            trackers,
+            &|project| wanted.names(project),
+            &panes,
+            now,
+        );
         loop {
             match self.draw(&reading, &panes, &out_of_reach, &provider, filter, now) {
                 Ok(snapshot) => return snapshot,
                 Err(needed) => {
                     self.read_on_demand.extend(needed.iter().cloned());
                     reading = self.widened(cfg);
-                    self.read(&reading, trackers, &|project| needed.contains(project), &panes, now);
+                    self.read(
+                        &reading,
+                        trackers,
+                        &|project| needed.contains(project),
+                        &panes,
+                        now,
+                    );
                 }
             }
         }
@@ -303,9 +315,8 @@ impl Collection {
     }
 
     /// Everything standing, in config order, however much of it this
-    /// collection just read — or, where a drawn bead's blocker is held by a
-    /// project `cfg`'s scope would take in, those projects, since the
-    /// snapshot would draw that blocker as unread.
+    /// collection just read. Where a project `cfg`'s scope would take in holds
+    /// a drawn bead's blocker, it hands back those projects instead.
     fn draw(
         &self,
         cfg: &Config,
@@ -639,8 +650,8 @@ mod tests {
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{BeadKey, Conflict};
     use crate::model::snapshot::LoosePane;
-    use crate::model::types::testing::{key, A_SESSION};
     use crate::model::tree::Unreachable;
+    use crate::model::types::testing::{key, A_SESSION};
     use crate::model::types::{PaneStatus, Status};
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
@@ -2761,12 +2772,10 @@ prefix = "kad"
 
     #[test]
     fn a_blocker_no_configured_project_states_the_prefix_of_is_reported_as_it_was() {
-        let trackers = Fakes::default()
-            .with("dunwich", dunwich_tracker())
-            .with(
-                "ferry",
-                Fake::holding(beads(&WAITING_ON_DUNWICH.replace("dun-7", "kad-1"))),
-            );
+        let trackers = Fakes::default().with("dunwich", dunwich_tracker()).with(
+            "ferry",
+            Fake::holding(beads(&WAITING_ON_DUNWICH.replace("dun-7", "kad-1"))),
+        );
 
         let snap = collected_under(&reading_ferry_where_dunwich(STATES_ITS_PREFIX), &trackers);
 
