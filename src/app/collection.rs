@@ -18,13 +18,13 @@ use crate::collect::agents::Agents;
 use crate::collect::run::FailureKind;
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
-use crate::config::{Config, Project};
+use crate::config::{Config, Project, Scope};
 use crate::model::join::{self, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Said, Session,
     SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
 };
-use crate::model::tree::{Across, Assembled, Nesting};
+use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
 use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh, RootUnread};
@@ -156,10 +156,16 @@ pub struct Collection {
     /// answer can place the id a silent session was holding. What it last
     /// answered with can.
     panes_last_answered: BTreeMap<String, BTreeSet<String>>,
+    /// The projects the scope left out that held a drawn bead's blocker. Each
+    /// is read from the collection that needed it onwards. Kept here
+    /// rather than written into a config, so a config the reader rewrites
+    /// does not stop them being read.
+    read_on_demand: BTreeSet<String>,
 }
 
 impl Collection {
-    /// Read what `wanted` names, and draw everything standing.
+    /// Read what `wanted` names, and draw everything standing — reading as
+    /// well any project the scope left out that holds a drawn bead's blocker.
     pub fn collect(
         &mut self,
         cfg: &Config,
@@ -178,7 +184,55 @@ impl Collection {
         // only chance the agent join gets.
         let (panes, provider, out_of_reach) = self.every_pane(agents);
 
-        for (project, answer) in self.refresh_together(cfg, trackers, wanted, &panes, now) {
+        let mut reading = self.widened(cfg);
+        self.read(
+            &reading,
+            trackers,
+            &|project| wanted.names(project),
+            &panes,
+            now,
+        );
+        loop {
+            match self.draw(&reading, &panes, &out_of_reach, &provider, filter, now) {
+                Ok(snapshot) => return snapshot,
+                Err(needed) => {
+                    self.read_on_demand.extend(needed.iter().cloned());
+                    reading = self.widened(cfg);
+                    self.read(
+                        &reading,
+                        trackers,
+                        &|project| needed.contains(project),
+                        &panes,
+                        now,
+                    );
+                }
+            }
+        }
+    }
+
+    /// `cfg`, with its scope taking in every project read on demand that it
+    /// can.
+    fn widened<'c>(&self, cfg: &'c Config) -> Cow<'c, Config> {
+        let mut widened = Cow::Borrowed(cfg);
+        for project in &self.read_on_demand {
+            if widened.scope.widens_to(project) {
+                widened.to_mut().scope.widen_to(project);
+            }
+        }
+        widened
+    }
+
+    /// Refresh every project `cfg` reads that `named` names, and keep what
+    /// each said.
+    fn read(
+        &mut self,
+        cfg: &Config,
+        trackers: &dyn Trackers,
+        named: &(dyn Fn(&str) -> bool + Sync),
+        panes: &[Pane],
+        now: DateTime<Utc>,
+    ) {
+        for (project, answer) in self.refresh_together(cfg, trackers, named, panes, now) {
             match answer {
                 Ok(Refresh::Unchanged) => {
                     // A skipped read is a successful read: `bdi` knows the
@@ -215,11 +269,9 @@ impl Collection {
                 }
             }
         }
-
-        self.draw(cfg, &panes, &out_of_reach, provider, filter, now)
     }
 
-    /// One refresh of every project `wanted` names, made together rather
+    /// One refresh of every project `named` names, made together rather
     /// than in turn, and handed back once the last of them has answered.
     ///
     /// The trackers are independent and a read of one is a sequence of round
@@ -232,14 +284,14 @@ impl Collection {
         &self,
         cfg: &'a Config,
         trackers: &dyn Trackers,
-        wanted: &Wanted,
+        named: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) -> Vec<(&'a Project, Result<Refresh, OpenFailure>)> {
         std::thread::scope(|reads| {
             let reading: Vec<_> = cfg
                 .read()
-                .filter(|p| wanted.names(&p.name))
+                .filter(|p| named(&p.name))
                 .map(|project| {
                     let standing = self
                         .read
@@ -263,16 +315,17 @@ impl Collection {
     }
 
     /// Everything standing, in config order, however much of it this
-    /// collection just read.
+    /// collection just read. Where a project `cfg`'s scope would take in holds
+    /// a drawn bead's blocker, it hands back those projects instead.
     fn draw(
         &self,
         cfg: &Config,
         panes: &[Pane],
         out_of_reach: &BTreeSet<String>,
-        agents: AgentProvider,
+        agents: &AgentProvider,
         filter: Filter,
         now: DateTime<Utc>,
-    ) -> Snapshot {
+    ) -> Result<Snapshot, BTreeSet<String>> {
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
         let not_read: Vec<(&str, Option<&str>)> = cfg
             .projects
@@ -281,6 +334,10 @@ impl Collection {
             .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
             .collect();
         let drawn = reaching_across(&answered, &not_read);
+        let needed = held_by_unread(&drawn, &cfg.scope);
+        if !needed.is_empty() {
+            return Err(needed);
+        }
 
         // One resolve over every project's rows at once. A pane names its bead
         // by id alone, and only the whole set tells a match from a prefix
@@ -360,7 +417,7 @@ impl Collection {
             .filter_map(|(project, work)| Some((project.to_string(), work.speaks_until?)))
             .collect();
 
-        snapshot::build(
+        Ok(snapshot::build(
             Collected {
                 trees,
                 failed_projects,
@@ -370,10 +427,10 @@ impl Collection {
             panes,
             joined,
             cfg,
-            agents,
+            agents.clone(),
             filter,
             now,
-        )
+        ))
     }
 
     /// What has been read, in the order the config names the projects. The
@@ -521,6 +578,22 @@ fn reaching_across<'a>(
         .collect()
 }
 
+/// The projects holding a blocker some drawn bead waits on, where `scope`
+/// would take them in.
+fn held_by_unread(drawn: &[Drawn<'_>], scope: &Scope) -> BTreeSet<String> {
+    drawn
+        .iter()
+        .filter_map(|(_, _, read)| read.as_ref().ok())
+        .flat_map(|assembled| assembled.orphaned.values().flatten())
+        .filter_map(|orphaned| match &orphaned.why {
+            Unreachable::HeldByUnread { project } if scope.widens_to(project) => {
+                Some(project.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// A tree's beads, gathered under the project whose answer holds each.
 fn by_project<'a>(project: &'a str, assembled: &'a Assembled) -> Vec<(&'a str, Vec<Bead>)> {
     let mut rows: BTreeMap<&str, Vec<Bead>> = BTreeMap::new();
@@ -577,8 +650,9 @@ mod tests {
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{BeadKey, Conflict};
     use crate::model::snapshot::LoosePane;
+    use crate::model::tree::Unreachable;
     use crate::model::types::testing::{key, A_SESSION};
-    use crate::model::types::PaneStatus;
+    use crate::model::types::{PaneStatus, Status};
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -2483,5 +2557,255 @@ path = "{}"
             "nothing dunwich's earlier read produced is still drawn"
         );
         assert_eq!(after.read_at["dunwich"], later);
+    }
+
+    // ---- a blocker in a project the run is not reading -----------------
+
+    const STATES_ITS_PREFIX: &str = r#"prefix = "dun""#;
+    const STATES_NO_PREFIX: &str = "";
+
+    /// dunwich, with `dunwich_states` written into its entry, and ferry — as
+    /// a run started in ferry's checkout reads them.
+    fn reading_ferry_where_dunwich(dunwich_states: &str) -> Config {
+        Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+{dunwich_states}
+
+[[projects]]
+name = "ferry"
+path = "{FERRY}"
+"#
+        ))
+        .expect("the config parses")
+        .scoped_to_the_project_holding(Path::new(FERRY))
+    }
+
+    fn ferry_waiting_on_dunwich() -> Fakes {
+        Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)))
+    }
+
+    fn collected_under(cfg: &Config, trackers: &Fakes) -> Snapshot {
+        Collection::default().collect(
+            cfg,
+            &no_panes(),
+            trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        )
+    }
+
+    /// Why ferry's bead says each blocker it waits on is not drawn.
+    fn unreachable_from_ferry(snap: &Snapshot) -> Vec<(&str, &Unreachable)> {
+        node(tree_of(snap, "ferry"), "fer-2")
+            .orphaned_dependencies
+            .iter()
+            .map(|orphaned| (orphaned.id.as_str(), &orphaned.why))
+            .collect()
+    }
+
+    #[test]
+    fn a_blocker_a_project_the_run_is_not_reading_holds_is_read_and_drawn_as_the_bead_it_is() {
+        let snap = collected_under(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &ferry_waiting_on_dunwich(),
+        );
+
+        let blocker = node(tree_of(&snap, "ferry"), "dun-7");
+        assert_eq!(
+            (
+                blocker.project.as_str(),
+                blocker.title.as_str(),
+                &blocker.status
+            ),
+            ("dunwich", "lift the ground station", &Status::InProgress)
+        );
+        assert_eq!(unreachable_from_ferry(&snap), vec![]);
+        assert_eq!(snap.projects, ["dunwich", "ferry"]);
+    }
+
+    /// dunwich's bead waits on kadath's, so reading dunwich for ferry's
+    /// blocker is what says kadath is needed too.
+    #[test]
+    fn a_blocker_of_a_blocker_read_on_demand_is_read_on_demand_too() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+prefix = "dun"
+
+[[projects]]
+name = "ferry"
+path = "{FERRY}"
+
+[[projects]]
+name = "kadath"
+path = "/srv/work/kadath"
+prefix = "kad"
+"#
+        ))
+        .expect("the config parses")
+        .scoped_to_the_project_holding(Path::new(FERRY));
+        let trackers = Fakes::default()
+            .with(
+                "dunwich",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+                   "dependencies":[{"depends_on_id":"kad-1","type":"blocks"}],
+                   "priority":1,"issue_type":"epic"}
+                ]"#,
+                )),
+            )
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)))
+            .with(
+                "kadath",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"kad-1","title":"survey the plateau","status":"open",
+                   "priority":2,"issue_type":"task"}
+                ]"#,
+                )),
+            );
+
+        let snap = collected_under(&cfg, &trackers);
+
+        assert_eq!(node(tree_of(&snap, "ferry"), "kad-1").project, "kadath");
+        assert_eq!(snap.projects, ["dunwich", "ferry", "kadath"]);
+    }
+
+    #[test]
+    fn a_project_nothing_drawn_needs_is_still_not_read() {
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", colliding_tracker());
+
+        let snap = collected_under(&reading_ferry_where_dunwich(STATES_ITS_PREFIX), &trackers);
+
+        assert_eq!(asked_of(&trackers, "dunwich"), 0);
+        assert_eq!(snap.projects, ["ferry"]);
+    }
+
+    #[test]
+    fn a_project_read_on_demand_is_read_again_when_a_refresh_names_it() {
+        let cfg = reading_ferry_where_dunwich(STATES_ITS_PREFIX);
+        let trackers = ferry_waiting_on_dunwich();
+        let mut standing = Collection::default();
+        let later = now() + chrono::Duration::seconds(30);
+        standing.collect(
+            &cfg,
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let asked_before = asked_of(&trackers, "dunwich");
+
+        let after = standing.collect(
+            &cfg,
+            &no_panes(),
+            &trackers,
+            &dunwich_alone(),
+            Filter::All,
+            later,
+        );
+
+        assert!(asked_of(&trackers, "dunwich") > asked_before);
+        assert_eq!(after.read_at["dunwich"], later);
+    }
+
+    /// Watched from then on, as a project the run was started reading is,
+    /// rather than dropped the moment its beads stop being needed.
+    #[test]
+    fn a_project_read_on_demand_goes_on_being_read_once_nothing_needs_it() {
+        let cfg = reading_ferry_where_dunwich(STATES_ITS_PREFIX);
+        let mut standing = Collection::default();
+        standing.collect(
+            &cfg,
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        let no_longer_waiting = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", colliding_tracker());
+
+        let after = standing.collect(
+            &cfg,
+            &no_panes(),
+            &no_longer_waiting,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert!(asked_of(&no_longer_waiting, "dunwich") > 0);
+        assert_eq!(after.projects, ["dunwich", "ferry"]);
+    }
+
+    #[test]
+    fn a_blocker_in_a_project_stating_no_prefix_is_reported_as_it_was() {
+        let trackers = ferry_waiting_on_dunwich();
+
+        let snap = collected_under(&reading_ferry_where_dunwich(STATES_NO_PREFIX), &trackers);
+
+        assert_eq!(asked_of(&trackers, "dunwich"), 0);
+        assert_eq!(
+            unreachable_from_ferry(&snap),
+            vec![(
+                "dun-7",
+                &Unreachable::NotRead {
+                    projects: vec!["dunwich".to_string()]
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn a_blocker_no_configured_project_states_the_prefix_of_is_reported_as_it_was() {
+        let trackers = Fakes::default().with("dunwich", dunwich_tracker()).with(
+            "ferry",
+            Fake::holding(beads(&WAITING_ON_DUNWICH.replace("dun-7", "kad-1"))),
+        );
+
+        let snap = collected_under(&reading_ferry_where_dunwich(STATES_ITS_PREFIX), &trackers);
+
+        assert_eq!(asked_of(&trackers, "dunwich"), 0);
+        assert_eq!(
+            unreachable_from_ferry(&snap),
+            vec![("kad-1", &Unreachable::Unconfigured)]
+        );
+    }
+
+    /// `--project` is the reader saying which projects to read, so a
+    /// blocker outside it is reported rather than read.
+    #[test]
+    fn a_blocker_outside_the_projects_the_reader_named_is_reported_rather_than_read() {
+        let cfg = reading_ferry_where_dunwich(STATES_ITS_PREFIX)
+            .scoped_to(&["ferry".to_string()])
+            .expect("ferry is configured");
+        let trackers = ferry_waiting_on_dunwich();
+
+        let snap = collected_under(&cfg, &trackers);
+
+        assert_eq!(asked_of(&trackers, "dunwich"), 0);
+        assert_eq!(
+            unreachable_from_ferry(&snap),
+            vec![(
+                "dun-7",
+                &Unreachable::HeldByUnread {
+                    project: "dunwich".to_string()
+                }
+            )]
+        );
     }
 }

@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 
 use super::due::due_after;
 use crate::app::Wanted;
+use crate::config::{Config, Scope};
 
 /// One disarmed `Armed` per project a config names.
 ///
@@ -20,7 +21,20 @@ use crate::app::Wanted;
 /// settled where `bdi` is run. The loop asks this again whenever the reader
 /// writes a config, so the set of projects that poll is the set the file
 /// names.
-pub(crate) type Arming = Box<dyn Fn(&crate::config::Config) -> Vec<Armed>>;
+pub(crate) type Arming = Box<dyn Fn(&Config) -> Vec<Armed>>;
+
+/// Armed for each project `cfg` names and does not read, for the collection
+/// that reads one on demand.
+pub(super) fn armed_unread(arms: &Arming, cfg: &Config) -> Vec<Armed> {
+    let every_project = Config {
+        scope: Scope::Everything,
+        ..cfg.clone()
+    };
+    arms(&every_project)
+        .into_iter()
+        .filter(|armed| !cfg.reads(armed.project()))
+        .collect()
+}
 
 /// One project's poll: how long after a read it asks to be read again, and
 /// when that next falls due.
@@ -156,10 +170,15 @@ impl Armed {
         speaks_until: Option<DateTime<Utc>>,
     ) {
         if wanted.names(&self.project) {
-            self.speaks_until = speaks_until;
-            self.at = self.due_from(at);
-            self.vouched_at = Some(at);
+            self.was_read(at, speaks_until);
         }
+    }
+
+    /// This project has been read, whatever was asked for.
+    pub(super) fn was_read(&mut self, at: DateTime<Utc>, speaks_until: Option<DateTime<Utc>>) {
+        self.speaks_until = speaks_until;
+        self.at = self.due_from(at);
+        self.vouched_at = Some(at);
     }
 
     /// Something outside says it covers this project and nothing in it has
@@ -222,6 +241,28 @@ mod tests {
 
     fn polling() -> Armed {
         Armed::polling("arkham".to_string(), Some(EVERY))
+    }
+
+    #[test]
+    fn the_projects_armed_unread_are_the_ones_the_config_names_and_the_run_does_not_read() {
+        let cfg = Config::from_toml(
+            "[[projects]]\nname = \"arkham\"\npath = \"/srv/work/arkham\"\n\n\
+             [[projects]]\nname = \"ferry\"\npath = \"/srv/work/ferry\"\n",
+        )
+        .expect("the config parses")
+        .scoped_to_the_project_holding(std::path::Path::new("/srv/work/arkham"));
+        let arms: Arming = Box::new(|cfg: &Config| {
+            cfg.read()
+                .map(|project| Armed::polling(project.name.clone(), Some(EVERY)))
+                .collect()
+        });
+
+        let unread: Vec<String> = armed_unread(&arms, &cfg)
+            .iter()
+            .map(|armed| armed.project().to_string())
+            .collect();
+
+        assert_eq!(unread, ["ferry"]);
     }
 
     /// The largest whole number of seconds — the unit `refresh_seconds` is

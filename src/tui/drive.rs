@@ -20,7 +20,7 @@ use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Notch, Typing};
 
-use super::armed::{Armed, Arming};
+use super::armed::{armed_unread, Armed, Arming};
 use super::keys::{action, typing};
 use super::reload::{Reload, Reloaded};
 
@@ -370,13 +370,9 @@ pub(super) fn drive(
             // each of them does about the screen it says below.
             Waited::Aged => ran_out(view, drawn_at, Utc::now()),
             Waited::Event(event) => {
-                let Some(changed) = answered(
-                    view,
-                    &mut outstanding,
-                    &mut reading.polling,
-                    &mut showing,
-                    event,
-                ) else {
+                let Some(changed) =
+                    answered(view, &mut outstanding, &mut reading, &mut showing, event)
+                else {
                     return Ok(());
                 };
                 changed
@@ -466,7 +462,7 @@ fn looked_at(
     let Reloaded::Fresh(written) = reloaded else {
         return noticed;
     };
-    reading.now_reading(arms(written));
+    reading.now_reading(arms(written), armed_unread(arms, written));
     outstanding.waits_out(written.tui.unanswered_after());
     if ask
         .send(Asked::Reloaded(Box::new(written.clone())))
@@ -513,11 +509,49 @@ fn still_armed(standing: Vec<Armed>, named: Vec<Armed>) -> Vec<Armed> {
 pub(super) struct Reading {
     polling: Vec<Armed>,
     accepted: Reported,
+    /// The projects the config names and this run is not reading, each
+    /// armed for the collection that reads it on demand.
+    unread: Vec<Armed>,
 }
 
 impl Reading {
     pub(super) fn of(polling: Vec<Armed>, accepted: Reported) -> Self {
-        Self { polling, accepted }
+        Self {
+            polling,
+            accepted,
+            unread: Vec::new(),
+        }
+    }
+
+    pub(super) fn unread(self, unread: Vec<Armed>) -> Self {
+        Self { unread, ..self }
+    }
+
+    /// Take the projects a collection has read into what the run reads, and
+    /// hand back those it was not reading until now.
+    fn read_on_demand(&mut self, read: &[String]) -> Vec<String> {
+        let (gained, unread) = std::mem::take(&mut self.unread)
+            .into_iter()
+            .partition::<Vec<_>, _>(|project| read.iter().any(|named| named == project.project()));
+        self.unread = unread;
+        if gained.is_empty() {
+            return Vec::new();
+        }
+        let names = gained
+            .iter()
+            .map(|project| project.project().to_string())
+            .collect();
+        self.polling.extend(gained);
+        self.accept_what_polls();
+        names
+    }
+
+    fn accept_what_polls(&self) {
+        self.accepted.now_watching(
+            self.polling
+                .iter()
+                .map(|project| project.project().to_string()),
+        );
     }
 
     /// The projects a config the reader has written names, as what the run
@@ -526,11 +560,10 @@ impl Reading {
     /// `still_due` is where what the file settles and what its last read
     /// settled are told apart, so the channel is told what came out of that
     /// rather than what went into it.
-    fn now_reading(&mut self, named: Vec<Armed>) {
-        let polling = still_armed(std::mem::take(&mut self.polling), named);
-        self.accepted
-            .now_watching(polling.iter().map(|project| project.project().to_string()));
-        self.polling = polling;
+    fn now_reading(&mut self, named: Vec<Armed>, unread: Vec<Armed>) {
+        self.polling = still_armed(std::mem::take(&mut self.polling), named);
+        self.unread = unread;
+        self.accept_what_polls();
     }
 }
 
@@ -639,7 +672,7 @@ fn keeps_what_is_open(event: &Event, showing: Showing) -> bool {
 fn answered(
     view: &mut dyn View,
     outstanding: &mut Outstanding,
-    armed: &mut [Armed],
+    reading: &mut Reading,
     showing: &mut Showing,
     event: Event,
 ) -> Option<bool> {
@@ -808,22 +841,33 @@ fn answered(
         Event::Changed(wanted) => asked_for(view, outstanding, wanted),
         Event::Covered(covered) => {
             let now = Utc::now();
-            for project in armed.iter_mut().filter(|armed| armed.project() == covered) {
+            for project in reading
+                .polling
+                .iter_mut()
+                .filter(|armed| armed.project() == covered)
+            {
                 project.covered(now);
             }
             false
         }
         Event::Collected(snapshot) => {
             let now = Utc::now();
+            // A project the collection read on demand was read by it as
+            // much as any the read named.
+            let gained = reading.read_on_demand(&snapshot.projects);
             if let Some(read) = outstanding.came_back() {
                 // Every project that read covered now has nothing coming, so
                 // this is where each of them arms its next ask. The only
                 // place: a read that never comes back arms nothing, and the
                 // project says its tracker has stopped answering rather than
                 // being quietly polled over.
-                for project in armed.iter_mut() {
+                for project in reading.polling.iter_mut() {
                     let speaks_until = snapshot.speaks_until.get(project.project()).copied();
-                    project.came_back(&read, now, speaks_until);
+                    if gained.iter().any(|named| named == project.project()) {
+                        project.was_read(now, speaks_until);
+                    } else {
+                        project.came_back(&read, now, speaks_until);
+                    }
                 }
             }
             view.collected(*snapshot);
@@ -2982,6 +3026,69 @@ mod tests {
             !reached.contains(&Asked::Read(arkham())),
             "and the one it stopped polling asked for nothing, though it is \
              still read: {reached:?}"
+        );
+    }
+
+    /// A project the run was not reading, which a collection came back
+    /// having read for a blocker a drawn bead waits on, asks for itself from
+    /// then on and is accepted on the inbound channel, as a project the run
+    /// was started reading is.
+    #[test]
+    fn a_project_a_collection_read_on_demand_polls_and_is_accepted_from_then_on() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let (send, events) = mpsc::channel();
+        let reported = Reported::watching(["arkham".to_string()]);
+        let mut outstanding = at_once();
+        outstanding.ask(Wanted::Everything, Utc::now());
+
+        let holding = thread::spawn(move || {
+            let mut reached = Vec::new();
+            while let Ok(one) = asked.recv_timeout(A_MOMENT) {
+                let polled = matches!(one, Asked::Read(Wanted::Project(_)));
+                if one == Asked::Read(Wanted::Everything) {
+                    let read_ferry_too = Snapshot {
+                        projects: vec!["arkham".to_string(), "ferry".to_string()],
+                        ..a_snapshot()
+                    };
+                    send.send(Event::Collected(Box::new(read_ferry_too)))
+                        .expect("the loop's end of the channel is open");
+                }
+                reached.push(one);
+                if polled {
+                    break;
+                }
+            }
+            drop(send);
+            reached
+        });
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            outstanding,
+            Reading::of(
+                vec![Armed::polling("arkham".to_string(), None)],
+                reported.clone(),
+            )
+            .unread(vec![Armed::polling("ferry".to_string(), Some(AN_INTERVAL))]),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            holding.join().expect("the thread ran").last(),
+            Some(&Asked::Read(ferry())),
+            "the project read on demand asked for itself once its read came back"
+        );
+        assert_eq!(
+            reported.take("ferry"),
+            crate::collect::changes::Answer::Watched(crate::collect::changes::Heard::Changed(
+                "ferry".to_string()
+            )),
+            "and the channel accepts a report for it"
         );
     }
 

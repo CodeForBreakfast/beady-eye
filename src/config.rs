@@ -87,6 +87,25 @@ impl Scope {
             }
         }
     }
+
+    /// Whether this scope would take `name` in were it asked to: only a
+    /// scope the directory chose widens, since one the reader typed says
+    /// what to read.
+    pub fn widens_to(&self, name: &str) -> bool {
+        matches!(self, Scope::Directory { .. }) && !self.reads(name)
+    }
+
+    /// Take `name` in where [`Self::widens_to`] says it would, and say
+    /// whether it did.
+    pub fn widen_to(&mut self, name: &str) -> bool {
+        if !self.widens_to(name) {
+            return false;
+        }
+        if let Scope::Directory { widened, .. } = self {
+            widened.push(name.to_string());
+        }
+        true
+    }
 }
 
 /// An unknown key is refused rather than dropped, which is serde's default.
@@ -959,17 +978,14 @@ impl Config {
                 names_of(&self.projects).join(", ")
             );
         }
-        if !self.reads(project) {
-            match &mut self.scope {
-                Scope::Directory { widened, .. } => widened.push(project.to_string()),
-                Scope::Asked(_) | Scope::Everything => anyhow::bail!(
-                    "{named}: bdi is not reading {project}; it is reading {}",
-                    self.read()
-                        .map(|p| p.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            }
+        if !self.reads(project) && !self.scope.widen_to(project) {
+            anyhow::bail!(
+                "{named}: bdi is not reading {project}; it is reading {}",
+                self.read()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
         Ok((project.to_string(), id.to_string()))
     }

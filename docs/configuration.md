@@ -131,9 +131,12 @@ than passed on a command line, so the password never shows in `ps`.
 **`prefix`** is the prefix the project's tracker gives its beads, written as
 `bd init --prefix` takes it: `prefix = "dun"` for beads named `dun-7`. `bdi`
 learns a prefix from the beads a tracker answers with, so this only matters
-for a project it has not read. With it, a blocker
-carrying the prefix is drawn as this project's bead, which was not read, and a
-blocker carrying another prefix is never put down to this project. A project
+for a project it has not read. With it, a blocker carrying the prefix is known
+to be this project's bead. Where the directory `bdi` was started in chose what
+to read, `bdi` then reads this project, draws the blocker as the bead it is,
+and goes on reading the project from then on. Under `--project` it says the
+blocker is this project's bead, which was not read. A blocker carrying another
+prefix is never put down to this project. A project
 stating none may hold any blocker whose prefix no answer carries, so the line
 lists it among the projects not read.
 

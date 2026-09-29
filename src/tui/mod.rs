@@ -150,7 +150,7 @@ pub fn run(
         &events,
         &ask,
         outstanding,
-        Reading::of(armed, reported),
+        Reading::of(armed, reported).unread(armed::armed_unread(&arms, cfg)),
         &arms,
         reload,
     )
