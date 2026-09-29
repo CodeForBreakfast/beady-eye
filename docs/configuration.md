@@ -27,6 +27,7 @@ path = "/home/you/arkham"
 name = "dunwich"
 path = "/srv/work/dunwich"
 environment_command = "nix develop -c"
+prefix = "dun"
 
 [[projects]]
 name = "kadath"
@@ -126,6 +127,15 @@ says why.
 **`credential_command`** is a command whose stdout is the tracker's password.
 It runs inside the project's environment, and its output is captured rather
 than passed on a command line, so the password never shows in `ps`.
+
+**`prefix`** is the prefix the project's tracker gives its beads, written as
+`bd init --prefix` takes it: `prefix = "dun"` for beads named `dun-7`. `bdi`
+learns a prefix from the beads a tracker answers with, so this only matters
+for a project it has not read. With it, a blocker
+carrying the prefix is drawn as this project's bead, which was not read, and a
+blocker carrying another prefix is never put down to this project. A project
+stating none may hold any blocker whose prefix no answer carries, so the line
+lists it among the projects not read.
 
 **`poll = false`** stops polling this project and relies on something
 [telling `bdi` when it changed](#telling-bdi-a-project-changed). Nothing then

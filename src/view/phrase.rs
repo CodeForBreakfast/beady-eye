@@ -433,6 +433,7 @@ pub fn unreachable(why: &Unreachable) -> String {
         Unreachable::NotRead { projects } => {
             format!("not found · projects not read: {}", projects.join(", "))
         }
+        Unreachable::HeldByUnread { project } => format!("in {project}, which was not read"),
         Unreachable::Unconfigured => "not in any configured project".to_string(),
     }
 }
@@ -1089,7 +1090,10 @@ mod tests {
                 Unreachable::HeldBySeveral { .. } => Some(Unreachable::NotRead {
                     projects: projects(),
                 }),
-                Unreachable::NotRead { .. } => Some(Unreachable::Unconfigured),
+                Unreachable::NotRead { .. } => Some(Unreachable::HeldByUnread {
+                    project: "ferry".to_string(),
+                }),
+                Unreachable::HeldByUnread { .. } => Some(Unreachable::Unconfigured),
                 Unreachable::Unconfigured => None,
             },
         )
@@ -1961,6 +1965,9 @@ mod tests {
                 for project in projects {
                     assert!(said.contains(project.as_str()), "{said:?}");
                 }
+            }
+            if let Unreachable::HeldByUnread { project } = &why {
+                assert!(said.contains(project.as_str()), "{said:?}");
             }
         }
     }

@@ -274,11 +274,11 @@ impl Collection {
         now: DateTime<Utc>,
     ) -> Snapshot {
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
-        let not_read: Vec<&str> = cfg
+        let not_read: Vec<(&str, Option<&str>)> = cfg
             .projects
             .iter()
-            .map(|project| project.name.as_str())
-            .filter(|project| !answered.iter().any(|(answering, _)| answering == project))
+            .map(|project| (project.name.as_str(), project.prefix.as_deref()))
+            .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
             .collect();
         let drawn = reaching_across(&answered, &not_read);
 
@@ -481,10 +481,11 @@ type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
 /// bead waiting on work that answer does not hold is one each tree already
 /// names as an orphaned dependency. So only a tree naming one is assembled again, across
 /// every answer, and a run with none reads nothing twice. `not_read` is the
-/// configured projects that gave no answer, whichever bead they might hold.
+/// configured projects that gave no answer, each with the prefix its config
+/// states.
 fn reaching_across<'a>(
     answered: &[(&'a str, &'a ProjectWork)],
-    not_read: &[&'a str],
+    not_read: &[(&'a str, Option<&'a str>)],
 ) -> Vec<Drawn<'a>> {
     let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
         read.as_ref()

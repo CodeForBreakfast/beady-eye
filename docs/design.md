@@ -951,12 +951,15 @@ that project's trees.
 tracker's beads carry its prefix, the id up to its first `-` as bd reads one,
 so the prefix says whose the bead would be. The line names the projects whose
 answers carry the prefix and hold no bead by that id, or the projects that
-each hold one. Where no answer carries the prefix, it names the configured
+each hold one. Where no answer carries the prefix, it falls to the configured
 projects that gave no answer, whether refused, unreachable or left out of the
 run, because nothing can learn the prefix of a tracker that did not answer.
-Where every configured project answered, the bead is in a project `bdi` is
-not configured to read. A parent no answer holds gets no such line, because
-it would have been drawn above the bead rather than beneath it. The tree's
+Only a project's config can state it. Where one of them states the prefix,
+the line says the bead is in that project, which was not read. Otherwise it
+names the ones that may hold it: those stating the prefix, or failing any,
+those stating none. Where no configured project may hold it, the bead is in a
+project `bdi` is not configured to read. A parent no answer holds gets no such
+line, because it would have been drawn above the bead rather than beneath it. The tree's
 note still counts every bead waiting on something missing, because a fold
 can hide the line.
 
@@ -2045,8 +2048,10 @@ refusing conflict as `refused`, and one it did not omits the field.
 `orphaned_dependencies` is every blocker the bead waits on that no tracker
 holds, `[]` where there is none, each an `id` and a `reason`: `not-held` with
 the `projects` whose beads carry its prefix, `held-by-several` with the
-`projects` that each hold a bead by it, `not-read` with the configured
-`projects` that gave no answer, or `unconfigured` with none. `agents`
+`projects` that each hold a bead by it, `held-by-unread` with the one
+configured `project` that gave no answer and whose config states its prefix,
+`not-read` with the configured `projects` that gave no answer and may hold it,
+or `unconfigured` with none. `agents`
 says which agent provider was asked and how that went, so a consumer knows
 which tier it is reading and which program answered for it: `state` is
 `answering`, `not-answering` where the provider is there and did not — which

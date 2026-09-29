@@ -1251,6 +1251,36 @@ fn a_bead_waiting_on_one_in_a_project_the_run_left_out_names_that_project_at_the
     );
 }
 
+/// Dunwich's config states the prefix `dun-2e7` carries, so the bead is
+/// dunwich's although the run read neither dunwich nor innsmouth.
+#[test]
+fn a_bead_waiting_on_one_whose_prefix_an_unread_project_states_names_that_project_alone() {
+    let cfg = Config::from_toml(
+        r#"
+[[projects]]
+name = "arkham"
+path = "/srv/work/arkham"
+
+[[projects]]
+name = "dunwich"
+path = "/srv/work/dunwich"
+prefix = "dun"
+
+[[projects]]
+name = "innsmouth"
+path = "/srv/work/innsmouth"
+"#,
+    )
+    .expect("the config parses")
+    .scoped_to(&["arkham".to_string()])
+    .expect("arkham is configured");
+
+    assert_eq!(
+        orphaned_under_the_beacon(&cfg, &arkham_waiting_on_dunwich()),
+        json!([{"id": "dun-2e7", "reason": "held-by-unread", "project": "dunwich"}])
+    );
+}
+
 /// Arkham is the only project configured, and it answered, so the bead is
 /// in a project `bdi` was never told about.
 #[test]

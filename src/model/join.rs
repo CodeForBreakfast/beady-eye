@@ -454,6 +454,7 @@ mod tests {
             path: path.into(),
             environment_command: None,
             credential_command: None,
+            prefix: None,
             poll: true,
             badges: Vec::new(),
             worktrees: Vec::new(),

@@ -1144,6 +1144,7 @@ detached
             path: PathBuf::from("/srv/work/dunwich"),
             environment_command: None,
             credential_command: None,
+            prefix: None,
             poll,
             badges: Vec::new(),
             worktrees: Vec::new(),
