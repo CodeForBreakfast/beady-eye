@@ -114,6 +114,12 @@ pub struct Project {
     /// to `ps`, so it stays rather than folding into one.
     #[serde(default)]
     pub credential_command: Option<String>,
+    /// The prefix this project's tracker gives its beads, as `bd init
+    /// --prefix` takes it. It says which project holds a bead id before that
+    /// project's tracker has answered, where nothing can learn the prefix
+    /// from its beads.
+    #[serde(default)]
+    pub prefix: Option<String>,
     /// Whether this project asks for itself every interval, or leaves saying
     /// its work has moved to whatever reports for it on the inbound channel.
     ///
@@ -1079,6 +1085,7 @@ credential_command = "secret-tool lookup tracker arkham"
 name = "kadath"
 path = "/home/user/dev/kadath"
 credential_command = "cat /home/user/dev/kadath/.beads-password"
+prefix = "kad"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
@@ -1165,6 +1172,7 @@ path = "/home/user/dev/cinder"
                     path: PathBuf::from("/home/user/arkham"),
                     environment_command: None,
                     credential_command: Some("secret-tool lookup tracker arkham".to_string()),
+                    prefix: None,
                     poll: true,
                     badges: Vec::new(),
                     worktrees: Vec::new(),
@@ -1176,6 +1184,7 @@ path = "/home/user/dev/cinder"
                     credential_command: Some(
                         "cat /home/user/dev/kadath/.beads-password".to_string()
                     ),
+                    prefix: Some("kad".to_string()),
                     poll: true,
                     badges: vec![Badge {
                         key: "metadata.delivery_pr".to_string(),
@@ -1458,6 +1467,7 @@ title = ["title", "badge.metadata.jira", "badges"]
             path: PathBuf::from("/home/user").join(name),
             environment_command: None,
             credential_command: None,
+            prefix: None,
             poll: true,
             badges,
             worktrees: Vec::new(),
@@ -1729,6 +1739,15 @@ path = "/home/user/dev/kadath"
         let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
 
         assert_eq!(cfg.projects[0].environment_command, None);
+    }
+
+    /// A config written before a project could state its prefix still
+    /// parses, and says nothing about whose a bead is.
+    #[test]
+    fn a_project_saying_nothing_about_its_prefix_states_none() {
+        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
+
+        assert_eq!(cfg.projects[0].prefix, None);
     }
 
     const ONE_ENTERED_WITH_DIRENV: &str = r#"

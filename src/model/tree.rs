@@ -117,7 +117,7 @@ pub struct OrphanedDependency {
 /// A dependency names an id and no project, and a tracker's beads carry its
 /// prefix — the id up to its first `-`, as bd reads one — so the prefix is
 /// what says whose the bead would be. A tracker that gave no answer carries
-/// a prefix nothing here can learn.
+/// a prefix nothing here can learn, so only its config can state it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Unreachable {
@@ -128,10 +128,14 @@ pub enum Unreachable {
     /// picks between them.
     HeldBySeveral { projects: Vec<String> },
     /// No tracker that answered carries the id's prefix, and these
-    /// configured projects gave no answer.
+    /// configured projects gave no answer and may hold it: the several whose
+    /// config states the prefix, or else every one stating none.
     NotRead { projects: Vec<String> },
-    /// No tracker that answered carries the id's prefix, and every
-    /// configured project answered.
+    /// No tracker that answered carries the id's prefix, and this configured
+    /// project, which gave no answer, is the one whose config states it.
+    HeldByUnread { project: String },
+    /// No tracker that answered carries the id's prefix, and no configured
+    /// project that gave no answer may hold it.
     Unconfigured,
 }
 
@@ -533,16 +537,17 @@ pub struct Across<'a> {
     holding: BTreeMap<&'a str, Vec<usize>>,
     /// Which of `answers` hold a bead carrying each prefix.
     carrying: BTreeMap<&'a str, BTreeSet<usize>>,
-    /// The configured projects that gave no answer.
-    not_read: Vec<String>,
+    /// The configured projects that gave no answer, each with the prefix its
+    /// config states, where it states one.
+    not_read: Vec<(&'a str, Option<&'a str>)>,
 }
 
 impl<'a> Across<'a> {
     /// Every project's answer, by its project, and the configured projects
-    /// that gave none.
+    /// that gave none, each with the prefix its config states.
     pub fn of(
         answers: impl IntoIterator<Item = (&'a str, Nesting<'a>)>,
-        not_read: impl IntoIterator<Item = &'a str>,
+        not_read: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
     ) -> Self {
         let (projects, answers): (Vec<&str>, Vec<Nesting>) = answers.into_iter().unzip();
         let mut holding: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -558,7 +563,7 @@ impl<'a> Across<'a> {
             answers,
             holding,
             carrying,
-            not_read: not_read.into_iter().map(str::to_string).collect(),
+            not_read: not_read.into_iter().collect(),
         }
     }
 
@@ -656,7 +661,7 @@ impl<'a> Across<'a> {
             .map(|id| {
                 let why = self.unreachable(id);
                 let may_block = match why {
-                    Unreachable::NotRead { .. } => true,
+                    Unreachable::NotRead { .. } | Unreachable::HeldByUnread { .. } => true,
                     Unreachable::HeldBySeveral { .. } => self.holding[id]
                         .iter()
                         .any(|&holder| !self.answers[holder].by_id[id].status.is_finished()),
@@ -683,14 +688,34 @@ impl<'a> Across<'a> {
                 projects: named(&mut holders.iter().copied()),
             };
         }
-        match self.carrying.get(prefix_of(id)) {
-            Some(carriers) => Unreachable::NotHeld {
+        if let Some(carriers) = self.carrying.get(prefix_of(id)) {
+            return Unreachable::NotHeld {
                 projects: named(&mut carriers.iter().copied()),
-            },
-            None if self.not_read.is_empty() => Unreachable::Unconfigured,
-            None => Unreachable::NotRead {
-                projects: self.not_read.clone(),
-            },
+            };
+        }
+        let not_read_stating = |wanted: &dyn Fn(Option<&str>) -> bool| -> Vec<String> {
+            self.not_read
+                .iter()
+                .filter(|(_, stated)| wanted(*stated))
+                .map(|(project, _)| project.to_string())
+                .collect()
+        };
+        let is_the_ids =
+            |stated: &str| prefix_of(id).strip_suffix('-') == Some(stated.trim_end_matches('-'));
+        let stating = not_read_stating(&|stated| stated.is_some_and(is_the_ids));
+        let may_hold = match stating.as_slice() {
+            [project] => {
+                return Unreachable::HeldByUnread {
+                    project: project.clone(),
+                };
+            }
+            [] => not_read_stating(&|stated| stated.is_none()),
+            _ => stating,
+        };
+        if may_hold.is_empty() {
+            Unreachable::Unconfigured
+        } else {
+            Unreachable::NotRead { projects: may_hold }
         }
     }
 }
@@ -1482,8 +1507,12 @@ mod tests {
         across_without(answers, &[])
     }
 
-    /// The same, with configured projects whose trackers gave no answer.
-    fn across_without<'a>(answers: &'a [(&'a str, Vec<Bead>)], not_read: &[&'a str]) -> Across<'a> {
+    /// The same, with configured projects whose trackers gave no answer, each
+    /// with the prefix its config states, where it states one.
+    fn across_without<'a>(
+        answers: &'a [(&'a str, Vec<Bead>)],
+        not_read: &[(&'a str, Option<&'a str>)],
+    ) -> Across<'a> {
         Across::of(
             answers
                 .iter()
@@ -1501,7 +1530,9 @@ mod tests {
     fn orphaned(id: &str, why: Unreachable) -> OrphanedDependency {
         let may_block = matches!(
             why,
-            Unreachable::NotRead { .. } | Unreachable::HeldBySeveral { .. }
+            Unreachable::NotRead { .. }
+                | Unreachable::HeldByUnread { .. }
+                | Unreachable::HeldBySeveral { .. }
         );
         OrphanedDependency {
             id: id.to_string(),
@@ -1618,7 +1649,7 @@ mod tests {
             "arkham",
             &[bead("ark-1", "open", &[dep("fer-2", "blocks")])],
         )];
-        let a = across_without(&answers, &["ferry"])
+        let a = across_without(&answers, &[("ferry", None)])
             .assemble("arkham", "ark-1")
             .expect("the rows assemble");
 
@@ -1628,6 +1659,150 @@ mod tests {
                 "fer-2",
                 Unreachable::NotRead {
                     projects: projects(&["ferry"])
+                }
+            )]
+        );
+    }
+
+    /// A project's config can say what its beads carry before its tracker
+    /// has answered, so the one project stating the prefix is the one that
+    /// holds the blocker.
+    #[test]
+    fn a_blocker_whose_prefix_an_unread_project_states_is_held_by_that_project() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("fer-2", "blocks")])],
+        )];
+        let a = across_without(&answers, &[("dunwich", None), ("ferry", Some("fer"))])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "fer-2",
+                Unreachable::HeldByUnread {
+                    project: "ferry".to_string()
+                }
+            )]
+        );
+    }
+
+    /// bd trims the dashes off a prefix it is given, so a config stating one
+    /// the way an id spells it means the same prefix.
+    #[test]
+    fn a_stated_prefix_ending_in_a_dash_is_the_prefix_without_it() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("fer-2", "blocks")])],
+        )];
+        let a = across_without(&answers, &[("ferry", Some("fer-"))])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "fer-2",
+                Unreachable::HeldByUnread {
+                    project: "ferry".to_string()
+                }
+            )]
+        );
+    }
+
+    /// Prefixes are uncoordinated, so two configs may state the same one,
+    /// and then nothing picks between the two.
+    #[test]
+    fn a_blocker_whose_prefix_two_unread_projects_state_names_both() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("fer-2", "blocks")])],
+        )];
+        let a = across_without(
+            &answers,
+            &[
+                ("dunwich", None),
+                ("ferry", Some("fer")),
+                ("innsmouth", Some("fer")),
+            ],
+        )
+        .assemble("arkham", "ark-1")
+        .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "fer-2",
+                Unreachable::NotRead {
+                    projects: projects(&["ferry", "innsmouth"])
+                }
+            )]
+        );
+    }
+
+    /// A project whose config states another prefix does not hold the
+    /// blocker, so only the unread projects stating none may.
+    #[test]
+    fn an_unread_project_stating_another_prefix_is_not_named() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("inn-4", "blocks")])],
+        )];
+        let a = across_without(&answers, &[("dunwich", None), ("ferry", Some("fer"))])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "inn-4",
+                Unreachable::NotRead {
+                    projects: projects(&["dunwich"])
+                }
+            )]
+        );
+    }
+
+    /// Where every unread project states a prefix and none is the blocker's,
+    /// no configured project can hold it.
+    #[test]
+    fn a_blocker_whose_prefix_no_project_carries_or_states_is_unconfigured() {
+        let answers = [answer(
+            "arkham",
+            &[bead("ark-1", "open", &[dep("inn-4", "blocks")])],
+        )];
+        let a = across_without(&answers, &[("ferry", Some("fer"))])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned("inn-4", Unreachable::Unconfigured)]
+        );
+    }
+
+    /// A prefix an answer carries says whose the blocker is before any
+    /// config does.
+    #[test]
+    fn a_prefix_an_answer_carries_outranks_one_an_unread_project_states() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("dun-9", "blocks")])],
+            ),
+            answer("dunwich", &[bead("dun-7", "open", &[])]),
+        ];
+        let a = across_without(&answers, &[("ferry", Some("dun"))])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "dun-9",
+                Unreachable::NotHeld {
+                    projects: projects(&["dunwich"])
                 }
             )]
         );
