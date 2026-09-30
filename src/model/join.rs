@@ -338,16 +338,13 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
         let Some(project) = pane_project[&pane.key()] else {
             continue;
         };
-        // A pane in a project this run left out is on that project's work,
-        // whose tracker was never read: an id it names says nothing about
-        // a read project's bead of the same id.
-        if !cfg.reads(project) {
-            continue;
-        }
         // Most `display_agent` values are free text rather than a bead id.
         let Some(holders) = projects_holding.get(id.as_str()) else {
             continue;
         };
+        // A pane in a project this run left out is on that project's work,
+        // which no tree drew: an id it names that no drawn bead of its own
+        // project carries says nothing about another project's bead.
         if holders.contains(project) {
             named_by
                 .entry(BeadKey {
@@ -356,7 +353,7 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
                 })
                 .or_default()
                 .insert(pane.key());
-        } else {
+        } else if cfg.reads(project) {
             for holder in holders {
                 conflicts.push(Conflict::PaneInAnotherProject {
                     bead: BeadKey {

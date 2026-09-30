@@ -329,8 +329,8 @@ impl Collection {
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Result<Snapshot, BTreeSet<String>> {
-        let rooted = &cfg.scope;
-        let cfg = &self.widened(cfg);
+        let rooted = cfg;
+        let cfg = &self.widened(rooted);
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
         let not_read: Vec<(&str, Option<&str>)> = cfg
             .projects
@@ -338,7 +338,7 @@ impl Collection {
             .map(|project| (project.name.as_str(), project.prefix.as_deref()))
             .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
             .collect();
-        let drawn = reaching_across(&answered, &not_read, rooted);
+        let drawn = reaching_across(&answered, &not_read, &rooted.scope);
         let needed = held_by_unread(&drawn, &cfg.scope);
         if !needed.is_empty() {
             return Err(needed);
@@ -347,7 +347,9 @@ impl Collection {
         // One resolve over every project's rows at once. A pane names its bead
         // by id alone, and only the whole set tells a match from a prefix
         // collision. A tree that reached into another project holds beads of
-        // both, and each is that project's row.
+        // both, and each is that project's row. It joins against the projects
+        // that root trees, so a pane in one read only for what they reach is
+        // joined as a pane in a project left out would be.
         let reached: Vec<(&str, Vec<Bead>)> = drawn
             .iter()
             .filter_map(|(project, _, read)| match read {
@@ -377,7 +379,7 @@ impl Collection {
                 panes,
                 out_of_reach,
             },
-            cfg,
+            rooted,
         );
 
         let said: BTreeMap<&str, Said> = answered

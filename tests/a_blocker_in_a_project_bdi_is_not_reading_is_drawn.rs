@@ -211,6 +211,47 @@ fn a_pane_in_a_project_read_for_a_blocker_shows_only_through_a_bead_the_reach_dr
     assert_eq!(unattributed, ["wT:p3"]);
 }
 
+/// Dunwich's beads, and one more of its own that carries the id of ferry's
+/// other tree, as uncoordinated prefixes allow.
+const DUNWICH_SHARING_AN_ID_WITH_FERRY: &str = r#"[
+  {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+   "priority":1,"issue_type":"epic"},
+  {"id":"fer-4","title":"dredge the channel","status":"open","priority":2,
+   "issue_type":"task"}
+]"#;
+
+/// A seat in dunwich naming a bead nothing reaches is on dunwich's work, so
+/// ferry's bead of the same id is no bead of the seat's.
+#[test]
+fn a_pane_in_a_project_read_for_a_blocker_is_not_joined_across_to_a_drawn_bead_of_its_id() {
+    let home = a_home_where_dunwich("colliding-on-demand", "prefix = \"dun\"");
+    let herdr = ShimmedHerdr::beside(&home);
+    herdr.lists(&format!(
+        r#"{{"result":{{"agents":[
+            {{"pane_id":"wT:p2","cwd":"{}","agent_status":"working",
+             "display_agent":"fer-4"}}
+        ]}}}}"#,
+        home.join("dunwich").display()
+    ));
+    let mut environment = the_trackers_in_holding(
+        &home,
+        FERRY_WITH_ANOTHER_TREE,
+        DUNWICH_SHARING_AN_ID_WITH_FERRY,
+    )
+    .environment();
+    environment.extend(herdr.environment());
+
+    let snapshot = json_from(&home, &environment, &["--all"]);
+
+    assert_eq!(roots_of(&snapshot), ["fer-2", "fer-4"]);
+    assert_eq!(
+        in_ferrys_tree(&snapshot, "dun-7").expect("the blocker is drawn")["project"],
+        "dunwich"
+    );
+    assert_eq!(snapshot["conflicts"], serde_json::json!([]));
+    assert_eq!(snapshot["unattributed"], serde_json::json!([]));
+}
+
 /// The dunwich bead ferry's waits on, under a parent of its own and holding a
 /// child that waits on kadath's, and a tree of dunwich's own.
 const DUNWICH_TO_KADATH: &str = r#"[
