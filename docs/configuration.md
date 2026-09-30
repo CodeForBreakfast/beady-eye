@@ -134,7 +134,8 @@ learns a prefix from the beads a tracker answers with, so this only matters
 for a project it has not read. With it, a blocker carrying the prefix is known
 to be this project's bead. Where the directory `bdi` was started in chose what
 to read, `bdi` then reads this project, draws the blocker as the bead it is,
-and goes on reading the project from then on. Under `--project` it says the
+and goes on reading the project from then on. It draws the blocker's children
+and blockers with it, and none of the project's own trees. Under `--project` it says the
 blocker is this project's bead, which was not read. A blocker carrying another
 prefix is never put down to this project. A project
 stating none may hold any blocker whose prefix no answer carries, so the line

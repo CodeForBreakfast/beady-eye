@@ -456,6 +456,11 @@ directory chose the scope and a project it left out states the blocker's
 prefix, the run widens to read that project, as a root on the command line
 widens it, and goes on reading it from then on: the reader typed nothing the
 widening overrides, and the project's line on the screen shows it was added.
+A project read this way draws none of its own trees. It adds only what a
+drawn tree reaches in it, which runs from a bead to its children and to the
+beads blocking it, and never up to a parent or out to what a blocker blocks.
+A pane in it shows only against a bead so reached, and is otherwise treated
+like a pane under an excluded project.
 Nothing else is read to find a bead, so a project nothing drawn needs stays
 unread. Against a scope the reader typed, a bead only an excluded project
 holds stays work the answer does not hold, because reading that tracker is
