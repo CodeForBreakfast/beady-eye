@@ -184,7 +184,7 @@ impl Collection {
         // only chance the agent join gets.
         let (panes, provider, out_of_reach) = self.every_pane(agents);
 
-        let mut reading = self.widened(cfg);
+        let reading = self.widened(cfg);
         self.read(
             &reading,
             trackers,
@@ -193,11 +193,11 @@ impl Collection {
             now,
         );
         loop {
-            match self.draw(&reading, &panes, &out_of_reach, &provider, filter, now) {
+            match self.draw(cfg, &panes, &out_of_reach, &provider, filter, now) {
                 Ok(snapshot) => return snapshot,
                 Err(needed) => {
                     self.read_on_demand.extend(needed.iter().cloned());
-                    reading = self.widened(cfg);
+                    let reading = self.widened(cfg);
                     self.read(
                         &reading,
                         trackers,
@@ -317,6 +317,9 @@ impl Collection {
     /// Everything standing, in config order, however much of it this
     /// collection just read. Where a project `cfg`'s scope would take in holds
     /// a drawn bead's blocker, it hands back those projects instead.
+    ///
+    /// Only a project `cfg` reads contributes trees of its own. One read on
+    /// demand draws only what those trees reach in it.
     fn draw(
         &self,
         cfg: &Config,
@@ -326,6 +329,8 @@ impl Collection {
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Result<Snapshot, BTreeSet<String>> {
+        let rooted = &cfg.scope;
+        let cfg = &self.widened(cfg);
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
         let not_read: Vec<(&str, Option<&str>)> = cfg
             .projects
@@ -333,7 +338,7 @@ impl Collection {
             .map(|project| (project.name.as_str(), project.prefix.as_deref()))
             .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
             .collect();
-        let drawn = reaching_across(&answered, &not_read);
+        let drawn = reaching_across(&answered, &not_read, rooted);
         let needed = held_by_unread(&drawn, &cfg.scope);
         if !needed.is_empty() {
             return Err(needed);
@@ -531,8 +536,8 @@ impl Collection {
 /// tree, or why there is none.
 type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
 
-/// Every root's tree, reaching into another project's answer where a bead in
-/// it waits on a bead that project holds.
+/// Every root's tree in a project `rooted` reads, reaching into another
+/// project's answer where a bead in it waits on a bead that project holds.
 ///
 /// A project's read assembled its trees from its own answer alone, and a
 /// bead waiting on work that answer does not hold is one each tree already
@@ -543,13 +548,18 @@ type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
 fn reaching_across<'a>(
     answered: &[(&'a str, &'a ProjectWork)],
     not_read: &[(&'a str, Option<&'a str>)],
+    rooted: &Scope,
 ) -> Vec<Drawn<'a>> {
+    let roots = || {
+        answered
+            .iter()
+            .filter(|(project, _)| rooted.reads(project))
+    };
     let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
         read.as_ref()
             .is_ok_and(|assembled| !assembled.orphaned_dependencies.is_empty())
     };
-    let across = answered
-        .iter()
+    let across = roots()
         .any(|(_, work)| work.roots.iter().any(|(_, read)| waits_elsewhere(read)))
         .then(|| {
             Across::of(
@@ -560,8 +570,7 @@ fn reaching_across<'a>(
             )
         });
 
-    answered
-        .iter()
+    roots()
         .flat_map(|&(project, work)| {
             let across = across.as_ref();
             work.roots.iter().map(move |(root, read)| {
