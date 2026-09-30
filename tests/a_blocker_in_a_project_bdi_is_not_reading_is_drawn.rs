@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use terminal::driver::{Driven, GIVING_UP};
-use terminal::shims::ShimmedTracker;
+use terminal::shims::{ShimmedHerdr, ShimmedTracker};
 
 /// Ferry's one bead, waiting on a bead of dunwich's.
 const FERRY: &str = r#"[
@@ -84,18 +84,18 @@ fn the_trackers_in_holding(home: &Path, ferry: &str, dunwich: &str) -> ShimmedTr
 
 /// The snapshot `bdi fer-2 --json` prints, started in ferry's directory.
 fn ferry_named_from(home: &Path) -> Value {
-    json_from(home, &the_trackers_in(home), &["fer-2"])
+    json_from(home, &the_trackers_in(home).environment(), &["fer-2"])
 }
 
 /// The snapshot `bdi --json` prints given `arguments`, started in ferry's
-/// directory and reading `trackers`.
-fn json_from(home: &Path, trackers: &ShimmedTracker, arguments: &[&str]) -> Value {
+/// directory with `environment`.
+fn json_from(home: &Path, environment: &[(String, String)], arguments: &[&str]) -> Value {
     let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
         .arg("--config")
         .arg(the_config_in(home))
         .args(arguments)
         .arg("--json")
-        .envs(trackers.environment())
+        .envs(environment.iter().cloned())
         .current_dir(home)
         .output()
         .expect("bdi runs");
@@ -165,13 +165,50 @@ fn roots_of(snapshot: &Value) -> Vec<&str> {
 fn a_project_read_for_a_blocker_draws_none_of_its_own_trees() {
     let home = a_home_where_dunwich("no-roots-on-demand", "prefix = \"dun\"");
 
-    let snapshot = json_from(&home, &the_trackers_in(&home), &[]);
+    let snapshot = json_from(&home, &the_trackers_in(&home).environment(), &[]);
 
     assert_eq!(roots_of(&snapshot), ["fer-2"]);
     assert_eq!(
         in_ferrys_tree(&snapshot, "dun-7").expect("the blocker is drawn")["project"],
         "dunwich"
     );
+}
+
+/// A seat in dunwich shows through a bead a drawn tree reaches, and one on a
+/// bead nothing reaches is no more reported than it would be had dunwich not
+/// been read. A seat in ferry on no bead is the control: it says the panes
+/// were listed and a loose one is reported.
+#[test]
+fn a_pane_in_a_project_read_for_a_blocker_shows_only_through_a_bead_the_reach_drew() {
+    let home = a_home_where_dunwich("panes-on-demand", "prefix = \"dun\"");
+    let dunwich = home.join("dunwich").display().to_string();
+    let herdr = ShimmedHerdr::beside(&home);
+    herdr.lists(&format!(
+        r#"{{"result":{{"agents":[
+            {{"pane_id":"wT:p1","cwd":"{dunwich}","agent_status":"working",
+             "display_agent":"dun-7"}},
+            {{"pane_id":"wT:p2","cwd":"{dunwich}","agent_status":"working",
+             "display_agent":"dun-3"}},
+            {{"pane_id":"wT:p3","cwd":"{}","agent_status":"working"}}
+        ]}}}}"#,
+        home.display()
+    ));
+    let mut environment = the_trackers_in(&home).environment();
+    environment.extend(herdr.environment());
+
+    let snapshot = json_from(&home, &environment, &[]);
+
+    assert_eq!(
+        in_ferrys_tree(&snapshot, "dun-7").expect("the blocker is drawn")["agent"]["pane"]["id"],
+        "wT:p1"
+    );
+    let unattributed: Vec<&Value> = snapshot["unattributed"]
+        .as_array()
+        .expect("unattributed is an array")
+        .iter()
+        .map(|loose| &loose["pane"]["id"])
+        .collect();
+    assert_eq!(unattributed, ["wT:p3"]);
 }
 
 /// The dunwich bead ferry's waits on, under a parent of its own and holding a
@@ -221,7 +258,7 @@ fn a_chain_of_blockers_across_projects_is_followed_through_blockers_and_children
     let trackers = the_trackers_in_holding(&home, FERRY, DUNWICH_TO_KADATH);
     trackers.holds_for("kadath", KADATH);
 
-    let snapshot = json_from(&home, &trackers, &[]);
+    let snapshot = json_from(&home, &trackers.environment(), &[]);
 
     assert_eq!(roots_of(&snapshot), ["fer-2"]);
     let mut drawn: Vec<&str> = snapshot["trees"][0]["nodes"]

@@ -454,6 +454,10 @@ pub struct Collected {
     pub failed_projects: Vec<FailedProject>,
     pub read_at: BTreeMap<String, DateTime<Utc>>,
     pub speaks_until: BTreeMap<String, DateTime<Utc>>,
+    /// The projects read only for what the trees reach in them. None roots a
+    /// tree, so a pane in one that no drawn bead holds is on work nothing
+    /// here drew.
+    pub read_for_reach: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

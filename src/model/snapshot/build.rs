@@ -225,6 +225,7 @@ pub fn build(
         failed_projects,
         read_at,
         speaks_until,
+        read_for_reach,
     } = collected;
     in_flight_first(&mut trees);
     let trees: Vec<Arc<Tree>> = trees.into_iter().map(Arc::new).collect();
@@ -248,7 +249,8 @@ pub fn build(
         match join::project_of(pane, &cfg.projects) {
             // A pane in a project this run left out is on another desktop's
             // work: neither drawn nor reported.
-            Some(project) if !cfg.reads(&project.name) => {}
+            Some(project)
+                if !cfg.reads(&project.name) || read_for_reach.contains(&project.name) => {}
             Some(project) => unattributed.push(LoosePane {
                 claim_refused: refused.contains(&pane.key()),
                 pane: pane.key(),
@@ -1143,6 +1145,7 @@ render = "⇢ {repo} #{number}"
                 failed_projects: Vec::new(),
                 read_at: std::collections::BTreeMap::new(),
                 speaks_until: std::collections::BTreeMap::new(),
+                read_for_reach: std::collections::BTreeSet::new(),
             },
             &panes,
             &joined,

@@ -422,12 +422,19 @@ impl Collection {
             .filter_map(|(project, work)| Some((project.to_string(), work.speaks_until?)))
             .collect();
 
+        let read_for_reach = cfg
+            .read()
+            .filter(|project| !rooted.reads(&project.name))
+            .map(|project| project.name.clone())
+            .collect();
+
         Ok(snapshot::build(
             Collected {
                 trees,
                 failed_projects,
                 read_at,
                 speaks_until,
+                read_for_reach,
             },
             panes,
             joined,
@@ -550,11 +557,7 @@ fn reaching_across<'a>(
     not_read: &[(&'a str, Option<&'a str>)],
     rooted: &Scope,
 ) -> Vec<Drawn<'a>> {
-    let roots = || {
-        answered
-            .iter()
-            .filter(|(project, _)| rooted.reads(project))
-    };
+    let roots = || answered.iter().filter(|(project, _)| rooted.reads(project));
     let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
         read.as_ref()
             .is_ok_and(|assembled| !assembled.orphaned_dependencies.is_empty())
