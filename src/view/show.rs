@@ -2572,6 +2572,31 @@ mod tests {
         );
     }
 
+    /// `bdi-pxmz`: the name is what the reader opened the window on, so no
+    /// number of labels pushes it off the end of its row.
+    #[test]
+    fn the_labels_never_cost_the_head_its_name() {
+        let labelled = Node {
+            labels: vec![
+                "needs-design".to_string(),
+                "needs-review".to_string(),
+                "blocked-on-human".to_string(),
+            ],
+            ..a_bead()
+        };
+
+        for width in [44, 60, 90] {
+            let drawn = drawn_with(&labelled, None, &mut Show::default(), width, 24);
+
+            assert!(
+                head_of(&drawn)
+                    .iter()
+                    .any(|row| row.contains("re-point the dish")),
+                "{width} columns lost the name: {drawn:#?}"
+            );
+        }
+    }
+
     /// A badge that opens somewhere from the forest row opens there from the
     /// window too: a reader who opened the bead to read it in full should not
     /// have to close it again to follow what it points at.
