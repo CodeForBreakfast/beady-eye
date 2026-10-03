@@ -1604,29 +1604,6 @@ fn stepped_to(
     })
 }
 
-/// The line `scope` names, and everything drawn beneath it, read off lines
-/// a test has drawn whole.
-///
-/// Beneath is depth: the lines after it, up to the first one standing at its
-/// own depth or shallower. A project is depth zero, the roots under it are
-/// one, and a group's things are one under a group that is also zero, so the
-/// scope of a project stops at the next project or the first group.
-#[cfg(test)]
-fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
-    let Some(at) = drawn
-        .iter()
-        .position(|line| handle_of(line).as_ref() == Some(scope))
-    else {
-        return &[];
-    };
-    let depth = drawn[at].depth;
-    let end = drawn[at + 1..]
-        .iter()
-        .position(|line| line.depth <= depth)
-        .map_or(drawn.len(), |past| at + 1 + past);
-    &drawn[at..end]
-}
-
 /// Whether a line stands over what is beneath it only for now: a run of
 /// quiet children, which goes when its siblings drop below three, or a
 /// group of trees the filter or the mode holds back, which goes when the

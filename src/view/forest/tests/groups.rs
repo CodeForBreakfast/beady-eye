@@ -236,6 +236,28 @@ fn hidden_trees_group(forest: &Forest, project: &str) -> Group {
         .unwrap_or_else(|| panic!("the filter hid a tree of {project}"))
 }
 
+/// The line `scope` names, and everything drawn beneath it, read off lines
+/// a test has drawn whole.
+///
+/// Beneath is depth: the lines after it, up to the first one standing at its
+/// own depth or shallower. A project is depth zero, the roots under it are
+/// one, and a group's things are one under a group that is also zero, so the
+/// scope of a project stops at the next project or the first group.
+fn subtree_of<'a>(drawn: &'a [Line], scope: &Handle) -> &'a [Line] {
+    let Some(at) = drawn
+        .iter()
+        .position(|line| handle_of(line).as_ref() == Some(scope))
+    else {
+        return &[];
+    };
+    let depth = drawn[at].depth;
+    let end = drawn[at + 1..]
+        .iter()
+        .position(|line| line.depth <= depth)
+        .map_or(drawn.len(), |past| at + 1 + past);
+    &drawn[at..end]
+}
+
 /// The selected line and everything drawn beneath it, sketched.
 fn beneath_the_selection(forest: &Forest) -> Vec<String> {
     let scope = forest
