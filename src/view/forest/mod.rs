@@ -1203,7 +1203,7 @@ impl Forest {
         let on_a_bead = self
             .lines
             .get(self.selected)
-            .and_then(|line| line.place.clone());
+            .and_then(Self::place_of_a_bead);
         match on_a_bead {
             Some(place) => Some((place, false)),
             None => Some((self.first_bead_under()?, true)),
@@ -1240,8 +1240,18 @@ impl Forest {
             _ => None,
         };
         shut_over.or_else(|| {
-            (self.selected..self.lines.len()).find_map(|row| self.lines[row].place.clone())
+            (self.selected..self.lines.len())
+                .find_map(|row| Self::place_of_a_bead(&self.lines[row]))
         })
+    }
+
+    /// The place a line is drawn at, where the line is a bead. A root whose
+    /// tracker refused has a place too, but no bead is drawn there for a
+    /// match to be counted at.
+    fn place_of_a_bead(line: &Line) -> Option<Place> {
+        matches!(line.content, Content::Bead(_))
+            .then(|| line.place.clone())
+            .flatten()
     }
 
     /// Put the selection on the `at`th match, counting from zero, and say
@@ -9630,6 +9640,53 @@ credential_command = "secret harbour"
             forest.next_match(false),
             Some(went_to("dunwich", "tow-1.2.1", 6, 8)),
             "stepping back from the shut group came round instead: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// The header of a root whose tracker refused is a line with a place, but
+    /// no bead is drawn there for a match to be counted at. A reader resting
+    /// on it carries on from there like one resting on a project or a group.
+    #[test]
+    fn stepping_from_a_root_whose_tracker_refused_carries_on_below_it() {
+        let mut forest = flatten(built(Filter::All));
+        forest.seek_here("survey");
+        let header = forest
+            .lines()
+            .iter()
+            .position(
+                |line| matches!(&line.content, Content::Unread(unread) if unread.root == "fer-2"),
+            )
+            .expect("the shared snapshot draws a tree whose tracker refused");
+        forest.select_line(header);
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("harbour", "hbr-3.1", 3, 3)),
+            "stepping on from the refused root came round: {:#?}",
+            sketch(&forest)
+        );
+    }
+
+    /// A reader resting above a refused root's header, on its project's line,
+    /// is standing above the first bead *drawn* below, not above the header.
+    #[test]
+    fn stepping_from_above_a_root_whose_tracker_refused_passes_its_header() {
+        let mut forest = flatten(built(Filter::All));
+        forest.seek_here("survey");
+        let project = forest
+            .lines()
+            .iter()
+            .position(
+                |line| matches!(&line.content, Content::Project(line) if line.project == "ferry"),
+            )
+            .expect("the shared snapshot draws the ferry project");
+        forest.select_line(project);
+
+        assert_eq!(
+            forest.next_match(true),
+            Some(went_to("harbour", "hbr-3.1", 3, 3)),
+            "stepping on from above the refused root came round: {:#?}",
             sketch(&forest)
         );
     }
