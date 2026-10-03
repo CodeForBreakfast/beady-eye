@@ -1,3 +1,5 @@
+//! What a search matches, and the folds stepping through its matches opens and shuts.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

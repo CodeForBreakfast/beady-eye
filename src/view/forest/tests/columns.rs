@@ -1,3 +1,5 @@
+//! The column a line's content starts in.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

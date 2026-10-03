@@ -1,3 +1,5 @@
+//! A run of quiet closed siblings drawn as a count, and a finished subtree resting as one line.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

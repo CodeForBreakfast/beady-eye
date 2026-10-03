@@ -1,3 +1,5 @@
+//! The forest's tests, and the fixtures and helpers more than one of them reads.
+
 use super::facts::TreeFacts;
 use super::handle::Fold;
 use super::*;

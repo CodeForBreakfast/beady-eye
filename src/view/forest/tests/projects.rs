@@ -1,3 +1,5 @@
+//! A project's own line, and the loose panes and groups hanging under it.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

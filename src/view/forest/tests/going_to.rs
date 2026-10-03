@@ -1,3 +1,5 @@
+//! Going to a bead the reader has not walked to, and coming back to a place.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

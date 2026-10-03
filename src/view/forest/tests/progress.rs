@@ -1,3 +1,5 @@
+//! What a bead says of its subtree's progress, and what a keystroke walks to say it.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

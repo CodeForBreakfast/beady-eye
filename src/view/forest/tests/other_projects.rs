@@ -1,3 +1,5 @@
+//! Another project's bead, drawn under a bead of this one.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

@@ -1,3 +1,5 @@
+//! What the forest draws open by default, and a fold set by hand outliving a refresh.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

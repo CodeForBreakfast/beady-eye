@@ -1,3 +1,5 @@
+//! Expand all, collapse all, and back to the default.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

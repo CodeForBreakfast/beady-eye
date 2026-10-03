@@ -1,3 +1,5 @@
+//! The part of the forest the band shows, and what moves it.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

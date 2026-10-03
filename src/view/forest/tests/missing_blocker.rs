@@ -1,3 +1,5 @@
+//! A blocker no tracker holds, drawn where it would hang.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

@@ -1,3 +1,5 @@
+//! Selecting a line by naming it rather than stepping to it.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

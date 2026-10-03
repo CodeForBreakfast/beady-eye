@@ -1,3 +1,5 @@
+//! A forest with nothing in it, and the lines it still draws.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

@@ -1,3 +1,5 @@
+//! Moving the selection, and where it lands when a refresh moves the bead under it.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

@@ -1,3 +1,5 @@
+//! Rooting the forest at a bead, named at the start or focused on the way.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

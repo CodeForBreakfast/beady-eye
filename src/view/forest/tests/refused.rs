@@ -1,3 +1,5 @@
+//! A root whose tracker refused, and the selection resting on its line.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

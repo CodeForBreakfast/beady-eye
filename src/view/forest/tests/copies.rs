@@ -1,3 +1,5 @@
+//! A bead drawn more than once, and which of its copies the fold rule opens.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

@@ -1,3 +1,5 @@
+//! What a line shut over its subtree says it hides.
+
 use super::*;
 use pretty_assertions::assert_eq;
 

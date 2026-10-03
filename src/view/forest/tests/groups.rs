@@ -1,3 +1,5 @@
+//! Groups, chiefly the one holding the trees the filter hides, and a selection on them.
+
 use super::*;
 use pretty_assertions::assert_eq;
 
