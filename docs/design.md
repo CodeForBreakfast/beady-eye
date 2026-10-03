@@ -2569,7 +2569,9 @@ sections, under `bd show`'s names and in its order.
 whole width, one row each, and beside them the facts the row has no width to
 carry. In this order:
 
-- the glyph, the id, the labels, and the title
+- the glyph, the id, and the title
+- the labels, on a row of their own, so that however many a bead has they
+  never push its name off the end of the row above
 - the status word, the priority, the type, the owner and the assignee, by name
   as `bd show` prints them
 - `ready`, or `blocked by:` and the blockers, as `bd ready` and `bd list` say
