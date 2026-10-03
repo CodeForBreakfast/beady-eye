@@ -435,19 +435,12 @@ pub fn said(
     followable: &dyn Fn(&Related) -> bool,
 ) -> Page {
     let cells = row::cells(node, None, progress, None);
-    let mut name = vec![
+    let name = vec![
         Span::styled(cells.glyph.to_string(), status_style(&cells.status)),
         Span::raw(" "),
         Span::styled(cells.id.clone(), palette::IDENTITY),
         Span::raw(indent()),
     ];
-    if !node.labels.is_empty() {
-        name.push(Span::styled(
-            node.labels.join(BETWEEN_LABELS),
-            palette::QUIET,
-        ));
-        name.push(Span::raw(indent()));
-    }
     let where_the_title_starts = name.iter().map(Span::width).sum::<usize>();
     let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
     for line in title_of(
@@ -462,6 +455,12 @@ pub fn said(
         };
         row.extend(line);
         rows.push(row);
+    }
+    if !node.labels.is_empty() {
+        rows.push(indented(vec![Span::styled(
+            node.labels.join(BETWEEN_LABELS),
+            palette::QUIET,
+        )]));
     }
     let mut facts = vec![format!("P{}", node.priority), node.issue_type.clone()];
     facts.extend(node.created_by.clone());
@@ -2539,7 +2538,7 @@ mod tests {
     /// badges on one row, and the fraction under them.
     ///
     /// And beside them the facts the row has no width to carry: the labels
-    /// between the id and the title, the owner and the assignee by name, and
+    /// on a row of their own under the name, the owner and the assignee by name, and
     /// the dates on two rows of their own under the facts. This is what
     /// fixes their order, which is the one `design.md` lists.
     #[test]
@@ -2558,7 +2557,8 @@ mod tests {
         assert_eq!(
             head_of(&drawn),
             vec![
-                " ◐ dun-7.1  mast, weather  re-point the dish",
+                " ◐ dun-7.1  re-point the dish",
+                "   mast, weather",
                 "   in_progress · P2 · task · Mira Vance · assignee Rowan Ash",
                 "   created 2026-03-14 · updated 2026-03-16",
                 "   started 2026-03-15",
@@ -2573,7 +2573,8 @@ mod tests {
     }
 
     /// `bdi-pxmz`: the name is what the reader opened the window on, so no
-    /// number of labels pushes it off the end of its row.
+    /// number of labels pushes it off the end of its row. The labels take a
+    /// row of their own under it.
     #[test]
     fn the_labels_never_cost_the_head_its_name() {
         let labelled = Node {
@@ -2588,10 +2589,9 @@ mod tests {
         for width in [44, 60, 90] {
             let drawn = drawn_with(&labelled, None, &mut Show::default(), width, 24);
 
-            assert!(
-                head_of(&drawn)
-                    .iter()
-                    .any(|row| row.contains("re-point the dish")),
+            assert_eq!(
+                head_of(&drawn).first().map(String::as_str),
+                Some(" ◐ dun-7.1  re-point the dish"),
                 "{width} columns lost the name: {drawn:#?}"
             );
         }
