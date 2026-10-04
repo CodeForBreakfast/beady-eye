@@ -4,6 +4,7 @@
 //! has to start it in. `run` below says why that order is the one it is.
 
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -13,7 +14,7 @@ use signal_hook::iterator::Signals;
 
 use crate::app::{armed_unread, Arming, Asked, Outstanding, Reading, Wanted};
 use crate::collect::agents::Agents;
-use crate::collect::changes::Reported;
+use crate::collect::changes::{Heard, Reported};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
 use crate::view::Notice;
@@ -80,12 +81,14 @@ use wire::wire;
 /// what `--json` prints. What the wiring finds has no snapshot to ride on and
 /// is handed to the screen directly, so the foot draws both without knowing
 /// which is which.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     cfg: &Config,
     filter: Filter,
     arms: Arming,
     agents: Arc<dyn Agents>,
     listening_on: Option<PathBuf>,
+    from_the_listener: Receiver<Heard>,
     collect: Collecting,
     reload: Option<Reload>,
 ) -> anyhow::Result<()> {
@@ -119,6 +122,7 @@ pub fn run(
         reported.clone(),
         agents,
         listening_on,
+        from_the_listener,
         collect,
         asked_to_stop,
     );

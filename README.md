@@ -170,8 +170,9 @@ after the project can pick another tracker, so a permission rule on
 `bdi listen` reads every configured project and holds what it read, polling as
 the eye does and taking the same reports on a socket of its own. Run one per
 machine under whatever supervises your processes, such as a systemd user unit or
-a launchd agent. `bdi --json` and `bdi --beads` then answer from what it holds
-and run no `bd` of their own, and read for themselves whenever it is not there. "Running the listener" in
+a launchd agent. The view, `bdi --json` and `bdi --beads` then answer from what
+it holds and run no `bd` of their own, and read for themselves whenever it is
+not there. "Running the listener" in
 [docs/configuration.md](docs/configuration.md) has an example of each.
 
 Anything can watch beads through the listener. A consumer connects to its

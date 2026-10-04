@@ -11,10 +11,10 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 
-use crate::app::Asked;
 use crate::app::{
     armed_unread, hold, serve, Armed, Arming, Hold, Outstanding, ReadingTrackers, Reads,
 };
+use crate::app::{Asked, Wanted};
 use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes;
@@ -344,7 +344,18 @@ pub fn run() -> anyhow::Result<ExitCode> {
         )
     });
     let mut collection = crate::app::Collection::default();
-    let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
+    // Each project read through the listener while one answers for it, and
+    // read here while none does. Looked for again at the refresh interval,
+    // which is as long as a project read here waits for its next poll.
+    let (heard_from_the_listener, from_the_listener) = mpsc::channel();
+    let trackers = Through::staying(
+        changes::where_the_listener_is(cfg.listener.socket.clone()).as_deref(),
+        cfg.read().map(|project| project.name.as_str()),
+        bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
+        heard_from_the_listener,
+        cfg.tui.refresh(),
+    );
+    let mut started = false;
     // One provider for the run, asked by the collection on its thread and by
     // the tail on another. Which one it is is chosen here and nowhere below.
     let agents: Arc<dyn Agents> = Arc::new(herdr::Herdr::new(&RealRunner as &dyn Runner));
@@ -355,6 +366,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         arms,
         agents,
         listening_on,
+        from_the_listener,
         Box::new(move |asked| match asked {
             // Nothing is drawn for a config the reader has written: what it
             // changes is what every read after it reads, and the loop asks
@@ -364,6 +376,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 None
             }
             Asked::Read(wanted) => {
+                // A read of every project after the first is the reader
+                // asking for one, and the listener is the one to read. The
+                // first is the run starting, which the listener has already
+                // read for.
+                if wanted == Wanted::Everything && std::mem::replace(&mut started, true) {
+                    trackers.asks_again();
+                }
                 Some(collection.collect(&cfg, &listing, &trackers, &wanted, filter, Utc::now()))
             }
         }),
@@ -397,7 +416,7 @@ fn read_for_each_bead(
 
 /// The trackers a run that reads once is read through: the listener's
 /// answers where one is running and answers, and `own` where it does not.
-fn through_the_listener<'t>(cfg: &Config, own: &'t dyn Trackers) -> Through<'t> {
+fn through_the_listener<O: Trackers>(cfg: &Config, own: O) -> Through<O> {
     Through::listener_at(
         changes::where_the_listener_is(cfg.listener.socket.clone()).as_deref(),
         cfg.read().map(|project| project.name.as_str()),

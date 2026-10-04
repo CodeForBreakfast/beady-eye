@@ -102,6 +102,12 @@ pub trait Trackers: Sync {
     fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure>;
 }
 
+impl<T: Trackers + ?Sized> Trackers for &T {
+    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
+        (**self).of(project)
+    }
+}
+
 impl<T: Tracker + ?Sized> Tracker for &T {
     fn fingerprint(&self) -> Option<Result<String, RunFailure>> {
         (**self).fingerprint()

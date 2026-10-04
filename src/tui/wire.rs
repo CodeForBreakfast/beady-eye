@@ -80,6 +80,7 @@ pub(super) fn wire(
     reported: Reported,
     agents: Arc<dyn Agents>,
     listening_on: Option<PathBuf>,
+    from_the_listener: Receiver<Heard>,
     collect: Collecting,
     asked_to_stop: Signals,
 ) -> Wired {
@@ -113,6 +114,9 @@ pub(super) fn wire(
     // and its `Socket` has to reach the loop, or nothing takes the socket off
     // the filesystem when the run ends.
     let (socket, refused) = inbound(changes::listen(listening_on, &reported, changed.clone()));
+
+    let listened_to = to_the_loop.clone();
+    thread::spawn(move || report(&mut Listened(from_the_listener), &listened_to));
 
     thread::spawn(move || {
         report(
@@ -155,6 +159,17 @@ struct Inbound {
 impl Changes for Inbound {
     fn next(&mut self) -> Option<Event> {
         self.changes.recv().ok().map(Event::from)
+    }
+}
+
+/// The source for the projects read through the listener: each is read
+/// again once the listener has answered for it, and once the listener has
+/// gone, after which it is read some other way.
+struct Listened(Receiver<Heard>);
+
+impl Changes for Listened {
+    fn next(&mut self) -> Option<Event> {
+        self.0.recv().ok().map(Event::from)
     }
 }
 
