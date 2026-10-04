@@ -616,6 +616,31 @@ fn a_view_beside_a_listener_reads_no_tracker_until_the_listener_goes() {
     until(|| reads_in_full(&tracker) > 1, "the view's own read");
 }
 
+/// `^R`, which asks every project for itself again.
+const REFRESH: &[u8] = b"\x12";
+
+/// A view draws what the listener holds, so asking for a read is asking
+/// the listener for one.
+#[test]
+fn the_refresh_key_has_the_listener_a_view_reads_through_read_again() {
+    let (home, tracker) = a_home_with_a_listener_configured("listened-view-refresh");
+    let listener = listening_in(&home, &tracker);
+    let mut bdi = Driven::bdi(40, 120, home.clone(), &tracker.environment());
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
+    bdi.send(SHOW_EVERY_TREE);
+    bdi.read_until(b"dun-0tp", THE_SCREEN_GIVING_UP);
+    bdi.settle(Duration::from_millis(300), THE_SCREEN_GIVING_UP);
+    let asked_before = tracker.calls().len();
+
+    bdi.send(REFRESH);
+
+    until(
+        || tracker.calls().len() > asked_before,
+        "the listener asking its tracker",
+    );
+    stopped(listener);
+}
+
 /// A test that panics before it stops its listener must not leave it behind.
 #[test]
 fn a_listener_a_test_abandons_is_killed() {
