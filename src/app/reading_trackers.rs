@@ -96,6 +96,9 @@ impl ReadingTrackers {
 impl ChangeSource for ReadingTrackers {
     fn next(&mut self) -> Option<Answer> {
         loop {
+            while let Ok(heard) = self.heard.try_recv() {
+                self.take(heard);
+            }
             if let Some(answer) = self.told.pop_front() {
                 return Some(answer);
             }
@@ -142,6 +145,14 @@ mod tests {
     /// Every project `trackers` holds, read through a collection as
     /// `bdi listen` reads them, with no window and nothing polling.
     fn reading(trackers: Arc<Fakes>) -> (ReadingTrackers, Sender<Heard>) {
+        polling_every(None, trackers)
+    }
+
+    /// As [`reading`], with every project polling `every` after each read.
+    fn polling_every(
+        every: Option<std::time::Duration>,
+        trackers: Arc<Fakes>,
+    ) -> (ReadingTrackers, Sender<Heard>) {
         let cfg = two_projects();
         let mut collection = Collection::default();
         let reads: Reads = Box::new(move |wanted, now| {
@@ -159,7 +170,7 @@ mod tests {
         let (tell, heard) = mpsc::channel();
         let armed = ["dunwich", "ferry"]
             .into_iter()
-            .map(|project| Armed::polling(project.to_string(), None))
+            .map(|project| Armed::polling(project.to_string(), every))
             .collect();
         let source = ReadingTrackers::new(
             reads,
@@ -228,6 +239,21 @@ mod tests {
         assert_eq!(answer.project, "ferry");
         assert!(matches!(answer.said, Said::Vouched { .. }));
         assert_eq!(trackers.tracker("ferry").asked().len(), asked);
+    }
+
+    #[test]
+    fn a_producers_line_is_taken_while_polls_keep_coming_due() {
+        let (mut source, tell) = polling_every(Some(std::time::Duration::ZERO), trackers());
+        for _ in 0..2 {
+            source.next();
+        }
+
+        tell.send(Heard::Covered("ferry".to_string())).unwrap();
+
+        assert!(
+            (0..10).any(|_| matches!(source.next().expect("an answer").said, Said::Vouched { .. })),
+            "ferry's cover was never taken while polls kept coming due"
+        );
     }
 
     #[test]
