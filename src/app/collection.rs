@@ -292,13 +292,13 @@ impl Collection {
     ) {
         for (project, answer) in self.refresh_together(cfg, trackers, named, panes, now) {
             match answer {
-                Ok(Refresh::Unchanged { as_of }) => {
+                Ok(Refresh::Unchanged) => {
                     // A skipped read is a successful read: `bdi` knows the
                     // tracker has not moved, so the project is as fresh as if
                     // the cascade had run and the foot must not draw it as
                     // stale.
                     if let Some(standing) = self.read.get_mut(&project.name) {
-                        standing.at = as_of;
+                        standing.at = now;
                     }
                 }
                 Ok(Refresh::Read { at, work, as_of }) => {

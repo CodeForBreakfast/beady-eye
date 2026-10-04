@@ -119,19 +119,19 @@ fn speaks_until(beads: &[Bead], read_at: DateTime<Utc>) -> Option<DateTime<Utc>>
         .min()
 }
 
-/// What one refresh of one project did, and the instant what it says was
-/// last vouched for: when it was asked, unless the tracker answered from
-/// what another process read.
+/// What one refresh of one project did.
 pub(super) enum Refresh {
     /// Nothing has moved since the read that is standing, so there is nothing
     /// to replace it with.
-    Unchanged { as_of: DateTime<Utc> },
+    Unchanged,
     /// What the tracker says now, and what it was read against. `None` where
     /// the probe could not answer, which has every later refresh read in full
-    /// rather than compare against a state nobody established.
+    /// rather than compare against a state nobody established. `as_of` is
+    /// when what it says was last vouched for: when it was asked, unless the
+    /// tracker answered from what another process read.
     ///
-    /// Both fields are behind a box because `Unchanged` is the usual answer
-    /// and carries next to nothing: a project that has not moved would
+    /// `at` and `work` are behind a box because `Unchanged` is the usual
+    /// answer and carries nothing: a project that has not moved would
     /// otherwise be handed back on the stack as the size of one that had.
     /// `ReadAt` holds a whole `Project`, so it grows whenever a project entry
     /// gains a field.
@@ -177,7 +177,7 @@ pub(super) fn refresh_project(
 
     if let (Some(fingerprint), Some(standing)) = (probed.as_deref(), standing) {
         if standing.still_speaks_for(project, fingerprint, &named, &roots, now) {
-            return Ok(Refresh::Unchanged { as_of });
+            return Ok(Refresh::Unchanged);
         }
     }
 

@@ -548,15 +548,49 @@ path = "/srv/work/ferry"
         let own = own_trackers();
         let cfg = projects();
         let through = through(&at, &own, A_MOMENT);
+        let asked = Instant::now();
 
         through
             .of(project(&cfg, "ferry"))
             .map(|tracker| ids(tracker.as_ref()))
             .expect("read for itself");
+        let left_at = asked.elapsed();
         through.of(project(&cfg, "dunwich")).expect("answered");
 
+        assert!(left_at < A_MOMENT, "left on the refusal, not the patience");
         assert!(!own.tracker("ferry").asked().is_empty());
         assert!(own.tracker("dunwich").asked().is_empty());
+    }
+
+    /// Each project is watched once, however often a collection opens it.
+    #[test]
+    fn each_project_is_watched_once() {
+        let at = a_socket("listened-watched-once");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        let heard = thread::spawn(move || {
+            let (connection, _) = listening.accept().expect("the run connects");
+            let mut answering = connection.try_clone().expect("ours to write");
+            for project in ["dunwich", "ferry"] {
+                writeln!(answering, "{}", fresh(project, json!("ok"))).expect("sent");
+            }
+            BufReader::new(connection)
+                .lines()
+                .map_while(Result::ok)
+                .collect::<Vec<String>>()
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        for named in ["dunwich", "ferry", "dunwich"] {
+            through.of(project(&cfg, named)).expect("answered");
+        }
+        drop(through);
+
+        assert_eq!(
+            heard.join().expect("the listener hears the run out"),
+            ["watch-all dunwich", "watch-all ferry"]
+        );
     }
 
     /// A listener that cannot reach a tracker says why, and the project is
@@ -638,6 +672,35 @@ path = "/srv/work/dunwich"
         assert!(own.tracker("dunwich").asked().is_empty());
     }
 
+    /// A run answered from two reads of different ages is as old as the
+    /// older of them.
+    #[test]
+    fn a_run_is_dated_to_the_oldest_read_it_was_drawn_from() {
+        let mut later: serde_json::Value =
+            serde_json::from_str(&fresh("ferry", json!("ok"))).expect("JSON");
+        later["as_of"] = json!("2026-08-30T11:59:50Z");
+        let at = a_listener_saying(
+            "listened-dated",
+            vec![later.to_string(), fresh("dunwich", json!("ok"))],
+        );
+        let own = own_trackers();
+
+        let snapshot = crate::app::run(
+            &projects(),
+            &crate::collect::agents::Unasked,
+            &through(&at, &own, A_MOMENT),
+            crate::model::snapshot::Filter::All,
+            "2026-08-30T12:00:00Z".parse().expect("an instant"),
+        );
+
+        assert_eq!(
+            snapshot.generated_at,
+            "2026-08-30T11:59:30Z"
+                .parse::<DateTime<Utc>>()
+                .expect("an instant")
+        );
+    }
+
     /// The listener went with one project answered and the other not: the
     /// answered one stands, and the other is read here in full.
     #[test]
@@ -646,6 +709,12 @@ path = "/srv/work/dunwich"
         let listening = UnixListener::bind(&at).expect("the socket is ours");
         thread::spawn(move || {
             let (mut connection, _) = listening.accept().expect("the run connects");
+            let mut asked = BufReader::new(connection.try_clone().expect("ours to read"));
+            for _ in ["dunwich", "ferry"] {
+                asked
+                    .read_line(&mut String::new())
+                    .expect("the run watches");
+            }
             writeln!(connection, "{}", bead("dunwich", "dun-1", true, &[])).expect("sent");
             writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
         });
