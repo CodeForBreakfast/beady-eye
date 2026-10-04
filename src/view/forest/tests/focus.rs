@@ -559,6 +559,33 @@ fn a_focused_root_that_stopped_reading_stays_focused_until_it_reads_again() {
     assert_eq!(sketch(&forest), rooted);
 }
 
+/// The selection stays on a focused root that drew no row however far the
+/// lines above it have moved.
+#[test]
+fn the_selection_stays_on_a_focused_root_that_stopped_reading_as_the_lines_above_it_move() {
+    let mut forest = flatten(built(Filter::All));
+    focus_on(&mut forest, "hbr-3");
+
+    forest.refresh(gather(
+        vec![
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("harbour", "hbr-3", TrackerFailure::Auth),
+        ],
+        vec![FailedProject {
+            project: "dunwich".into(),
+            tracker: TrackerFailure::Unstartable,
+        }],
+        Filter::All,
+    ));
+
+    assert_eq!(
+        cursor(&forest),
+        Some(&key("harbour", "hbr-3")),
+        "{:#?}",
+        sketch(&forest)
+    );
+}
+
 /// The view was started to show one bead, so that bead leaving does not
 /// open the whole forest: the line where it stood says it is gone.
 #[test]
