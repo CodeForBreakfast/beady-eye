@@ -51,7 +51,7 @@ fn parsed(s: &str, keeping_rows: bool) -> anyhow::Result<Vec<Bead>> {
 
 /// One row as a bead, its typed fields moved out of the map it was read into,
 /// and holding the map as well where `keeping_rows` asks for it.
-fn bead_of(written: Printed, keeping_rows: bool) -> serde_json::Result<Bead> {
+pub(crate) fn bead_of(written: Printed, keeping_rows: bool) -> serde_json::Result<Bead> {
     let values = values_of(&written);
     let printed = keeping_rows.then(|| Arc::new(written.clone()));
     Ok(Row::deserialize(serde_json::Value::Object(written))?.into_bead(values, printed))

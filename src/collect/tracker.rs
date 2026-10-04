@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{DateTime, Utc};
+
 use crate::collect::run::RunFailure;
 use crate::config::Project;
 use crate::model::types::Bead;
@@ -32,6 +34,13 @@ pub trait Tracker: Sync {
 
     /// Every blocker of every blocked bead.
     fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure>;
+
+    /// The instant these answers were last vouched for, where that is not
+    /// the instant they are asked: a tracker answering from what another
+    /// process read. `None` from one that is read as it is asked.
+    fn as_of(&self) -> Option<DateTime<Utc>> {
+        None
+    }
 }
 
 /// Why a project drew nothing: its tracker could not be opened, or bd would
@@ -108,6 +117,10 @@ impl<T: Tracker + ?Sized> Tracker for &T {
 
     fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
         (**self).blocked()
+    }
+
+    fn as_of(&self) -> Option<DateTime<Utc>> {
+        (**self).as_of()
     }
 }
 

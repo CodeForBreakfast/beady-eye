@@ -72,7 +72,7 @@ pub struct Dependency {
 /// broke it, which is the whole of what a reader can do about one. Neither is
 /// the tool's prose — `read` is `bdi`'s own command line, and `cause` is the
 /// parser describing `bdi`'s own structs.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unreadable {
     /// The subcommand whose answer would not parse, as `bdi` spells it on
     /// the command line: `list`, `ready`, `query`, `blocked`, `sql`.

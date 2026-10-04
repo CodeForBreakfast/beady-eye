@@ -164,7 +164,7 @@ pub fn own_the_terminal(spawned_by: u32) -> std::io::Result<()> {
 /// Linux only, because a parent-death signal is. On a system without one the
 /// `Drop` is all there is.
 #[cfg(target_os = "linux")]
-fn die_with(spawned_by: u32) -> std::io::Result<()> {
+pub fn die_with(spawned_by: u32) -> std::io::Result<()> {
     unsafe {
         if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
             return Err(std::io::Error::last_os_error());
@@ -181,7 +181,7 @@ fn die_with(spawned_by: u32) -> std::io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn die_with(_spawned_by: u32) -> std::io::Result<()> {
+pub fn die_with(_spawned_by: u32) -> std::io::Result<()> {
     Ok(())
 }
 

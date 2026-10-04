@@ -126,15 +126,19 @@ pub(super) enum Refresh {
     Unchanged,
     /// What the tracker says now, and what it was read against. `None` where
     /// the probe could not answer, which has every later refresh read in full
-    /// rather than compare against a state nobody established.
+    /// rather than compare against a state nobody established. `as_of` is
+    /// when what it says was last vouched for: when it was asked, unless the
+    /// tracker answered from what another process read.
     ///
-    /// Both fields are behind a box because `Unchanged` is the usual answer
-    /// and carries nothing: a project that has not moved would otherwise be
-    /// handed back on the stack as the size of one that had. `ReadAt` holds a
-    /// whole `Project`, so it grows whenever a project entry gains a field.
+    /// `at` and `work` are behind a box because `Unchanged` is the usual
+    /// answer and carries nothing: a project that has not moved would
+    /// otherwise be handed back on the stack as the size of one that had.
+    /// `ReadAt` holds a whole `Project`, so it grows whenever a project entry
+    /// gains a field.
     Read {
         at: Option<Box<ReadAt>>,
         work: Box<ProjectWork>,
+        as_of: DateTime<Utc>,
     },
 }
 
@@ -161,6 +165,7 @@ pub(super) fn refresh_project(
     now: DateTime<Utc>,
 ) -> Result<Refresh, OpenFailure> {
     let tracker = trackers.of(project)?;
+    let as_of = tracker.as_of().unwrap_or(now);
 
     let probed = probing
         .then(|| tracker.fingerprint().and_then(Result::ok))
@@ -189,6 +194,7 @@ pub(super) fn refresh_project(
     Ok(Refresh::Read {
         at,
         work: Box::new(work),
+        as_of,
     })
 }
 

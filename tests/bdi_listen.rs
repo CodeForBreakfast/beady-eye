@@ -1,6 +1,7 @@
 //! `bdi listen` reads every configured project, reads one again when a
 //! producer reports it, will not start beside a listener already running, and
-//! sends each consumer the beads it watches.
+//! sends each consumer the beads it watches. A one-shot `bdi` reads through
+//! it where one is running, and for itself where none is.
 //!
 //! The cases run the binary, because what is under test is the process a
 //! supervisor starts and the socket it leaves on the machine.
@@ -8,7 +9,8 @@
 mod terminal;
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -16,7 +18,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project_settled, Producer, THE_DESCRIBED_SUBTREE};
+use terminal::{a_home_naming_one_project_settled, die_with, Producer, THE_DESCRIBED_SUBTREE};
 
 /// The call that reads a tracker in full.
 const READ_IN_FULL: &str = "list --all --limit 0 --json";
@@ -34,6 +36,7 @@ fn listening_at(home: &Path) -> PathBuf {
 }
 
 fn bdi_listen(home: &Path, tracker: &ShimmedTracker) -> Command {
+    let spawned_by = std::process::id();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
     command
         .args(["listen", "--socket"])
@@ -46,18 +49,47 @@ fn bdi_listen(home: &Path, tracker: &ShimmedTracker) -> Command {
         .envs(tracker.environment())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    // Dropping a `Child` leaves its process running, and a test binary that
+    // is killed runs no `Drop`, so the kernel is asked to end the listener
+    // with its spawner.
+    unsafe { command.pre_exec(move || die_with(spawned_by)) };
     command
+}
+
+/// A running `bdi listen` that is killed and reaped if the test ends without
+/// stopping it, which a panic does.
+struct Listener(Option<Child>);
+
+impl Listener {
+    fn stopping(mut self) -> Child {
+        self.0.take().expect("the listener is still held")
+    }
+
+    fn pid(&self) -> u32 {
+        self.0.as_ref().expect("the listener is still held").id()
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// A listener started over a tracker holding the described subtree, once its
 /// first read of the tracker is in.
-fn a_listener(named: &str) -> (PathBuf, ShimmedTracker, Child) {
+fn a_listener(named: &str) -> (PathBuf, ShimmedTracker, Listener) {
     let home = a_home_naming_one_project_settled(named, NOT_POLLED);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
-    let listener = bdi_listen(&home, &tracker)
-        .spawn()
-        .expect("bdi listen starts");
+    let listener = Listener(Some(
+        bdi_listen(&home, &tracker)
+            .spawn()
+            .expect("bdi listen starts"),
+    ));
     until(|| reads_in_full(&tracker) == 1, "the first read");
     until(|| listening_at(&home).exists(), "the socket");
     (home, tracker, listener)
@@ -80,13 +112,16 @@ fn until(holds: impl Fn() -> bool, awaited: &str) {
 }
 
 /// Ask `listener` to stop as a supervisor does, and take what it said.
-fn stopped(listener: Child) -> Output {
+fn stopped(listener: Listener) -> Output {
     let signalled = Command::new("kill")
-        .args(["-TERM", &listener.id().to_string()])
+        .args(["-TERM", &listener.pid().to_string()])
         .status()
         .expect("kill runs");
     assert!(signalled.success());
-    listener.wait_with_output().expect("bdi listen exits")
+    listener
+        .stopping()
+        .wait_with_output()
+        .expect("bdi listen exits")
 }
 
 #[test]
@@ -258,6 +293,7 @@ fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
     assert_eq!(freshness["project"], "arkham");
     assert_eq!(freshness["tracker"], "ok");
     assert_eq!(freshness["events"], "off");
+    assert_eq!(freshness["protocol"], 1);
     assert!(freshness["as_of"].is_string(), "{freshness}");
 }
 
@@ -413,4 +449,151 @@ fn a_listener_that_stops_closes_its_consumers_and_takes_no_more() {
 
     assert_eq!(consumer.hears(), None);
     assert!(UnixStream::connect(listening_at(&home)).is_err());
+}
+
+/// A home whose config tells every run where the listener is, as a setup
+/// that starts one says it, holding the described subtree.
+fn a_home_with_a_listener_configured(named: &str) -> (PathBuf, ShimmedTracker) {
+    let home = a_home_naming_one_project_settled(named, NOT_POLLED);
+    let config = home.join(".config/beady-eye/config.toml");
+    let mut text = std::fs::read_to_string(&config).expect("the config was just written");
+    text.push_str(&format!(
+        "\n[listener]\nsocket = \"{}\"\n",
+        listening_at(&home).display()
+    ));
+    std::fs::write(&config, text).expect("the config is ours to write");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    (home, tracker)
+}
+
+/// A listener started in `home`, once it has answered for its first read of
+/// the tracker, which is when every call of that read has been made.
+fn listening_in(home: &Path, tracker: &ShimmedTracker) -> Listener {
+    let listener = Listener(Some(
+        bdi_listen(home, tracker)
+            .spawn()
+            .expect("bdi listen starts"),
+    ));
+    until(|| listening_at(home).exists(), "the socket");
+    Consumer::connected_to(&listening_at(home))
+        .sends("watch arkham")
+        .hears_an_answer();
+    listener
+}
+
+/// What a one-shot `bdi` run in `home` with `args` wrote, read as JSON, with
+/// the instant it is dated to taken out to be looked at on its own.
+fn one_shot(home: &Path, tracker: &ShimmedTracker, args: &[&str]) -> (Value, Value) {
+    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .args(args)
+        .current_dir(home)
+        .env("HOME", home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("BDI_PROJECT")
+        .envs(tracker.environment())
+        .output()
+        .expect("bdi runs");
+    assert!(
+        out.status.success(),
+        "bdi exited {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut written: Value = serde_json::from_slice(&out.stdout).expect("bdi writes JSON");
+    let dated = written["generated_at"].take();
+    (written, dated)
+}
+
+/// Both one-shots, each beside a listener and then with none, so the two
+/// answers can be set side by side.
+#[test]
+fn a_one_shot_beside_a_listener_reads_no_tracker_and_says_what_its_own_read_says() {
+    for (named, args) in [
+        ("listened-json", &["--json", "--all"][..]),
+        ("listened-beads", &["--beads"][..]),
+    ] {
+        let (home, tracker) = a_home_with_a_listener_configured(named);
+        let listener = listening_in(&home, &tracker);
+        let asked_before = tracker.calls();
+
+        let (through_the_listener, dated) = one_shot(&home, &tracker, args);
+
+        let asked_after = tracker.calls();
+        stopped(listener);
+        let (read_for_itself, _) = one_shot(&home, &tracker, args);
+        assert_eq!(asked_after, asked_before, "{args:?} asked bd nothing");
+        assert_eq!(through_the_listener, read_for_itself, "{args:?}");
+        assert!(dated.is_string(), "{args:?} is dated: {dated}");
+    }
+}
+
+/// A one-shot is dated to the listener's read rather than to the instant it
+/// asked, so it says how old what it says is.
+#[test]
+fn a_one_shot_beside_a_listener_is_dated_to_the_listeners_read() {
+    let (home, tracker) = a_home_with_a_listener_configured("listened-dated");
+    let listener = listening_in(&home, &tracker);
+    let freshness = Consumer::connected_to(&listening_at(&home))
+        .sends("watch arkham")
+        .hears_an_answer()
+        .pop()
+        .expect("an answer ends");
+
+    let (_, dated) = one_shot(&home, &tracker, &["--json", "--all"]);
+
+    stopped(listener);
+    assert_eq!(dated, freshness["as_of"]);
+}
+
+/// A listener that hangs up without answering is one that is not running,
+/// and the run reads its tracker as it would with none configured.
+#[test]
+fn a_one_shot_whose_listener_hangs_up_reads_for_itself() {
+    let (home, tracker) = a_home_with_a_listener_configured("listened-hangs-up");
+    let hanging_up = UnixListener::bind(listening_at(&home)).expect("the socket is ours");
+    std::thread::spawn(move || {
+        for connection in hanging_up.incoming() {
+            drop(connection);
+        }
+    });
+
+    let (written, _) = one_shot(&home, &tracker, &["--json", "--all"]);
+
+    assert_eq!(reads_in_full(&tracker), 1, "the run read for itself");
+    assert_eq!(written["failed_projects"], json!([]));
+    assert_eq!(written["trees"][0]["root"], "dun-0tp");
+}
+
+/// Configured and not running is the ordinary state of a machine whose
+/// listener is being restarted.
+#[test]
+fn a_one_shot_whose_listener_is_not_running_reads_for_itself() {
+    let (home, tracker) = a_home_with_a_listener_configured("listened-not-running");
+
+    let (written, _) = one_shot(&home, &tracker, &["--beads"]);
+
+    assert!(tracker.read_the_tracker(), "the run read for itself");
+    assert_eq!(written["failed_projects"], json!([]));
+    assert!(
+        !written["beads"].as_array().expect("beads").is_empty(),
+        "{written}"
+    );
+}
+
+/// A test that panics before it stops its listener must not leave it behind.
+#[test]
+fn a_listener_a_test_abandons_is_killed() {
+    let (_home, _tracker, listener) = a_listener("listen-abandoned");
+    let pid = listener.pid();
+
+    drop(listener);
+
+    let still_there = Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .expect("kill runs");
+    assert!(!still_there.success(), "listener {pid} outlived its test");
 }

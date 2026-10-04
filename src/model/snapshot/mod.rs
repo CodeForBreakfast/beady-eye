@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::ser::SerializeStruct;
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::config::Scope;
 use crate::model::anomaly::Anomaly;
@@ -150,7 +150,7 @@ pub enum Filter {
 /// *stderr*, when it refuses a credential and exits non-zero; a parse failure
 /// is a run that succeeded, so what would not read is bd's stdout — the
 /// tracker's own rows, which `bdi` draws.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum TrackerFailure {
     /// The project asked to be read in a captured environment — by the command
@@ -200,7 +200,7 @@ pub enum TrackerFailure {
     UnknownFlag,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrackerState {
     Ok,
