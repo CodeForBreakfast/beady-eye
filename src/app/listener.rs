@@ -89,10 +89,10 @@ impl Hold {
         match answer.said {
             Said::Read { at, beads } => {
                 standing.beads = Some(beads);
-                standing.as_of = Some(at);
+                standing.as_of = standing.as_of.max(Some(at));
                 standing.unreachable = None;
             }
-            Said::Vouched { at } => standing.as_of = Some(at),
+            Said::Vouched { at } => standing.as_of = standing.as_of.max(Some(at)),
             Said::Unreachable(failure) => standing.unreachable = Some(failure),
         }
     }
@@ -184,6 +184,22 @@ mod tests {
 
         let standing = hold.of("dunwich").expect("dunwich was read");
         assert_eq!(ids(standing), Some(vec!["dun-1"]));
+        assert_eq!(standing.as_of, Some(later(10)));
+    }
+
+    /// A read made before the last word vouching for the project, handed
+    /// over again because another project was read, brings the beads up to
+    /// date and leaves the project as current as that word made it.
+    #[test]
+    fn a_project_is_never_less_current_than_the_last_word_vouching_for_it() {
+        let mut hold = Hold::default();
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.take(said("dunwich", Said::Vouched { at: later(10) }));
+
+        hold.take(read("dunwich", now(), &["dun-1", "dun-2"]));
+
+        let standing = hold.of("dunwich").expect("dunwich was read");
+        assert_eq!(ids(standing), Some(vec!["dun-1", "dun-2"]));
         assert_eq!(standing.as_of, Some(later(10)));
     }
 
