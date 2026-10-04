@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::collect::run::{found_on_path, Env, RunFailure, Runner};
+use crate::collect::run::{found_on_path, Env, RunFailure, Runner, PATH};
 use crate::collect::tracker::OpenFailure;
 use crate::config::{Command, Project};
 
@@ -273,11 +273,15 @@ enum Current {
 /// does, and it spares a second load on top of the one direnv just made.
 ///
 /// direnv is handed the capture without the tracker or its credential, so it
-/// reports those afresh wherever the directory still sets them. They are
-/// dropped before its answer is applied, or a variable the directory stopped
-/// setting would be carried over from the kept capture.
+/// reports those afresh wherever the directory still sets them. Nor is it
+/// handed the kept `PATH`: a spawn looks its program up on the `PATH` it is
+/// given, and the kept one would find whichever direnv the project's devshell
+/// puts first rather than the one that captured. The three are dropped before
+/// direnv's answer is applied, or a variable the directory stopped setting
+/// would be carried over from the kept capture.
 fn brought_up_to_date(kept: Env, path: &Path, runner: &dyn Runner) -> Option<Current> {
-    let asked = lending(&kept);
+    let mut asked = lending(&kept);
+    asked.remove(PATH);
     let answer = runner
         .run(DIRENV, &["export", "json"], Some(path), &asked)
         .ok()?;
@@ -1150,6 +1154,25 @@ mod tests {
     /// direnv is one of the programs a tracker's credential is kept from, and
     /// asking it whether anything moved is no reason to hand it one. The kept
     /// environment still carries the password to bd.
+    /// The direnv asked whether anything moved is the one that captured, so
+    /// it is found on `bdi`'s own `PATH`. Handed the kept `PATH`, the spawn
+    /// would look the program up there and find whichever direnv the
+    /// project's devshell puts first. Where the directory still sets a
+    /// `PATH`, direnv reports it with everything else that changed.
+    #[test]
+    fn direnv_is_found_where_the_capture_found_it() {
+        let cache = an_empty_cache("same-direnv");
+        first_run(&cache);
+        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert!(
+            !runner.call(STILL_CURRENT).env.contains_key("PATH"),
+            "the kept PATH chose which direnv was asked"
+        );
+    }
+
     #[test]
     fn direnv_is_asked_without_the_tracker_or_its_credential() {
         let cache = an_empty_cache("withheld");
