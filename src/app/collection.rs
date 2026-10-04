@@ -19,14 +19,15 @@ use crate::collect::run::FailureKind;
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
-use crate::model::join::{self, Listed, ProjectRows};
+use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Said, Session,
-    SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
+    Node, SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
 };
 use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
+use super::listener::{self, Answer, Held};
 use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh, RootUnread};
 
 /// What one project's tracker last said, and when it said it.
@@ -208,6 +209,60 @@ impl Collection {
                 }
             }
         }
+    }
+
+    /// What every project standing says to a listener, each bead with the
+    /// readiness `snapshot`, the collection just drawn from these reads, gives
+    /// it.
+    ///
+    /// Every project rather than only those just read, because a blocker
+    /// closing in one project frees a bead in another. A bead no tree reaches
+    /// takes bd's own readiness, which is all there is to say of it.
+    pub fn answers(&self, snapshot: &Snapshot) -> Vec<Answer> {
+        let mut drawn: BTreeMap<BeadKey, &Node> = BTreeMap::new();
+        for node in snapshot.collected.iter().flat_map(|tree| &tree.beads) {
+            drawn.entry(node.key()).or_insert(node);
+        }
+        self.read
+            .iter()
+            .map(|(project, read)| Answer {
+                project: project.clone(),
+                said: match &read.work {
+                    Ok(work) => listener::Said::Read {
+                        at: read.at,
+                        beads: work
+                            .beads
+                            .iter()
+                            .map(|bead| {
+                                let key = BeadKey {
+                                    project: project.clone(),
+                                    id: bead.id.clone(),
+                                };
+                                let (ready, blocked_by) = match drawn.get(&key) {
+                                    Some(node) => (node.ready, node.blocked_by.clone()),
+                                    None => (
+                                        work.readiness.ready.contains(&bead.id),
+                                        work.readiness
+                                            .blocked_by
+                                            .get(&bead.id)
+                                            .cloned()
+                                            .unwrap_or_default(),
+                                    ),
+                                };
+                                let held = Held {
+                                    row: bead.row.clone(),
+                                    ready,
+                                    blocked_by,
+                                };
+                                (key.id, held)
+                            })
+                            .collect(),
+                    },
+                    Err(failure) => listener::Said::Unreachable(failure.clone()),
+                },
+                events: Vec::new(),
+            })
+            .collect()
     }
 
     /// `cfg`, with its scope taking in every project read on demand that it
@@ -2821,5 +2876,107 @@ prefix = "kad"
                 }
             )]
         );
+    }
+
+    // ---- what a listener is told ----------------------------------------
+
+    /// The one bead of a project's answer to a listener named `id`.
+    fn held<'a>(answers: &'a [Answer], project: &str, id: &str) -> &'a listener::Held {
+        let answer = answers
+            .iter()
+            .find(|answer| answer.project == project)
+            .unwrap_or_else(|| panic!("{project} is answered for"));
+        match &answer.said {
+            listener::Said::Read { beads, .. } => beads
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} is among {project}'s beads")),
+            said => panic!("{project} was read, and the answer says {said:?}"),
+        }
+    }
+
+    /// Both projects read, ferry's bead waiting on dunwich's epic, which bd
+    /// cannot see and so calls the bead ready.
+    fn both_read_with_ferry_waiting() -> (Collection, Snapshot) {
+        let trackers = Fakes::default().with("dunwich", dunwich_tracker()).with(
+            "ferry",
+            Fake::holding(beads(WAITING_ON_DUNWICH)).ready(["fer-2"]),
+        );
+        let mut collection = Collection::default();
+        let snapshot = collection.collect(
+            &two_projects(),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        (collection, snapshot)
+    }
+
+    #[test]
+    fn a_listener_is_told_each_beads_readiness_as_the_listing_gives_it() {
+        let (collection, snapshot) = both_read_with_ferry_waiting();
+
+        let answers = collection.answers(&snapshot);
+
+        let waiting = held(&answers, "ferry", "fer-2");
+        assert_eq!(
+            (waiting.ready, waiting.blocked_by.as_slice()),
+            (false, ["dun-7".to_string()].as_slice()),
+            "a blocker in another project holds the bead back"
+        );
+        assert!(held(&answers, "dunwich", "dun-7.2").ready);
+        assert_eq!(held(&answers, "dunwich", "dun-7.1").blocked_by, ["dun-9"]);
+    }
+
+    /// A bead no tree reaches is still a bead the tracker holds.
+    #[test]
+    fn a_listener_is_told_every_bead_whether_a_tree_reaches_it_or_not() {
+        let trackers = dunwich_with(dunwich_holding(
+            r#"[{"id":"dun-1","title":"retire the old mast","status":"closed",
+                 "priority":3,"issue_type":"task"}]"#,
+        ));
+        let mut collection = Collection::default();
+        let snapshot = collection.collect(
+            &one_project(),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        let answers = collection.answers(&snapshot);
+
+        let finished = held(&answers, "dunwich", "dun-1");
+        assert_eq!((finished.ready, finished.blocked_by.len()), (false, 0));
+    }
+
+    #[test]
+    fn a_listener_is_told_a_tracker_could_not_be_read_and_when_one_was() {
+        let mut collection = Collection::default();
+        let snapshot = collection.collect(
+            &two_projects(),
+            &no_panes(),
+            &dunwich_refusing(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        let answers = collection.answers(&snapshot);
+
+        let said: Vec<(&str, bool)> = answers
+            .iter()
+            .map(|answer| {
+                let read = matches!(answer.said, listener::Said::Read { at, .. } if at == now());
+                (answer.project.as_str(), read)
+            })
+            .collect();
+        assert_eq!(said, [("dunwich", false), ("ferry", true)]);
+        assert!(matches!(
+            answers[0].said,
+            listener::Said::Unreachable(TrackerFailure::Auth)
+        ));
     }
 }

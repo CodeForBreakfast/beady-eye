@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -20,11 +20,17 @@ use crate::collect::environment;
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
-use crate::model::types::{Bead, Dependency, Edge, Status};
+use crate::model::types::{Bead, Dependency, Edge, Printed, Status};
 
 /// Parse a flat array of bd rows, however the answer that carried them was
 /// asked for. `bd list`, `bd ready` and `bd query` all write the same row.
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
+    parsed(s, false)
+}
+
+/// The rows in `s` as beads, each holding the row it was read from where
+/// `keeping_rows` asks for it.
+fn parsed(s: &str, keeping_rows: bool) -> anyhow::Result<Vec<Bead>> {
     let rows: Vec<Row> =
         serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
     // Read for its own fields after it has parsed, so what a reader is told
@@ -35,7 +41,10 @@ pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     Ok(rows
         .into_iter()
         .zip(written)
-        .map(|(row, written)| row.into_bead(values_of(&written)))
+        .map(|(row, written)| {
+            let values = values_of(&written);
+            row.into_bead(values, keeping_rows.then(|| Arc::new(written)))
+        })
         .collect())
 }
 
@@ -148,10 +157,11 @@ struct RowDependency {
 
 impl Row {
     /// This row as a bead, beside every value a badge could name in it.
-    fn into_bead(self, values: BTreeMap<String, String>) -> Bead {
+    fn into_bead(self, values: BTreeMap<String, String>, printed: Option<Arc<Printed>>) -> Bead {
         let row = self;
         Bead {
             values,
+            row: printed,
             id: row.id,
             title: row.title,
             status: row.status,
@@ -298,6 +308,10 @@ pub struct Cli<'r> {
     /// refresh. Found out once per project, from the refusal itself, so the
     /// probe is paid for once per run rather than once per refresh.
     without_a_probe: Mutex<BTreeSet<String>>,
+    /// Whether each bead is handed over with the row bd printed for it. Only
+    /// a listener asks: a view draws what it parsed, and a row held beside
+    /// every bead would hold the tracker's text twice.
+    keeping_rows: bool,
 }
 
 impl<'r> Cli<'r> {
@@ -306,6 +320,15 @@ impl<'r> Cli<'r> {
             runner,
             ambient: environment::ambient_credential(),
             without_a_probe: Mutex::default(),
+            keeping_rows: false,
+        }
+    }
+
+    /// The same CLI, handing each bead over with the row bd printed for it.
+    pub fn keeping_rows(self) -> Self {
+        Self {
+            keeping_rows: true,
+            ..self
         }
     }
 }
@@ -319,6 +342,7 @@ impl Trackers for Cli<'_> {
             path: project.path.clone(),
             env,
             without_a_probe: &self.without_a_probe,
+            keeping_rows: self.keeping_rows,
         }))
     }
 }
@@ -333,6 +357,7 @@ struct Reader<'r> {
     /// The run's memory of which projects' trackers refused the probe,
     /// shared with every reader the run opens.
     without_a_probe: &'r Mutex<BTreeSet<String>>,
+    keeping_rows: bool,
 }
 
 impl Reader<'_> {
@@ -455,8 +480,8 @@ impl Tracker for Reader<'_> {
     /// the kind of wrong that reads as right.
     fn all(&self) -> Result<Vec<Bead>, RunFailure> {
         let out = self.asked(&["list", "--all", "--limit", "0", "--json"])?;
-        let mut beads = rows(&out, "list")?;
-        beads.extend(rows(&self.wisps()?, "query")?);
+        let mut beads = rows(&out, "list", self.keeping_rows)?;
+        beads.extend(rows(&self.wisps()?, "query", self.keeping_rows)?);
         Ok(beads)
     }
 
@@ -464,7 +489,7 @@ impl Tracker for Reader<'_> {
     /// it is asked for rather than inferred from status.
     fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
         let out = self.asked(&["ready", "--limit", "0", "--json"])?;
-        Ok(rows(&out, "ready")?
+        Ok(rows(&out, "ready", false)?
             .into_iter()
             .map(|bead| bead.id)
             .collect())
@@ -509,8 +534,8 @@ const EPHEMERAL: &str = "ephemeral=true";
 /// The root cause rather than the whole chain: `parse_beads` wraps the
 /// parser's account in a sentence saying the answer was not understood, which
 /// is what the phrase around this already says.
-fn rows(out: &str, read: &str) -> Result<Vec<Bead>, RunFailure> {
-    parse_beads(out).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
+fn rows(out: &str, read: &str, keeping_rows: bool) -> Result<Vec<Bead>, RunFailure> {
+    parsed(out, keeping_rows).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
 }
 
 /// The one bd command `bdi bd` passes through, and the one write `bdi` makes.
@@ -1060,6 +1085,7 @@ mod tests {
             path: project_dir(),
             env: credentialled(),
             without_a_probe: Box::leak(Box::default()),
+            keeping_rows: false,
         }
     }
 
@@ -1085,6 +1111,7 @@ mod tests {
             runner,
             ambient: ambient.map(str::to_string),
             without_a_probe: Mutex::default(),
+            keeping_rows: false,
         }
     }
 
@@ -1407,6 +1434,44 @@ mod tests {
             assert_eq!(call.cwd.as_deref(), Some(project_dir().as_path()));
             assert_eq!(call.env, credentialled());
         }
+    }
+
+    /// A reader keeping rows hands each bead over with its row exactly as bd
+    /// printed it, so a field `bdi` holds nothing of reaches whoever reads
+    /// the row.
+    #[test]
+    fn a_reader_keeping_rows_hands_each_bead_over_with_the_row_bd_printed() {
+        let runner = FakeRunner::default()
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), WISPS);
+        let printed: Vec<serde_json::Map<String, serde_json::Value>> = [FIXTURE, WISPS]
+            .iter()
+            .flat_map(|out| serde_json::from_str::<Vec<_>>(out).expect("the capture parses"))
+            .collect();
+
+        let beads = Reader {
+            keeping_rows: true,
+            ..opened(&runner)
+        }
+        .all()
+        .unwrap();
+
+        let rows: Vec<_> = beads
+            .iter()
+            .map(|bead| bead.row.as_deref().cloned().expect("the row is kept"))
+            .collect();
+        assert_eq!(rows, printed);
+    }
+
+    #[test]
+    fn a_reader_not_keeping_rows_holds_none() {
+        let runner = FakeRunner::default()
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), WISPS);
+
+        let beads = opened(&runner).all().unwrap();
+
+        assert!(beads.iter().all(|bead| bead.row.is_none()));
     }
 
     /// `bd list` answers about the permanent table, so it returns no wisp at
