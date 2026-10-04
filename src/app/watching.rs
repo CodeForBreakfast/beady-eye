@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 
+use crate::collect::listened::PROTOCOL;
 use crate::model::snapshot::{TrackerFailure, TrackerState};
 
 use super::listener::Held;
@@ -211,7 +212,8 @@ fn gone_line(project: &str, id: &str) -> String {
 }
 
 /// How current `project`'s beads are: as of `as_of`, and whether the last
-/// attempt to reach its tracker failed.
+/// attempt to reach its tracker failed. It carries the protocol every line
+/// about a watch is written in.
 pub fn freshness_line(
     project: &str,
     as_of: Option<DateTime<Utc>>,
@@ -226,6 +228,7 @@ pub fn freshness_line(
         "as_of": as_of,
         "tracker": tracker,
         "events": "off",
+        "protocol": PROTOCOL,
     })
     .to_string()
 }
@@ -545,7 +548,7 @@ mod tests {
 
         assert_eq!(
             line,
-            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": { "unreachable": { "reason": "auth" } }, "events": "off" })
+            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": { "unreachable": { "reason": "auth" } }, "events": "off", "protocol": 1 })
         );
     }
 }

@@ -21,8 +21,9 @@ use crate::collect::changes;
 use crate::collect::discovery;
 use crate::collect::environment::{self, EnvironmentCache};
 use crate::collect::herdr;
+use crate::collect::listened::Through;
 use crate::collect::run::{self, RealRunner, Runner};
-use crate::collect::tracker::OpenFailure;
+use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Listing, Snapshot};
 use crate::tui::{Reload, CHECKED_EVERY};
@@ -273,17 +274,17 @@ pub fn run() -> anyhow::Result<ExitCode> {
     } else {
         Filter::LiveAgents
     };
-    let collected = |filter| {
-        crate::app::run(
+    if cli.json {
+        let mut snapshot = crate::app::run(
             &cfg,
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
-            &bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
+            &through_the_listener(
+                &cfg,
+                &bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
+            ),
             filter,
             Utc::now(),
-        )
-    };
-    if cli.json {
-        let mut snapshot = collected(filter);
+        );
         snapshot.narrow_to(&cfg.roots.named_beads());
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
         return Ok(ExitCode::SUCCESS);
@@ -383,11 +384,24 @@ fn read_for_each_bead(
     crate::app::run(
         cfg,
         &herdr::Herdr::new(runner),
-        &bd::Cli::new(runner)
-            .for_unfinished_work()
-            .caching_environments(cache),
+        &through_the_listener(
+            cfg,
+            &bd::Cli::new(runner)
+                .for_unfinished_work()
+                .caching_environments(cache),
+        ),
         Filter::All,
         now,
+    )
+}
+
+/// The trackers a run that reads once is read through: the listener's
+/// answers where one is running and answers, and `own` where it does not.
+fn through_the_listener<'t>(cfg: &Config, own: &'t dyn Trackers) -> Through<'t> {
+    Through::listener_at(
+        changes::where_the_listener_is(cfg.listener.socket.clone()).as_deref(),
+        cfg.read().map(|project| project.name.as_str()),
+        own,
     )
 }
 

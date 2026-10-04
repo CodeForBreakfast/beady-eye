@@ -301,11 +301,11 @@ impl Collection {
                         standing.at = now;
                     }
                 }
-                Ok(Refresh::Read { at, work }) => {
+                Ok(Refresh::Read { at, work, as_of }) => {
                     self.read.insert(
                         project.name.clone(),
                         Read {
-                            at: now,
+                            at: as_of,
                             work: Ok(*work),
                             taken_at: at.map(|at| *at),
                         },
@@ -704,7 +704,12 @@ fn unlistable(kind: FailureKind) -> ProviderState {
     }
 }
 
-/// Read every configured tracker and the agent provider, and draw the result.
+/// Read every configured tracker and the agent provider, and draw the
+/// result, dated to the oldest of the reads it was drawn from.
+///
+/// A tracker read now is read as of `now`, so the date is the instant the
+/// run asked. One answered from a listener's read is as old as that read,
+/// and the date is what tells a consumer so.
 pub fn run(
     cfg: &Config,
     agents: &dyn Agents,
@@ -712,11 +717,15 @@ pub fn run(
     filter: Filter,
     now: DateTime<Utc>,
 ) -> Snapshot {
-    Collection {
+    let mut snapshot = Collection {
         once: true,
         ..Collection::default()
     }
-    .collect(cfg, agents, trackers, &Wanted::Everything, filter, now)
+    .collect(cfg, agents, trackers, &Wanted::Everything, filter, now);
+    if let Some(oldest) = snapshot.read_at.values().min() {
+        snapshot.generated_at = *oldest;
+    }
+    snapshot
 }
 
 #[cfg(test)]

@@ -140,6 +140,11 @@ impl ShimmedTracker {
             &format!("list --status {UNFINISHED} --limit 0 --json"),
             &unfinished,
         );
+        // The two listings `bdi --beads` reads beads through. The brief one
+        // is answered whole, which says more than bd would of a finished
+        // bead and nothing a listing of unfinished work draws.
+        answer("list --limit 0 --json", &unfinished);
+        answer("list --all --brief --limit 0 --json", &rows);
         for row in &rows {
             let id = row["id"].as_str().expect("a bd row names its bead");
             answer(&format!("show {id} --json"), std::slice::from_ref(row));

@@ -1541,9 +1541,10 @@ overrules — the machine is asked whether it has a direnv before one is run, so
 the case that drew nothing now reads the tracker ambient.
 
 A single read-only user across every tracker would retire `credential_command`
-entirely, and the shape it would take has been measured — see *Open, for
-Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does not
-depend on it.
+entirely. The shape it would take has been measured: `GRANT SELECT ON <db>.*`
+per tracker reaches the base tables and the `ready_issues` view, and is refused
+every write. Graeme decided against it on 2026-09-18, so `credential_command`
+per project stays the design.
 
 ### Reading a tracker is not leaving it alone
 
@@ -2146,7 +2147,7 @@ for a bead it never held:
 **A freshness line** says how current a project's beads are:
 
 ```json
-{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "events": "ok" }
+{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "events": "ok", "protocol": 1 }
 ```
 
 It closes every answer the source gives for the project. It follows the beads
@@ -2162,6 +2163,16 @@ last known, and `as_of` says how old that is. A project that has never been
 read is sent no beads, and its `as_of` is `null`. `events` is explained under
 *bd's events*. A consumer watching one bead is sent its project's freshness
 line.
+
+`protocol` is the version of every line the listener sends about a watch. A
+listener is long-lived, so after an upgrade it can be an older `bdi` than the
+consumers reading from it, and a line whose meaning changed while its shape
+did not would be believed. A consumer that finds `protocol` missing, or a
+version it does not know, treats the listener as down. The version moves only
+for a change a consumer cannot read as it read the version before. It rides
+on the freshness line rather than on a greeting, because producers share the
+socket and read their first line as their answer, and because a consumer
+takes nothing from an answer before its freshness line arrives.
 
 **An alive line** goes out on every connection every 20 seconds, whatever else
 has been sent:
@@ -2310,6 +2321,41 @@ listener loses nothing by it. One that starts one has each tracker read once
 on a machine, however many views, one-shots and other consumers are looking at
 it.
 
+**A one-shot reads for itself every project the listener does not answer
+for.** The listener answers for a project when its freshness line arrives. A
+refused or closed connection, a refused watch line, a line the run cannot
+read, a protocol it does not know, or a minute with no answer for a project
+leaves that project and every project still unanswered to bd. The projects
+already answered stand, so the run gives a whole answer either way, each
+project read once by one of the two.
+
+**What the run takes from a bead line is what bd would have told it.** The
+row is bd's, and `ready` is the listener's. `blocked_by` is cut to the
+blockers the bead's own project holds, which are the ones bd names. The
+listener found the rest in a tree of its own, and which tree drew a bead
+decides which of them it found. The run's own trees find them again, so the
+screen and `--json` say what a read of their own would say.
+
+That holds while the run and the listener read the same answers, and it fails
+in two cases. A listener that hangs up part way leaves the run to read the
+rest itself, and those reads can be newer than the ones that set `ready`. A
+bead can then read as not ready with nothing blocking it. And where two
+projects hold beads of one id, a blocker found in the other project survives
+the cut. Both go once the bead line carries bd's own readiness and blockers
+beside bdi's.
+
+**A listener's answer is taken by project name alone.** A config that names
+no socket finds the one listener its session runs, whatever config that
+listener read. So a run under another config, or under one changed since the
+listener started, can be answered from a different tracker that has the same
+name. This goes once a run checks that the listener reads the tracker its own
+config names.
+
+**A one-shot is dated to the oldest read it was drawn from.** For a project
+the listener answered, that read is the freshness line's `as_of`. So
+`generated_at` says how old the answer is, which is the only bound a one-shot
+consumer has.
+
 ## The JSON contract
 
 `bdi --json` emits the model, one whole collection.
@@ -2390,6 +2436,10 @@ it.
   "projects_named_without_git": []
 }
 ```
+
+`generated_at` is the instant the oldest read behind the document was made:
+when the run asked, or, for a project read through the listener, when the
+listener last vouched for it.
 
 `nodes` is pre-flattened in render order with an explicit `depth`, so a consumer
 draws it without reconstructing the tree; `edge` says which kind of edge put
