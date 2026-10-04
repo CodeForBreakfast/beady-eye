@@ -324,6 +324,9 @@ pub struct Cli<'r> {
     /// a listener asks: a view draws what it parsed, and a row held beside
     /// every bead would hold the tracker's text twice.
     keeping_rows: bool,
+    /// Whether a finished bead is read without its free text, for a run that
+    /// shows unfinished work alone.
+    unfinished_work: bool,
 }
 
 impl<'r> Cli<'r> {
@@ -333,6 +336,7 @@ impl<'r> Cli<'r> {
             ambient: environment::ambient_credential(),
             without_a_probe: Mutex::default(),
             keeping_rows: false,
+            unfinished_work: false,
         }
     }
 
@@ -340,6 +344,16 @@ impl<'r> Cli<'r> {
     pub fn keeping_rows(self) -> Self {
         Self {
             keeping_rows: true,
+            ..self
+        }
+    }
+
+    /// The same CLI, reading every bead but a finished bead's free text, for
+    /// a run that never shows that text. Every bead is still read, so every
+    /// tree is placed as before.
+    pub fn for_unfinished_work(self) -> Self {
+        Self {
+            unfinished_work: true,
             ..self
         }
     }
@@ -355,6 +369,7 @@ impl Trackers for Cli<'_> {
             env,
             without_a_probe: &self.without_a_probe,
             keeping_rows: self.keeping_rows,
+            unfinished_work: self.unfinished_work,
         }))
     }
 }
@@ -370,6 +385,7 @@ struct Reader<'r> {
     /// shared with every reader the run opens.
     without_a_probe: &'r Mutex<BTreeSet<String>>,
     keeping_rows: bool,
+    unfinished_work: bool,
 }
 
 impl Reader<'_> {
@@ -455,6 +471,56 @@ impl Reader<'_> {
     fn wisps(&self) -> Result<String, RunFailure> {
         self.asked(&["query", EPHEMERAL, "--all", "--limit", "0", "--json"])
     }
+
+    /// Every bead the tracker holds, wisps among them.
+    fn every_bead(&self) -> Result<Vec<Bead>, RunFailure> {
+        let (listed, wisps) = together(
+            || self.asked(&["list", "--all", "--limit", "0", "--json"]),
+            || self.wisps(),
+        );
+        let mut beads = rows(&listed?, "list", self.keeping_rows)?;
+        beads.extend(rows(&wisps?, "query", self.keeping_rows)?);
+        Ok(beads)
+    }
+
+    /// Every bead the tracker holds, wisps among them, with a finished bead's
+    /// free text left out: its description, its notes, and the rest of what
+    /// `bd list --brief` drops.
+    ///
+    /// The unfinished beads come whole from bd's default listing, and the
+    /// rest from a brief listing asked for at the same time.
+    ///
+    /// bd's default listing leaves out a status bd counts as done, and
+    /// `Status::is_finished` does not count it. A tracker holding a bead in
+    /// such a status is read whole instead, so that the bead keeps its text.
+    /// So is a tracker whose bd predates `--brief`, which bd 1.2.0 added.
+    fn every_bead_with_unfinished_text(&self) -> Result<Vec<Bead>, RunFailure> {
+        let ((unfinished, briefly), wisps) = together(
+            || {
+                together(
+                    || self.asked(&["list", "--limit", "0", "--json"]),
+                    || self.asked(&["list", "--all", "--brief", "--limit", "0", "--json"]),
+                )
+            },
+            || self.wisps(),
+        );
+        let briefly = match briefly {
+            Err(refused) if refused.kind == FailureKind::UnknownFlag => return self.every_bead(),
+            briefly => briefly?,
+        };
+        let mut beads = rows(&unfinished?, "list", self.keeping_rows)?;
+        let whole: BTreeSet<String> = beads.iter().map(|bead| bead.id.clone()).collect();
+        let briefly: Vec<Bead> = rows(&briefly, "list", self.keeping_rows)?
+            .into_iter()
+            .filter(|bead| !whole.contains(&bead.id))
+            .collect();
+        if briefly.iter().any(|bead| !bead.status.is_finished()) {
+            return self.every_bead();
+        }
+        beads.extend(briefly);
+        beads.extend(rows(&wisps?, "query", self.keeping_rows)?);
+        Ok(beads)
+    }
 }
 
 impl Tracker for Reader<'_> {
@@ -491,13 +557,11 @@ impl Tracker for Reader<'_> {
     /// and a smaller correct-looking answer about a different population is
     /// the kind of wrong that reads as right.
     fn all(&self) -> Result<Vec<Bead>, RunFailure> {
-        let (listed, wisps) = together(
-            || self.asked(&["list", "--all", "--limit", "0", "--json"]),
-            || self.wisps(),
-        );
-        let mut beads = rows(&listed?, "list", self.keeping_rows)?;
-        beads.extend(rows(&wisps?, "query", self.keeping_rows)?);
-        Ok(beads)
+        if self.unfinished_work {
+            self.every_bead_with_unfinished_text()
+        } else {
+            self.every_bead()
+        }
     }
 
     /// bd computes readiness itself and treats it as a state of its own, so
@@ -1152,6 +1216,7 @@ mod tests {
             env: credentialled(),
             without_a_probe: Box::leak(Box::default()),
             keeping_rows: false,
+            unfinished_work: false,
         }
     }
 
@@ -1178,6 +1243,7 @@ mod tests {
             ambient: ambient.map(str::to_string),
             without_a_probe: Mutex::default(),
             keeping_rows: false,
+            unfinished_work: false,
         }
     }
 
@@ -1561,6 +1627,113 @@ mod tests {
             "the free-standing wisp: {ids:?}"
         );
         assert_eq!(beads.len(), 9, "both answers, neither replacing the other");
+    }
+
+    /// What a reader for unfinished work asks for in place of the whole
+    /// listing: the unfinished beads whole, and every bead without its free
+    /// text.
+    const UNFINISHED_CALL: &str = "list --limit 0 --json";
+    const BRIEF_CALL: &str = "list --all --brief --limit 0 --json";
+
+    fn reading_unfinished_work(runner: &FakeRunner) -> Reader<'_> {
+        Reader {
+            unfinished_work: true,
+            ..opened(runner)
+        }
+    }
+
+    /// ark-1.1 is the one unfinished bead, under a closed epic.
+    const ARK_UNFINISHED: &str = r#"[{"id":"ark-1.1","title":"chart the reef","status":"open",
+        "priority":2,"issue_type":"task","description":"from the lighthouse to the point",
+        "parent":"ark-1","dependencies":[{"depends_on_id":"ark-1","type":"parent-child"}]}]"#;
+
+    /// Every bead in the same tracker as a brief listing writes it, with no
+    /// description on any of them.
+    const ARK_BRIEFLY: &str = r#"[
+        {"id":"ark-1","title":"survey the harbour","status":"closed","priority":1,"issue_type":"epic"},
+        {"id":"ark-1.1","title":"chart the reef","status":"open","priority":2,"issue_type":"task",
+         "parent":"ark-1","dependencies":[{"depends_on_id":"ark-1","type":"parent-child"}]}
+    ]"#;
+
+    #[test]
+    fn a_read_for_unfinished_work_takes_unfinished_beads_whole_and_the_rest_briefly() {
+        let runner = FakeRunner::default()
+            .with(&spelled(UNFINISHED_CALL), ARK_UNFINISHED)
+            .with(&spelled(BRIEF_CALL), ARK_BRIEFLY)
+            .with(&spelled(WISP_CALL), WISPS);
+
+        let beads = reading_unfinished_work(&runner).all().unwrap();
+
+        let described: Vec<(&str, Option<&str>)> = beads
+            .iter()
+            .map(|bead| (bead.id.as_str(), bead.description.as_deref()))
+            .filter(|(id, _)| id.starts_with("ark-"))
+            .collect();
+        assert_eq!(
+            described,
+            [
+                ("ark-1.1", Some("from the lighthouse to the point")),
+                ("ark-1", None)
+            ]
+        );
+        assert_eq!(beads.len(), 4, "the two beads once each, and both wisps");
+    }
+
+    #[test]
+    fn a_read_for_unfinished_work_asks_for_all_three_listings_together() {
+        let runner = FakeRunner::default()
+            .with(&spelled(UNFINISHED_CALL), ARK_UNFINISHED)
+            .with(&spelled(BRIEF_CALL), ARK_BRIEFLY)
+            .with(&spelled(WISP_CALL), "[]")
+            .meeting(&[
+                &spelled(UNFINISHED_CALL),
+                &spelled(BRIEF_CALL),
+                &spelled(WISP_CALL),
+            ]);
+
+        reading_unfinished_work(&runner).all().unwrap();
+
+        assert_eq!(runner.waited_alone(), Vec::<String>::new());
+    }
+
+    /// bd's default listing leaves out a status bd counts as done, which
+    /// `bdi` draws as unfinished, so that bead would be shown without its
+    /// text. The tracker is read whole instead.
+    #[test]
+    fn a_tracker_holding_a_status_bd_counts_as_done_is_read_whole() {
+        let shelved = r#"[{"id":"ark-3","title":"paint the hull","status":"shelved",
+            "priority":2,"issue_type":"task"}]"#;
+        let runner = FakeRunner::default()
+            .with(&spelled(UNFINISHED_CALL), "[]")
+            .with(&spelled(BRIEF_CALL), shelved)
+            .with(&spelled(WISP_CALL), "[]")
+            .with(&spelled(TRACKER_CALL), FIXTURE);
+
+        let beads = reading_unfinished_work(&runner).all().unwrap();
+
+        assert_eq!(beads.len(), fixture().len());
+    }
+
+    /// A project can pin a bd older than `--brief`, which bd 1.2.0 added.
+    #[test]
+    fn a_tracker_whose_bd_has_no_brief_listing_is_read_whole() {
+        let runner = FakeRunner::default()
+            .with(&spelled(UNFINISHED_CALL), "[]")
+            .failing(
+                &spelled(BRIEF_CALL),
+                RunFailure {
+                    kind: FailureKind::UnknownFlag,
+                    program: "bd".to_string(),
+                    detail: "bd does not know a flag bdi uses".to_string(),
+                    unreadable: None,
+                },
+            )
+            .with(&spelled(WISP_CALL), "[]")
+            .with(&spelled(TRACKER_CALL), FIXTURE);
+
+        let beads = reading_unfinished_work(&runner).all().unwrap();
+
+        assert_eq!(beads.len(), fixture().len());
     }
 
     /// The listing and the wisps are two round trips that need nothing from

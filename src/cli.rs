@@ -8,7 +8,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::app::Asked;
@@ -22,7 +22,7 @@ use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::config::Config;
-use crate::model::snapshot::{Filter, Listing};
+use crate::model::snapshot::{Filter, Listing, Snapshot};
 use crate::tui::{Reload, CHECKED_EVERY};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -287,7 +287,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     if cli.each_bead {
-        let snapshot = collected(Filter::All);
+        let snapshot = read_for_each_bead(&cfg, &RealRunner, Utc::now());
         println!("{}", serde_json::to_string_pretty(&Listing::of(&snapshot))?);
         return Ok(ExitCode::SUCCESS);
     }
@@ -368,6 +368,18 @@ pub fn run() -> anyhow::Result<ExitCode> {
     )?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// What `bdi --beads` lists each unfinished bead from: every tree, read
+/// without the free text of finished beads, which the listing never shows.
+fn read_for_each_bead(cfg: &Config, runner: &dyn Runner, now: DateTime<Utc>) -> Snapshot {
+    crate::app::run(
+        cfg,
+        &herdr::Herdr::new(runner),
+        &bd::Cli::new(runner).for_unfinished_work(),
+        Filter::All,
+        now,
+    )
 }
 
 /// The projects `cfg` reads, each armed to poll as `polling` says.
@@ -1376,5 +1388,191 @@ detached
             expand_tilde(DEFAULT_CONFIG, None),
             PathBuf::from(DEFAULT_CONFIG)
         );
+    }
+
+    /// One bd row, with `parent` written beside its parent-child edge as bd
+    /// writes it.
+    fn row(id: &str, status: &str, deps: &[(&str, &str)]) -> serde_json::Value {
+        let parent = deps
+            .iter()
+            .find(|(_, kind)| *kind == "parent-child")
+            .map(|(on, _)| *on);
+        serde_json::json!({
+            "id": id, "title": format!("the work of {id}"), "status": status,
+            "priority": 2, "issue_type": "task", "parent": parent,
+            "description": format!("what {id} is for"),
+            "dependencies": deps.iter().map(|(on, kind)| serde_json::json!({
+                "issue_id": id, "depends_on_id": on, "type": kind,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    /// A tracker that answers every command line a read spells from one
+    /// whole set of rows, the way bd would, and remembers what it was asked.
+    struct WholeTracker {
+        rows: Vec<serde_json::Value>,
+        wisps: Vec<serde_json::Value>,
+        ready: Vec<&'static str>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl WholeTracker {
+        fn answer(&self, rows: impl Iterator<Item = serde_json::Value>) -> String {
+            serde_json::Value::Array(rows.collect()).to_string()
+        }
+    }
+
+    /// A row as `bd list --brief` writes it, without its free text.
+    fn briefly(mut row: serde_json::Value) -> serde_json::Value {
+        row.as_object_mut().unwrap().remove("description");
+        row
+    }
+
+    impl Runner for WholeTracker {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            _cwd: Option<&Path>,
+            _env: &Env,
+        ) -> Result<String, RunFailure> {
+            let unfinished = |row: &serde_json::Value| {
+                !matches!(row["status"].as_str(), Some("closed" | "pinned"))
+            };
+            match (program, args) {
+                ("herdr", ["session", "list", "--json"]) => {
+                    Ok(r#"{"sessions":[{"default":true,"name":"default","running":true}]}"#.into())
+                }
+                ("herdr", _) => Ok(r#"{"result":{"agents":[]}}"#.into()),
+                ("bd", ["-C", _, "--readonly", asked @ ..]) => {
+                    self.asked.lock().unwrap().push(asked.join(" "));
+                    Ok(match asked {
+                        ["list", "--all", "--limit", "0", "--json"] => {
+                            self.answer(self.rows.iter().cloned())
+                        }
+                        ["list", "--limit", "0", "--json"] => {
+                            self.answer(self.rows.iter().filter(|r| unfinished(r)).cloned())
+                        }
+                        ["list", "--all", "--brief", "--limit", "0", "--json"] => {
+                            self.answer(self.rows.iter().cloned().map(briefly))
+                        }
+                        ["query", "ephemeral=true", ..] => self.answer(self.wisps.iter().cloned()),
+                        ["ready", ..] => self.answer(
+                            self.rows
+                                .iter()
+                                .chain(&self.wisps)
+                                .filter(|r| self.ready.contains(&r["id"].as_str().unwrap()))
+                                .cloned(),
+                        ),
+                        ["blocked", "--json"] => "[]".into(),
+                        _ => panic!("no answer for bd {asked:?}"),
+                    })
+                }
+                _ => Err(RunFailure::not_installed(program, "not on this machine")),
+            }
+        }
+    }
+
+    /// Every way a finished bead can place unfinished work in a tree, and
+    /// finished work nothing unfinished reaches: kad-8 alone, kad-9 over its
+    /// child, and kad-10 under a parent the tracker no longer holds. kad-11 is
+    /// finished, but the config names it as a root. Every bead has a
+    /// description.
+    fn kadath() -> WholeTracker {
+        WholeTracker {
+            rows: vec![
+                row("kad-1", "closed", &[]),
+                row("kad-1.1", "open", &[("kad-1", "parent-child")]),
+                row("kad-1.2", "closed", &[("kad-1", "parent-child")]),
+                row("kad-1.2.1", "closed", &[("kad-1.2", "parent-child")]),
+                row("kad-2", "open", &[("kad-3", "blocks")]),
+                row("kad-3", "closed", &[]),
+                row("kad-4", "closed", &[("kad-2", "blocks")]),
+                row("kad-5", "open", &[("kad-6", "discovered-from")]),
+                row("kad-6", "closed", &[]),
+                row("kad-7", "closed", &[("kad-5", "related")]),
+                row("kad-8", "closed", &[]),
+                row("kad-9", "closed", &[]),
+                row("kad-9.1", "closed", &[("kad-9", "parent-child")]),
+                row("kad-10", "closed", &[("kad-99", "parent-child")]),
+                row("kad-11", "closed", &[]),
+                row("kad-12", "open", &[("kad-98", "blocks")]),
+                row("kad-13", "pinned", &[]),
+                row("kad-13.1", "open", &[("kad-13", "parent-child")]),
+            ],
+            wisps: vec![row("kad-wisp-1", "open", &[("kad-1", "parent-child")])],
+            ready: vec!["kad-1.1", "kad-5", "kad-13.1", "kad-wisp-1"],
+            asked: Mutex::default(),
+        }
+    }
+
+    const KADATH: &str = r#"
+[[projects]]
+name = "kadath"
+path = "/nowhere/kadath"
+
+[roots.explicit]
+kadath = ["kad-11"]
+"#;
+
+    fn noon() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-10-04T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    /// Every tree in `snapshot`, as JSON, with the free text of each finished
+    /// bead taken out.
+    fn trees_without_finished_text(snapshot: &Snapshot) -> serde_json::Value {
+        let mut trees = serde_json::to_value(snapshot).unwrap()["trees"].take();
+        for node in trees
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .flat_map(|tree| tree["nodes"].as_array_mut().unwrap())
+        {
+            if matches!(node["status"].as_str(), Some("closed" | "pinned")) {
+                node.as_object_mut().unwrap().remove("description");
+            }
+        }
+        trees
+    }
+
+    /// `--beads` reads every bead, but a finished one without its free text.
+    /// What it lists is what a read of every whole row would list, and every
+    /// tree is drawn the same but for the text of its finished beads. One
+    /// project and two are both read this way.
+    #[test]
+    fn a_listing_read_without_finished_text_lists_what_a_whole_read_would() {
+        let two =
+            format!("{KADATH}\n[[projects]]\nname = \"ulthar\"\npath = \"/nowhere/ulthar\"\n");
+        for config in [KADATH, two.as_str()] {
+            let cfg = Config::from_toml(config).unwrap();
+            let whole = kadath();
+            let without_text = kadath();
+
+            let everything = crate::app::run(
+                &cfg,
+                &herdr::Herdr::new(&whole),
+                &bd::Cli::new(&whole),
+                Filter::All,
+                noon(),
+            );
+            let listed = read_for_each_bead(&cfg, &without_text, noon());
+
+            assert_eq!(
+                serde_json::to_value(Listing::of(&listed)).unwrap(),
+                serde_json::to_value(Listing::of(&everything)).unwrap()
+            );
+            assert_eq!(
+                trees_without_finished_text(&listed),
+                trees_without_finished_text(&everything)
+            );
+            let asked = without_text.asked.lock().unwrap().clone();
+            assert!(
+                !asked.contains(&"list --all --limit 0 --json".to_string()),
+                "{asked:?}"
+            );
+        }
     }
 }
