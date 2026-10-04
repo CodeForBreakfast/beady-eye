@@ -1586,8 +1586,8 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: String::new(),
-            notes: String::new(),
+            description: "".into(),
+            notes: "".into(),
             created_by: None,
             assignee: None,
             labels: Vec::new(),
@@ -2364,7 +2364,7 @@ mod tests {
         for tree in &mut snapshot.collected {
             let tree = Arc::make_mut(tree);
             for node in &mut tree.beads {
-                node.description = format!("what {} is about", node.id);
+                node.description = format!("what {} is about", node.id).into();
             }
         }
         snapshot.trees = snapshot.collected.clone();
@@ -2430,7 +2430,8 @@ mod tests {
         tree.beads[0].description = (1..=lines)
             .map(|n| format!("line {n} of the description"))
             .collect::<Vec<_>>()
-            .join("\\\n");
+            .join("\\\n")
+            .into();
         snapshot.trees = snapshot.collected.clone();
         snapshot
     }
@@ -2440,7 +2441,7 @@ mod tests {
     fn a_grove_with_a_marked_up_bead() -> Snapshot {
         let mut snapshot = a_described_grove(6);
         let tree = Arc::make_mut(&mut snapshot.collected[0]);
-        tree.beads[0].description = "## Shape\n\n- keep `wrap` *soft*".to_string();
+        tree.beads[0].description = "## Shape\n\n- keep `wrap` *soft*".into();
         snapshot.trees = snapshot.collected.clone();
         snapshot
     }
@@ -3044,7 +3045,7 @@ mod tests {
         for tree in &mut reordered.collected {
             let tree = Arc::make_mut(tree);
             for node in &mut tree.beads {
-                node.description = format!("what {} is about", node.id);
+                node.description = format!("what {} is about", node.id).into();
             }
         }
         reordered.trees = reordered.collected.clone();

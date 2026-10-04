@@ -29,6 +29,12 @@ pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     parsed(s, false)
 }
 
+/// The same rows, each bead shared as a project's read holds it.
+#[cfg(any(test, feature = "testing"))]
+pub fn parse_shared_beads(s: &str) -> anyhow::Result<Vec<Arc<Bead>>> {
+    Ok(parse_beads(s)?.into_iter().map(Arc::new).collect())
+}
+
 /// The rows in `s` as beads, each holding the row it was read from where
 /// `keeping_rows` asks for it.
 fn parsed(s: &str, keeping_rows: bool) -> anyhow::Result<Vec<Bead>> {
@@ -143,10 +149,10 @@ struct Row {
     /// As `bd show` prints it. bd leaves the field out of a row that has
     /// none.
     #[serde(default)]
-    description: Option<String>,
+    description: Option<Arc<str>>,
     /// Everything `bd note` has added, as one text. Left out the same way.
     #[serde(default)]
-    notes: Option<String>,
+    notes: Option<Arc<str>>,
     #[serde(default)]
     created_at: Option<DateTime<Utc>>,
     #[serde(default)]

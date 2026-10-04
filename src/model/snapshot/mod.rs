@@ -301,9 +301,9 @@ pub struct Node {
     /// can show a bead without asking the tracker again. Not part of the
     /// forest's JSON, which is the forest and not the beads' prose.
     #[serde(skip)]
-    pub description: String,
+    pub description: Arc<str>,
     #[serde(skip)]
-    pub notes: String,
+    pub notes: Arc<str>,
     /// The row's `created_by`, and not the address its `owner` carries.
     #[serde(skip)]
     pub created_by: Option<String>,
@@ -718,7 +718,7 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_beads;
+    use crate::collect::bd::parse_shared_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Config;
     use crate::model::edges;
@@ -787,7 +787,7 @@ render = "⏸ waiting"
     }
 
     /// The root of a hand-written tree: the one row that depends on nothing.
-    fn root_row(beads: &[Bead]) -> String {
+    fn root_row(beads: &[Arc<Bead>]) -> String {
         beads
             .iter()
             .find(|b| b.dependencies.is_empty())
@@ -797,7 +797,7 @@ render = "⏸ waiting"
     }
 
     pub(super) fn assembled(json: &str) -> Assembled {
-        let beads = parse_beads(json).expect("the rows parse");
+        let beads = parse_shared_beads(json).expect("the rows parse");
         let root = root_row(&beads);
         Nesting::of(&beads)
             .assemble(&root)
@@ -808,7 +808,7 @@ render = "⏸ waiting"
         parse_agent_list(A_SESSION, json).expect("the panes parse")
     }
 
-    pub(super) fn joined(rows: &[Bead], panes: &[Pane]) -> Joined {
+    pub(super) fn joined(rows: &[Arc<Bead>], panes: &[Pane]) -> Joined {
         let cfg = cfg();
         join::resolve(
             &[ProjectRows {

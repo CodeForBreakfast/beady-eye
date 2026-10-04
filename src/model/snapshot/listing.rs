@@ -60,7 +60,7 @@ impl<'a> From<&'a Node> for Listed<'a> {
             agent: node.agent.as_ref(),
             badges: &node.badges,
             labels: &node.labels,
-            description: Some(node.description.as_str()).filter(|said| !said.is_empty()),
+            description: Some(&*node.description).filter(|said| !said.is_empty()),
         }
     }
 }

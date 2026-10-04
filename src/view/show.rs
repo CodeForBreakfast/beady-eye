@@ -835,8 +835,8 @@ mod tests {
             }),
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "Point it at the new bird.\n\nThe old one is gone.".to_string(),
-            notes: "The crane is booked for Tuesday.".to_string(),
+            description: "Point it at the new bird.\n\nThe old one is gone.".into(),
+            notes: "The crane is booked for Tuesday.".into(),
             created_by: Some("kim".to_string()),
             assignee: None,
             labels: Vec::new(),
@@ -942,8 +942,8 @@ mod tests {
     fn sections_the_bead_has_nothing_for_are_left_out() {
         let bare = Node {
             agent: None,
-            description: String::new(),
-            notes: String::new(),
+            description: "".into(),
+            notes: "".into(),
             created_by: None,
             assignee: None,
             created_at: None,
@@ -1042,8 +1042,7 @@ mod tests {
     #[test]
     fn the_description_wraps_to_the_window_rather_than_being_cut() {
         let long = Node {
-            description: "one two three four five six seven eight nine ten eleven twelve"
-                .to_string(),
+            description: "one two three four five six seven eight nine ten eleven twelve".into(),
             ..a_bead()
         };
         let rows = drawn(&long, &mut Show::default(), 30, 30);
@@ -1207,8 +1206,8 @@ mod tests {
     fn a_line_that_names_another_bead_is_cut_rather_than_wrapped() {
         let named = Node {
             agent: None,
-            description: String::new(),
-            notes: String::new(),
+            description: "".into(),
+            notes: "".into(),
             depends_on: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
@@ -1629,7 +1628,7 @@ mod tests {
     #[test]
     fn on_a_wide_screen_the_window_is_four_fifths_of_it_and_the_prose_wraps_there() {
         let long = Node {
-            description: "abcde ".repeat(60).trim().to_string(),
+            description: "abcde ".repeat(60).trim().into(),
             ..a_bead()
         };
         let rows = drawn(&long, &mut Show::default(), 200, 60);
@@ -1695,7 +1694,7 @@ mod tests {
     fn a_bead_shorter_than_the_window_still_gets_the_full_height() {
         let bare = Node {
             agent: None,
-            notes: String::new(),
+            notes: "".into(),
             parent: None,
             depends_on: Vec::new(),
             blocks: Vec::new(),
@@ -1740,7 +1739,7 @@ mod tests {
     #[test]
     fn no_row_is_drawn_in_the_column_beside_a_border() {
         let bead = Node {
-            description: "abcde ".repeat(40).trim().to_string(),
+            description: "abcde ".repeat(40).trim().into(),
             ..a_bead_with_a_long_title()
         };
         let mut read = 0;
@@ -2198,7 +2197,7 @@ mod tests {
     #[test]
     fn emphasis_in_the_prose_is_by_weight_and_a_code_span_by_its_own_colour() {
         let bead = Node {
-            description: "Point it at the **new** bird, `now`.\n\nThe old one is gone.".to_string(),
+            description: "Point it at the **new** bird, `now`.\n\nThe old one is gone.".into(),
             ..a_bead()
         };
         let prose = painted(&bead, 44, 24).row(7);
