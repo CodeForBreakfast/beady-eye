@@ -147,17 +147,15 @@ pub fn tracker_env(
 
 /// What entering each project's directory produced on an earlier run, kept
 /// on disk so a one-shot read does not pay for re-sourcing an unchanged
-/// `.envrc`: measured on 2026-10-04 at about 0.35 seconds a project.
+/// `.envrc`.
 ///
-/// A kept environment is used only where a fresh capture would give the same
-/// answer. That needs the same environment `bdi` hands its children, and
-/// direnv bringing it up to date: it says nothing where nothing it watches has
-/// moved, and what changed where something has. That is the rule a shell
-/// sitting in the directory reloads by, and direnv's watches cover the
-/// `.envrc`, its allow record, and whatever the `.envrc` watches, which is how
-/// a `dotenv` file or a flake lock is noticed.
+/// A kept environment is used only where it was captured under the same
+/// environment `bdi` now hands its children, and only once direnv has brought
+/// it up to date. direnv's watches cover the `.envrc`, its allow record, and
+/// whatever the `.envrc` watches, which is how a `dotenv` file or a flake lock
+/// is noticed.
 ///
-/// So only [`DIRENV_ENTERING_THE_DIRECTORY`] is kept. Nothing else can say
+/// Only [`DIRENV_ENTERING_THE_DIRECTORY`] is kept. Nothing else can say
 /// when what another command produced stopped being current, and direnv
 /// answers about the directory it is asked in, so a command entering any
 /// other would be checked against the wrong one.

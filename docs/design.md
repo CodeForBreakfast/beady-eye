@@ -1386,20 +1386,19 @@ environment_command = "nix develop -c"
   current.** Once a run is affordable, a one-shot read run in a loop pays the
   capture every time, and it was the largest cost left inside `bdi`. So the
   capture is kept on disk, readable by its user alone, because it can hold the
-  tracker's password. A later run uses it only where a fresh capture would
-  give the same answer. That needs the same command and the same environment
-  `bdi` hands its children. Then `direnv export json`, handed the kept
-  environment, brings it up to date. It is what a shell's prompt hook runs. It
-  prints nothing where nothing direnv watches has moved, and otherwise reloads
-  the directory and prints what to set and unset, which `bdi` applies as the
-  shell would. direnv's watches cover the `.envrc`, its allow record, and
-  whatever the `.envrc` watches, which is how an edited `dotenv` file or a
-  moved flake lock is noticed. Only `direnv exec .` is kept. Nothing else can
-  say when what it produced stopped being current, and direnv answers about
-  the directory it is asked in, so a command entering any other would be
-  checked against the wrong one. Anything
-  that cannot be trusted is captured afresh. The credential command is never
-  kept and answers on every run.
+  tracker's password. A later run uses it only where it was captured under the
+  same environment `bdi` now hands its children. Then `direnv export json`,
+  handed the kept environment, brings it up to date. It is what a shell's
+  prompt hook runs. It prints nothing where nothing direnv watches has moved,
+  and otherwise reloads the directory and prints what to set and unset, which
+  `bdi` applies as the shell would. direnv's watches cover the `.envrc`, its
+  allow record, and whatever the `.envrc` watches, which is how an edited
+  `dotenv` file or a moved flake lock is noticed. Only `direnv exec .` is
+  kept. Nothing else can say when what it produced stopped being current, and
+  direnv answers about the directory it is asked in, so a command entering
+  any other would be checked against the wrong one. Anything that cannot be
+  trusted is captured afresh. The credential command is never kept and
+  answers on every run.
 
   So a read costs no load while nothing has moved, and one load when
   something has, the same as before. nix-direnv 3.2.0 refreshes the timestamps
