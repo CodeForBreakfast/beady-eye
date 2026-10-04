@@ -701,6 +701,82 @@ path = "/srv/work/dunwich"
         assert!(own.tracker("dunwich").asked().is_empty());
     }
 
+    /// The listener reads every project, so its `ready` already counts a
+    /// blocker in a project a narrower run leaves out. The narrower run
+    /// counts it too, from the project it did not read.
+    #[test]
+    fn a_run_narrower_than_the_listener_says_what_its_own_read_says() {
+        let row = |id: &str, status: &str, blocks_on: &[&str]| {
+            let dependencies: Vec<_> = blocks_on
+                .iter()
+                .map(|on| json!({ "depends_on_id": on, "type": "blocks" }))
+                .collect();
+            json!({ "id": id, "title": "re-point the dish", "status": status,
+                    "priority": 2, "issue_type": "task", "dependencies": dependencies })
+        };
+        let held = |row: &serde_json::Value| {
+            bead_of(row.as_object().expect("a row is an object").clone(), false)
+                .expect("the row reads")
+        };
+        let cfg = projects()
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured");
+        let readiness_of = |trackers: &dyn Trackers| {
+            let snapshot = crate::app::run(
+                &cfg,
+                &crate::collect::agents::Unasked,
+                trackers,
+                crate::model::snapshot::Filter::All,
+                "2026-08-30T12:00:00Z".parse().expect("an instant"),
+            );
+            snapshot
+                .collected
+                .iter()
+                .flat_map(|tree| &tree.beads)
+                .find(|node| node.id == "dun-1")
+                .map(|node| (node.ready, node.blocked_by.clone()))
+        };
+        let waiting = row("dun-1", "open", &["fer-1"]);
+
+        for status in ["open", "closed"] {
+            let blocker = row("fer-1", status, &[]);
+            let unfinished = status == "open";
+            let own = Fakes::default()
+                .with(
+                    "dunwich",
+                    Fake::holding(vec![held(&waiting)]).ready(["dun-1"]),
+                )
+                .with("ferry", Fake::holding(vec![held(&blocker)]));
+            let listened_blocked_by: &[&str] = if unfinished { &["fer-1"] } else { &[] };
+            let at = a_listener_saying(
+                &format!("listened-narrower-{status}"),
+                vec![
+                    json!({ "line": "bead", "project": "dunwich", "ready": !unfinished,
+                            "blocked_by": listened_blocked_by, "row": waiting })
+                    .to_string(),
+                    fresh("dunwich", json!("ok")),
+                    json!({ "line": "bead", "project": "ferry", "ready": unfinished,
+                            "blocked_by": [], "row": blocker })
+                    .to_string(),
+                    fresh("ferry", json!("ok")),
+                ],
+            );
+            let unasked = own_trackers();
+
+            assert_eq!(
+                readiness_of(&own),
+                Some((false, vec!["fer-1".to_string()])),
+                "a blocker in a project the run did not read may be unfinished"
+            );
+            assert_eq!(
+                readiness_of(&Through::listener_at(Some(&at), ["dunwich"], &unasked)),
+                readiness_of(&own),
+                "a blocker that is {status}"
+            );
+            assert!(unasked.tracker("dunwich").asked().is_empty());
+        }
+    }
+
     /// A run answered from two reads of different ages is as old as the
     /// older of them.
     #[test]
