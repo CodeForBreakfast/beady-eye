@@ -126,27 +126,35 @@ impl<O: Trackers> Through<O> {
     }
 
     /// Have the listener read again every project it is watched for, as a
-    /// producer's report has it read a project. Nothing where there is no
-    /// listener to ask.
+    /// producer's report has it read a project.
     pub fn asks_again(&self) {
+        let asked = self.listener.said().asked.clone();
+        self.says(asked.into_iter().map(Heard::Changed).collect());
+    }
+
+    /// Say to the listener what a producer said to this run, so that what
+    /// it holds, which this run reads, takes it in.
+    pub fn passes_on(&self, heard: Heard) {
+        self.says(vec![heard]);
+    }
+
+    /// Say each of `heard` to the listener, as a producer would. Nothing
+    /// where there is no listener to say it to.
+    fn says(&self, heard: Vec<Heard>) {
         let Some(at) = self.at.clone() else {
             return;
         };
-        let projects: Vec<String> = {
-            let said = self.listener.said();
-            if said.writing.is_none() {
-                return;
-            }
-            said.asked.iter().cloned().collect()
-        };
+        if self.listener.said().writing.is_none() {
+            return;
+        }
         // On a thread of its own, so that a listener slow to take the
         // connection holds up nobody.
         thread::spawn(move || {
             let Some((mut to, _)) = connected_to(&at, WEDGED_AFTER) else {
                 return;
             };
-            for project in projects {
-                if writeln!(to, "{project}").is_err() {
+            for heard in heard {
+                if writeln!(to, "{}", heard.line()).is_err() {
                     return;
                 }
             }
@@ -898,6 +906,37 @@ path = "/srv/work/ferry"
         assert_eq!(
             heard.recv_timeout(A_MOMENT),
             Ok(vec!["dunwich".to_string(), "ferry".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_report_passed_on_is_said_to_the_listener_as_its_producer_said_it() {
+        let at = a_socket("listened-passes-on");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        let (hearing, heard) = mpsc::channel();
+        thread::spawn(move || {
+            let (watching, _) = listening.accept().expect("the run watches");
+            let mut answering = watching.try_clone().expect("ours to write");
+            writeln!(answering, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+            let (passing_on, _) = listening.accept().expect("the run passes a report on");
+            let _ = hearing.send(
+                BufReader::new(passing_on)
+                    .lines()
+                    .map_while(Result::ok)
+                    .collect::<Vec<String>>(),
+            );
+            drop(watching);
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+        through.of(project(&cfg, "dunwich")).expect("answered");
+
+        through.passes_on(Heard::Covered("ferry".to_string()));
+
+        assert_eq!(
+            heard.recv_timeout(A_MOMENT),
+            Ok(vec!["covered ferry".to_string()])
         );
     }
 

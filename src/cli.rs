@@ -26,7 +26,7 @@ use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Listing, Snapshot};
-use crate::tui::{Reload, CHECKED_EVERY};
+use crate::tui::{Hearing, Reload, CHECKED_EVERY};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
@@ -348,13 +348,14 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // read here while none does. Looked for again at the refresh interval,
     // which is as long as a project read here waits for its next poll.
     let (heard_from_the_listener, from_the_listener) = mpsc::channel();
-    let trackers = Through::staying(
+    let trackers = Arc::new(Through::staying(
         changes::where_the_listener_is(cfg.listener.socket.clone()).as_deref(),
         cfg.read().map(|project| project.name.as_str()),
         bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
         heard_from_the_listener,
         cfg.tui.refresh(),
-    );
+    ));
+    let passing_on = Arc::clone(&trackers);
     let mut started = false;
     // One provider for the run, asked by the collection on its thread and by
     // the tail on another. Which one it is is chosen here and nowhere below.
@@ -365,8 +366,11 @@ pub fn run() -> anyhow::Result<ExitCode> {
         filter,
         arms,
         agents,
-        listening_on,
-        from_the_listener,
+        Hearing {
+            listening_on,
+            from_the_listener,
+            passing_on: Box::new(move |heard| passing_on.passes_on(heard.clone())),
+        },
         Box::new(move |asked| match asked {
             // Nothing is drawn for a config the reader has written: what it
             // changes is what every read after it reads, and the loop asks
@@ -383,7 +387,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 if wanted == Wanted::Everything && std::mem::replace(&mut started, true) {
                     trackers.asks_again();
                 }
-                Some(collection.collect(&cfg, &listing, &trackers, &wanted, filter, Utc::now()))
+                Some(collection.collect(&cfg, &listing, &*trackers, &wanted, filter, Utc::now()))
             }
         }),
         reload,

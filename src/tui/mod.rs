@@ -38,6 +38,23 @@ pub(crate) use reload::{Reload, CHECKED_EVERY};
 /// is what every read after it reads.
 pub type Collecting = Box<dyn FnMut(Asked) -> Option<Snapshot> + Send>;
 
+/// Where what a writer says on the inbound channel is passed on to.
+pub type PassingOn = Box<dyn Fn(&Heard) + Send>;
+
+/// What a view hears from outside it: what writers say on its inbound
+/// channel, and what the listener it reads through says.
+pub struct Hearing {
+    /// Where the inbound channel is opened, or nothing where it has nowhere
+    /// to go.
+    pub listening_on: Option<PathBuf>,
+    /// Each project the listener has answered for, or can no longer answer
+    /// for.
+    pub from_the_listener: Receiver<Heard>,
+    /// Where each thing a writer says on the inbound channel is passed on
+    /// to, since what the listener holds is what the view reads.
+    pub passing_on: PassingOn,
+}
+
 use drive::{drive, View};
 use screen::{Drawing, Screen};
 use wire::wire;
@@ -81,14 +98,12 @@ use wire::wire;
 /// what `--json` prints. What the wiring finds has no snapshot to ride on and
 /// is handed to the screen directly, so the foot draws both without knowing
 /// which is which.
-#[allow(clippy::too_many_arguments)]
 pub fn run(
     cfg: &Config,
     filter: Filter,
     arms: Arming,
     agents: Arc<dyn Agents>,
-    listening_on: Option<PathBuf>,
-    from_the_listener: Receiver<Heard>,
+    hearing: Hearing,
     collect: Collecting,
     reload: Option<Reload>,
 ) -> anyhow::Result<()> {
@@ -118,14 +133,8 @@ pub fn run(
     let reported = Reported::watching(projects);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, from_the_wiring) = wire(
-        reported.clone(),
-        agents,
-        listening_on,
-        from_the_listener,
-        collect,
-        asked_to_stop,
-    );
+    let (events, ask, panes, _socket, from_the_wiring) =
+        wire(reported.clone(), agents, hearing, collect, asked_to_stop);
     // Only this process's own, and only the wiring's: what settling the config
     // could not do is on the snapshot, where both mouths read it.
     let at_startup: Vec<Notice> = from_the_wiring.into_iter().collect();

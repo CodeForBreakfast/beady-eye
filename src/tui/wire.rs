@@ -5,7 +5,6 @@
 //! the time they leave here: an `Event` on the one channel the loop waits
 //! on. Each source blocks on its own thread so the loop never has to.
 
-use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -20,7 +19,7 @@ use crate::collect::panes::{Aside, Panes};
 use crate::view::{Notch, Notice};
 
 use super::drive::Event;
-use super::Collecting;
+use super::{Collecting, Hearing, PassingOn};
 
 /// The inbound channel, or nothing and the two things said in its place.
 ///
@@ -79,11 +78,15 @@ pub(super) type Wired = (
 pub(super) fn wire(
     reported: Reported,
     agents: Arc<dyn Agents>,
-    listening_on: Option<PathBuf>,
-    from_the_listener: Receiver<Heard>,
+    hearing: Hearing,
     collect: Collecting,
     asked_to_stop: Signals,
 ) -> Wired {
+    let Hearing {
+        listening_on,
+        from_the_listener,
+        passing_on,
+    } = hearing;
     let (to_the_loop, events) = mpsc::channel();
     let (ask, asked) = mpsc::channel();
 
@@ -123,6 +126,7 @@ pub(super) fn wire(
             &mut Inbound {
                 changes,
                 _open: changed,
+                passing_on,
             },
             &to_the_loop,
         );
@@ -154,11 +158,15 @@ struct Inbound {
     /// Held so the channel never runs out of writers. A source whose last
     /// writer has gone must go quiet, not report as fast as it can.
     _open: Sender<Heard>,
+    /// Where each thing a writer says is passed on before it is reported.
+    passing_on: PassingOn,
 }
 
 impl Changes for Inbound {
     fn next(&mut self) -> Option<Event> {
-        self.changes.recv().ok().map(Event::from)
+        let heard = self.changes.recv().ok()?;
+        (self.passing_on)(&heard);
+        Some(Event::from(heard))
     }
 }
 
@@ -315,6 +323,7 @@ mod tests {
                 &mut Inbound {
                     changes,
                     _open: changed,
+                    passing_on: Box::new(|_| {}),
                 },
                 &to_the_loop,
             );
@@ -337,6 +346,7 @@ mod tests {
                 &mut Inbound {
                     changes,
                     _open: open,
+                    passing_on: Box::new(|_| {}),
                 },
                 &to_the_loop,
             );
@@ -358,6 +368,38 @@ mod tests {
             events.recv_timeout(A_MOMENT).ok(),
             Some(Event::Covered("ferry".to_string())),
             "and which one it said it covers, which asks for no read"
+        );
+    }
+
+    /// A view reading through the listener collects from what the listener
+    /// holds, so a report that reached the view has to reach the listener
+    /// too, or the change it names never reaches the screen.
+    #[test]
+    fn what_a_writer_says_on_the_inbound_channel_is_passed_on() {
+        let (to_the_loop, _events) = mpsc::channel();
+        let (changed, changes) = mpsc::channel();
+        let (passed, passed_on) = mpsc::channel();
+        let open = changed.clone();
+        thread::spawn(move || {
+            report(
+                &mut Inbound {
+                    changes,
+                    _open: open,
+                    passing_on: Box::new(move |heard| {
+                        let _ = passed.send(heard.clone());
+                    }),
+                },
+                &to_the_loop,
+            );
+        });
+
+        changed
+            .send(Heard::Covered("ferry".to_string()))
+            .expect("the source is listening");
+
+        assert_eq!(
+            passed_on.recv_timeout(A_MOMENT).ok(),
+            Some(Heard::Covered("ferry".to_string()))
         );
     }
 
@@ -602,6 +644,7 @@ mod tests {
                 &mut Inbound {
                     changes,
                     _open: changed,
+                    passing_on: Box::new(|_| {}),
                 },
                 &to_the_loop,
             );

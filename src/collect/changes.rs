@@ -132,6 +132,14 @@ impl Heard {
             Heard::Changed(project) | Heard::Covered(project) => project,
         }
     }
+
+    /// The line a writer says this in.
+    pub fn line(&self) -> String {
+        match self {
+            Heard::Changed(project) => project.clone(),
+            Heard::Covered(project) => format!("{COVERED} {project}"),
+        }
+    }
 }
 
 /// The word a writer puts before a project's name to say it covers the

@@ -2327,8 +2327,8 @@ project's name to the listener on a connection of its own, which the listener
 takes as it takes a producer's. The run starting sends none, because the
 listener has already read every project. The view still asks the agent
 provider and still makes the join, because the listener does neither. It
-keeps its own inbound channel, so a producer reporting to the view still
-reaches it. `bdi --json` and `--beads` watch the same way, read as far as each
+keeps its own inbound channel, and passes on to the listener each line a
+producer says there, because the view draws what the listener holds. `bdi --json` and `--beads` watch the same way, read as far as each
 project's freshness line and hang up.
 
 **Where none is running, a view reads its trackers itself**, as *Refresh*
