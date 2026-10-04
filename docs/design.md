@@ -2301,6 +2301,14 @@ listener found the rest in a tree of its own, and which tree drew a bead
 decides which of them it found. The run's own trees find them again, so the
 screen and `--json` say what a read of their own would say.
 
+That holds while the run and the listener read the same answers, and it fails
+in two cases. A listener that hangs up part way leaves the run to read the
+rest itself, and those reads can be newer than the ones that set `ready`. A
+bead can then read as not ready with nothing blocking it. And where two
+projects hold beads of one id, a blocker found in the other project survives
+the cut. Both go once the bead line carries bd's own readiness and blockers
+beside bdi's.
+
 **A one-shot is dated to the oldest read it was drawn from.** For a project
 the listener answered, that read is the freshness line's `as_of`. So
 `generated_at` says how old the answer is, which is the only bound a one-shot
