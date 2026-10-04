@@ -133,6 +133,10 @@ pub enum Content {
     /// and without a line of its own the root would leave the screen, which
     /// is the one way a tree can be lost silently.
     Unread(Unread),
+    /// A bead the forest is rooted at that the snapshot in hand has no row
+    /// for, said where its row would be. Its tracker either did not answer,
+    /// or answered without it — `RootNotFound`, which is the bead gone.
+    Absent(Unread),
     /// A run of closed siblings nobody is working, said as a count.
     Elided {
         count: usize,

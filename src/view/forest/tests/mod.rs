@@ -821,6 +821,10 @@ fn said(content: &Content) -> String {
     match content {
         Content::Project(line) => line.project.clone(),
         Content::Unread(unread) => format!("⚠ {} unread", unread.root),
+        Content::Absent(absent) if absent.tracker == TrackerState::RootNotFound => {
+            format!("⚠ {} gone", absent.root)
+        }
+        Content::Absent(absent) => format!("⚠ {} unread", absent.root),
         Content::Bead(row) => format!("{} {} {}", row.glyph, row.id, row.title),
         Content::Elided { count, .. } => format!("… {count} more"),
         Content::Orphaned(orphaned) => format!("⚠ {} {:?}", orphaned.id, orphaned.why),

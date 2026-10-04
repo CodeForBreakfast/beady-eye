@@ -491,15 +491,49 @@ fn the_key_roots_the_forest_afresh_once_the_focused_bead_has_gone() {
     );
 }
 
-/// A tracker that stops answering for the focused root has taken that bead
-/// out of the collection as surely as one that dropped it, so the mode
-/// ends. The root keeps a row saying it would not read, and a mode reading
-/// that row as the bead still being there would spend the next press
-/// putting back a forest that is already back.
+/// A tracker that did not answer has not said the focused bead is gone, so
+/// the mode holds through it: still focused, the selection still on the
+/// bead, and every other project still behind its line.
 #[test]
-fn the_key_roots_the_forest_afresh_once_the_focused_root_stopped_reading() {
+fn a_read_of_the_focused_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
+    let mut forest = flatten(snapshot());
+    focus_on(&mut forest, "dun-7.1");
+    let was = behind_the_line_elsewhere(&forest);
+
+    forest.refresh(dunwich_failed());
+
+    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
+    assert_eq!(behind_the_line_elsewhere(&forest), was);
+    assert!(
+        drawn_here(&forest, "⚠ dun-7.1 unread"),
+        "nothing stands where the bead was: {:#?}",
+        sketch(&forest)
+    );
+}
+
+/// The same holds for a bead named on the command line.
+#[test]
+fn a_read_of_a_named_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
+    let mut forest = named_on_the_command_line(&[("dunwich", "dun-7.1")]);
+    let was = behind_the_line_elsewhere(&forest);
+
+    forest.refresh(dunwich_failed());
+
+    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
+    assert_eq!(behind_the_line_elsewhere(&forest), was);
+}
+
+/// A focused root its tracker would not read this time is not known to
+/// have gone either. The forest stays rooted at it, and is drawn as it was
+/// once the tracker answers again.
+#[test]
+fn a_focused_root_that_stopped_reading_stays_focused_until_it_reads_again() {
     let mut forest = flatten(built(Filter::All));
     focus_on(&mut forest, "dun-7");
+    let rooted = sketch(&forest);
+
     forest.refresh(gather(
         vec![
             Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
@@ -509,18 +543,75 @@ fn the_key_roots_the_forest_afresh_once_the_focused_root_stopped_reading() {
         Filter::All,
     ));
     assert!(
-        drawn_here(&forest, "hbr-3 dredge the channel"),
+        !drawn_here(&forest, "hbr-3 dredge the channel"),
         "every root is back: {:#?}",
         sketch(&forest)
     );
-
-    focus_on(&mut forest, "hbr-3");
-
     assert!(
-        !drawn_here(&forest, "⚠ dun-7 unread"),
-        "rooted at the bead just asked for: {:#?}",
+        !drawn_here(&forest, "[OutOfTheWay dunwich]"),
+        "the focused root went behind the line: {:#?}",
         sketch(&forest)
     );
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7")));
+
+    forest.refresh(built(Filter::All));
+
+    assert_eq!(sketch(&forest), rooted);
+}
+
+/// The view was started to show one bead, so that bead leaving does not
+/// open the whole forest: the line where it stood says it is gone.
+#[test]
+fn a_named_bead_its_tracker_no_longer_holds_is_said_to_be_gone_where_it_stood() {
+    let mut forest = named_on_the_command_line(&[("dunwich", "dun-7.1.1")]);
+
+    let renamed = edited(DUNWICH, r#""id":"dun-7.1.1""#, r#""id":"dun-7.1.9""#);
+    forest.refresh(gather(
+        vec![
+            tree_of("dunwich", &renamed),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            tree_of("harbour", HARBOUR),
+        ],
+        Vec::new(),
+        Filter::LiveAgents,
+    ));
+
+    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert!(
+        !drawn_here(&forest, "fer-2"),
+        "still rooted at one bead: {:#?}",
+        sketch(&forest)
+    );
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1.1")));
+    assert!(
+        drawn_here(&forest, "⚠ dun-7.1.1 gone"),
+        "nothing says the bead is gone: {:#?}",
+        sketch(&forest)
+    );
+}
+
+/// Dunwich failing to answer, as a collection says it: no trees of its own,
+/// and its failure among the failed projects.
+fn dunwich_failed() -> Snapshot {
+    gather(
+        vec![
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            tree_of("harbour", HARBOUR),
+        ],
+        vec![FailedProject {
+            project: "dunwich".into(),
+            tracker: TrackerFailure::Unstartable,
+        }],
+        Filter::LiveAgents,
+    )
+}
+
+/// The lines the mode holds the other projects' roots behind, as drawn.
+fn behind_the_line_elsewhere(forest: &Forest) -> Vec<String> {
+    sketch(forest)
+        .into_iter()
+        .filter(|row| row.contains("[OutOfTheWay ferry]") || row.contains("[OutOfTheWay harbour]"))
+        .collect()
 }
 
 /// Going to a bead opens what is shut over it, and under this mode what is

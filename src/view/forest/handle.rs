@@ -296,7 +296,7 @@ impl Folds {
 /// is why this is the same question as whether the selection may sit there.
 pub(super) fn handle_of(line: &Line) -> Option<Handle> {
     match &line.content {
-        Content::Bead(_) => line.place.clone().map(Handle::Bead),
+        Content::Bead(_) | Content::Absent(_) => line.place.clone().map(Handle::Bead),
         Content::Unread(_) => line.place.clone().map(Handle::Unread),
         Content::Project(line) => Some(Handle::Project(line.project.clone())),
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
@@ -325,7 +325,8 @@ pub(super) fn selectable(line: &Line) -> bool {
 /// line's own handle out.
 pub(super) fn names(line: &Line, handle: &Handle) -> bool {
     match (handle, &line.content) {
-        (Handle::Bead(place), Content::Bead(_)) | (Handle::Unread(place), Content::Unread(_)) => {
+        (Handle::Bead(place), Content::Bead(_) | Content::Absent(_))
+        | (Handle::Unread(place), Content::Unread(_)) => {
             line.place.as_ref() == Some(place)
         }
         (Handle::Project(project), Content::Project(line)) => line.project == *project,

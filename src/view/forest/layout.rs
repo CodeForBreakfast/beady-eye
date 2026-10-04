@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::config;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Counts, Node as Bead, Snapshot, Tree};
+use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::{Link, OrphanedDependency};
 use crate::model::types::Edge;
 use crate::view::draw::identity_widths;
@@ -130,7 +130,16 @@ pub(super) fn draws_so_far() -> usize {
 pub(super) struct Rooted {
     pub(super) place: Place,
     /// The way down from the tree's root to the focused bead, that bead last.
-    pub(super) way: Vec<usize>,
+    /// Why there is none where the snapshot in hand holds no such bead.
+    pub(super) way: Result<Vec<usize>, TrackerState>,
+}
+
+/// What a project draws a line for at the top of its trees: a tree, from its
+/// root or from the focused bead and the way down to it, or a focused bead
+/// the snapshot holds no row for and why.
+enum Root<'a> {
+    Tree(&'a Arc<Tree>, Option<(&'a Place, &'a [usize])>),
+    Absent(&'a Place, &'a TrackerState),
 }
 
 /// Whether a group is drawn at all, which is whether the snapshot has put
@@ -154,8 +163,9 @@ pub(super) fn group_drawn(
 /// both read: the first has nothing to draw and the second is reported among
 /// the failed projects, and a line here would say of either that its rows
 /// were still coming.
-pub(super) fn project_drawn(snapshot: &Snapshot, project: &str) -> bool {
-    snapshot.trees.iter().any(|tree| tree.project == project)
+pub(super) fn project_drawn(snapshot: &Snapshot, project: &str, rooted: &[Rooted]) -> bool {
+    rooted.iter().any(|rooted| rooted.place.tree.project == project)
+        || snapshot.trees.iter().any(|tree| tree.project == project)
         || snapshot
             .hidden_trees
             .iter()
@@ -248,7 +258,7 @@ pub(super) fn walked<'a>(
 ) -> Vec<(&'a Tree, Vec<usize>, Vec<usize>)> {
     let mut drawn = Vec::new();
     for project in &snapshot.projects {
-        if !project_drawn(snapshot, project) {
+        if !project_drawn(snapshot, project, rooted) {
             continue;
         }
         if rooted.is_empty() {
@@ -271,8 +281,9 @@ pub(super) fn walked<'a>(
                 .iter()
                 .filter(|rooted| rooted.place.tree.project == *project)
                 .filter_map(|rooted| {
+                    let way = rooted.way.as_ref().ok()?;
                     let tree = snapshot.tree(&rooted.place.tree)?;
-                    Some((tree, rooted.way.clone(), Vec::new()))
+                    Some((tree, way.clone(), Vec::new()))
                 }),
         );
         drawn.extend(
@@ -401,14 +412,15 @@ fn out_of_the_way<'a>(
                 .collect();
             // A root that is itself focused leaves nothing here: the whole
             // tree hangs beneath it, so the mode stopped drawing none of it.
-            if focused.iter().any(|rooted| rooted.way.len() == 1) {
+            if focused.iter().any(|rooted| rooted.place.steps.is_empty()) {
                 return None;
             }
             Some(Behind {
                 tree,
                 without: focused
                     .iter()
-                    .map(|rooted| *rooted.way.last().expect("a way down ends somewhere"))
+                    .filter_map(|rooted| rooted.way.as_ref().ok())
+                    .map(|way| *way.last().expect("a way down ends somewhere"))
                     .collect(),
             })
         })
@@ -553,7 +565,7 @@ impl<'a> Layout<'a> {
         // the first frame of a run. Walking the projects rather than the
         // trees is what lets one be drawn before it has any.
         for project in &self.snapshot.projects {
-            if project_drawn(self.snapshot, project) {
+            if project_drawn(self.snapshot, project, self.rooted) {
                 lines.push(self.draw_project(project));
             }
         }
@@ -599,7 +611,7 @@ impl<'a> Layout<'a> {
         tree: &'a Arc<Tree>,
         over: Option<&'a Scope>,
         rests_shut: bool,
-        rooted: Option<&'a Rooted>,
+        rooted: Option<(&'a Place, &'a [usize])>,
         without: Vec<usize>,
     ) -> TreeLayout<'a> {
         let root = root_key(tree);
@@ -667,12 +679,12 @@ impl<'a> Layout<'a> {
         if !open && !self.beneath_shut {
             return Node::drawn(line, Vec::new());
         }
-        let trees: Vec<(&Arc<Tree>, Option<&Rooted>)> = if self.rooted.is_empty() {
+        let roots: Vec<Root> = if self.rooted.is_empty() {
             self.snapshot
                 .trees
                 .iter()
                 .filter(|tree| tree.project == project)
-                .map(|tree| (tree, None))
+                .map(|tree| Root::Tree(tree, None))
                 .collect()
         } else {
             // Rooted at its focused beads, the forest draws the tree holding
@@ -680,12 +692,19 @@ impl<'a> Layout<'a> {
             // was collected rather than from what the filter shows, so a
             // reader who rooted the forest at a bead in a tree the filter is
             // holding back keeps the tree they asked for.
+            //
+            // A focused bead the snapshot holds no row for is drawn where its
+            // tree would be, saying why: its tracker did not answer, or it
+            // has gone.
             self.rooted
                 .iter()
                 .filter(|rooted| rooted.place.tree.project == project)
-                .filter_map(|rooted| {
-                    let tree = self.snapshot.shared_tree(&rooted.place.tree)?;
-                    Some((tree, Some(rooted)))
+                .filter_map(|rooted| match &rooted.way {
+                    Ok(way) => {
+                        let tree = self.snapshot.shared_tree(&rooted.place.tree)?;
+                        Some(Root::Tree(tree, Some((&rooted.place, way.as_slice()))))
+                    }
+                    Err(why) => Some(Root::Absent(&rooted.place, why)),
                 })
                 .collect()
         };
@@ -697,15 +716,17 @@ impl<'a> Layout<'a> {
             .filter(|kind| self.rooted.is_empty() || *kind != GroupKind::HiddenTrees)
             .filter_map(|kind| group_of(self.snapshot, kind, Some(&project), self.rooted))
             .collect();
-        let mut entries = trees.len() + groups.len();
+        let mut entries = roots.len() + groups.len();
         let mut trunk = Vec::new();
         let mut children = Vec::new();
-        for (tree, rooted) in trees {
+        for root in roots {
             entries -= 1;
-            children.push(
-                self.tree_layout(tree, over, false, rooted, Vec::new())
+            children.push(match root {
+                Root::Tree(tree, rooted) => self
+                    .tree_layout(tree, over, false, rooted, Vec::new())
                     .draw(&mut trunk, entries == 0),
-            );
+                Root::Absent(place, why) => absent(place, why, &trunk, entries == 0),
+            });
         }
         for group in groups {
             entries -= 1;
@@ -854,9 +875,9 @@ struct TreeLayout<'a> {
     /// The lines the folds name in this tree, from its root.
     named: Option<&'a Mentioned>,
     rests_shut: bool,
-    /// The bead to draw this tree from, where the reader has rooted the forest
-    /// at one. Its own root otherwise.
-    rooted: Option<&'a Rooted>,
+    /// The bead to draw this tree from and the way down to it, where the
+    /// reader has rooted the forest at one. Its own root otherwise.
+    rooted: Option<(&'a Place, &'a [usize])>,
     /// The beads to leave out, because the forest is drawing them somewhere
     /// else. Only a root a focused bead stands in, drawn behind the line the
     /// mode holds it back with, has any.
@@ -873,11 +894,11 @@ impl<'a> TreeLayout<'a> {
         // everywhere else, so a fold set on it survives the key that rooted
         // the forest there and the key that puts the forest back.
         let (root, way, (over, stand), named) = match self.rooted {
-            Some(rooted) => (
-                rooted.place.clone(),
-                rooted.way.clone(),
-                self.over_rooted(rooted),
-                self.named_under(&rooted.place),
+            Some((place, way)) => (
+                place.clone(),
+                way.to_vec(),
+                self.over_rooted(place, way),
+                self.named_under(place),
             ),
             None => {
                 let root = Place::root(root_key(self.tree));
@@ -953,11 +974,11 @@ impl<'a> TreeLayout<'a> {
     /// over it — so they are read on the way down to it, as the walk that
     /// drew them would have read them. Where it stands is not read on the
     /// way down: the rule begins afresh at the bead itself.
-    fn over_rooted(&self, rooted: &Rooted) -> (Option<&'a Scope>, Stand) {
+    fn over_rooted(&self, rooted: &Place, way: &[usize]) -> (Option<&'a Scope>, Stand) {
         let folds: &'a Folds = self.layout.folds;
         let mut over = self.over;
         let mut place = Place::root(root_key(self.tree));
-        for step in rooted.way.windows(2) {
+        for step in way.windows(2) {
             over = folds.beneath(&Handle::Bead(place.clone()), over);
             let link = self.tree.children[step[0]]
                 .iter()
@@ -966,7 +987,7 @@ impl<'a> TreeLayout<'a> {
             place = place.step_to(self.key_of(link));
         }
         let stand = self
-            .begun(&rooted.place)
+            .begun(rooted)
             .expect("the rule begins where the forest is rooted");
         (over, stand)
     }
@@ -1235,6 +1256,23 @@ fn orphaned_node(orphaned: &OrphanedDependency, trunk: &[bool], last: bool, dept
             folded: None,
             place: None,
             content: Content::Orphaned(orphaned.clone()),
+        },
+        Vec::new(),
+    )
+}
+
+/// The line saying why a focused bead has no row, where its row would be.
+fn absent(place: &Place, why: &TrackerState, trunk: &[bool], last: bool) -> Node {
+    Node::drawn(
+        Line {
+            prefix: prefix(trunk, last, false, None),
+            depth: trunk.len() as u16 + 1,
+            folded: None,
+            place: Some(place.clone()),
+            content: Content::Absent(Unread {
+                root: place.key().id.clone(),
+                tracker: why.clone(),
+            }),
         },
         Vec::new(),
     )
