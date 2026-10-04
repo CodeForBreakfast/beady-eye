@@ -21,8 +21,8 @@ use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
 use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
-    self, AgentProvider, Collected, FailedProject, Filter, ProviderState, Said, Session,
-    Node, SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
+    self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
+    SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
 };
 use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};

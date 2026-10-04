@@ -12,6 +12,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use crate::model::snapshot::TrackerFailure;
+use crate::model::types::Printed;
 
 /// One bead as the listener holds it: its tracker's row, and the readiness
 /// `bdi --beads` gives it.
@@ -22,7 +23,7 @@ use crate::model::snapshot::TrackerFailure;
 pub struct Held {
     /// The row as bd printed it, so a field `bdi` never reads still reaches a
     /// consumer. Nothing where the tracker was read without keeping its rows.
-    pub row: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
+    pub row: Option<Arc<Printed>>,
     pub ready: bool,
     /// Every bead blocking this one, in its own project or another.
     pub blocked_by: Vec<String>,
@@ -98,6 +99,7 @@ impl Hold {
 
     /// What the listener holds of `project`, where a source has said anything
     /// of it.
+    #[cfg(test)]
     pub fn of(&self, project: &str) -> Option<&Standing> {
         self.projects.get(project)
     }

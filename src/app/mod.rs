@@ -21,10 +21,10 @@ mod tracker;
 pub use armed::{armed_unread, Armed, Arming};
 pub use collection::{run, Asked, Awaited, Collection, Wanted};
 pub use due::due_after;
-pub use outstanding::Outstanding;
 pub use listener::{hold, Hold};
+pub use outstanding::Outstanding;
 pub use reading::Reading;
-pub use reading_trackers::{Reads, ReadingTrackers};
+pub use reading_trackers::{ReadingTrackers, Reads};
 
 /// The fake trackers and panes both halves read in their tests.
 ///

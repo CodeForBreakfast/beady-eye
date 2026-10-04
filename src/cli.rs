@@ -4,7 +4,7 @@
 use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -12,8 +12,8 @@ use chrono::Utc;
 use clap::{Parser, Subcommand};
 
 use crate::app::Asked;
-use crate::app::{Armed, Arming};
-use crate::collect::agents::Agents;
+use crate::app::{armed_unread, hold, Armed, Arming, Hold, Outstanding, ReadingTrackers, Reads};
+use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::discovery;
@@ -24,6 +24,8 @@ use crate::collect::tracker::OpenFailure;
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Listing};
 use crate::tui::{Reload, CHECKED_EVERY};
+use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
@@ -120,6 +122,19 @@ enum Passing {
             allow_hyphen_values = true
         )]
         asked: Vec<String>,
+    },
+    /// Hold every configured project's beads as last read, reading each
+    /// tracker as a view does, and take producers' reports on a socket of its
+    /// own. One per machine, run under whatever supervises your processes.
+    Listen {
+        /// Listen on this socket, rather than the one the config names or
+        /// the one under $XDG_RUNTIME_DIR.
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+        /// Read the configuration from this file, rather than
+        /// ~/.config/beady-eye/config.toml.
+        #[arg(long)]
+        config: Option<String>,
     },
 }
 
@@ -223,8 +238,15 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
 
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    if let Some(Passing::Bd { project, asked }) = &cli.passing {
-        return passed_to_bd(&expand_tilde(DEFAULT_CONFIG, home), project, asked);
+    match &cli.passing {
+        Some(Passing::Bd { project, asked }) => {
+            return passed_to_bd(&expand_tilde(DEFAULT_CONFIG, home), project, asked);
+        }
+        Some(Passing::Listen { socket, config }) => {
+            let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
+            return listen(socket.clone(), &config);
+        }
+        None => {}
     }
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let launch = Launch {
@@ -284,22 +306,11 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // The socket is asked for once, so a config the reader writes later
     // cannot move it, and nothing below this line reads the path again.
     let listening_on = changes::where_writers_find_bdi(told_to_listen_on(&cli, &cfg));
-    let polling = Polling::asked_for(&cli);
     // Asked again whenever the reader writes a config, so the set of
     // projects that poll is the set the file names. The command line is what
     // it carries that a config cannot: `--poll` and `--no-poll` overrule
     // every project's own key, and they are settled here.
-    let arms: Arming = Box::new(move |cfg: &Config| {
-        cfg.read()
-            .map(|project| {
-                Armed::polling(
-                    project.name.clone(),
-                    polling.after_a_read(project, cfg.tui.refresh()),
-                )
-                .lapsing_after(cfg.changes.covered_for())
-            })
-            .collect()
-    });
+    let arms = arming(Polling::asked_for(&cli));
     // Built before the config goes to the collector, and holding a copy of
     // it: what a re-read is compared against is the config this run is
     // working to, and after this line the collector owns the only other one.
@@ -357,6 +368,98 @@ pub fn run() -> anyhow::Result<ExitCode> {
     )?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// The projects `cfg` reads, each armed to poll as `polling` says.
+fn arming(polling: Polling) -> Arming {
+    Box::new(move |cfg: &Config| {
+        cfg.read()
+            .map(|project| {
+                Armed::polling(
+                    project.name.clone(),
+                    polling.after_a_read(project, cfg.tui.refresh()),
+                )
+                .lapsing_after(cfg.changes.covered_for())
+            })
+            .collect()
+    })
+}
+
+/// `bdi listen`: every configured project read and held until a signal says
+/// stop, with producers' reports taken on the listener's own socket.
+///
+/// The config is read once. Replacing what the listener reads is a restart.
+fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
+    let cwd = std::env::current_dir().context("finding the current directory")?;
+    let cfg = read_config(
+        &RealRunner,
+        config,
+        &Launch {
+            cwd: &cwd,
+            reading: Reading::EveryProject,
+            roots: &[],
+        },
+    )?
+    .config;
+    // Taken before the socket, so a signal from here on removes it.
+    let mut asked_to_stop = Signals::new([SIGHUP, SIGINT, SIGTERM])
+        .context("asking to be told about the signals that would otherwise kill bdi")?;
+    let arms = arming(Polling::AsConfigured);
+    let armed = arms(&cfg);
+    let reported = changes::Reported::watching(
+        armed
+            .iter()
+            .map(|project| project.project().to_string())
+            .collect::<Vec<_>>(),
+    );
+    let (heard_by, heard) = mpsc::channel();
+    let at = changes::where_the_listener_is(socket.or_else(|| cfg.listener.socket.clone()));
+    // Held, not discarded: the socket comes off the filesystem when this
+    // returns.
+    let _socket = match changes::listen(at, &reported, heard_by) {
+        Ok(socket) => socket,
+        Err(refused) => {
+            eprintln!("bdi listen cannot start: {}", listener_refused(&refused));
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    let reading = crate::app::Reading::of(armed, reported).unread(armed_unread(&arms, &cfg));
+    let outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
+    let mut collection = crate::app::Collection::default();
+    let trackers = bd::Cli::new(&RealRunner).keeping_rows();
+    let reads: Reads = Box::new(move |wanted, now| {
+        let snapshot = collection.collect(&cfg, &Unasked, &trackers, wanted, Filter::All, now);
+        let answers = collection.answers(&snapshot);
+        (snapshot, answers)
+    });
+    let mut source = ReadingTrackers::new(reads, heard, outstanding, reading);
+    let held = Arc::new(Mutex::new(Hold::default()));
+    std::thread::spawn(move || hold(&mut source, &held));
+
+    asked_to_stop.forever().next();
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Why the listener's socket could not be opened, and what to do about it.
+fn listener_refused(refused: &changes::Refused) -> String {
+    use changes::Refused;
+    match refused {
+        Refused::NoRuntimeDirectory => "this session has no XDG_RUNTIME_DIR to put the socket in; choose a path with --socket, or with socket under [listener] in the config".to_string(),
+        Refused::AlreadyListening(at) => format!(
+            "another bdi listen is running on {}",
+            at.display()
+        ),
+        Refused::NotASocket(at) => format!(
+            "{} is not a socket, so bdi will not use it; choose another path with --socket, or with socket under [listener] in the config",
+            at.display()
+        ),
+        Refused::NameOthersMayTake(directory) => format!(
+            "other users may take a name in {}, so a socket under it is not bdi's alone; choose a path outside it with --socket, or with socket under [listener] in the config",
+            directory.display()
+        ),
+        Refused::Unopenable(at, error) => format!("{} could not be opened: {error}", at.display()),
+    }
 }
 
 /// `bdi bd`: bd run against `project`'s tracker on the terminal `bdi` was

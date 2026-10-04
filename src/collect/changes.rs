@@ -34,6 +34,9 @@ const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 /// Where `bdi` puts its socket inside that directory.
 const SOCKET: &str = "beady-eye/changes.sock";
 
+/// Where `bdi listen` puts its socket inside that directory.
+const LISTENER_SOCKET: &str = "beady-eye/listener.sock";
+
 /// Nothing this long is a project name, so a writer still building a line at
 /// this point is broken. Reading stops here, which is what keeps a writer
 /// that never ends its line from being read into memory without limit.
@@ -398,6 +401,14 @@ pub fn where_writers_find_bdi(told: Option<PathBuf>) -> Option<PathBuf> {
                 .map(PathBuf::from)
                 .as_deref(),
         )
+    })
+}
+
+/// Where a consumer finds `bdi listen`: the path it was told to listen on, or
+/// the one under the directory this session owns where it was told none.
+pub fn where_the_listener_is(told: Option<PathBuf>) -> Option<PathBuf> {
+    told.or_else(|| {
+        std::env::var_os(RUNTIME_DIRECTORY).map(|dir| PathBuf::from(dir).join(LISTENER_SOCKET))
     })
 }
 

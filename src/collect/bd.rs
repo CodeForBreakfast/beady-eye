@@ -24,6 +24,7 @@ use crate::model::types::{Bead, Dependency, Edge, Printed, Status};
 
 /// Parse a flat array of bd rows, however the answer that carried them was
 /// asked for. `bd list`, `bd ready` and `bd query` all write the same row.
+#[cfg(any(test, feature = "testing"))]
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
     parsed(s, false)
 }
