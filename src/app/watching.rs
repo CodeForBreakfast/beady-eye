@@ -169,7 +169,9 @@ impl Interest {
 const HEARTBEAT: [&str; 2] = ["lease_expires_at", "heartbeat_at"];
 
 fn differs(was: &Held, is: &Held) -> bool {
-    was.ready != is.ready || was.blocked_by != is.blocked_by || acted_on(was) != acted_on(is)
+    was.ready != is.ready
+        || was.blocked_by != is.blocked_by
+        || (was.row != is.row && acted_on(was) != acted_on(is))
 }
 
 fn acted_on(held: &Held) -> Option<Vec<(&String, &serde_json::Value)>> {
