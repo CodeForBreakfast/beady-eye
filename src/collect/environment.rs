@@ -5,7 +5,11 @@
 //! one its directory implies — with its credential command replacing the
 //! password in any of them. Every question asked with it is in `bd`.
 
-use std::path::Path;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use crate::collect::run::{found_on_path, Env, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
@@ -112,6 +116,7 @@ pub fn tracker_env(
     runner: &dyn Runner,
     project: &Project,
     ambient: Option<&str>,
+    cache: Option<&EnvironmentCache>,
 ) -> Result<Env, OpenFailure> {
     let mut env = ambient.map_or_else(Env::new, |password| {
         Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
@@ -121,8 +126,11 @@ pub fn tracker_env(
         .clone()
         .or_else(|| detected(&project.path))
     {
-        let captured =
-            entering(&project.path, runner, &command).map_err(|_| OpenFailure::NoEnvironment)?;
+        let captured = match cache.filter(|_| command.words().first() == Some(&DIRENV)) {
+            Some(cache) => cache.recall_or_enter(&project.path, runner, &command),
+            None => entering(&project.path, runner, &command),
+        }
+        .map_err(|_| OpenFailure::NoEnvironment)?;
         env.extend(captured);
     }
     if let Some(command) = &project.credential_command {
@@ -136,6 +144,134 @@ pub fn tracker_env(
     }
     Ok(env)
 }
+
+/// What entering each project's directory produced on an earlier run, kept
+/// on disk so a one-shot read does not pay for re-sourcing an unchanged
+/// `.envrc`: measured on 2026-10-04 at about 0.35 seconds a project.
+///
+/// A kept environment is used only while a fresh capture would give the same
+/// answer. That needs the same command, the same environment `bdi` hands its
+/// children, and direnv saying nothing it watches has moved. The last is the
+/// rule a shell sitting in the directory uses to decide whether to reload, and
+/// its watches cover the `.envrc`, its allow record, and whatever the `.envrc`
+/// watches, which is how a `dotenv` file or a flake lock is noticed. So only a
+/// command direnv runs is kept: nothing else can say when what it produced
+/// stopped being current.
+///
+/// Whatever cannot be trusted is captured afresh rather than guessed at: no
+/// file, one that will not parse, a direnv that will not answer. A cache that
+/// cannot be written is one the next run does not find.
+pub struct EnvironmentCache {
+    dir: PathBuf,
+    handed: Env,
+}
+
+/// One project's capture as the cache holds it, with what it was captured
+/// under.
+#[derive(Serialize, Deserialize)]
+struct Kept {
+    path: PathBuf,
+    command: Vec<String>,
+    handed: Env,
+    captured: Env,
+}
+
+impl EnvironmentCache {
+    /// The cache under this user's home, for a run launched in the
+    /// environment `bdi` is running in.
+    pub fn here() -> Option<Self> {
+        let home = PathBuf::from(std::env::var_os("HOME")?);
+        Some(Self {
+            dir: home.join(".cache/beady-eye/environments"),
+            handed: std::env::vars_os()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+                .filter(|(name, _)| !NEVER_INHERITED.contains(&name.as_str()))
+                .collect(),
+        })
+    }
+
+    /// What entering `path` produces: the capture kept for it while that is
+    /// still current, and a fresh one, kept for next time, where it is not.
+    fn recall_or_enter(
+        &self,
+        path: &Path,
+        runner: &dyn Runner,
+        command: &Command,
+    ) -> Result<Env, RunFailure> {
+        let words: Vec<String> = command.words().into_iter().map(str::to_string).collect();
+        if let Some(kept) = self.still_current(path, runner, &words) {
+            return Ok(kept);
+        }
+        let kept = Kept {
+            captured: entering(path, runner, command)?,
+            path: path.to_path_buf(),
+            command: words,
+            handed: self.handed.clone(),
+        };
+        let _ = self.keep(&kept);
+        Ok(kept.captured)
+    }
+
+    fn still_current(&self, path: &Path, runner: &dyn Runner, command: &[String]) -> Option<Env> {
+        let kept = self.recalled(path)?;
+        let same_capture =
+            kept.path == path && kept.command == command && kept.handed == self.handed;
+        let unchanged = || {
+            runner
+                .run(
+                    DIRENV,
+                    &["export", "json"],
+                    Some(path),
+                    &lending(&kept.captured),
+                )
+                .is_ok_and(|changes| changes.trim().is_empty())
+        };
+        (same_capture && unchanged()).then_some(kept.captured)
+    }
+
+    fn recalled(&self, path: &Path) -> Option<Kept> {
+        serde_json::from_slice(&std::fs::read(self.file_for(path)).ok()?).ok()
+    }
+
+    /// Written whole under another name and renamed into place, so a run
+    /// reading it as it is written finds the last capture or this one and
+    /// never part of either.
+    fn keep(&self, kept: &Kept) -> std::io::Result<()> {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(PRIVATE_DIRECTORY)
+            .create(&self.dir)?;
+        let file = self.file_for(&kept.path);
+        let partial = file.with_extension(std::process::id().to_string());
+        let mut writing = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(PRIVATE_FILE)
+            .open(&partial)?;
+        serde_json::to_writer(&mut writing, kept)?;
+        std::fs::rename(partial, file)
+    }
+
+    /// One file per project, so projects read side by side never write the
+    /// same file. The path is hashed because it may be longer than a file
+    /// name may be; the path kept inside is what says whose it is.
+    fn file_for(&self, path: &Path) -> PathBuf {
+        let mut hasher = DefaultHasher::new();
+        path.hash(&mut hasher);
+        self.dir.join(format!("{:016x}.json", hasher.finish()))
+    }
+}
+
+/// A kept environment can hold the tracker's password and anything else a
+/// project's `.envrc` exports, so no one else on the machine reads it.
+const PRIVATE_DIRECTORY: u32 = 0o700;
+const PRIVATE_FILE: u32 = 0o600;
 
 /// The wrapper a project's own directory asks for without its config saying
 /// so: `direnv exec .`, where the directory holds an `.envrc` and the machine
@@ -342,7 +478,7 @@ mod tests {
             ]),
         );
 
-        let env = tracker_env(&runner, &entered_with_direnv(), None).unwrap();
+        let env = tracker_env(&runner, &entered_with_direnv(), None, None).unwrap();
 
         assert_eq!(
             env.get("BEADS_DOLT_PASSWORD").map(String::as_str),
@@ -368,6 +504,7 @@ mod tests {
             &runner,
             &entered_with_direnv(),
             Some("the-launching-shells-password"),
+            None,
         )
         .unwrap();
 
@@ -391,7 +528,7 @@ mod tests {
             ),
         );
 
-        let env = tracker_env(&runner, &entered_with_direnv(), None).unwrap();
+        let env = tracker_env(&runner, &entered_with_direnv(), None, None).unwrap();
 
         assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter2"));
         assert_eq!(
@@ -421,7 +558,8 @@ mod tests {
             RunFailure::unstartable("direnv", "No such file or directory"),
         );
 
-        let failure = tracker_env(&runner, &entered_with_direnv(), Some("hunter2")).unwrap_err();
+        let failure =
+            tracker_env(&runner, &entered_with_direnv(), Some("hunter2"), None).unwrap_err();
 
         assert_eq!(failure, OpenFailure::NoEnvironment);
     }
@@ -443,7 +581,7 @@ mod tests {
                 },
             );
 
-            let failure = tracker_env(&runner, &entered_with_direnv(), None).unwrap_err();
+            let failure = tracker_env(&runner, &entered_with_direnv(), None, None).unwrap_err();
 
             assert_eq!(failure, OpenFailure::NoEnvironment, "{kind:?}");
         }
@@ -466,7 +604,7 @@ mod tests {
         };
 
         assert_eq!(
-            tracker_env(&runner, &project, None).unwrap_err(),
+            tracker_env(&runner, &project, None, None).unwrap_err(),
             OpenFailure::NoEnvironment
         );
     }
@@ -498,7 +636,7 @@ mod tests {
             ..entered_with_direnv()
         };
 
-        let env = tracker_env(&runner, &project, None).unwrap();
+        let env = tracker_env(&runner, &project, None, None).unwrap();
 
         let call = runner.call("sh -c op read the/password");
         assert_eq!(
@@ -535,7 +673,7 @@ mod tests {
             worktrees: Vec::new(),
         };
 
-        tracker_env(&runner, &project, None).unwrap();
+        tracker_env(&runner, &project, None, None).unwrap();
 
         assert!(
             !runner
@@ -561,7 +699,7 @@ mod tests {
     fn a_project_that_says_nothing_about_its_environment_is_read_without_running_anything() {
         let runner = FakeRunner::default();
 
-        let env = tracker_env(&runner, &ambient_project(), Some("hunter2")).unwrap();
+        let env = tracker_env(&runner, &ambient_project(), Some("hunter2"), None).unwrap();
 
         assert_eq!(env, credentialled());
         assert_eq!(
@@ -637,7 +775,13 @@ mod tests {
             worktrees: Vec::new(),
         };
 
-        let env = tracker_env(&runner, &project, Some("the-launching-shells-password")).unwrap();
+        let env = tracker_env(
+            &runner,
+            &project,
+            Some("the-launching-shells-password"),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(
             env,
@@ -662,7 +806,7 @@ mod tests {
             &exported(&[("PATH", "/nix/bin")]),
         );
 
-        let env = tracker_env(&runner, &entered_with_direnv(), Some("hunter2")).unwrap();
+        let env = tracker_env(&runner, &entered_with_direnv(), Some("hunter2"), None).unwrap();
 
         assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter2"));
         assert_eq!(
@@ -679,7 +823,7 @@ mod tests {
         let runner = FakeRunner::default().with(&entering_the_directory(), &exported(&[]));
 
         assert_eq!(
-            tracker_env(&runner, &entered_with_direnv(), None).unwrap(),
+            tracker_env(&runner, &entered_with_direnv(), None, None).unwrap(),
             Env::new()
         );
     }
@@ -721,8 +865,13 @@ mod tests {
                 },
             );
 
-            let failure =
-                tracker_env(&runner, &credentialled_by("op read the/password"), None).unwrap_err();
+            let failure = tracker_env(
+                &runner,
+                &credentialled_by("op read the/password"),
+                None,
+                None,
+            )
+            .unwrap_err();
 
             assert_eq!(failure, OpenFailure::NoCredential, "{kind:?}");
         }
@@ -750,5 +899,293 @@ mod tests {
 
         assert_eq!(failure.kind, FailureKind::Unavailable);
         assert_eq!(failure.program, "sh");
+    }
+
+    /// What `bdi` asks direnv to learn whether a kept environment is still
+    /// the one entering the directory would produce.
+    const STILL_CURRENT: &str = "direnv export json";
+
+    /// The environment `bdi` was launched in on every run below but one.
+    const LAUNCHED_IN: &[(&str, &str)] = &[("HOME", "/home/someone"), ("PATH", "/usr/bin")];
+
+    /// A cache under the environment `bdi` hands every child as `handed`
+    /// says, in a directory named for the test.
+    fn cache_in(named: &str, handed: &[(&str, &str)]) -> EnvironmentCache {
+        EnvironmentCache {
+            dir: std::env::temp_dir().join(format!(
+                "bdi-environment-cache-{named}-{}",
+                std::process::id()
+            )),
+            handed: handed
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+        }
+    }
+
+    /// A cache holding nothing, emptied first so an earlier run of the same
+    /// test cannot answer for this one.
+    fn an_empty_cache(named: &str) -> EnvironmentCache {
+        let cache = cache_in(named, LAUNCHED_IN);
+        let _ = std::fs::remove_dir_all(&cache.dir);
+        cache
+    }
+
+    /// What entering the directory produces, as direnv leaves it: the
+    /// project's own variables, and the record of what direnv watches.
+    fn entered() -> String {
+        exported(&[
+            ("BEADS_DIR", "/nowhere/a-project/.beads"),
+            ("BEADS_DOLT_PASSWORD", "the-projects-own-password"),
+            ("DIRENV_WATCHES", "the-files-direnv-watches"),
+            ("PATH", "/nix/bin:/usr/bin"),
+        ])
+    }
+
+    /// One run's read of the project, with whatever `runner` has staged.
+    fn read(
+        runner: &FakeRunner,
+        project: &Project,
+        cache: &EnvironmentCache,
+    ) -> Result<Env, OpenFailure> {
+        tracker_env(runner, project, None, Some(cache))
+    }
+
+    /// The first run on a machine, which has nothing kept and so enters the
+    /// directory.
+    fn first_run(cache: &EnvironmentCache) -> Env {
+        let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+        read(&runner, &entered_with_direnv(), cache).unwrap()
+    }
+
+    fn entered_the_directory(runner: &FakeRunner) -> bool {
+        runner
+            .calls()
+            .iter()
+            .any(|call| call.argv == entering_the_directory())
+    }
+
+    /// What the cache is for: a one-shot read paid for re-sourcing the
+    /// `.envrc` on every run. direnv saying nothing it watches has moved is
+    /// the rule a shell sitting in the directory uses to decide not to
+    /// reload, so it is the rule here. The fake panics on a call nobody
+    /// staged, so entering the directory again fails this in the runner.
+    #[test]
+    fn a_directory_direnv_says_is_unchanged_is_not_entered_on_the_next_run() {
+        let cache = an_empty_cache("unchanged");
+        let first = first_run(&cache);
+        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+
+        let next = read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert_eq!(next, first, "the next run was read in another environment");
+        assert_eq!(
+            runner.call(STILL_CURRENT).cwd.as_deref(),
+            Some(project_dir().as_path()),
+            "direnv was asked about a directory other than the project's"
+        );
+    }
+
+    /// An edited `.envrc`, `.env.local` or flake lock is a change direnv
+    /// reports, and reading with the environment from before it could mean
+    /// another bd or another credential. What it reported is not applied:
+    /// the directory is entered afresh, exactly as on a first run, and that
+    /// is what the next run is checked against.
+    #[test]
+    fn a_directory_direnv_says_has_changed_is_entered_afresh_and_kept_again() {
+        let cache = an_empty_cache("changed");
+        first_run(&cache);
+        let moved = exported(&[
+            ("BEADS_DOLT_PASSWORD", "the-edited-password"),
+            ("DIRENV_WATCHES", "the-files-direnv-watches-now"),
+        ]);
+        let runner = FakeRunner::default()
+            .with(
+                STILL_CURRENT,
+                r#"{"BEADS_DOLT_PASSWORD":"the-edited-password"}"#,
+            )
+            .with(&entering_the_directory(), &moved);
+
+        let changed = read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert_eq!(changed, variables(&moved));
+        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+        assert_eq!(
+            read(&runner, &entered_with_direnv(), &cache).unwrap(),
+            changed,
+            "the run after a change was read with what came before it"
+        );
+    }
+
+    /// A fresh capture reads `bdi`'s own environment as well as the
+    /// directory, so a run launched in another one is a capture direnv's
+    /// watches say nothing about.
+    #[test]
+    fn an_environment_kept_by_a_run_launched_elsewhere_is_not_used() {
+        first_run(&an_empty_cache("launched-elsewhere"));
+        let cache = cache_in(
+            "launched-elsewhere",
+            &[("HOME", "/home/someone"), ("PATH", "/opt/other/bin")],
+        );
+        let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert!(entered_the_directory(&runner));
+    }
+
+    /// A project whose config now names another command is entered by that
+    /// command, whatever the last one produced.
+    #[test]
+    fn an_environment_kept_for_another_command_is_not_used() {
+        let cache = an_empty_cache("another-command");
+        first_run(&cache);
+        let project = Project {
+            environment_command: Some(Command::Line("direnv exec ./tracker".to_string())),
+            ..entered_with_direnv()
+        };
+        let runner = FakeRunner::default().with("direnv exec ./tracker env -0", &entered());
+
+        read(&runner, &project, &cache).unwrap();
+
+        assert_eq!(runner.calls().len(), 1, "{:?}", runner.calls());
+    }
+
+    /// Only direnv can say whether what it produced is still current. A
+    /// command it does not run has no such rule, so it is run every time.
+    #[test]
+    fn a_command_direnv_does_not_run_is_run_every_time() {
+        let cache = an_empty_cache("not-direnv");
+        let project = Project {
+            environment_command: Some(Command::Line("nix develop -c".to_string())),
+            ..entered_with_direnv()
+        };
+        for run in ["first", "next"] {
+            let runner = FakeRunner::default().with("nix develop -c env -0", &entered());
+
+            read(&runner, &project, &cache).unwrap();
+
+            assert_eq!(
+                runner.calls().len(),
+                1,
+                "the {run} run: {:?}",
+                runner.calls()
+            );
+        }
+    }
+
+    /// direnv is one of the programs a tracker's credential is kept from, and
+    /// asking it whether anything moved is no reason to hand it one. The kept
+    /// environment still carries the password to bd.
+    #[test]
+    fn direnv_is_asked_without_the_tracker_or_its_credential() {
+        let cache = an_empty_cache("withheld");
+        first_run(&cache);
+        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+
+        let env = read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        let asked = runner.call(STILL_CURRENT);
+        for withheld in NEVER_INHERITED {
+            assert!(
+                !asked.env.contains_key(withheld),
+                "{withheld} reached direnv"
+            );
+        }
+        assert_eq!(
+            asked.env.get("DIRENV_WATCHES").map(String::as_str),
+            Some("the-files-direnv-watches"),
+            "direnv was not shown what it watched"
+        );
+        assert_eq!(
+            env.get(CREDENTIAL_VAR).map(String::as_str),
+            Some("the-projects-own-password")
+        );
+    }
+
+    /// A direnv that cannot answer has not said nothing moved, so the cache
+    /// cannot be trusted and the directory is entered as on a first run.
+    #[test]
+    fn a_direnv_that_cannot_say_whether_anything_moved_has_the_directory_entered() {
+        let cache = an_empty_cache("unanswered");
+        first_run(&cache);
+        let runner = FakeRunner::default()
+            .failing(
+                STILL_CURRENT,
+                RunFailure::unstartable("direnv", "No such file or directory"),
+            )
+            .with(&entering_the_directory(), &entered());
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert!(entered_the_directory(&runner));
+    }
+
+    /// A kept environment that will not parse — truncated by a full disk,
+    /// written by another version of `bdi` — is a cache that cannot be
+    /// trusted, not a reason to fail the project.
+    #[test]
+    fn a_kept_environment_that_cannot_be_read_has_the_directory_entered() {
+        let cache = an_empty_cache("unreadable");
+        first_run(&cache);
+        for kept in std::fs::read_dir(&cache.dir).unwrap() {
+            std::fs::write(kept.unwrap().path(), "{ not what bdi wrote").unwrap();
+        }
+        let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert!(entered_the_directory(&runner));
+    }
+
+    /// What entering a directory produces can hold the tracker's password and
+    /// anything else the `.envrc` exports, so no one else on the machine may
+    /// read it.
+    #[test]
+    fn a_kept_environment_is_readable_by_this_user_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let cache = an_empty_cache("private");
+
+        first_run(&cache);
+
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&cache.dir), 0o700);
+        let kept: Vec<PathBuf> = std::fs::read_dir(&cache.dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(mode(&kept[0]), 0o600);
+    }
+
+    /// The credential command answers afresh on every run, and what it says
+    /// never reaches the disk: it is the escape hatch for a password that
+    /// lives outside the directory, and nothing direnv watches says when it
+    /// changes.
+    #[test]
+    fn a_credential_command_answers_afresh_and_is_never_kept() {
+        let cache = an_empty_cache("credential");
+        let project = Project {
+            credential_command: Some("op read the/password".to_string()),
+            ..entered_with_direnv()
+        };
+        let runner = FakeRunner::default()
+            .with(&entering_the_directory(), &entered())
+            .with("sh -c op read the/password", "hunter2\n");
+        read(&runner, &project, &cache).unwrap();
+        let runner = FakeRunner::default()
+            .with(STILL_CURRENT, "")
+            .with("sh -c op read the/password", "hunter3\n");
+
+        let env = read(&runner, &project, &cache).unwrap();
+
+        assert_eq!(env.get(CREDENTIAL_VAR).map(String::as_str), Some("hunter3"));
+        for kept in std::fs::read_dir(&cache.dir).unwrap() {
+            let text = std::fs::read_to_string(kept.unwrap().path()).unwrap();
+            assert!(
+                !text.contains("hunter"),
+                "a credential command's answer was kept: {text}"
+            );
+        }
     }
 }

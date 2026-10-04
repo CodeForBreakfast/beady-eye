@@ -1382,6 +1382,20 @@ environment_command = "nix develop -c"
   figure above is what it costs now. A project whose `.envrc` does expensive
   work per load still costs what that work costs, and the cold figure is what
   any project pays once after nix-direnv invalidates on an mtime.
+- **A capture direnv made is kept between runs, while direnv says it is
+  current.** Once a run is affordable, a one-shot read run in a loop pays the
+  capture every time, and it was the largest cost left inside `bdi`. So the
+  capture is kept on disk, readable by its user alone, because it can hold the
+  tracker's password. A later run uses it only where a fresh capture would
+  give the same answer. That needs the same command, the same environment
+  `bdi` hands its children, and `direnv export json`, handed the kept
+  environment, printing nothing. That last check is the rule a shell sitting
+  in the directory uses to decide whether to reload. direnv's watches cover the
+  `.envrc`, its allow record, and whatever the `.envrc` watches, which is how
+  an edited `dotenv` file or a moved flake lock is noticed. Only a command
+  direnv runs is kept, because nothing else can say when what it produced
+  stopped being current. Anything that cannot be trusted is captured afresh.
+  The credential command is never kept and answers on every run.
 - **A project whose `.envrc` writes to stdout cannot corrupt an answer.**
   direnv's own log lines reach stderr, measured, but nothing stops a project's
   `.envrc` printing to stdout and only this repository's has been fixed not to.
