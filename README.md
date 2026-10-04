@@ -167,6 +167,12 @@ trackers or credentials. No other `bd` command is passed, and no flag but
 after the project can pick another tracker, so a permission rule on
 `bdi bd <project>` holds a caller to that one project.
 
+`bdi listen` reads every configured project and holds what it read, polling as
+the eye does and taking the same reports on a socket of its own. Run one per
+machine under whatever supervises your processes, such as a systemd user unit or
+a launchd agent. "Running the listener" in
+[docs/configuration.md](docs/configuration.md) has an example of each.
+
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
 what a bead carries, credentials, extra roots, intervals, the light theme, and
 the socket you can poke to say a tracker changed so the eye stops polling it.
