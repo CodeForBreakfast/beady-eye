@@ -28,7 +28,7 @@ use crate::model::snapshot::{
 use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
-use super::listener::{self, Answer, Held};
+use super::listener::{self, Answer, BeadReadiness, Held};
 use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh, RootUnread};
 
 /// What one project's tracker last said, and when it said it.
@@ -242,21 +242,24 @@ impl Collection {
                                     project: project.clone(),
                                     id: bead.id.clone(),
                                 };
+                                let bd = BeadReadiness {
+                                    ready: work.readiness.ready.contains(&bead.id),
+                                    blocked_by: work
+                                        .readiness
+                                        .blocked_by
+                                        .get(&bead.id)
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                };
                                 let (ready, blocked_by) = match drawn.get(&key) {
                                     Some(node) => (node.ready, node.blocked_by.clone()),
-                                    None => (
-                                        work.readiness.ready.contains(&bead.id),
-                                        work.readiness
-                                            .blocked_by
-                                            .get(&bead.id)
-                                            .cloned()
-                                            .unwrap_or_default(),
-                                    ),
+                                    None => (bd.ready, bd.blocked_by.clone()),
                                 };
                                 let held = Held {
                                     row: bead.row.clone(),
                                     ready,
                                     blocked_by,
+                                    bd,
                                 };
                                 (key.id, held)
                             })
@@ -2951,6 +2954,24 @@ prefix = "kad"
         );
         assert!(held(&answers, "dunwich", "dun-7.2").ready);
         assert_eq!(held(&answers, "dunwich", "dun-7.1").blocked_by, ["dun-9"]);
+    }
+
+    #[test]
+    fn a_listener_is_told_each_beads_readiness_as_bd_gives_it_too() {
+        let (collection, snapshot) = both_read_with_ferry_waiting();
+
+        let answers = collection.answers(&snapshot);
+
+        let waiting = &held(&answers, "ferry", "fer-2").bd;
+        assert_eq!(
+            (waiting.ready, waiting.blocked_by.len()),
+            (true, 0),
+            "bd cannot see a blocker in another project"
+        );
+        assert_eq!(
+            held(&answers, "dunwich", "dun-7.1").bd.blocked_by,
+            ["dun-9"]
+        );
     }
 
     /// A bead no tree reaches is still a bead the tracker holds.

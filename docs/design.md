@@ -87,6 +87,7 @@ coin one — and say so.**
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
+| **reach** | *coined* | the `path` and `environment_command` a project's config entry gives, which together decide the tracker bd reaches. Neither project names the pair. |
 | **covered** | *coined* | a project something outside `bdi` has said it is watching, with nothing changed: a `covered <project>` line on the inbound channel. A covered line, and a read of the project coming back, each vouch for its rows for `[changes] covered_for_seconds`. A project that does not poll and that nothing has vouched for in that time has **lapsed**, and its mark says so. Neither project names this: the channel is `bdi`'s own. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
@@ -2092,6 +2093,13 @@ name and `covered <project>`, and answers them as the inbound channel does. A
 second `bdi listen` finds the first by connecting, as a view finds another
 view, and exits saying which socket is taken.
 
+**A run of `bdi` believes only a socket that is the user's own.** Before it
+connects, it makes the same checks on the way down that the listener makes,
+and it requires the socket itself to belong to the user. A sticky directory
+such as `/tmp` passes the way down, yet lets another user bind a name there
+first. Once the name is the user's own, nobody else can replace it. A run that
+finds any other socket at the path takes it as no listener at all.
+
 ### Watching
 
 A consumer connects and sends one line for each thing it watches:
@@ -2123,17 +2131,18 @@ says which kind it is.
 **A bead line** is one bead as its tracker now has it:
 
 ```json
-{ "line": "bead", "project": "summit-works", "ready": false, "blocked_by": ["smt-4kd3p.13"], "row": { "id": "smt-4kd3p.20", "title": "the daily wallpaper timer calls dms", "status": "blocked", "parent": "smt-4kd3p", "dependencies": [ { "depends_on_id": "smt-4kd3p", "type": "parent-child" }, { "depends_on_id": "smt-4kd3p.13", "type": "blocks" } ], "labels": [], "metadata": { "blocked_on": "human" }, "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z" } }
+{ "line": "bead", "project": "summit-works", "ready": false, "blocked_by": ["smt-4kd3p.13"], "bd": { "ready": false, "blocked_by": ["smt-4kd3p.13"] }, "row": { "id": "smt-4kd3p.20", "title": "the daily wallpaper timer calls dms", "status": "blocked", "parent": "smt-4kd3p", "dependencies": [ { "depends_on_id": "smt-4kd3p", "type": "parent-child" }, { "depends_on_id": "smt-4kd3p.13", "type": "blocks" } ], "labels": [], "metadata": { "blocked_on": "human" }, "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z" } }
 ```
 
 `row` is bd's row whole, cut here to the fields this section names. `ready`
 and `blocked_by` are the values `--beads` gives, so a blocker in another
-project counts. They sit beside the row and not in it, so nothing `bdi` adds
-can be taken for bd's or collide with a field a later bd adds.
+project counts. `bd` holds the same two as bd itself gives them, from this one
+tracker. They sit beside the row and not in it, so nothing `bdi` adds can be
+taken for bd's or collide with a field a later bd adds.
 
 A bead line is sent the first time a watch reaches a bead, which is how a
 consumer learns of one created after it connected, and again whenever the row,
-`ready` or `blocked_by` differs from what that connection was last sent. A row
+`ready`, `blocked_by` or `bd` differs from what that connection was last sent. A row
 differing only in `lease_expires_at` or `heartbeat_at` is not sent: a claim's
 heartbeat writes those and nothing a consumer acts on.
 
@@ -2147,7 +2156,7 @@ for a bead it never held:
 **A freshness line** says how current a project's beads are:
 
 ```json
-{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "events": "ok", "protocol": 1 }
+{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "events": "ok", "protocol": 1, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
 ```
 
 It closes every answer the source gives for the project. It follows the beads
@@ -2161,8 +2170,10 @@ included, or the last covered line naming the project. `tracker` is `ok`, or
 attempt to reach the project failed. The beads already sent then stand as the
 last known, and `as_of` says how old that is. A project that has never been
 read is sent no beads, and its `as_of` is `null`. `events` is explained under
-*bd's events*. A consumer watching one bead is sent its project's freshness
-line.
+*bd's events*. `reach` is the `path` and `environment_command` the listener's
+config gives the project, which together decide the tracker bd reaches, with
+the command as a list of words. A consumer watching one bead is sent its
+project's freshness line.
 
 `protocol` is the version of every line the listener sends about a watch. A
 listener is long-lived, so after an upgrade it can be an older `bdi` than the
@@ -2322,34 +2333,22 @@ on a machine, however many views, one-shots and other consumers are looking at
 it.
 
 **A one-shot reads for itself every project the listener does not answer
-for.** The listener answers for a project when its freshness line arrives. A
-refused or closed connection, a refused watch line, a line the run cannot
-read, a protocol it does not know, or a minute with no answer for a project
-leaves that project and every project still unanswered to bd. The projects
-already answered stand, so the run gives a whole answer either way, each
-project read once by one of the two.
-
-**What the run takes from a bead line is what bd would have told it.** The
-row is bd's, and `ready` is the listener's. `blocked_by` is cut to the
-blockers the bead's own project holds, which are the ones bd names. The
-listener found the rest in a tree of its own, and which tree drew a bead
-decides which of them it found. The run's own trees find them again, so the
-screen and `--json` say what a read of their own would say.
-
-That holds while the run and the listener read the same answers, and it fails
-in two cases. A listener that hangs up part way leaves the run to read the
-rest itself, and those reads can be newer than the ones that set `ready`. A
-bead can then read as not ready with nothing blocking it. And where two
-projects hold beads of one id, a blocker found in the other project survives
-the cut. Both go once the bead line carries bd's own readiness and blockers
-beside bdi's.
-
-**A listener's answer is taken by project name alone.** A config that names
+for.** The listener answers for a project when its freshness line arrives
+with the `reach` the run's own config gives the project. A config that names
 no socket finds the one listener its session runs, whatever config that
-listener read. So a run under another config, or under one changed since the
-listener started, can be answered from a different tracker that has the same
-name. This goes once a run checks that the listener reads the tracker its own
-config names.
+listener read, so a run under another config, or under one changed since the
+listener started, can find the name answered from another tracker. A
+different `reach`, a refused or closed connection, a refused watch line, a line
+the run cannot read, a protocol it does not know, or a minute with no answer
+for a project leaves that project to bd, and a connection that has gone
+leaves every project still unanswered to bd as well. The projects already
+answered stand, so the run gives a whole answer either way, each project read
+once by one of the two.
+
+**What the run takes from a bead line is what bd would have told it:** the row
+and `bd`. The run's own trees work out `bdi`'s readiness again, so the screen
+and `--json` say what a read of their own would say, whichever projects it
+read itself.
 
 **A one-shot is dated to the oldest read it was drawn from.** For a project
 the listener answered, that read is the freshness line's `as_of`. So

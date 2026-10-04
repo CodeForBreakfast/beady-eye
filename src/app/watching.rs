@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::collect::listened::PROTOCOL;
+use crate::config::Reach;
 use crate::model::snapshot::{TrackerFailure, TrackerState};
 
 use super::listener::Held;
@@ -177,6 +178,7 @@ const HEARTBEAT: [&str; 2] = ["lease_expires_at", "heartbeat_at"];
 fn differs(was: &Held, is: &Held) -> bool {
     was.ready != is.ready
         || was.blocked_by != is.blocked_by
+        || was.bd != is.bd
         || (was.row != is.row && acted_on(was) != acted_on(is))
 }
 
@@ -202,6 +204,7 @@ fn bead_line(project: &str, held: &Held) -> String {
         "project": project,
         "ready": held.ready,
         "blocked_by": held.blocked_by,
+        "bd": held.bd,
         "row": held.row,
     })
     .to_string()
@@ -212,10 +215,12 @@ fn gone_line(project: &str, id: &str) -> String {
 }
 
 /// How current `project`'s beads are: as of `as_of`, and whether the last
-/// attempt to reach its tracker failed. It carries the protocol every line
-/// about a watch is written in.
+/// attempt to reach its tracker failed, which the listener reaches as
+/// `reach` says. It carries the protocol every line about a watch is written
+/// in.
 pub fn freshness_line(
     project: &str,
+    reach: &Reach,
     as_of: Option<DateTime<Utc>>,
     unreachable: Option<&TrackerFailure>,
 ) -> String {
@@ -229,6 +234,7 @@ pub fn freshness_line(
         "tracker": tracker,
         "events": "off",
         "protocol": PROTOCOL,
+        "reach": reach,
     })
     .to_string()
 }
@@ -246,6 +252,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::app::listener::BeadReadiness;
 
     fn a_bead(id: &str, status: &str) -> (String, Held) {
         let row = json!({ "id": id, "status": status });
@@ -258,6 +265,7 @@ mod tests {
                 row: Some(Arc::new(row)),
                 ready: false,
                 blocked_by: Vec::new(),
+                bd: BeadReadiness::default(),
             },
         )
     }
@@ -411,6 +419,39 @@ mod tests {
         );
     }
 
+    /// bd's own readiness is what a run reading part of the tracker takes, so
+    /// it moving is a change even where `bdi`'s does not.
+    #[test]
+    fn bd_naming_a_blocker_is_a_change() {
+        let mut interest = watching(&[project(false)]);
+        interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
+        let mut blocked = beads(&[("dun-1", "open")]);
+        blocked.get_mut("dun-1").expect("held").bd.blocked_by = vec!["dun-4".to_string()];
+
+        assert_eq!(
+            said(&interest.catch_up("dunwich", &blocked)),
+            ["bead dun-1"]
+        );
+    }
+
+    #[test]
+    fn a_bead_line_carries_bds_readiness_beside_bdis() {
+        let mut held = beads(&[("dun-1", "open")]);
+        let dun_1 = held.get_mut("dun-1").expect("held");
+        dun_1.blocked_by = vec!["fer-4".to_string()];
+        dun_1.bd = BeadReadiness {
+            ready: true,
+            blocked_by: Vec::new(),
+        };
+        let lines = watching(&[project(false)]).catch_up("dunwich", &held);
+        let line: Value = serde_json::from_str(&lines[0]).expect("JSON");
+
+        assert_eq!(
+            line,
+            json!({ "line": "bead", "project": "dunwich", "ready": false, "blocked_by": ["fer-4"], "bd": { "ready": true, "blocked_by": [] }, "row": { "id": "dun-1", "status": "open" } })
+        );
+    }
+
     #[test]
     fn a_refusal_names_the_line_and_why() {
         let line: Value =
@@ -541,14 +582,34 @@ mod tests {
     fn freshness_says_the_tracker_could_not_be_reached_and_why() {
         let line: Value = serde_json::from_str(&freshness_line(
             "dunwich",
+            &Reach::default(),
             None,
             Some(&TrackerFailure::Auth),
         ))
         .expect("JSON");
 
         assert_eq!(
+            line["tracker"],
+            json!({ "unreachable": { "reason": "auth" } })
+        );
+    }
+
+    #[test]
+    fn freshness_says_how_the_listener_reaches_the_tracker() {
+        let reach = Reach {
+            path: "/srv/work/dunwich".into(),
+            environment_command: Some(vec![
+                "direnv".to_string(),
+                "exec".to_string(),
+                ".".to_string(),
+            ]),
+        };
+        let line: Value =
+            serde_json::from_str(&freshness_line("dunwich", &reach, None, None)).expect("JSON");
+
+        assert_eq!(
             line,
-            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": { "unreachable": { "reason": "auth" } }, "events": "off", "protocol": 1 })
+            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "events": "off", "protocol": 1, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
         );
     }
 }

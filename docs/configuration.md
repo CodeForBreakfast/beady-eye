@@ -511,7 +511,9 @@ does not read as a producer that has gone. A polled project never lapses.
 
 `socket` is where `bdi listen` takes its socket. It defaults to
 `$XDG_RUNTIME_DIR/beady-eye/listener.sock`, and `bdi listen --socket` overrides
-it. The path is checked as `[changes]`'s is. [Running the
+it. The path is checked as `[changes]`'s is. `bdi --json` and `bdi --beads`
+make the same check before they connect, and also require the socket to be
+yours. Where either fails, they read every project themselves. [Running the
 listener](#running-the-listener) has the rest.
 
 ## `[anomalies]`
@@ -699,7 +701,9 @@ producer that should reach the listener is pointed at
 `$XDG_RUNTIME_DIR/beady-eye/listener.sock`, or at the path `[listener]` names.
 A consumer watching beads connects to the same socket. The README has a worked
 one. `bdi --json` and `bdi --beads` find the listener at the same path and read
-through it, so a `[listener]` socket is named once for both.
+through it, so a `[listener]` socket is named once for both. They read a project
+themselves where the listener's config gives it another `path` or
+`environment_command` than theirs does.
 
 Run one per machine. A second `bdi listen` finds the first by connecting to the
 socket, says on stderr which socket is taken, and exits non-zero. One that

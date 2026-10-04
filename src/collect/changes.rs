@@ -412,6 +412,19 @@ pub fn where_the_listener_is(told: Option<PathBuf>) -> Option<PathBuf> {
     })
 }
 
+/// Whether the socket at `at` is one only this user could have put there,
+/// and so one a consumer may believe: a socket of this user's own, under a
+/// way down the listener would bind in.
+///
+/// The owner as well as the way down, because a sticky directory such as
+/// `/tmp` passes the way down and still lets another user bind a name first.
+/// Where the name is this user's, nobody else may replace it.
+pub fn only_this_user_holds(at: &Path) -> bool {
+    only_this_user_may_take_a_name_under(directory_holding(at)).is_ok()
+        && fs::symlink_metadata(at)
+            .is_ok_and(|what| what.file_type().is_socket() && what.uid() == this_user())
+}
+
 fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
     runtime_directory.map(|dir| dir.join(SOCKET))
 }
@@ -761,6 +774,40 @@ mod tests {
         std::fs::set_permissions(&told, std::fs::Permissions::from_mode(how))
             .expect("set as the test means it rather than as umask left it");
         told.join("changes.sock")
+    }
+
+    #[test]
+    fn a_socket_this_user_bound_where_nobody_else_may_take_its_name_is_theirs() {
+        let at = a_socket_in_a_directory_moded("held-own", ONLY_THIS_USER_MAY_ENTER);
+        let _listening = UnixListener::bind(&at).expect("the socket is ours");
+
+        assert!(only_this_user_holds(&at));
+    }
+
+    /// Another user could have bound the name first, or could put their own
+    /// socket there once this one goes.
+    #[test]
+    fn a_socket_in_a_directory_others_may_take_a_name_in_is_not_this_users_alone() {
+        let at = a_socket_in_a_directory_moded("held-shared", 0o777);
+        let _listening = UnixListener::bind(&at).expect("the socket is ours");
+
+        assert!(!only_this_user_holds(&at));
+    }
+
+    #[test]
+    fn a_name_holding_no_socket_of_this_users_is_not_one_it_holds() {
+        let at = a_socket_in_a_directory_moded("held-nothing", ONLY_THIS_USER_MAY_ENTER);
+        let elsewhere = a_socket_in_a_directory_moded("held-elsewhere", ONLY_THIS_USER_MAY_ENTER);
+        let _listening = UnixListener::bind(&elsewhere).expect("the socket is ours");
+
+        let nothing = only_this_user_holds(&at);
+        std::os::unix::fs::symlink(&elsewhere, &at).expect("a link to the socket");
+        let a_link = only_this_user_holds(&at);
+        std::fs::remove_file(&at).expect("the link goes");
+        std::fs::write(&at, "").expect("a file in its place");
+        let a_file = only_this_user_holds(&at);
+
+        assert_eq!((nothing, a_link, a_file), (false, false, false));
     }
 
     /// An open channel, and the end of it the loop would be reading.
