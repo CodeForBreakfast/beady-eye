@@ -446,7 +446,10 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         .map(|project| project.project().to_string())
         .collect();
     let reported = changes::Reported::watching(projects.clone());
-    let held = Arc::new(Mutex::new(Hold::reading(projects)));
+    let held = Arc::new(Mutex::new(Hold::reading(
+        cfg.read()
+            .map(|project| (project.name.clone(), project.reach())),
+    )));
     let (heard_by, heard) = mpsc::channel();
     let at = changes::where_the_listener_is(socket.or_else(|| cfg.listener.socket.clone()));
     let serving = (Arc::clone(&held), reported.clone());

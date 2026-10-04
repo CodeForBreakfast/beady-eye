@@ -16,8 +16,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 use crate::collect::changes::{self, Heard, Reported};
+use crate::config::Reach;
 use crate::model::snapshot::TrackerFailure;
 use crate::model::types::Printed;
 
@@ -35,6 +37,17 @@ pub struct Held {
     pub row: Option<Arc<Printed>>,
     pub ready: bool,
     /// Every bead blocking this one, in its own project or another.
+    pub blocked_by: Vec<String>,
+    /// What bd itself says, from this one tracker. A consumer reading some
+    /// projects through the listener and the rest itself builds its trees
+    /// from these, as it would from reads of its own.
+    pub bd: BeadReadiness,
+}
+
+/// Whether one bead is ready, and the beads blocking it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct BeadReadiness {
+    pub ready: bool,
     pub blocked_by: Vec<String>,
 }
 
@@ -83,6 +96,8 @@ pub struct Standing {
     pub as_of: Option<DateTime<Utc>>,
     /// Why the last attempt to reach the tracker failed, where it did.
     pub unreachable: Option<TrackerFailure>,
+    /// How the listener's config reaches the tracker.
+    pub reach: Reach,
 }
 
 impl Standing {
@@ -98,6 +113,7 @@ impl Standing {
         };
         lines.push(watching::freshness_line(
             project,
+            &self.reach,
             self.as_of,
             self.unreachable.as_ref(),
         ));
@@ -139,12 +155,18 @@ impl Watcher {
 
 impl Hold {
     /// Holding nothing yet of each of `projects`, which are the projects a
-    /// consumer may watch.
-    pub fn reading<I: IntoIterator<Item = String>>(projects: I) -> Self {
+    /// consumer may watch, each with how its tracker is reached.
+    pub fn reading<I: IntoIterator<Item = (String, Reach)>>(projects: I) -> Self {
         Self {
             projects: projects
                 .into_iter()
-                .map(|project| (project, Standing::default()))
+                .map(|(project, reach)| {
+                    let standing = Standing {
+                        reach,
+                        ..Standing::default()
+                    };
+                    (project, standing)
+                })
                 .collect(),
             ..Self::default()
         }
@@ -327,6 +349,10 @@ mod tests {
             row: None,
             ready: true,
             blocked_by: Vec::new(),
+            bd: BeadReadiness {
+                ready: true,
+                blocked_by: Vec::new(),
+            },
         }
     }
 
@@ -473,11 +499,18 @@ mod tests {
         }
     }
 
+    fn dunwich() -> Reach {
+        Reach {
+            path: "/srv/work/dunwich".into(),
+            environment_command: None,
+        }
+    }
+
     /// A hold reading dunwich, and one connection to it, whose lines arrive
     /// on what this hands back. Room for `behind` batches before it is hung
     /// up on.
     fn a_watcher(behind: usize) -> (Hold, u64, Receiver<Vec<String>>, UnixStream) {
-        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
         let Connection {
             watcher,
             told,
@@ -541,6 +574,22 @@ mod tests {
         assert_eq!(kinds(&told), [["bead", "freshness"]]);
     }
 
+    #[test]
+    fn a_watch_is_told_how_the_listener_reaches_the_tracker() {
+        let (mut hold, watcher, told, _theirs) = a_watcher(4);
+        hold.watch(watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.take(read("dunwich", now(), &[]));
+
+        let batch = told.try_recv().expect("a batch");
+        let line: serde_json::Value = serde_json::from_str(&batch[0]).expect("JSON");
+        assert_eq!(
+            line["reach"],
+            serde_json::json!({ "path": "/srv/work/dunwich", "environment_command": null })
+        );
+    }
+
     /// The one thing a consumer of a tracker that never answered can be
     /// told, and the thing it most needs telling.
     #[test]
@@ -597,7 +646,7 @@ mod tests {
 
     #[test]
     fn each_connection_is_told_for_itself() {
-        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
         let first = connected(&mut hold, 4);
         let second = connected(&mut hold, 4);
         hold.watch(first.watcher, &watching_dunwich())
@@ -613,7 +662,7 @@ mod tests {
 
     #[test]
     fn a_connection_forgotten_is_told_nothing_more() {
-        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
         let gone = connected(&mut hold, 4);
         hold.watch(gone.watcher, &watching_dunwich())
             .expect("dunwich is read");
@@ -626,7 +675,7 @@ mod tests {
 
     #[test]
     fn a_connection_that_keeps_up_stays_open() {
-        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
         let keeping_up = connected(&mut hold, 1);
         hold.watch(keeping_up.watcher, &watching_dunwich())
             .expect("dunwich is read");
@@ -644,7 +693,7 @@ mod tests {
 
     #[test]
     fn a_connection_that_falls_behind_is_hung_up_on() {
-        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
         let mut behind = connected(&mut hold, 1);
         hold.take(read("dunwich", now(), &["dun-1"]));
         hold.watch(behind.watcher, &watching_dunwich())

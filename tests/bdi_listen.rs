@@ -282,6 +282,7 @@ fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
     assert_eq!(bead["project"], "arkham");
     assert_eq!(bead["ready"], false);
     assert_eq!(bead["blocked_by"], json!([]));
+    assert_eq!(bead["bd"], json!({ "ready": false, "blocked_by": [] }));
     assert_eq!(
         bead["row"]["description"]
             .as_str()
@@ -295,6 +296,7 @@ fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
     assert_eq!(freshness["events"], "off");
     assert_eq!(freshness["protocol"], 1);
     assert!(freshness["as_of"].is_string(), "{freshness}");
+    assert!(freshness["reach"]["path"].is_string(), "{freshness}");
 }
 
 #[test]

@@ -22,7 +22,7 @@ use serde::Deserialize;
 use crate::collect::bd::bead_of;
 use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
-use crate::config::Project;
+use crate::config::{Project, Reach};
 use crate::model::snapshot::{TrackerFailure, TrackerState};
 use crate::model::types::{Bead, Printed};
 
@@ -83,7 +83,7 @@ impl Trackers for Through<'_> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .answer_for(&project.name);
-        match told {
+        match told.filter(|told| told.reach.as_ref() == Some(&project.reach())) {
             Some(told) => match &told.unreachable {
                 Some(failure) => Err(reached_as(failure)),
                 None => Ok(Box::new(Answered(told))),
@@ -121,12 +121,19 @@ struct Told {
     beads: BTreeMap<String, Listed>,
     as_of: Option<DateTime<Utc>>,
     unreachable: Option<TrackerFailure>,
+    /// How the listener's config reaches the tracker, where it said.
+    reach: Option<Reach>,
 }
 
-/// One bead as the listener sent it.
+/// One bead as the listener sent it, with the readiness bd gives it.
 #[derive(Debug, Clone)]
 struct Listed {
     bead: Bead,
+    bd: BeadReadiness,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BeadReadiness {
     ready: bool,
     blocked_by: Vec<String>,
 }
@@ -138,8 +145,7 @@ struct Listed {
 enum Line {
     Bead {
         project: String,
-        ready: bool,
-        blocked_by: Vec<String>,
+        bd: BeadReadiness,
         row: Printed,
     },
     Gone {
@@ -151,6 +157,7 @@ enum Line {
         as_of: Option<DateTime<Utc>>,
         tracker: TrackerState,
         protocol: Option<u32>,
+        reach: Option<Reach>,
     },
     Refused {
         asked: String,
@@ -201,18 +208,9 @@ impl Listener {
     /// taken, which is a listener this run cannot read.
     fn take(&mut self, line: Line) -> Option<()> {
         match line {
-            Line::Bead {
-                project,
-                ready,
-                blocked_by,
-                row,
-            } => {
+            Line::Bead { project, bd, row } => {
                 let bead = bead_of(row, false).ok()?;
-                let listed = Listed {
-                    bead,
-                    ready,
-                    blocked_by,
-                };
+                let listed = Listed { bead, bd };
                 self.arriving(&project)
                     .beads
                     .insert(listed.bead.id.clone(), listed);
@@ -225,6 +223,7 @@ impl Listener {
                 as_of,
                 tracker,
                 protocol,
+                reach,
             } => {
                 if protocol != Some(PROTOCOL) {
                     return None;
@@ -235,6 +234,7 @@ impl Listener {
                     .or_else(|| self.current.get(&project).map(|told| (**told).clone()))
                     .unwrap_or_default();
                 told.as_of = as_of;
+                told.reach = reach;
                 told.unreachable = match tracker {
                     TrackerState::Unreachable(failure) => Some(failure),
                     _ => None,
@@ -331,30 +331,18 @@ impl Tracker for Answered {
             .0
             .beads
             .iter()
-            .filter(|(_, listed)| listed.ready)
+            .filter(|(_, listed)| listed.bd.ready)
             .map(|(id, _)| id.clone())
             .collect())
     }
 
-    /// The blockers the project itself holds, as bd names them. The listener
-    /// sends each bead's blockers as `bdi` drew them, bd's own and then those
-    /// a tree found in other projects, and those depend on which tree drew
-    /// the bead. So they are left for this run's own trees to find again.
     fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
         Ok(self
             .0
             .beads
             .iter()
-            .map(|(id, listed)| {
-                let held_here: Vec<String> = listed
-                    .blocked_by
-                    .iter()
-                    .filter(|blocker| self.0.beads.contains_key(*blocker))
-                    .cloned()
-                    .collect();
-                (id.clone(), held_here)
-            })
-            .filter(|(_, held_here)| !held_here.is_empty())
+            .filter(|(_, listed)| !listed.bd.blocked_by.is_empty())
+            .map(|(id, listed)| (id.clone(), listed.bd.blocked_by.clone()))
             .collect())
     }
 
@@ -428,12 +416,15 @@ mod tests {
         at
     }
 
+    /// A bead bd calls `ready` and blocked by `blocked_by`, which the
+    /// listener's own trees held back on a bead in another project.
     fn bead(project: &str, id: &str, ready: bool, blocked_by: &[&str]) -> String {
         json!({
             "line": "bead",
             "project": project,
-            "ready": ready,
-            "blocked_by": blocked_by,
+            "ready": false,
+            "blocked_by": ["fer-9"],
+            "bd": { "ready": ready, "blocked_by": blocked_by },
             "row": { "id": id, "title": "re-point the dish", "status": "open",
                      "priority": 2, "issue_type": "task" },
         })
@@ -441,6 +432,18 @@ mod tests {
     }
 
     fn fresh(project: &str, tracker: serde_json::Value) -> String {
+        fresh_reaching(
+            project,
+            tracker,
+            json!({ "path": format!("/srv/work/{project}"), "environment_command": null }),
+        )
+    }
+
+    fn fresh_reaching(
+        project: &str,
+        tracker: serde_json::Value,
+        reach: serde_json::Value,
+    ) -> String {
         json!({
             "line": "freshness",
             "project": project,
@@ -448,6 +451,7 @@ mod tests {
             "tracker": tracker,
             "events": "off",
             "protocol": 1,
+            "reach": reach,
         })
         .to_string()
     }
@@ -495,14 +499,17 @@ path = "/srv/work/ferry"
         Through::waiting(Some(at), ["dunwich", "ferry"], own, patience)
     }
 
+    /// The readiness taken is bd's, which is what a read of this run's own
+    /// would have been told. The listener's own trees decided `bdi`'s, and
+    /// this run's trees decide it again.
     #[test]
     fn a_project_the_listener_answers_for_is_read_from_its_answer_alone() {
         let at = a_listener_saying(
             "listened-answers",
             vec![
                 bead("dunwich", "dun-1", true, &[]),
-                bead("dunwich", "dun-2", false, &["fer-9", "dun-1"]),
-                bead("dunwich", "dun-3", false, &["fer-9"]),
+                bead("dunwich", "dun-2", false, &["dun-1"]),
+                bead("dunwich", "dun-3", true, &[]),
                 fresh("dunwich", json!("ok")),
             ],
         );
@@ -516,14 +523,16 @@ path = "/srv/work/ferry"
             .unwrap_or_else(|_| panic!("the listener answers"));
 
         assert_eq!(ids(tracker.as_ref()), ["dun-1", "dun-2", "dun-3"]);
-        assert_eq!(tracker.ready(), Ok(BTreeSet::from(["dun-1".to_string()])));
+        assert_eq!(
+            tracker.ready(),
+            Ok(BTreeSet::from(["dun-1".to_string(), "dun-3".to_string()]))
+        );
         assert_eq!(
             tracker.blocked(),
             Ok(BTreeMap::from([(
                 "dun-2".to_string(),
                 vec!["dun-1".to_string()]
-            )])),
-            "a blocker in another project is this run's to find"
+            )]))
         );
         assert_eq!(
             tracker.as_of(),
@@ -556,6 +565,61 @@ path = "/srv/work/ferry"
 
         assert_eq!(ids(first.as_ref()), ["dun-1"]);
         assert_eq!(ids(midway.as_ref()), ["dun-1"]);
+    }
+
+    /// A listener started on another config, or on this one before it
+    /// changed, can read another tracker under the same name.
+    #[test]
+    fn a_project_the_listener_reaches_another_way_is_read_for_itself() {
+        let at = a_listener_saying(
+            "listened-elsewhere",
+            vec![
+                bead("ferry", "fer-1", true, &[]),
+                fresh_reaching(
+                    "ferry",
+                    json!("ok"),
+                    json!({ "path": "/srv/work/ferry", "environment_command": ["direnv", "exec", "."] }),
+                ),
+                fresh_reaching(
+                    "dunwich",
+                    json!("ok"),
+                    json!({ "path": "/srv/old/dunwich", "environment_command": null }),
+                ),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        for named in ["ferry", "dunwich"] {
+            let read = through
+                .of(project(&cfg, named))
+                .map(|tracker| ids(tracker.as_ref()));
+            assert_eq!(read, Ok(Vec::new()), "{named} is read for itself");
+            assert!(!own.tracker(named).asked().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_listener_that_does_not_say_how_it_reaches_a_tracker_is_read_around() {
+        let at = a_listener_saying(
+            "listened-unsaid",
+            vec![json!({
+                "line": "freshness", "project": "dunwich", "as_of": null,
+                "tracker": "ok", "events": "off", "protocol": 1,
+            })
+            .to_string()],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()))
+            .expect("read for itself");
+
+        assert!(!own.tracker("dunwich").asked().is_empty());
     }
 
     #[test]
@@ -752,11 +816,13 @@ path = "/srv/work/dunwich"
                 &format!("listened-narrower-{status}"),
                 vec![
                     json!({ "line": "bead", "project": "dunwich", "ready": !unfinished,
-                            "blocked_by": listened_blocked_by, "row": waiting })
+                            "blocked_by": listened_blocked_by,
+                            "bd": { "ready": true, "blocked_by": [] }, "row": waiting })
                     .to_string(),
                     fresh("dunwich", json!("ok")),
                     json!({ "line": "bead", "project": "ferry", "ready": unfinished,
-                            "blocked_by": [], "row": blocker })
+                            "blocked_by": [], "bd": { "ready": unfinished, "blocked_by": [] },
+                            "row": blocker })
                     .to_string(),
                     fresh("ferry", json!("ok")),
                 ],

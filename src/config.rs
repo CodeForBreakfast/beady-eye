@@ -238,6 +238,26 @@ impl Project {
             .map(|tree| tree.components().count())
             .max()
     }
+
+    /// How this entry reaches its tracker. Two entries that reach alike read
+    /// the same tracker.
+    pub fn reach(&self) -> Reach {
+        Reach {
+            path: self.path.clone(),
+            environment_command: self
+                .environment_command
+                .as_ref()
+                .map(|command| command.words().into_iter().map(str::to_string).collect()),
+        }
+    }
+}
+
+/// The directory a project's tracker is read in, and the environment
+/// command it is read through: what decides which tracker bd reaches.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reach {
+    pub path: PathBuf,
+    pub environment_command: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
