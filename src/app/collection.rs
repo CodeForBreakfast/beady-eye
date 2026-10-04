@@ -292,20 +292,20 @@ impl Collection {
     ) {
         for (project, answer) in self.refresh_together(cfg, trackers, named, panes, now) {
             match answer {
-                Ok(Refresh::Unchanged) => {
+                Ok(Refresh::Unchanged { as_of }) => {
                     // A skipped read is a successful read: `bdi` knows the
                     // tracker has not moved, so the project is as fresh as if
                     // the cascade had run and the foot must not draw it as
                     // stale.
                     if let Some(standing) = self.read.get_mut(&project.name) {
-                        standing.at = now;
+                        standing.at = as_of;
                     }
                 }
-                Ok(Refresh::Read { at, work }) => {
+                Ok(Refresh::Read { at, work, as_of }) => {
                     self.read.insert(
                         project.name.clone(),
                         Read {
-                            at: now,
+                            at: as_of,
                             work: Ok(*work),
                             taken_at: at.map(|at| *at),
                         },
@@ -704,7 +704,12 @@ fn unlistable(kind: FailureKind) -> ProviderState {
     }
 }
 
-/// Read every configured tracker and the agent provider, and draw the result.
+/// Read every configured tracker and the agent provider, and draw the
+/// result, dated to the oldest of the reads it was drawn from.
+///
+/// A tracker read now is read as of `now`, so the date is the instant the
+/// run asked. One answered from a listener's read is as old as that read,
+/// and the date is what tells a consumer so.
 pub fn run(
     cfg: &Config,
     agents: &dyn Agents,
@@ -712,11 +717,15 @@ pub fn run(
     filter: Filter,
     now: DateTime<Utc>,
 ) -> Snapshot {
-    Collection {
+    let mut snapshot = Collection {
         once: true,
         ..Collection::default()
     }
-    .collect(cfg, agents, trackers, &Wanted::Everything, filter, now)
+    .collect(cfg, agents, trackers, &Wanted::Everything, filter, now);
+    if let Some(oldest) = snapshot.read_at.values().min() {
+        snapshot.generated_at = *oldest;
+    }
+    snapshot
 }
 
 #[cfg(test)]
