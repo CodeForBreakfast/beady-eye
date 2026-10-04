@@ -25,26 +25,34 @@ use crate::model::types::{Bead, Dependency, Edge, Status};
 /// Parse a flat array of bd rows, however the answer that carried them was
 /// asked for. `bd list`, `bd ready` and `bd query` all write the same row.
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
-    let rows: Vec<Row> =
-        serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
-    // Read for its own fields after it has parsed, so what a reader is told
-    // about an answer that would not parse still carries where in the answer
-    // it broke. Anything the typed read accepted is an array of objects here.
+    const SHAPE: &str = "bd --json returned a shape we do not understand";
     let written: Vec<serde_json::Map<String, serde_json::Value>> =
-        serde_json::from_str(s).context("bd --json returned a shape we do not understand")?;
-    Ok(rows
-        .into_iter()
-        .zip(written)
-        .map(|(row, written)| row.into_bead(values_of(&written)))
-        .collect())
+        serde_json::from_str(s).context(SHAPE)?;
+    match written.into_iter().map(bead_of).collect() {
+        Ok(beads) => Ok(beads),
+        // A row read out of its map has lost where in the answer it was, so
+        // the answer is read again as rows to say where it broke.
+        Err(unplaced) => Err(serde_json::from_str::<Vec<Row>>(s)
+            .err()
+            .unwrap_or(unplaced))
+        .context(SHAPE),
+    }
 }
 
-/// Every value this row holds, under the key that names it: a field by its own
-/// name, and a member of a field's object by the two joined with a dot.
+/// One row as a bead, its typed fields moved out of the map it was read into.
+fn bead_of(written: serde_json::Map<String, serde_json::Value>) -> serde_json::Result<Bead> {
+    let values = values_of(&written);
+    Ok(Row::deserialize(serde_json::Value::Object(written))?.into_bead(values))
+}
+
+/// Every value this row holds that no text field of `Bead` holds, under the
+/// key that names it: a field by its own name, and a member of a field's
+/// object by the two joined with a dot.
 ///
-/// A badge reads here, so what a row holds is what a badge can draw. A field bd
-/// grows is drawable the day bd writes it, and an object-valued one is drawable
-/// a member at a time, without `bdi` learning a thing about either.
+/// A badge reads these through `Bead::value`, so what a row holds is what a
+/// badge can draw. A field bd grows is drawable the day bd writes it, and an
+/// object-valued one is drawable a member at a time, without `bdi` learning a
+/// thing about either.
 ///
 /// `text_of` decides what is one value, and it decides it the same way for a
 /// field and for a member. The rule is about kinds of value rather than names
@@ -52,6 +60,9 @@ pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
 fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
     for (field, value) in row {
+        if Bead::TEXT_FIELDS.contains(&field.as_str()) {
+            continue;
+        }
         match object_written_either_way(value) {
             Some(members) => values.extend(
                 members
@@ -759,26 +770,71 @@ mod tests {
              "metadata":{"jira":"ARKHAM-19","helio.ticket":"HELIO-9"}}
         ]"#;
 
-        let fields = &parse_beads(rows).expect("the row parses")[0].values;
+        let bead = &parse_beads(rows).expect("the row parses")[0];
 
         assert_eq!(
-            fields.get("external_ref").map(String::as_str),
+            bead.value("external_ref"),
             Some("https://jira.invalid/browse/HELIO-412")
         );
-        assert_eq!(fields.get("id").map(String::as_str), Some("a"));
+        assert_eq!(bead.value("id"), Some("a"));
+        assert_eq!(bead.value("issue_type"), Some("feature"));
+        assert_eq!(bead.value("metadata.jira"), Some("ARKHAM-19"));
         assert_eq!(
-            fields.get("issue_type").map(String::as_str),
-            Some("feature")
-        );
-        assert_eq!(
-            fields.get("metadata.jira").map(String::as_str),
-            Some("ARKHAM-19")
-        );
-        assert_eq!(
-            fields.get("metadata.helio.ticket").map(String::as_str),
+            bead.value("metadata.helio.ticket"),
             Some("HELIO-9"),
             "a key holding a dot of its own is named by the whole of it"
         );
+    }
+
+    /// A text `Bead` holds a field of its own for is drawable under bd's name
+    /// for it, and is held once: a large tracker's descriptions and notes are
+    /// most of what its beads weigh.
+    #[test]
+    fn a_text_held_in_a_field_is_drawable_and_held_once() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","issue_type":"task",
+             "parent":"p","created_by":"ada","assignee":"grace",
+             "description":"what it is","notes":"what was noted"}
+        ]"#;
+
+        let bead = &parse_beads(rows).expect("the row parses")[0];
+
+        for (key, text) in [
+            ("id", "a"),
+            ("title", "t"),
+            ("issue_type", "task"),
+            ("parent", "p"),
+            ("created_by", "ada"),
+            ("assignee", "grace"),
+            ("description", "what it is"),
+            ("notes", "what was noted"),
+        ] {
+            assert_eq!(bead.value(key), Some(text), "{key} is drawable");
+            assert_eq!(bead.values.get(key), None, "{key} is held once");
+        }
+    }
+
+    /// An empty text is no value to draw, whether bdi holds a field for it
+    /// or not.
+    #[test]
+    fn an_empty_text_held_in_a_field_is_no_value() {
+        let rows = r#"[
+            {"id":"a","title":"","status":"open","issue_type":"",
+             "description":"","notes":"","assignee":"","created_by":""}
+        ]"#;
+
+        let bead = &parse_beads(rows).expect("the row parses")[0];
+
+        for absent in [
+            "title",
+            "issue_type",
+            "description",
+            "notes",
+            "assignee",
+            "created_by",
+        ] {
+            assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
+        }
     }
 
     /// A value is what a badge draws, so a row carries the three kinds that
@@ -795,12 +851,12 @@ mod tests {
              "metadata":{"jira":"ARKHAM-19"}}
         ]"#;
 
-        let fields = &parse_beads(rows).expect("the row parses")[0].values;
+        let bead = &parse_beads(rows).expect("the row parses")[0];
 
-        assert_eq!(fields.get("priority").map(String::as_str), Some("1"));
-        assert_eq!(fields.get("pinned").map(String::as_str), Some("true"));
+        assert_eq!(bead.value("priority"), Some("1"));
+        assert_eq!(bead.value("pinned"), Some("true"));
         for absent in ["external_ref", "parent", "dependencies", "metadata"] {
-            assert_eq!(fields.get(absent), None, "{absent} is no value to draw");
+            assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
         }
     }
 
@@ -817,27 +873,18 @@ mod tests {
                          "seats":["ada","grace"],"budget":{"hours":4}}}
         ]"#;
 
-        let values = &parse_beads(rows).expect("the row parses")[0].values;
+        let bead = &parse_beads(rows).expect("the row parses")[0];
 
-        assert_eq!(
-            values.get("metadata.attempts").map(String::as_str),
-            Some("3")
-        );
-        assert_eq!(
-            values.get("metadata.waiting").map(String::as_str),
-            Some("false")
-        );
-        assert_eq!(
-            values.get("metadata.phase").map(String::as_str),
-            Some("vacuum-soak")
-        );
+        assert_eq!(bead.value("metadata.attempts"), Some("3"));
+        assert_eq!(bead.value("metadata.waiting"), Some("false"));
+        assert_eq!(bead.value("metadata.phase"), Some("vacuum-soak"));
         for absent in [
             "metadata.cleared",
             "metadata.note",
             "metadata.seats",
             "metadata.budget",
         ] {
-            assert_eq!(values.get(absent), None, "{absent} is no value to draw");
+            assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
         }
     }
 

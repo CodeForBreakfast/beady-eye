@@ -96,10 +96,10 @@ pub struct Bead {
     /// Whatever was written into the bead's metadata, each value as the
     /// text it prints as.
     pub metadata: BTreeMap<String, String>,
-    /// Every value the row held, under the key that names it: a field by its
-    /// own name, and a member of a field's object by the two joined with a
-    /// dot. What a badge reads, so a field bd grows is drawable without `bdi`
-    /// holding one of its own for it.
+    /// Every value the row held that no text field here holds, under the key
+    /// that names it: a field by its own name, and a member of a field's
+    /// object by the two joined with a dot. So a field bd grows is drawable
+    /// without `bdi` holding one of its own for it.
     pub values: BTreeMap<String, String>,
     /// The row's `created_by`. The row's `owner` is an address, which no
     /// surface draws, so it is not held.
@@ -119,6 +119,38 @@ pub struct Bead {
     /// when it passes — so it is the one thing a tracker says that turns over
     /// on the clock rather than on a write.
     pub defer_until: Option<DateTime<Utc>>,
+}
+
+impl Bead {
+    /// The keys whose text a field of `Bead` holds, which `values` therefore
+    /// does not.
+    pub const TEXT_FIELDS: [&str; 8] = [
+        "id",
+        "title",
+        "issue_type",
+        "parent",
+        "created_by",
+        "assignee",
+        "description",
+        "notes",
+    ];
+
+    /// The value the row held under `key`, which is what a badge reads. An
+    /// empty text is no value, as it is in `values`.
+    pub fn value(&self, key: &str) -> Option<&str> {
+        let text = match key {
+            "id" => Some(self.id.as_str()),
+            "title" => Some(self.title.as_str()),
+            "issue_type" => Some(self.issue_type.as_str()),
+            "parent" => self.parent.as_deref(),
+            "created_by" => self.created_by.as_deref(),
+            "assignee" => self.assignee.as_deref(),
+            "description" => self.description.as_deref(),
+            "notes" => self.notes.as_deref(),
+            _ => return self.values.get(key).map(String::as_str),
+        };
+        text.filter(|text| !text.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
