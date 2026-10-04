@@ -33,7 +33,7 @@ pub const PROTOCOL: u32 = 1;
 /// How long a listener may leave a project unanswered before it is taken to
 /// have wedged. It sends every connection a line every 20 seconds, so a
 /// minute of silence is three missed.
-pub const WEDGED_AFTER: Duration = Duration::from_secs(60);
+const WEDGED_AFTER: Duration = Duration::from_secs(60);
 
 /// Each configured project's tracker, read through the listener where it
 /// answers and through `otherwise` where it does not.
