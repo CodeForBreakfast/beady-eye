@@ -99,6 +99,8 @@ coin one — and say so.**
 | **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
 | **aside** | *coined* | the agent provider held off the loop: the tail asks by sending, and the answer arrives later on the channel every other event arrives on. A provider that has wedged therefore costs one waiting thread rather than a keyboard that has stopped answering. Neither project names it, because neither is the thing being kept waiting. |
 | **block** | *coined* | one of the three parts a row is fitted from: the identity, left-aligned and yielding last; the title, filling the middle and cut first; the state, right-justified and cut from its own end. Neither project has a word for it, because neither fits a row to a width. |
+| **listener** | *coined* | `bdi listen`, the one process per machine that tells consumers when a bead they watch has changed. Neither project names it: bd's events journal records changes, and nothing in either project routes them to whoever asked. |
+| **change source** | *coined* | what hands the listener each project's bead answers and how current they are. The first reads trackers; another, such as one tailing bd's events journal, can replace it. Distinct from a *producer*, which only says a project changed. |
 | **cell** | *coined* | one named thing a bead's row draws, in whichever block the row's layout puts it: a built-in — `glyph`, `id`, `title`, `badges`, `progress`, `agent`, `anomalies` — or one badge as `badge.<key>`. Notes and the fold's counts are not cells; they trail the state whatever the layout says. Neither project names the parts of a drawn row. |
 
 ### Three different things are called "blocked"
@@ -1963,6 +1965,123 @@ remedy no phrase could.
 
 `README.md` carries the worked example: a `bd` wrapper that writes the project
 name to the socket after any command that wrote something.
+
+## Telling others a bead changed
+
+Something other than a view often wants to know that a bead moved: an agent
+waiting for its question to be answered, a bar widget, a script that syncs
+beads into another system. Each could poll its tracker, and each would pay a
+read's cost to learn, nearly every time, that nothing moved. `bdi` already
+reads every configured tracker and knows when it has changed, so it says so to
+whoever asks. One process per machine does that, and any number of consumers
+watch the beads they care about through it.
+
+**The listener is `bdi listen`, a run with no view.** It takes changes from a
+change source, below, and tells each consumer about the beads it watches. It
+does not ask the agent provider anything, because nothing it reports comes from
+a pane. Starting it and keeping it running is the setup's business, under
+whatever supervises a user's processes there: a systemd user unit, a launchd
+agent. `bdi` ships no unit, for the same reason it ships no producer.
+
+**Where changes come from is a seam.** A change source hands the listener, for
+each project, the answer for every bead it holds and how current those answers
+are: as of when, or why the project could not be reached. What a consumer is
+sent is decided from that alone, so a source can be replaced without anything
+that subscribes or delivers changing.
+
+**The first source reads trackers.** It is the reading path a view already
+has, and its answers are as current as the read that produced them. bd can
+keep an events journal and serve it as a stream, and a source tailing that
+would see every change exactly. It is not the first source for three reasons. A
+setup that leaves the journal off must still have a working `bdi`, so the
+reading source is needed whichever else exists. The journal counts from its own
+first record on each replica, so its source would keep a checkpoint per project
+and have to know when one stops meaning anything. And every open stream is a
+query the tracker's server runs once a second for as long as it is open. Until
+the journal has a source of its own, what it is good for is telling the reading
+source sooner: a producer reading it can report a project on the listener's
+inbound channel, exactly as it would to a view.
+
+What the reading source costs is latency and resolution. A change reaches a
+consumer within one poll of the project, `refresh_seconds`, unless a producer
+reports it first. And two changes between one read and the next arrive as one:
+a bead closed and reopened inside one poll is never seen closed. A consumer
+that must see every transition wants the journal, and until a source reads it,
+should read it itself.
+
+**A consumer connects to the listener's socket and watches beads by key.**
+The socket is its own, at `$XDG_RUNTIME_DIR/beady-eye/listener.sock` unless
+the listener is told a path, and it takes the same producer lines the inbound
+channel does — a bare project name and `covered <project>` — so the listener
+is a place a producer can report to as well. It is a separate path from the
+views' channel because the views' channel goes to whichever run asks first,
+and a view started while the listener was restarting would hold it for the
+rest of its life. Every check *Where the socket may sit* makes, it makes here.
+
+A consumer adds one line per bead:
+
+```
+watch summit-works smt-4kd3p.20
+```
+
+The key is `(project, id)` as everywhere else, so a blocker in another
+project is watched the same way as one in the consumer's own. The listener
+answers each `watch` line straight away with the source's last answer for the
+bead, and again whenever the bead's answer differs from the last one it sent on
+that connection. Each answer is one line of JSON:
+
+```json
+{ "project": "summit-works", "id": "smt-4kd3p.20", "status": "closed", "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok" }
+```
+
+`status`, `comment_count` and `updated_at` are `bd`'s, read verbatim, and a
+change in any of them is what makes the listener send. That covers what a
+consumer is waiting for — a close, a status change, a comment — and leaves out
+a claim's heartbeat, which moves nothing a consumer acts on. Anything more the
+consumer reads with `bd show`, since the line says which bead to ask about and
+not what it now says in full. `as_of` is the instant the source last vouched
+for the project's answers, which for the reading source is its last successful
+read. `tracker` is `ok`, or `{ "unreachable": <reason> }` with the reason
+`--json` gives, where the source's last attempt to reach the project failed.
+
+A `watch` for a project the listener does not read is answered
+`unknown <project>`, and one for a bead its project does not hold is answered
+with `"status": null`. A `bdi` older than `watch` answers
+`unknown watch <project> <id>`, the line it was sent, which is how a consumer can
+tell it is talking to one.
+
+**A consumer can tell a quiet listener from one that has gone.**
+
+- A refused connection, or one the listener closes, is a listener that is not
+  running. Nothing has been said about any bead, and a consumer that acts only
+  on an answer should not act.
+- An open connection carries a line of its own every 20 seconds, `alive`, even
+  when no bead it watches has moved. A connection that has said nothing for a
+  minute belongs to a listener that has wedged, and is treated as closed.
+- Every answer carries `as_of` and `tracker`, so a listener that is alive but
+  cannot reach a tracker says so rather than reporting the bead unchanged. How
+  old a read may be before a consumer stops trusting it is the consumer's call,
+  since only the consumer knows how long its question can wait.
+
+Nothing is lost across a reconnect. A consumer that reconnects watches its
+beads again and gets their current answers first, so a close that happened
+while it was away arrives as the bead's status rather than as an event it had
+to be there for. No consumer keeps a checkpoint.
+
+A consumer that wants one answer rather than a subscription connects, watches,
+reads one line per bead and hangs up. That is a read of a bead's state at the
+cost of a socket round trip, with the age of the read beside it.
+
+**One per machine, found by its path.** A second `bdi listen` finds the first
+by connecting, as a view finds another view, and exits saying which socket is
+taken. Replacing the listener is stopping it and starting another. Its
+consumers see their connections close, reconnect, and watch again. Until the
+new listener's source has answered for a project, a `watch` for that project
+waits for the answer rather than being told nothing.
+
+**Views are unchanged by this.** A view still binds its own inbound channel and
+reads every project itself. A view that watches the listener rather than reading
+trackers of its own is a later step, not part of this one.
 
 ## The JSON contract
 
