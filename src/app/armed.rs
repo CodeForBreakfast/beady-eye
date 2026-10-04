@@ -21,11 +21,11 @@ use crate::config::{Config, Scope};
 /// settled where `bdi` is run. The loop asks this again whenever the reader
 /// writes a config, so the set of projects that poll is the set the file
 /// names.
-pub(crate) type Arming = Box<dyn Fn(&Config) -> Vec<Armed>>;
+pub type Arming = Box<dyn Fn(&Config) -> Vec<Armed>>;
 
 /// Armed for each project `cfg` names and does not read, for the collection
 /// that reads one on demand.
-pub(super) fn armed_unread(arms: &Arming, cfg: &Config) -> Vec<Armed> {
+pub fn armed_unread(arms: &Arming, cfg: &Config) -> Vec<Armed> {
     let every_project = Config {
         scope: Scope::Everything,
         ..cfg.clone()
@@ -56,7 +56,7 @@ pub(super) fn armed_unread(arms: &Arming, cfg: &Config) -> Vec<Armed> {
 /// rather than piling up. What says so on the screen is the read still
 /// standing unanswered in `Outstanding`, which is where a wait is measured.
 /// Arming anywhere but on a completed read would paper over exactly that.
-pub(crate) struct Armed {
+pub struct Armed {
     project: String,
     /// How long after a read comes back this project asks for another, or
     /// nothing where it does not poll at all.
@@ -85,7 +85,7 @@ impl Armed {
     /// the loop starts: a project's first ask is already on its way when this
     /// is built, and arming here would ask a second time for what is being
     /// read.
-    pub(crate) fn polling(project: String, every: Option<Duration>) -> Self {
+    pub fn polling(project: String, every: Option<Duration>) -> Self {
         Self {
             project,
             every,
@@ -98,14 +98,14 @@ impl Armed {
 
     /// This project, said to have lapsed once `covered_for` has passed with
     /// nothing vouching for it, where it does not poll.
-    pub(crate) fn lapsing_after(self, covered_for: Duration) -> Self {
+    pub fn lapsing_after(self, covered_for: Duration) -> Self {
         Self {
             covered_for: Some(covered_for),
             ..self
         }
     }
 
-    pub(super) fn project(&self) -> &str {
+    pub fn project(&self) -> &str {
         &self.project
     }
 
@@ -163,7 +163,7 @@ impl Armed {
     /// own last ask all arm the next one the same way, which is what makes a
     /// project something keeps reporting for one that never polls — each
     /// report's read pushes the poll out past the interval before it arrives.
-    pub(super) fn came_back(
+    pub fn came_back(
         &mut self,
         wanted: &Wanted,
         at: DateTime<Utc>,
@@ -231,7 +231,7 @@ impl Armed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::fixtures::{arkham, ferry};
+    use crate::app::fixtures::{arkham, ferry};
 
     const EVERY: Duration = Duration::from_secs(30);
 

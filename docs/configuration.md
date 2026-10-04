@@ -57,6 +57,9 @@ pane_key = "agent_pane"
 socket = "/run/user/1000/beady-eye/changes.sock"
 covered_for_seconds = 60
 
+[listener]
+socket = "/run/user/1000/beady-eye/listener.sock"
+
 [anomalies]
 stale_claim_days = 30
 
@@ -504,6 +507,13 @@ that its mark turns to `?`. The default of 60 is three of the 20-second
 heartbeats a producer reading a Dolt event stream sends, so a late heartbeat
 does not read as a producer that has gone. A polled project never lapses.
 
+## `[listener]`
+
+`socket` is where `bdi listen` takes its socket. It defaults to
+`$XDG_RUNTIME_DIR/beady-eye/listener.sock`, and `bdi listen --socket` overrides
+it. The path is checked as `[changes]`'s is. [Running the
+listener](#running-the-listener) has the rest.
+
 ## `[anomalies]`
 
 `stale_claim_days` is how long a claim may go untouched before `bdi` flags it.
@@ -674,6 +684,74 @@ alone. A socket a crashed run left behind is cleared.
 If the socket still cannot be opened, because there is no path to put it at or
 another `bdi` is already listening on the one it has, `bdi` says so on stderr
 at startup, names the remedy, and polls everything.
+
+## Running the listener
+
+`bdi listen` is a `bdi` with no view. It reads every project the config names,
+polls and probes each one as a view does, and holds each bead as bd printed it,
+with whether it is ready and what blocks it. Its config is read once at
+startup, so an edit to the config takes effect at the next start. It runs
+nothing of herdr's.
+
+It listens on a socket of its own, apart from the one a view listens on, and
+takes the same producer lines: a project's name, or `covered <project>`. A
+producer that should reach the listener is pointed at
+`$XDG_RUNTIME_DIR/beady-eye/listener.sock`, or at the path `[listener]` names.
+
+Run one per machine. A second `bdi listen` finds the first by connecting to the
+socket, says on stderr which socket is taken, and exits non-zero. One that
+cannot open its socket for any other reason exits the same way.
+
+Start it under whatever supervises your processes. A systemd user unit, at `~/.config/systemd/user/bdi-listen.service`:
+
+```ini
+[Unit]
+Description=beady-eye listener
+
+[Service]
+ExecStart=%h/.cargo/bin/bdi listen
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```console
+$ systemctl --user enable --now bdi-listen
+```
+
+The listener reaches each tracker with the environment it starts in, so a
+tracker whose credential comes from your shell wants a `credential_command` in
+its `[[projects]]` entry, or an `Environment=` line here.
+
+A launchd agent on macOS, at `~/Library/LaunchAgents/com.example.bdi-listen.plist`.
+macOS has no `$XDG_RUNTIME_DIR`, so the socket is named:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.bdi-listen</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/you/.cargo/bin/bdi</string>
+    <string>listen</string>
+    <string>--socket</string>
+    <string>/Users/you/Library/Caches/beady-eye/listener.sock</string>
+  </array>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+```console
+$ launchctl load ~/Library/LaunchAgents/com.example.bdi-listen.plist
+```
+
+SIGTERM, SIGINT or SIGHUP stops it and removes its socket.
 
 ## Server and embedded trackers
 

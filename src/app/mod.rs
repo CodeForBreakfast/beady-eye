@@ -2,14 +2,29 @@
 //!
 //! One module for reading a single project — the calls, and what each failure
 //! along them means — and one for the standing set of those reads, which is
-//! what lets a collection name one project and still draw every other. It
+//! what lets a collection name one project and still draw every other. Beside
+//! them is the refresh path: when each project asks to be read again, and the
+//! queue its reads wait in, driven alike by a view and by the listener, which
+//! holds what the reads said for consumers with no view of their own. It
 //! sits between `collect/`, which runs the programs, and `model/`, which
 //! joins what they said; it names neither `view/` nor `tui/`.
 
+mod armed;
 mod collection;
+mod due;
+mod listener;
+mod outstanding;
+mod reading;
+mod reading_trackers;
 mod tracker;
 
+pub use armed::{armed_unread, Armed, Arming};
 pub use collection::{run, Asked, Awaited, Collection, Wanted};
+pub use due::due_after;
+pub use listener::{hold, Hold};
+pub use outstanding::Outstanding;
+pub use reading::Reading;
+pub use reading_trackers::{ReadingTrackers, Reads};
 
 /// The fake trackers and panes both halves read in their tests.
 ///
@@ -18,7 +33,7 @@ pub use collection::{run, Asked, Awaited, Collection, Wanted};
 /// reading the same thing rather than its own idea of it, and none of them
 /// knows how a real one is asked.
 #[cfg(test)]
-mod fixtures {
+pub(crate) mod fixtures {
     use chrono::{DateTime, Utc};
 
     use crate::collect::agents::testing::{pane, titled, Fake as Provider};
@@ -28,6 +43,8 @@ mod fixtures {
     use crate::config::Config;
     use crate::model::snapshot::{Node, Tree};
     use crate::model::types::{Bead, PaneStatus};
+
+    use super::Wanted;
 
     pub(super) const DUNWICH: &str = "/srv/work/dunwich";
     pub(super) const FERRY: &str = "/srv/work/ferry";
@@ -72,6 +89,14 @@ mod fixtures {
     /// Rows as a test writes them, read into the beads a tracker answers with.
     pub(super) fn beads(rows: &str) -> Vec<Bead> {
         parse_beads(rows).expect("the rows parse")
+    }
+
+    pub(crate) fn arkham() -> Wanted {
+        Wanted::Project("arkham".to_string())
+    }
+
+    pub(crate) fn ferry() -> Wanted {
+        Wanted::Project("ferry".to_string())
     }
 
     pub(super) fn now() -> DateTime<Utc> {

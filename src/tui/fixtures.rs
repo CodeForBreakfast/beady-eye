@@ -17,13 +17,7 @@ use crate::model::snapshot::{a_provider, Filter, ProviderState, Snapshot, Tracke
 /// enough that a test waiting in vain is not a hang.
 pub(in crate::tui) const A_MOMENT: Duration = Duration::from_secs(5);
 
-pub(in crate::tui) fn arkham() -> Wanted {
-    Wanted::Project("arkham".to_string())
-}
-
-pub(in crate::tui) fn ferry() -> Wanted {
-    Wanted::Project("ferry".to_string())
-}
+pub(in crate::tui) use crate::app::fixtures::{arkham, ferry};
 
 /// A collection reading `wanted`, asked for at `asked_at`.
 ///

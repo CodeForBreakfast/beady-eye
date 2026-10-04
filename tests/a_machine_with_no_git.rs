@@ -150,8 +150,6 @@ fn the_guess_is_on_the_screen_before_the_first_collection_comes_back() {
         .to_string();
     bdi.read_until(named.as_bytes(), GIVING_UP);
     bdi.read_until(THE_REMEDY, GIVING_UP);
-
-    std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
 }
 
 /// The call a collection opens each project's read with, as `collect::bd`

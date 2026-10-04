@@ -23,7 +23,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 /// clock advances — it was 1.8 billion seconds longer at the epoch than it
 /// is now — so the only literal safe at every instant is one no measurement
 /// gives.
-pub(super) fn due_after(answered: DateTime<Utc>, gap: Duration) -> Option<DateTime<Utc>> {
+pub fn due_after(answered: DateTime<Utc>, gap: Duration) -> Option<DateTime<Utc>> {
     TimeDelta::from_std(gap)
         .ok()
         .and_then(|gap| answered.checked_add_signed(gap))
