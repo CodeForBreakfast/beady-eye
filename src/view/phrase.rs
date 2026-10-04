@@ -421,6 +421,12 @@ pub fn root_not_found() -> &'static str {
     "no such bead in this tracker · check the config or command line"
 }
 
+/// A bead the forest is rooted at that its tracker held and has since
+/// answered without.
+pub fn gone() -> &'static str {
+    "gone · its tracker no longer holds this bead"
+}
+
 /// Why a blocker a bead waits on is not drawn beneath it.
 pub fn unreachable(why: &Unreachable) -> String {
     match why {
