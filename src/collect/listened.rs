@@ -852,6 +852,41 @@ path = "/srv/work/ferry"
         assert!(!own.tracker("dunwich").asked().is_empty());
     }
 
+    /// Nothing moving is not a listener gone: the alive line it sends every
+    /// connection keeps a watch open for as long as it is sent.
+    #[test]
+    fn a_run_that_stays_keeps_a_quiet_listener_that_is_alive() {
+        let patience = Duration::from_millis(100);
+        let at = a_socket("listened-staying-quiet");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        thread::spawn(move || {
+            let (mut connection, _) = listening.accept().expect("the run connects");
+            writeln!(connection, "{}", bead("dunwich", "dun-1", true, &[])).expect("sent");
+            writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+            while writeln!(connection, r#"{{"line":"alive"}}"#).is_ok() {
+                thread::sleep(patience / 4);
+            }
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let (telling, told) = mpsc::channel();
+        let staying = Staying {
+            telling,
+            again_every: A_MOMENT,
+        };
+        let through = Through::hearing(Some(&at), ["dunwich"], &own, patience, Some(staying));
+
+        let answered = told.recv_timeout(A_MOMENT);
+        thread::sleep(5 * patience);
+        let read = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+
+        assert_eq!(answered, Ok(changed("dunwich")));
+        assert_eq!(told.try_recv().ok(), None, "nothing went");
+        assert_eq!(read, Ok(vec!["dun-1".to_string()]));
+    }
+
     #[test]
     fn a_run_that_stays_finds_a_listener_started_after_it() {
         let at = a_socket("listened-staying-late");
