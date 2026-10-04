@@ -590,6 +590,29 @@ fn a_named_bead_its_tracker_no_longer_holds_is_said_to_be_gone_where_it_stood() 
     );
 }
 
+/// A reader who puts the forest back and focuses again has taken the mode
+/// in hand, so the bead they focused lets go as any focused by key does.
+#[test]
+fn a_focus_taken_by_key_after_a_named_start_ends_once_the_bead_has_gone() {
+    let mut forest = named_on_the_command_line(&[("dunwich", "dun-7.1")]);
+    assert!(forest.apply(Action::FocusForest), "{:#?}", sketch(&forest));
+    toggle_fold_of(&mut forest, "dun-7.1");
+    focus_on(&mut forest, "dun-7.1.1");
+
+    let renamed = edited(DUNWICH, r#""id":"dun-7.1.1""#, r#""id":"dun-7.1.9""#);
+    forest.refresh(gather(
+        vec![
+            tree_of("dunwich", &renamed),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            tree_of("harbour", HARBOUR),
+        ],
+        Vec::new(),
+        Filter::LiveAgents,
+    ));
+
+    assert!(!forest.is_focused(), "still focused: {:#?}", sketch(&forest));
+}
+
 /// Dunwich failing to answer, as a collection says it: no trees of its own,
 /// and its failure among the failed projects.
 fn dunwich_failed() -> Snapshot {
