@@ -7,12 +7,21 @@
 //! anything that watches or delivers changing.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::io::{BufWriter, Write};
+use std::net::Shutdown;
+use std::os::unix::net::UnixStream;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
+use crate::collect::changes::{self, Heard, Reported};
 use crate::model::snapshot::TrackerFailure;
 use crate::model::types::Printed;
+
+use super::watching::{self, Interest, Refusal, Watch, ALIVE_LINE};
 
 /// One bead as the listener holds it: its tracker's row, and the readiness
 /// `bdi --beads` gives it.
@@ -76,16 +85,74 @@ pub struct Standing {
     pub unreachable: Option<TrackerFailure>,
 }
 
-/// Every project's beads as last read, and how current each is.
+impl Standing {
+    /// The lines that bring `interest` up to what this project holds, ending
+    /// with how current that is. None until there is something to say: a
+    /// project neither read nor found unreachable has a watch wait rather
+    /// than be told it is empty.
+    fn told(&self, project: &str, interest: &mut Interest) -> Option<Vec<String>> {
+        let mut lines = match &self.beads {
+            Some(beads) => interest.catch_up(project, beads),
+            None if self.unreachable.is_some() => Vec::new(),
+            None => return None,
+        };
+        lines.push(watching::freshness_line(
+            project,
+            self.as_of,
+            self.unreachable.as_ref(),
+        ));
+        Some(lines)
+    }
+}
+
+/// Every project's beads as last read, how current each is, and who is
+/// watching them.
 #[derive(Debug, Default)]
 pub struct Hold {
     projects: BTreeMap<String, Standing>,
+    watchers: BTreeMap<u64, Watcher>,
+    next_watcher: u64,
+}
+
+/// One connection watching beads.
+#[derive(Debug)]
+struct Watcher {
+    /// Where its lines go, a batch at a time, to be written by the
+    /// connection's own thread.
+    telling: SyncSender<Vec<String>>,
+    /// The connection, to hang up on where it falls behind.
+    connection: UnixStream,
+    interests: BTreeMap<String, Interest>,
+}
+
+impl Watcher {
+    /// Send `lines`, or hang up where the connection is too far behind to
+    /// take them. False where it is gone.
+    fn tells(&self, lines: Vec<String>) -> bool {
+        let sent = self.telling.try_send(lines).is_ok();
+        if !sent {
+            let _ = self.connection.shutdown(Shutdown::Both);
+        }
+        sent
+    }
 }
 
 impl Hold {
-    /// Take what a source said of one project.
+    /// Holding nothing yet of each of `projects`, which are the projects a
+    /// consumer may watch.
+    pub fn reading<I: IntoIterator<Item = String>>(projects: I) -> Self {
+        Self {
+            projects: projects
+                .into_iter()
+                .map(|project| (project, Standing::default()))
+                .collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Take what a source said of one project, and tell everyone watching it.
     pub fn take(&mut self, answer: Answer) {
-        let standing = self.projects.entry(answer.project).or_default();
+        let standing = self.projects.entry(answer.project.clone()).or_default();
         match answer.said {
             Said::Read { at, beads } => {
                 standing.beads = Some(beads);
@@ -95,6 +162,68 @@ impl Hold {
             Said::Vouched { at } => standing.as_of = standing.as_of.max(Some(at)),
             Said::Unreachable(failure) => standing.unreachable = Some(failure),
         }
+
+        let project = answer.project;
+        self.watchers.retain(|_, watcher| {
+            let Some(interest) = watcher.interests.get_mut(&project) else {
+                return true;
+            };
+            standing
+                .told(&project, interest)
+                .is_none_or(|lines| watcher.tells(lines))
+        });
+    }
+
+    /// A connection that will watch beads, sent its lines on `telling`.
+    pub fn connect(&mut self, telling: SyncSender<Vec<String>>, connection: UnixStream) -> u64 {
+        let id = self.next_watcher;
+        self.next_watcher += 1;
+        let watcher = Watcher {
+            telling,
+            connection,
+            interests: BTreeMap::new(),
+        };
+        self.watchers.insert(id, watcher);
+        id
+    }
+
+    /// Have `watcher` watch what `watch` names, and send it what it was not
+    /// already sent of that.
+    pub fn watch(&mut self, watcher: u64, watch: &Watch) -> Result<(), Refusal> {
+        let projects: Vec<&String> = match watch {
+            Watch::Everything => self.projects.keys().collect(),
+            Watch::Project { project, .. } | Watch::Bead { project, .. } => {
+                let (project, _) = self
+                    .projects
+                    .get_key_value(project)
+                    .ok_or(Refusal::UnknownProject)?;
+                vec![project]
+            }
+        };
+        let Some(connection) = self.watchers.get_mut(&watcher) else {
+            return Ok(());
+        };
+
+        let mut lines = Vec::new();
+        for project in projects {
+            let interest = connection.interests.entry(project.clone()).or_default();
+            interest.widen(watch);
+            lines.extend(
+                self.projects[project]
+                    .told(project, interest)
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        if !lines.is_empty() && !connection.tells(lines) {
+            self.watchers.remove(&watcher);
+        }
+        Ok(())
+    }
+
+    /// Stop telling a connection that has gone.
+    pub fn forget(&mut self, watcher: u64) {
+        self.watchers.remove(&watcher);
     }
 
     /// What the listener holds of `project`, where a source has said anything
@@ -105,12 +234,86 @@ impl Hold {
     }
 }
 
+fn locked(hold: &Mutex<Hold>) -> MutexGuard<'_, Hold> {
+    hold.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Hold everything `source` says until it stops.
-pub fn hold(source: &mut dyn ChangeSource, into: &std::sync::Mutex<Hold>) {
+pub fn hold(source: &mut dyn ChangeSource, into: &Mutex<Hold>) {
     while let Some(answer) = source.next() {
-        into.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take(answer);
+        locked(into).take(answer);
+    }
+}
+
+/// How many answers a connection may fall behind by before it is hung up
+/// on. A consumer that reconnects is sent the beads as they then stand, so
+/// hanging up loses it nothing, where queueing for it without end would cost
+/// the listener memory for as long as it does not read.
+const FALLING_BEHIND: usize = 64;
+
+/// How often every connection is told the listener is alive, whatever else
+/// it has been sent.
+pub const ALIVE_EVERY: Duration = Duration::from_secs(20);
+
+/// Serve one connection to the listener's socket until it goes away: its
+/// watch lines go to `hold`, and every other line is a producer's.
+pub fn serve(
+    connection: UnixStream,
+    hold: &Mutex<Hold>,
+    reported: &Reported,
+    changed: &Sender<Heard>,
+) {
+    let (Ok(writing), Ok(hanging_up)) = (connection.try_clone(), connection.try_clone()) else {
+        return;
+    };
+    let (telling, told) = mpsc::sync_channel(FALLING_BEHIND);
+    thread::spawn(move || tell(writing, &told, ALIVE_EVERY));
+    let watcher = locked(hold).connect(telling.clone(), hanging_up);
+
+    changes::each_line(connection, |message| {
+        let answer = match message.map(|line| (line, watching::asked(line))) {
+            Some((line, Some(asked))) => asked
+                .and_then(|watch| locked(hold).watch(watcher, &watch))
+                .err()
+                .map(|refusal| watching::refused_line(line, refusal)),
+            _ => {
+                let Some(answer) = changes::answered(message, reported, changed) else {
+                    return false;
+                };
+                Some(answer)
+            }
+        };
+        answer.is_none_or(|answer| telling.send(vec![answer]).is_ok())
+    });
+    locked(hold).forget(watcher);
+}
+
+/// Write each batch of lines `told` hands over to `to`, and an alive line
+/// every `alive_every`, until nothing is left to hand any over or `to` will
+/// not take them.
+fn tell(to: UnixStream, told: &Receiver<Vec<String>>, alive_every: Duration) {
+    let mut to = BufWriter::new(to);
+    let mut alive_at = Instant::now() + alive_every;
+    loop {
+        let now = Instant::now();
+        let lines = if now >= alive_at {
+            alive_at += alive_every;
+            vec![ALIVE_LINE.to_string()]
+        } else {
+            match told.recv_timeout(alive_at - now) {
+                Ok(lines) => lines,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        };
+        let written = lines
+            .iter()
+            .try_for_each(|line| writeln!(to, "{line}"))
+            .and_then(|()| to.flush());
+        if written.is_err() {
+            let _ = to.get_ref().shutdown(Shutdown::Both);
+            return;
+        }
     }
 }
 
@@ -257,5 +460,132 @@ mod tests {
         let dunwich = hold.of("dunwich").expect("dunwich was read");
         assert_eq!(ids(dunwich), Some(vec!["dun-1"]));
         assert_eq!(dunwich.as_of, Some(now()));
+    }
+
+    fn watching_dunwich() -> Watch {
+        Watch::Project {
+            project: "dunwich".to_string(),
+            closed_too: false,
+        }
+    }
+
+    /// A hold reading dunwich, and one connection to it, whose lines arrive
+    /// on what this hands back. Room for `behind` batches before it is hung
+    /// up on.
+    fn a_watcher(behind: usize) -> (Hold, u64, Receiver<Vec<String>>, UnixStream) {
+        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let (telling, told) = mpsc::sync_channel(behind);
+        let (ours, theirs) = UnixStream::pair().expect("a connection");
+        let watcher = hold.connect(telling, ours);
+        (hold, watcher, told, theirs)
+    }
+
+    /// The kind of each line in each batch sent so far.
+    fn kinds(told: &Receiver<Vec<String>>) -> Vec<Vec<String>> {
+        told.try_iter()
+            .map(|batch| {
+                batch
+                    .iter()
+                    .map(|line| {
+                        let line: serde_json::Value = serde_json::from_str(line).expect("JSON");
+                        line["line"].as_str().unwrap_or_default().to_string()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Unread is not empty: the watch is told nothing until the first read,
+    /// and then the beads it starts from.
+    #[test]
+    fn a_watch_on_a_project_not_yet_read_waits_for_the_read() {
+        let (mut hold, watcher, told, _theirs) = a_watcher(4);
+
+        hold.watch(watcher, &watching_dunwich())
+            .expect("dunwich is read");
+        let before = kinds(&told);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        assert_eq!(before, Vec::<Vec<String>>::new());
+        assert_eq!(kinds(&told), [["bead", "freshness"]]);
+    }
+
+    /// The one thing a consumer of a tracker that never answered can be
+    /// told, and the thing it most needs telling.
+    #[test]
+    fn a_tracker_that_cannot_be_reached_is_said_before_anything_is_read() {
+        let (mut hold, watcher, told, _theirs) = a_watcher(4);
+        hold.watch(watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.take(said("dunwich", Said::Unreachable(TrackerFailure::Auth)));
+
+        let batch = told.try_recv().expect("a batch");
+        let line: serde_json::Value = serde_json::from_str(&batch[0]).expect("JSON");
+        assert_eq!(batch.len(), 1);
+        assert_eq!(line["tracker"]["unreachable"]["reason"], "auth");
+    }
+
+    #[test]
+    fn a_project_the_listener_does_not_read_is_refused() {
+        let (mut hold, watcher, _told, _theirs) = a_watcher(4);
+
+        let refused = hold.watch(
+            watcher,
+            &Watch::Bead {
+                project: "ferry".to_string(),
+                id: "fer-1".to_string(),
+            },
+        );
+
+        assert_eq!(refused, Err(Refusal::UnknownProject));
+    }
+
+    #[test]
+    fn a_project_nobody_watches_is_sent_to_nobody() {
+        let (mut hold, _watcher, told, _theirs) = a_watcher(4);
+
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        assert_eq!(kinds(&told), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn a_connection_that_falls_behind_is_hung_up_on() {
+        let (mut hold, watcher, _told, mut theirs) = a_watcher(1);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.watch(watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.take(said("dunwich", Said::Vouched { at: later(10) }));
+        hold.take(said("dunwich", Said::Vouched { at: later(20) }));
+
+        let mut rest = Vec::new();
+        std::io::Read::read_to_end(&mut theirs, &mut rest).expect("the connection ends");
+        assert!(hold.watchers.is_empty());
+    }
+
+    #[test]
+    fn every_connection_is_told_the_listener_is_alive_on_the_interval() {
+        let (ours, theirs) = UnixStream::pair().expect("a connection");
+        let (telling, told) = mpsc::sync_channel(4);
+        let writing = thread::spawn(move || tell(ours, &told, Duration::from_millis(50)));
+        let mut hearing = std::io::BufReader::new(theirs);
+        let mut lines = Vec::new();
+
+        telling
+            .send(vec!["{}".to_string()])
+            .expect("the writer takes it");
+        for _ in 0..3 {
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut hearing, &mut line).expect("a line");
+            lines.push(line.trim_end().to_string());
+        }
+        drop(telling);
+        writing
+            .join()
+            .expect("the writer stops when nothing is left to tell");
+
+        assert_eq!(lines, ["{}", ALIVE_LINE, ALIVE_LINE]);
     }
 }
