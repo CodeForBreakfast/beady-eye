@@ -154,9 +154,9 @@ pub(super) fn group_drawn(
 }
 
 /// Whether a project's line is drawn: where anything hangs under it — a tree
-/// shown or hidden, or a pane working in its paths that no bead claims — or
-/// where nothing has read it yet, which is every project on the first frame
-/// of a run.
+/// shown or hidden, a bead the forest is rooted at, or a pane working in its
+/// paths that no bead claims — or where nothing has read it yet, which is
+/// every project on the first frame of a run.
 ///
 /// A project with nothing beneath it is drawn only where nothing has read
 /// it. A tracker that answered and held nothing, and one that refused, are
@@ -164,7 +164,9 @@ pub(super) fn group_drawn(
 /// the failed projects, and a line here would say of either that its rows
 /// were still coming.
 pub(super) fn project_drawn(snapshot: &Snapshot, project: &str, rooted: &[Rooted]) -> bool {
-    rooted.iter().any(|rooted| rooted.place.tree.project == project)
+    rooted
+        .iter()
+        .any(|rooted| rooted.place.tree.project == project)
         || snapshot.trees.iter().any(|tree| tree.project == project)
         || snapshot
             .hidden_trees

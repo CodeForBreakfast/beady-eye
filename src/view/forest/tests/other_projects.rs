@@ -355,12 +355,20 @@ fn a_focus_on_another_projects_bead_keeps_what_it_draws_that_projects() {
 #[test]
 fn a_focus_on_a_bead_only_another_project_draws_holds_while_that_project_does_not_answer() {
     let mut forest = flatten(harbour_waiting_on_dunwich());
-    assert!(forest.go_to(&key("dunwich", "dun-8")), "{:#?}", sketch(&forest));
+    assert!(
+        forest.go_to(&key("dunwich", "dun-8")),
+        "{:#?}",
+        sketch(&forest)
+    );
     assert!(forest.apply(Action::FocusForest), "{:#?}", sketch(&forest));
 
     forest.refresh(harbour_failing_to_answer());
 
-    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
+    );
     assert_eq!(
         forest.place().map(|place| place.key().clone()),
         Some(key("dunwich", "dun-8"))
@@ -372,7 +380,11 @@ fn a_focus_on_a_bead_only_another_project_draws_holds_while_that_project_does_no
 #[test]
 fn a_focus_on_another_projects_bead_holds_while_its_own_project_does_not_answer() {
     let mut forest = flatten(harbour_waiting_on_dunwich());
-    assert!(forest.go_to(&key("dunwich", "dun-8")), "{:#?}", sketch(&forest));
+    assert!(
+        forest.go_to(&key("dunwich", "dun-8")),
+        "{:#?}",
+        sketch(&forest)
+    );
     assert!(forest.apply(Action::FocusForest), "{:#?}", sketch(&forest));
 
     let mut dunwich_failing =
@@ -383,7 +395,11 @@ fn a_focus_on_another_projects_bead_holds_while_its_own_project_does_not_answer(
     });
     forest.refresh(dunwich_failing);
 
-    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
+    );
 }
 
 /// Every bead a search counts, in the order it counts them: an empty

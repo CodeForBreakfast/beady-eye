@@ -1583,8 +1583,8 @@ impl Forest {
 
     /// Whether the snapshot still draws the line a place names.
     fn drawn(&self, place: &Place) -> bool {
-        // A focused bead is drawn whether or not the snapshot holds it, on a
-        // line saying why there is no row where it has none.
+        // A focused bead always has a line: its row, or one saying why it
+        // has none.
         if self.focused.contains(place) {
             return true;
         }

@@ -326,9 +326,7 @@ pub(super) fn selectable(line: &Line) -> bool {
 pub(super) fn names(line: &Line, handle: &Handle) -> bool {
     match (handle, &line.content) {
         (Handle::Bead(place), Content::Bead(_) | Content::Absent(_))
-        | (Handle::Unread(place), Content::Unread(_)) => {
-            line.place.as_ref() == Some(place)
-        }
+        | (Handle::Unread(place), Content::Unread(_)) => line.place.as_ref() == Some(place),
         (Handle::Project(project), Content::Project(line)) => line.project == *project,
         (Handle::Elided(place), Content::Elided { under, .. }) => under == place,
         (Handle::Group(kind, project), Content::Group(group)) => {

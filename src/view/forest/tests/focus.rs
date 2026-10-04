@@ -502,7 +502,11 @@ fn a_read_of_the_focused_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
 
     forest.refresh(dunwich_failed());
 
-    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
+    );
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     assert_eq!(behind_the_line_elsewhere(&forest), was);
     assert!(
@@ -520,7 +524,11 @@ fn a_read_of_a_named_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
 
     forest.refresh(dunwich_failed());
 
-    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
+    );
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
     assert_eq!(behind_the_line_elsewhere(&forest), was);
 }
@@ -603,7 +611,11 @@ fn a_named_bead_its_tracker_no_longer_holds_is_said_to_be_gone_where_it_stood() 
         Filter::LiveAgents,
     ));
 
-    assert!(forest.is_focused(), "the mode ended: {:#?}", sketch(&forest));
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
+    );
     assert!(
         !drawn_here(&forest, "fer-2"),
         "still rooted at one bead: {:#?}",
@@ -637,7 +649,11 @@ fn a_focus_taken_by_key_after_a_named_start_ends_once_the_bead_has_gone() {
         Filter::LiveAgents,
     ));
 
-    assert!(!forest.is_focused(), "still focused: {:#?}", sketch(&forest));
+    assert!(
+        !forest.is_focused(),
+        "still focused: {:#?}",
+        sketch(&forest)
+    );
 }
 
 /// Dunwich failing to answer, as a collection says it: no trees of its own,
