@@ -1394,8 +1394,10 @@ environment_command = "nix develop -c"
   the directory and prints what to set and unset, which `bdi` applies as the
   shell would. direnv's watches cover the `.envrc`, its allow record, and
   whatever the `.envrc` watches, which is how an edited `dotenv` file or a
-  moved flake lock is noticed. Only a command direnv runs is kept, because
-  nothing else can say when what it produced stopped being current. Anything
+  moved flake lock is noticed. Only `direnv exec .` is kept. Nothing else can
+  say when what it produced stopped being current, and direnv answers about
+  the directory it is asked in, so a command entering any other would be
+  checked against the wrong one. Anything
   that cannot be trusted is captured afresh. The credential command is never
   kept and answers on every run.
 

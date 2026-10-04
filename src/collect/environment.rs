@@ -126,7 +126,7 @@ pub fn tracker_env(
         .clone()
         .or_else(|| detected(&project.path))
     {
-        let captured = match cache.filter(|_| command.words().first() == Some(&DIRENV)) {
+        let captured = match cache.filter(|_| command.words() == DIRENV_ENTERING_THE_DIRECTORY) {
             Some(cache) => cache.recall_or_enter(&project.path, runner, &command),
             None => entering(&project.path, runner, &command),
         }
@@ -150,14 +150,17 @@ pub fn tracker_env(
 /// `.envrc`: measured on 2026-10-04 at about 0.35 seconds a project.
 ///
 /// A kept environment is used only where a fresh capture would give the same
-/// answer. That needs the same command, the same environment `bdi` hands its
-/// children, and direnv bringing it up to date: it says nothing where nothing
-/// it watches has moved, and what changed where something has. That is the
-/// rule a shell sitting in the directory reloads by, and direnv's watches
-/// cover the `.envrc`, its allow record, and whatever the `.envrc` watches,
-/// which is how a `dotenv` file or a flake lock is noticed. So only a command
-/// direnv runs is kept: nothing else can say when what it produced stopped
-/// being current.
+/// answer. That needs the same environment `bdi` hands its children, and
+/// direnv bringing it up to date: it says nothing where nothing it watches has
+/// moved, and what changed where something has. That is the rule a shell
+/// sitting in the directory reloads by, and direnv's watches cover the
+/// `.envrc`, its allow record, and whatever the `.envrc` watches, which is how
+/// a `dotenv` file or a flake lock is noticed.
+///
+/// So only [`DIRENV_ENTERING_THE_DIRECTORY`] is kept. Nothing else can say
+/// when what another command produced stopped being current, and direnv
+/// answers about the directory it is asked in, so a command entering any
+/// other would be checked against the wrong one.
 ///
 /// Whatever cannot be trusted is captured afresh rather than guessed at: no
 /// file, one that will not parse, a direnv that will not answer or answers in
@@ -173,7 +176,6 @@ pub struct EnvironmentCache {
 #[derive(Serialize, Deserialize)]
 struct Kept {
     path: PathBuf,
-    command: Vec<String>,
     handed: Env,
     captured: Env,
 }
@@ -205,10 +207,9 @@ impl EnvironmentCache {
         runner: &dyn Runner,
         command: &Command,
     ) -> Result<Env, RunFailure> {
-        let words: Vec<String> = command.words().into_iter().map(str::to_string).collect();
-        let recalled = self.recalled(path).filter(|kept| {
-            kept.path == path && kept.command == words && kept.handed == self.handed
-        });
+        let recalled = self
+            .recalled(path)
+            .filter(|kept| kept.path == path && kept.handed == self.handed);
         let captured = match recalled.map(|kept| brought_up_to_date(kept.captured, path, runner)) {
             Some(Some(Current::Unchanged(captured))) => return Ok(captured),
             Some(Some(Current::Changed(captured))) => captured,
@@ -217,7 +218,6 @@ impl EnvironmentCache {
         let kept = Kept {
             captured,
             path: path.to_path_buf(),
-            command: words,
             handed: self.handed.clone(),
         };
         let _ = self.keep(&kept);
@@ -337,7 +337,7 @@ const PRIVATE_FILE: u32 = 0o600;
 /// can fix — an `.envrc` wanting `direnv allow` is the usual one.
 fn detected(path: &Path) -> Option<Command> {
     (path.join(ENTERED_DIRECTORY).exists() && found_on_path(DIRENV, Some(path)))
-        .then(|| Command::Line(format!("{DIRENV} exec {THE_DIRECTORY_ITSELF}")))
+        .then(|| Command::Line(DIRENV_ENTERING_THE_DIRECTORY.join(" ")))
 }
 
 /// The file whose presence says a directory is one direnv would enter.
@@ -354,6 +354,10 @@ const DIRENV: &str = "direnv";
 /// writes it that way: the command runs in the project's own directory, so
 /// this is the directory being asked about rather than one spelled twice.
 const THE_DIRECTORY_ITSELF: &str = ".";
+
+/// The command a detected directory is entered with, and the one form whose
+/// capture is kept between runs.
+const DIRENV_ENTERING_THE_DIRECTORY: [&str; 3] = [DIRENV, "exec", THE_DIRECTORY_ITSELF];
 
 /// What a project's own credential command is run in: the environment its
 /// environment command produced, less the two variables nothing inherits.
@@ -1111,43 +1115,36 @@ mod tests {
         assert!(entered_the_directory(&runner));
     }
 
-    /// A project whose config now names another command is entered by that
-    /// command, whatever the last one produced.
+    /// Only direnv can say whether what it produced is still current, and it
+    /// says so about the directory it is asked in. A command it does not run
+    /// has no such rule, and one entering somewhere else would be checked
+    /// against the project's own directory, which is not what it captured.
+    /// Both are run every time, even where the project's own directory has a
+    /// capture kept for it.
     #[test]
-    fn an_environment_kept_for_another_command_is_not_used() {
-        let cache = an_empty_cache("another-command");
-        first_run(&cache);
-        let project = Project {
-            environment_command: Some(Command::Line("direnv exec ./tracker".to_string())),
-            ..entered_with_direnv()
-        };
-        let runner = FakeRunner::default().with("direnv exec ./tracker env -0", &entered());
+    fn a_command_other_than_direnv_entering_the_project_is_run_every_time() {
+        for (named, command) in [
+            ("not-direnv", "nix develop -c"),
+            ("elsewhere", "direnv exec ./tracker"),
+        ] {
+            let cache = an_empty_cache(named);
+            first_run(&cache);
+            let project = Project {
+                environment_command: Some(Command::Line(command.to_string())),
+                ..entered_with_direnv()
+            };
+            for run in ["first", "next"] {
+                let runner = FakeRunner::default().with(&format!("{command} {PROBE}"), &entered());
 
-        read(&runner, &project, &cache).unwrap();
+                read(&runner, &project, &cache).unwrap();
 
-        assert_eq!(runner.calls().len(), 1, "{:?}", runner.calls());
-    }
-
-    /// Only direnv can say whether what it produced is still current. A
-    /// command it does not run has no such rule, so it is run every time.
-    #[test]
-    fn a_command_direnv_does_not_run_is_run_every_time() {
-        let cache = an_empty_cache("not-direnv");
-        let project = Project {
-            environment_command: Some(Command::Line("nix develop -c".to_string())),
-            ..entered_with_direnv()
-        };
-        for run in ["first", "next"] {
-            let runner = FakeRunner::default().with("nix develop -c env -0", &entered());
-
-            read(&runner, &project, &cache).unwrap();
-
-            assert_eq!(
-                runner.calls().len(),
-                1,
-                "the {run} run: {:?}",
-                runner.calls()
-            );
+                assert_eq!(
+                    runner.calls().len(),
+                    1,
+                    "{command}, the {run} run: {:?}",
+                    runner.calls()
+                );
+            }
         }
     }
 
