@@ -584,8 +584,11 @@ mod tests {
 
         hold.watch(watcher, &watching_dunwich())
             .expect("dunwich is read");
+        let at_once = kinds(&told);
+        hold.take(read("dunwich", later(30), &["dun-1", "dun-2"]));
 
-        assert_eq!(kinds(&told), [["bead", "freshness"]]);
+        assert_eq!(at_once, [["bead", "freshness"]]);
+        assert_eq!(kinds(&told), [["bead", "freshness"]], "and after");
     }
 
     #[test]
