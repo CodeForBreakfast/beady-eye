@@ -570,16 +570,19 @@ path = "/srv/work/ferry"
     fn each_project_is_watched_once() {
         let at = a_socket("listened-watched-once");
         let listening = UnixListener::bind(&at).expect("the socket is ours");
-        let heard = thread::spawn(move || {
+        let (hearing, heard) = std::sync::mpsc::channel();
+        thread::spawn(move || {
             let (connection, _) = listening.accept().expect("the run connects");
             let mut answering = connection.try_clone().expect("ours to write");
             for project in ["dunwich", "ferry"] {
                 writeln!(answering, "{}", fresh(project, json!("ok"))).expect("sent");
             }
-            BufReader::new(connection)
-                .lines()
-                .map_while(Result::ok)
-                .collect::<Vec<String>>()
+            let _ = hearing.send(
+                BufReader::new(connection)
+                    .lines()
+                    .map_while(Result::ok)
+                    .collect::<Vec<String>>(),
+            );
         });
         let own = own_trackers();
         let cfg = projects();
@@ -591,8 +594,11 @@ path = "/srv/work/ferry"
         drop(through);
 
         assert_eq!(
-            heard.join().expect("the listener hears the run out"),
-            ["watch-all dunwich", "watch-all ferry"]
+            heard.recv_timeout(A_MOMENT),
+            Ok(vec![
+                "watch-all dunwich".to_string(),
+                "watch-all ferry".to_string()
+            ])
         );
     }
 
