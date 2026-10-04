@@ -474,10 +474,37 @@ mod tests {
     /// up on.
     fn a_watcher(behind: usize) -> (Hold, u64, Receiver<Vec<String>>, UnixStream) {
         let mut hold = Hold::reading(["dunwich".to_string()]);
+        let Connection {
+            watcher,
+            told,
+            theirs,
+            ..
+        } = connected(&mut hold, behind);
+        (hold, watcher, told, theirs)
+    }
+
+    /// One connection to `hold`, and the ends of it the test holds.
+    struct Connection {
+        watcher: u64,
+        told: Receiver<Vec<String>>,
+        theirs: UnixStream,
+        /// The listener's end, kept open beside the one the hold has as a
+        /// connection's reading thread keeps it, so that only a hang-up
+        /// ends the connection.
+        _reading: UnixStream,
+    }
+
+    fn connected(hold: &mut Hold, behind: usize) -> Connection {
         let (telling, told) = mpsc::sync_channel(behind);
         let (ours, theirs) = UnixStream::pair().expect("a connection");
+        let reading = ours.try_clone().expect("the end is ours to share");
         let watcher = hold.connect(telling, ours);
-        (hold, watcher, told, theirs)
+        Connection {
+            watcher,
+            told,
+            theirs,
+            _reading: reading,
+        }
     }
 
     /// The kind of each line in each batch sent so far.
@@ -551,17 +578,76 @@ mod tests {
     }
 
     #[test]
-    fn a_connection_that_falls_behind_is_hung_up_on() {
-        let (mut hold, watcher, _told, mut theirs) = a_watcher(1);
+    fn a_watch_on_a_project_already_read_is_sent_its_beads_at_once() {
+        let (mut hold, watcher, told, _theirs) = a_watcher(4);
         hold.take(read("dunwich", now(), &["dun-1"]));
+
         hold.watch(watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        assert_eq!(kinds(&told), [["bead", "freshness"]]);
+    }
+
+    #[test]
+    fn each_connection_is_told_for_itself() {
+        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let first = connected(&mut hold, 4);
+        let second = connected(&mut hold, 4);
+        hold.watch(first.watcher, &watching_dunwich())
+            .expect("dunwich is read");
+        hold.watch(second.watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        assert_eq!(kinds(&first.told), [["bead", "freshness"]]);
+        assert_eq!(kinds(&second.told), [["bead", "freshness"]]);
+    }
+
+    #[test]
+    fn a_connection_forgotten_is_told_nothing_more() {
+        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let gone = connected(&mut hold, 4);
+        hold.watch(gone.watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.forget(gone.watcher);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        assert_eq!(kinds(&gone.told), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn a_connection_that_keeps_up_stays_open() {
+        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let keeping_up = connected(&mut hold, 1);
+        hold.watch(keeping_up.watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        let mut rest = Vec::new();
+        let mut theirs = &keeping_up.theirs;
+        theirs
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("a read is ours to give up on");
+        let still_open = std::io::Read::read_to_end(&mut theirs, &mut rest);
+        assert!(still_open.is_err(), "nothing hung up on it");
+    }
+
+    #[test]
+    fn a_connection_that_falls_behind_is_hung_up_on() {
+        let mut hold = Hold::reading(["dunwich".to_string()]);
+        let mut behind = connected(&mut hold, 1);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.watch(behind.watcher, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(said("dunwich", Said::Vouched { at: later(10) }));
         hold.take(said("dunwich", Said::Vouched { at: later(20) }));
 
         let mut rest = Vec::new();
-        std::io::Read::read_to_end(&mut theirs, &mut rest).expect("the connection ends");
+        std::io::Read::read_to_end(&mut behind.theirs, &mut rest).expect("the connection ends");
         assert!(hold.watchers.is_empty());
     }
 
