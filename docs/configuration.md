@@ -697,6 +697,8 @@ It listens on a socket of its own, apart from the one a view listens on, and
 takes the same producer lines: a project's name, or `covered <project>`. A
 producer that should reach the listener is pointed at
 `$XDG_RUNTIME_DIR/beady-eye/listener.sock`, or at the path `[listener]` names.
+A consumer watching beads connects to the same socket. The README has a worked
+one.
 
 Run one per machine. A second `bdi listen` finds the first by connecting to the
 socket, says on stderr which socket is taken, and exits non-zero. One that
