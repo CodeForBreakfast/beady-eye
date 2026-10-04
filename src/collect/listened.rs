@@ -189,10 +189,7 @@ impl Listener {
             if self.refused.contains(project) {
                 return None;
             }
-            let connection = self.connection.as_mut()?;
-            let heard = giving_up
-                .checked_duration_since(Instant::now())
-                .and_then(|left| connection.next(left));
+            let heard = self.connection.as_mut()?.next(giving_up);
             if heard.and_then(|line| self.take(line)).is_none() {
                 self.connection = None;
             }
@@ -275,15 +272,32 @@ impl Connection {
         Some(Self { to, from })
     }
 
-    /// The next line the listener sends within `patience`. Nothing where it
-    /// sent none, closed the connection, or sent something that is not a
-    /// line about a watch.
-    fn next(&mut self, patience: Duration) -> Option<Line> {
-        self.from.get_ref().set_read_timeout(Some(patience)).ok()?;
-        let mut line = String::new();
-        match self.from.read_line(&mut line) {
-            Ok(0) | Err(_) => None,
-            Ok(_) => serde_json::from_str(&line).ok(),
+    /// The next line the listener finishes sending before `giving_up`.
+    /// Nothing where it finished none, closed the connection, or sent
+    /// something that is not a line about a watch.
+    fn next(&mut self, giving_up: Instant) -> Option<Line> {
+        let mut line = Vec::new();
+        loop {
+            let left = giving_up
+                .checked_duration_since(Instant::now())
+                .filter(|left| !left.is_zero())?;
+            self.from.get_ref().set_read_timeout(Some(left)).ok()?;
+            let arrived = self.from.fill_buf().ok()?;
+            if arrived.is_empty() {
+                return None;
+            }
+            match arrived.iter().position(|&byte| byte == b'\n') {
+                Some(end) => {
+                    line.extend_from_slice(&arrived[..end]);
+                    self.from.consume(end + 1);
+                    return serde_json::from_slice(&line).ok();
+                }
+                None => {
+                    let taken = arrived.len();
+                    line.extend_from_slice(arrived);
+                    self.from.consume(taken);
+                }
+            }
         }
     }
 }
@@ -732,14 +746,17 @@ path = "/srv/work/dunwich"
         let through = through(&at, &own, A_MOMENT);
 
         let dunwich = through.of(project(&cfg, "dunwich")).expect("answered");
+        let asked = Instant::now();
         through
             .of(project(&cfg, "ferry"))
             .map(|tracker| ids(tracker.as_ref()))
             .expect("read for itself");
+        let left_at = asked.elapsed();
 
         assert_eq!(ids(dunwich.as_ref()), ["dun-1"]);
         assert!(own.tracker("dunwich").asked().is_empty());
         assert!(!own.tracker("ferry").asked().is_empty());
+        assert!(left_at < A_MOMENT, "left on the hang-up, not the patience");
     }
 
     #[test]
@@ -754,6 +771,30 @@ path = "/srv/work/dunwich"
             .expect("read for itself");
 
         assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
+    #[test]
+    fn a_listener_that_never_finishes_a_line_is_left_behind() {
+        let at = a_socket("listened-dribbling");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        thread::spawn(move || {
+            let (mut connection, _) = listening.accept().expect("the run connects");
+            while connection.write_all(b" ").is_ok() {
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let (done, finished) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let own = own_trackers();
+            let cfg = projects();
+            let read = through(&at, &own, Duration::from_millis(100))
+                .of(project(&cfg, "dunwich"))
+                .map(|tracker| ids(tracker.as_ref()))
+                .is_ok();
+            let _ = done.send(read && !own.tracker("dunwich").asked().is_empty());
+        });
+
+        assert_eq!(finished.recv_timeout(A_MOMENT), Ok(true));
     }
 
     #[test]
