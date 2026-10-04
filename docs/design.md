@@ -2143,7 +2143,9 @@ choosing what to start rather than drawing a tree:
       "ready": false,
       "blocked_by": ["smt-4kd3p.13", "mdw-9"],
       "agent": null,
-      "badges": []
+      "badges": [],
+      "labels": ["human"],
+      "description": "Guard the key in the parser, the store, or both?"
     }
   ],
   "failed_projects": [ { "project": "meadow", "tracker": { "reason": "auth" } } ],
@@ -2164,7 +2166,10 @@ cannot disagree. `ready` and `blocked_by` are bd's answer with the blockers
 in other projects added, as *Across projects* says. So for a project with no
 dependency on another project's bead, the beads with `ready` true are what
 `bd ready` names. A blocked bead is listed too, because what blocks it is
-what says which work is next.
+what says which work is next. `labels` and `description` are as bd reported
+them: a bead with no labels has an empty array, and one with no description
+has `null`. bdi gives no label a meaning, so a reader wanting the beads
+labelled `human` filters for them.
 
 A list that is short says so. `failed_projects` is the forest's, and
 `unread_trees` names each root whose tracker gave no rows, with the `tracker`
