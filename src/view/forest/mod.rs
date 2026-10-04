@@ -98,6 +98,11 @@ pub struct Forest {
     /// The beads the command line named that no collection has drawn yet,
     /// each focused as one does.
     named: Vec<BeadKey>,
+    /// Whether the beads the forest is rooted at are the ones the command
+    /// line named. Those never let go: the view was started to show them,
+    /// so one its tracker answers without stays where it was, said to be
+    /// gone, rather than opening the whole forest.
+    named_at_launch: bool,
     /// What was last searched for, which `n` and `N` step through.
     ///
     /// The text and not the matches it found. A match set held between
@@ -128,6 +133,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         selected: 0,
         focused: Vec::new(),
         named: Vec::new(),
+        named_at_launch: false,
         searched: None,
         layout: row::Layout::default(),
     };
@@ -249,17 +255,11 @@ impl Forest {
         // snapshot, exactly as the folds and the cursor do.
         snapshot.refilter(self.snapshot.filter);
         self.take(snapshot);
-        // The bead leaving the collection ends the mode, and the place it
-        // stood on goes with it. Kept, it would take the next press of the
-        // key and spend it putting back a forest that is already back.
-        //
-        // Found again by the bead rather than by the way down to it, because
-        // a tracker that reparented it has moved the bead and not lost it.
         let focused = std::mem::take(&mut self.focused);
         self.focused = outermost(
             focused
                 .iter()
-                .filter_map(|place| self.rerooted(place))
+                .filter_map(|place| self.still_focused(place))
                 .collect(),
         );
         let first_focused = self.focus_the_named();
@@ -287,6 +287,7 @@ impl Forest {
     /// collection draws them.
     pub fn focus_when_drawn(&mut self, beads: Vec<BeadKey>) {
         self.named = beads;
+        self.named_at_launch = true;
         if let Some(place) = self.focus_the_named() {
             self.answer();
             self.cursor = Some(Handle::Bead(place));
@@ -639,6 +640,7 @@ impl Forest {
     /// drawn yet are let go of: the reader has taken the mode in hand.
     fn focus_forest(&mut self) {
         self.named.clear();
+        self.named_at_launch = false;
         if !self.focused.is_empty() {
             let under = match &self.cursor {
                 Some(Handle::Bead(on)) => self.focused_over(on).cloned(),
@@ -674,9 +676,33 @@ impl Forest {
         }
     }
 
+    /// Where a focused bead is in the snapshot just taken, or nothing where
+    /// the mode lets it go.
+    ///
+    /// The bead leaving ends the mode, and the place it stood on goes with
+    /// it. Kept, it would take the next press of the key and spend it putting
+    /// back a forest that is already back. But a bead leaves only when its
+    /// tracker answers without it: one that did not answer has not said the
+    /// bead is gone, so the place is kept as it stood. A bead the command
+    /// line named is kept even once it has gone.
+    fn still_focused(&self, place: &Place) -> Option<Place> {
+        self.rerooted(place).or_else(|| {
+            let gone = self.why_not_drawn(place) == TrackerState::RootNotFound;
+            (!gone || self.named_at_launch).then(|| place.clone())
+        })
+    }
+
+    /// Why the snapshot in hand has no row for a focused bead.
+    fn why_not_drawn(&self, place: &Place) -> TrackerState {
+        self.snapshot.why_not_held(place.key(), &place.tree)
+    }
+
     /// Where the bead a place stood on is now, which is the place itself
     /// while nothing has moved. Nothing at all once the collection no longer
-    /// holds that bead, which is what ends the mode.
+    /// holds that bead.
+    ///
+    /// Found again by the bead rather than by the way down to it, because a
+    /// tracker that reparented it has moved the bead and not lost it.
     ///
     /// A place with no steps stands on the root of its tree, and a root filed
     /// under another root has moved as much as any other bead: it is looked
@@ -692,21 +718,20 @@ impl Forest {
         self.place_of(place.steps.last().unwrap_or(&place.tree))
     }
 
-    /// Where the forest is rooted, at each focused bead the snapshot in hand
-    /// still draws.
+    /// Where the forest is rooted: the way down to each focused bead the
+    /// snapshot in hand draws, and why there is none to each it does not.
     ///
     /// Resolved against that snapshot on every layout rather than kept, so a
-    /// collection that moved a bead is followed and one that dropped it
-    /// lets it go.
+    /// collection that moved a bead is followed.
     fn rooted(&self) -> Vec<Rooted> {
         self.focused
             .iter()
-            .filter_map(|place| {
-                let (_, way) = self.locate(place)?;
-                Some(Rooted {
-                    place: place.clone(),
-                    way,
-                })
+            .map(|place| Rooted {
+                place: place.clone(),
+                way: self
+                    .locate(place)
+                    .map(|(_, way)| way)
+                    .ok_or_else(|| self.why_not_drawn(place)),
             })
             .collect()
     }
@@ -1047,8 +1072,12 @@ impl Forest {
     /// What the line a place stands for is known by: a bead's, or the row
     /// of a root whose tracker would not read.
     fn handle_on(&self, place: &Place) -> Handle {
+        // A focused root is a bead's line however its tree read, so the
+        // selection on it stays put through a read that drew it no row.
         match self.tree_of(place) {
-            Some(tree) if place.steps.is_empty() => root_handle(tree),
+            Some(tree) if place.steps.is_empty() && !self.focused.contains(place) => {
+                root_handle(tree)
+            }
             _ => Handle::Bead(place.clone()),
         }
     }
@@ -1546,12 +1575,19 @@ impl Forest {
                 layout::group_drawn(&self.snapshot, *kind, project.as_deref(), &self.rooted())
             }
             Handle::Item(key) => layout::group_holding(&self.snapshot, key).is_some(),
-            Handle::Project(project) => layout::project_drawn(&self.snapshot, project),
+            Handle::Project(project) => {
+                layout::project_drawn(&self.snapshot, project, &self.rooted())
+            }
         }
     }
 
     /// Whether the snapshot still draws the line a place names.
     fn drawn(&self, place: &Place) -> bool {
+        // A focused bead always has a line: its row, or one saying why it
+        // has none.
+        if self.focused.contains(place) {
+            return true;
+        }
         // A tracker that could not be read keeps its root and has no nodes,
         // so its header is drawn with nothing beneath it to walk to.
         if place.steps.is_empty() {

@@ -72,6 +72,7 @@ pub fn target(forest: &Forest) -> Target<'_> {
         Content::Item(item) => named_pane(item).map_or(Target::NotABead, Target::Pane),
         Content::Project(_)
         | Content::Unread(_)
+        | Content::Absent(_)
         | Content::Elided { .. }
         | Content::Orphaned(_)
         | Content::Note(_)

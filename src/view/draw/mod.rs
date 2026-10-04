@@ -40,7 +40,7 @@ pub use tail::{draw_tail, Band};
 use bead::{bead_line, elided_run, orphaned_line};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
-use project::{project_line, unread_line};
+use project::{absent_line, project_line, unread_line};
 
 /// What every project line's freshness is drawn from: when each project was
 /// last read, which projects have a read outstanding, which have lapsed, and
@@ -203,6 +203,7 @@ pub(super) fn fitted(
             project_line(project, &line.prefix, reads.of(project), reads.now)
         }
         Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
+        Content::Absent(absent) => absent_line(absent, &line.prefix, widths.of(&Cell::Id)),
         Content::Bead(row) => bead_line(row, &line.prefix, widths, layout),
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Orphaned(orphaned) => orphaned_line(orphaned, &line.prefix, widths.of(&Cell::Id)),

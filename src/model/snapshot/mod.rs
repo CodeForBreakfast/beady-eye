@@ -652,6 +652,27 @@ impl Snapshot {
             .all(|tree| tree.tracker == TrackerState::Ok)
     }
 
+    /// Why the snapshot holds no bead `key` names in the tree rooted at
+    /// `root`: `RootNotFound` where both trackers answered, and so answered
+    /// without it, or else the failure of the one that did not answer.
+    pub fn why_not_held(&self, key: &BeadKey, root: &BeadKey) -> TrackerState {
+        let failed = |project: &str| {
+            self.failed_projects
+                .iter()
+                .find(|failed| failed.project == project)
+                .map(|failed| TrackerState::Unreachable(failed.tracker.clone()))
+        };
+        let refused = self
+            .tree(root)
+            .map(|tree| &tree.tracker)
+            .filter(|tracker| matches!(tracker, TrackerState::Unreachable(_)))
+            .cloned();
+        failed(&key.project)
+            .or_else(|| failed(&root.project))
+            .or(refused)
+            .unwrap_or(TrackerState::RootNotFound)
+    }
+
     /// The tree a root names, shown or hidden. A filter is a display choice
     /// over what was collected, so what it hid is still in hand and still
     /// answers for itself.
