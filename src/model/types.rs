@@ -140,8 +140,8 @@ impl Bead {
     ];
 
     /// The value the row held under `key`, which is what a badge reads. A text
-    /// held in a field is no value where it is empty or spells an object, as
-    /// it would not be in `values`: the members of an object are there.
+    /// held in a field is no value when it is empty or spells an object, as in
+    /// `values`. An object's members are values of their own, in `values`.
     pub fn value(&self, key: &str) -> Option<&str> {
         let text = match key {
             "id" => Some(self.id.as_str()),
