@@ -74,7 +74,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
     let mut read: BTreeSet<&str> = BTreeSet::new();
 
     for badge in badges {
-        let Some(value) = bead.values.get(&badge.key).map(String::as_str) else {
+        let Some(value) = bead.value(&badge.key) else {
             continue;
         };
         // Badges on one key are a chain read in config order, so the entries
