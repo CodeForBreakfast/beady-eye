@@ -6,21 +6,19 @@
 //! terminal, a forest or a tail, and nothing that produces an event names
 //! the loop.
 
-use std::collections::BTreeMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 
 use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::{Asked, Awaited, Wanted};
-use crate::collect::changes::{Heard, Reported};
+use crate::app::{armed_unread, Arming, Asked, Awaited, Outstanding, Reading, Wanted};
+use crate::collect::changes::Heard;
 use crate::collect::panes::Answer;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Notch, Typing};
 
-use super::armed::{armed_unread, Armed, Arming};
 use super::keys::{action, typing};
 use super::reload::{Reload, Reloaded};
 
@@ -353,7 +351,7 @@ pub(super) fn drive(
         sleeps_for(
             view,
             &outstanding,
-            &reading.polling,
+            &reading,
             reload.as_ref(),
             drawn_at,
             Utc::now(),
@@ -385,8 +383,8 @@ pub(super) fn drive(
         // each arm, so that the loop cannot answer an event and forget to
         // look.
         let now = Utc::now();
-        let told = asks_for_what_is_due(view, &mut outstanding, &mut reading.polling, now);
-        let lapsed = view.lapsed(&lapsed(&reading.polling, now));
+        let told = asks_for_what_is_due(view, &mut outstanding, &mut reading, now);
+        let lapsed = view.lapsed(&reading.lapsed(now));
         outstanding.sends(ask, now);
         view.reread(now);
         // A run reading a config file looks at it here; a run that found no
@@ -474,108 +472,6 @@ fn looked_at(
     told || noticed
 }
 
-/// The projects that poll, as the config the reader has just written names
-/// them: one the file has gained polls, one it has lost stops asking, and one
-/// it still names polls as the file now says — `Armed::still_due` is where
-/// what the file settles and what its last read settled are told apart.
-///
-/// A project the file has gained is disarmed, exactly as every project is at
-/// startup: what arms it is the read this reload asks for coming back, and
-/// arming it here would ask a second time for what is already being
-/// collected.
-fn still_armed(standing: Vec<Armed>, named: Vec<Armed>) -> Vec<Armed> {
-    let mut standing: BTreeMap<String, Armed> = standing
-        .into_iter()
-        .map(|project| (project.project().to_string(), project))
-        .collect();
-    named
-        .into_iter()
-        .map(|named| match standing.remove(named.project()) {
-            Some(standing) => standing.still_due(named),
-            None => named,
-        })
-        .collect()
-}
-
-/// The projects this run reads, in the two places a config decides them:
-/// which of them ask for themselves, and which of them the inbound channel
-/// accepts a report for.
-///
-/// One value rather than two, because one list settles both. A project the
-/// loop polls and a project the channel answers `ok` to are the same project
-/// by construction here; held apart they would be two lists agreeing by
-/// argument, and the argument is what a reader of a bug report is left
-/// checking. Only [`Self::now_reading`] writes either, and it writes both.
-pub(super) struct Reading {
-    polling: Vec<Armed>,
-    accepted: Reported,
-    /// The projects the config names and this run is not reading, each
-    /// armed for the collection that reads it on demand.
-    unread: Vec<Armed>,
-}
-
-impl Reading {
-    pub(super) fn of(polling: Vec<Armed>, accepted: Reported) -> Self {
-        Self {
-            polling,
-            accepted,
-            unread: Vec::new(),
-        }
-    }
-
-    pub(super) fn unread(self, unread: Vec<Armed>) -> Self {
-        Self { unread, ..self }
-    }
-
-    /// Take the projects a collection has read into what the run reads, and
-    /// hand back those it was not reading until now.
-    fn read_on_demand(&mut self, read: &[String]) -> Vec<String> {
-        let (gained, unread) = std::mem::take(&mut self.unread)
-            .into_iter()
-            .partition::<Vec<_>, _>(|project| read.iter().any(|named| named == project.project()));
-        self.unread = unread;
-        if gained.is_empty() {
-            return Vec::new();
-        }
-        let names = gained
-            .iter()
-            .map(|project| project.project().to_string())
-            .collect();
-        self.polling.extend(gained);
-        self.accept_what_polls();
-        names
-    }
-
-    fn accept_what_polls(&self) {
-        self.accepted.now_watching(
-            self.polling
-                .iter()
-                .map(|project| project.project().to_string()),
-        );
-    }
-
-    /// The projects a config the reader has written names, as what the run
-    /// reads from here on.
-    ///
-    /// `still_due` is where what the file settles and what its last read
-    /// settled are told apart, so the channel is told what came out of that
-    /// rather than what went into it.
-    fn now_reading(&mut self, named: Vec<Armed>, unread: Vec<Armed>) {
-        self.polling = still_armed(std::mem::take(&mut self.polling), named);
-        self.unread = unread;
-        self.accept_what_polls();
-    }
-}
-
-/// The projects nothing has vouched for lately, as `now` finds them.
-fn lapsed(armed: &[Armed], now: DateTime<Utc>) -> Vec<String> {
-    armed
-        .iter()
-        .filter(|project| project.lapsed(now))
-        .map(|project| project.project().to_string())
-        .collect()
-}
-
 /// Ask for whatever the projects that arm themselves are now due to ask for.
 /// Whether the screen changed for it.
 ///
@@ -586,14 +482,11 @@ fn lapsed(armed: &[Armed], now: DateTime<Utc>) -> Vec<String> {
 fn asks_for_what_is_due(
     view: &mut dyn View,
     outstanding: &mut Outstanding,
-    armed: &mut [Armed],
+    reading: &mut Reading,
     now: DateTime<Utc>,
 ) -> bool {
-    // Every project that is due, not the first: several come due together
-    // after a read of everything, and a short-circuiting `any` would ask for
-    // one of them and leave the rest armed in the past.
     let mut told = false;
-    for wanted in armed.iter_mut().filter_map(|project| project.asks(now)) {
+    for wanted in reading.due(now) {
         told |= asked_for(view, outstanding, wanted);
     }
     told
@@ -626,7 +519,7 @@ fn ran_out(view: &dyn View, drawn_at: DateTime<Utc>, now: DateTime<Utc>) -> bool
 fn sleeps_for(
     view: &dyn View,
     outstanding: &Outstanding,
-    armed: &[Armed],
+    reading: &Reading,
     reload: Option<&Reload>,
     drawn_at: DateTime<Utc>,
     now: DateTime<Utc>,
@@ -641,10 +534,9 @@ fn sleeps_for(
         outstanding.sends_in(now),
         view.rereads_in(now),
         reload.and_then(|reload| reload.checks_in(now)),
+        reading.next_due_in(now),
     ]
     .into_iter()
-    .chain(armed.iter().map(|project| project.asks_in(now)))
-    .chain(armed.iter().map(|project| project.lapses_in(now)))
     .flatten()
     .min()
 }
@@ -840,36 +732,16 @@ fn answered(
         Event::Resize => true,
         Event::Changed(wanted) => asked_for(view, outstanding, wanted),
         Event::Covered(covered) => {
-            let now = Utc::now();
-            for project in reading
-                .polling
-                .iter_mut()
-                .filter(|armed| armed.project() == covered)
-            {
-                project.covered(now);
-            }
+            reading.covered(&covered, Utc::now());
             false
         }
         Event::Collected(snapshot) => {
-            let now = Utc::now();
-            // A project the collection read on demand was read by it as
-            // much as any the read named.
-            let gained = reading.read_on_demand(&snapshot.projects);
-            if let Some(read) = outstanding.came_back() {
-                // Every project that read covered now has nothing coming, so
-                // this is where each of them arms its next ask. The only
-                // place: a read that never comes back arms nothing, and the
-                // project says its tracker has stopped answering rather than
-                // being quietly polled over.
-                for project in reading.polling.iter_mut() {
-                    let speaks_until = snapshot.speaks_until.get(project.project()).copied();
-                    if gained.iter().any(|named| named == project.project()) {
-                        project.was_read(now, speaks_until);
-                    } else {
-                        project.came_back(&read, now, speaks_until);
-                    }
-                }
-            }
+            reading.came_back(
+                outstanding.came_back(),
+                &snapshot.projects,
+                &snapshot.speaks_until,
+                Utc::now(),
+            );
             view.collected(*snapshot);
             // A collection that moved the selection off the bead the view
             // was opened on takes the view down with it: drawn from the
@@ -911,286 +783,18 @@ fn asked_for(view: &mut dyn View, outstanding: &mut Outstanding, wanted: Wanted)
     outstanding.ask(wanted, Utc::now()) && view.collecting(outstanding.awaited())
 }
 
-/// How long a read is held after it is asked for before it is sent, so that
-/// a burst about one project costs one read rather than one each.
-///
-/// A producer with nothing to lose by talking — a hook firing per commit, a
-/// key held down — says the same thing many times in a moment, and without
-/// this each saying is a read. It runs from the first notification and is not
-/// reset by the ones after it, so a `^R` held down still gets the read it was
-/// pressed for; a resetting window would withhold it for as long as the key
-/// was down.
-///
-/// **It has to stay well under `[tui] unanswered_after_seconds`.** A read
-/// waiting out its window is drawn exactly like one a tracker has stopped
-/// answering, because `Awaited::unanswered_at` measures from the ask and
-/// deliberately not from the send — `Outstanding::came_back` says why that
-/// stamp cannot move. The two are kept apart by the config key counting in
-/// whole seconds: the shortest wait it can name that is not "immediately" is
-/// a second, and this is a fifth of it.
-///
-/// `a_read_goes_before_its_project_can_be_said_to_have_stopped_being_read`
-/// holds that against the shortest patience the key can name, through the
-/// predicate rather than by comparing two constants, and on the pair
-/// `Outstanding::for_a_run` builds rather than on this constant — so it
-/// holds whichever value the window comes to be read from. A
-/// `debug_assert!(window < patience)` in `waiting` would cover it too and is
-/// not available: the tests that are about the window construct one longer
-/// than the patience on purpose.
-const WINDOW: TimeDelta = TimeDelta::milliseconds(200);
-
-/// What has been asked for and not yet collected.
-///
-/// A project is in one of three states here and never in none of them: its
-/// read is in flight, or its read is asked for and waiting — out its window,
-/// or behind the read in front of it — or it has nothing here at all and is
-/// `Armed` to ask again. The last transition is `came_back`'s, and it is what
-/// makes the three cover every project: a read that comes back arms, a read
-/// that never comes back stays here and is drawn as unanswered.
-///
-/// A request arriving while a collection is in flight used to be dropped, on
-/// the grounds that the collection already running was reading exactly what
-/// it would ask for. A refresh that names a project is what ends that: the
-/// one running may be reading a different project entirely, and dropping the
-/// request would lose the change it was sent for — the failure the inbound
-/// channel exists to prevent. So a request waits its turn instead. A whole
-/// collection absorbs the single projects it would read anyway, so what waits
-/// is never more than one per project.
-pub(super) struct Outstanding {
-    /// Every read asked for and not yet come back, in the order they will be
-    /// served: the one the collector has, then whatever is waiting for it.
-    ///
-    /// What each names rather than that some read is running — a project line
-    /// says for itself whether its own rows are on their way, so the screen
-    /// needs to know which projects and not only that some are — and *when
-    /// each was asked for*, because that is the only measure of the wait
-    /// there is. Nothing downstream can recover it: the collector blocks in
-    /// `Command::output()`, which has no deadline of its own, and reports
-    /// nothing until it is done, so a tracker hung for an hour and one asked
-    /// half a second ago look identical from every side but this one. A read
-    /// that has not been sent yet is worse still, because there is nothing to
-    /// report from at all.
-    ///
-    /// One sequence rather than the one in flight beside a stash of what
-    /// waits. The question a project line asks is how long its rows have been
-    /// on their way, and being sent is a step along that wait rather than the
-    /// start of it — so the two belong to one list, ordered by when each was
-    /// asked for, which is also the order the collector takes them in.
-    awaited: Vec<Awaited>,
-    /// How long a read this asks for may go unanswered before the project it
-    /// names is reported as having stopped being read. Held here because this
-    /// is where a read is asked for, and carried on each one so that whoever
-    /// draws it needs nothing else to decide.
-    patience: TimeDelta,
-    /// How long the read at the front is held before it is sent, so that a
-    /// burst of notifications about one project costs one read rather than
-    /// one each. See `WINDOW`.
-    window: TimeDelta,
-    /// Whether the read at the front has gone to the collector. False while
-    /// it is waiting out its window, and false again the moment the read it
-    /// named comes back.
-    sent: bool,
-}
-
-impl Outstanding {
-    /// Nothing outstanding, at the two waits a run drives with: the patience
-    /// its config names, and `WINDOW`.
-    ///
-    /// The only place production pairs them, so that a guard calling this
-    /// holds the relationship between them against the pair a run is built
-    /// with rather than against `WINDOW`.
-    pub(super) fn for_a_run(patience: TimeDelta) -> Self {
-        Self::waiting(patience, WINDOW)
-    }
-
-    /// Wait this long on a read from here on, as the config the reader has
-    /// just written says.
-    ///
-    /// The reads already asked for keep the patience they were stamped with,
-    /// because that is what the screen has been drawing them against: a read
-    /// the reader has been watching for a minute would otherwise be reported
-    /// as having stopped answering by an edit that said nothing about it.
-    pub(super) fn waits_out(&mut self, patience: TimeDelta) {
-        self.patience = patience;
-    }
-
-    pub(super) fn waiting(patience: TimeDelta, window: TimeDelta) -> Self {
-        Self {
-            awaited: Vec::new(),
-            patience,
-            window,
-            sent: false,
-        }
-    }
-
-    /// Ask for a collection, or keep it until the one running comes back.
-    ///
-    /// Reports whether what is outstanding is any different for it, which is
-    /// not the same as whether a collection started: a request arriving
-    /// mid-collection waits its turn, and its project's line says so.
-    ///
-    /// Asking never sends. Every read waits out its window first, and
-    /// `sends` is where the leaving happens — so the screen says a read is
-    /// coming at the instant it was asked for, whatever the window then does
-    /// about when it goes.
-    pub(super) fn ask(&mut self, wanted: Wanted, now: DateTime<Utc>) -> bool {
-        if self.awaited.is_empty() {
-            self.awaited.push(self.stamped(wanted, now));
-            return true;
-        }
-        self.queue(wanted, now)
-    }
-
-    /// Send the read at the front, where its window is out and no other is in
-    /// flight.
-    ///
-    /// One at a time, as it has always been: a collection is dozens of round
-    /// trips per project and two at once would double what a tracker is
-    /// asked without halving anything.
-    pub(super) fn sends(&mut self, ask: &Sender<Asked>, now: DateTime<Utc>) {
-        if self.sent {
-            return;
-        }
-        let Some(next) = self.awaited.first() else {
-            return;
-        };
-        if now < next.asked_at + self.window {
-            return;
-        }
-        if ask.send(Asked::Read(next.wanted.clone())).is_err() {
-            self.awaited.clear();
-            return;
-        }
-        self.sent = true;
-    }
-
-    /// How long until the read at the front leaves, or nothing where none is
-    /// waiting to leave: the loop sleeps until this among its other
-    /// deadlines, because nothing else is going to wake it for a window
-    /// running out.
-    pub(super) fn sends_in(&self, now: DateTime<Utc>) -> Option<Duration> {
-        if self.sent {
-            return None;
-        }
-        self.awaited.first().map(|next| {
-            (next.asked_at + self.window - now)
-                .to_std()
-                .unwrap_or_default()
-        })
-    }
-
-    /// Keep a request until its turn, where nothing already waiting covers
-    /// it.
-    ///
-    /// Covered by what is *waiting* rather than by what is in flight: the
-    /// collection running may have passed the project before the change was
-    /// reported, so a change arriving mid-collection always earns a read of
-    /// its own. What it does not earn is a second one.
-    fn queue(&mut self, wanted: Wanted, now: DateTime<Utc>) -> bool {
-        match wanted {
-            // A whole collection reads every project, so it stands in for the
-            // single ones waiting with it — and its wait begins when it was
-            // asked for, not when the earliest of theirs did. It names every
-            // project on the screen, including the ones nothing had asked
-            // about, and one instant cannot be true of both: an inherited one
-            // would put a wait those projects never had beside their names,
-            // and a whole screen of marks saying the reads have stopped is
-            // what a reader gets for one project changing.
-            //
-            // What that costs is the projects it absorbs. Their wait was
-            // longer and this understates it, for one patience, after which
-            // the mark says what it said before. Understating a wait is what
-            // patience is: it is the length of not-saying-yet the project has
-            // already decided on, and it is bounded. Overstating one is a
-            // claim about a tracker nobody asked.
-            Wanted::Everything => {
-                if self.queued().any(|it| it.wanted == Wanted::Everything) {
-                    return false;
-                }
-                self.awaited.truncate(self.in_flight());
-                self.awaited.push(self.stamped(Wanted::Everything, now));
-                true
-            }
-            // A project reported for again while it waits is the same wait: a
-            // project nothing reports for is polled every refresh interval,
-            // and the poll goes on naming it for as long as it is uncovered,
-            // so a stamp taken from the latest ask would be pushed forward by
-            // the very polling that proves nothing has been read.
-            Wanted::Project(project) => {
-                if self.queued().any(|it| it.wanted.names(&project)) {
-                    return false;
-                }
-                self.awaited
-                    .push(self.stamped(Wanted::Project(project), now));
-                true
-            }
-        }
-    }
-
-    /// The reads that have not been sent.
-    ///
-    /// Every one but the first, once the first has gone — and every one of
-    /// them while the first is still waiting out its window, which is what
-    /// makes the window a debounce at all. A hundred messages about one
-    /// project arriving into an idle `bdi` find their own unsent read at the
-    /// front and are dropped against it; were the front skipped they would
-    /// queue ninety-nine reads behind it.
-    fn queued(&self) -> impl Iterator<Item = &Awaited> {
-        self.awaited.iter().skip(self.in_flight())
-    }
-
-    /// How many reads the collector has: one, or none while the front is
-    /// still waiting out its window.
-    fn in_flight(&self) -> usize {
-        usize::from(self.sent)
-    }
-
-    fn stamped(&self, wanted: Wanted, asked_at: DateTime<Utc>) -> Awaited {
-        Awaited {
-            wanted,
-            asked_at,
-            patience: self.patience,
-        }
-    }
-
-    /// Take the read that came back, and say what it read.
-    ///
-    /// What it read is what arms the projects it covered for their next ask,
-    /// which is the only thing that arms them: a read nobody answers arms
-    /// nothing, and a project with nothing coming is what the unanswered mark
-    /// is for.
-    ///
-    /// Whatever waited behind it is left to `sends`. The one that reaches the
-    /// front keeps the stamp it queued at rather than being stamped again.
-    /// Its project's rows have been on their way since the change that wanted
-    /// them was reported, and a wait that started over on reaching the front
-    /// would tell a reader whose project had been stranded ten minutes behind
-    /// a hung tracker that its own tracker had just been asked. Its window
-    /// ran out while it waited, so `sends` finds it due and it leaves at once.
-    fn came_back(&mut self) -> Option<Wanted> {
-        if self.awaited.is_empty() {
-            return None;
-        }
-        self.sent = false;
-        Some(self.awaited.remove(0).wanted)
-    }
-
-    /// Every read outstanding and since when, for the screen to say beside
-    /// the projects each of them names.
-    pub(super) fn awaited(&self) -> &[Awaited] {
-        &self.awaited
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Armed;
+    use crate::collect::changes::Reported;
     use crate::config::Config;
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
     use crate::view::phrase;
     use crate::view::Edit;
+    use chrono::TimeDelta;
     use ratatui::crossterm::event::KeyCode;
     use std::cell::RefCell;
     use std::sync::mpsc;
@@ -2709,7 +2313,7 @@ mod tests {
             sleeps_for(
                 &Recorder::default(),
                 &at_once(),
-                &nothing_armed(),
+                &a_run_reading(nothing_armed()),
                 None,
                 Utc::now(),
                 Utc::now()
@@ -2730,7 +2334,7 @@ mod tests {
             sleeps_for(
                 &Recorder::default(),
                 &outstanding,
-                &[sooner],
+                &a_run_reading(vec![sooner]),
                 None,
                 now,
                 now
@@ -2742,7 +2346,7 @@ mod tests {
             sleeps_for(
                 &Recorder::default(),
                 &outstanding,
-                &nothing_armed(),
+                &a_run_reading(nothing_armed()),
                 None,
                 now,
                 now
@@ -2765,7 +2369,14 @@ mod tests {
         };
 
         assert_eq!(
-            sleeps_for(&view, &outstanding, &nothing_armed(), None, now, now),
+            sleeps_for(
+                &view,
+                &outstanding,
+                &a_run_reading(nothing_armed()),
+                None,
+                now,
+                now
+            ),
             Some(AN_INTERVAL),
             "the pane falls due long before the window is out"
         );
@@ -2788,7 +2399,7 @@ mod tests {
             sleeps_for(
                 &Recorder::default(),
                 &at_once(),
-                &nothing_armed(),
+                &a_run_reading(nothing_armed()),
                 Some(&reload),
                 now,
                 now
@@ -3175,12 +2786,26 @@ mod tests {
 
         let drawn_at = now - TimeDelta::milliseconds(30);
         assert_eq!(
-            sleeps_for(&view, &at_once(), &nothing_armed(), None, drawn_at, now),
+            sleeps_for(
+                &view,
+                &at_once(),
+                &a_run_reading(nothing_armed()),
+                None,
+                drawn_at,
+                now
+            ),
             Some(phrase::FRAME - Duration::from_millis(30)),
         );
         let drawn_at = now - TimeDelta::milliseconds(100);
         assert_eq!(
-            sleeps_for(&view, &at_once(), &nothing_armed(), None, drawn_at, now),
+            sleeps_for(
+                &view,
+                &at_once(),
+                &a_run_reading(nothing_armed()),
+                None,
+                drawn_at,
+                now
+            ),
             Some(Duration::ZERO),
             "the frame ran out before the loop asked, so it wakes at once"
         );
@@ -3301,7 +2926,14 @@ mod tests {
         lapsing.came_back(&arkham(), now, None);
 
         assert_eq!(
-            sleeps_for(&Recorder::default(), &at_once(), &[lapsing], None, now, now),
+            sleeps_for(
+                &Recorder::default(),
+                &at_once(),
+                &a_run_reading(vec![lapsing]),
+                None,
+                now,
+                now
+            ),
             Some(AN_INTERVAL)
         );
     }

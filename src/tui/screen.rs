@@ -35,9 +35,9 @@ use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Ty
 
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
-use super::due::due_after;
 use super::keys::{bead_key_rows, bindings, forest_key_rows};
 use super::reload::Reloaded;
+use crate::app::due_after;
 
 /// What the config settles about the drawing, as one value read from it in
 /// one place.

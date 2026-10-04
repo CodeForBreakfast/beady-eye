@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,9 @@ pub struct Bead {
     /// when it passes — so it is the one thing a tracker says that turns over
     /// on the clock rather than on a write.
     pub defer_until: Option<DateTime<Utc>>,
+    /// The row as the tracker printed it, every field it wrote whether `bdi`
+    /// reads it or not, where whoever read the tracker asked for it kept.
+    pub row: Option<Arc<Printed>>,
 }
 
 impl Bead {
@@ -156,6 +160,9 @@ impl Bead {
         })
     }
 }
+
+/// One row as the tracker printed it.
+pub type Printed = serde_json::Map<String, serde_json::Value>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

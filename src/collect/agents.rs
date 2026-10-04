@@ -37,6 +37,32 @@ pub trait Agents: Send + Sync {
     fn focus(&self, pane: &PaneKey) -> Result<(), RunFailure>;
 }
 
+/// No provider, for a run that reports nothing from a pane: every session
+/// list it is asked for is empty, and nothing is run to find that out.
+pub struct Unasked;
+
+impl Agents for Unasked {
+    fn name(&self) -> &'static str {
+        "none"
+    }
+
+    fn sessions(&self) -> Result<Vec<String>, RunFailure> {
+        Ok(Vec::new())
+    }
+
+    fn list(&self, _session: &str) -> Result<Vec<Pane>, RunFailure> {
+        Ok(Vec::new())
+    }
+
+    fn read(&self, _pane: &PaneKey, _lines: u16) -> Result<Vec<String>, RunFailure> {
+        Ok(Vec::new())
+    }
+
+    fn focus(&self, _pane: &PaneKey) -> Result<(), RunFailure> {
+        Ok(())
+    }
+}
+
 /// A provider shared between the collection that lists and the tail that
 /// reads, each on its own thread, is held as one of these — so the seam
 /// carries through the sharing rather than stopping at it.
