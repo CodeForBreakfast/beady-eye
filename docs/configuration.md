@@ -692,7 +692,8 @@ hard: `bdi`'s read waits behind the writes, and a read taking longer than
 
 ## Each tracker read by its own bd
 
-`bdi` never writes to a tracker, but a bd older than 1.3.0 does: on finding
+`bdi` writes to a tracker only when `bdi bd` records a person's answer, but a
+bd older than 1.3.0 also writes when it is asked to read: on finding
 itself newer than the bd that last opened a tracker, it rewrites
 `.beads/.local_version` and migrates the schema, before running whatever
 subcommand it was given. `--readonly` does not stop that, and under `--json` bd

@@ -1,12 +1,13 @@
 //! bd's command line as the way to a project's tracker.
 //!
-//! The one module that spells `bd -C <path> --readonly …`. Each question the
+//! The one module that spells `bd -C <path> --readonly …`, and the one write
+//! `bdi bd` passes through, `bd -C <path> human respond …`. Each question the
 //! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
 //! here and nowhere else. The roots to draw the rows under are read off the
 //! rows themselves, in `app::tracker`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::Context;
@@ -345,8 +346,8 @@ impl Reader<'_> {
     /// they mean a misconfiguration fails loudly.
     ///
     /// Every subcommand composed here is a read, and that rests on the command
-    /// lines below rather than on bd. It is not why `bdi` never writes to a
-    /// tracker, because bd writes to one on its own account. The pinned bd
+    /// lines below rather than on bd. It does not mean a read leaves the
+    /// tracker alone, because bd writes to one on its own account. The pinned bd
     /// 1.3.0 leaves two lock files behind even on a read it answers. A bd older
     /// than 1.3.0 also rewrites `.beads/.local_version` and runs its schema
     /// auto-migration on finding itself newer than the bd that last opened that
@@ -510,6 +511,51 @@ const EPHEMERAL: &str = "ephemeral=true";
 /// is what the phrase around this already says.
 fn rows(out: &str, read: &str) -> Result<Vec<Bead>, RunFailure> {
     parse_beads(out).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
+}
+
+/// The one bd command `bdi bd` passes through, and the one write `bdi` makes.
+const PASSED_THROUGH: [&str; 2] = ["human", "respond"];
+
+/// The flags `bd human respond` takes its response by. Each takes the word
+/// after it as that response, whatever the word looks like.
+const RESPONSE: [&str; 2] = ["-r", "--response"];
+
+/// bd's argv for `asked`, run against the tracker in `path` and no other.
+///
+/// A permission rule can limit a seat to `bdi bd <project> …`, and that holds
+/// only if nothing later on the line can pick another tracker. bd reads its
+/// flags wherever they stand before a `--`, so `-C`, `--db`, `--database` or
+/// `--global` anywhere there would outrank the `-C` this puts first. Every
+/// flag but the response is refused, so one bd adds later is refused too.
+pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<String>> {
+    if asked.len() < PASSED_THROUGH.len() || asked[..PASSED_THROUGH.len()] != PASSED_THROUGH {
+        anyhow::bail!(
+            "bdi bd passes only `human respond` through to a tracker, and was asked for `{}`",
+            asked.join(" ")
+        );
+    }
+    let mut words = asked[PASSED_THROUGH.len()..].iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--" => break,
+            flag if RESPONSE.contains(&flag) => {
+                words.next();
+            }
+            response if response.starts_with("--response=") => {}
+            response if response.starts_with("-r") && !response.starts_with("--") => {}
+            flag if flag.starts_with('-') && flag != "-" => anyhow::bail!(
+                "bdi bd passes `human respond` its bead and response and nothing else, so it \
+                 refuses {flag}; a response that starts with a dash goes after --"
+            ),
+            _ => {}
+        }
+    }
+    let named = path.to_string_lossy();
+    Ok(["-C", named.as_ref()]
+        .into_iter()
+        .map(String::from)
+        .chain(asked.iter().cloned())
+        .collect())
 }
 
 #[cfg(test)]
@@ -1741,5 +1787,93 @@ mod tests {
                 "on {spelling:?}"
             );
         }
+    }
+
+    // ---- the one command line passed through --------------------------------
+
+    fn words(line: &str) -> Vec<String> {
+        line.split_whitespace().map(String::from).collect()
+    }
+
+    fn passed(line: &str) -> anyhow::Result<String> {
+        passed_through(&project_dir(), &words(line)).map(|argv| argv.join(" "))
+    }
+
+    /// The tracker is named outright and first, and nothing refuses the
+    /// write: `--readonly` is what every read carries, and it would veto this.
+    #[test]
+    fn a_response_is_passed_to_the_projects_tracker_as_written() {
+        assert_eq!(
+            passed("human respond dun-7 -r yes").expect("a response is passed through"),
+            format!("-C {} human respond dun-7 -r yes", project_dir().display())
+        );
+    }
+
+    #[test]
+    fn every_way_bd_takes_a_response_by_flag_or_word_is_passed_through() {
+        for line in [
+            "human respond dun-7 use OAuth2",
+            "human respond dun-7 --response yes",
+            "human respond dun-7 --response=yes",
+            "human respond dun-7 -ryes",
+            "human respond dun-7 -- -C is not a flag here",
+        ] {
+            assert!(passed(line).is_ok(), "{line:?} was refused");
+        }
+    }
+
+    #[test]
+    fn any_other_bd_command_is_refused() {
+        for line in [
+            "close dun-7",
+            "human dismiss dun-7",
+            "human",
+            "respond dun-7",
+        ] {
+            let refused = passed(line).expect_err(line);
+
+            assert!(
+                refused.to_string().contains("human respond"),
+                "{line:?} got: {refused}"
+            );
+        }
+    }
+
+    /// Every spelling cobra reads a tracker's flag by, including a shorthand
+    /// bundled behind another.
+    #[test]
+    fn a_flag_that_would_pick_another_tracker_is_refused_wherever_it_stands() {
+        for line in [
+            "human respond dun-7 -C /srv/work/ferry yes",
+            "human respond dun-7 yes --db /srv/work/ferry/.beads",
+            "human respond dun-7 --db=ferry yes",
+            "human respond dun-7 --database ferry yes",
+            "human respond dun-7 --directory=/srv/work/ferry yes",
+            "human respond dun-7 --global yes",
+            "human respond dun-7 -qC /srv/work/ferry yes",
+            "human respond dun-7 -r yes --db ferry",
+            "human respond dun-7 -r -- --db ferry",
+            "--db ferry human respond dun-7 yes",
+        ] {
+            assert!(passed(line).is_err(), "{line:?} was passed through");
+        }
+    }
+
+    #[test]
+    fn a_flag_that_is_not_the_response_is_refused_and_named() {
+        for flag in ["--json", "--stdin", "--file", "-q", "--actor"] {
+            let line = format!("human respond dun-7 {flag} x");
+            let refused = passed(&line).expect_err(&line);
+
+            assert!(refused.to_string().contains(flag), "got: {refused}");
+        }
+    }
+
+    /// The value after `-r` is the response whatever it looks like, which is
+    /// how cobra reads it too.
+    #[test]
+    fn a_response_that_looks_like_a_flag_is_still_a_response() {
+        assert!(passed("human respond dun-7 -r --global").is_ok());
+        assert!(passed("human respond dun-7 --response -C").is_ok());
     }
 }

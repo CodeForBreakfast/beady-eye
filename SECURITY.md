@@ -24,9 +24,11 @@ carry fixes.
 
 ## What is worth reporting
 
-`bdi` issues only reads: every `bd` command line it spells is a read, and the
-pane tail it draws is output it was handed rather than a shell it runs. That is
-a property of those command lines rather than a guarantee about your tracker —
+`bdi` issues reads, with one exception: `bdi bd <project> human respond` runs
+that write against the named project's tracker. Every other `bd` command line
+it spells is a read, and the pane tail it draws is output it was handed rather
+than a shell it runs. That is a property of those command lines rather than a
+guarantee about your tracker —
 a `bd` older than 1.3.0 writes on its own account when it opens one, rewriting
 `.beads/.local_version` and migrating the schema before it runs whatever it was
 asked for, even under `--readonly`. [docs/configuration.md](docs/configuration.md#each-tracker-read-by-its-own-bd) has that, and it is not a
@@ -51,6 +53,11 @@ worth a report.
 mode `0600` under the user's own runtime directory, and its whole protocol is one
 project name per line. Anything that lets a line do more than schedule a read of
 a project the config already names belongs here.
+
+**It passes one write through.** `bdi bd` runs `bd human respond` against the
+tracker of the project it names, with that project's credential. A command line
+that gets it to run anything else, or to reach another project's tracker, is
+worth a report.
 
 **It draws what other programs say.** Bead titles, bead metadata and pane output
 all come from outside `bdi` and end up on a terminal. Content that escapes the
