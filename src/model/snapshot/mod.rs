@@ -298,8 +298,8 @@ pub struct Node {
     /// drawn beneath it with why.
     pub orphaned_dependencies: Vec<OrphanedDependency>,
     /// What `bd show` says of the bead beyond its row, carried so the screen
-    /// can show a bead without asking the tracker again. Not part of the JSON
-    /// contract, which is the forest and not the beads' prose.
+    /// can show a bead without asking the tracker again. Not part of the
+    /// forest's JSON, which is the forest and not the beads' prose.
     #[serde(skip)]
     pub description: String,
     #[serde(skip)]

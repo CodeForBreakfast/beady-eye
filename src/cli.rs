@@ -76,8 +76,9 @@ struct Cli {
     json: bool,
 
     /// Emit each unfinished bead once as JSON: whether it is ready, what
-    /// blocks it in its own project or another, and the agent on it. Beads
-    /// with no live agent in their tree are listed too.
+    /// blocks it in its own project or another, the agent on it, and its
+    /// labels and description. Beads with no live agent in their tree are
+    /// listed too.
     #[arg(long = "beads", conflicts_with_all = ["json", "all", "beads"])]
     each_bead: bool,
 
