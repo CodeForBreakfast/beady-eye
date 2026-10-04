@@ -2337,6 +2337,13 @@ projects hold beads of one id, a blocker found in the other project survives
 the cut. Both go once the bead line carries bd's own readiness and blockers
 beside bdi's.
 
+**A listener's answer is taken by project name alone.** A config that names
+no socket finds the one listener its session runs, whatever config that
+listener read. So a run under another config, or under one changed since the
+listener started, can be answered from a different tracker that has the same
+name. This goes once a run checks that the listener reads the tracker its own
+config names.
+
 **A one-shot is dated to the oldest read it was drawn from.** For a project
 the listener answered, that read is the freshness line's `as_of`. So
 `generated_at` says how old the answer is, which is the only bound a one-shot
