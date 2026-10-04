@@ -327,6 +327,9 @@ pub struct Cli<'r> {
     /// Whether a finished bead is read without its free text, for a run that
     /// shows unfinished work alone.
     unfinished_work: bool,
+    /// The environments captured on earlier runs, which a project is read
+    /// with while direnv says entering its directory would produce the same.
+    cache: Option<environment::EnvironmentCache>,
 }
 
 impl<'r> Cli<'r> {
@@ -337,7 +340,15 @@ impl<'r> Cli<'r> {
             without_a_probe: Mutex::default(),
             keeping_rows: false,
             unfinished_work: false,
+            cache: None,
         }
+    }
+
+    /// The same CLI, reading each project with the environment an earlier
+    /// run captured for it wherever that is still what entering its
+    /// directory would produce.
+    pub fn caching_environments(self, cache: Option<environment::EnvironmentCache>) -> Self {
+        Self { cache, ..self }
     }
 
     /// The same CLI, handing each bead over with the row bd printed for it.
@@ -361,7 +372,12 @@ impl<'r> Cli<'r> {
 
 impl Trackers for Cli<'_> {
     fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
-        let env = environment::tracker_env(self.runner, project, self.ambient.as_deref())?;
+        let env = environment::tracker_env(
+            self.runner,
+            project,
+            self.ambient.as_deref(),
+            self.cache.as_ref(),
+        )?;
         Ok(Box::new(Reader {
             runner: self.runner,
             name: project.name.clone(),
@@ -1244,6 +1260,7 @@ mod tests {
             without_a_probe: Mutex::default(),
             keeping_rows: false,
             unfinished_work: false,
+            cache: None,
         }
     }
 
