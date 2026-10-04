@@ -12,7 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{mpsc, Arc, Mutex, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -263,10 +264,15 @@ impl Listener {
 }
 
 impl Connection {
-    /// A connection to the listener at `at`, giving up on any one write it
-    /// will not take within `patience`.
+    /// A connection to the listener at `at`, giving up on it where it takes
+    /// no connection, or any one write, within `patience`.
     fn to(at: &Path, patience: Duration) -> Option<Self> {
-        let to = UnixStream::connect(at).ok()?;
+        let (connected, connection) = mpsc::channel();
+        let at = at.to_path_buf();
+        // ponytail: a connection never taken leaves its thread waiting until
+        // the run exits, which a run that reads once soon does.
+        thread::spawn(move || connected.send(UnixStream::connect(at)));
+        let to = connection.recv_timeout(patience).ok()?.ok()?;
         to.set_write_timeout(Some(patience)).ok()?;
         let from = BufReader::new(to.try_clone().ok()?);
         Some(Self { to, from })
@@ -771,6 +777,31 @@ path = "/srv/work/dunwich"
             .expect("read for itself");
 
         assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
+    #[test]
+    fn a_listener_that_takes_no_connection_for_its_patience_is_left_behind() {
+        use std::os::fd::AsRawFd;
+
+        let at = a_socket("listened-not-accepting");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        // SAFETY: `listening` is a listening socket this test owns, and
+        // listening again only shortens its queue to the one connection.
+        assert_eq!(unsafe { libc::listen(listening.as_raw_fd(), 0) }, 0);
+        let _queued = UnixStream::connect(&at).expect("the queue holds one");
+        let (done, finished) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let own = own_trackers();
+            let cfg = projects();
+            let read = through(&at, &own, Duration::from_millis(100))
+                .of(project(&cfg, "dunwich"))
+                .map(|tracker| ids(tracker.as_ref()))
+                .is_ok();
+            let _ = done.send(read && !own.tracker("dunwich").asked().is_empty());
+        });
+
+        assert_eq!(finished.recv_timeout(A_MOMENT), Ok(true));
+        drop(listening);
     }
 
     #[test]
