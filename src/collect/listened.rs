@@ -61,7 +61,7 @@ impl<'t> Through<'t> {
         patience: Duration,
     ) -> Self {
         let mut listener = Listener {
-            connection: at.and_then(Connection::to),
+            connection: at.and_then(|at| Connection::to(at, patience)),
             patience,
             ..Listener::default()
         };
@@ -266,8 +266,11 @@ impl Listener {
 }
 
 impl Connection {
-    fn to(at: &Path) -> Option<Self> {
+    /// A connection to the listener at `at`, giving up on any one write it
+    /// will not take within `patience`.
+    fn to(at: &Path, patience: Duration) -> Option<Self> {
         let to = UnixStream::connect(at).ok()?;
+        to.set_write_timeout(Some(patience)).ok()?;
         let from = BufReader::new(to.try_clone().ok()?);
         Some(Self { to, from })
     }
@@ -745,6 +748,34 @@ path = "/srv/work/dunwich"
             .expect("read for itself");
 
         assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
+    #[test]
+    fn a_listener_that_takes_nothing_for_its_patience_is_left_behind() {
+        let at = a_socket("listened-not-reading");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        thread::spawn(move || {
+            let (_connection, _) = listening.accept().expect("the run connects");
+            thread::sleep(2 * A_MOMENT);
+        });
+        let more_than_the_socket_holds = "dunwich".repeat(1 << 20);
+        let (done, finished) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let own = own_trackers();
+            let cfg = projects();
+            let read = Through::waiting(
+                Some(&at),
+                [more_than_the_socket_holds.as_str(), "dunwich"],
+                &own,
+                Duration::from_millis(100),
+            )
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()))
+            .is_ok();
+            let _ = done.send(read && !own.tracker("dunwich").asked().is_empty());
+        });
+
+        assert_eq!(finished.recv_timeout(A_MOMENT), Ok(true));
     }
 
     /// A bead whose row this run cannot read is a listener it cannot read,
