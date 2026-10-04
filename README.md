@@ -173,6 +173,56 @@ machine under whatever supervises your processes, such as a systemd user unit or
 a launchd agent. "Running the listener" in
 [docs/configuration.md](docs/configuration.md) has an example of each.
 
+Anything can watch beads through the listener. A consumer connects to its
+socket and says what it watches. It is sent each of those beads as one line of
+JSON, first as they stand and then each time one changes. This one watches a
+project and prints every bead it hears of:
+
+```python
+import json, os, socket, sys
+
+project = sys.argv[1]
+at = os.path.join(os.environ["XDG_RUNTIME_DIR"], "beady-eye", "listener.sock")
+
+listener = socket.socket(socket.AF_UNIX)
+listener.connect(at)        # refused: no listener, so nothing is known
+listener.settimeout(60)     # an alive line is due every 20 seconds
+listener.sendall(f"watch {project}\n".encode())
+
+try:
+    for line in listener.makefile():
+        said = json.loads(line)
+        if said["line"] == "bead":
+            print(said["row"]["id"], said["row"]["status"], flush=True)
+        elif said["line"] == "gone":
+            print(said["id"], "gone", flush=True)
+        elif said["line"] == "freshness" and said["tracker"] != "ok":
+            print(project, "unreachable, last read", said["as_of"], flush=True)
+except TimeoutError:
+    sys.exit("the listener has wedged")
+sys.exit("the listener has gone")
+```
+
+It starts from the beads that are not closed. A bead filed after it connected
+arrives as a line of its own, and so does a bead that closes:
+
+```console
+$ python3 watch.py summit-works
+smt-4kd3p open
+smt-4kd3p.20 blocked
+smt-4kd3p.21 open
+smt-4kd3p.20 closed
+```
+
+The script tells a quiet listener from one that has gone. A listener that is up
+sends an alive line every 20 seconds, however quiet its trackers are. So a
+refused connection, a closed one, or a minute of silence means nothing is
+watching, and the script stops rather than act on what it has not been told.
+A tracker the listener cannot reach is reported in that project's freshness
+line, and the beads already sent stand as the last known.
+[docs/design.md](docs/design.md) has every line the listener sends, under
+"Watching".
+
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
 what a bead carries, credentials, extra roots, intervals, the light theme, and
 the socket you can poke to say a tracker changed so the eye stops polling it.

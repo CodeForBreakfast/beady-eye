@@ -2124,7 +2124,8 @@ which for the reading source is its last read that came back, a skipped one
 included, or the last covered line naming the project. `tracker` is `ok`, or
 `{ "unreachable": <reason> }` with the reason `--json` gives, where the last
 attempt to reach the project failed. The beads already sent then stand as the
-last known, and `as_of` says how old that is. `events` is explained under
+last known, and `as_of` says how old that is. A project that has never been
+read is sent no beads, and its `as_of` is `null`. `events` is explained under
 *bd's events*. A consumer watching one bead is sent its project's freshness
 line.
 
@@ -2168,6 +2169,11 @@ socket.
 Nothing is lost across a reconnect. A consumer that reconnects sends its lines
 again and is sent the beads as they now stand, so a close that happened while
 it was away arrives as the bead's status. No consumer keeps a checkpoint.
+
+So the listener closes a connection whose consumer has stopped reading, once
+answers have piled up waiting to be written to it. Holding them without end
+would cost the listener memory for as long as the consumer does not read, and
+the consumer loses nothing by reconnecting.
 
 A consumer that wants one answer connects, sends its lines, reads as far as
 each project's freshness line and hangs up.
