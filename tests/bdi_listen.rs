@@ -387,14 +387,14 @@ fn a_watch_is_told_of_a_close_and_a_reconnect_is_sent_the_bead_as_it_stands() {
 #[test]
 fn a_watch_on_one_bead_is_sent_that_bead_whatever_its_status() {
     let (home, tracker, listener) = a_listener("listen-one-bead");
-    tracker.holds(&the_described_subtree_with(|rows| {
-        closing(rows, "dun-0tp.7")
-    }));
-    Producer::connected_to(&listening_at(&home)).says("arkham");
-    until(
-        || reads_in_full(&tracker) == 2,
-        "the read the report asked for",
+    let mut waiting = Consumer::connected_to(&listening_at(&home));
+    waiting.sends("watch arkham").hears_an_answer();
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
     );
+    waiting.hears_an_answer();
 
     let mut consumer = Consumer::connected_to(&listening_at(&home));
     let closed = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
@@ -402,6 +402,7 @@ fn a_watch_on_one_bead_is_sent_that_bead_whatever_its_status() {
 
     stopped(listener);
     assert_eq!(beads_in(&closed), ["dun-0tp.7"]);
+    assert_eq!(closed[0]["row"]["status"], "closed");
     assert_eq!(
         closed.len(),
         2,

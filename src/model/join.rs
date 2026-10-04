@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -110,7 +111,7 @@ impl Conflict {
 /// One project's assembled rows, as the join reads them.
 pub struct ProjectRows<'a> {
     pub project: &'a str,
-    pub rows: &'a [Bead],
+    pub rows: &'a [Arc<Bead>],
 }
 
 /// What one run holds about panes: every pane a session answered with, and
@@ -424,7 +425,7 @@ pub fn unattributed<'a>(panes: &'a [Pane], joined: &Joined) -> Vec<&'a Pane> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_beads;
+    use crate::collect::bd::parse_shared_beads;
     use crate::collect::herdr::parse_agent_list;
     use crate::config::Join;
     use crate::model::tree::Nesting;
@@ -466,7 +467,7 @@ mod tests {
     }
 
     /// The root of a hand-written tree: the one row that depends on nothing.
-    fn root_row(beads: &[Bead]) -> String {
+    fn root_row(beads: &[Arc<Bead>]) -> String {
         beads
             .iter()
             .find(|b| b.dependencies.is_empty())
@@ -475,8 +476,8 @@ mod tests {
             .clone()
     }
 
-    fn rows(json: &str) -> Vec<Bead> {
-        let beads = parse_beads(json).expect("the rows parse");
+    fn rows(json: &str) -> Vec<Arc<Bead>> {
+        let beads = parse_shared_beads(json).expect("the rows parse");
         let root = root_row(&beads);
         Nesting::of(&beads)
             .assemble(&root)

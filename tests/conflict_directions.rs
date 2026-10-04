@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use beady_eye::collect::bd::parse_beads;
+use beady_eye::collect::bd::parse_shared_beads;
 use beady_eye::collect::herdr::parse_agent_list;
 use beady_eye::config::Config;
 use beady_eye::model::anomaly::Anomaly;
@@ -90,7 +90,7 @@ fn read(dunwich_rows: &str, agents: &str) -> Reading {
     let assembled: Vec<(&str, _)> = [("dunwich", dunwich_rows), ("ferry", FERRY_ROWS)]
         .into_iter()
         .map(|(project, rows)| {
-            let beads = parse_beads(rows).expect("the rows parse");
+            let beads = parse_shared_beads(rows).expect("the rows parse");
             let root = beads
                 .iter()
                 .find(|b| b.dependencies.is_empty())
