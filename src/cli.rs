@@ -12,7 +12,9 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::app::Asked;
-use crate::app::{armed_unread, hold, Armed, Arming, Hold, Outstanding, ReadingTrackers, Reads};
+use crate::app::{
+    armed_unread, hold, serve, Armed, Arming, Hold, Outstanding, ReadingTrackers, Reads,
+};
 use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes;
@@ -425,17 +427,21 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         .context("asking to be told about the signals that would otherwise kill bdi")?;
     let arms = arming(Polling::AsConfigured);
     let armed = arms(&cfg);
-    let reported = changes::Reported::watching(
-        armed
-            .iter()
-            .map(|project| project.project().to_string())
-            .collect::<Vec<_>>(),
-    );
+    let projects: Vec<String> = armed
+        .iter()
+        .map(|project| project.project().to_string())
+        .collect();
+    let reported = changes::Reported::watching(projects.clone());
+    let held = Arc::new(Mutex::new(Hold::reading(projects)));
     let (heard_by, heard) = mpsc::channel();
     let at = changes::where_the_listener_is(socket.or_else(|| cfg.listener.socket.clone()));
+    let serving = (Arc::clone(&held), reported.clone());
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
-    let _socket = match changes::listen(at, &reported, heard_by) {
+    let _socket = match changes::serve(at, move |connection| {
+        let (held, reported) = &serving;
+        serve(connection, held, reported, &heard_by);
+    }) {
         Ok(socket) => socket,
         Err(refused) => {
             eprintln!("bdi listen cannot start: {}", listener_refused(&refused));
@@ -455,7 +461,6 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         (snapshot, answers)
     });
     let mut source = ReadingTrackers::new(reads, heard, outstanding, reading);
-    let held = Arc::new(Mutex::new(Hold::default()));
     std::thread::spawn(move || hold(&mut source, &held));
 
     asked_to_stop.forever().next();

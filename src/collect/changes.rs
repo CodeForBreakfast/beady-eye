@@ -423,6 +423,16 @@ pub fn listen(
     reported: &Reported,
     changed: Sender<Heard>,
 ) -> Result<Socket, Refused> {
+    let reported = reported.clone();
+    serve(at, move |writer| hear(writer, &reported, &changed))
+}
+
+/// Open a socket and hand each connection to `each` on a thread of its own,
+/// reporting what stopped it rather than failing.
+pub fn serve(
+    at: Option<PathBuf>,
+    each: impl Fn(UnixStream) + Send + Sync + 'static,
+) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
     let listener = bind(&at)?;
     // Read before anything else this run does, so the name has had as little
@@ -431,8 +441,8 @@ pub fn listen(
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
 
-    let reported = reported.clone();
-    thread::spawn(move || accept(&listener, &reported, &changed));
+    let each = Arc::new(each);
+    thread::spawn(move || accept(&listener, &each));
 
     Ok(Socket { at, bound })
 }
@@ -630,17 +640,18 @@ fn is_a_socket(at: &Path) -> bool {
     fs::symlink_metadata(at).is_ok_and(|what| what.file_type().is_socket())
 }
 
-/// Take writers until the socket stops giving them.
+/// Take connections until the socket stops giving them, each on a thread of
+/// its own.
 ///
 /// An accept that fails ends the channel rather than being retried: there is
 /// no error here a retry would clear, and the poll is what the view falls
 /// back to.
-fn accept(listener: &UnixListener, reported: &Reported, changed: &Sender<Heard>) {
-    for writer in listener.incoming() {
-        let Ok(writer) = writer else { return };
+fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(listener: &UnixListener, each: &Arc<F>) {
+    for connection in listener.incoming() {
+        let Ok(connection) = connection else { return };
 
-        let (reported, changed) = (reported.clone(), changed.clone());
-        thread::spawn(move || hear(writer, &reported, &changed));
+        let each = Arc::clone(each);
+        thread::spawn(move || each(connection));
     }
 }
 
@@ -653,7 +664,17 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<Heard>) {
     let Ok(mut answering) = writer.try_clone() else {
         return;
     };
-    let mut reading = BufReader::new(writer);
+    each_line(writer, |message| {
+        answered(message, reported, changed)
+            .is_some_and(|answer| writeln!(answering, "{answer}").is_ok())
+    });
+}
+
+/// Each line a connection sends until it goes away, handed to `take` as
+/// text, or as nothing where it is not text or never ended. `take` answering
+/// false ends the reading.
+pub fn each_line(from: UnixStream, mut take: impl FnMut(Option<&str>) -> bool) {
+    let mut reading = BufReader::new(from);
     let mut line = Vec::new();
 
     loop {
@@ -665,24 +686,30 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<Heard>) {
         }
 
         // A line that filled the room it was given never ended, so the rest
-        // of what this writer is saying cannot be read as messages either.
+        // of what this connection is saying cannot be read as lines either.
         let unended = line.len() > LONGEST_MESSAGE;
-        let answer = match std::str::from_utf8(&line) {
-            Ok(message) if !unended => reported.take(message),
-            _ => Answer::Malformed,
-        };
-
-        // The name goes with the signal: what a writer said changed is
-        // what the collection it triggers has to read, and no more.
-        if let Answer::Watched(heard) = &answer {
-            if changed.send(heard.clone()).is_err() {
-                return;
-            }
-        }
-        if writeln!(answering, "{answer}").is_err() || unended {
+        let message = std::str::from_utf8(&line).ok().filter(|_| !unended);
+        if !take(message) || unended {
             return;
         }
     }
+}
+
+/// What to answer a producer's message, once a change it reports is passed
+/// on to `changed`. Nothing where nobody is left there to pass it to.
+pub fn answered(
+    message: Option<&str>,
+    reported: &Reported,
+    changed: &Sender<Heard>,
+) -> Option<String> {
+    let answer = message.map_or(Answer::Malformed, |message| reported.take(message));
+
+    // The name goes with the signal: what a writer said changed is what the
+    // collection it triggers has to read, and no more.
+    if let Answer::Watched(heard) = &answer {
+        changed.send(heard.clone()).ok()?;
+    }
+    Some(answer.to_string())
 }
 
 #[cfg(test)]

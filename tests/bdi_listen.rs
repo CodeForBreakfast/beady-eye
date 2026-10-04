@@ -1,14 +1,19 @@
 //! `bdi listen` reads every configured project, reads one again when a
-//! producer reports it, and will not start beside a listener already running.
+//! producer reports it, will not start beside a listener already running, and
+//! sends each consumer the beads it watches.
 //!
 //! The cases run the binary, because what is under test is the process a
 //! supervisor starts and the socket it leaves on the machine.
 
 mod terminal;
 
+use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
 
 use terminal::shims::ShimmedTracker;
 use terminal::{a_home_naming_one_project_settled, Producer, THE_DESCRIBED_SUBTREE};
@@ -124,4 +129,287 @@ fn a_second_listener_on_the_same_socket_will_not_start_and_says_where() {
         "the socket is named: {said}"
     );
     assert_eq!(reads_in_full(&tracker), 1, "the second read nothing");
+}
+
+/// Something outside `bdi` watching beads on the listener's socket.
+struct Consumer {
+    speaking: UnixStream,
+    listening: BufReader<UnixStream>,
+}
+
+impl Consumer {
+    fn connected_to(at: &Path) -> Self {
+        let speaking = UnixStream::connect(at)
+            .unwrap_or_else(|why| panic!("bdi listen is on {} ({why})", at.display()));
+        let listening = speaking
+            .try_clone()
+            .expect("the connection is ours to read");
+        listening
+            .set_read_timeout(Some(GIVING_UP))
+            .expect("a read nothing answers is ours to give up on");
+        Self {
+            speaking,
+            listening: BufReader::new(listening),
+        }
+    }
+
+    fn sends(&mut self, line: &str) -> &mut Self {
+        writeln!(self.speaking, "{line}").expect("the line is ours to send");
+        self
+    }
+
+    /// The next line the listener sends, or nothing where it closed the
+    /// connection.
+    fn hears(&mut self) -> Option<Value> {
+        let mut line = String::new();
+        match self.listening.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => Some(
+                serde_json::from_str(&line)
+                    .unwrap_or_else(|why| panic!("the listener sends JSON lines ({why}): {line}")),
+            ),
+            Err(why) if why.kind() == ErrorKind::ConnectionReset => None,
+            Err(why) => panic!("the listener said nothing in time ({why})"),
+        }
+    }
+
+    /// Every line up to and including the next freshness line: one answer
+    /// for one project.
+    fn hears_an_answer(&mut self) -> Vec<Value> {
+        let mut answer = Vec::new();
+        loop {
+            let line = self.hears().expect("the listener stays up");
+            let done = line["line"] == "freshness";
+            answer.push(line);
+            if done {
+                return answer;
+            }
+        }
+    }
+}
+
+/// The ids an answer sends bead lines for, in the order it sent them.
+fn beads_in(answer: &[Value]) -> Vec<&str> {
+    answer
+        .iter()
+        .filter(|line| line["line"] == "bead")
+        .map(|line| line["row"]["id"].as_str().expect("a row names its bead"))
+        .collect()
+}
+
+/// The described subtree with `change` made to its rows.
+fn the_described_subtree_with(change: impl FnOnce(&mut Vec<Value>)) -> String {
+    let mut rows: Vec<Value> =
+        serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the capture is bd's JSON");
+    change(&mut rows);
+    serde_json::to_string(&rows).expect("rows serialise")
+}
+
+fn closing(rows: &mut [Value], id: &str) {
+    let row = rows
+        .iter_mut()
+        .find(|row| row["id"] == id)
+        .expect("the capture holds the bead");
+    row["status"] = json!("closed");
+}
+
+/// Change what `tracker` holds and have a producer report it, so the
+/// listener reads it again.
+fn the_tracker_now_holds(home: &Path, tracker: &ShimmedTracker, capture: &str) {
+    let before = reads_in_full(tracker);
+    tracker.holds(capture);
+    Producer::connected_to(&listening_at(home)).says("arkham");
+    until(
+        || reads_in_full(tracker) > before,
+        "the read the report asked for",
+    );
+}
+
+const EVERY_DESCRIBED_BEAD: [&str; 5] = [
+    "dun-0tp",
+    "dun-0tp.6",
+    "dun-0tp.7",
+    "dun-0tp.8",
+    "dun-0tp.9",
+];
+
+#[test]
+fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
+    let (home, _tracker, listener) = a_listener("listen-watch");
+
+    let answer = Consumer::connected_to(&listening_at(&home))
+        .sends("watch arkham")
+        .hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
+    let bead = &answer[0];
+    assert_eq!(bead["project"], "arkham");
+    assert_eq!(bead["ready"], false);
+    assert_eq!(bead["blocked_by"], json!([]));
+    assert_eq!(
+        bead["row"]["description"]
+            .as_str()
+            .map(|text| !text.is_empty()),
+        Some(true),
+        "the row is bd's whole: {bead}"
+    );
+    let freshness = answer.last().expect("an answer ends");
+    assert_eq!(freshness["project"], "arkham");
+    assert_eq!(freshness["tracker"], "ok");
+    assert_eq!(freshness["events"], "off");
+    assert!(freshness["as_of"].is_string(), "{freshness}");
+}
+
+#[test]
+fn a_bead_created_after_the_consumer_connected_is_sent_and_one_that_goes_is_gone() {
+    let (home, tracker, listener) = a_listener("listen-learns-of-new-beads");
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    consumer.sends("watch arkham").hears_an_answer();
+
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| {
+            let mut created = rows[1].clone();
+            created["id"] = json!("dun-0tp.10");
+            rows.push(created);
+            rows.retain(|row| row["id"] != "dun-0tp.6");
+        }),
+    );
+    let answer = consumer.hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(beads_in(&answer), ["dun-0tp.10"]);
+    assert!(
+        answer.contains(&json!({ "line": "gone", "project": "arkham", "id": "dun-0tp.6" })),
+        "{answer:?}"
+    );
+}
+
+#[test]
+fn a_report_that_changes_nothing_is_answered_by_freshness_alone() {
+    let (home, tracker, listener) = a_listener("listen-quiet");
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    let first = consumer.sends("watch arkham").hears_an_answer();
+
+    the_tracker_now_holds(&home, &tracker, THE_DESCRIBED_SUBTREE);
+    let answer = consumer.hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(answer.len(), 1, "{answer:?}");
+    assert_ne!(
+        answer[0]["as_of"],
+        first.last().expect("an answer ends")["as_of"],
+        "the second read vouches for a later instant"
+    );
+}
+
+/// `watch` starts from the beads that are not closed and is told when one
+/// closes. `watch-all` starts from every bead, and a reconnect is sent the
+/// beads as they now stand.
+#[test]
+fn a_watch_is_told_of_a_close_and_a_reconnect_is_sent_the_bead_as_it_stands() {
+    let (home, tracker, listener) = a_listener("listen-close");
+    let mut watching = Consumer::connected_to(&listening_at(&home));
+    watching.sends("watch arkham").hears_an_answer();
+
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
+    );
+    let told = watching.hears_an_answer();
+    let open_only = Consumer::connected_to(&listening_at(&home))
+        .sends("watch arkham")
+        .hears_an_answer();
+    let everything = Consumer::connected_to(&listening_at(&home))
+        .sends("watch-all arkham")
+        .hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(beads_in(&told), ["dun-0tp.7"]);
+    assert_eq!(told[0]["row"]["status"], "closed");
+    assert_eq!(
+        beads_in(&open_only),
+        ["dun-0tp", "dun-0tp.6", "dun-0tp.8", "dun-0tp.9"]
+    );
+    assert_eq!(beads_in(&everything), EVERY_DESCRIBED_BEAD);
+}
+
+#[test]
+fn a_watch_on_one_bead_is_sent_that_bead_whatever_its_status() {
+    let (home, tracker, listener) = a_listener("listen-one-bead");
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.7")
+    }));
+    Producer::connected_to(&listening_at(&home)).says("arkham");
+    until(
+        || reads_in_full(&tracker) == 2,
+        "the read the report asked for",
+    );
+
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    let closed = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
+    let never_held = consumer.sends("watch arkham dun-0tp.99").hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(beads_in(&closed), ["dun-0tp.7"]);
+    assert_eq!(
+        closed.len(),
+        2,
+        "the bead and its project's freshness: {closed:?}"
+    );
+    assert_eq!(
+        never_held[0],
+        json!({ "line": "gone", "project": "arkham", "id": "dun-0tp.99" })
+    );
+    assert_eq!(never_held.len(), 2, "{never_held:?}");
+}
+
+#[test]
+fn every_project_is_watched_by_a_bare_watch() {
+    let (home, _tracker, listener) = a_listener("listen-everything");
+
+    let answer = Consumer::connected_to(&listening_at(&home))
+        .sends("watch")
+        .hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
+}
+
+#[test]
+fn a_line_the_listener_cannot_serve_is_refused_and_the_connection_goes_on() {
+    let (home, _tracker, listener) = a_listener("listen-refuses");
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+
+    let unknown = consumer.sends("watch innsmouth").hears();
+    let malformed = consumer.sends("watch-all").hears();
+    let answer = consumer.sends("watch arkham").hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(
+        unknown,
+        Some(json!({ "line": "refused", "asked": "watch innsmouth", "reason": "unknown-project" }))
+    );
+    assert_eq!(
+        malformed,
+        Some(json!({ "line": "refused", "asked": "watch-all", "reason": "malformed" }))
+    );
+    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
+}
+
+/// What a consumer that acts only on what it is told relies on: a listener
+/// that goes closes the connection, and the next connect is refused.
+#[test]
+fn a_listener_that_stops_closes_its_consumers_and_takes_no_more() {
+    let (home, _tracker, listener) = a_listener("listen-gone");
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    consumer.sends("watch arkham").hears_an_answer();
+
+    stopped(listener);
+
+    assert_eq!(consumer.hears(), None);
+    assert!(UnixStream::connect(listening_at(&home)).is_err());
 }
