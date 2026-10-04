@@ -135,8 +135,9 @@ impl Bead {
         "notes",
     ];
 
-    /// The value the row held under `key`, which is what a badge reads. An
-    /// empty text is no value, as it is in `values`.
+    /// The value the row held under `key`, which is what a badge reads. A text
+    /// held in a field is no value where it is empty or spells an object, as
+    /// it would not be in `values`: the members of an object are there.
     pub fn value(&self, key: &str) -> Option<&str> {
         let text = match key {
             "id" => Some(self.id.as_str()),
@@ -149,7 +150,10 @@ impl Bead {
             "notes" => self.notes.as_deref(),
             _ => return self.values.get(key).map(String::as_str),
         };
-        text.filter(|text| !text.is_empty())
+        text.filter(|text| {
+            !text.is_empty()
+                && serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text).is_err()
+        })
     }
 }
 

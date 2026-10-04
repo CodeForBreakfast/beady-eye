@@ -60,15 +60,13 @@ fn bead_of(written: serde_json::Map<String, serde_json::Value>) -> serde_json::R
 fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
     for (field, value) in row {
-        if Bead::TEXT_FIELDS.contains(&field.as_str()) {
-            continue;
-        }
         match object_written_either_way(value) {
             Some(members) => values.extend(
                 members
                     .iter()
                     .filter_map(|(key, member)| Some((format!("{field}.{key}"), text_of(member)?))),
             ),
+            None if Bead::TEXT_FIELDS.contains(&field.as_str()) => {}
             None => {
                 if let Some(text) = text_of(value) {
                     values.insert(field.clone(), text);
@@ -812,6 +810,21 @@ mod tests {
             assert_eq!(bead.value(key), Some(text), "{key} is drawable");
             assert_eq!(bead.values.get(key), None, "{key} is held once");
         }
+    }
+
+    /// A text spelling an object is read as that object, as metadata written
+    /// before April 2026 is, whether bdi holds a field for the text or not.
+    #[test]
+    fn a_text_held_in_a_field_that_spells_an_object_is_read_as_its_members() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open",
+             "description":"{\"ticket\":\"HELIO-9\"}"}
+        ]"#;
+
+        let bead = &parse_beads(rows).expect("the row parses")[0];
+
+        assert_eq!(bead.value("description.ticket"), Some("HELIO-9"));
+        assert_eq!(bead.value("description"), None, "an object is no one value");
     }
 
     /// An empty text is no value to draw, whether bdi holds a field for it
