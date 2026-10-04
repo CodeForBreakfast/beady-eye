@@ -22,7 +22,9 @@ pub trait Tracker: Sync {
     fn fingerprint(&self) -> Option<Result<String, RunFailure>>;
 
     /// Every bead the tracker holds, finished or not, each carrying the beads
-    /// it depends on and the bead it hangs under.
+    /// it depends on and the bead it hangs under. A tracker opened for a run
+    /// that shows unfinished work alone may leave out a finished bead's free
+    /// text.
     fn all(&self) -> Result<Vec<Bead>, RunFailure>;
 
     /// The ids the tracker itself considers ready to start.
