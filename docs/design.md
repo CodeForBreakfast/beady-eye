@@ -1535,9 +1535,10 @@ overrules — the machine is asked whether it has a direnv before one is run, so
 the case that drew nothing now reads the tracker ambient.
 
 A single read-only user across every tracker would retire `credential_command`
-entirely, and the shape it would take has been measured — see *Open, for
-Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does not
-depend on it.
+entirely. The shape it would take has been measured: `GRANT SELECT ON <db>.*`
+per tracker reaches the base tables and the `ready_issues` view, and is refused
+every write. Graeme decided against it on 2026-09-18, so `credential_command`
+per project stays the design.
 
 ### Reading a tracker is not leaving it alone
 
