@@ -20,6 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::collect::bd::bead_of;
+use crate::collect::changes;
 use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::{Project, Reach};
@@ -265,8 +266,12 @@ impl Listener {
 
 impl Connection {
     /// A connection to the listener at `at`, giving up on it where it takes
-    /// no connection, or any one write, within `patience`.
+    /// no connection, or any one write, within `patience`. Nothing where the
+    /// socket is one another user could have put there.
     fn to(at: &Path, patience: Duration) -> Option<Self> {
+        if !changes::only_this_user_holds(at) {
+            return None;
+        }
         let (connected, connection) = mpsc::channel();
         let at = at.to_path_buf();
         // ponytail: a connection never taken leaves its thread waiting until
@@ -380,6 +385,7 @@ fn reached_as(failure: &TrackerFailure) -> OpenFailure {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
     use std::thread;
@@ -404,7 +410,10 @@ mod tests {
     /// A listener that answers the first connection with `lines`, then holds
     /// it open saying nothing more until the run hangs up.
     fn a_listener_saying(named: &str, lines: Vec<String>) -> PathBuf {
-        let at = a_socket(named);
+        a_listener_at(a_socket(named), lines)
+    }
+
+    fn a_listener_at(at: PathBuf, lines: Vec<String>) -> PathBuf {
         let listening = UnixListener::bind(&at).expect("the socket is ours");
         thread::spawn(move || {
             let (mut connection, _) = listening.accept().expect("the run connects");
@@ -619,6 +628,39 @@ path = "/srv/work/ferry"
             .map(|tracker| ids(tracker.as_ref()))
             .expect("read for itself");
 
+        assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
+    /// Another user could have bound the name, and answered with whatever
+    /// beads they liked.
+    #[test]
+    fn a_listener_at_a_name_another_user_may_take_is_left_unasked() {
+        let around = a_socket("listened-shared")
+            .parent()
+            .expect("the socket is in a directory")
+            .to_path_buf();
+        std::fs::set_permissions(&around, std::fs::Permissions::from_mode(0o700))
+            .expect("nobody else may enter it");
+        let shared = around.join("shared");
+        std::fs::create_dir(&shared).expect("a directory to open up");
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777))
+            .expect("the directory is ours to open up");
+        let at = a_listener_at(
+            shared.join("listener.sock"),
+            vec![
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        let read = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+
+        assert_eq!(read, Ok(Vec::new()), "read for itself");
         assert!(!own.tracker("dunwich").asked().is_empty());
     }
 

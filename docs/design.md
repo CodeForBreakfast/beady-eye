@@ -2086,6 +2086,13 @@ name and `covered <project>`, and answers them as the inbound channel does. A
 second `bdi listen` finds the first by connecting, as a view finds another
 view, and exits saying which socket is taken.
 
+**A run of `bdi` believes only a socket that is the user's own.** Before it
+connects, it makes the same checks on the way down that the listener makes,
+and it requires the socket itself to belong to the user. A sticky directory
+such as `/tmp` passes the way down, yet lets another user bind a name there
+first. Once the name is the user's own, nobody else can replace it. A run that
+finds any other socket at the path takes it as no listener at all.
+
 ### Watching
 
 A consumer connects and sends one line for each thing it watches:

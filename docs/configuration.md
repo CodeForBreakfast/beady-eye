@@ -511,7 +511,9 @@ does not read as a producer that has gone. A polled project never lapses.
 
 `socket` is where `bdi listen` takes its socket. It defaults to
 `$XDG_RUNTIME_DIR/beady-eye/listener.sock`, and `bdi listen --socket` overrides
-it. The path is checked as `[changes]`'s is. [Running the
+it. The path is checked as `[changes]`'s is. `bdi --json` and `bdi --beads`
+make the same check before they connect, and also require the socket to be
+yours. Where either fails, they read every project themselves. [Running the
 listener](#running-the-listener) has the rest.
 
 ## `[anomalies]`
