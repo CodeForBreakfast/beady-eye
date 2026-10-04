@@ -694,10 +694,6 @@ impl<'a> Layout<'a> {
             // was collected rather than from what the filter shows, so a
             // reader who rooted the forest at a bead in a tree the filter is
             // holding back keeps the tree they asked for.
-            //
-            // A focused bead the snapshot holds no row for is drawn where its
-            // tree would be, saying why: its tracker did not answer, or it
-            // has gone.
             self.rooted
                 .iter()
                 .filter(|rooted| rooted.place.tree.project == project)
