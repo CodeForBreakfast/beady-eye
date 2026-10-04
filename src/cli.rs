@@ -19,7 +19,7 @@ use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::discovery;
-use crate::collect::environment;
+use crate::collect::environment::{self, EnvironmentCache};
 use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::OpenFailure;
@@ -277,7 +277,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         crate::app::run(
             &cfg,
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
-            &bd::Cli::new(&RealRunner),
+            &bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
             filter,
             Utc::now(),
         )
@@ -289,7 +289,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     if cli.each_bead {
-        let snapshot = read_for_each_bead(&cfg, &RealRunner, Utc::now());
+        let snapshot = read_for_each_bead(&cfg, &RealRunner, EnvironmentCache::here(), Utc::now());
         println!("{}", serde_json::to_string_pretty(&Listing::of(&snapshot))?);
         return Ok(ExitCode::SUCCESS);
     }
@@ -343,7 +343,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         )
     });
     let mut collection = crate::app::Collection::default();
-    let trackers = bd::Cli::new(&RealRunner);
+    let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
     // One provider for the run, asked by the collection on its thread and by
     // the tail on another. Which one it is is chosen here and nowhere below.
     let agents: Arc<dyn Agents> = Arc::new(herdr::Herdr::new(&RealRunner as &dyn Runner));
@@ -374,11 +374,18 @@ pub fn run() -> anyhow::Result<ExitCode> {
 
 /// What `bdi --beads` lists each unfinished bead from: every tree, read
 /// without the free text of finished beads, which the listing never shows.
-fn read_for_each_bead(cfg: &Config, runner: &dyn Runner, now: DateTime<Utc>) -> Snapshot {
+fn read_for_each_bead(
+    cfg: &Config,
+    runner: &dyn Runner,
+    cache: Option<EnvironmentCache>,
+    now: DateTime<Utc>,
+) -> Snapshot {
     crate::app::run(
         cfg,
         &herdr::Herdr::new(runner),
-        &bd::Cli::new(runner).for_unfinished_work(),
+        &bd::Cli::new(runner)
+            .for_unfinished_work()
+            .caching_environments(cache),
         Filter::All,
         now,
     )
@@ -445,7 +452,9 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let reading = crate::app::Reading::of(armed, reported).unread(armed_unread(&arms, &cfg));
     let outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
     let mut collection = crate::app::Collection::default();
-    let trackers = bd::Cli::new(&RealRunner).keeping_rows();
+    let trackers = bd::Cli::new(&RealRunner)
+        .keeping_rows()
+        .caching_environments(EnvironmentCache::here());
     let reads: Reads = Box::new(move |wanted, now| {
         let snapshot = collection.collect(&cfg, &Unasked, &trackers, wanted, Filter::All, now);
         let answers = collection.answers(&snapshot);
@@ -501,6 +510,7 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
         &RealRunner,
         project,
         environment::ambient_credential().as_deref(),
+        EnvironmentCache::here().as_ref(),
     )
     .map_err(|failure| match failure {
         OpenFailure::NoEnvironment => {
@@ -1563,7 +1573,7 @@ kadath = ["kad-11"]
                 Filter::All,
                 noon(),
             );
-            let listed = read_for_each_bead(&cfg, &without_text, noon());
+            let listed = read_for_each_bead(&cfg, &without_text, None, noon());
 
             assert_eq!(
                 serde_json::to_value(Listing::of(&listed)).unwrap(),
