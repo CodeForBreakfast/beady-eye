@@ -13,17 +13,37 @@ fn harbour_waiting_on_dunwich() -> Snapshot {
 /// finished dunwich bead that no tree of dunwich's own draws.
 fn harbour_waiting_on_dunwich_staffed(on: &[&str]) -> Snapshot {
     harbour_and_dunwich(
-        r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked",
-             "dependencies":[{"depends_on_id":"dun-7","type":"blocks"},
-                             {"depends_on_id":"dun-8","type":"blocks"}]}]"#,
-        r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
-            {"id":"dun-7.1","title":"re-point the dish","status":"open",
-             "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
-            {"id":"dun-8","title":"survey the mast","status":"closed"}]"#,
+        HARBOUR_WAITING,
+        DUNWICH_WAITED_ON,
         &[("dunwich", "dun-7"), ("harbour", "hbr-1")],
         on,
     )
 }
+
+/// The same with harbour's tracker failing to answer: dunwich's tree alone,
+/// and harbour among the failed projects.
+fn harbour_failing_to_answer() -> Snapshot {
+    let mut failing = harbour_and_dunwich(
+        HARBOUR_WAITING,
+        DUNWICH_WAITED_ON,
+        &[("dunwich", "dun-7")],
+        &["dun-7.1"],
+    );
+    failing.failed_projects.push(FailedProject {
+        project: "harbour".into(),
+        tracker: TrackerFailure::Unstartable,
+    });
+    failing
+}
+
+const HARBOUR_WAITING: &str = r#"[{"id":"hbr-1","title":"clear the berth","status":"blocked",
+     "dependencies":[{"depends_on_id":"dun-7","type":"blocks"},
+                     {"depends_on_id":"dun-8","type":"blocks"}]}]"#;
+
+const DUNWICH_WAITED_ON: &str = r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
+    {"id":"dun-7.1","title":"re-point the dish","status":"open",
+     "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
+    {"id":"dun-8","title":"survey the mast","status":"closed"}]"#;
 
 /// Harbour's epic over a task `bd` calls ready, which waits on dunwich's
 /// `dun-7` in the status given.
@@ -326,6 +346,59 @@ fn a_focus_on_another_projects_bead_keeps_what_it_draws_that_projects() {
     assert!(
         searched.iter().all(|key| key.project == "dunwich"),
         "{searched:#?}"
+    );
+}
+
+/// A bead no tree of its own project draws is read through the tree of the
+/// project waiting on it, so that project failing to answer has not said
+/// the bead is gone either.
+#[test]
+fn a_focus_on_a_bead_only_another_project_draws_holds_while_that_project_does_not_answer() {
+    let mut forest = flatten(harbour_waiting_on_dunwich());
+    assert!(
+        forest.go_to(&key("dunwich", "dun-8")),
+        "{:#?}",
+        sketch(&forest)
+    );
+    assert!(forest.apply(Action::FocusForest), "{:#?}", sketch(&forest));
+
+    forest.refresh(harbour_failing_to_answer());
+
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
+    );
+    assert_eq!(
+        forest.place().map(|place| place.key().clone()),
+        Some(key("dunwich", "dun-8"))
+    );
+}
+
+/// Nor has the bead's own project failing to answer, which leaves the
+/// project waiting on it nothing to reach it through.
+#[test]
+fn a_focus_on_another_projects_bead_holds_while_its_own_project_does_not_answer() {
+    let mut forest = flatten(harbour_waiting_on_dunwich());
+    assert!(
+        forest.go_to(&key("dunwich", "dun-8")),
+        "{:#?}",
+        sketch(&forest)
+    );
+    assert!(forest.apply(Action::FocusForest), "{:#?}", sketch(&forest));
+
+    let mut dunwich_failing =
+        harbour_and_dunwich(HARBOUR_WAITING, "[]", &[("harbour", "hbr-1")], &[]);
+    dunwich_failing.failed_projects.push(FailedProject {
+        project: "dunwich".into(),
+        tracker: TrackerFailure::Unstartable,
+    });
+    forest.refresh(dunwich_failing);
+
+    assert!(
+        forest.is_focused(),
+        "the mode ended: {:#?}",
+        sketch(&forest)
     );
 }
 

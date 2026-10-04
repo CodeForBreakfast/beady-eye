@@ -95,6 +95,7 @@ coin one — and say so.**
 | **link** | *coined* | one way down from a bead to a bead beneath it, as the tree holds it: which bead, by which kind of edge, and whether it is the way the walk first reached the bead. beads has the dependency; the link is the nesting drawn from it. |
 | **facts** | *coined* | what a line says of the tree beneath its bead — its fraction, what it is shut over, whether it rests open, whether it is finished, what a run under it stands for — and what a project's line counts over its trees. Each depends on the snapshot alone, so the forest answers them once when it takes a snapshot and a keystroke reads them. Neither project has a word for an answer kept between draws. |
 | **ambient** | *coined* | the environment `bdi` itself was started in, which is what a project's tracker is read in where neither the project's config nor its directory says how to enter it. Neither project names it: `bd` reads whatever environment it is given, and herdr never runs `bd`. |
+| **gone** | *coined* | a bead its tracker held and has since answered without. The listener's gone line names one, and so does the line standing where a focused bead's row was. Not a root its tracker never held, which is reported missing. Neither project has a word for a bead that has left a tracker's answer. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 | **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
 | **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
@@ -1111,9 +1112,14 @@ the key had been pressed on that bead, once a collection draws it. Several
 named are each drawn as a root, which is the one way the mode holds more than
 one bead; a bead named beneath another is already drawn under it. The key
 then puts the forest back as it does after any other focus. The bead leaving the collection is the one thing that ends the
-mode on its own; a bead that closes is still in the collection, so closing the
-focused bead does not, and a bead the tracker has moved is followed to where it
-moved to. Everything the mode stops drawing goes behind
+mode on its own, and a bead leaves only when its tracker answers and the answer
+does not hold it. A read that did not answer has not said the bead is gone, so
+the mode holds through it, and a line where the bead's row would be says why
+there is none. A bead the command line named never lets go: the view was
+started to show it, so when it leaves the view stays where it was and that line
+says the bead is gone. A bead that closes is still in the collection, so
+closing the focused bead does not end the mode, and a bead the tracker has
+moved is followed to where it moved to. Everything the mode stops drawing goes behind
 one collapsed line per project rather than off the screen, which is *degrade,
 never disappear* binding here as everywhere: every other root and every other
 project's, and the focused bead's own root for the part of it that is left —
@@ -1536,9 +1542,10 @@ overrules — the machine is asked whether it has a direnv before one is run, so
 the case that drew nothing now reads the tracker ambient.
 
 A single read-only user across every tracker would retire `credential_command`
-entirely, and the shape it would take has been measured — see *Open, for
-Graeme* in `CLAUDE.md`. It needs each project's consent, so the design does not
-depend on it.
+entirely. The shape it would take has been measured: `GRANT SELECT ON <db>.*`
+per tracker reaches the base tables and the `ready_issues` view, and is refused
+every write. Graeme decided against it on 2026-09-18, so `credential_command`
+per project stays the design.
 
 ### Reading a tracker is not leaving it alone
 

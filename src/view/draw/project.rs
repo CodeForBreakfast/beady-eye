@@ -95,16 +95,31 @@ fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'stat
 /// reader scanning a project's roots meets it in the column the others are in
 /// rather than having to find it.
 pub(super) fn unread_line(unread: &Unread, prefix: &str, id_width: usize) -> Fitted {
-    let identity = vec![
-        structure(prefix),
-        Span::styled(WARNING.to_string(), palette::ATTENTION),
-        Span::raw(format!(" {:id_width$}", unread.root)),
-    ];
     let why = match &unread.tracker {
         TrackerState::Unreachable(failure) => phrase::tracker_failure(failure),
         TrackerState::RootNotFound => phrase::root_not_found().to_string(),
         TrackerState::Ok => phrase::root_unread().to_string(),
     };
+    warning_line(&unread.root, why, prefix, id_width)
+}
+
+/// A bead the forest is rooted at and has no row for, said where its row
+/// would have been, the way a root that drew no row is.
+pub(super) fn absent_line(absent: &Unread, prefix: &str, id_width: usize) -> Fitted {
+    match absent.tracker {
+        TrackerState::RootNotFound => {
+            warning_line(&absent.root, phrase::gone().to_string(), prefix, id_width)
+        }
+        _ => unread_line(absent, prefix, id_width),
+    }
+}
+
+fn warning_line(id: &str, why: String, prefix: &str, id_width: usize) -> Fitted {
+    let identity = vec![
+        structure(prefix),
+        Span::styled(WARNING.to_string(), palette::ATTENTION),
+        Span::raw(format!(" {id:id_width$}")),
+    ];
 
     Fitted::new(
         identity,
@@ -812,6 +827,33 @@ mod tests {
         says(&drawn[0], "smt-4kd3p");
         says(&drawn[0], "no such bead in this tracker");
         does_not_say(&drawn[0], "bdi cannot read");
+    }
+
+    /// A focused bead its tracker answered without was there before, so its
+    /// line says the bead has gone rather than sending the reader to check
+    /// what named it.
+    #[test]
+    fn a_focused_bead_its_tracker_answered_without_says_it_is_gone() {
+        let absent = unread("smt-4kd3p.21", TrackerState::RootNotFound);
+        let drawn = Painted::of(absent_line(&absent, LAST, 12), 90, 1).rows();
+
+        says(&drawn[0], "smt-4kd3p.21");
+        says(&drawn[0], "gone");
+        does_not_say(&drawn[0], "check the config");
+    }
+
+    /// One whose tracker did not answer says why, as a root that drew no row
+    /// does.
+    #[test]
+    fn a_focused_bead_whose_tracker_did_not_answer_says_why() {
+        let absent = unread(
+            "smt-4kd3p.21",
+            TrackerState::Unreachable(TrackerFailure::Unavailable),
+        );
+        let drawn = Painted::of(absent_line(&absent, LAST, 12), 90, 1).rows();
+
+        says(&drawn[0], "the tracker did not answer");
+        does_not_say(&drawn[0], "gone");
     }
 
     /// A tracker that could not be read has no counts, and `0/0` would say the
