@@ -160,6 +160,8 @@ pub struct Nesting<'a> {
     /// then priority, then id in numeric order — so `.2` comes before `.10`
     /// on an epic with more than nine children.
     children: BTreeMap<&'a str, Vec<&'a str>>,
+    /// The beads each bead sits beneath: `children` read the other way.
+    over: BTreeMap<&'a str, Vec<&'a str>>,
     /// Beads naming a dependency the answer does not hold, of any kind.
     waiting_on_the_absent: BTreeSet<&'a str>,
     /// Of those, the ones whose absent dependency would have placed them. An
@@ -221,7 +223,7 @@ impl<'a> Nesting<'a> {
             }
         }
 
-        let children = children
+        let children: BTreeMap<&str, Vec<&str>> = children
             .into_iter()
             .map(|(parent, kids)| {
                 let mut kids: Vec<&str> = kids.into_iter().collect();
@@ -230,9 +232,17 @@ impl<'a> Nesting<'a> {
             })
             .collect();
 
+        let mut over: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (parent, kids) in &children {
+            for kid in kids {
+                over.entry(kid).or_default().push(parent);
+            }
+        }
+
         Nesting {
             by_id,
             children,
+            over,
             waiting_on_the_absent,
             lost_their_place,
         }
@@ -301,20 +311,13 @@ impl<'a> Nesting<'a> {
     /// A bead can hang under more than one, so this is a set rather than one
     /// id.
     pub fn top_of(&self, id: &str) -> Vec<String> {
-        let mut over: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for (parent, kids) in &self.children {
-            for kid in kids {
-                over.entry(kid).or_default().push(parent);
-            }
-        }
-
         let mut above: BTreeSet<&str> = BTreeSet::new();
         let mut climbing: Vec<&str> = vec![id];
         while let Some(reached) = climbing.pop() {
             if !above.insert(reached) {
                 continue;
             }
-            climbing.extend(over.get(reached).into_iter().flatten());
+            climbing.extend(self.over.get(reached).into_iter().flatten());
         }
 
         // A bead nothing nests is where a tree starts, and a loop has no such
@@ -327,7 +330,7 @@ impl<'a> Nesting<'a> {
         let mut tops: BTreeSet<&str> = above
             .iter()
             .copied()
-            .filter(|reached| !over.contains_key(reached))
+            .filter(|reached| !self.over.contains_key(reached))
             .collect();
         loop {
             let drawn = under(tops.iter().copied(), &self.children);
