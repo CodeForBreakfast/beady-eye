@@ -11,6 +11,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -415,7 +416,7 @@ impl Collection {
         // both, and each is that project's row. It joins against the projects
         // that root trees, so a pane in one read only for what they reach is
         // joined as a pane in a project left out would be.
-        let reached: Vec<(&str, Vec<Bead>)> = drawn
+        let reached: Vec<(&str, Vec<Arc<Bead>>)> = drawn
             .iter()
             .filter_map(|(project, _, read)| match read {
                 Ok(Cow::Owned(assembled)) => Some(by_project(project, assembled)),
@@ -674,11 +675,11 @@ fn held_by_unread(drawn: &[Drawn<'_>], scope: &Scope) -> BTreeSet<String> {
 }
 
 /// A tree's beads, gathered under the project whose answer holds each.
-fn by_project<'a>(project: &'a str, assembled: &'a Assembled) -> Vec<(&'a str, Vec<Bead>)> {
-    let mut rows: BTreeMap<&str, Vec<Bead>> = BTreeMap::new();
+fn by_project<'a>(project: &'a str, assembled: &'a Assembled) -> Vec<(&'a str, Vec<Arc<Bead>>)> {
+    let mut rows: BTreeMap<&str, Vec<Arc<Bead>>> = BTreeMap::new();
     for (at, bead) in assembled.beads.iter().enumerate() {
         let own = assembled.external.get(&at).map_or(project, String::as_str);
-        rows.entry(own).or_default().push(bead.clone());
+        rows.entry(own).or_default().push(Arc::clone(bead));
     }
     rows.into_iter().collect()
 }

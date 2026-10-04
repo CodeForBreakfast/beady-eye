@@ -6,6 +6,7 @@
 //! between collections, or that other projects exist.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
@@ -26,7 +27,7 @@ use crate::model::types::{Bead, Pane, Unreadable};
 /// waiting on one of this project's beads draws it, and everything beneath
 /// it, from here.
 pub(super) struct ProjectWork {
-    pub(super) beads: Vec<Bead>,
+    pub(super) beads: Vec<Arc<Bead>>,
     pub(super) readiness: Readiness,
     pub(super) relations: BTreeMap<String, Relations>,
     pub(super) roots: Vec<(String, Result<Assembled, RootUnread>)>,
@@ -111,7 +112,7 @@ impl ReadAt {
 
 /// The soonest instant after `read_at` at which this tracker would answer
 /// differently with nothing written, or `None` where it holds nothing back.
-fn speaks_until(beads: &[Bead], read_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
+fn speaks_until(beads: &[Arc<Bead>], read_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
     beads
         .iter()
         .filter_map(|bead| bead.defer_until)
@@ -214,7 +215,7 @@ fn read_project(
         || tracker.all(),
         || together(|| tracker.ready(), || tracker.blocked()),
     );
-    let beads = beads?;
+    let beads: Vec<Arc<Bead>> = beads?.into_iter().map(Arc::new).collect();
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -338,7 +339,7 @@ fn what_no_root_reached(
 /// Wisps are in the listing too, and one with no parent is a root of its own:
 /// every step of a bd molecule hangs under it, so the one rootless row is the
 /// whole run.
-fn unfinished(beads: &[Bead]) -> impl Iterator<Item = &str> {
+fn unfinished(beads: &[Arc<Bead>]) -> impl Iterator<Item = &str> {
     beads
         .iter()
         .filter(|bead| !bead.status.is_finished())

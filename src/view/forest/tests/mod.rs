@@ -3,7 +3,7 @@
 use super::facts::TreeFacts;
 use super::handle::Fold;
 use super::*;
-use crate::collect::bd::parse_beads;
+use crate::collect::bd::parse_shared_beads;
 use crate::collect::herdr::parse_agent_list;
 use crate::config::{Config, Scope};
 use crate::model::join::{self, Joined, Listed, ProjectRows};
@@ -655,7 +655,7 @@ fn edited(json: &str, from: &str, to: &str) -> String {
 }
 
 /// The root of a hand-written tree: the one row that depends on nothing.
-fn root_row(beads: &[crate::model::types::Bead]) -> String {
+fn root_row(beads: &[Arc<crate::model::types::Bead>]) -> String {
     beads
         .iter()
         .find(|b| b.dependencies.is_empty())
@@ -665,7 +665,7 @@ fn root_row(beads: &[crate::model::types::Bead]) -> String {
 }
 
 fn assembled(json: &str) -> Assembled {
-    let beads = parse_beads(json).expect("the rows parse");
+    let beads = parse_shared_beads(json).expect("the rows parse");
     let root = root_row(&beads);
     Nesting::of(&beads)
         .assemble(&root)
@@ -1007,7 +1007,7 @@ fn together(project: &str, jsons: &[&str], panes: &[Pane]) -> Snapshot {
 
 fn ready_together(project: &str, jsons: &[&str], panes: &[Pane], ready: &[&str]) -> Snapshot {
     let roots: Vec<Assembled> = jsons.iter().map(|json| assembled(json)).collect();
-    let rows: Vec<Bead> = roots
+    let rows: Vec<Arc<Bead>> = roots
         .iter()
         .flat_map(|root| root.beads.iter().cloned())
         .collect();
@@ -1400,8 +1400,8 @@ fn harbour_and_dunwich_ready(
     on: &[&str],
     ready: &[&str],
 ) -> Snapshot {
-    let harbour = parse_beads(harbour).expect("the rows parse");
-    let dunwich = parse_beads(dunwich).expect("the rows parse");
+    let harbour = parse_shared_beads(harbour).expect("the rows parse");
+    let dunwich = parse_shared_beads(dunwich).expect("the rows parse");
     let across = tree::Across::of(
         [
             ("harbour", Nesting::of(&harbour)),

@@ -6,6 +6,7 @@
 //! in another tree — or in no tree at all.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::model::types::{Bead, Edge, Status};
 
@@ -37,8 +38,8 @@ pub struct Relations {
 }
 
 /// What every bead in the answer is tied to.
-pub fn relations(beads: &[Bead]) -> BTreeMap<String, Relations> {
-    let by_id: BTreeMap<&str, &Bead> = beads.iter().map(|b| (b.id.as_str(), b)).collect();
+pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
+    let by_id: BTreeMap<&str, &Bead> = beads.iter().map(|b| (b.id.as_str(), &**b)).collect();
     let related = |id: &str, edge: Edge| {
         let row = by_id.get(id);
         Related {
@@ -82,7 +83,7 @@ pub fn relations(beads: &[Bead]) -> BTreeMap<String, Relations> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_beads;
+    use crate::collect::bd::parse_shared_beads;
     use pretty_assertions::assert_eq;
 
     /// `dun-3.1` hangs under `dun-3` and waits on `dun-3.2`, which is closed;
@@ -98,7 +99,7 @@ mod tests {
     ]"#;
 
     fn tied() -> BTreeMap<String, Relations> {
-        relations(&parse_beads(BEADS).expect("the rows parse"))
+        relations(&parse_shared_beads(BEADS).expect("the rows parse"))
     }
 
     fn held(id: &str, edge: Edge, status: Status, title: &str) -> Related {
@@ -184,7 +185,7 @@ mod tests {
           {"id":"dun-4.1","title":"first","status":"open",
            "dependencies":[{"depends_on_id":"dun-4","type":"blocks"}]}
         ]"#;
-        let tied = relations(&parse_beads(rows).expect("the rows parse"));
+        let tied = relations(&parse_shared_beads(rows).expect("the rows parse"));
 
         assert_eq!(
             tied["dun-4"]
@@ -205,7 +206,7 @@ mod tests {
           {"id":"dun-5.1","title":"two","status":"open",
            "dependencies":[{"depends_on_id":"dun-5","type":"relates-to"}]}
         ]"#;
-        let tied = relations(&parse_beads(rows).expect("the rows parse"));
+        let tied = relations(&parse_shared_beads(rows).expect("the rows parse"));
 
         assert_eq!(
             tied["dun-5.1"].depends_on[0].edge,

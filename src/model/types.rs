@@ -108,9 +108,9 @@ pub struct Bead {
     pub assignee: Option<String>,
     pub labels: Vec<String>,
     /// The bead's own account of itself, where it has one.
-    pub description: Option<String>,
+    pub description: Option<Arc<str>>,
     /// Everything noted on it, as one text, where anything has been.
-    pub notes: Option<String>,
+    pub notes: Option<Arc<str>>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
