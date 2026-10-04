@@ -149,18 +149,20 @@ pub fn tracker_env(
 /// on disk so a one-shot read does not pay for re-sourcing an unchanged
 /// `.envrc`: measured on 2026-10-04 at about 0.35 seconds a project.
 ///
-/// A kept environment is used only while a fresh capture would give the same
+/// A kept environment is used only where a fresh capture would give the same
 /// answer. That needs the same command, the same environment `bdi` hands its
-/// children, and direnv saying nothing it watches has moved. The last is the
-/// rule a shell sitting in the directory uses to decide whether to reload, and
-/// its watches cover the `.envrc`, its allow record, and whatever the `.envrc`
-/// watches, which is how a `dotenv` file or a flake lock is noticed. So only a
-/// command direnv runs is kept: nothing else can say when what it produced
-/// stopped being current.
+/// children, and direnv bringing it up to date: it says nothing where nothing
+/// it watches has moved, and what changed where something has. That is the
+/// rule a shell sitting in the directory reloads by, and direnv's watches
+/// cover the `.envrc`, its allow record, and whatever the `.envrc` watches,
+/// which is how a `dotenv` file or a flake lock is noticed. So only a command
+/// direnv runs is kept: nothing else can say when what it produced stopped
+/// being current.
 ///
 /// Whatever cannot be trusted is captured afresh rather than guessed at: no
-/// file, one that will not parse, a direnv that will not answer. A cache that
-/// cannot be written is one the next run does not find.
+/// file, one that will not parse, a direnv that will not answer or answers in
+/// words `bdi` cannot read. A cache that cannot be written is one the next run
+/// does not find.
 pub struct EnvironmentCache {
     dir: PathBuf,
     handed: Env,
@@ -204,34 +206,22 @@ impl EnvironmentCache {
         command: &Command,
     ) -> Result<Env, RunFailure> {
         let words: Vec<String> = command.words().into_iter().map(str::to_string).collect();
-        if let Some(kept) = self.still_current(path, runner, &words) {
-            return Ok(kept);
-        }
+        let recalled = self.recalled(path).filter(|kept| {
+            kept.path == path && kept.command == words && kept.handed == self.handed
+        });
+        let captured = match recalled.map(|kept| brought_up_to_date(kept.captured, path, runner)) {
+            Some(Some(Current::Unchanged(captured))) => return Ok(captured),
+            Some(Some(Current::Changed(captured))) => captured,
+            _ => entering(path, runner, command)?,
+        };
         let kept = Kept {
-            captured: entering(path, runner, command)?,
+            captured,
             path: path.to_path_buf(),
             command: words,
             handed: self.handed.clone(),
         };
         let _ = self.keep(&kept);
         Ok(kept.captured)
-    }
-
-    fn still_current(&self, path: &Path, runner: &dyn Runner, command: &[String]) -> Option<Env> {
-        let kept = self.recalled(path)?;
-        let same_capture =
-            kept.path == path && kept.command == command && kept.handed == self.handed;
-        let unchanged = || {
-            runner
-                .run(
-                    DIRENV,
-                    &["export", "json"],
-                    Some(path),
-                    &lending(&kept.captured),
-                )
-                .is_ok_and(|changes| changes.trim().is_empty())
-        };
-        (same_capture && unchanged()).then_some(kept.captured)
     }
 
     fn recalled(&self, path: &Path) -> Option<Kept> {
@@ -266,6 +256,44 @@ impl EnvironmentCache {
         path.hash(&mut hasher);
         self.dir.join(format!("{:016x}.json", hasher.finish()))
     }
+}
+
+/// A kept capture as direnv, asked about it, says it stands now.
+enum Current {
+    Unchanged(Env),
+    Changed(Env),
+}
+
+/// What entering `path` produces now, from a capture kept earlier, or nothing
+/// where direnv cannot say.
+///
+/// `direnv export json` is what a shell's prompt hook runs: silence where
+/// nothing it watches has moved, and otherwise the variables to set and unset,
+/// worked out by loading the directory again. Applying them is what the shell
+/// does, and it spares a second load on top of the one direnv just made.
+///
+/// direnv is handed the capture without the tracker or its credential, so it
+/// reports those afresh wherever the directory still sets them. They are
+/// dropped before its answer is applied, or a variable the directory stopped
+/// setting would be carried over from the kept capture.
+fn brought_up_to_date(kept: Env, path: &Path, runner: &dyn Runner) -> Option<Current> {
+    let asked = lending(&kept);
+    let answer = runner
+        .run(DIRENV, &["export", "json"], Some(path), &asked)
+        .ok()?;
+    if answer.trim().is_empty() {
+        return Some(Current::Unchanged(kept));
+    }
+    let changes: std::collections::BTreeMap<String, Option<String>> =
+        serde_json::from_str(&answer).ok()?;
+    let mut now = asked;
+    for (name, value) in changes {
+        match value {
+            Some(value) => now.insert(name, value),
+            None => now.remove(&name),
+        };
+    }
+    Some(Current::Changed(now))
 }
 
 /// A kept environment can hold the tracker's password and anything else a
@@ -988,33 +1016,78 @@ mod tests {
 
     /// An edited `.envrc`, `.env.local` or flake lock is a change direnv
     /// reports, and reading with the environment from before it could mean
-    /// another bd or another credential. What it reported is not applied:
-    /// the directory is entered afresh, exactly as on a first run, and that
-    /// is what the next run is checked against.
+    /// another bd or another credential. By the time direnv reports it, it
+    /// has already loaded the directory again, so what it reports is applied
+    /// as a shell applies it, rather than paying for a second load. What it
+    /// unset is gone, and the result is what the next run is checked against.
     #[test]
-    fn a_directory_direnv_says_has_changed_is_entered_afresh_and_kept_again() {
+    fn a_change_direnv_reports_is_applied_without_entering_the_directory_again() {
         let cache = an_empty_cache("changed");
         first_run(&cache);
-        let moved = exported(&[
-            ("BEADS_DOLT_PASSWORD", "the-edited-password"),
-            ("DIRENV_WATCHES", "the-files-direnv-watches-now"),
-        ]);
-        let runner = FakeRunner::default()
-            .with(
-                STILL_CURRENT,
-                r#"{"BEADS_DOLT_PASSWORD":"the-edited-password"}"#,
-            )
-            .with(&entering_the_directory(), &moved);
+        let runner = FakeRunner::default().with(
+            STILL_CURRENT,
+            r#"{
+                "BEADS_DIR": "/nowhere/a-project/.beads",
+                "BEADS_DOLT_PASSWORD": "the-edited-password",
+                "DIRENV_WATCHES": "the-files-direnv-watches-now",
+                "PATH": null
+            }"#,
+        );
 
         let changed = read(&runner, &entered_with_direnv(), &cache).unwrap();
 
-        assert_eq!(changed, variables(&moved));
+        assert_eq!(
+            changed,
+            variables(&exported(&[
+                ("BEADS_DIR", "/nowhere/a-project/.beads"),
+                ("BEADS_DOLT_PASSWORD", "the-edited-password"),
+                ("DIRENV_WATCHES", "the-files-direnv-watches-now"),
+            ]))
+        );
         let runner = FakeRunner::default().with(STILL_CURRENT, "");
         assert_eq!(
             read(&runner, &entered_with_direnv(), &cache).unwrap(),
             changed,
             "the run after a change was read with what came before it"
         );
+    }
+
+    /// direnv is asked without the tracker or its credential, so it reports
+    /// them as set afresh where the directory still sets them and says
+    /// nothing where it no longer does. Silence there has to mean gone: the
+    /// kept values are the ones the directory stopped producing.
+    #[test]
+    fn a_tracker_the_directory_no_longer_names_is_not_carried_over_from_the_kept_one() {
+        let cache = an_empty_cache("tracker-dropped");
+        first_run(&cache);
+        let runner = FakeRunner::default().with(
+            STILL_CURRENT,
+            r#"{"DIRENV_WATCHES": "the-files-direnv-watches-now"}"#,
+        );
+
+        let changed = read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        for withheld in NEVER_INHERITED {
+            assert!(
+                !changed.contains_key(withheld),
+                "{withheld} survived a load that no longer set it"
+            );
+        }
+    }
+
+    /// An answer that is neither silence nor a change bdi can read is not
+    /// one to act on.
+    #[test]
+    fn an_answer_from_direnv_that_cannot_be_read_has_the_directory_entered() {
+        let cache = an_empty_cache("unreadable-answer");
+        first_run(&cache);
+        let runner = FakeRunner::default()
+            .with(STILL_CURRENT, "direnv: something bdi has never seen")
+            .with(&entering_the_directory(), &entered());
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        assert!(entered_the_directory(&runner));
     }
 
     /// A fresh capture reads `bdi`'s own environment as well as the
