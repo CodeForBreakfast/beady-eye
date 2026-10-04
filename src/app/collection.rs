@@ -161,6 +161,9 @@ pub struct Collection {
     /// rather than written into a config, so a config the reader rewrites
     /// does not stop them being read.
     read_on_demand: BTreeSet<String>,
+    /// Set for a collection made once and never refreshed, which has no later
+    /// read to compare a tracker's fingerprint against and so asks for none.
+    once: bool,
 }
 
 impl Collection {
@@ -298,8 +301,15 @@ impl Collection {
                         .get(&project.name)
                         .and_then(|read| read.taken_at.clone());
                     reads.spawn(move || {
-                        let answer =
-                            refresh_project(trackers, project, cfg, panes, standing.as_ref(), now);
+                        let answer = refresh_project(
+                            trackers,
+                            project,
+                            cfg,
+                            panes,
+                            standing.as_ref(),
+                            !self.once,
+                            now,
+                        );
                         (project, answer)
                     })
                 })
@@ -647,7 +657,11 @@ pub fn run(
     filter: Filter,
     now: DateTime<Utc>,
 ) -> Snapshot {
-    Collection::default().collect(cfg, agents, trackers, &Wanted::Everything, filter, now)
+    Collection {
+        once: true,
+        ..Collection::default()
+    }
+    .collect(cfg, agents, trackers, &Wanted::Everything, filter, now)
 }
 
 #[cfg(test)]
