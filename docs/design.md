@@ -1350,10 +1350,12 @@ environment_command = "nix develop -c"
   does not rest on it, and reaches the same answer for less: it looks for the
   `.envrc` and runs nothing where there is none, so the pass-through is a
   property `bdi` no longer needs rather than one it relies on.
-- **Every command line `bdi` spells is a read, and that is a property of the
-  subcommands `collect/` composes and of nothing beside them.** It is not a
-  no-writes rule. bd writes on its own account on the way to answering, so no
-  property of the command line can exclude it, and *Reading a tracker is not
+- **Every command line `bdi` spells is a read but one, and that is a property
+  of the subcommands `collect/` composes and of nothing beside them.** The one
+  is `bdi bd`'s `bd human respond`, which records a person's answer in the
+  tracker of the project it names, without `--readonly`. That the rest are
+  reads is not a no-writes rule. bd writes on its own account on the way to
+  answering, so no property of the command line can exclude it, and *Reading a tracker is not
   leaving it alone* below says what it does. `--readonly` still earns its place
   on the line:
   it vetoes bd's mutating subcommands, so a mutating call arriving in
@@ -1616,8 +1618,9 @@ there is whether that file exists for a server-backed tracker at all. The
 measurements above were taken against throwaway embedded stores, and this one
 cannot be taken against a live tracker.
 
-So `bdi` claims what it can hold: every command line it spells is a read. It
-does not claim a tracker comes back unchanged. The pinned bd leaves its lock
+So `bdi` claims what it can hold: every command line it spells is a read, bar
+the one write `bdi bd` passes through. It does not claim a tracker comes back
+unchanged. The pinned bd leaves its lock
 files behind even on a read it answers, and a bd older than 1.3.0 migrates
 whatever the command line says. Nothing holds a tracker still, either: the
 trigger compares the bd running against the bd that ran last, so an in-place
@@ -2153,7 +2156,9 @@ choosing what to start rather than drawing a tree:
       "ready": false,
       "blocked_by": ["smt-4kd3p.13", "mdw-9"],
       "agent": null,
-      "badges": []
+      "badges": [],
+      "labels": ["human"],
+      "description": "Guard the key in the parser, the store, or both?"
     }
   ],
   "failed_projects": [ { "project": "meadow", "tracker": { "reason": "auth" } } ],
@@ -2174,7 +2179,10 @@ cannot disagree. `ready` and `blocked_by` are bd's answer with the blockers
 in other projects added, as *Across projects* says. So for a project with no
 dependency on another project's bead, the beads with `ready` true are what
 `bd ready` names. A blocked bead is listed too, because what blocks it is
-what says which work is next.
+what says which work is next. `labels` and `description` are as bd reported
+them: a bead with no labels has an empty array, and one with no description
+has `null`. bdi gives no label a meaning, so a reader wanting the beads
+labelled `human` filters for them.
 
 A list that is short says so. `failed_projects` is the forest's, and
 `unread_trees` names each root whose tracker gave no rows, with the `tracker`

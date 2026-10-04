@@ -42,6 +42,8 @@ struct Listed<'a> {
     blocked_by: &'a [String],
     agent: Option<&'a AgentRef>,
     badges: &'a [Badged],
+    labels: &'a [String],
+    description: Option<&'a str>,
 }
 
 impl<'a> From<&'a Node> for Listed<'a> {
@@ -57,6 +59,8 @@ impl<'a> From<&'a Node> for Listed<'a> {
             blocked_by: &node.blocked_by,
             agent: node.agent.as_ref(),
             badges: &node.badges,
+            labels: &node.labels,
+            description: Some(node.description.as_str()).filter(|said| !said.is_empty()),
         }
     }
 }

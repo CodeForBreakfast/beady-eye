@@ -171,6 +171,14 @@ impl ShimmedTracker {
         std::fs::write(self.answers.join(asked), text).expect("the answer is ours to write");
     }
 
+    /// Answer `asked` with `text`, for the tracker at a directory whose last
+    /// component is `tracker` and for no other.
+    pub fn answers_for(&self, tracker: &str, asked: &str, text: &str) {
+        let answers = self.answers.join(tracker);
+        std::fs::create_dir_all(&answers).expect("the answers are ours to write");
+        std::fs::write(answers.join(asked), text).expect("the answer is ours to write");
+    }
+
     /// Answer as a direnv that has entered the directory would: these
     /// variables, spelled as `env -0` spells them.
     ///

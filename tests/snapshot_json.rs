@@ -1600,6 +1600,30 @@ fn a_listed_bead_carries_its_agent_and_its_badges() {
     );
 }
 
+/// Each bead carries its labels and its description as bd reported them, so
+/// a reader can pick out the beads labelled for them and read what each asks.
+#[test]
+fn a_listed_bead_carries_its_labels_and_its_description() {
+    let rows = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"open","issue_type":"epic",
+       "labels":["human","mast"],"description":"Lift it before the storm, or after?"},
+      {"id":"dun-7.1","title":"re-point the dish","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}
+    ]"#;
+
+    let listed = listing(&dunwich_with(Fake::holding(beads(rows))));
+
+    let asked = listed_once(&listed, "dunwich", "dun-7");
+    assert_eq!(asked["labels"], json!(["human", "mast"]));
+    assert_eq!(
+        asked["description"],
+        json!("Lift it before the storm, or after?")
+    );
+    let silent = listed_once(&listed, "dunwich", "dun-7.1");
+    assert_eq!(silent["labels"], json!([]));
+    assert_eq!(silent["description"], Value::Null);
+}
+
 /// `dun-7.1` is drawn under its parent in one tree and under the bead it
 /// blocks in another, and is one bead to pick up.
 #[test]

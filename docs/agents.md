@@ -5,9 +5,10 @@ trees and, beside each bead an agent has claimed, the
 [herdr](https://herdr.dev) pane that agent sits in. beads is the issue tracker
 the work lives in, and `bd` is its command; a bead is one issue. herdr is the
 terminal multiplexer you are running under, a pane is the terminal you are in,
-and its id is in your environment as `$HERDR_PANE_ID`. `bdi` never writes to a
-tracker, so it can only draw what you have written. This page is addressed to
-you, the agent: fold its lines into whatever instructions you already follow.
+and its id is in your environment as `$HERDR_PANE_ID`. `bdi` writes to a
+tracker only to record a person's answer to a bead, so it can only draw what
+you have written. This page is addressed to you, the agent: fold its lines
+into whatever instructions you already follow.
 
 ## Name your pane on the bead, and the bead on your pane
 
