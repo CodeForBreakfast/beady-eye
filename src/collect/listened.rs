@@ -150,11 +150,11 @@ impl<O: Trackers> Through<O> {
         // On a thread of its own, so that a listener slow to take the
         // connection holds up nobody.
         thread::spawn(move || {
-            let Some((mut to, _)) = connected_to(&at, WEDGED_AFTER) else {
+            let Some((mut to, mut from)) = connected_to(&at, WEDGED_AFTER) else {
                 return;
             };
             for heard in heard {
-                if writeln!(to, "{}", heard.line()).is_err() {
+                if writeln!(to, "{}", heard.line()).is_err() || !answered(&mut from) {
                     return;
                 }
             }
@@ -486,6 +486,25 @@ fn connected_to(at: &Path, patience: Duration) -> Option<(UnixStream, BufReader<
     to.set_write_timeout(Some(patience)).ok()?;
     let from = BufReader::new(to.try_clone().ok()?);
     Some((to, from))
+}
+
+/// Whether the listener answered the line a producer last said on `from`.
+/// It reads no line it cannot answer, so a producer that goes before the
+/// answer comes can lose every line after it. Alive lines on the way are
+/// passed over.
+fn answered(from: &mut BufReader<UnixStream>) -> bool {
+    if from.get_ref().set_read_timeout(Some(WEDGED_AFTER)).is_err() {
+        return false;
+    }
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match from.read_line(&mut line) {
+            Ok(0) | Err(_) => return false,
+            Ok(_) if line.starts_with('{') => {}
+            Ok(_) => return true,
+        }
+    }
 }
 
 /// The next line the listener finishes sending on `from` before
@@ -913,24 +932,41 @@ path = "/srv/work/ferry"
         assert_eq!(after, Ok(vec!["dun-1".to_string()]));
     }
 
-    #[test]
-    fn asking_again_names_each_project_to_the_listener_as_a_producer_does() {
-        let at = a_socket("listened-asks-again");
+    /// A listener that answers dunwich on the connection watching it, and
+    /// takes a producer's lines on the next connection as the listener
+    /// does: it answers each line before it reads the next, and stops at
+    /// the first answer it cannot send. What it took comes back.
+    ///
+    /// It takes its time over the first line, so a producer that has gone
+    /// by then is one whose lines it never answers.
+    fn a_listener_hearing_a_producer(named: &str) -> (PathBuf, mpsc::Receiver<Vec<String>>) {
+        let at = a_socket(named);
         let listening = UnixListener::bind(&at).expect("the socket is ours");
         let (hearing, heard) = mpsc::channel();
         thread::spawn(move || {
             let (watching, _) = listening.accept().expect("the run watches");
             let mut answering = watching.try_clone().expect("ours to write");
             writeln!(answering, "{}", fresh("dunwich", json!("ok"))).expect("sent");
-            let (asking, _) = listening.accept().expect("the run asks again");
-            let _ = hearing.send(
-                BufReader::new(asking)
-                    .lines()
-                    .map_while(Result::ok)
-                    .collect::<Vec<String>>(),
-            );
+            let (producer, _) = listening.accept().expect("the run speaks as a producer");
+            let mut answering = producer.try_clone().expect("ours to write");
+            thread::sleep(A_MOMENT / 50);
+            let mut took = Vec::new();
+            for line in BufReader::new(producer).lines().map_while(Result::ok) {
+                let answered = writeln!(answering, "ok {line}");
+                took.push(line);
+                if answered.is_err() {
+                    break;
+                }
+            }
+            let _ = hearing.send(took);
             drop(watching);
         });
+        (at, heard)
+    }
+
+    #[test]
+    fn asking_again_names_each_project_to_the_listener_as_a_producer_does() {
+        let (at, heard) = a_listener_hearing_a_producer("listened-asks-again");
         let own = own_trackers();
         let cfg = projects();
         let through = through(&at, &own, A_MOMENT);
@@ -946,22 +982,7 @@ path = "/srv/work/ferry"
 
     #[test]
     fn a_report_passed_on_is_said_to_the_listener_as_its_producer_said_it() {
-        let at = a_socket("listened-passes-on");
-        let listening = UnixListener::bind(&at).expect("the socket is ours");
-        let (hearing, heard) = mpsc::channel();
-        thread::spawn(move || {
-            let (watching, _) = listening.accept().expect("the run watches");
-            let mut answering = watching.try_clone().expect("ours to write");
-            writeln!(answering, "{}", fresh("dunwich", json!("ok"))).expect("sent");
-            let (passing_on, _) = listening.accept().expect("the run passes a report on");
-            let _ = hearing.send(
-                BufReader::new(passing_on)
-                    .lines()
-                    .map_while(Result::ok)
-                    .collect::<Vec<String>>(),
-            );
-            drop(watching);
-        });
+        let (at, heard) = a_listener_hearing_a_producer("listened-passes-on");
         let own = own_trackers();
         let cfg = projects();
         let through = through(&at, &own, A_MOMENT);
