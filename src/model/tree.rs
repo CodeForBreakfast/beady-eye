@@ -3,6 +3,7 @@
 //! to start.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use anyhow::bail;
 use serde::Serialize;
@@ -74,8 +75,9 @@ pub struct Placed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembled {
     /// Every bead the root reaches, once each: the root first, then the rest
-    /// in the order the walk first reaches them.
-    pub beads: Vec<Bead>,
+    /// in the order the walk first reaches them. Each is the bead the answer
+    /// holds, and not a copy of it.
+    pub beads: Vec<Arc<Bead>>,
     /// The beads another project's answer holds, by their place in `beads`,
     /// and that project. A tree reaches them through what bd calls an
     /// external dependency, and each is keyed on its own project wherever it
@@ -155,7 +157,7 @@ fn prefix_of(id: &str) -> &str {
 /// blocks. An edge kind beads may add later has no settled direction against
 /// completion, so it nests nothing.
 pub struct Nesting<'a> {
-    by_id: BTreeMap<&'a str, &'a Bead>,
+    by_id: BTreeMap<&'a str, &'a Arc<Bead>>,
     /// The beads beneath each bead, in render order: siblings sort by state,
     /// then priority, then id in numeric order — so `.2` comes before `.10`
     /// on an epic with more than nine children.
@@ -185,11 +187,11 @@ impl<'a> Nesting<'a> {
     /// Read every edge in the answer once, in the one place that says which
     /// way each kind runs — so a kind beads adds later is answered here and
     /// nowhere else.
-    pub fn of(beads: &'a [Bead]) -> Self {
+    pub fn of(beads: &'a [Arc<Bead>]) -> Self {
         #[cfg(test)]
         NESTINGS.with(|count| count.set(count.get() + 1));
 
-        let by_id: BTreeMap<&str, &Bead> = beads.iter().map(|b| (b.id.as_str(), b)).collect();
+        let by_id: BTreeMap<&str, &Arc<Bead>> = beads.iter().map(|b| (b.id.as_str(), b)).collect();
         let mut children: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
         let mut waiting_on_the_absent = BTreeSet::new();
         let mut lost_their_place = BTreeSet::new();
@@ -417,7 +419,7 @@ fn edge_between(child: &Bead, over: &str) -> Edge {
 fn assemble<'a, K: Copy + Ord>(
     root: K,
     beneath: impl Fn(K) -> Vec<(K, Edge)>,
-    held: impl Fn(K) -> (&'a Bead, Option<&'a str>),
+    held: impl Fn(K) -> (&'a Arc<Bead>, Option<&'a str>),
     unheld: impl Fn(K) -> bool,
     orphaned: impl Fn(K) -> Vec<OrphanedDependency>,
 ) -> Assembled {
@@ -456,7 +458,7 @@ fn assemble<'a, K: Copy + Ord>(
         .filter(|(_, beneath)| !beneath.is_empty())
         .collect();
 
-    let beads = order.iter().map(|key| held(*key).0.clone()).collect();
+    let beads = order.iter().map(|key| Arc::clone(held(*key).0)).collect();
     let external = order
         .iter()
         .enumerate()
@@ -592,7 +594,7 @@ impl<'a> Across<'a> {
         ))
     }
 
-    fn bead(&self, (at, id): Held<'a>) -> &'a Bead {
+    fn bead(&self, (at, id): Held<'a>) -> &'a Arc<Bead> {
         self.answers[at].by_id[id]
     }
 
@@ -867,7 +869,7 @@ mod tests {
 
     /// The root of every hand-written tree below.
     const ROOT: &str = "r";
-    use crate::collect::bd::parse_beads;
+    use crate::collect::bd::parse_shared_beads;
     use crate::model::types::Edge;
 
     /// A slice of this project's own tracker as `bd list --all --json`
@@ -877,7 +879,7 @@ mod tests {
     const FIXTURE_ROOT: &str = "bdi-2bb";
 
     fn assembled(json: &str, root: &str) -> Assembled {
-        let beads = parse_beads(json).expect("the rows parse");
+        let beads = parse_shared_beads(json).expect("the rows parse");
         Nesting::of(&beads)
             .assemble(root)
             .expect("the rows assemble")
@@ -1466,7 +1468,7 @@ mod tests {
           {"id":"one","title":"one","status":"open"},
           {"id":"two","title":"two","status":"open"}
         ]"#;
-        let beads = parse_beads(json).unwrap();
+        let beads = parse_shared_beads(json).unwrap();
         let err = Nesting::of(&beads)
             .assemble("three")
             .expect_err("no bead three to draw from")
@@ -1506,14 +1508,14 @@ mod tests {
 
     /// Each project's answer as a tracker writes it, read as one, with every
     /// configured project among them.
-    fn across<'a>(answers: &'a [(&'a str, Vec<Bead>)]) -> Across<'a> {
+    fn across<'a>(answers: &'a [(&'a str, Vec<Arc<Bead>>)]) -> Across<'a> {
         across_without(answers, &[])
     }
 
     /// The same, with configured projects whose trackers gave no answer, each
     /// with the prefix its config states, where it states one.
     fn across_without<'a>(
-        answers: &'a [(&'a str, Vec<Bead>)],
+        answers: &'a [(&'a str, Vec<Arc<Bead>>)],
         not_read: &[(&'a str, Option<&'a str>)],
     ) -> Across<'a> {
         Across::of(
@@ -1875,10 +1877,10 @@ mod tests {
         );
     }
 
-    fn answer<'a>(project: &'a str, beads: &[String]) -> (&'a str, Vec<Bead>) {
+    fn answer<'a>(project: &'a str, beads: &[String]) -> (&'a str, Vec<Arc<Bead>>) {
         (
             project,
-            parse_beads(&tracker(beads)).expect("the rows parse"),
+            parse_shared_beads(&tracker(beads)).expect("the rows parse"),
         )
     }
 

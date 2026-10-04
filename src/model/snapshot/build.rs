@@ -290,7 +290,7 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_beads;
+    use crate::collect::bd::parse_shared_beads;
     use crate::config::Scope;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
@@ -377,14 +377,14 @@ mod tests {
     /// beads, and the tree counts both.
     #[test]
     fn a_tree_counts_two_projects_beads_of_one_id_as_two() {
-        let harbour = parse_beads(
+        let harbour = parse_shared_beads(
             r#"[{"id":"hbr-1","title":"clear the berth","status":"open",
                  "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]},
                 {"id":"x-1","title":"harbour's x-1","status":"open",
                  "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]}]"#,
         )
         .expect("the rows parse");
-        let dunwich = parse_beads(
+        let dunwich = parse_shared_beads(
             r#"[{"id":"dun-7","title":"lift the ground station","status":"open"},
                 {"id":"x-1","title":"dunwich's x-1","status":"open",
                  "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}]"#,
@@ -417,12 +417,12 @@ mod tests {
     /// bd cannot read.
     #[test]
     fn a_finished_bead_is_blocked_by_nothing_in_another_project() {
-        let harbour = parse_beads(
+        let harbour = parse_shared_beads(
             r#"[{"id":"hbr-1","title":"clear the berth","status":"closed",
                  "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]}]"#,
         )
         .expect("the rows parse");
-        let dunwich = parse_beads(
+        let dunwich = parse_shared_beads(
             r#"[{"id":"dun-7","title":"lift the ground station","status":"in_progress"}]"#,
         )
         .expect("the rows parse");
@@ -599,7 +599,7 @@ mod tests {
           {"id":"dun-6.2","title":"what it waits on","status":"closed",
            "dependencies":[{"depends_on_id":"dun-6","type":"parent-child"}]}
         ]"#;
-        let beads = parse_beads(json).expect("the rows parse");
+        let beads = parse_shared_beads(json).expect("the rows parse");
         let relations = relations(&beads);
         let t = build_tree(
             "dunwich",
@@ -612,8 +612,8 @@ mod tests {
         );
 
         let root = node(&t, "dun-6");
-        assert_eq!(root.description, "lift the whole station");
-        assert_eq!(root.notes, "the crane is booked");
+        assert_eq!(&*root.description, "lift the whole station");
+        assert_eq!(&*root.notes, "the crane is booked");
         assert_eq!(root.created_by.as_deref(), Some("Mira Vance"));
         assert_eq!(root.assignee.as_deref(), Some("Rowan Ash"));
         assert_eq!(root.labels, ["mast", "weather"]);
@@ -624,8 +624,8 @@ mod tests {
         assert_eq!(root.blocks, vec![]);
 
         let waiting = node(&t, "dun-6.1");
-        assert_eq!(waiting.description, "", "a row with nothing to say");
-        assert_eq!(waiting.notes, "");
+        assert_eq!(&*waiting.description, "", "a row with nothing to say");
+        assert_eq!(&*waiting.notes, "");
         assert_eq!(waiting.created_by, None);
         assert_eq!(waiting.assignee, None);
         assert_eq!(waiting.labels, [] as [String; 0]);
@@ -706,7 +706,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 "#,
         )
         .expect("the config parses");
-        let beads = parse_beads(json).expect("the rows parse");
+        let beads = parse_shared_beads(json).expect("the rows parse");
 
         let t = build_tree(
             "dunwich",
@@ -836,7 +836,7 @@ render = "⇢ {repo} #{number}"
 "#,
         )
         .expect("the config parses");
-        let beads = parse_beads(json).expect("the rows parse");
+        let beads = parse_shared_beads(json).expect("the rows parse");
 
         let t = build_tree(
             "dunwich",
