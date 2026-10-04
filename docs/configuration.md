@@ -700,8 +700,9 @@ takes the same producer lines: a project's name, or `covered <project>`. A
 producer that should reach the listener is pointed at
 `$XDG_RUNTIME_DIR/beady-eye/listener.sock`, or at the path `[listener]` names.
 A consumer watching beads connects to the same socket. The README has a worked
-one. `bdi --json` and `bdi --beads` find the listener at the same path and read
-through it, so a `[listener]` socket is named once for both. They read a project
+one. The view, `bdi --json` and `bdi --beads` find the listener at the same
+path and read through it, so a `[listener]` socket is named once for all
+three. They read a project
 themselves where the listener's config gives it another `path` or
 `environment_command` than theirs does.
 

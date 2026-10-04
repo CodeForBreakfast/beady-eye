@@ -2320,17 +2320,28 @@ keeps its own `seq`.
 **Where a listener is running, a view watches it and reads no tracker
 itself.** It sends `watch-all` for each project it draws, builds its trees
 from the bead lines as it builds them from a read of its own, and draws each
-project's freshness from the freshness lines. `^R` sends each project's name
-to the listener, which takes it as it takes a producer's. The view still asks
-the agent provider and still makes the join, because the listener does
-neither. `bdi --json` and `--beads` watch the same way, read as far as each
+project's freshness from the freshness lines. Each freshness line has the
+view collect that project again, as a producer's line does, so a change
+reaches the screen as soon as it reaches the listener. `^R` sends each
+project's name to the listener on a connection of its own, which the listener
+takes as it takes a producer's. The run starting sends none, because the
+listener has already read every project. The view still asks the agent
+provider and still makes the join, because the listener does neither. It
+keeps its own inbound channel, and passes on to the listener each line a
+producer says there, because the view draws what the listener holds. `bdi --json` and `--beads` watch the same way, read as far as each
 project's freshness line and hang up.
 
 **Where none is running, a view reads its trackers itself**, as *Refresh*
-describes, and so does a view whose listener goes away. A setup that starts no
-listener loses nothing by it. One that starts one has each tracker read once
-on a machine, however many views, one-shots and other consumers are looking at
-it.
+describes. A setup that starts no listener loses nothing by it. One that
+starts one has each tracker read once on a machine, however many views,
+one-shots and other consumers are looking at it.
+
+**A view whose listener goes away reads every project itself at once**,
+rather than waiting for each project's next poll, because the answers it
+holds would go stale with nothing to say so. It looks for a listener again
+every `refresh_seconds`, which is as long as a project read by the view
+itself waits for its next poll. A view that started with no listener looks
+for one the same way.
 
 **A one-shot reads for itself every project the listener does not answer
 for.** The listener answers for a project when its freshness line arrives

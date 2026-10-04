@@ -2,7 +2,8 @@
 //!
 //! A run that finds a listener reads its trackers through it: it watches each
 //! project it reads, takes the beads it is sent as a read of its own, and
-//! hangs up when it is done. A project the listener does not answer for is
+//! hangs up when it is done. A view stays, and is told of each answer as it
+//! arrives. A project the listener does not answer for is
 //! read as it would be with no listener at all, so a listener that is down,
 //! wedged or reading other projects costs a run what it would have saved and
 //! never its answer. `docs/design.md`'s *A view reads through the listener*
@@ -10,9 +11,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
+use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex, PoisonError};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,7 +23,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::collect::bd::bead_of;
-use crate::collect::changes;
+use crate::collect::changes::{self, Heard};
 use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::{Project, Reach};
@@ -39,51 +42,137 @@ const WEDGED_AFTER: Duration = Duration::from_secs(60);
 
 /// Each configured project's tracker, read through the listener where it
 /// answers and through `otherwise` where it does not.
-pub struct Through<'t> {
-    listener: Mutex<Listener>,
-    otherwise: &'t dyn Trackers,
+pub struct Through<O> {
+    at: Option<PathBuf>,
+    listener: Arc<Shared>,
+    otherwise: O,
 }
 
-impl<'t> Through<'t> {
+/// What the listener has said, shared between whoever asks for a project and
+/// the thread that hears it.
+struct Shared {
+    said: Mutex<Listener>,
+    /// Woken at every line taken, and when a connection comes or goes.
+    moved: Condvar,
+}
+
+/// What a run that stays does with what it hears.
+struct Staying {
+    /// Where each project the listener has answered for is said, as a
+    /// producer's report is, and each project it can no longer answer for.
+    telling: Sender<Heard>,
+    /// How long after losing a listener, or failing to find one, to look
+    /// for it again.
+    again_every: Duration,
+}
+
+impl<O: Trackers> Through<O> {
     /// Watch each of `projects` on the listener at `at`, reading through
     /// `otherwise` every project it does not answer for. A listener that is
     /// not there leaves every project to `otherwise`.
     pub fn listener_at<'p>(
         at: Option<&Path>,
         projects: impl IntoIterator<Item = &'p str>,
-        otherwise: &'t dyn Trackers,
+        otherwise: O,
     ) -> Self {
-        Self::waiting(at, projects, otherwise, WEDGED_AFTER)
+        Self::hearing(at, projects, otherwise, WEDGED_AFTER, None)
     }
 
-    fn waiting<'p>(
+    /// As [`Self::listener_at`], for a run that stays. Each answer the
+    /// listener closes is said on `telling`, as a producer's report is. A
+    /// listener that goes has every project it answered for said there too,
+    /// since each is read through `otherwise` from then on, and it is looked
+    /// for again every `again_every`, as one that was not there is.
+    pub fn staying<'p>(
         at: Option<&Path>,
         projects: impl IntoIterator<Item = &'p str>,
-        otherwise: &'t dyn Trackers,
-        patience: Duration,
+        otherwise: O,
+        telling: Sender<Heard>,
+        again_every: Duration,
     ) -> Self {
-        let mut listener = Listener {
-            connection: at.and_then(|at| Connection::to(at, patience)),
-            patience,
-            ..Listener::default()
+        let staying = Staying {
+            telling,
+            again_every,
         };
-        for project in projects {
-            listener.ask(project);
+        Self::hearing(at, projects, otherwise, WEDGED_AFTER, Some(staying))
+    }
+
+    fn hearing<'p>(
+        at: Option<&Path>,
+        projects: impl IntoIterator<Item = &'p str>,
+        otherwise: O,
+        patience: Duration,
+        staying: Option<Staying>,
+    ) -> Self {
+        let listener = Arc::new(Shared {
+            said: Mutex::new(Listener {
+                connecting: at.is_some(),
+                patience,
+                asked: projects.into_iter().map(str::to_string).collect(),
+                ..Listener::default()
+            }),
+            moved: Condvar::new(),
+        });
+        if let Some(at) = at {
+            let at = at.to_path_buf();
+            let hearing = Arc::clone(&listener);
+            thread::spawn(move || hear(&at, &hearing, patience, staying.as_ref()));
         }
         Self {
-            listener: Mutex::new(listener),
+            at: at.map(Path::to_path_buf),
+            listener,
             otherwise,
         }
     }
+
+    /// Have the listener read again every project it is watched for, as a
+    /// producer's report has it read a project.
+    pub fn asks_again(&self) {
+        let asked = self.listener.said().asked.clone();
+        self.says(asked.into_iter().map(Heard::Changed).collect());
+    }
+
+    /// Say to the listener what a producer said to this run, so that what
+    /// it holds, which this run reads, takes it in.
+    pub fn passes_on(&self, heard: Heard) {
+        self.says(vec![heard]);
+    }
+
+    /// Say each of `heard` to the listener, as a producer would. Nothing
+    /// where there is no listener to say it to.
+    fn says(&self, heard: Vec<Heard>) {
+        let Some(at) = self.at.clone() else {
+            return;
+        };
+        if self.listener.said().writing.is_none() {
+            return;
+        }
+        // On a thread of its own, so that a listener slow to take the
+        // connection holds up nobody.
+        thread::spawn(move || {
+            let Some((mut to, mut from)) = connected_to(&at, WEDGED_AFTER) else {
+                return;
+            };
+            for heard in heard {
+                if writeln!(to, "{}", heard.line()).is_err() || !answered(&mut from) {
+                    return;
+                }
+            }
+        });
+    }
 }
 
-impl Trackers for Through<'_> {
+impl<O> Drop for Through<O> {
+    fn drop(&mut self) {
+        let mut said = self.listener.said();
+        said.stopped = true;
+        said.hang_up();
+    }
+}
+
+impl<O: Trackers> Trackers for Through<O> {
     fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
-        let told = self
-            .listener
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .answer_for(&project.name);
+        let told = self.listener.answer_for(&project.name);
         match told.filter(|told| told.reach.as_ref() == Some(&project.reach())) {
             Some(told) => match &told.unreachable {
                 Some(failure) => Err(reached_as(failure)),
@@ -94,14 +183,21 @@ impl Trackers for Through<'_> {
     }
 }
 
-/// One connection to the listener, and what it has said on it.
+/// What the listener has said on the connection to it.
 #[derive(Default)]
 struct Listener {
-    /// Nothing once the listener has gone, wedged or said something this
-    /// run cannot read.
-    connection: Option<Connection>,
+    /// Where watch lines go, for as long as there is a connection. Nothing
+    /// once the listener has gone, wedged or said something this run cannot
+    /// read.
+    writing: Option<UnixStream>,
+    /// Whether the first connection is still being made, which an ask waits
+    /// out.
+    connecting: bool,
+    /// Whether the run has finished with the listener.
+    stopped: bool,
     patience: Duration,
-    /// The projects a watch line has gone out for.
+    /// The projects the run watches, each sent a watch line on every
+    /// connection.
     asked: BTreeSet<String>,
     /// The projects the listener said it does not read.
     refused: BTreeSet<String>,
@@ -109,11 +205,6 @@ struct Listener {
     current: BTreeMap<String, Arc<Told>>,
     /// The answers that have begun and not yet closed.
     arriving: BTreeMap<String, Told>,
-}
-
-struct Connection {
-    to: UnixStream,
-    from: BufReader<UnixStream>,
 }
 
 /// One project as the listener last said it stood.
@@ -169,45 +260,103 @@ enum Line {
 
 const WATCH_ALL: &str = "watch-all";
 
-impl Listener {
-    /// Send the watch line for `project`, once.
-    fn ask(&mut self, project: &str) {
-        if self.asked.contains(project) {
-            return;
-        }
-        self.asked.insert(project.to_string());
-        let sent = self
-            .connection
-            .as_mut()
-            .is_some_and(|connection| writeln!(connection.to, "{WATCH_ALL} {project}").is_ok());
-        if !sent {
-            self.connection = None;
-        }
+impl Shared {
+    fn said(&self) -> MutexGuard<'_, Listener> {
+        self.said.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// What the listener says of `project`, reading until it has said it.
+    /// What the listener says of `project`, waiting until it has said it.
     /// Nothing where it will not say, which leaves the project to be read
     /// some other way.
-    fn answer_for(&mut self, project: &str) -> Option<Arc<Told>> {
-        self.ask(project);
-        let giving_up = Instant::now() + self.patience;
+    fn answer_for(&self, project: &str) -> Option<Arc<Told>> {
+        let mut said = self.said();
+        said.ask(project);
+        let giving_up = Instant::now() + said.patience;
         loop {
-            if let Some(told) = self.current.get(project) {
+            if let Some(told) = said.current.get(project) {
                 return Some(Arc::clone(told));
             }
-            if self.refused.contains(project) {
+            let listening = said.connecting || said.writing.is_some();
+            if said.refused.contains(project) || !listening {
                 return None;
             }
-            let heard = self.connection.as_mut()?.next(giving_up);
-            if heard.and_then(|line| self.take(line)).is_none() {
-                self.connection = None;
-            }
+            let Some(left) = giving_up
+                .checked_duration_since(Instant::now())
+                .filter(|left| !left.is_zero())
+            else {
+                said.hang_up();
+                return None;
+            };
+            said = self
+                .moved
+                .wait_timeout(said, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+impl Listener {
+    /// Watch `project` from now on, sending its watch line once.
+    fn ask(&mut self, project: &str) {
+        if self.asked.insert(project.to_string()) {
+            self.watch(project);
         }
     }
 
-    /// Take one line into what has been said. Nothing where it cannot be
-    /// taken, which is a listener this run cannot read.
-    fn take(&mut self, line: Line) -> Option<()> {
+    /// Send the watch line for `project`, where there is a connection to
+    /// send it on.
+    fn watch(&mut self, project: &str) {
+        let sent = self
+            .writing
+            .as_mut()
+            .map(|to| writeln!(to, "{WATCH_ALL} {project}").is_ok());
+        if sent == Some(false) {
+            self.hang_up();
+        }
+    }
+
+    /// Take `to` as the connection to the listener, and watch every project
+    /// on it. False where the run has finished with the listener.
+    fn connected(&mut self, to: UnixStream) -> bool {
+        self.connecting = false;
+        if self.stopped {
+            let _ = to.shutdown(Shutdown::Both);
+            return false;
+        }
+        self.writing = Some(to);
+        for project in self.asked.clone() {
+            self.watch(&project);
+        }
+        true
+    }
+
+    /// Stop listening, so that the thread hearing the listener finds the
+    /// connection closed.
+    fn hang_up(&mut self) {
+        self.connecting = false;
+        if let Some(to) = self.writing.take() {
+            let _ = to.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// The listener has gone. A run that stays forgets every answer, which
+    /// it can no longer keep current, and is told which projects to read
+    /// some other way.
+    fn gone(&mut self, staying: bool) -> Vec<String> {
+        self.hang_up();
+        if !staying {
+            return Vec::new();
+        }
+        self.arriving.clear();
+        self.refused.clear();
+        std::mem::take(&mut self.current).into_keys().collect()
+    }
+
+    /// Take one line into what has been said, and say which project's
+    /// answer it closed. Nothing where it cannot be taken, which is a
+    /// listener this run cannot read.
+    fn take(&mut self, line: Line) -> Option<Option<String>> {
         match line {
             Line::Bead { project, bd, row } => {
                 let bead = bead_of(row, false).ok()?;
@@ -240,7 +389,8 @@ impl Listener {
                     TrackerState::Unreachable(failure) => Some(failure),
                     _ => None,
                 };
-                self.current.insert(project, Arc::new(told));
+                self.current.insert(project.clone(), Arc::new(told));
+                return Some(Some(project));
             }
             Line::Refused { asked } => {
                 let project = asked.strip_prefix(WATCH_ALL)?.trim();
@@ -248,7 +398,7 @@ impl Listener {
             }
             Line::Other => {}
         }
-        Some(())
+        Some(None)
     }
 
     /// The answer for `project` that has begun, beginning it from what was
@@ -264,50 +414,123 @@ impl Listener {
     }
 }
 
-impl Connection {
-    /// A connection to the listener at `at`, giving up on it where it takes
-    /// no connection, or any one write, within `patience`. Nothing where the
-    /// socket is one another user could have put there.
-    fn to(at: &Path, patience: Duration) -> Option<Self> {
-        if !changes::only_this_user_holds(at) {
+/// Connect to the listener at `at` and hear it until it goes, then look for
+/// it again where the run stays.
+fn hear(at: &Path, shared: &Shared, patience: Duration, staying: Option<&Staying>) {
+    loop {
+        let connection = connected_to(at, patience);
+        let heard = connection.is_some_and(|(to, from)| {
+            let watching = shared.said().connected(to);
+            shared.moved.notify_all();
+            watching && {
+                listen(from, shared, patience, staying);
+                true
+            }
+        });
+        let gone = shared.said().gone(staying.is_some());
+        shared.moved.notify_all();
+        let Some(staying) = staying else {
+            return;
+        };
+        if heard {
+            for project in gone {
+                if staying.telling.send(Heard::Changed(project)).is_err() {
+                    return;
+                }
+            }
+        }
+        thread::sleep(staying.again_every);
+        if shared.said().stopped {
+            return;
+        }
+    }
+}
+
+/// Take every line the listener sends on `from` until it goes, wedges or
+/// says something this run cannot read.
+fn listen(
+    mut from: BufReader<UnixStream>,
+    shared: &Shared,
+    patience: Duration,
+    staying: Option<&Staying>,
+) {
+    loop {
+        let heard = next(&mut from, Instant::now() + patience);
+        let taken = heard.and_then(|line| shared.said().take(line));
+        shared.moved.notify_all();
+        match (taken, staying) {
+            (None, _) => return,
+            (Some(Some(project)), Some(staying)) => {
+                if staying.telling.send(Heard::Changed(project)).is_err() {
+                    return;
+                }
+            }
+            (Some(_), _) => {}
+        }
+    }
+}
+
+/// A connection to the listener at `at`, giving up on it where it takes no
+/// connection, or any one write, within `patience`. Nothing where the socket
+/// is one another user could have put there.
+fn connected_to(at: &Path, patience: Duration) -> Option<(UnixStream, BufReader<UnixStream>)> {
+    if !changes::only_this_user_holds(at) {
+        return None;
+    }
+    let (connected, connection) = mpsc::channel();
+    let at = at.to_path_buf();
+    // ponytail: a connection never taken leaves its thread waiting until the
+    // listener takes it or the run exits.
+    thread::spawn(move || connected.send(UnixStream::connect(at)));
+    let to = connection.recv_timeout(patience).ok()?.ok()?;
+    to.set_write_timeout(Some(patience)).ok()?;
+    let from = BufReader::new(to.try_clone().ok()?);
+    Some((to, from))
+}
+
+/// Whether the listener answered the line a producer last said on `from`.
+/// It reads no line it cannot answer, so a producer that goes before the
+/// answer comes can lose every line after it. Alive lines on the way are
+/// passed over.
+fn answered(from: &mut BufReader<UnixStream>) -> bool {
+    if from.get_ref().set_read_timeout(Some(WEDGED_AFTER)).is_err() {
+        return false;
+    }
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match from.read_line(&mut line) {
+            Ok(0) | Err(_) => return false,
+            Ok(_) if line.starts_with('{') => {}
+            Ok(_) => return true,
+        }
+    }
+}
+
+/// The next line the listener finishes sending on `from` before
+/// `giving_up`. Nothing where it finished none, closed the connection, or
+/// sent something that is not a line about a watch.
+fn next(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Line> {
+    let mut line = Vec::new();
+    loop {
+        let left = giving_up
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())?;
+        from.get_ref().set_read_timeout(Some(left)).ok()?;
+        let arrived = from.fill_buf().ok()?;
+        if arrived.is_empty() {
             return None;
         }
-        let (connected, connection) = mpsc::channel();
-        let at = at.to_path_buf();
-        // ponytail: a connection never taken leaves its thread waiting until
-        // the run exits, which a run that reads once soon does.
-        thread::spawn(move || connected.send(UnixStream::connect(at)));
-        let to = connection.recv_timeout(patience).ok()?.ok()?;
-        to.set_write_timeout(Some(patience)).ok()?;
-        let from = BufReader::new(to.try_clone().ok()?);
-        Some(Self { to, from })
-    }
-
-    /// The next line the listener finishes sending before `giving_up`.
-    /// Nothing where it finished none, closed the connection, or sent
-    /// something that is not a line about a watch.
-    fn next(&mut self, giving_up: Instant) -> Option<Line> {
-        let mut line = Vec::new();
-        loop {
-            let left = giving_up
-                .checked_duration_since(Instant::now())
-                .filter(|left| !left.is_zero())?;
-            self.from.get_ref().set_read_timeout(Some(left)).ok()?;
-            let arrived = self.from.fill_buf().ok()?;
-            if arrived.is_empty() {
-                return None;
+        match arrived.iter().position(|&byte| byte == b'\n') {
+            Some(end) => {
+                line.extend_from_slice(&arrived[..end]);
+                from.consume(end + 1);
+                return serde_json::from_slice(&line).ok();
             }
-            match arrived.iter().position(|&byte| byte == b'\n') {
-                Some(end) => {
-                    line.extend_from_slice(&arrived[..end]);
-                    self.from.consume(end + 1);
-                    return serde_json::from_slice(&line).ok();
-                }
-                None => {
-                    let taken = arrived.len();
-                    line.extend_from_slice(arrived);
-                    self.from.consume(taken);
-                }
+            None => {
+                let taken = arrived.len();
+                line.extend_from_slice(arrived);
+                from.consume(taken);
             }
         }
     }
@@ -504,8 +727,8 @@ path = "/srv/work/ferry"
             .collect()
     }
 
-    fn through<'t>(at: &Path, own: &'t Fakes, patience: Duration) -> Through<'t> {
-        Through::waiting(Some(at), ["dunwich", "ferry"], own, patience)
+    fn through<'t>(at: &Path, own: &'t Fakes, patience: Duration) -> Through<&'t Fakes> {
+        Through::hearing(Some(at), ["dunwich", "ferry"], own, patience, None)
     }
 
     /// The readiness taken is bd's, which is what a read of this run's own
@@ -562,7 +785,6 @@ path = "/srv/work/ferry"
                 bead("dunwich", "dun-2", true, &[]),
                 json!({ "line": "gone", "project": "dunwich", "id": "dun-1" }).to_string(),
                 fresh("ferry", json!("ok")),
-                fresh("dunwich", json!("ok")),
             ],
         );
         let own = own_trackers();
@@ -574,6 +796,204 @@ path = "/srv/work/ferry"
 
         assert_eq!(ids(first.as_ref()), ["dun-1"]);
         assert_eq!(ids(midway.as_ref()), ["dun-1"]);
+    }
+
+    fn staying<'t>(
+        at: &Path,
+        own: &'t Fakes,
+        again_every: Duration,
+    ) -> (Through<&'t Fakes>, mpsc::Receiver<Heard>) {
+        let (telling, told) = mpsc::channel();
+        let through = Through::hearing(
+            Some(at),
+            ["dunwich", "ferry"],
+            own,
+            A_MOMENT,
+            Some(Staying {
+                telling,
+                again_every,
+            }),
+        );
+        (through, told)
+    }
+
+    fn changed(project: &str) -> Heard {
+        Heard::Changed(project.to_string())
+    }
+
+    #[test]
+    fn a_run_that_stays_is_told_of_each_answer_as_it_closes() {
+        let at = a_listener_saying(
+            "listened-staying",
+            vec![
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+                fresh("ferry", json!("ok")),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, A_MOMENT);
+
+        assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("ferry")));
+        let read = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+        assert_eq!(read, Ok(vec!["dun-1".to_string()]));
+        assert!(own.tracker("dunwich").asked().is_empty());
+    }
+
+    /// Its answers would go stale with nothing to say so, so it reads every
+    /// project itself, and is told to at once rather than at its next poll.
+    #[test]
+    fn a_run_that_stays_reads_for_itself_once_its_listener_goes() {
+        let at = a_socket("listened-staying-goes");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        thread::spawn(move || {
+            let (mut connection, _) = listening.accept().expect("the run connects");
+            writeln!(connection, "{}", bead("dunwich", "dun-1", true, &[])).expect("sent");
+            writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, 2 * A_MOMENT);
+
+        let heard: Vec<Heard> = (0..2)
+            .filter_map(|_| told.recv_timeout(A_MOMENT).ok())
+            .collect();
+        let read = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+
+        assert_eq!(heard, [changed("dunwich"), changed("dunwich")]);
+        assert_eq!(read, Ok(Vec::new()));
+        assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
+    /// Nothing moving is not a listener gone: the alive line it sends every
+    /// connection keeps a watch open for as long as it is sent.
+    #[test]
+    fn a_run_that_stays_keeps_a_quiet_listener_that_is_alive() {
+        let patience = Duration::from_millis(100);
+        let at = a_socket("listened-staying-quiet");
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        thread::spawn(move || {
+            let (mut connection, _) = listening.accept().expect("the run connects");
+            writeln!(connection, "{}", bead("dunwich", "dun-1", true, &[])).expect("sent");
+            writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+            while writeln!(connection, r#"{{"line":"alive"}}"#).is_ok() {
+                thread::sleep(patience / 4);
+            }
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let (telling, told) = mpsc::channel();
+        let staying = Staying {
+            telling,
+            again_every: A_MOMENT,
+        };
+        let through = Through::hearing(Some(&at), ["dunwich"], &own, patience, Some(staying));
+
+        let answered = told.recv_timeout(A_MOMENT);
+        thread::sleep(5 * patience);
+        let read = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+
+        assert_eq!(answered, Ok(changed("dunwich")));
+        assert_eq!(told.try_recv().ok(), None, "nothing went");
+        assert_eq!(read, Ok(vec!["dun-1".to_string()]));
+    }
+
+    #[test]
+    fn a_run_that_stays_finds_a_listener_started_after_it() {
+        let at = a_socket("listened-staying-late");
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, Duration::from_millis(20));
+        let before = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+
+        a_listener_at(
+            at.clone(),
+            vec![
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
+        );
+
+        assert_eq!(before, Ok(Vec::new()));
+        assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        let after = through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()));
+        assert_eq!(after, Ok(vec!["dun-1".to_string()]));
+    }
+
+    /// A listener that answers dunwich on the connection watching it, and
+    /// takes a producer's lines on the next connection as the listener
+    /// does: it answers each line before it reads the next, and stops at
+    /// the first answer it cannot send. What it took comes back.
+    ///
+    /// It takes its time over the first line, so a producer that has gone
+    /// by then is one whose lines it never answers.
+    fn a_listener_hearing_a_producer(named: &str) -> (PathBuf, mpsc::Receiver<Vec<String>>) {
+        let at = a_socket(named);
+        let listening = UnixListener::bind(&at).expect("the socket is ours");
+        let (hearing, heard) = mpsc::channel();
+        thread::spawn(move || {
+            let (watching, _) = listening.accept().expect("the run watches");
+            let mut answering = watching.try_clone().expect("ours to write");
+            writeln!(answering, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+            let (producer, _) = listening.accept().expect("the run speaks as a producer");
+            let mut answering = producer.try_clone().expect("ours to write");
+            thread::sleep(A_MOMENT / 50);
+            let mut took = Vec::new();
+            for line in BufReader::new(producer).lines().map_while(Result::ok) {
+                let answered = writeln!(answering, "ok {line}");
+                took.push(line);
+                if answered.is_err() {
+                    break;
+                }
+            }
+            let _ = hearing.send(took);
+            drop(watching);
+        });
+        (at, heard)
+    }
+
+    #[test]
+    fn asking_again_names_each_project_to_the_listener_as_a_producer_does() {
+        let (at, heard) = a_listener_hearing_a_producer("listened-asks-again");
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+        through.of(project(&cfg, "dunwich")).expect("answered");
+
+        through.asks_again();
+
+        assert_eq!(
+            heard.recv_timeout(A_MOMENT),
+            Ok(vec!["dunwich".to_string(), "ferry".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_report_passed_on_is_said_to_the_listener_as_its_producer_said_it() {
+        let (at, heard) = a_listener_hearing_a_producer("listened-passes-on");
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+        through.of(project(&cfg, "dunwich")).expect("answered");
+
+        through.passes_on(Heard::Covered("ferry".to_string()));
+
+        assert_eq!(
+            heard.recv_timeout(A_MOMENT),
+            Ok(vec!["covered ferry".to_string()])
+        );
     }
 
     /// A listener started on another config, or on this one before it
@@ -1025,11 +1445,12 @@ path = "/srv/work/dunwich"
         thread::spawn(move || {
             let own = own_trackers();
             let cfg = projects();
-            let read = Through::waiting(
+            let read = Through::hearing(
                 Some(&at),
                 [more_than_the_socket_holds.as_str(), "dunwich"],
                 &own,
                 Duration::from_millis(100),
+                None,
             )
             .of(project(&cfg, "dunwich"))
             .map(|tracker| ids(tracker.as_ref()))

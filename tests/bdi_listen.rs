@@ -17,8 +17,17 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project_settled, die_with, Producer, THE_DESCRIBED_SUBTREE};
+use terminal::{
+    a_home_naming_one_project_settled, die_with, Producer, ENTER_ALTERNATE_SCREEN,
+    THE_DESCRIBED_SUBTREE,
+};
+
+/// `a`, which shows every tree rather than only those with a live agent. No
+/// pane sits in the temp `HOME`, so without it the one tree here sits behind
+/// its project's *no live agent* line and draws no row of its own.
+const SHOW_EVERY_TREE: &[u8] = b"a";
 
 /// The call that reads a tracker in full.
 const READ_IN_FULL: &str = "list --all --limit 0 --json";
@@ -582,6 +591,54 @@ fn a_one_shot_whose_listener_is_not_running_reads_for_itself() {
         !written["beads"].as_array().expect("beads").is_empty(),
         "{written}"
     );
+}
+
+/// A view beside a listener draws what the listener holds and asks bd
+/// nothing, and reads the tracker itself as soon as the listener goes.
+#[test]
+fn a_view_beside_a_listener_reads_no_tracker_until_the_listener_goes() {
+    let (home, tracker) = a_home_with_a_listener_configured("listened-view");
+    let listener = listening_in(&home, &tracker);
+    let asked_before = tracker.calls();
+
+    let mut bdi = Driven::bdi(40, 120, home.clone(), &tracker.environment());
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
+    bdi.send(SHOW_EVERY_TREE);
+    bdi.read_until(b"dun-0tp", THE_SCREEN_GIVING_UP);
+    bdi.settle(Duration::from_millis(300), THE_SCREEN_GIVING_UP);
+    let asked_while_listening = tracker.calls();
+    stopped(listener);
+
+    assert_eq!(
+        asked_while_listening, asked_before,
+        "the view asked bd nothing"
+    );
+    until(|| reads_in_full(&tracker) > 1, "the view's own read");
+}
+
+/// `^R`, which asks every project for itself again.
+const REFRESH: &[u8] = b"\x12";
+
+/// A view draws what the listener holds, so asking for a read is asking
+/// the listener for one.
+#[test]
+fn the_refresh_key_has_the_listener_a_view_reads_through_read_again() {
+    let (home, tracker) = a_home_with_a_listener_configured("listened-view-refresh");
+    let listener = listening_in(&home, &tracker);
+    let mut bdi = Driven::bdi(40, 120, home.clone(), &tracker.environment());
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
+    bdi.send(SHOW_EVERY_TREE);
+    bdi.read_until(b"dun-0tp", THE_SCREEN_GIVING_UP);
+    bdi.settle(Duration::from_millis(300), THE_SCREEN_GIVING_UP);
+    let asked_before = tracker.calls().len();
+
+    bdi.send(REFRESH);
+
+    until(
+        || tracker.calls().len() > asked_before,
+        "the listener asking its tracker",
+    );
+    stopped(listener);
 }
 
 /// A test that panics before it stops its listener must not leave it behind.

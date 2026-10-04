@@ -4,6 +4,7 @@
 //! has to start it in. `run` below says why that order is the one it is.
 
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -13,7 +14,7 @@ use signal_hook::iterator::Signals;
 
 use crate::app::{armed_unread, Arming, Asked, Outstanding, Reading, Wanted};
 use crate::collect::agents::Agents;
-use crate::collect::changes::Reported;
+use crate::collect::changes::{Heard, Reported};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
 use crate::view::Notice;
@@ -36,6 +37,23 @@ pub(crate) use reload::{Reload, CHECKED_EVERY};
 /// with nothing at all, because it draws nothing by itself: what it changes
 /// is what every read after it reads.
 pub type Collecting = Box<dyn FnMut(Asked) -> Option<Snapshot> + Send>;
+
+/// Where what a writer says on the inbound channel is passed on to.
+pub type PassingOn = Box<dyn Fn(&Heard) + Send>;
+
+/// What a view hears from outside it: what writers say on its inbound
+/// channel, and what the listener it reads through says.
+pub struct Hearing {
+    /// Where the inbound channel is opened, or nothing where it has nowhere
+    /// to go.
+    pub listening_on: Option<PathBuf>,
+    /// Each project the listener has answered for, or can no longer answer
+    /// for.
+    pub from_the_listener: Receiver<Heard>,
+    /// Where each thing a writer says on the inbound channel is passed on
+    /// to, since what the listener holds is what the view reads.
+    pub passing_on: PassingOn,
+}
 
 use drive::{drive, View};
 use screen::{Drawing, Screen};
@@ -85,7 +103,7 @@ pub fn run(
     filter: Filter,
     arms: Arming,
     agents: Arc<dyn Agents>,
-    listening_on: Option<PathBuf>,
+    hearing: Hearing,
     collect: Collecting,
     reload: Option<Reload>,
 ) -> anyhow::Result<()> {
@@ -115,13 +133,8 @@ pub fn run(
     let reported = Reported::watching(projects);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, from_the_wiring) = wire(
-        reported.clone(),
-        agents,
-        listening_on,
-        collect,
-        asked_to_stop,
-    );
+    let (events, ask, panes, _socket, from_the_wiring) =
+        wire(reported.clone(), agents, hearing, collect, asked_to_stop);
     // Only this process's own, and only the wiring's: what settling the config
     // could not do is on the snapshot, where both mouths read it.
     let at_startup: Vec<Notice> = from_the_wiring.into_iter().collect();
