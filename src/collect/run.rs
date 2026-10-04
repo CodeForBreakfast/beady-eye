@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 
 use crate::collect::environment::NEVER_INHERITED;
 use crate::model::types::Unreadable;
@@ -498,17 +498,7 @@ impl Runner for RealRunner {
         cwd: Option<&Path>,
         env: &Env,
     ) -> Result<String, RunFailure> {
-        let mut cmd = Command::new(program);
-        cmd.args(args);
-        if let Some(dir) = cwd {
-            cmd.current_dir(dir);
-        }
-        for inherited in NEVER_INHERITED {
-            cmd.env_remove(inherited);
-        }
-        cmd.envs(env);
-
-        let out = cmd
+        let out = told(program, args, cwd, env)
             .output()
             .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))?;
         if !out.status.success() {
@@ -520,6 +510,34 @@ impl Runner for RealRunner {
         }
         String::from_utf8(out.stdout).map_err(|e| RunFailure::parse(program, e))
     }
+}
+
+/// Runs one command on `bdi`'s own stdin, stdout and stderr, and hands back
+/// how it exited.
+pub fn handed_over(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &Env,
+) -> Result<ExitStatus, RunFailure> {
+    told(program, args, cwd, env)
+        .status()
+        .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))
+}
+
+/// A command as every child is told it: the environment `bdi` runs in, less
+/// what is never inherited, with `env` laid over it.
+fn told(program: &str, args: &[&str], cwd: Option<&Path>, env: &Env) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    for inherited in NEVER_INHERITED {
+        cmd.env_remove(inherited);
+    }
+    cmd.envs(env);
+    cmd
 }
 
 #[cfg(test)]

@@ -9,15 +9,17 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::Utc;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use crate::app::Asked;
 use crate::collect::agents::Agents;
 use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::discovery;
+use crate::collect::environment;
 use crate::collect::herdr;
-use crate::collect::run::{RealRunner, Runner};
+use crate::collect::run::{self, RealRunner, Runner};
+use crate::collect::tracker::OpenFailure;
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Listing};
 use crate::tui::{Armed, Arming, Reload, CHECKED_EVERY};
@@ -34,8 +36,16 @@ const PROJECT_IN_THE_ENVIRONMENT: &str = "BDI_PROJECT";
 const NO_TERMINAL: u8 = 2;
 
 #[derive(Parser)]
-#[command(name = "bdi", version, about = "A tree of work in flight")]
+#[command(
+    name = "bdi",
+    version,
+    about = "A tree of work in flight",
+    args_conflicts_with_subcommands = true
+)]
 struct Cli {
+    #[command(subcommand)]
+    passing: Option<Passing>,
+
     /// Start focused on this bead, as Shift+F on it would. Write it as
     /// <project>:<bead-id> where bdi is reading more than one project; a bare
     /// id means the one project being read. A bead under a project the
@@ -90,6 +100,26 @@ struct Cli {
     /// channel of its own.
     #[arg(long, value_name = "PATH")]
     socket: Option<PathBuf>,
+}
+
+/// A command `bdi` passes to bd rather than draws.
+#[derive(Subcommand)]
+enum Passing {
+    /// Run `bd human respond` against a configured project's tracker, entered
+    /// and credentialled as bdi reads it. No other bd command is passed, and
+    /// no flag but the response.
+    Bd {
+        /// The configured project whose tracker the response is recorded in.
+        project: String,
+        /// `human respond`, the bead, and the response.
+        #[arg(
+            value_name = "ARGS",
+            required = true,
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        asked: Vec<String>,
+    },
 }
 
 /// What this run was told about where to listen, over what its config says.
@@ -192,6 +222,9 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
 
     let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(Passing::Bd { project, asked }) = &cli.passing {
+        return passed_to_bd(&expand_tilde(DEFAULT_CONFIG, home), project, asked);
+    }
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let launch = Launch {
         cwd: &cwd,
@@ -323,6 +356,46 @@ pub fn run() -> anyhow::Result<ExitCode> {
     )?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// `bdi bd`: bd run against `project`'s tracker on the terminal `bdi` was
+/// run on, and exiting as bd exits.
+///
+/// The config is always the one in its usual place. A `--config` later on
+/// the line could name a project of the same name somewhere else, and the
+/// project coming first is what a permission rule limiting a seat to one
+/// relies on.
+fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Result<ExitCode> {
+    let text = std::fs::read_to_string(config)
+        .with_context(|| format!("reading the config at {}", config.display()))?;
+    let cfg = Config::from_toml(&text)?;
+    let Some(project) = cfg.projects.iter().find(|p| p.name == project) else {
+        anyhow::bail!(
+            "{project} is not a project the config at {} names",
+            config.display()
+        );
+    };
+    let argv = bd::passed_through(&project.path, asked)?;
+    let env = environment::tracker_env(
+        &RealRunner,
+        project,
+        environment::ambient_credential().as_deref(),
+    )
+    .map_err(|failure| match failure {
+        OpenFailure::NoEnvironment => {
+            anyhow::anyhow!("could not set up {}'s environment", project.name)
+        }
+        OpenFailure::NoCredential => {
+            anyhow::anyhow!("{}'s credential command failed", project.name)
+        }
+        OpenFailure::Refused(failure) => failure.into(),
+    })?;
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
+    Ok(exited
+        .code()
+        .and_then(|code| u8::try_from(code).ok())
+        .map_or(ExitCode::FAILURE, ExitCode::from))
 }
 
 /// A path the user named is read as written: a config that is not there is an
@@ -957,6 +1030,25 @@ detached
     #[test]
     fn the_command_line_is_well_formed() {
         Cli::command().debug_assert();
+    }
+
+    /// Everything after the project is bd's to be checked, so nothing there
+    /// is read as one of bdi's own options.
+    #[test]
+    fn everything_after_the_project_is_handed_on_as_written() {
+        let cli = Cli::parse_from([
+            "bdi", "bd", "dunwich", "human", "respond", "dun-7", "--config", "x", "-r", "yes",
+        ]);
+
+        let Some(Passing::Bd { project, asked }) = cli.passing else {
+            panic!("bdi bd is the pass-through");
+        };
+        assert_eq!(project, "dunwich");
+        assert_eq!(
+            asked,
+            ["human", "respond", "dun-7", "--config", "x", "-r", "yes"]
+        );
+        assert_eq!(cli.config, None);
     }
 
     #[test]

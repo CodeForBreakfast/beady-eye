@@ -22,8 +22,9 @@ foot is what the selected one's pane is saying.
 claimed it, herdr has no pane for that agent, and the eye says so. It has seen
 a pane die on a Tuesday before.
 
-The eye only looks. It never writes to a tracker. Changing the work is still
-`bd`'s job, and the eye finds this arrangement acceptable.
+The eye only looks, but for one errand: it will carry a person's answer to a
+bead that asked for one. Changing the work is still `bd`'s job, and the eye
+finds this arrangement acceptable.
 
 ## Summoning
 
@@ -157,6 +158,14 @@ and it reads them all. `--project NAME` picks.
 Each project is read with its own `bd`, entered the way you would enter it
 yourself. An `.envrc` and direnv need nothing said. Anything else, say it with
 `environment_command`.
+
+`bdi bd <project> human respond <bead> <response>` is the errand. It records a
+person's answer in the tracker of a project the config names, by running that
+project's own `bd` the way the eye reads it, so whatever asks needs no map of
+trackers or credentials. No other `bd` command is passed, and no flag but
+`-r`/`--response`. A response that starts with a dash goes after `--`. Nothing
+after the project can pick another tracker, so a permission rule on
+`bdi bd <project>` holds a caller to that one project.
 
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
 what a bead carries, credentials, extra roots, intervals, the light theme, and

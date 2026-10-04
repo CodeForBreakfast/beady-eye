@@ -2,8 +2,9 @@
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
 root, annotated with the live agent on each node. Every bd command line it
-spells is a read, and `collect/` spells all of them. `docs/design.md`'s
-*Reading a tracker is not leaving it alone* has the measurements.
+spells is a read but one, the `bd human respond` that `bdi bd` passes through,
+and `collect/` spells all of them. `docs/design.md`'s *Reading a tracker is
+not leaving it alone* has the measurements.
 
 ## What beady-eye owns
 
@@ -19,12 +20,14 @@ spells is a read, and `collect/` spells all of them. `docs/design.md`'s
 ## What it does not own
 
 - **Beads.** The tracker, its schema and its commands belong to the beads
-  project. `bdi` only reads from it, and a change to what `bd` prints is
-  asked of beads.
+  project. `bdi` reads from it, and a change to what `bd` prints is asked of
+  beads.
 - **herdr.** Panes, agent detection and agent status belong to the herdr
   project. `bdi` draws what herdr reports.
-- **Writing to a tracker.** `bdi` never creates, updates or closes a bead.
-  Whoever runs it does that with `bd`.
+- **Writing to a tracker.** `bdi` never creates or updates a bead. The one
+  write it makes is `bdi bd`'s `human respond`, which records a person's answer
+  and closes the bead that asked. Whoever runs it does everything else with
+  `bd`.
 - **How agents are organised.** `bdi` knows no roles, orchestration model or
   skill names. A convention a setup keeps in bead metadata is named in the
   user's config and drawn without interpretation.
