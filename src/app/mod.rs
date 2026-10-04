@@ -17,11 +17,12 @@ mod outstanding;
 mod reading;
 mod reading_trackers;
 mod tracker;
+mod watching;
 
 pub use armed::{armed_unread, Armed, Arming};
 pub use collection::{run, Asked, Awaited, Collection, Wanted};
 pub use due::due_after;
-pub use listener::{hold, Hold};
+pub use listener::{hold, serve, Hold};
 pub use outstanding::Outstanding;
 pub use reading::Reading;
 pub use reading_trackers::{ReadingTrackers, Reads};
