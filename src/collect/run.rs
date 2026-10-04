@@ -488,6 +488,24 @@ pub trait Runner: Sync {
     ) -> Result<String, RunFailure>;
 }
 
+/// Both answers, with `second` asked on a thread of its own while `first`
+/// is asked on this one, so two round trips that need nothing from each
+/// other cost the slower of them rather than the two together. A call that
+/// panics is resumed here, as it would have been had they been made in turn.
+pub fn together<A, B>(first: impl FnOnce() -> A, second: impl FnOnce() -> B + Send) -> (A, B)
+where
+    B: Send,
+{
+    std::thread::scope(|asking| {
+        let second = asking.spawn(second);
+        let first = first();
+        let second = second
+            .join()
+            .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked));
+        (first, second)
+    })
+}
+
 pub struct RealRunner;
 
 impl Runner for RealRunner {
@@ -543,9 +561,64 @@ fn told(program: &str, args: &[&str], cwd: Option<&Path>, env: &Env) -> Command 
 #[cfg(test)]
 pub mod testing {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::{Condvar, Mutex};
+    use std::time::Duration;
+
+    /// How long a caller at a rendezvous waits for the others before it is
+    /// let go and its wait is written down as spent alone. Calls made
+    /// together arrive within a thread spawn of each other, so only calls
+    /// made one after the other ever reach this.
+    const ALONE: Duration = Duration::from_secs(5);
+
+    /// A place where each of a set of named calls waits until every one of
+    /// them has arrived, remembering each wait that was let go by the clock
+    /// rather than by the last arrival.
+    ///
+    /// It is what tells calls made together from calls made in turn without
+    /// asserting against a clock: calls in flight together meet, and one made
+    /// after another has returned waits alone. The deadline is only what a
+    /// wait that would never end is reported in. A name it was not set up
+    /// with passes straight through.
+    #[derive(Default)]
+    pub struct Rendezvous {
+        expected: BTreeSet<String>,
+        arrived: Mutex<BTreeSet<String>>,
+        someone_arrived: Condvar,
+        waited_alone: Mutex<Vec<String>>,
+    }
+
+    impl Rendezvous {
+        pub fn of<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
+            Self {
+                expected: names.into_iter().map(str::to_string).collect(),
+                ..Self::default()
+            }
+        }
+
+        /// `name` has been called; wait here for the rest of the set.
+        pub fn arrive(&self, name: &str) {
+            if !self.expected.contains(name) {
+                return;
+            }
+            let mut arrived = self.arrived.lock().unwrap();
+            arrived.insert(name.to_string());
+            self.someone_arrived.notify_all();
+            let (_arrived, waited) = self
+                .someone_arrived
+                .wait_timeout_while(arrived, ALONE, |arrived| !self.expected.is_subset(arrived))
+                .unwrap();
+            if waited.timed_out() {
+                self.waited_alone.lock().unwrap().push(name.to_string());
+            }
+        }
+
+        /// Every call that waited out the clock, in the order they gave up.
+        pub fn waited_alone(&self) -> Vec<String> {
+            self.waited_alone.lock().unwrap().clone()
+        }
+    }
 
     /// One invocation as the fake saw it, including the directory and the
     /// environment — the two a fake that ignored them would let a wrong
@@ -562,9 +635,22 @@ pub mod testing {
     pub struct FakeRunner {
         responses: HashMap<String, Result<String, RunFailure>>,
         calls: Mutex<Vec<Call>>,
+        meeting: Rendezvous,
     }
 
     impl FakeRunner {
+        /// Each of `argvs` waits, once called, until every one of them has
+        /// been.
+        pub fn meeting(mut self, argvs: &[&str]) -> Self {
+            self.meeting = Rendezvous::of(argvs.iter().copied());
+            self
+        }
+
+        /// Every call `meeting` named that waited for the others alone.
+        pub fn waited_alone(&self) -> Vec<String> {
+            self.meeting.waited_alone()
+        }
+
         pub fn with(mut self, argv: &str, out: &str) -> Self {
             self.responses.insert(argv.to_string(), Ok(out.to_string()));
             self
@@ -629,6 +715,7 @@ pub mod testing {
                 cwd: cwd.map(Path::to_path_buf),
                 env: env.clone(),
             });
+            self.meeting.arrive(&argv);
             match self.responses.get(&argv) {
                 Some(Ok(out)) => Ok(out.clone()),
                 Some(Err(failure)) => Err(failure.clone()),

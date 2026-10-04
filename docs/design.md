@@ -1685,6 +1685,16 @@ is done there, and its freshness is as good as if the cascade had run: a
 skipped read is a successful read, and the project line says so. A project
 whose fingerprint has moved is read in full.
 
+**A read made once asks for no fingerprint.** `--json` and `--beads` read each
+tracker a single time and exit, so nothing would ever be compared with the
+probe's answer.
+
+**The cascade's calls are asked together.** `list`, `query`, `ready` and
+`blocked` need nothing from each other, so all four are in flight at once and
+a read waits for the slowest of them rather than for the four in turn. bd
+1.3.0 answered four `--readonly` reads at once on one embedded store eighty
+times out of eighty, measured 2026-10-04 on a throwaway store.
+
 Measured 2026-09-01 against this project's tracker with bd 1.2.2, when the
 probe was the whole working root, `dolt_hashof_db()`: the probe 0.203–0.205 s
 against 1.53 s for the cascade; a read does not move the root (three probes

@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserializer;
 
 use crate::collect::environment;
-use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
+use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
 use crate::model::types::{Bead, Dependency, Edge, Status};
@@ -454,9 +454,12 @@ impl Tracker for Reader<'_> {
     /// and a smaller correct-looking answer about a different population is
     /// the kind of wrong that reads as right.
     fn all(&self) -> Result<Vec<Bead>, RunFailure> {
-        let out = self.asked(&["list", "--all", "--limit", "0", "--json"])?;
-        let mut beads = rows(&out, "list")?;
-        beads.extend(rows(&self.wisps()?, "query")?);
+        let (listed, wisps) = together(
+            || self.asked(&["list", "--all", "--limit", "0", "--json"]),
+            || self.wisps(),
+        );
+        let mut beads = rows(&listed?, "list")?;
+        beads.extend(rows(&wisps?, "query")?);
         Ok(beads)
     }
 
@@ -1432,6 +1435,20 @@ mod tests {
         assert_eq!(beads.len(), 9, "both answers, neither replacing the other");
     }
 
+    /// The listing and the wisps are two round trips that need nothing from
+    /// each other, so a read pays for the slower of them rather than both.
+    #[test]
+    fn the_listing_and_the_wisps_are_asked_for_together() {
+        let runner = FakeRunner::default()
+            .with(&spelled(TRACKER_CALL), FIXTURE)
+            .with(&spelled(WISP_CALL), WISPS)
+            .meeting(&[&spelled(TRACKER_CALL), &spelled(WISP_CALL)]);
+
+        opened(&runner).all().unwrap();
+
+        assert_eq!(runner.waited_alone(), Vec::<String>::new());
+    }
+
     /// bd omits a field it has nothing for rather than writing it as null:
     /// measured across the 73 ephemeral rows of a tracker on 2026-08-31,
     /// eleven keys are universal and every other one is absent when empty.
@@ -1655,15 +1672,17 @@ mod tests {
 
     #[test]
     fn a_tracker_that_refuses_the_credential_reaches_the_caller_classified() {
-        let runner = FakeRunner::default().failing(
-            &spelled(TRACKER_CALL),
-            RunFailure {
-                kind: FailureKind::Auth,
-                program: "bd".to_string(),
-                detail: "bd was refused the tracker's credential".to_string(),
-                unreadable: None,
-            },
-        );
+        let runner = FakeRunner::default()
+            .failing(
+                &spelled(TRACKER_CALL),
+                RunFailure {
+                    kind: FailureKind::Auth,
+                    program: "bd".to_string(),
+                    detail: "bd was refused the tracker's credential".to_string(),
+                    unreadable: None,
+                },
+            )
+            .with(&spelled(WISP_CALL), "[]");
 
         let failure = opened(&runner).all().unwrap_err();
 
@@ -1677,7 +1696,9 @@ mod tests {
     #[test]
     fn a_listing_that_will_not_parse_names_the_read_and_where_it_broke() {
         let row = r#"[{"id":"ark-1","title":42,"status":"open"}]"#;
-        let runner = FakeRunner::default().with(&spelled(TRACKER_CALL), row);
+        let runner = FakeRunner::default()
+            .with(&spelled(TRACKER_CALL), row)
+            .with(&spelled(WISP_CALL), "[]");
 
         let unreadable = opened(&runner)
             .all()

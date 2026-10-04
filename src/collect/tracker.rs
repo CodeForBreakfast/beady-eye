@@ -12,7 +12,7 @@ use crate::config::Project;
 use crate::model::types::Bead;
 
 /// One project's tracker, opened for one read.
-pub trait Tracker {
+pub trait Tracker: Sync {
     /// One value that moves when anything the tracker holds does, and stays
     /// put when a read costs nothing — or `None` from a tracker that has no
     /// such thing to offer, which is read in full every time.
@@ -120,7 +120,7 @@ pub mod testing {
     use super::*;
 
     /// One of the four questions, as a fake records being asked it.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum Asked {
         Fingerprint,
         All,
