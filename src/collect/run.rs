@@ -288,7 +288,7 @@ fn ours_to_report(cause: &std::io::Error, cwd: Option<&Path>) -> bool {
 }
 
 /// Where a child looks for a program it was named without a path.
-const PATH: &str = "PATH";
+pub const PATH: &str = "PATH";
 
 /// What herdr says when the pane a command names is not there, and when a
 /// pane is in the alternate screen and working so its history cannot be
