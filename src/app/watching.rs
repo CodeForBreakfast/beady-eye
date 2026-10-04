@@ -76,6 +76,9 @@ pub struct Interest {
     closed_too: bool,
     named: BTreeSet<String>,
     known: BTreeMap<String, Known>,
+    /// The beads the connection was told are gone and that have not been
+    /// held since, so a later line does not tell it again.
+    told_gone: BTreeSet<String>,
     /// A watch line has widened this since the project's beads were last
     /// caught up with, so the next beads it is given are where that watch
     /// starts rather than a change.
@@ -146,11 +149,13 @@ impl Interest {
             gone.extend(
                 self.named
                     .iter()
-                    .filter(|id| !beads.contains_key(*id))
+                    .filter(|id| !beads.contains_key(*id) && !self.told_gone.contains(*id))
                     .cloned(),
             );
         }
         lines.extend(gone.iter().map(|id| gone_line(project, id)));
+        self.told_gone.retain(|id| !beads.contains_key(id));
+        self.told_gone.extend(gone);
         lines
     }
 
@@ -487,6 +492,29 @@ mod tests {
 
         assert_eq!(said(&first), ["gone dun-9"]);
         assert_eq!(said(&then), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_bead_told_gone_is_not_told_again_by_a_later_line() {
+        let held = beads(&[("dun-1", "open")]);
+        let mut interest = watching(&[bead("dun-9")]);
+        interest.catch_up("dunwich", &held);
+
+        interest.widen(&bead("dun-1"));
+        let lines = interest.catch_up("dunwich", &held);
+
+        assert_eq!(said(&lines), ["bead dun-1"]);
+    }
+
+    #[test]
+    fn a_bead_told_gone_that_comes_and_goes_again_is_gone_again() {
+        let mut interest = watching(&[bead("dun-9")]);
+        interest.catch_up("dunwich", &beads(&[]));
+        interest.catch_up("dunwich", &beads(&[("dun-9", "open")]));
+
+        let lines = interest.catch_up("dunwich", &beads(&[]));
+
+        assert_eq!(said(&lines), ["gone dun-9"]);
     }
 
     /// A bead two lines name is sent once, and a closed bead `watch` started
