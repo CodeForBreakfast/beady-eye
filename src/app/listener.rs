@@ -462,6 +462,10 @@ mod tests {
         assert_eq!(dunwich.as_of, Some(now()));
     }
 
+    /// Long enough for a line that is coming to have come, and short enough
+    /// that one that is not is a failure rather than a hang.
+    const GIVING_UP: Duration = Duration::from_secs(5);
+
     fn watching_dunwich() -> Watch {
         Watch::Project {
             project: "dunwich".to_string(),
@@ -649,6 +653,10 @@ mod tests {
         hold.take(said("dunwich", Said::Vouched { at: later(10) }));
         hold.take(said("dunwich", Said::Vouched { at: later(20) }));
 
+        behind
+            .theirs
+            .set_read_timeout(Some(GIVING_UP))
+            .expect("a read is ours to give up on");
         let mut rest = Vec::new();
         std::io::Read::read_to_end(&mut behind.theirs, &mut rest).expect("the connection ends");
         assert!(hold.watchers.is_empty());
@@ -659,6 +667,9 @@ mod tests {
         let (ours, theirs) = UnixStream::pair().expect("a connection");
         let (telling, told) = mpsc::sync_channel(4);
         let writing = thread::spawn(move || tell(ours, &told, Duration::from_millis(50)));
+        theirs
+            .set_read_timeout(Some(GIVING_UP))
+            .expect("a read is ours to give up on");
         let mut hearing = std::io::BufReader::new(theirs);
         let mut lines = Vec::new();
 

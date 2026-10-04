@@ -361,6 +361,61 @@ mod tests {
     }
 
     #[test]
+    fn a_bead_whose_row_changes_is_sent_again() {
+        let mut interest = watching(&[project(false)]);
+        interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
+
+        let lines = interest.catch_up("dunwich", &beads(&[("dun-1", "in_progress")]));
+
+        assert_eq!(said(&lines), ["bead dun-1"]);
+    }
+
+    /// `watch` starts past closed beads and still sends every change after.
+    #[test]
+    fn a_closed_bead_that_changes_and_stays_closed_is_sent() {
+        let mut interest = watching(&[project(false)]);
+        interest.catch_up("dunwich", &beads(&[("dun-2", "closed")]));
+        let mut commented = beads(&[("dun-2", "closed")]);
+        let row = Arc::make_mut(
+            commented
+                .get_mut("dun-2")
+                .and_then(|held| held.row.as_mut())
+                .expect("a row"),
+        );
+        row.insert("comment_count".to_string(), json!(1));
+
+        assert_eq!(
+            said(&interest.catch_up("dunwich", &commented)),
+            ["bead dun-2"]
+        );
+    }
+
+    #[test]
+    fn a_blocker_arriving_is_a_change() {
+        let mut interest = watching(&[project(false)]);
+        interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
+        let mut blocked = beads(&[("dun-1", "open")]);
+        blocked.get_mut("dun-1").expect("held").blocked_by = vec!["fer-4".to_string()];
+
+        assert_eq!(
+            said(&interest.catch_up("dunwich", &blocked)),
+            ["bead dun-1"]
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_the_line_and_why() {
+        let line: Value =
+            serde_json::from_str(&refused_line("watch ferry\n", Refusal::UnknownProject))
+                .expect("JSON");
+
+        assert_eq!(
+            line,
+            json!({ "line": "refused", "asked": "watch ferry", "reason": "unknown-project" })
+        );
+    }
+
+    #[test]
     fn a_bead_nothing_changed_is_not_sent_again() {
         let mut interest = watching(&[project(false)]);
         interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
