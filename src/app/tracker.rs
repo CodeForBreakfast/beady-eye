@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 
-use crate::collect::run::{FailureKind, RunFailure};
+use crate::collect::run::{together, FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::{Config, Project};
 use crate::model::edges::{self, Relations};
@@ -149,18 +149,22 @@ pub(super) enum Refresh {
 /// A tracker that cannot answer its fingerprint is read the slow way: an
 /// error there means "read it the slow way", never "nothing changed". A
 /// tracker with no fingerprint to offer says so with `None` and is read the
-/// slow way every time.
+/// slow way every time. A refresh nothing will be compared with later does
+/// not ask for one at all.
 pub(super) fn refresh_project(
     trackers: &dyn Trackers,
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
     standing: Option<&ReadAt>,
+    probing: bool,
     now: DateTime<Utc>,
 ) -> Result<Refresh, OpenFailure> {
     let tracker = trackers.of(project)?;
 
-    let probed = tracker.fingerprint().and_then(Result::ok);
+    let probed = probing
+        .then(|| tracker.fingerprint().and_then(Result::ok))
+        .flatten();
     let named: BTreeSet<String> = beads_named_here(panes, project, cfg)
         .map(str::to_string)
         .collect();
@@ -200,13 +204,17 @@ fn read_project(
     panes: &[Pane],
     now: DateTime<Utc>,
 ) -> Result<ProjectWork, RunFailure> {
-    let beads = tracker.all()?;
+    let (beads, (ready, blocked_by)) = together(
+        || tracker.all(),
+        || together(|| tracker.ready(), || tracker.blocked()),
+    );
+    let beads = beads?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
     let readiness = Readiness {
-        ready: tracker.ready()?,
-        blocked_by: tracker.blocked()?,
+        ready: ready?,
+        blocked_by: blocked_by?,
     };
 
     // Every bead this read of the tracker turned up, and the bead each one
@@ -523,6 +531,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::collect::agents::testing::{named, pane, Fake as Provider};
+    use crate::collect::run::testing::Rendezvous;
     use crate::collect::run::{Env, RealRunner, Runner};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
@@ -952,8 +961,16 @@ dunwich = ["dun-4"]
         let before = one_project();
         let after = one_project_with_a_root_named();
 
-        let first = refresh_project(&trackers, &before.projects[0], &before, &[], None, now())
-            .expect("the tracker answers every call");
+        let first = refresh_project(
+            &trackers,
+            &before.projects[0],
+            &before,
+            &[],
+            None,
+            true,
+            now(),
+        )
+        .expect("the tracker answers every call");
         let Refresh::Read { at, .. } = first else {
             panic!("a project nothing has read is read in full")
         };
@@ -964,6 +981,7 @@ dunwich = ["dun-4"]
             &after,
             &[],
             at.as_deref(),
+            true,
             now(),
         )
         .expect("the tracker answers every call");
@@ -1315,7 +1333,7 @@ dunwich = ["dun-c3"]
     /// A closed bead above unfinished children is the normal healthy shape of
     /// this tree, and discovery never sees one. Every row carries the bead's
     /// own parent, so the climb past it is answered from the read already in
-    /// hand: one read is the four questions and nothing more, however many
+    /// hand: one read is its three questions and nothing more, however many
     /// beads share the parent.
     #[test]
     fn a_closed_parent_over_open_work_costs_the_tracker_no_further_question() {
@@ -1324,10 +1342,30 @@ dunwich = ["dun-c3"]
         let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
         assert_eq!(snap.trees[0].root, "dun-7");
+        let mut asked = trackers.tracker("dunwich").asked();
+        asked.sort();
         assert_eq!(
-            trackers.tracker("dunwich").asked(),
-            vec![Asked::Fingerprint, Asked::All, Asked::Ready, Asked::Blocked],
+            asked,
+            vec![Asked::All, Asked::Ready, Asked::Blocked],
             "a parent the listing already carries is not asked for again"
+        );
+    }
+
+    /// A read made once and never again has no later read to compare a
+    /// fingerprint against, so it asks for none.
+    #[test]
+    fn a_read_made_once_asks_for_no_fingerprint() {
+        let trackers = dunwich();
+
+        run(&one_project(), &panes(), &trackers, Filter::All, now());
+
+        assert!(
+            !trackers
+                .tracker("dunwich")
+                .asked()
+                .contains(&Asked::Fingerprint),
+            "{:?}",
+            trackers.tracker("dunwich").asked()
         );
     }
 
@@ -1800,6 +1838,55 @@ dunwich = ["bdi-404"]
             "a blocker outside the tree still reaches the node"
         );
         assert!(node(tree, "dun-7.2").blocked_by.is_empty());
+    }
+
+    /// Dunwich's tracker, holding each of the three questions a read asks
+    /// until the other two have been asked as well.
+    struct Meeting {
+        inner: Fake,
+        at: Rendezvous,
+    }
+
+    impl Tracker for Meeting {
+        fn fingerprint(&self) -> Option<Result<String, RunFailure>> {
+            Tracker::fingerprint(&self.inner)
+        }
+
+        fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+            self.at.arrive("all");
+            Tracker::all(&self.inner)
+        }
+
+        fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
+            self.at.arrive("ready");
+            Tracker::ready(&self.inner)
+        }
+
+        fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
+            self.at.arrive("blocked");
+            Tracker::blocked(&self.inner)
+        }
+    }
+
+    impl Trackers for Meeting {
+        fn of(&self, _: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
+            Ok(Box::new(self))
+        }
+    }
+
+    /// The listing, the readiness and the blockers are round trips that need
+    /// nothing from each other, so a read pays for the slowest of them rather
+    /// than all three.
+    #[test]
+    fn a_read_asks_its_three_questions_together() {
+        let trackers = Meeting {
+            inner: dunwich_tracker(),
+            at: Rendezvous::of(["all", "ready", "blocked"]),
+        };
+
+        run(&one_project(), &panes(), &trackers, Filter::All, now());
+
+        assert_eq!(trackers.at.waited_alone(), Vec::<String>::new());
     }
 
     // ---- degradation ---------------------------------------------------
