@@ -11,7 +11,7 @@ use chrono::Utc;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
-use crate::app::{Asked, Wanted};
+use crate::app::{armed_unread, Arming, Asked, Outstanding, Reading, Wanted};
 use crate::collect::agents::Agents;
 use crate::collect::changes::Reported;
 use crate::config::Config;
@@ -21,16 +21,13 @@ use crate::view::Notice;
 #[cfg(test)]
 mod fixtures;
 
-mod armed;
 mod clipboard;
 mod drive;
-mod due;
 mod keys;
 mod reload;
 mod screen;
 mod wire;
 
-pub(crate) use armed::{Armed, Arming};
 pub(crate) use reload::{Reload, CHECKED_EVERY};
 
 /// What the collector thread does with each thing it is asked for.
@@ -40,7 +37,7 @@ pub(crate) use reload::{Reload, CHECKED_EVERY};
 /// is what every read after it reads.
 pub type Collecting = Box<dyn FnMut(Asked) -> Option<Snapshot> + Send>;
 
-use drive::{drive, Outstanding, Reading, View};
+use drive::{drive, View};
 use screen::{Drawing, Screen};
 use wire::wire;
 
@@ -150,7 +147,7 @@ pub fn run(
         &events,
         &ask,
         outstanding,
-        Reading::of(armed, reported).unread(armed::armed_unread(&arms, cfg)),
+        Reading::of(armed, reported).unread(armed_unread(&arms, cfg)),
         &arms,
         reload,
     )

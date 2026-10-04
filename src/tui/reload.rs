@@ -32,7 +32,7 @@ use chrono::{DateTime, Utc};
 
 use crate::config::Config;
 
-use super::due::due_after;
+use crate::app::due_after;
 
 /// How long after each check the next one falls due.
 ///

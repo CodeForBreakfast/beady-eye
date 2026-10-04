@@ -12,6 +12,7 @@ use chrono::Utc;
 use clap::{Parser, Subcommand};
 
 use crate::app::Asked;
+use crate::app::{Armed, Arming};
 use crate::collect::agents::Agents;
 use crate::collect::bd;
 use crate::collect::changes;
@@ -22,7 +23,7 @@ use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Listing};
-use crate::tui::{Armed, Arming, Reload, CHECKED_EVERY};
+use crate::tui::{Reload, CHECKED_EVERY};
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
