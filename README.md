@@ -266,7 +266,9 @@ Hand it over, and let it fold the lines into whatever it already obeys.
 ## Status
 
 Released, and gazed into daily by the people who wrote it. It has not yet
-gazed back. The design is in [docs/design.md](docs/design.md).
+gazed back. The design is in [docs/design.md](docs/design.md). It is made at
+[Code For Breakfast](https://codeforbreakfast.co/beady-eye), where it has a
+page of its own.
 
 Versions are `0.x`, and a breaking change bumps the minor. Pin a tag. `1.0.0`
 arrives when the shape has settled, not when something breaks.
