@@ -230,7 +230,9 @@ of a comment.
 
 A Claude Code session can be one of those consumers. The `beady-eye` plugin
 gives it `watch`, `unwatch` and `watching` tools, and wakes it when a bead it
-watches changes status, becomes ready, is commented on or goes. It needs Node
+watches changes status, becomes ready, is commented on or goes. Its
+`using-beady-eye` skill tells the session how to read a change and when to
+unwatch. It needs Node
 and a watcher on the same machine. Add this repository as a marketplace pinned
 to a plugin release, and install the plugin from it:
 

@@ -2412,6 +2412,14 @@ id and working directory to each call to the plugin's tools, because MCP tells
 a server neither. The server takes the first id it is given, from either, and
 keeps it.
 
+**A session is told how to use the plugin.** The server sends MCP
+instructions that every session loading the plugin receives: what the three
+tools do, how a change reads, and that a watch lasts until `unwatch`. The
+plugin also ships a `using-beady-eye` skill, which a session loads when it
+waits on a bead or a change arrives, on what to watch, how to act on a change,
+and when to unwatch. When a particular setup's agents should watch a bead is
+that setup's to say.
+
 ### Finding the watcher
 
 The plugin reads `[watcher]`'s `socket` from `~/.config/beady-eye/config.toml`,
