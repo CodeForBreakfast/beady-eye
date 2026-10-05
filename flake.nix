@@ -3408,7 +3408,7 @@ and a second line"
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-qHMoo3c16Vlby0A+kAYJolqzV3kxiHzhpQJj186oZbw=";
+          outputHash = "sha256-mWLM5EnT1kKDX2oU6eer6zrHoyY4o/1HJ36WWbdQqAg=";
         };
 
         pluginTools = [ pkgs.bun pkgs.biome pkgs.typescript pkgs.nodejs ];
