@@ -328,11 +328,11 @@ pub struct Cli<'r> {
     /// probe is paid for once per run rather than once per refresh.
     without_a_probe: Mutex<BTreeSet<String>>,
     /// Whether each bead is handed over with the row bd printed for it. Only
-    /// a listener asks: a view draws what it parsed, and a row held beside
+    /// a watcher asks: a view draws what it parsed, and a row held beside
     /// every bead would hold the tracker's text twice.
     keeping_rows: bool,
     /// Whether a project claiming an events journal has it read. Only a
-    /// listener asks, because only a listener passes the records on.
+    /// watcher asks, because only a watcher passes the records on.
     reading_journals: bool,
     /// Whether a finished bead is read without its free text, for a run that
     /// shows unfinished work alone.

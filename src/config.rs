@@ -30,7 +30,7 @@ pub struct Config {
     #[serde(default)]
     pub changes: Changes,
     #[serde(default)]
-    pub listener: Listener,
+    pub watcher: Watcher,
     #[serde(default)]
     pub tui: Tui,
     #[serde(default)]
@@ -523,11 +523,11 @@ pub struct Join {
     pub pane_key: String,
 }
 
-/// Where `bdi` listens for something saying a project's work has moved on.
+/// Where `bdi` watches for something saying a project's work has moved on.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Changes {
-    /// The socket to listen on, rather than the one under the directory this
+    /// The socket to watch, rather than the one under the directory this
     /// login session owns.
     ///
     /// Told rather than derived because the two parties that have to agree on
@@ -574,13 +574,13 @@ impl Changes {
     }
 }
 
-/// Where `bdi listen` takes its socket.
+/// Where `bdi watch` takes its socket.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
-pub struct Listener {
-    /// The socket to listen on, rather than the one under the directory this
+pub struct Watcher {
+    /// The socket to watch, rather than the one under the directory this
     /// login session owns. A path of its own, apart from `[changes]`, so a
-    /// view never holds the listener's socket. Checked as `[changes]`'s is.
+    /// view never holds the watcher's socket. Checked as `[changes]`'s is.
     pub socket: Option<PathBuf>,
 }
 
@@ -766,7 +766,7 @@ impl Config {
             anomalies: Anomalies::default(),
             join: Join::default(),
             changes: Changes::default(),
-            listener: Listener::default(),
+            watcher: Watcher::default(),
             tui: Tui::default(),
             theme: Theme::default(),
             row: Layout::default(),
@@ -1171,8 +1171,8 @@ pane_key = "herdr_pane"
 socket = "/var/folders/T/beady-eye/changes.sock"
 covered_for_seconds = 90
 
-[listener]
-socket = "/var/folders/T/beady-eye/listener.sock"
+[watcher]
+socket = "/var/folders/T/beady-eye/watcher.sock"
 
 [tui]
 refresh_seconds = 5
@@ -1302,8 +1302,8 @@ path = "/home/user/dev/cinder"
         );
         assert_eq!(cfg.changes.covered_for_seconds, 90);
         assert_eq!(
-            cfg.listener.socket,
-            Some(PathBuf::from("/var/folders/T/beady-eye/listener.sock"))
+            cfg.watcher.socket,
+            Some(PathBuf::from("/var/folders/T/beady-eye/watcher.sock"))
         );
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
@@ -1652,7 +1652,7 @@ path = "/home/user/dev/kadath"
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
         assert_eq!(cfg.changes.socket, None);
-        assert_eq!(cfg.listener.socket, None);
+        assert_eq!(cfg.watcher.socket, None);
         assert_eq!(cfg.changes.covered_for_seconds, 60);
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);

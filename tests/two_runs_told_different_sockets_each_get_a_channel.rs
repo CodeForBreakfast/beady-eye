@@ -16,7 +16,7 @@
 //! **The second run's config names the socket the first run is already on.**
 //! That is what makes its answer proof rather than coincidence: a run that
 //! read its config here would find the path held by a live `bdi`, be refused,
-//! and listen nowhere. Being answered on the path its command line named is
+//! and watch nowhere. Being answered on the path its command line named is
 //! the only way that run has a channel at all.
 //!
 //! Neither run has a runtime directory, because [`terminal::bdi_on`] takes
@@ -37,11 +37,11 @@ const COLS: u16 = 120;
 
 /// The project both runs read, drawn once the config has been read — which
 /// is after the socket has been asked for, so a run that has drawn it has
-/// settled where it listens.
+/// settled where it watches.
 const ARKHAM: &[u8] = "arkham".as_bytes();
 
-/// A `HOME` whose config names one project and the socket to listen on.
-fn a_home_listening_on(named: &str, socket: &Path) -> PathBuf {
+/// A `HOME` whose config names one project and the socket to watch.
+fn a_home_watching(named: &str, socket: &Path) -> PathBuf {
     a_home_naming_one_project_settled(
         named,
         &format!("\n[changes]\nsocket = \"{}\"\n", socket.display()),
@@ -59,7 +59,7 @@ fn two_runs_told_different_sockets_each_get_a_channel() {
         std::process::id()
     ));
 
-    let home = a_home_listening_on("told-sockets", &named_by_the_config);
+    let home = a_home_watching("told-sockets", &named_by_the_config);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
     let environment = tracker.environment();
@@ -87,7 +87,7 @@ fn two_runs_told_different_sockets_each_get_a_channel() {
     assert_eq!(
         (answers.0.as_str(), answers.1.as_str()),
         ("ok arkham", "ok arkham"),
-        "a producer reaches each run where that run was told to listen: the \
+        "a producer reaches each run where that run was told to watch: the \
          first on the path its config named, the second on the path its \
          command line named over the same config. Neither has a runtime \
          directory to derive one from, so a told path is the whole of what \

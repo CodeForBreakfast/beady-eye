@@ -2,7 +2,7 @@
 //!
 //! It polls, waits out the window, reads one thing at a time and takes
 //! producers' lines exactly as a view's loop does, by driving the same three
-//! types. What a read finds goes to the listener rather than to a screen.
+//! types. What a read finds goes to the watcher rather than to a screen.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -12,12 +12,12 @@ use chrono::{DateTime, Utc};
 use crate::collect::changes::Heard;
 use crate::model::snapshot::Snapshot;
 
-use super::listener::{Answer, ChangeSource, Said};
+use super::watcher::{Answer, ChangeSource, Said};
 use super::{Asked, Outstanding, Reading, Wanted};
 
 /// One read of what `Wanted` names, as of the instant handed in: the
 /// collection drawn from it, and what each project standing says to the
-/// listener.
+/// watcher.
 pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> (Snapshot, Vec<Answer>) + Send>;
 
 /// A change source that reads every configured project's tracker, once at
@@ -135,7 +135,7 @@ mod tests {
 
     use super::*;
     use crate::app::fixtures::{dunwich, two_projects};
-    use crate::app::listener::Held;
+    use crate::app::watcher::Held;
     use crate::app::{Armed, Collection};
     use crate::collect::agents::testing::Fake as Provider;
     use crate::collect::changes::Reported;
@@ -143,7 +143,7 @@ mod tests {
     use crate::model::snapshot::Filter;
 
     /// Every project `trackers` holds, read through a collection as
-    /// `bdi listen` reads them, with no window and nothing polling.
+    /// `bdi watch` reads them, with no window and nothing polling.
     fn reading(trackers: Arc<Fakes>) -> (ReadingTrackers, Sender<Heard>) {
         polling_every(None, trackers)
     }
@@ -268,15 +268,15 @@ mod tests {
         assert_eq!(source.next(), None);
     }
 
-    /// The hold over the source, as `bdi listen` keeps it, after the
+    /// The hold over the source, as `bdi watch` keeps it, after the
     /// source's first two answers.
     #[test]
     fn what_a_source_reads_is_held() {
         let (mut source, tell) = reading(trackers());
-        let hold = Mutex::new(crate::app::listener::Hold::default());
+        let hold = Mutex::new(crate::app::watcher::Hold::default());
         drop(tell);
 
-        crate::app::listener::hold(&mut source, &hold);
+        crate::app::watcher::hold(&mut source, &hold);
 
         let held = hold.lock().unwrap();
         let dunwich = held.of("dunwich").expect("dunwich is held");

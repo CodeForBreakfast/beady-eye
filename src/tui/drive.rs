@@ -896,7 +896,7 @@ mod tests {
         /// the loop by what it does rather than for a window of wall clock.
         /// The loop asks the band to read its pane once a pass whether or not
         /// one is due, so this is where the view sees a pass go by. A pass
-        /// after the test has stopped listening has nobody left to tell,
+        /// after the test has stopped watching has nobody left to tell,
         /// which is not a failure.
         ///
         /// The instant and not a bare tick, because a test can want a pass at
@@ -3614,7 +3614,7 @@ mod tests {
             Event::Key(key(KeyCode::Char('j'))),
             Event::Key(key(KeyCode::Char('q'))),
         ] {
-            to_the_loop.send(event).expect("the loop is listening");
+            to_the_loop.send(event).expect("the loop is watching");
         }
 
         // The outstanding collection holds the channel open, so `q` reaching

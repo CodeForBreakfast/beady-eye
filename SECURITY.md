@@ -49,7 +49,7 @@ rather than put on a command line, so it stays out of `ps`. Anywhere it reaches 
 process argument, an environment a child did not need, the screen, or `--json` is
 worth a report.
 
-**It listens on a socket.** `$XDG_RUNTIME_DIR/beady-eye/changes.sock` is created
+**It takes connections on a socket.** `$XDG_RUNTIME_DIR/beady-eye/changes.sock` is created
 mode `0600` under the user's own runtime directory, and its whole protocol is one
 project name per line. Anything that lets a line do more than schedule a read of
 a project the config already names belongs here.

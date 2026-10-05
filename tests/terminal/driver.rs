@@ -111,7 +111,7 @@ impl Driven {
     }
 
     /// The same, on a command line of the test's own — `--socket`, say, for a
-    /// test whose subject is where this run listens.
+    /// test whose subject is where this run watches.
     pub fn bdi_with_arguments(
         rows: u16,
         cols: u16,

@@ -42,16 +42,16 @@ pub type Collecting = Box<dyn FnMut(Asked) -> Option<Snapshot> + Send>;
 pub type PassingOn = Box<dyn Fn(&Heard) + Send>;
 
 /// What a view hears from outside it: what writers say on its inbound
-/// channel, and what the listener it reads through says.
+/// channel, and what the watcher it reads through says.
 pub struct Hearing {
     /// Where the inbound channel is opened, or nothing where it has nowhere
     /// to go.
-    pub listening_on: Option<PathBuf>,
-    /// Each project the listener has answered for, or can no longer answer
+    pub watching_at: Option<PathBuf>,
+    /// Each project the watcher has answered for, or can no longer answer
     /// for.
-    pub from_the_listener: Receiver<Heard>,
+    pub from_the_watcher: Receiver<Heard>,
     /// Where each thing a writer says on the inbound channel is passed on
-    /// to, since what the listener holds is what the view reads.
+    /// to, since what the watcher holds is what the view reads.
     pub passing_on: PassingOn,
 }
 

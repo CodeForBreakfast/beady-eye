@@ -665,7 +665,7 @@ mod tests {
 
         says(
             &drawn[0],
-            "another bdi is already listening for changes · every project is polled instead",
+            "another bdi is already watching for changes · every project is polled instead",
         );
     }
 

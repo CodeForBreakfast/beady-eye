@@ -32,7 +32,7 @@ const ARKHAM: &[u8] = "arkham".as_bytes();
 /// the project lapses again, and short enough to wait out.
 const COVERED_FOR_SECONDS: u64 = 3;
 
-/// A `HOME` whose one project does not poll, listening on `socket`.
+/// A `HOME` whose one project does not poll, watching `socket`.
 fn a_home_that_does_not_poll(socket: &Path) -> PathBuf {
     a_home_naming_one_project_settled(
         "lapses",

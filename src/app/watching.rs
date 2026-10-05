@@ -1,4 +1,4 @@
-//! What a consumer watches on the listener's socket, and the lines that tell
+//! What a consumer watches on the watcher's socket, and the lines that tell
 //! it what it watches.
 //!
 //! Every line sent about a watch is one JSON object whose `line` says which
@@ -10,16 +10,16 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 
-use crate::collect::listened::PROTOCOL;
+use crate::collect::watched::PROTOCOL;
 use crate::config::Reach;
 use crate::model::snapshot::{TrackerFailure, TrackerState};
 
-use super::listener::Held;
+use super::watcher::Held;
 
-/// What one line asks the listener to send.
+/// What one line asks the watcher to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Watch {
-    /// `watch`: every project the listener reads.
+    /// `watch`: every project the watcher reads.
     Everything,
     /// `watch <project>`, or `watch-all <project>`, which starts from the
     /// closed beads too.
@@ -32,7 +32,7 @@ pub enum Watch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Refusal {
-    /// A project the listener does not read.
+    /// A project the watcher does not read.
     UnknownProject,
     /// A `watch` or `watch-all` in none of the four forms.
     Malformed,
@@ -233,7 +233,7 @@ pub enum Events {
 }
 
 /// How current `project`'s beads are: as of `as_of`, and whether the last
-/// attempt to reach its tracker failed, which the listener reaches as
+/// attempt to reach its tracker failed, which the watcher reaches as
 /// `reach` says, and whether its event records are sent. It carries the
 /// protocol every line about a watch is written in.
 pub fn freshness_line(
@@ -271,7 +271,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::app::listener::BeadReadiness;
+    use crate::app::watcher::BeadReadiness;
 
     fn a_bead(id: &str, status: &str) -> (String, Held) {
         let row = json!({ "id": id, "status": status });
@@ -615,7 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn freshness_says_how_the_listener_reaches_the_tracker() {
+    fn freshness_says_how_the_watcher_reaches_the_tracker() {
         let reach = Reach {
             path: "/srv/work/dunwich".into(),
             environment_command: Some(vec![

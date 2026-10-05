@@ -29,10 +29,10 @@ use crate::model::snapshot::{
 use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
-use super::listener::{self, Answer, BeadReadiness, Held};
 use super::tracker::{
     open_failure, refresh_project, tracker_failure, ProjectWork, ReadAt, Refresh, RootUnread,
 };
+use super::watcher::{self, Answer, BeadReadiness, Held};
 
 /// What one project's tracker last said, and when it said it.
 ///
@@ -186,7 +186,7 @@ struct Journalled {
     /// once bd has pruned the start, because bd offers no cheaper way to ask
     /// where it ends. A head read from bd would lift it.
     seq: Option<u64>,
-    said: Option<listener::Journal>,
+    said: Option<watcher::Journal>,
 }
 
 impl Journalled {
@@ -205,7 +205,7 @@ impl Journalled {
                     if let FailureKind::Pruned(retained) = kind {
                         self.seq = Some(retained.floor.saturating_sub(1));
                     }
-                    self.said = Some(listener::Journal::Unreadable(tracker_failure(&failure)));
+                    self.said = Some(watcher::Journal::Unreadable(tracker_failure(&failure)));
                     return;
                 }
             },
@@ -216,13 +216,13 @@ impl Journalled {
             .or(self.seq)
             .or(Some(0));
         let mut sent = match self.said.take() {
-            Some(listener::Journal::Read(sent)) => sent,
+            Some(watcher::Journal::Read(sent)) => sent,
             _ => Vec::new(),
         };
         if found_the_end {
             sent.extend(records);
         }
-        self.said = Some(listener::Journal::Read(sent));
+        self.said = Some(watcher::Journal::Read(sent));
     }
 }
 
@@ -273,7 +273,7 @@ impl Collection {
         }
     }
 
-    /// What every project standing says to a listener, each bead with the
+    /// What every project standing says to a watcher, each bead with the
     /// readiness `snapshot`, the collection just drawn from these reads, gives
     /// it.
     ///
@@ -290,7 +290,7 @@ impl Collection {
             .map(|(project, read)| Answer {
                 project: project.clone(),
                 said: match &read.work {
-                    Ok(work) => listener::Said::Read {
+                    Ok(work) => watcher::Said::Read {
                         at: read.at,
                         beads: work
                             .beads
@@ -323,7 +323,7 @@ impl Collection {
                             })
                             .collect(),
                     },
-                    Err(failure) => listener::Said::Unreachable(failure.clone()),
+                    Err(failure) => watcher::Said::Unreachable(failure.clone()),
                 },
                 journal: self
                     .journals
@@ -791,7 +791,7 @@ fn unlistable(kind: FailureKind) -> ProviderState {
 /// result, dated to the oldest of the reads it was drawn from.
 ///
 /// A tracker read now is read as of `now`, so the date is the instant the
-/// run asked. One answered from a listener's read is as old as that read,
+/// run asked. One answered from a watcher's read is as old as that read,
 /// and the date is what tells a consumer so.
 pub fn run(
     cfg: &Config,
@@ -815,7 +815,7 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::app::fixtures::*;
-    use crate::app::listener::Journal;
+    use crate::app::watcher::Journal;
     use crate::collect::agents::testing::{
         in_session, named, pane, titled, Asked as AskedOfTheProvider, Fake as Provider, THE_FAKE,
     };
@@ -2985,16 +2985,16 @@ prefix = "kad"
         );
     }
 
-    // ---- what a listener is told ----------------------------------------
+    // ---- what a watcher is told ----------------------------------------
 
-    /// The one bead of a project's answer to a listener named `id`.
-    fn held<'a>(answers: &'a [Answer], project: &str, id: &str) -> &'a listener::Held {
+    /// The one bead of a project's answer to a watcher named `id`.
+    fn held<'a>(answers: &'a [Answer], project: &str, id: &str) -> &'a watcher::Held {
         let answer = answers
             .iter()
             .find(|answer| answer.project == project)
             .unwrap_or_else(|| panic!("{project} is answered for"));
         match &answer.said {
-            listener::Said::Read { beads, .. } => beads
+            watcher::Said::Read { beads, .. } => beads
                 .get(id)
                 .unwrap_or_else(|| panic!("{id} is among {project}'s beads")),
             said => panic!("{project} was read, and the answer says {said:?}"),
@@ -3021,7 +3021,7 @@ prefix = "kad"
     }
 
     #[test]
-    fn a_listener_is_told_each_beads_readiness_as_the_listing_gives_it() {
+    fn a_watcher_is_told_each_beads_readiness_as_the_listing_gives_it() {
         let (mut collection, snapshot) = both_read_with_ferry_waiting();
 
         let answers = collection.answers(&snapshot);
@@ -3037,7 +3037,7 @@ prefix = "kad"
     }
 
     #[test]
-    fn a_listener_is_told_each_beads_readiness_as_bd_gives_it_too() {
+    fn a_watcher_is_told_each_beads_readiness_as_bd_gives_it_too() {
         let (mut collection, snapshot) = both_read_with_ferry_waiting();
 
         let answers = collection.answers(&snapshot);
@@ -3056,7 +3056,7 @@ prefix = "kad"
 
     /// A bead no tree reaches is still a bead the tracker holds.
     #[test]
-    fn a_listener_is_told_every_bead_whether_a_tree_reaches_it_or_not() {
+    fn a_watcher_is_told_every_bead_whether_a_tree_reaches_it_or_not() {
         let trackers = dunwich_with(dunwich_holding(
             r#"[{"id":"dun-1","title":"retire the old mast","status":"closed",
                  "priority":3,"issue_type":"task"}]"#,
@@ -3078,7 +3078,7 @@ prefix = "kad"
     }
 
     #[test]
-    fn a_listener_is_told_a_tracker_could_not_be_read_and_when_one_was() {
+    fn a_watcher_is_told_a_tracker_could_not_be_read_and_when_one_was() {
         let mut collection = Collection::default();
         let snapshot = collection.collect(
             &two_projects(),
@@ -3094,14 +3094,14 @@ prefix = "kad"
         let said: Vec<(&str, bool)> = answers
             .iter()
             .map(|answer| {
-                let read = matches!(answer.said, listener::Said::Read { at, .. } if at == now());
+                let read = matches!(answer.said, watcher::Said::Read { at, .. } if at == now());
                 (answer.project.as_str(), read)
             })
             .collect();
         assert_eq!(said, [("dunwich", false), ("ferry", true)]);
         assert!(matches!(
             answers[0].said,
-            listener::Said::Unreachable(TrackerFailure::Auth)
+            watcher::Said::Unreachable(TrackerFailure::Auth)
         ));
     }
 
