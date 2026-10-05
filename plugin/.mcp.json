@@ -2,7 +2,7 @@
   "mcpServers": {
     "beady-eye": {
       "command": "npx",
-      "args": ["-y", "@codeforbreakfast/beady-eye-mcp@0.1.0"],
+      "args": ["-y", "@codeforbreakfast/beady-eye-mcp@0.2.0"],
       "env": {
         "npm_config_min_release_age": "${user_config.NPM_MIN_RELEASE_AGE}"
       }
