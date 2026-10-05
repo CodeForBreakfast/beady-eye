@@ -383,7 +383,7 @@ mod tests {
         assert!(HiddenTree::of(&claimed).findings);
     }
 
-    /// `fleet-launch` makes a pane and boots for some time before the agent
+    /// A launcher makes a pane and boots for some time before the agent
     /// in it writes `agent_pane`, and a bead whose agent never writes the key
     /// stays that way for good. The claim is the only sign of the work, and a
     /// filter that hides the project loses every trace of it.
