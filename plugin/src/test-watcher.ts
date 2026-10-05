@@ -36,7 +36,9 @@ export interface Connection {
 export const aWatcherAt = async (at: string) => {
   const arrived: Connection[] = []
   const waiting: ((connection: Connection) => void)[] = []
+  const held: Socket[] = []
   const server: Server = createServer((connection) => {
+    held.push(connection)
     connection.setEncoding('utf8')
     connection.once('data', (asked) => {
       const accepted = { connection, asked: String(asked) }
@@ -49,6 +51,11 @@ export const aWatcherAt = async (at: string) => {
   cleanUp.push(() => server.close())
   return {
     server,
+    /** Stop listening, and close every connection the watcher holds. */
+    stop: () => {
+      server.close()
+      for (const connection of held) connection.destroy()
+    },
     next: () =>
       new Promise<Connection>((resolve) => {
         const accepted = arrived.shift()

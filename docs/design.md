@@ -2376,8 +2376,6 @@ consumer has.
 
 ## Waking a Claude Code session when a bead changes
 
-Most of this section is not built yet. It is the design the build works to.
-
 An agent that has asked a question on a bead, or is waiting on someone else's
 bead, has no way to learn that the bead changed short of asking again. The
 watcher already knows, and an agent session cannot hold a connection to it
