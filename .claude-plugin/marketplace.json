@@ -1,0 +1,14 @@
+{
+	"name": "beady-eye",
+	"owner": {
+		"name": "Code For Breakfast",
+		"email": "info@codeforbreakfast.co"
+	},
+	"plugins": [
+		{
+			"name": "beady-eye",
+			"source": "./plugin",
+			"description": "Wakes a Claude Code session when a bead it watches changes."
+		}
+	]
+}
