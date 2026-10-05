@@ -300,8 +300,25 @@ fn locked(hold: &Mutex<Hold>) -> MutexGuard<'_, Hold> {
 pub fn hold(source: &mut dyn ChangeSource, into: &Mutex<Hold>) {
     while let Some(answer) = source.next() {
         locked(into).take(answer);
+        give_back_freed_memory();
     }
 }
+
+/// Return the memory the last read and the last consumers' lines freed.
+///
+/// glibc keeps freed memory for reuse rather than returning it, and a read
+/// and a consumer's catch-up each free tens of megabytes among rows the
+/// watcher holds for good. Without this the resident set ratchets up with
+/// every consumer served, to several times what the watcher holds.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn give_back_freed_memory() {
+    // SAFETY: `malloc_trim` takes no pointer and only releases memory that
+    // nothing holds.
+    unsafe { libc::malloc_trim(0) };
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn give_back_freed_memory() {}
 
 /// How many answers a connection may fall behind by before it is hung up
 /// on. A consumer that reconnects is sent the beads as they then stand, so
