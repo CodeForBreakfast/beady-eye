@@ -2374,6 +2374,154 @@ the watcher answered, that read is the freshness line's `as_of`. So
 `generated_at` says how old the answer is, which is the only bound a one-shot
 consumer has.
 
+## Waking a Claude Code session when a bead changes
+
+Nothing in this section is built yet. It is the design the build works to.
+
+An agent that has asked a question on a bead, or is waiting on someone else's
+bead, has no way to learn that the bead changed short of asking again. The
+watcher already knows, and an agent session cannot hold a connection to it
+open between turns. So the beady-eye plugin holds the connection for it: a
+Claude Code plugin, shipped from this repository, that watches the beads a
+session names and puts each change into the session as a message, which wakes
+the session if it is idle.
+
+**The plugin is a consumer like any other.** It connects to the watcher on its
+own machine and sends the lines *Watching* describes. `bdi` knows nothing of
+it, and everything Claude Code needs lives in the plugin. It relays nothing
+through chat, which would need a topic per bead.
+
+### What it is made of
+
+**The plugin's server is TypeScript speaking MCP.** It is built with Bun into
+one file, published to npm, and started by the plugin's `.mcp.json` with `npx` at the plugin's exact version, so a user needs
+Node and nothing else. The repository's root carries the
+`.claude-plugin/marketplace.json` that makes it a marketplace, so the plugin
+installs as `beady-eye@beady-eye`.
+
+**A change arrives as a channel message.** The server declares Claude Code's
+`claude/channel` capability and sends `notifications/claude/channel`, which the
+session sees as a `<channel source="beady-eye" …>` block. Claude Code delivers
+a plugin's channel messages only to a session started with that channel
+allowed. Without it the plugin's tools still answer and no change arrives, so
+starting sessions that way is the setup's business, as starting the watcher is.
+
+**One hook hands the server its session.** A `PreToolUse` hook adds the
+session's id and working directory to each call to the plugin's tools,
+because an MCP server is told neither.
+
+### Finding the watcher
+
+The plugin reads `[watcher]`'s `socket` from `~/.config/beady-eye/config.toml`,
+and where the config names none, takes `$XDG_RUNTIME_DIR/beady-eye/watcher.sock`
+as `bdi` does. Where neither gives a path, as on a Mac whose config names
+none, there is no watcher to reach, and the plugin says so as it says a
+watcher is down. It believes only a socket that is the user's own, by the same
+checks *A run of `bdi` believes only a socket that is the user's own* makes.
+
+### Watching a bead
+
+The plugin has three tools:
+
+- **`watch`** takes a bead's id and, optionally, its project. It answers with
+  the bead as it stands: its title, status and whether it is ready. Changes
+  after that arrive as messages.
+- **`unwatch`** takes the same, and stops them.
+- **`watching`** lists what the session watches, each bead's last known
+  status, and whether the watcher is answering.
+
+**A bead named without its project is found by asking the watcher.** The
+plugin opens one short connection, sends `watch <project> <id>` for each
+project the config names, and reads as far as each freshness line. The project
+that answers with a bead line holds it. Where none does, or more than one
+does, `watch` refuses and asks for the project. The key is still
+`(project, id)`, and the plugin never guesses a project from an id's prefix.
+
+**`watch` refuses a project the watcher does not read.** Waiting cannot mend
+an unknown project, so it is an error at once rather than a watch that never
+answers.
+
+**Each watched bead has a connection of its own.** The protocol has no line to
+stop a watch, so `unwatch` closes that bead's connection, and a connection
+lost is that bead's alone to restore.
+
+**A session's watches outlive its server.** Claude Code restarts an MCP server
+under a live session, and a session can be resumed later. So the plugin keeps
+each session's watches in a file of its own under
+`$XDG_STATE_HOME/beady-eye/watches/`, named for the session's id, and
+watches them again when it next learns that id.
+A watch ends when the session unwatches the bead, and not when the bead
+closes, because a closed bead can reopen.
+
+### What wakes the session
+
+**A session wakes for what a waiting agent acts on, and for nothing else.**
+That is a bead's status changing, with its `close_reason` when it closes;
+`ready` turning true or false; a comment arriving; and the bead going from its
+tracker. Every other change to the row sends nothing. An agent writes to the
+bead it waits on, to keep the question on it current or to say where it can be
+found, and no line tells the plugin who wrote: a bead line carries no actor,
+and an event line carries one only where the project keeps a journal, and two
+writers to one tracker can sign as the same actor. So the kind of change is
+the only thing that can keep a session from waking on its own writes.
+
+**One message for each batch.** The watcher closes each batch of changes to a
+project with its freshness line. The plugin compares each watched bead with
+what it last told the session, and once the freshness line arrives sends one
+message for each bead with something to say. `bd human respond` adds a comment
+and closes the bead in one write, and the session wakes once for both.
+
+**The message names what changed.** It gives the bead's id and title, and the
+old and new value of each thing that woke it. Where the project keeps bd's
+events journal, a comment comes with its author and text. Where it does not,
+the message says how many comments arrived, and the session reads them with
+`bd`. The channel block's attributes carry `project`, `id`, `status` and
+`ready`, so a closed bead shows as one without reading further.
+
+**What a session is told is kept, so a reconnect is not news.** The beads the
+watcher sends when the plugin connects again are compared with what the
+session was last told, as any batch is. A restart of the watcher with nothing
+changed sends nothing, and a bead that closed while the plugin was away
+arrives once, as a close.
+
+### When the watcher is not answering
+
+**A session waiting on a bead is told when it can no longer be told,** because
+it has no other way to find out and would otherwise wait for ever. A watcher
+refused, closed or wedged is down, as *A quiet watcher, and one that has gone*
+says. The plugin connects again with a growing pause and says nothing for the
+first minute, because the watcher restarts on each upgrade and each edit to
+its config. Past that minute it sends one message naming the beads it cannot
+watch, and saying that the watches are kept and the session will be told when
+the watcher is back. When it is back, one message says so, with any watched
+bead that changed meanwhile. bd's event records from the gap are not replayed,
+so a comment made while the watcher was down arrives as a count and not as
+text, and the message says so.
+
+**A protocol the plugin does not know is said at once.** Connecting again
+cannot mend it. The message says the plugin and the watcher need releases that
+speak the same protocol.
+
+**A tracker the watcher cannot reach is told the same way.** A watched bead's
+project whose freshness line has said `unreachable` for a minute sends one
+message, and its first `ok` after that sends another.
+
+**Watching while the watcher is down is accepted.** `watch` records the bead
+and answers that the watcher is down, and the bead is watched from when it
+comes back.
+
+### Releasing the plugin
+
+**The plugin has a version and releases of its own.** Its version is written
+in its `plugin.json`, its npm package and the pin in its `.mcp.json`, and
+`nix flake check` holds those together as it holds `bdi`'s four. Its notes go
+under `RELEASE-NOTES/plugin/`, and the `Release` workflow cuts a
+`plugin-v<version>` tag, publishes to npm and announces the release, marked so
+it does not displace `bdi`'s as the latest. A user pins the marketplace to a
+plugin tag. A plugin and a watcher from different releases meet anyway, since
+the watcher is long-lived and installed apart from the plugin, and the
+freshness line's `protocol` is what keeps them honest.
+
 ## The JSON contract
 
 `bdi --json` emits the model, one whole collection.
