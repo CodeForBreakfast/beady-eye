@@ -155,16 +155,14 @@ export const watchBead = (
 	hearing: Hearing,
 	timing: Timing = WATCHER_TIMING,
 ): { stop(): void } => {
-	let stopped = false;
 	let failures = 0;
 	let closeConnection = () => {};
 	let again: ReturnType<typeof setTimeout> | undefined;
 
 	const down = (why: Down) => {
-		if (stopped) return;
 		failures += 1;
-		hearing.down(why);
 		again = setTimeout(connect, pauseAfter(failures, timing));
+		hearing.down(why);
 	};
 
 	const connect = () => {
@@ -178,15 +176,18 @@ export const watchBead = (
 		let pending = "";
 		let batch: Said[] = [];
 
-		const end = (why: Down) => {
-			if (over) return;
+		const close = () => {
 			over = true;
 			clearTimeout(wedged);
 			connection.destroy();
+		};
+		const end = (why: Down) => {
+			if (over) return;
+			close();
 			down(why);
 		};
 		const wedged = setTimeout(() => end("wedged"), timing.wedgedAfter);
-		closeConnection = () => connection.destroy();
+		closeConnection = close;
 
 		const take = (line: string) => {
 			wedged.refresh();
@@ -227,7 +228,6 @@ export const watchBead = (
 	connect();
 	return {
 		stop: () => {
-			stopped = true;
 			clearTimeout(again);
 			closeConnection();
 		},

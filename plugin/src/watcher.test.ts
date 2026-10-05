@@ -371,3 +371,58 @@ test("a watch that stops closes its connection and is not tried again", async ()
 
 	expect(session.heard).toEqual([]);
 });
+
+test("a watch stopped as it hears its watcher is down is not tried again", async () => {
+	const at = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(at);
+	let connections = 0;
+	watcher.server.on("connection", () => {
+		connections += 1;
+	});
+	const told: Down[] = [];
+	const watch = watchBead(
+		bead,
+		() => at,
+		{
+			heard: () => {},
+			down: (why) => {
+				told.push(why);
+				watch.stop();
+			},
+		},
+		timing,
+	);
+	cleanUp.push(watch.stop);
+
+	(await watcher.next()).connection.end();
+	await pause(timing.longestPause * 3);
+
+	expect(told).toEqual(["closed"]);
+	expect(connections).toBe(1);
+});
+
+test("a watch stopped as it hears a batch is told nothing more", async () => {
+	const at = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(at);
+	const heard: (readonly Said[] | Down)[] = [];
+	const watch = watchBead(
+		bead,
+		() => at,
+		{
+			heard: (batch) => {
+				heard.push(batch);
+				watch.stop();
+			},
+			down: (why) => heard.push(why),
+		},
+		timing,
+	);
+	cleanUp.push(watch.stop);
+
+	(await watcher.next()).connection.write(
+		said(beadLine, freshness, beadLine, freshness),
+	);
+	await pause(timing.longestPause * 3);
+
+	expect(heard).toEqual([[beadLine, freshness]]);
+});
