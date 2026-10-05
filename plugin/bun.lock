@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "beady-eye-plugin",
+      "name": "@codeforbreakfast/beady-eye-mcp",
       "devDependencies": {
         "@modelcontextprotocol/sdk": "1.32.0",
         "bun-types": "1.4.2",
