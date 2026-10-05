@@ -1,8 +1,8 @@
 # rust
 /target/
 # Every run cargo-mutants leaves behind, whatever it is called. It rotates
-# mutants.out to mutants.out.old itself, and a seat keeping a third run
-# names it by hand — so the glob is what makes the next invented name safe.
+# mutants.out to mutants.out.old itself, and a third run kept under a name
+# chosen by hand — so the glob is what makes the next invented name safe.
 /mutants.out*/
 
 # herdr: the released bdi herdr/fetch.sh installs.
@@ -17,15 +17,14 @@ result
 result-*
 .direnv/
 
-# beads: the maintainers' tracker is not part of this repository. Contributors
-# file GitHub issues instead; see CLAUDE.md. This entry is tracked rather than
-# left to .git/info/exclude so it travels with the clone — `cargo publish`
-# uploads the git-tracked tree from a maintainer's machine, and that is exactly
+# beads: a local tracker's workspace is not part of this repository. This entry
+# is tracked rather than left to .git/info/exclude so it travels with the
+# clone — `cargo publish` uploads the git-tracked tree, and that is exactly
 # the machine with a populated .beads/.
 /.beads/
 
-# Maintainer-local: credentials, the tracker-aware shell selection, and the
-# notes that go with them. Never leave the machine.
+# Machine-local: credentials, the dev shell selection, and the notes that go
+# with them. Never leave the machine.
 .env.local
 .envrc.local
 CLAUDE.local.md
@@ -38,7 +37,7 @@ CLAUDE.local.md
 # bd 1.3.0 leaves this behind after a read.
 /.beads.gate.lock
 
-# A seat's worktree is a checkout of this repository, not a source file.
+# A linked worktree is a checkout of this repository, not a source file.
 .claude/worktrees/
 
 # python: the frame tooling under tools/capture/ is run rather than imported,

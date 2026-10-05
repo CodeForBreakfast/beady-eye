@@ -103,7 +103,7 @@ read-ci-verdict "$(git rev-parse HEAD)"    # until it answers
 
 ## 6. Merge
 
-Delivery is `CLAUDE.local.md`'s, with no branch of our own to push.
+There is no branch of our own to push.
 
 ```bash
 gh api repos/CodeForBreakfast/beady-eye/compare/main...<head sha> --jq .behind_by
