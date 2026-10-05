@@ -46,6 +46,12 @@ belongs.
 before you push: it runs the check, and refuses a dirty tree rather than check a
 source nix cannot see all of.
 
+`plugin/` is the Claude Code plugin's TypeScript workspace, and the dev shell
+gives `bun`, `biome` and `tsc` for it. `nix flake check` runs its typecheck,
+lint and tests. After changing `plugin/bun.lock`, the fixed-output hash of
+`pluginModules` in `flake.nix` changes too: set it to `pkgs.lib.fakeHash` and
+copy the hash the failed build reports.
+
 Once it is pushed, `read-ci-verdict [<commit>]` says whether CI passed for it,
 and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
 

@@ -3390,6 +3390,41 @@ and a second line"
         # Everything needed to build, test and lint the crate. The tracker
         # client is not here — that is a maintainer's tool, not a
         # contributor's.
+        # The Claude Code plugin's TypeScript workspace. Bun, TypeScript and
+        # Biome come from nixpkgs, at the versions commy pins, because their npm
+        # packages carry a binary per platform and a fixed-output hash cannot
+        # be one value on all four systems. What bun installs is only the
+        # plugin's pure JavaScript, so the one hash holds everywhere.
+        pluginSource = sourceOf [ ./plugin ];
+
+        pluginModules = pkgs.stdenvNoCC.mkDerivation {
+          name = "beady-eye-plugin-modules";
+          src = sourceOf [ ./plugin/package.json ./plugin/bun.lock ];
+          nativeBuildInputs = [ pkgs.bun ];
+          buildPhase = ''
+            export HOME=$TMPDIR
+            cd plugin
+            bun install --frozen-lockfile --no-progress
+          '';
+          installPhase = "cp -r node_modules $out";
+          dontFixup = true;
+          outputHashMode = "recursive";
+          outputHashAlgo = "sha256";
+          outputHash = "sha256-TpE45RtzqgswUpxaylKCkjsC/49OebTorIKskqZGywo=";
+        };
+
+        pluginTools = [ pkgs.bun pkgs.biome pkgs.typescript ];
+
+        pluginCheck = name: tools: command:
+          pkgs.runCommand "beady-eye-plugin-${name}" { nativeBuildInputs = tools; } ''
+            cp -r ${pluginSource}/plugin work
+            chmod -R u+w work
+            cd work
+            ln -s ${pluginModules} node_modules
+            ${command}
+            touch $out
+          '';
+
         rustTools = [
           pkgs.git
           pkgs.cargo
@@ -3447,7 +3482,7 @@ and a second line"
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = rustTools;
+          buildInputs = rustTools ++ pluginTools;
 
           shellHook = ''
             # The banner is diagnostic, so it goes where nix puts its own
@@ -3464,7 +3499,7 @@ and a second line"
         # entering this shell is opt-in. Select it locally with an untracked
         # `.envrc.local` containing `devshell=maintainer`.
         devShells.maintainer = pkgs.mkShell {
-          buildInputs = rustTools ++ [ beads.packages.${system}.bd ];
+          buildInputs = rustTools ++ pluginTools ++ [ beads.packages.${system}.bd ];
 
           shellHook = ''
             # Neither the tracker's coordinates nor its password are checked
@@ -3532,6 +3567,9 @@ and a second line"
           palette = checkOf "palette" null [ coloursComeFromThePalette ]
             "colours-come-from-the-palette";
           palette-test = coloursComeFromThePaletteTest;
+          plugin-lint = pluginCheck "lint" pluginTools "biome check .";
+          plugin-test = pluginCheck "test" pluginTools "bun test";
+          plugin-typecheck = pluginCheck "typecheck" pluginTools "tsc --noEmit -p .";
 
           # A source of its own for the same reason readme-pin has one.
           plugin-version = pkgs.runCommand "plugin-version"
