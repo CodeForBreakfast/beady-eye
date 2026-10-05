@@ -50,3 +50,12 @@ two.
 
 Dependency bumps and internal improvements.
 ```
+
+## The Claude Code plugin
+
+The plugin releases on a version of its own, the one
+`plugin/.claude-plugin/plugin.json` declares, so its notes go in
+`RELEASE-NOTES/plugin/<version>.md` and its release is tagged
+`plugin-v<version>`. The audience is somebody running the plugin in Claude
+Code. The style and the template above hold, with `beady-eye plugin <version>`
+as the first line.

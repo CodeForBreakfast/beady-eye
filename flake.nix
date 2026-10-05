@@ -2128,6 +2128,109 @@ $pinned"
           touch $out
         '';
 
+        # The Claude Code plugin releases on a version of its own, which its
+        # plugin.json declares. Its npm package carries it too, and its
+        # .mcp.json starts the server at it, so a bump that forgets either
+        # installs one release's plugin over another release's server. The
+        # README's install line pins a plugin tag wherever it carries one.
+        claudePluginVersionsAgree = pkgs.writeShellScriptBin "claude-plugin-versions-agree" ''
+          set -u
+
+          cd "''${1:-.}" || exit 1
+          jq=${pkgs.jq}/bin/jq
+
+          version="$($jq -r .version plugin/.claude-plugin/plugin.json)"
+          package="$($jq -r .name plugin/package.json)"
+
+          wrong=""
+          disagrees() { wrong="$wrong  $1"$'\n'; }
+
+          packaged="$($jq -r .version plugin/package.json)"
+          [ "$packaged" = "$version" ] ||
+            disagrees "plugin/package.json declares $packaged."
+
+          pinned="$($jq -r '.mcpServers[].args[]' plugin/.mcp.json |
+            sed -n "s|^$package@||p")"
+          [ "$pinned" = "$version" ] ||
+            disagrees "plugin/.mcp.json starts $package at ''${pinned:-no version}."
+
+          for tag in $(grep -oE 'CodeForBreakfast/beady-eye[@#]plugin-v[^[:space:]`"]+' README.md |
+            sed 's|.*plugin-v|plugin-v|' | sort -u); do
+            [ "$tag" = "plugin-v$version" ] ||
+              disagrees "README.md pins the marketplace to $tag."
+          done
+
+          if [ -n "$wrong" ]; then
+            echo "The Claude Code plugin's version is written somewhere it does not agree."
+            echo
+            echo "plugin/.claude-plugin/plugin.json declares $version."
+            printf '%s' "$wrong"
+            echo
+            echo "Each of those says $version, and a README pin says plugin-v$version."
+            exit 1
+          fi
+        '';
+
+        claudePluginVersionsAgreeTest = pkgs.runCommand "claude-plugin-versions-agree-test"
+          { nativeBuildInputs = [ claudePluginVersionsAgree ]; } ''
+          set -u
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree/plugin/.claude-plugin"
+
+          sites() {
+            printf '{ "name": "example", "version": "%s" }\n' "$1" \
+              > "$tree/plugin/.claude-plugin/plugin.json"
+            printf '{ "name": "@example/server", "version": "%s" }\n' "$2" \
+              > "$tree/plugin/package.json"
+            printf '{ "mcpServers": { "example": { "command": "npx", "args": ["-y", "%s"] } } }\n' "$3" \
+              > "$tree/plugin/.mcp.json"
+            printf '%s\n' "$4" > "$tree/README.md"
+          }
+
+          fail() { echo "FAIL: $1"; echo "$output"; exit 1; }
+
+          accepts() {
+            output="$( claude-plugin-versions-agree "$tree" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 0 ] || fail "$1"
+          }
+
+          refuses() {
+            output="$( claude-plugin-versions-agree "$tree" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status: $1"
+            case "$output" in
+              *"$2"*) ;;
+              *) fail "the refusal did not say where ($2): $1" ;;
+            esac
+          }
+
+          pin='$ claude plugin marketplace add CodeForBreakfast/beady-eye@plugin-v0.2.0'
+
+          sites 0.2.0 0.2.0 @example/server@0.2.0 "$pin"
+          accepts "it refused four sites that agree:"
+
+          # A README with no install line pins nothing to disagree with.
+          sites 0.2.0 0.2.0 @example/server@0.2.0 'no pin here'
+          accepts "it refused a README that pins no plugin tag:"
+
+          sites 0.2.0 0.1.0 @example/server@0.2.0 "$pin"
+          refuses "it accepted a package left on the previous version:" "plugin/package.json declares 0.1.0"
+
+          sites 0.2.0 0.2.0 @example/server@0.1.0 "$pin"
+          refuses "it accepted a server started at the previous version:" "starts @example/server at 0.1.0"
+
+          # The pin has to name the package itself, so a server started under
+          # another name is no pin at all.
+          sites 0.2.0 0.2.0 @example/other@0.2.0 "$pin"
+          refuses "it read another package's pin as the server's:" "at no version"
+
+          sites 0.2.0 0.2.0 @example/server@0.2.0 \
+            '$ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.1.0'
+          refuses "it accepted a README pinning the previous plugin tag:" "to plugin-v0.1.0"
+
+          touch $out
+        '';
+
         # The Release body is RELEASE-NOTES/<version>.md byte for byte, and
         # GitHub renders that body with its hard line break extension on — so a
         # newline inside a paragraph becomes a <br> and the published page
@@ -2145,7 +2248,7 @@ $pinned"
           cd "''${1:-.}" || exit 1
 
           files=""
-          for file in RELEASE-NOTES/[0-9]*.md; do
+          for file in RELEASE-NOTES/[0-9]*.md RELEASE-NOTES/plugin/[0-9]*.md; do
             [ -e "$file" ] && files="$files $file"
           done
 
@@ -2298,6 +2401,16 @@ One file per release, `RELEASE-NOTES/<version>.md`, where `<version>` is
 the `MAJOR.MINOR.PATCH` the release bumps to.
 EOF
           accepts "it read the wrapped README beside the notes files:"
+
+          # The Claude Code plugin's notes are a Release body as much as bdi's.
+          mkdir "$tree/RELEASE-NOTES/plugin"
+          cat > "$tree/RELEASE-NOTES/plugin/0.1.0.md" <<'EOF'
+beady-eye plugin 0.1.0
+
+**A session wakes when a bead it watches changes.** It needs the watcher
+running on the same machine.
+EOF
+          refuses "it accepted a wrapped plugin notes file:" "RELEASE-NOTES/plugin/0.1.0.md"
 
           touch $out
         '';
@@ -3542,6 +3655,19 @@ and a second line"
         checks = {
           await-ci-verdict-test = awaitCiVerdictTest;
           build-and-test = beady-eye;
+
+          # A source of its own for the same reason readme-pin has one.
+          claude-plugin-version = pkgs.runCommand "claude-plugin-version"
+            { nativeBuildInputs = [ claudePluginVersionsAgree ]; } ''
+            claude-plugin-versions-agree ${sourceOf [
+              ./plugin/.claude-plugin/plugin.json
+              ./plugin/package.json
+              ./plugin/.mcp.json
+              ./README.md
+            ]}
+            touch $out
+          '';
+          claude-plugin-version-test = claudePluginVersionsAgreeTest;
           check-before-push = checkBeforePushTest;
           clippy = checkOf "clippy" artifacts.dev [ pkgs.clippy ] "cargo clippy --all-targets -- -D warnings";
           conventional-subject-test = conventionalSubjectTest;

@@ -1,8 +1,20 @@
 {
-	"name": "beady-eye-plugin",
+	"name": "@codeforbreakfast/beady-eye-mcp",
 	"version": "0.1.0",
-	"private": true,
+	"description": "The MCP server the beady-eye Claude Code plugin starts.",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/CodeForBreakfast/beady-eye.git",
+		"directory": "plugin"
+	},
 	"type": "module",
+	"bin": {
+		"beady-eye-mcp": "dist/server.js"
+	},
+	"files": [
+		"dist/server.js"
+	],
 	"scripts": {
 		"build": "bun build src/main.ts --target node --outfile dist/server.js"
 	},
