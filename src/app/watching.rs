@@ -161,7 +161,8 @@ impl Interest {
         lines
     }
 
-    fn covers(&self, id: &str) -> bool {
+    /// Whether this watches bead `id`, and so is sent bd's records about it.
+    pub fn covers(&self, id: &str) -> bool {
         self.whole || self.named.contains(id)
     }
 
@@ -214,15 +215,33 @@ fn gone_line(project: &str, id: &str) -> String {
     json!({ "line": "gone", "project": project, "id": id }).to_string()
 }
 
+/// One of bd's event records, passed on as bd printed it.
+pub fn event_line(project: &str, record: &serde_json::Value) -> String {
+    json!({ "line": "event", "project": project, "event": record }).to_string()
+}
+
+/// Whether a consumer of a project is sent bd's event records.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Events {
+    /// The project's config does not claim a journal, so none is sent.
+    #[default]
+    Off,
+    Ok,
+    /// The last attempt to read the journal failed.
+    Unreadable(TrackerFailure),
+}
+
 /// How current `project`'s beads are: as of `as_of`, and whether the last
 /// attempt to reach its tracker failed, which the listener reaches as
-/// `reach` says. It carries the protocol every line about a watch is written
-/// in.
+/// `reach` says, and whether its event records are sent. It carries the
+/// protocol every line about a watch is written in.
 pub fn freshness_line(
     project: &str,
     reach: &Reach,
     as_of: Option<DateTime<Utc>>,
     unreachable: Option<&TrackerFailure>,
+    events: &Events,
 ) -> String {
     let tracker = unreachable.map_or(TrackerState::Ok, |failure| {
         TrackerState::Unreachable(failure.clone())
@@ -232,7 +251,7 @@ pub fn freshness_line(
         "project": project,
         "as_of": as_of,
         "tracker": tracker,
-        "events": "off",
+        "events": events,
         "protocol": PROTOCOL,
         "reach": reach,
     })
@@ -585,6 +604,7 @@ mod tests {
             &Reach::default(),
             None,
             Some(&TrackerFailure::Auth),
+            &Events::Off,
         ))
         .expect("JSON");
 
@@ -605,11 +625,38 @@ mod tests {
             ]),
         };
         let line: Value =
-            serde_json::from_str(&freshness_line("dunwich", &reach, None, None)).expect("JSON");
+            serde_json::from_str(&freshness_line("dunwich", &reach, None, None, &Events::Off))
+                .expect("JSON");
 
         assert_eq!(
             line,
             json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "events": "off", "protocol": 1, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
+        );
+    }
+
+    #[test]
+    fn freshness_says_whether_the_journal_is_read() {
+        let events = |events: Events| -> Value {
+            let line = freshness_line("dunwich", &Reach::default(), None, None, &events);
+            serde_json::from_str::<Value>(&line).expect("JSON")["events"].clone()
+        };
+
+        assert_eq!(events(Events::Off), json!("off"));
+        assert_eq!(events(Events::Ok), json!("ok"));
+        assert_eq!(
+            events(Events::Unreadable(TrackerFailure::Unavailable)),
+            json!({ "unreadable": { "reason": "unavailable" } })
+        );
+    }
+
+    #[test]
+    fn an_event_line_carries_bds_record_whole() {
+        let record = json!({ "seq": 412, "op": "comment", "issue_id": "dun-1", "comment": { "text": "Guard it in the parser." } });
+        let line: Value = serde_json::from_str(&event_line("dunwich", &record)).expect("JSON");
+
+        assert_eq!(
+            line,
+            json!({ "line": "event", "project": "dunwich", "event": record })
         );
     }
 }

@@ -402,7 +402,7 @@ impl Freshness {
 mod tests {
     use super::*;
     use crate::app::Wanted;
-    use crate::collect::run::FailureKind;
+    use crate::collect::run::{FailureKind, Retained};
     use crate::model::join::JoinSource;
     use crate::model::snapshot::TrackerFailure;
     use crate::model::types::testing::an_unreadable;
@@ -481,7 +481,8 @@ mod tests {
             FailureKind::InstalledUnstartable => Some(FailureKind::Parse),
             FailureKind::Parse => Some(FailureKind::Unsupported),
             FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
-            FailureKind::UnknownFlag => None,
+            FailureKind::UnknownFlag => Some(FailureKind::Pruned(Retained { floor: 1, head: 1 })),
+            FailureKind::Pruned(_) => None,
         })
     }
 

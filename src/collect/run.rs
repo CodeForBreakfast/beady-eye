@@ -54,6 +54,15 @@ pub enum FailureKind {
     /// and refused the whole of it before running: a bd older than the flag,
     /// or newer than it and without it.
     UnknownFlag,
+    /// bd's events journal no longer holds the record a read started from.
+    Pruned(Retained),
+}
+
+/// The seqs a pruned events journal still holds, from `floor` to `head`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retained {
+    pub floor: u64,
+    pub head: u64,
 }
 
 /// A command that did not yield usable output, classified.
@@ -112,6 +121,22 @@ const NOT_KNOWN: [&str; 3] = [
 /// credential command or direnv says the same words to a flag it lacks, and
 /// neither is answered by a newer bd.
 const BD: &str = "bd";
+
+/// What bd 1.3.0 says to `bd events tail --since <seq>` below what it still
+/// holds, exit 1: `Error: events journal truncated: checkpoint 0 is below the
+/// retained window [5..6]; records 1..4 were pruned`, plain text with
+/// `--json` absent.
+const TRUNCATED: &str = "events journal truncated";
+const WINDOW: &str = "retained window [";
+
+fn retained(said: &str) -> Option<Retained> {
+    let window = &said[said.find(WINDOW)? + WINDOW.len()..];
+    let (floor, head) = window[..window.find(']')?].split_once("..")?;
+    Some(Retained {
+        floor: floor.parse().ok()?,
+        head: head.parse().ok()?,
+    })
+}
 
 /// What a search for the program found: something under that name, nothing
 /// under it, or a directory that refused the search, which settles neither.
@@ -308,6 +333,15 @@ impl RunFailure {
         }
     }
 
+    pub fn pruned(retained: Retained) -> Self {
+        Self {
+            kind: FailureKind::Pruned(retained),
+            program: BD.to_string(),
+            detail: format!("{BD} has pruned its events journal past where bdi read to"),
+            unreadable: None,
+        }
+    }
+
     pub fn unstartable(program: &str, cause: impl fmt::Display) -> Self {
         Self::could_not_be_started(FailureKind::Unstartable, program, cause)
     }
@@ -438,6 +472,11 @@ impl RunFailure {
                 FailureKind::UnknownFlag,
                 format!("{program} does not know a flag bdi uses"),
             )
+        } else if let Some(window) = (program == BD && said.contains(TRUNCATED))
+            .then(|| retained(&said))
+            .flatten()
+        {
+            return Self::pruned(window);
         } else if said.contains(NO_SUCH_PANE) {
             (
                 FailureKind::Gone,
@@ -737,7 +776,8 @@ pub mod testing {
             FailureKind::InstalledUnstartable => Some(FailureKind::Parse),
             FailureKind::Parse => Some(FailureKind::Unsupported),
             FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
-            FailureKind::UnknownFlag => None,
+            FailureKind::UnknownFlag => Some(FailureKind::Pruned(Retained { floor: 1, head: 1 })),
+            FailureKind::Pruned(_) => None,
         })
     }
 }
@@ -773,6 +813,25 @@ mod tests {
 
     /// A stderr no phrase places.
     const UNPLACED: &str = "Error: something neither bd nor herdr has been measured saying";
+
+    /// bd 1.3.0 refusing `bd events tail --since 0` on a journal it has
+    /// pruned below record 5, captured 2026-10-05 from a throwaway tracker.
+    const PRUNED: &str = "Error: events journal truncated: checkpoint 0 is below the retained window [5..6]; records 1..4 were pruned\nHint: resume with --since 4 to continue from the oldest retained record (accepting the gap), or re-import from scratch";
+
+    /// The window's two numbers are all that is kept of what bd said, and a
+    /// reader resumes from them.
+    #[test]
+    fn a_journal_pruned_past_the_record_asked_for_says_what_it_still_holds() {
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), PRUNED).kind,
+            FailureKind::Pruned(Retained { floor: 5, head: 6 })
+        );
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), "Error: events journal truncated").kind,
+            FailureKind::Unavailable,
+            "a refusal naming no window is one bdi cannot place"
+        );
+    }
 
     /// The two shapes herdr writes when it cannot read a pane, measured
     /// against herdr 0.8.2 on 2026-08-30. Both name the pane and the command,
@@ -980,6 +1039,7 @@ mod tests {
             NO_SUCH_PANE,
             PANE_BUSY,
             UNPLACED,
+            PRUNED,
         ] {
             assert!(
                 failing_command(said).unreadable.is_none(),

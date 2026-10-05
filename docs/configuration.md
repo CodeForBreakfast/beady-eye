@@ -149,6 +149,21 @@ lists it among the projects not read.
 covers for a producer that dies, so the project's mark turns to `?` once
 nothing has vouched for it for `covered_for_seconds`.
 
+**`events_journal = true`** says that every writer to this project's tracker
+keeps bd's events journal. [The listener](#running-the-listener) then reads
+the journal whenever the project has moved, and sends each record to the
+consumers watching the bead it names, ahead of the bead's new state. bd turns
+the journal on clone by clone, with `bd config set events-journal true`, and
+cannot tell a reader whether every other writer has done the same. So the key
+is your word for it, and a writer without the journal leaves a gap that
+nothing reports. Without the key the listener sends no records, and tells
+each consumer `"events": "off"`.
+
+The listener reads the whole journal once when it starts, to find where it
+ends, and sends none of it. Where bd has pruned the journal past a record the
+listener had not yet read, the listener tells each consumer once that the
+journal is unreadable, and then sends the records bd kept.
+
 ## `[roots.explicit]`
 
 Trees to draw beyond the ones `bdi` finds for itself, listed under the project

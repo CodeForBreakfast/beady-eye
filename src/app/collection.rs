@@ -14,9 +14,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use serde_json::Value;
 
 use crate::collect::agents::Agents;
-use crate::collect::run::FailureKind;
+use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
@@ -29,7 +30,9 @@ use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
 use super::listener::{self, Answer, BeadReadiness, Held};
-use super::tracker::{open_failure, refresh_project, ProjectWork, ReadAt, Refresh, RootUnread};
+use super::tracker::{
+    open_failure, refresh_project, tracker_failure, ProjectWork, ReadAt, Refresh, RootUnread,
+};
 
 /// What one project's tracker last said, and when it said it.
 ///
@@ -166,6 +169,61 @@ pub struct Collection {
     /// Set for a collection made once and never refreshed, which has no later
     /// read to compare a tracker's fingerprint against and so asks for none.
     once: bool,
+    /// Each project whose tracker was opened with its events journal: where
+    /// in the journal it has read to, and what the journal said since the
+    /// answers were last handed over.
+    journals: BTreeMap<String, Journalled>,
+}
+
+/// One project's events journal as a collection has read it.
+#[derive(Default)]
+struct Journalled {
+    /// The last `seq` read. Nothing until the journal's end has been found,
+    /// which the first read of it does and sends none of, because a consumer
+    /// is sent the records from when it watches and none from before.
+    ///
+    /// ponytail: that first read is the whole journal, or bd's refusal of it
+    /// once bd has pruned the start, because bd offers no cheaper way to ask
+    /// where it ends. A head read from bd would lift it.
+    seq: Option<u64>,
+    said: Option<listener::Journal>,
+}
+
+impl Journalled {
+    fn read(&mut self, journal: Result<Vec<Value>, RunFailure>) {
+        let found_the_end = self.seq.is_some();
+        let records = match journal {
+            Ok(records) => records,
+            Err(failure) => match failure.kind {
+                FailureKind::Pruned(retained) if !found_the_end => {
+                    self.seq = Some(retained.head);
+                    Vec::new()
+                }
+                kind => {
+                    // The records bd pruned are lost to every consumer, and
+                    // the ones it kept are read on the next poll.
+                    if let FailureKind::Pruned(retained) = kind {
+                        self.seq = Some(retained.floor.saturating_sub(1));
+                    }
+                    self.said = Some(listener::Journal::Unreadable(tracker_failure(&failure)));
+                    return;
+                }
+            },
+        };
+        self.seq = records
+            .last()
+            .and_then(|record| record["seq"].as_u64())
+            .or(self.seq)
+            .or(Some(0));
+        let mut sent = match self.said.take() {
+            Some(listener::Journal::Read(sent)) => sent,
+            _ => Vec::new(),
+        };
+        if found_the_end {
+            sent.extend(records);
+        }
+        self.said = Some(listener::Journal::Read(sent));
+    }
 }
 
 impl Collection {
@@ -222,7 +280,7 @@ impl Collection {
     /// Every project rather than only those just read, because a blocker
     /// closing in one project frees a bead in another. A bead no tree reaches
     /// takes bd's own readiness, which is all there is to say of it.
-    pub fn answers(&self, snapshot: &Snapshot) -> Vec<Answer> {
+    pub fn answers(&mut self, snapshot: &Snapshot) -> Vec<Answer> {
         let mut drawn: BTreeMap<BeadKey, &Node> = BTreeMap::new();
         for node in snapshot.collected.iter().flat_map(|tree| &tree.beads) {
             drawn.entry(node.key()).or_insert(node);
@@ -267,7 +325,10 @@ impl Collection {
                     },
                     Err(failure) => listener::Said::Unreachable(failure.clone()),
                 },
-                events: Vec::new(),
+                journal: self
+                    .journals
+                    .get_mut(project)
+                    .and_then(|journal| journal.said.take()),
             })
             .collect()
     }
@@ -305,7 +366,18 @@ impl Collection {
                         standing.at = now;
                     }
                 }
-                Ok(Refresh::Read { at, work, as_of }) => {
+                Ok(Refresh::Read {
+                    at,
+                    work,
+                    as_of,
+                    journal,
+                }) => {
+                    if let Some(journal) = journal {
+                        self.journals
+                            .entry(project.name.clone())
+                            .or_default()
+                            .read(journal);
+                    }
                     self.read.insert(
                         project.name.clone(),
                         Read {
@@ -359,6 +431,11 @@ impl Collection {
                         .read
                         .get(&project.name)
                         .and_then(|read| read.taken_at.clone());
+                    let since = self
+                        .journals
+                        .get(&project.name)
+                        .and_then(|journal| journal.seq)
+                        .unwrap_or(0);
                     reads.spawn(move || {
                         let answer = refresh_project(
                             trackers,
@@ -367,6 +444,7 @@ impl Collection {
                             panes,
                             standing.as_ref(),
                             !self.once,
+                            since,
                             now,
                         );
                         (project, answer)
@@ -704,7 +782,8 @@ fn unlistable(kind: FailureKind) -> ProviderState {
         | FailureKind::Busy
         | FailureKind::Parse
         | FailureKind::Unsupported
-        | FailureKind::UnknownFlag => ProviderState::NotAnswering,
+        | FailureKind::UnknownFlag
+        | FailureKind::Pruned(_) => ProviderState::NotAnswering,
     }
 }
 
@@ -736,6 +815,7 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::app::fixtures::*;
+    use crate::app::listener::Journal;
     use crate::collect::agents::testing::{
         in_session, named, pane, titled, Asked as AskedOfTheProvider, Fake as Provider, THE_FAKE,
     };
@@ -2942,7 +3022,7 @@ prefix = "kad"
 
     #[test]
     fn a_listener_is_told_each_beads_readiness_as_the_listing_gives_it() {
-        let (collection, snapshot) = both_read_with_ferry_waiting();
+        let (mut collection, snapshot) = both_read_with_ferry_waiting();
 
         let answers = collection.answers(&snapshot);
 
@@ -2958,7 +3038,7 @@ prefix = "kad"
 
     #[test]
     fn a_listener_is_told_each_beads_readiness_as_bd_gives_it_too() {
-        let (collection, snapshot) = both_read_with_ferry_waiting();
+        let (mut collection, snapshot) = both_read_with_ferry_waiting();
 
         let answers = collection.answers(&snapshot);
 
@@ -3023,5 +3103,214 @@ prefix = "kad"
             answers[0].said,
             listener::Said::Unreachable(TrackerFailure::Auth)
         ));
+    }
+
+    // ---- bd's events journal ----------------------------------------------
+
+    fn record(seq: u64, op: &str, id: &str) -> Value {
+        serde_json::json!({ "seq": seq, "op": op, "issue_id": id })
+    }
+
+    /// Dunwich's tracker with a journal holding `records`, read in full on
+    /// every refresh because it offers nothing to compare against.
+    fn dunwich_journalling(records: Vec<Value>) -> Fakes {
+        dunwich_with(
+            dunwich_tracker()
+                .without_a_fingerprint()
+                .journalling(records),
+        )
+    }
+
+    /// What one more collection of dunwich says of its journal.
+    fn journal_after_reading(collection: &mut Collection, trackers: &Fakes) -> Option<Journal> {
+        let snapshot = collection.collect(
+            &one_project(),
+            &no_panes(),
+            trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        collection
+            .answers(&snapshot)
+            .into_iter()
+            .find(|answer| answer.project == "dunwich")
+            .and_then(|answer| answer.journal)
+    }
+
+    /// A consumer is sent the records from when it watches, so the ones
+    /// written before the first read are where the journal ends rather than
+    /// news.
+    #[test]
+    fn the_first_read_of_a_journal_finds_its_end_and_passes_nothing_on() {
+        let trackers = dunwich_journalling(vec![
+            record(1, "create", "dun-7"),
+            record(2, "comment", "dun-7"),
+        ]);
+        let mut collection = Collection::default();
+
+        let journal = journal_after_reading(&mut collection, &trackers);
+
+        assert_eq!(journal, Some(Journal::Read(Vec::new())));
+        assert!(trackers
+            .tracker("dunwich")
+            .asked()
+            .contains(&Asked::Events(0)));
+    }
+
+    #[test]
+    fn a_journal_is_read_from_where_the_last_read_ended_and_what_it_adds_is_passed_on() {
+        let trackers = dunwich_journalling(vec![record(1, "create", "dun-7")]);
+        let mut collection = Collection::default();
+        journal_after_reading(&mut collection, &trackers);
+
+        trackers
+            .tracker("dunwich")
+            .writes(record(2, "comment", "dun-7"));
+        trackers
+            .tracker("dunwich")
+            .writes(record(3, "close", "dun-7.2"));
+        let journal = journal_after_reading(&mut collection, &trackers);
+
+        assert_eq!(
+            journal,
+            Some(Journal::Read(vec![
+                record(2, "comment", "dun-7"),
+                record(3, "close", "dun-7.2")
+            ]))
+        );
+        assert!(trackers
+            .tracker("dunwich")
+            .asked()
+            .contains(&Asked::Events(1)));
+    }
+
+    /// So every record passed on has a bead read at least as new as it.
+    #[test]
+    fn a_journal_is_read_before_the_beads_are() {
+        let trackers = dunwich_journalling(Vec::new());
+
+        journal_after_reading(&mut Collection::default(), &trackers);
+
+        let asked = trackers.tracker("dunwich").asked();
+        let at = |question: Asked| asked.iter().position(|was| *was == question);
+        assert!(at(Asked::Events(0)) < at(Asked::All), "{asked:?}");
+    }
+
+    #[test]
+    fn records_are_passed_on_once() {
+        let trackers = dunwich_journalling(Vec::new());
+        let mut collection = Collection::default();
+        journal_after_reading(&mut collection, &trackers);
+        trackers
+            .tracker("dunwich")
+            .writes(record(1, "comment", "dun-7"));
+        let snapshot = collection.collect(
+            &one_project(),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        let first = collection.answers(&snapshot);
+        let again = collection.answers(&snapshot);
+
+        assert!(matches!(&first[0].journal, Some(Journal::Read(records)) if records.len() == 1));
+        assert_eq!(again[0].journal, None);
+    }
+
+    /// The records are read again from where the last good read ended, so a
+    /// journal that comes back loses nothing.
+    #[test]
+    fn a_journal_that_will_not_answer_is_said_to_and_read_again_from_where_it_was() {
+        let trackers = dunwich_journalling(vec![record(1, "create", "dun-7")]);
+        let mut collection = Collection::default();
+        journal_after_reading(&mut collection, &trackers);
+        let refusing = dunwich_with(
+            dunwich_tracker()
+                .without_a_fingerprint()
+                .failing(Asked::Events(0), RunFailure::parse("bd", "a torn line")),
+        );
+
+        let journal = journal_after_reading(&mut collection, &refusing);
+        let answering = dunwich_journalling(vec![
+            record(1, "create", "dun-7"),
+            record(2, "close", "dun-7"),
+        ]);
+        let after = journal_after_reading(&mut collection, &answering);
+
+        assert!(matches!(
+            journal,
+            Some(Journal::Unreadable(TrackerFailure::Parse(_)))
+        ));
+        assert_eq!(
+            after,
+            Some(Journal::Read(vec![record(2, "close", "dun-7")]))
+        );
+    }
+
+    /// bd refuses a read from the start of a journal it has pruned, and its
+    /// refusal says where the journal ends.
+    #[test]
+    fn a_journal_pruned_before_its_first_read_is_read_from_where_bd_says_it_ends() {
+        let trackers = dunwich_journalling(vec![
+            record(1, "create", "dun-7"),
+            record(2, "comment", "dun-7"),
+            record(3, "update", "dun-7"),
+        ]);
+        trackers.tracker("dunwich").prunes(1);
+        let mut collection = Collection::default();
+
+        let first = journal_after_reading(&mut collection, &trackers);
+        trackers
+            .tracker("dunwich")
+            .writes(record(4, "close", "dun-7"));
+        let after = journal_after_reading(&mut collection, &trackers);
+
+        assert_eq!(first, Some(Journal::Read(Vec::new())));
+        assert_eq!(
+            after,
+            Some(Journal::Read(vec![record(4, "close", "dun-7")]))
+        );
+        assert!(trackers
+            .tracker("dunwich")
+            .asked()
+            .contains(&Asked::Events(3)));
+    }
+
+    /// The records bd pruned before they were read are gone, so the journal
+    /// is said to be unreadable once, and the records bd kept are passed on.
+    #[test]
+    fn a_journal_pruned_past_the_last_read_is_said_to_have_lost_records_and_read_on() {
+        let trackers = dunwich_journalling(vec![record(1, "create", "dun-7")]);
+        let mut collection = Collection::default();
+        journal_after_reading(&mut collection, &trackers);
+        for seq in 2..=4 {
+            trackers
+                .tracker("dunwich")
+                .writes(record(seq, "comment", "dun-7"));
+        }
+        trackers.tracker("dunwich").prunes(2);
+
+        let gap = journal_after_reading(&mut collection, &trackers);
+        let after = journal_after_reading(&mut collection, &trackers);
+
+        assert_eq!(gap, Some(Journal::Unreadable(TrackerFailure::Unavailable)));
+        assert_eq!(
+            after,
+            Some(Journal::Read(vec![
+                record(3, "comment", "dun-7"),
+                record(4, "comment", "dun-7")
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_tracker_opened_without_its_journal_says_nothing_of_one() {
+        let mut collection = Collection::default();
+
+        assert_eq!(journal_after_reading(&mut collection, &dunwich()), None);
     }
 }

@@ -460,6 +460,7 @@ mod tests {
             credential_command: None,
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }
@@ -703,6 +704,7 @@ mod tests {
             credential_command: Some("op read the/password".to_string()),
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         };
@@ -805,6 +807,7 @@ mod tests {
             credential_command: Some("op read the/password".to_string()),
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         };
@@ -871,6 +874,7 @@ mod tests {
             credential_command: Some(command.to_string()),
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }

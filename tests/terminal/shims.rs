@@ -172,8 +172,15 @@ impl ShimmedTracker {
         );
     }
 
-    fn answers_with(&self, asked: &str, text: &str) {
+    /// Answer `asked` with `text`, for every tracker.
+    pub fn answers_with(&self, asked: &str, text: &str) {
         std::fs::write(self.answers.join(asked), text).expect("the answer is ours to write");
+    }
+
+    /// Refuse `asked` for every tracker, saying `said` on stderr and exiting 1.
+    pub fn refuses_with(&self, asked: &str, said: &str) {
+        std::fs::write(self.answers.join(format!("{asked}.refused")), said)
+            .expect("the refusal is ours to write");
     }
 
     /// Answer `asked` with `text`, for the tracker at a directory whose last

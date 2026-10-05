@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 use crate::collect::run::{together, FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
@@ -140,6 +141,9 @@ pub(super) enum Refresh {
         at: Option<Box<ReadAt>>,
         work: Box<ProjectWork>,
         as_of: DateTime<Utc>,
+        /// bd's event records read just before `work`, where the tracker was
+        /// opened with its journal.
+        journal: Option<Result<Vec<Value>, RunFailure>>,
     },
 }
 
@@ -156,6 +160,10 @@ pub(super) enum Refresh {
 /// tracker with no fingerprint to offer says so with `None` and is read the
 /// slow way every time. A refresh nothing will be compared with later does
 /// not ask for one at all.
+///
+/// The journal is read after `since` before the beads are, so every record
+/// read has a bead read at least as new as it.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn refresh_project(
     trackers: &dyn Trackers,
     project: &Project,
@@ -163,6 +171,7 @@ pub(super) fn refresh_project(
     panes: &[Pane],
     standing: Option<&ReadAt>,
     probing: bool,
+    since: u64,
     now: DateTime<Utc>,
 ) -> Result<Refresh, OpenFailure> {
     let tracker = trackers.of(project)?;
@@ -182,8 +191,10 @@ pub(super) fn refresh_project(
         }
     }
 
+    let journal = tracker.events(since);
     let work = read_project(tracker.as_ref(), project, cfg, panes, now)?;
-    let at = probed.map(|fingerprint| {
+    let journal_answered = !matches!(journal, Some(Err(_)));
+    let at = probed.filter(|_| journal_answered).map(|fingerprint| {
         Box::new(ReadAt {
             project: project.clone(),
             fingerprint,
@@ -196,6 +207,7 @@ pub(super) fn refresh_project(
         at,
         work: Box::new(work),
         as_of,
+        journal,
     })
 }
 
@@ -517,7 +529,8 @@ pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
         FailureKind::Unavailable
         | FailureKind::Gone
         | FailureKind::Busy
-        | FailureKind::Unsupported => TrackerFailure::Unavailable,
+        | FailureKind::Unsupported
+        | FailureKind::Pruned(_) => TrackerFailure::Unavailable,
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
@@ -539,7 +552,7 @@ mod tests {
 
     use crate::collect::agents::testing::{named, pane, Fake as Provider};
     use crate::collect::run::testing::Rendezvous;
-    use crate::collect::run::{Env, RealRunner, Runner};
+    use crate::collect::run::{Env, RealRunner, Retained, Runner};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
@@ -975,6 +988,7 @@ dunwich = ["dun-4"]
             &[],
             None,
             true,
+            0,
             now(),
         )
         .expect("the tracker answers every call");
@@ -989,6 +1003,7 @@ dunwich = ["dun-4"]
             &[],
             at.as_deref(),
             true,
+            0,
             now(),
         )
         .expect("the tracker answers every call");
@@ -1356,6 +1371,26 @@ dunwich = ["dun-c3"]
             vec![Asked::All, Asked::Ready, Asked::Blocked],
             "a parent the listing already carries is not asked for again"
         );
+    }
+
+    /// Kept, the fingerprint would skip every later read while nothing else
+    /// moved, and the journal would go unread and unreadable that long.
+    #[test]
+    fn a_read_whose_journal_would_not_answer_is_not_compared_against() {
+        let trackers = dunwich_with(
+            dunwich_tracker().failing(Asked::Events(0), RunFailure::parse("bd", "a torn line")),
+        );
+        let cfg = one_project();
+
+        let refreshed =
+            refresh_project(&trackers, &cfg.projects[0], &cfg, &[], None, true, 0, now())
+                .expect("the beads are read");
+
+        let Refresh::Read { at, journal, .. } = refreshed else {
+            panic!("a project nothing has read is read in full")
+        };
+        assert!(matches!(journal, Some(Err(_))));
+        assert!(at.is_none(), "the next refresh reads in full");
     }
 
     /// A read made once and never again has no later read to compare a
@@ -1982,6 +2017,10 @@ dunwich = ["bdi-404"]
             ),
             (FailureKind::Unsupported, TrackerFailure::Unavailable),
             (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
+            (
+                FailureKind::Pruned(Retained { floor: 5, head: 6 }),
+                TrackerFailure::Unavailable,
+            ),
         ];
 
         for (kind, expected) in kinds {

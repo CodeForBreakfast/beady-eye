@@ -469,10 +469,13 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         .map(|project| project.project().to_string())
         .collect();
     let reported = changes::Reported::watching(projects.clone());
-    let held = Arc::new(Mutex::new(Hold::reading(
-        cfg.read()
-            .map(|project| (project.name.clone(), project.reach())),
-    )));
+    let held = Arc::new(Mutex::new(Hold::reading(cfg.read().map(|project| {
+        (
+            project.name.clone(),
+            project.reach(),
+            project.events_journal,
+        )
+    }))));
     let (heard_by, heard) = mpsc::channel();
     let at = changes::where_the_listener_is(socket.or_else(|| cfg.listener.socket.clone()));
     let serving = (Arc::clone(&held), reported.clone());
@@ -494,6 +497,7 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let mut collection = crate::app::Collection::default();
     let trackers = bd::Cli::new(&RealRunner)
         .keeping_rows()
+        .reading_journals()
         .caching_environments(EnvironmentCache::here());
     let reads: Reads = Box::new(move |wanted, now| {
         let snapshot = collection.collect(&cfg, &Unasked, &trackers, wanted, Filter::All, now);
@@ -1410,6 +1414,7 @@ detached
             credential_command: None,
             prefix: None,
             poll,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }

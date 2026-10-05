@@ -23,7 +23,7 @@ use crate::config::Reach;
 use crate::model::snapshot::TrackerFailure;
 use crate::model::types::Printed;
 
-use super::watching::{self, Interest, Refusal, Watch, ALIVE_LINE};
+use super::watching::{self, Events, Interest, Refusal, Watch, ALIVE_LINE};
 
 /// One bead as the listener holds it: its tracker's row, and the readiness
 /// `bdi --beads` gives it.
@@ -56,9 +56,19 @@ pub struct BeadReadiness {
 pub struct Answer {
     pub project: String,
     pub said: Said,
-    /// bd's event records since the source last answered for this project,
-    /// each as bd printed it. None from a source that reads no journal.
-    pub events: Vec<serde_json::Value>,
+    /// What the source read of the project's events journal for this
+    /// answer, where it read it.
+    pub journal: Option<Journal>,
+}
+
+/// One read of a project's events journal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Journal {
+    /// bd's event records since the source last read the journal, oldest
+    /// first, each as bd printed it.
+    Read(Vec<serde_json::Value>),
+    /// The journal would not answer.
+    Unreadable(TrackerFailure),
 }
 
 /// How current a project is, and the beads it holds where they were read.
@@ -98,6 +108,8 @@ pub struct Standing {
     pub unreachable: Option<TrackerFailure>,
     /// How the listener's config reaches the tracker.
     pub reach: Reach,
+    /// Whether the project's event records are sent.
+    pub events: Events,
 }
 
 impl Standing {
@@ -116,6 +128,7 @@ impl Standing {
             &self.reach,
             self.as_of,
             self.unreachable.as_ref(),
+            &self.events,
         ));
         Some(lines)
     }
@@ -155,14 +168,16 @@ impl Watcher {
 
 impl Hold {
     /// Holding nothing yet of each of `projects`, which are the projects a
-    /// consumer may watch, each with how its tracker is reached.
-    pub fn reading<I: IntoIterator<Item = (String, Reach)>>(projects: I) -> Self {
+    /// consumer may watch, each with how its tracker is reached and whether
+    /// its config claims an events journal.
+    pub fn reading<I: IntoIterator<Item = (String, Reach, bool)>>(projects: I) -> Self {
         Self {
             projects: projects
                 .into_iter()
-                .map(|(project, reach)| {
+                .map(|(project, reach, journal)| {
                     let standing = Standing {
                         reach,
+                        events: if journal { Events::Ok } else { Events::Off },
                         ..Standing::default()
                     };
                     (project, standing)
@@ -184,15 +199,36 @@ impl Hold {
             Said::Vouched { at } => standing.as_of = standing.as_of.max(Some(at)),
             Said::Unreachable(failure) => standing.unreachable = Some(failure),
         }
+        let records = match answer.journal {
+            Some(Journal::Read(records)) => {
+                standing.events = Events::Ok;
+                records
+            }
+            Some(Journal::Unreadable(failure)) => {
+                standing.events = Events::Unreadable(failure);
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
 
         let project = answer.project;
         self.watchers.retain(|_, watcher| {
             let Some(interest) = watcher.interests.get_mut(&project) else {
                 return true;
             };
-            standing
-                .told(&project, interest)
-                .is_none_or(|lines| watcher.tells(lines))
+            let mut lines: Vec<String> = records
+                .iter()
+                .filter(|record| {
+                    record["issue_id"]
+                        .as_str()
+                        .is_some_and(|id| interest.covers(id))
+                })
+                .map(|record| watching::event_line(&project, record))
+                .collect();
+            standing.told(&project, interest).is_none_or(|told| {
+                lines.extend(told);
+                watcher.tells(lines)
+            })
         });
     }
 
@@ -370,7 +406,7 @@ mod tests {
         Answer {
             project: project.to_string(),
             said,
-            events: Vec::new(),
+            journal: None,
         }
     }
 
@@ -510,7 +546,7 @@ mod tests {
     /// on what this hands back. Room for `behind` batches before it is hung
     /// up on.
     fn a_watcher(behind: usize) -> (Hold, u64, Receiver<Vec<String>>, UnixStream) {
-        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let Connection {
             watcher,
             told,
@@ -646,7 +682,7 @@ mod tests {
 
     #[test]
     fn each_connection_is_told_for_itself() {
-        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let first = connected(&mut hold, 4);
         let second = connected(&mut hold, 4);
         hold.watch(first.watcher, &watching_dunwich())
@@ -662,7 +698,7 @@ mod tests {
 
     #[test]
     fn a_connection_forgotten_is_told_nothing_more() {
-        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let gone = connected(&mut hold, 4);
         hold.watch(gone.watcher, &watching_dunwich())
             .expect("dunwich is read");
@@ -675,7 +711,7 @@ mod tests {
 
     #[test]
     fn a_connection_that_keeps_up_stays_open() {
-        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let keeping_up = connected(&mut hold, 1);
         hold.watch(keeping_up.watcher, &watching_dunwich())
             .expect("dunwich is read");
@@ -693,7 +729,7 @@ mod tests {
 
     #[test]
     fn a_connection_that_falls_behind_is_hung_up_on() {
-        let mut hold = Hold::reading([("dunwich".to_string(), dunwich())]);
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let mut behind = connected(&mut hold, 1);
         hold.take(read("dunwich", now(), &["dun-1"]));
         hold.watch(behind.watcher, &watching_dunwich())
@@ -709,6 +745,157 @@ mod tests {
         let mut rest = Vec::new();
         std::io::Read::read_to_end(&mut behind.theirs, &mut rest).expect("the connection ends");
         assert!(hold.watchers.is_empty());
+    }
+
+    // ---- bd's events -------------------------------------------------------
+
+    fn record(seq: u64, op: &str, id: &str) -> serde_json::Value {
+        serde_json::json!({ "seq": seq, "op": op, "issue_id": id })
+    }
+
+    /// A read of dunwich holding `ids`, with `records` read from its journal
+    /// just before.
+    fn journalled(at: DateTime<Utc>, ids: &[&str], records: Vec<serde_json::Value>) -> Answer {
+        Answer {
+            journal: Some(Journal::Read(records)),
+            ..read("dunwich", at, ids)
+        }
+    }
+
+    /// A hold reading dunwich, which claims a journal, and one connection
+    /// watching what `watch` names after the first read.
+    fn watching_a_journal(watch: &Watch) -> (Hold, Connection) {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), true)]);
+        let connection = connected(&mut hold, 8);
+        hold.take(journalled(now(), &["dun-1", "dun-2"], Vec::new()));
+        hold.watch(connection.watcher, watch)
+            .expect("dunwich is read");
+        connection.told.try_iter().for_each(drop);
+        (hold, connection)
+    }
+
+    /// Each line of each batch sent so far, as `<kind> <op>` for an event and
+    /// the kind alone for anything else.
+    fn heard(told: &Receiver<Vec<String>>) -> Vec<Vec<String>> {
+        told.try_iter()
+            .map(|batch| {
+                batch
+                    .iter()
+                    .map(|line| {
+                        let line: serde_json::Value = serde_json::from_str(line).expect("JSON");
+                        match line["event"]["op"].as_str() {
+                            Some(op) => format!("event {op}"),
+                            None => line["line"].as_str().unwrap_or_default().to_string(),
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A consumer acting at the freshness line has, for every event, a bead
+    /// line at least as new.
+    #[test]
+    fn a_watch_is_sent_each_record_ahead_of_the_beads_and_the_freshness_that_close_the_answer() {
+        let (mut hold, connection) = watching_a_journal(&watching_dunwich());
+        let mut closed = read("dunwich", later(30), &["dun-1", "dun-2"]);
+        if let Said::Read { beads, .. } = &mut closed.said {
+            beads.get_mut("dun-1").expect("held").ready = false;
+        }
+
+        hold.take(Answer {
+            journal: Some(Journal::Read(vec![
+                record(3, "comment", "dun-1"),
+                record(4, "dep_add", "dun-1"),
+                record(5, "close", "dun-2"),
+            ])),
+            ..closed
+        });
+
+        assert_eq!(
+            heard(&connection.told),
+            [[
+                "event comment",
+                "event dep_add",
+                "event close",
+                "bead",
+                "freshness"
+            ]]
+        );
+    }
+
+    #[test]
+    fn a_watch_on_one_bead_is_sent_only_the_records_about_it() {
+        let (mut hold, connection) = watching_a_journal(&Watch::Bead {
+            project: "dunwich".to_string(),
+            id: "dun-2".to_string(),
+        });
+
+        hold.take(journalled(
+            later(30),
+            &["dun-1", "dun-2"],
+            vec![record(3, "comment", "dun-1"), record(4, "close", "dun-2")],
+        ));
+
+        assert_eq!(heard(&connection.told), [["event close", "freshness"]]);
+    }
+
+    /// The bead lines a watch starts from already hold the outcome.
+    #[test]
+    fn a_watch_is_not_sent_the_records_read_before_it_watched() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), true)]);
+        let connection = connected(&mut hold, 8);
+        hold.take(journalled(
+            now(),
+            &["dun-1"],
+            vec![record(3, "comment", "dun-1")],
+        ));
+
+        hold.watch(connection.watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        assert_eq!(heard(&connection.told), [["bead", "freshness"]]);
+    }
+
+    #[test]
+    fn a_project_that_claims_no_journal_is_said_to_have_no_events() {
+        let (mut hold, watcher, told, _theirs) = a_watcher(4);
+        hold.watch(watcher, &watching_dunwich())
+            .expect("dunwich is read");
+
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        let batch = told.try_recv().expect("a batch");
+        let freshness: serde_json::Value =
+            serde_json::from_str(batch.last().expect("a freshness line")).expect("JSON");
+        assert_eq!(freshness["events"], "off");
+    }
+
+    #[test]
+    fn a_journal_that_would_not_answer_is_said_to_be_unreadable_until_it_answers() {
+        let (mut hold, connection) = watching_a_journal(&watching_dunwich());
+        let events = |told: &Receiver<Vec<String>>| -> Vec<serde_json::Value> {
+            told.try_iter()
+                .map(|batch| {
+                    let line: serde_json::Value =
+                        serde_json::from_str(batch.last().expect("a line")).expect("JSON");
+                    line["events"].clone()
+                })
+                .collect()
+        };
+
+        hold.take(Answer {
+            journal: Some(Journal::Unreadable(TrackerFailure::Unavailable)),
+            ..read("dunwich", later(30), &["dun-1", "dun-2"])
+        });
+        let unreadable = events(&connection.told);
+        hold.take(journalled(later(60), &["dun-1", "dun-2"], Vec::new()));
+
+        assert_eq!(
+            unreadable,
+            [serde_json::json!({ "unreadable": { "reason": "unavailable" } })]
+        );
+        assert_eq!(events(&connection.told), [serde_json::json!("ok")]);
     }
 
     #[test]

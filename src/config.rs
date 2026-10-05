@@ -156,6 +156,13 @@ pub struct Project {
     /// see. `bdi` polls until told otherwise, which is why this defaults on.
     #[serde(default = "polls")]
     pub poll: bool,
+    /// Whether every writer to this tracker keeps bd's events journal, so
+    /// that `bdi watch` passes its records on.
+    ///
+    /// A claim, as `poll = false` is, because bd cannot tell a reader whether
+    /// the other writers keep one. Off unless the setup says so.
+    #[serde(default)]
+    pub events_journal: bool,
     /// Badges this project draws in place of the ones `[[badges]]` names, for
     /// the keys it names and no others.
     ///
@@ -1135,6 +1142,7 @@ name = "kadath"
 path = "/home/user/dev/kadath"
 credential_command = "cat /home/user/dev/kadath/.beads-password"
 prefix = "kad"
+events_journal = true
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
@@ -1226,6 +1234,7 @@ path = "/home/user/dev/cinder"
                     credential_command: Some("secret-tool lookup tracker arkham".to_string()),
                     prefix: None,
                     poll: true,
+                    events_journal: false,
                     badges: Vec::new(),
                     worktrees: Vec::new(),
                 },
@@ -1238,6 +1247,7 @@ path = "/home/user/dev/cinder"
                     ),
                     prefix: Some("kad".to_string()),
                     poll: true,
+                    events_journal: true,
                     badges: vec![Badge {
                         key: "metadata.delivery_pr".to_string(),
                         match_value: None,
@@ -1525,6 +1535,7 @@ title = ["title", "badge.metadata.jira", "badges"]
             credential_command: None,
             prefix: None,
             poll: true,
+            events_journal: false,
             badges,
             worktrees: Vec::new(),
         }
