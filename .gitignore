@@ -1,8 +1,8 @@
 # rust
 /target/
 # Every run cargo-mutants leaves behind, whatever it is called. It rotates
-# mutants.out to mutants.out.old itself, and a third run kept
-# under a name chosen by hand — so the glob is what makes the next invented name safe.
+# mutants.out to mutants.out.old itself, and a third run kept under a name
+# chosen by hand — so the glob is what makes the next invented name safe.
 /mutants.out*/
 
 # herdr: the released bdi herdr/fetch.sh installs.

@@ -878,8 +878,8 @@
         # So the name carries what tells runs apart, and minting says it
         # aloud. cargo-mutants already names its build tree after the working
         # tree it copied, which under a linked worktree is the worktree's name
-        # — the name was in hand at the moment the run directory was minted and went
-        # unused. The head sha is the other half, and it is the half a seat
+        # — the name was in hand at the moment the run directory was minted and
+        # went unused. The head sha is the other half, and it is the half a seat
         # cannot recover by reading the run: your own successive runs share a
         # tree, and after a merge that adds no new file two of them hold
         # byte-identical change.diffs, so the diff separates you from a peer
