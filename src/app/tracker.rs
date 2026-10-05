@@ -193,7 +193,8 @@ pub(super) fn refresh_project(
 
     let journal = tracker.events(since);
     let work = read_project(tracker.as_ref(), project, cfg, panes, now)?;
-    let at = probed.map(|fingerprint| {
+    let journal_answered = !matches!(journal, Some(Err(_)));
+    let at = probed.filter(|_| journal_answered).map(|fingerprint| {
         Box::new(ReadAt {
             project: project.clone(),
             fingerprint,
@@ -1369,6 +1370,26 @@ dunwich = ["dun-c3"]
             vec![Asked::All, Asked::Ready, Asked::Blocked],
             "a parent the listing already carries is not asked for again"
         );
+    }
+
+    /// Kept, the fingerprint would skip every later read while nothing else
+    /// moved, and the journal would go unread and unreadable that long.
+    #[test]
+    fn a_read_whose_journal_would_not_answer_is_not_compared_against() {
+        let trackers = dunwich_with(
+            dunwich_tracker().failing(Asked::Events(0), RunFailure::parse("bd", "a torn line")),
+        );
+        let cfg = one_project();
+
+        let refreshed =
+            refresh_project(&trackers, &cfg.projects[0], &cfg, &[], None, true, 0, now())
+                .expect("the beads are read");
+
+        let Refresh::Read { at, journal, .. } = refreshed else {
+            panic!("a project nothing has read is read in full")
+        };
+        assert!(matches!(journal, Some(Err(_))));
+        assert!(at.is_none(), "the next refresh reads in full");
     }
 
     /// A read made once and never again has no later read to compare a
