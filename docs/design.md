@@ -2393,7 +2393,9 @@ through chat, which would need a topic per bead.
 
 ### What it is made of
 
-**The plugin's server is TypeScript speaking MCP.** It is built with Bun into
+**The plugin's server is TypeScript speaking MCP, written in Effect.** It makes
+the same technology choices as the server of commy, the Claude Code chat
+plugin, wherever Rust is not an option. It is built with Bun into
 one file, published to npm, and started by the plugin's `.mcp.json` with `npx` at the plugin's exact version, so a user needs
 Node and nothing else. The repository's root carries the
 `.claude-plugin/marketplace.json` that makes it a marketplace, so the plugin

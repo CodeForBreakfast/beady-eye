@@ -2,9 +2,19 @@
 // protocol, and *A quiet watcher, and one that has gone* says when a watcher
 // is down.
 
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
 import { dirname, join, resolve } from "node:path";
+import { FileSystem } from "@effect/platform";
+import {
+	Chunk,
+	Config,
+	Data,
+	Effect,
+	Option,
+	Ref,
+	Schema,
+	Stream,
+} from "effect";
 import { parse } from "smol-toml";
 
 /** The version of the watcher's lines this plugin reads. */
@@ -32,23 +42,43 @@ export const WATCHER_TIMING: Timing = {
  */
 export type Down = "nowhere" | "refused" | "closed" | "wedged" | "protocol";
 
+class WatcherDown extends Data.TaggedError("WatcherDown")<{
+	readonly why: Down;
+}> {}
+
 /** One line the watcher sent about a watch. */
 export interface Said {
 	readonly line: string;
 	readonly [field: string]: unknown;
 }
 
-export interface Hearing {
-	/** The lines of one answer for the bead's project, ending with its
-	 * freshness line, or a refused line on its own. */
-	heard(batch: readonly Said[]): void;
-	down(why: Down): void;
-}
+/** What a watched bead's connection hears: the lines of one answer for the
+ * bead's project, ending with its freshness line, or a refused line on its
+ * own; or that the watcher is down. */
+export type Heard =
+	| { readonly batch: readonly Said[] }
+	| { readonly down: Down };
 
 export interface Bead {
 	readonly project: string;
 	readonly id: string;
 }
+
+const WatcherSection = Schema.Struct({
+	watcher: Schema.Struct({ socket: Schema.String }),
+});
+
+const socketNamedIn = (config: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const text = yield* fs.readFileString(config);
+		const read = yield* Effect.try(() => parse(text));
+		return (yield* Schema.decodeUnknown(WatcherSection)(read)).watcher.socket;
+	}).pipe(Effect.option);
+
+const runtimeDirectory = Config.option(
+	Config.nonEmptyString("XDG_RUNTIME_DIR"),
+).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
 /**
  * Where `bdi watch` takes its socket: `[watcher]`'s `socket` in the bdi
@@ -56,25 +86,14 @@ export interface Bead {
  */
 export const whereTheWatcherIs = (
 	config: string,
-	runtimeDirectory: string | undefined,
-): string | undefined =>
-	socketNamedIn(config) ??
-	(runtimeDirectory
-		? join(runtimeDirectory, "beady-eye", "watcher.sock")
-		: undefined);
-
-const socketNamedIn = (config: string): string | undefined => {
-	let read: Record<string, unknown>;
-	try {
-		read = parse(readFileSync(config, "utf8"));
-	} catch {
-		return undefined;
-	}
-	const watcher = read.watcher;
-	if (typeof watcher !== "object" || watcher === null) return undefined;
-	const socket = (watcher as Record<string, unknown>).socket;
-	return typeof socket === "string" ? socket : undefined;
-};
+): Effect.Effect<Option.Option<string>, never, FileSystem.FileSystem> =>
+	Effect.gen(function* () {
+		const named = yield* socketNamedIn(config);
+		if (Option.isSome(named)) return named;
+		return Option.map(yield* runtimeDirectory, (directory) =>
+			join(directory, "beady-eye", "watcher.sock"),
+		);
+	});
 
 const A_GROUP_MAY_TAKE_NAMES = 0o030;
 const ANYBODY_MAY_TAKE_NAMES = 0o003;
@@ -116,120 +135,140 @@ const directoriesOn = (way: string): string[] => {
  * judged both as spelled and as resolved. `bdi` makes the same checks before
  * it believes a watcher.
  */
-export const onlyThisUserHolds = (at: string): boolean => {
-	const user = process.geteuid?.();
-	if (user === undefined) return false;
-	try {
+const onlyThisUserHolds = (at: string) =>
+	Effect.gen(function* () {
+		const user = process.geteuid?.();
+		if (user === undefined) return false;
+		const fs = yield* FileSystem.FileSystem;
 		const under = dirname(resolve(at));
 		const ways = [
 			...directoriesOn(under),
-			...directoriesOn(realpathSync(under)),
+			...directoriesOn(yield* fs.realPath(under)),
 		];
 		for (const directory of ways) {
-			const { mode, uid } = statSync(directory);
-			if (othersMayTakeANameIn(mode, uid, user)) return false;
+			const { mode, uid } = yield* fs.stat(directory);
+			if (Option.isNone(uid) || othersMayTakeANameIn(mode, uid.value, user)) {
+				return false;
+			}
 		}
-		const socket = lstatSync(at);
-		return socket.isSocket() && socket.uid === user;
-	} catch {
-		return false;
-	}
-};
+		if (yield* Effect.isSuccess(fs.readLink(at))) return false;
+		const socket = yield* fs.stat(at);
+		return socket.type === "Socket" && Option.contains(socket.uid, user);
+	}).pipe(Effect.orElseSucceed(() => false));
 
 export const pauseAfter = (failures: number, timing: Timing): number =>
 	Math.min(timing.firstPause * 2 ** (failures - 1), timing.longestPause);
 
-const isSaid = (value: unknown): value is Said =>
-	typeof value === "object" &&
-	value !== null &&
-	typeof (value as { line?: unknown }).line === "string";
+const down = (why: Down) => new WatcherDown({ why });
 
-/**
- * Hold a connection to the watcher that watches one bead, connecting again
- * with a growing pause whenever it is down. The protocol has no line to stop
- * a watch, so each bead has a connection of its own and stopping closes it.
- */
-export const watchBead = (
-	bead: Bead,
-	findWatcher: () => string | undefined,
-	hearing: Hearing,
-	timing: Timing = WATCHER_TIMING,
-): { stop(): void } => {
-	let failures = 0;
-	let closeConnection = () => {};
-	let again: ReturnType<typeof setTimeout> | undefined;
+const SaidLine = Schema.parseJson(
+	Schema.Struct(
+		{ line: Schema.String },
+		Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+	),
+);
 
-	const down = (why: Down) => {
-		failures += 1;
-		again = setTimeout(connect, pauseAfter(failures, timing));
-		hearing.down(why);
-	};
+const saidIn = (line: string) =>
+	Schema.decodeUnknown(SaidLine)(line).pipe(
+		Effect.filterOrFail(
+			(said) => said.line !== "freshness" || said.protocol === PROTOCOL,
+		),
+		Effect.mapError(() => down("protocol")),
+	);
 
-	const connect = () => {
-		const at = findWatcher();
-		if (at === undefined) return down("nowhere");
-		if (!onlyThisUserHolds(at)) return down("refused");
-
+/** Every line the watcher sends after it is sent `asking`, until the
+ * connection is down. */
+const linesFrom = (at: string, asking: readonly string[]) =>
+	Stream.async<string, WatcherDown>((emit) => {
 		const connection = createConnection(at);
 		let connected = false;
-		let over = false;
 		let pending = "";
-		let batch: Said[] = [];
-
-		const close = () => {
-			over = true;
-			clearTimeout(wedged);
-			connection.destroy();
-		};
-		const end = (why: Down) => {
-			if (over) return;
-			close();
-			down(why);
-		};
-		const wedged = setTimeout(() => end("wedged"), timing.wedgedAfter);
-		closeConnection = close;
-
-		const take = (line: string) => {
-			wedged.refresh();
-			let said: unknown;
-			try {
-				said = JSON.parse(line);
-			} catch {
-				return end("protocol");
-			}
-			if (!isSaid(said)) return end("protocol");
-			if (said.line === "alive") return;
-			if (said.line === "refused") return hearing.heard([said]);
-			batch.push(said);
-			if (said.line !== "freshness") return;
-			if (said.protocol !== PROTOCOL) return end("protocol");
-			failures = 0;
-			hearing.heard(batch);
-			batch = [];
-		};
-
 		connection.setEncoding("utf8");
 		connection.on("connect", () => {
 			connected = true;
-			connection.write(`watch ${bead.project} ${bead.id}\n`);
+			connection.write(asking.map((line) => `${line}\n`).join(""));
 		});
 		connection.on("data", (chunk: string) => {
 			const lines = (pending + chunk).split("\n");
 			pending = lines.pop() ?? "";
-			for (const line of lines) {
-				if (over) return;
-				take(line);
-			}
+			if (lines.length > 0) emit.chunk(Chunk.unsafeFromArray(lines));
 		});
-		connection.on("error", () => end(connected ? "closed" : "refused"));
-		connection.on("close", () => end("closed"));
-	};
+		connection.on("error", () =>
+			emit.fail(down(connected ? "closed" : "refused")),
+		);
+		connection.on("close", () => emit.fail(down("closed")));
+		return Effect.sync(() => connection.destroy());
+	}, "unbounded");
 
-	connect();
-	return {
-		stop: () => {
-			clearTimeout(again);
-			closeConnection();
-		},
-	};
-};
+/**
+ * Connect to the watcher, send it `asking`, and read every line it sends but
+ * an alive line, until the connection is down.
+ */
+const talkTo = <R>(
+	findWatcher: Effect.Effect<Option.Option<string>, never, R>,
+	asking: readonly string[],
+	timing: Timing,
+) =>
+	Stream.unwrap(
+		Effect.gen(function* () {
+			const at = yield* findWatcher;
+			if (Option.isNone(at)) return yield* down("nowhere");
+			if (!(yield* onlyThisUserHolds(at.value))) return yield* down("refused");
+			return linesFrom(at.value, asking).pipe(
+				Stream.timeoutFail(() => down("wedged"), timing.wedgedAfter),
+				Stream.mapEffect(saidIn),
+				Stream.filter((said) => said.line !== "alive"),
+			);
+		}),
+	);
+
+/** The lines of each answer, ending with its freshness line, and each
+ * refused line on its own. */
+const answersIn = <E, R>(lines: Stream.Stream<Said, E, R>) =>
+	lines.pipe(
+		Stream.mapAccum(
+			[] as readonly Said[],
+			(batch, said): [readonly Said[], readonly (readonly Said[])[]] => {
+				if (said.line === "refused") return [batch, [[said]]];
+				if (said.line === "freshness") return [[], [[...batch, said]]];
+				return [[...batch, said], []];
+			},
+		),
+		Stream.flattenIterables,
+	);
+
+const watchLine = (bead: Bead) => `watch ${bead.project} ${bead.id}`;
+
+/**
+ * What a connection to the watcher that watches one bead hears, connecting
+ * again with a growing pause whenever it is down. The protocol has no line to
+ * stop a watch, so each bead has a connection of its own, and it closes when
+ * the stream stops being read.
+ */
+export const watchBead = <R>(
+	bead: Bead,
+	findWatcher: Effect.Effect<Option.Option<string>, never, R>,
+	timing: Timing = WATCHER_TIMING,
+): Stream.Stream<Heard, never, R | FileSystem.FileSystem> =>
+	Stream.unwrap(
+		Effect.map(Ref.make(0), (failures) => {
+			const connection = answersIn(
+				talkTo(findWatcher, [watchLine(bead)], timing),
+			).pipe(
+				Stream.tap((batch) =>
+					batch.at(-1)?.line === "freshness"
+						? Ref.set(failures, 0)
+						: Effect.void,
+				),
+				Stream.map((batch): Heard => ({ batch })),
+				Stream.catchAll(({ why }) => Stream.make<Heard[]>({ down: why })),
+			);
+			const pause = Ref.updateAndGet(failures, (failed) => failed + 1).pipe(
+				Effect.flatMap((failed) => Effect.sleep(pauseAfter(failed, timing))),
+			);
+			return connection.pipe(
+				Stream.concat(Stream.execute(pause)),
+				Stream.forever,
+			);
+		}),
+	);

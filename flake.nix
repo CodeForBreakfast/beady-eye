@@ -3502,8 +3502,10 @@ and a second line"
         # The Claude Code plugin's TypeScript workspace. Bun, TypeScript and
         # Biome come from nixpkgs, at the versions commy pins, because their npm
         # packages carry a binary per platform and a fixed-output hash cannot
-        # be one value on all four systems. What bun installs is only the
-        # plugin's pure JavaScript, so the one hash holds everywhere.
+        # be one value on all four systems. For the same reason bun leaves out
+        # optional packages, which is where Effect's dependencies keep their
+        # native builds. What bun installs is only the plugin's pure
+        # JavaScript, so the one hash holds everywhere.
         pluginSource = sourceOf [ ./plugin ];
 
         pluginModules = pkgs.stdenvNoCC.mkDerivation {
@@ -3513,7 +3515,7 @@ and a second line"
           buildPhase = ''
             export HOME=$TMPDIR
             cd plugin
-            bun install --frozen-lockfile --no-progress
+            bun install --frozen-lockfile --no-progress --omit=optional
           '';
           # A package finds its own dependencies by walking up to a directory
           # named node_modules, so the store path keeps that directory whole.
@@ -3521,7 +3523,7 @@ and a second line"
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-mWLM5EnT1kKDX2oU6eer6zrHoyY4o/1HJ36WWbdQqAg=";
+          outputHash = "sha256-2U6hdVkMDSpfQ+l0ptMFvyYyKUVsxkWOvKMUHIRd4Q4=";
         };
 
         pluginTools = [ pkgs.bun pkgs.biome pkgs.typescript pkgs.nodejs ];
