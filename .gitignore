@@ -8,6 +8,9 @@
 # herdr: the released bdi herdr/fetch.sh installs.
 /bin/
 
+# the plugin's bun workspace
+node_modules/
+
 # nix
 result
 result-*

@@ -1,0 +1,8 @@
+{
+	"name": "beady-eye-plugin",
+	"private": true,
+	"type": "module",
+	"devDependencies": {
+		"bun-types": "1.4.2"
+	}
+}
