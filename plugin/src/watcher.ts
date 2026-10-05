@@ -19,6 +19,9 @@ export interface Timing {
   readonly longestPause: number
   /** How long a question asked once may wait for every project's answer. */
   readonly answeredWithin: number
+  /** How long the watcher or a tracker may be down before a session is told.
+   * The watcher restarts on each upgrade and each edit to its config. */
+  readonly quietFor: number
 }
 
 export const WATCHER_TIMING: Timing = {
@@ -26,6 +29,7 @@ export const WATCHER_TIMING: Timing = {
   firstPause: 1_000,
   longestPause: 30_000,
   answeredWithin: 15_000,
+  quietFor: 60_000,
 }
 
 /**

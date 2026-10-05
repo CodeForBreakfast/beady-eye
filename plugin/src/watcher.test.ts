@@ -21,6 +21,7 @@ const timing: Timing = {
   firstPause: 10,
   longestPause: 40,
   answeredWithin: 100,
+  quietFor: 300,
 }
 
 afterEach(cleanUpAfterEach)

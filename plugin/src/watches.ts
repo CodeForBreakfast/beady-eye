@@ -70,6 +70,11 @@ interface Known {
    * disk, so a change a server never told is told by the next. */
   told: Told | undefined
   down: Down | undefined
+  /** Which outage the bead's connection is down in, until it is answered. */
+  outage: number | undefined
+  /** Whether the session has been told the watcher cannot watch the bead,
+   * and not yet told it is back. */
+  toldDown: boolean
 }
 
 interface Watch {
@@ -236,6 +241,56 @@ const whyDown: Record<Down, string> = {
     'it speaks a protocol this plugin does not know, so the plugin and the watcher need releases that speak the same one',
 }
 
+const listed = (beads: readonly Bead[]) => beads.map((bead) => `- ${named(bead)}`)
+
+const watcherDown = (why: Down, beads: readonly Bead[]): Omit<News, 'told'> => ({
+  content: [
+    `The watcher is down: ${whyDown[why]}.`,
+    'These beads are not watched until it is back:',
+    ...listed(beads),
+    'Their watches are kept, and this session will be told when the watcher is back.',
+  ].join('\n'),
+  meta: { watcher: 'down' },
+})
+
+const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'> => ({
+  content: [
+    'The watcher is back, and watches every bead again.',
+    ...changed.map(({ content }) => content),
+    'A comment made while it was down arrives as a count, without its text.',
+  ].join('\n'),
+  meta: { watcher: 'answering' },
+})
+
+const trackerUnreachable = (
+  project: string,
+  why: string,
+  beads: readonly Bead[],
+): Omit<News, 'told'> => ({
+  content: [
+    `The watcher cannot reach the tracker of ${project}: ${quoted(why)}.`,
+    'These beads keep their last known status until it can:',
+    ...listed(beads),
+    'This session will be told when it can.',
+  ].join('\n'),
+  meta: { project, tracker: 'unreachable' },
+})
+
+const trackerBack = (project: string): Omit<News, 'told'> => ({
+  content: `The watcher reaches the tracker of ${project} again.`,
+  meta: { project, tracker: 'ok' },
+})
+
+/** Why a freshness line says its project's tracker could not be reached,
+ * where it says so. */
+const unreachableIn = (freshness: Said): string | undefined => {
+  const tracker = freshness['tracker']
+  if (typeof tracker !== 'object' || tracker === null || !('unreachable' in tracker)) {
+    return undefined
+  }
+  return String(tracker.unreachable)
+}
+
 const told = (text: string): Answer => ({ text, refused: false })
 const refusal = (text: string): Answer => ({ text, refused: true })
 
@@ -298,11 +353,15 @@ export const makeWatches = <R>(
 
     const keyOf = ({ project, id }: Bead) => `${project} ${id}`
 
-    /** Take what a batch says of `bead`, and tell the session where it
-     * watches the bead and something it acts on has changed since it was
-     * last told. A journal that answers again late sends a comment's event
-     * line in a batch after its bead line. */
-    const takeIn = (batch: readonly Said[], bead: Bead, known: Known) =>
+    /** Take what a batch says of `bead`, and the message for the session
+     * where it watches the bead and something it acts on has changed since it
+     * was last told. A journal that answers again late sends a comment's
+     * event line in a batch after its bead line. */
+    const takeIn = (
+      batch: readonly Said[],
+      bead: Bead,
+      known: Known,
+    ): Effect.Effect<News | undefined> =>
       Effect.gen(function* () {
         const before = known.heard
         known.standing = standingIn(batch, bead) ?? known.standing
@@ -320,11 +379,83 @@ export const makeWatches = <R>(
           before === undefined || after === undefined
             ? undefined
             : newsOf(bead, before, after, batch)
-        if (said !== undefined) {
-          yield* Queue.offer(news, { ...said, told: keep })
-        } else if (same(known.told, before) && !same(before, after)) {
-          yield* keep
+        if (said !== undefined) return { ...said, told: keep }
+        if (same(known.told, before) && !same(before, after)) yield* keep
+        return undefined
+      })
+
+    const tell = (said: Omit<News, 'told'>) => Queue.offer(news, { ...said, told: Effect.void })
+
+    /** Run `check` once the watcher or a tracker has had a minute to come
+     * back. */
+    const inAMinute = (check: Effect.Effect<void>) =>
+      Effect.sleep(timing.quietFor).pipe(Effect.zipRight(check), Effect.forkIn(scope))
+
+    let outages = 0
+
+    /** Tell the session of every watched bead the watcher cannot watch and
+     * the session has not been told of, in one message. */
+    const tellDown = Effect.suspend(() => {
+      const untold = [...watches.values()].filter(
+        ({ accepted, known }) => accepted && known.down !== undefined && !known.toldDown,
+      )
+      const why =
+        untold.find(({ known }) => known.down === 'protocol')?.known.down ?? untold[0]?.known.down
+      if (why === undefined) return Effect.void
+      for (const { known } of untold) known.toldDown = true
+      return tell(
+        watcherDown(
+          why,
+          untold.map(({ bead }) => bead),
+        ),
+      )
+    })
+
+    /** The news of each bead the session was told is down, held from when
+     * the first of them is back until all of them are, so the session is told
+     * once. */
+    const heldBack: News[] = []
+    let someAreBack = false
+
+    const tellBackOnceAllAre = Effect.suspend(() => {
+      const stillDown = [...watches.values()].some(({ known }) => known.toldDown)
+      if (stillDown || !someAreBack) return Effect.void
+      someAreBack = false
+      const changed = heldBack.splice(0)
+      return Queue.offer(news, {
+        ...watcherBack(changed),
+        told: Effect.forEach(changed, ({ told }) => told, { discard: true }),
+      })
+    })
+
+    /** Each project whose tracker the watcher cannot reach, and whether the
+     * session has been told. */
+    const unreachable = new Map<string, { told: boolean }>()
+
+    const trackerIn = (batch: readonly Said[], project: string) =>
+      Effect.gen(function* () {
+        const freshness = batch.at(-1)
+        if (freshness?.line !== 'freshness') return
+        const why = unreachableIn(freshness)
+        const known = unreachable.get(project)
+        if (why === undefined) {
+          unreachable.delete(project)
+          if (known?.told) yield* tell(trackerBack(project))
+          return
         }
+        if (known !== undefined) return
+        const outage = { told: false }
+        unreachable.set(project, outage)
+        yield* inAMinute(
+          Effect.suspend(() => {
+            const beads = [...watches.values()]
+              .filter((watch) => watch.accepted && watch.bead.project === project)
+              .map(({ bead }) => bead)
+            if (unreachable.get(project) !== outage || beads.length === 0) return Effect.void
+            outage.told = true
+            return tell(trackerUnreachable(project, why, beads))
+          }),
+        )
       })
 
     const start = (bead: Bead, accepted: boolean, told?: Told) =>
@@ -334,18 +465,41 @@ export const makeWatches = <R>(
           heard: told,
           told,
           down: undefined,
+          outage: undefined,
+          toldDown: false,
         }
         const firstHeard = yield* Deferred.make<void>()
-        const hear = (heard: Heard) =>
+        const goDown = (why: Down) =>
           Effect.gen(function* () {
-            if ('down' in heard) {
-              known.down = heard.down
-            } else {
-              known.down = undefined
-              yield* takeIn(heard.batch, bead, known)
+            known.down = why
+            if (known.outage === undefined) {
+              const outage = ++outages
+              known.outage = outage
+              yield* inAMinute(
+                Effect.suspend(() => (known.outage === outage ? tellDown : Effect.void)),
+              )
             }
-            yield* Deferred.succeed(firstHeard, undefined)
+            if (why === 'protocol') yield* tellDown
           })
+        const hearBatch = (batch: readonly Said[]) =>
+          Effect.gen(function* () {
+            known.down = undefined
+            known.outage = undefined
+            yield* trackerIn(batch, bead.project)
+            const said = yield* takeIn(batch, bead, known)
+            if (known.toldDown) {
+              known.toldDown = false
+              someAreBack = true
+              if (said !== undefined) heldBack.push(said)
+              yield* tellBackOnceAllAre
+            } else if (said !== undefined) {
+              yield* Queue.offer(news, said)
+            }
+          })
+        const hear = (heard: Heard) =>
+          ('down' in heard ? goDown(heard.down) : hearBatch(heard.batch)).pipe(
+            Effect.zipRight(Deferred.succeed(firstHeard, undefined)),
+          )
         const connection = yield* watchBead(bead, settings.findWatcher, timing).pipe(
           Stream.runForEach(hear),
           Effect.provide(context),
@@ -360,6 +514,7 @@ export const makeWatches = <R>(
       Effect.sync(() => watches.delete(keyOf(watch.bead))).pipe(
         Effect.zipRight(Fiber.interrupt(watch.connection)),
         Effect.zipRight(Deferred.succeed(watch.firstHeard, undefined)),
+        Effect.zipRight(tellBackOnceAllAre),
       )
 
     const persist = keeping.withPermits(1)(
