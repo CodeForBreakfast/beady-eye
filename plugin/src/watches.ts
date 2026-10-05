@@ -460,11 +460,7 @@ export const makeWatches = <R>(
             const beads = [...watches.values()]
               .filter((watch) => watch.accepted && watch.bead.project === project)
               .map(({ bead }) => bead)
-            if (unreachable.get(project) !== outage) return Effect.void
-            if (beads.length === 0) {
-              unreachable.delete(project)
-              return Effect.void
-            }
+            if (unreachable.get(project) !== outage || beads.length === 0) return Effect.void
             outage.told = true
             return tell(trackerUnreachable(project, why, beads))
           }),
@@ -485,6 +481,7 @@ export const makeWatches = <R>(
         const goDown = (why: Down) =>
           Effect.gen(function* () {
             known.down = why
+            if (known.toldOutage === 'back') known.toldOutage = 'down'
             if (known.outage === undefined) {
               const outage = ++outages
               known.outage = outage
@@ -522,7 +519,13 @@ export const makeWatches = <R>(
       })
 
     const stop = (watch: Watch) =>
-      Effect.sync(() => watches.delete(keyOf(watch.bead))).pipe(
+      Effect.sync(() => {
+        watches.delete(keyOf(watch.bead))
+        const { project } = watch.bead
+        if (![...watches.values()].some(({ bead }) => bead.project === project)) {
+          unreachable.delete(project)
+        }
+      }).pipe(
         Effect.zipRight(Fiber.interrupt(watch.connection)),
         Effect.zipRight(Deferred.succeed(watch.firstHeard, undefined)),
         Effect.zipRight(tellBackOnceAllAre),
