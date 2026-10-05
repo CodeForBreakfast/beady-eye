@@ -256,7 +256,7 @@ const watcherDown = (why: Down, beads: readonly Bead[]): Omit<News, 'told'> => (
 
 const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'> => ({
   content: [
-    'The watcher is back, and watches every bead again.',
+    'The watcher is answering again.',
     ...changed.map(({ content }) => content),
     'A comment made while it was down arrives as a count, without its text.',
   ].join('\n'),

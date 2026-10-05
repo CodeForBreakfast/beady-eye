@@ -907,7 +907,7 @@ test('a watcher back after an outage wakes the session once, with what changed m
 
   expect(answering).toEqual({
     content: [
-      'The watcher is back, and watches every bead again.',
+      'The watcher is answering again.',
       started.content,
       'A comment made while it was down arrives as a count, without its text.',
     ].join('\n'),
@@ -1001,7 +1001,7 @@ test('a bead back before the others is told of as it stands once they are all ba
 
   expect(answering.content).toBe(
     [
-      'The watcher is back, and watches every bead again.',
+      'The watcher is answering again.',
       'A comment made while it was down arrives as a count, without its text.',
     ].join('\n'),
   )
@@ -1046,7 +1046,7 @@ test('a bead back early that goes down again is waited for too', async () => {
 
   expect((await use.nextMessage()).content).toBe(
     [
-      'The watcher is back, and watches every bead again.',
+      'The watcher is answering again.',
       started.content,
       'A comment made while it was down arrives as a count, without its text.',
     ].join('\n'),
