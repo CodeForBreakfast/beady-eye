@@ -2408,9 +2408,11 @@ a plugin's channel messages only to a session started with that channel
 allowed. Without it the plugin's tools still answer and no change arrives, so
 starting sessions that way is the setup's business, as starting the watcher is.
 
-**One hook hands the server its session.** A `PreToolUse` hook adds the
-session's id and working directory to each call to the plugin's tools,
-because an MCP server is told neither.
+**The server learns its session as commy's does.** Claude Code starts it with
+the session's id in `CLAUDE_CODE_SESSION_ID`, and a `PreToolUse` hook adds the
+id and working directory to each call to the plugin's tools, because MCP tells
+a server neither. The server takes the first id it is given, from either, and
+keeps it.
 
 ### Finding the watcher
 
@@ -2436,24 +2438,33 @@ The plugin has three tools:
 plugin opens one short connection, sends `watch <project> <id>` for each
 project the config names, and reads as far as each freshness line. The project
 that answers with a bead line holds it. Where none does, or more than one
-does, `watch` refuses and asks for the project. The key is still
+does, `watch` refuses and asks for the project. It refuses too where a
+project the watcher has not read, or one that has not answered within 15
+seconds, leaves the answer open. The key is still
 `(project, id)`, and the plugin never guesses a project from an id's prefix.
 
-**`watch` refuses a project the watcher does not read.** Waiting cannot mend
-an unknown project, so it is an error at once rather than a watch that never
-answers.
+**`watch` refuses a project the watcher does not read, and a bead its project
+does not hold.** Waiting cannot mend either, so each is an error at once
+rather than a watch that never answers. The refusal names the project that
+answered, for a session that named the wrong one.
 
 **Each watched bead has a connection of its own.** The protocol has no line to
 stop a watch, so `unwatch` closes that bead's connection, and a connection
 lost is that bead's alone to restore.
 
 **A session's watches outlive its server.** Claude Code restarts an MCP server
-under a live session, and a session can be resumed later. So the plugin keeps
-each session's watches in a file of its own under
+under a live session, and a session can be resumed later under the same id. So
+the plugin keeps each session's watches in a file of its own under
 `$XDG_STATE_HOME/beady-eye/watches/`, named for the session's id, and
-watches them again when it next learns that id.
+watches them again as soon as it learns that id. A server started with the id
+in its environment learns it before any tool is called, which is what brings
+back the watches of a session asleep on a bead. On each `watch` and `unwatch`
+a new file replaces the old one whole, so a server stopped while writing leaves
+the last list standing. The file is never removed, as commy keeps its
+subscriptions.
 A watch ends when the session unwatches the bead, and not when the bead
-closes, because a closed bead can reopen.
+closes, because a closed bead can reopen. The server exits when the session
+closes its input, and every watch's connection closes with it.
 
 ### What wakes the session
 
