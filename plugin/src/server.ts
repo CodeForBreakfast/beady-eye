@@ -1,4 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Data, Effect } from "effect";
 import { version } from "../package.json";
 
 export const buildServer = (): Server =>
@@ -6,6 +7,10 @@ export const buildServer = (): Server =>
 		{ name: "beady-eye", version },
 		{ capabilities: { experimental: { "claude/channel": {} } } },
 	);
+
+export class SessionNotTold extends Data.TaggedError("SessionNotTold")<{
+	readonly cause: unknown;
+}> {}
 
 /**
  * Puts a message into the session as a `<channel source="beady-eye" …>`
@@ -16,8 +21,12 @@ export const tellSession = (
 	server: Server,
 	content: string,
 	meta: Record<string, string>,
-): Promise<void> =>
-	server.notification({
-		method: "notifications/claude/channel",
-		params: { content, meta },
+): Effect.Effect<void, SessionNotTold> =>
+	Effect.tryPromise({
+		try: () =>
+			server.notification({
+				method: "notifications/claude/channel",
+				params: { content, meta },
+			}),
+		catch: (cause) => new SessionNotTold({ cause }),
 	});

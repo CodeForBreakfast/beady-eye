@@ -5,16 +5,27 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { FileSystem } from "@effect/platform";
+import { NodeFileSystem } from "@effect/platform-node";
 import {
-	type Down,
+	Chunk,
+	ConfigProvider,
+	Effect,
+	Fiber,
+	Option,
+	Queue,
+	Stream,
+} from "effect";
+import {
+	type Heard,
 	othersMayTakeANameIn,
 	pauseAfter,
-	type Said,
 	type Timing,
 	watchBead,
 	whereTheWatcherIs,
@@ -45,9 +56,9 @@ const freshness = {
 const said = (...lines: unknown[]) =>
 	lines.map((line) => `${JSON.stringify(line)}\n`).join("");
 
-const cleanUp: (() => void)[] = [];
-afterEach(() => {
-	for (const clean of cleanUp.splice(0)) clean();
+const cleanUp: (() => unknown)[] = [];
+afterEach(async () => {
+	for (const clean of cleanUp.splice(0)) await clean();
 });
 
 const aPrivateDirectory = () => {
@@ -55,6 +66,12 @@ const aPrivateDirectory = () => {
 	cleanUp.push(() => rmSync(directory, { recursive: true, force: true }));
 	return directory;
 };
+
+const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
+	Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)));
+
+const at = (path: string | undefined) =>
+	Effect.succeed(Option.fromNullable(path));
 
 interface Connection {
 	readonly connection: Socket;
@@ -104,70 +121,79 @@ const aWatcherThatDied = async (at: string) => {
 	await watcher.exited;
 };
 
-type Heard = { batch: readonly Said[] } | { down: Down };
-
-/** What a session would be told, in order. */
-const aSession = () => {
-	const heard: Heard[] = [];
-	const waiting: ((heard: Heard) => void)[] = [];
-	const hear = (what: Heard) => {
-		const waiter = waiting.shift();
-		if (waiter) waiter(what);
-		else heard.push(what);
-	};
+/** A session watching the bead at `path`, and what it is told, in order. */
+const watching = (path: string | undefined, watchTiming = timing) => {
+	const told = Effect.runSync(Queue.unbounded<Heard>());
+	const watch = Effect.runFork(
+		watchBead(bead, at(path), watchTiming).pipe(
+			Stream.runForEach((heard) => Queue.offer(told, heard)),
+			Effect.provide(NodeFileSystem.layer),
+		),
+	);
+	const stop = () => Effect.runPromise(Fiber.interrupt(watch));
+	cleanUp.push(stop);
 	return {
-		heard,
-		hearing: {
-			heard: (batch: readonly Said[]) => hear({ batch }),
-			down: (why: Down) => hear({ down: why }),
-		},
-		next: () =>
-			new Promise<Heard>((resolve) => {
-				const first = heard.shift();
-				if (first) resolve(first);
-				else waiting.push(resolve);
-			}),
+		stop,
+		next: () => Effect.runPromise(Queue.take(told)),
+		heard: () => Chunk.toArray(Effect.runSync(Queue.takeAll(told))),
 	};
 };
 
-const watching = (
-	at: string | undefined,
-	session: ReturnType<typeof aSession>,
-) => {
-	const watch = watchBead(bead, () => at, session.hearing, timing);
-	cleanUp.push(watch.stop);
-	return watch;
-};
+/** What a session that stops after hearing `count` things is told. */
+const firstHeard = (path: string, count: number) =>
+	run(
+		watchBead(bead, at(path), timing).pipe(
+			Stream.take(count),
+			Stream.runCollect,
+			Effect.map(Chunk.toArray),
+		),
+	);
 
 const pause = (millis: number) =>
 	new Promise((resolve) => setTimeout(resolve, millis));
 
-test("the config's watcher socket is where the watcher is", () => {
+const whereWith = (config: string, runtimeDirectory: string | undefined) =>
+	run(
+		whereTheWatcherIs(config).pipe(
+			Effect.withConfigProvider(
+				ConfigProvider.fromMap(
+					new Map(
+						runtimeDirectory === undefined
+							? []
+							: [["XDG_RUNTIME_DIR", runtimeDirectory]],
+					),
+				),
+			),
+			Effect.map(Option.getOrUndefined),
+		),
+	);
+
+test("the config's watcher socket is where the watcher is", async () => {
 	const config = join(aPrivateDirectory(), "config.toml");
 	writeFileSync(config, '[watcher]\nsocket = "/var/folders/T/watcher.sock"\n');
 
-	expect(whereTheWatcherIs(config, "/run/user/1000")).toBe(
+	expect(await whereWith(config, "/run/user/1000")).toBe(
 		"/var/folders/T/watcher.sock",
 	);
 });
 
-test("a config naming no socket leaves the watcher under the runtime directory", () => {
+test("a config naming no socket leaves the watcher under the runtime directory", async () => {
 	const directory = aPrivateDirectory();
 	const config = join(directory, "config.toml");
 	writeFileSync(config, "[tui]\nrefresh_seconds = 30\n");
 
 	for (const named of [config, join(directory, "missing.toml")]) {
-		expect(whereTheWatcherIs(named, "/run/user/1000")).toBe(
+		expect(await whereWith(named, "/run/user/1000")).toBe(
 			"/run/user/1000/beady-eye/watcher.sock",
 		);
 	}
 });
 
-test("with no socket named and no runtime directory there is no watcher to reach", () => {
+test("with no socket named and no runtime directory there is no watcher to reach", async () => {
 	const config = join(aPrivateDirectory(), "missing.toml");
 
-	expect(whereTheWatcherIs(config, undefined)).toBeUndefined();
-	expect(whereTheWatcherIs(config, "")).toBeUndefined();
+	expect(await whereWith(config, undefined)).toBeUndefined();
+	expect(await whereWith(config, "")).toBeUndefined();
 });
 
 test("a directory is one others may take a name in by its owner as well as its mode", () => {
@@ -183,10 +209,9 @@ test("a directory is one others may take a name in by its owner as well as its m
 });
 
 test("a bead's lines arrive as one batch at its project's freshness line", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const session = watching(path);
 
 	const { connection, asked: line } = await watcher.next();
 	connection.write(said({ line: "alive" }, beadLine, freshness));
@@ -196,10 +221,9 @@ test("a bead's lines arrive as one batch at its project's freshness line", async
 });
 
 test("a refusal of the watch arrives on its own", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const session = watching(path);
 
 	const refused = {
 		line: "refused",
@@ -212,22 +236,20 @@ test("a refusal of the watch arrives on its own", async () => {
 });
 
 test("a refused connection is a watcher that is down", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	await aWatcherThatDied(at);
-	expect(lstatSync(at).isSocket()).toBe(true);
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	await aWatcherThatDied(path);
+	expect(lstatSync(path).isSocket()).toBe(true);
+	const session = watching(path);
 
 	expect(await session.next()).toEqual({ down: "refused" });
 });
 
 test("a watcher that is not there yet is tried again until it answers", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const session = watching(path);
 
 	expect(await session.next()).toEqual({ down: "refused" });
-	const watcher = await aWatcherAt(at);
+	const watcher = await aWatcherAt(path);
 	const { connection, asked: line } = await watcher.next();
 	connection.write(said(beadLine, freshness));
 
@@ -236,10 +258,9 @@ test("a watcher that is not there yet is tried again until it answers", async ()
 });
 
 test("a connection the watcher closes is down, and the bead is watched again", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const session = watching(path);
 
 	(await watcher.next()).connection.end();
 
@@ -248,10 +269,9 @@ test("a connection the watcher closes is down, and the bead is watched again", a
 });
 
 test("a connection with no line for a minute has wedged and is closed", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const session = watching(path);
 
 	const { connection } = await watcher.next();
 	const closed = new Promise((resolve) => connection.on("close", resolve));
@@ -262,10 +282,9 @@ test("a connection with no line for a minute has wedged and is closed", async ()
 });
 
 test("alive lines keep a quiet connection up", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const session = watching(path);
 
 	const { connection } = await watcher.next();
 	const alive = setInterval(
@@ -275,7 +294,7 @@ test("alive lines keep a quiet connection up", async () => {
 	await pause(timing.wedgedAfter * 3);
 	clearInterval(alive);
 
-	expect(session.heard).toEqual([]);
+	expect(session.heard()).toEqual([]);
 });
 
 test("a protocol the plugin does not know is a watcher that is down", async () => {
@@ -286,15 +305,14 @@ test("a protocol the plugin does not know is a watcher that is down", async () =
 		"unknown watch summit-works smt-4kd3p.20\n",
 		said("a string"),
 	]) {
-		const at = join(aPrivateDirectory(), "watcher.sock");
-		const watcher = await aWatcherAt(at);
-		const session = aSession();
-		const watch = watching(at, session);
+		const path = join(aPrivateDirectory(), "watcher.sock");
+		const watcher = await aWatcherAt(path);
+		const session = watching(path);
 
 		(await watcher.next()).connection.write(answer);
 
 		expect(await session.next()).toEqual({ down: "protocol" });
-		watch.stop();
+		await session.stop();
 	}
 });
 
@@ -302,31 +320,44 @@ test("a socket that is not the user's own is not believed", async () => {
 	const open = join(aPrivateDirectory(), "open");
 	mkdirSync(open);
 	chmodSync(open, 0o777);
-	const at = join(open, "watcher.sock");
-	const watcher = await aWatcherAt(at);
+	const path = join(open, "watcher.sock");
+	const watcher = await aWatcherAt(path);
 	let connections = 0;
 	watcher.server.on("connection", () => {
 		connections += 1;
 	});
-	const session = aSession();
-	watching(at, session);
+	const session = watching(path);
 
 	expect(await session.next()).toEqual({ down: "refused" });
 	expect(connections).toBe(0);
 });
 
 test("something other than a socket at the path is not believed", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	writeFileSync(at, "");
-	const session = aSession();
-	watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	writeFileSync(path, "");
+	const session = watching(path);
 
 	expect(await session.next()).toEqual({ down: "refused" });
 });
 
+test("a link to the user's own socket is not believed", async () => {
+	const directory = aPrivateDirectory();
+	const socket = join(directory, "watcher.sock");
+	const watcher = await aWatcherAt(socket);
+	let connections = 0;
+	watcher.server.on("connection", () => {
+		connections += 1;
+	});
+	const path = join(directory, "link.sock");
+	symlinkSync(socket, path);
+	const session = watching(path);
+
+	expect(await session.next()).toEqual({ down: "refused" });
+	expect(connections).toBe(0);
+});
+
 test("with nowhere to find a watcher the watcher is down", async () => {
-	const session = aSession();
-	watching(undefined, session);
+	const session = watching(undefined);
 
 	expect(await session.next()).toEqual({ down: "nowhere" });
 });
@@ -339,15 +370,13 @@ test("the pause before connecting again grows to a limit", () => {
 
 test("a watcher that answered is tried again after the shortest pause", async () => {
 	const slowly: Timing = { ...timing, firstPause: 20, longestPause: 5_000 };
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const session = aSession();
-	const watch = watchBead(bead, () => at, session.hearing, slowly);
-	cleanUp.push(watch.stop);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const session = watching(path, slowly);
 	for (let refused = 0; refused < 4; refused += 1) {
 		expect(await session.next()).toEqual({ down: "refused" });
 	}
 
-	const watcher = await aWatcherAt(at);
+	const watcher = await aWatcherAt(path);
 	(await watcher.next()).connection.end(said(beadLine, freshness));
 	expect(await session.next()).toEqual({ batch: [beadLine, freshness] });
 	expect(await session.next()).toEqual({ down: "closed" });
@@ -358,71 +387,44 @@ test("a watcher that answered is tried again after the shortest pause", async ()
 });
 
 test("a watch that stops closes its connection and is not tried again", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const session = aSession();
-	const watch = watching(at, session);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const session = watching(path);
 
 	const { connection } = await watcher.next();
 	const closed = new Promise((resolve) => connection.on("close", resolve));
-	watch.stop();
+	await session.stop();
 	await closed;
 	await pause(timing.longestPause * 3);
 
-	expect(session.heard).toEqual([]);
+	expect(session.heard()).toEqual([]);
 });
 
 test("a watch stopped as it hears its watcher is down is not tried again", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
 	let connections = 0;
 	watcher.server.on("connection", () => {
 		connections += 1;
 	});
-	const told: Down[] = [];
-	const watch = watchBead(
-		bead,
-		() => at,
-		{
-			heard: () => {},
-			down: (why) => {
-				told.push(why);
-				watch.stop();
-			},
-		},
-		timing,
-	);
-	cleanUp.push(watch.stop);
 
+	const told = firstHeard(path, 1);
 	(await watcher.next()).connection.end();
+	expect(await told).toEqual([{ down: "closed" }]);
 	await pause(timing.longestPause * 3);
 
-	expect(told).toEqual(["closed"]);
 	expect(connections).toBe(1);
 });
 
-test("a watch stopped as it hears a batch is told nothing more", async () => {
-	const at = join(aPrivateDirectory(), "watcher.sock");
-	const watcher = await aWatcherAt(at);
-	const heard: (readonly Said[] | Down)[] = [];
-	const watch = watchBead(
-		bead,
-		() => at,
-		{
-			heard: (batch) => {
-				heard.push(batch);
-				watch.stop();
-			},
-			down: (why) => heard.push(why),
-		},
-		timing,
-	);
-	cleanUp.push(watch.stop);
+test("a watch stopped as it hears a batch closes its connection", async () => {
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
 
-	(await watcher.next()).connection.write(
-		said(beadLine, freshness, beadLine, freshness),
-	);
-	await pause(timing.longestPause * 3);
+	const told = firstHeard(path, 1);
+	const { connection } = await watcher.next();
+	const closed = new Promise((resolve) => connection.on("close", resolve));
+	connection.write(said(beadLine, freshness, beadLine, freshness));
 
-	expect(heard).toEqual([[beadLine, freshness]]);
+	expect(await told).toEqual([{ batch: [beadLine, freshness] }]);
+	await closed;
 });
