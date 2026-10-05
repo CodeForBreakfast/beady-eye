@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -760,4 +760,32 @@ test('a bead first heard of after it was watched is kept as what the session was
   again.connection.write(said(startedLine, freshness('summit-works')))
 
   expect(await after.nextMessage()).toEqual(started)
+})
+
+test('a bead whose project the watcher refused for a while is compared with what the session was told', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(
+    said({ line: 'refused', asked: 'watch summit-works smt-4kd3p.20', reason: 'unknown-project' }),
+  )
+  connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await use.nextMessage()).toEqual(started)
+})
+
+test('a watch goes on being told of changes where the session file cannot be written', async () => {
+  const place = aPlace()
+  const { use, connection } = await aWatchedBead(place)
+  chmodSync(join(place.directory, 'beady-eye', 'watches'), 0o500)
+  cleanUp.unshift(() => chmodSync(join(place.directory, 'beady-eye', 'watches'), 0o700))
+
+  connection.write(said(theBead({ ready: true }), freshness('summit-works')))
+  await use.nextMessage()
+  connection.write(
+    said(theBead({ ready: true, row: { status: 'in_progress' } }), freshness('summit-works')),
+  )
+
+  expect((await use.nextMessage()).content).toBe(
+    `${heading}\n- Its status went from blocked to in_progress.`,
+  )
 })

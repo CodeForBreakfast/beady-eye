@@ -61,6 +61,8 @@ type Standing =
 /** What is known of a watched bead from its connection. */
 interface Known {
   standing: Standing
+  /** What the session was last told of the bead, kept through a refusal. */
+  told: Told | undefined
   down: Down | undefined
 }
 
@@ -288,21 +290,23 @@ export const makeWatches = <R>(
      * line in a batch after its bead line. */
     const takeIn = (batch: readonly Said[], bead: Bead, known: Known) =>
       Effect.gen(function* () {
-        const before = toldOf(known.standing)
+        const before = known.told
         known.standing = standingIn(batch, bead) ?? known.standing
-        const after = toldOf(known.standing)
+        const after = toldOf(known.standing) ?? before
+        known.told = after
         if (watches.get(keyOf(bead))?.accepted !== true) return
         if (before !== undefined && after !== undefined) {
           const said = newsOf(bead, before, after, batch)
           if (said !== undefined) yield* Queue.offer(news, said)
         }
-        if (JSON.stringify(before) !== JSON.stringify(after)) yield* persist
+        if (JSON.stringify(before) !== JSON.stringify(after)) yield* Effect.exit(persist)
       })
 
     const start = (bead: Bead, accepted: boolean, told?: Told) =>
       Effect.gen(function* () {
         const known: Known = {
           standing: told ?? { is: 'unheard' },
+          told,
           down: undefined,
         }
         const firstHeard = yield* Deferred.make<void>()
@@ -344,7 +348,7 @@ export const makeWatches = <R>(
                   .map(({ bead: { project, id }, known }) => ({
                     project,
                     id,
-                    told: toldOf(known.standing),
+                    told: known.told,
                   }))
                 const written = `${path}.new`
                 return fs
