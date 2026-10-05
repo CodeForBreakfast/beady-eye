@@ -10,6 +10,7 @@
 
 # the plugin's bun workspace
 node_modules/
+/plugin/dist/
 
 # nix
 result

@@ -1,6 +1,14 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
-	"files": { "includes": ["src/**", "*.json"] },
+	"files": {
+		"includes": [
+			"src/**",
+			"hooks/**",
+			"*.json",
+			".claude-plugin/**",
+			".mcp.json"
+		]
+	},
 	"linter": { "enabled": true, "rules": { "preset": "none" } },
 	"formatter": { "enabled": true }
 }

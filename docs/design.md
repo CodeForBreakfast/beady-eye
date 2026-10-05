@@ -2376,7 +2376,7 @@ consumer has.
 
 ## Waking a Claude Code session when a bead changes
 
-Nothing in this section is built yet. It is the design the build works to.
+Most of this section is not built yet. It is the design the build works to.
 
 An agent that has asked a question on a bead, or is waiting on someone else's
 bead, has no way to learn that the bead changed short of asking again. The

@@ -1,8 +1,13 @@
 {
 	"name": "beady-eye-plugin",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"build": "bun build src/main.ts --target node --outfile dist/server.js"
+	},
 	"devDependencies": {
+		"@modelcontextprotocol/sdk": "1.32.0",
 		"bun-types": "1.4.2"
 	}
 }

@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"beady-eye": {
+			"command": "npx",
+			"args": ["-y", "@codeforbreakfast/beady-eye-mcp@0.1.0"]
+		}
+	}
+}

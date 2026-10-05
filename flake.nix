@@ -3406,21 +3406,23 @@ and a second line"
             cd plugin
             bun install --frozen-lockfile --no-progress
           '';
-          installPhase = "cp -r node_modules $out";
+          # A package finds its own dependencies by walking up to a directory
+          # named node_modules, so the store path keeps that directory whole.
+          installPhase = "mkdir $out && cp -r node_modules $out";
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-TpE45RtzqgswUpxaylKCkjsC/49OebTorIKskqZGywo=";
+          outputHash = "sha256-qHMoo3c16Vlby0A+kAYJolqzV3kxiHzhpQJj186oZbw=";
         };
 
-        pluginTools = [ pkgs.bun pkgs.biome pkgs.typescript ];
+        pluginTools = [ pkgs.bun pkgs.biome pkgs.typescript pkgs.nodejs ];
 
         pluginCheck = name: tools: command:
           pkgs.runCommand "beady-eye-plugin-${name}" { nativeBuildInputs = tools; } ''
             cp -r ${pluginSource}/plugin work
             chmod -R u+w work
             cd work
-            ln -s ${pluginModules} node_modules
+            ln -s ${pluginModules}/node_modules node_modules
             ${command}
             touch $out
           '';

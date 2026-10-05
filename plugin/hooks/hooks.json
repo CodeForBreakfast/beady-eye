@@ -1,0 +1,16 @@
+{
+	"hooks": {
+		"PreToolUse": [
+			{
+				"matcher": "mcp__plugin_beady-eye_beady-eye__.*",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "node",
+						"args": ["${CLAUDE_PLUGIN_ROOT}/hooks/hand-over-session.ts"]
+					}
+				]
+			}
+		]
+	}
+}
