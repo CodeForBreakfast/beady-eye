@@ -239,6 +239,11 @@ $ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.1.0
 $ claude plugin install beady-eye@beady-eye
 ```
 
+Where npm's `min-release-age` is set, npm refuses to start the plugin's server
+until each release has aged past it. The plugin's `NPM_MIN_RELEASE_AGE` setting
+replaces that age for the plugin's server alone, and `0` starts a new release at
+once.
+
 Claude Code delivers a plugin's messages only to a session started with its
 channel allowed. A session started any other way still has the tools, and is
 never woken:

@@ -6,5 +6,13 @@
     "name": "Code For Breakfast",
     "email": "info@codeforbreakfast.co"
   },
-  "keywords": ["beads", "bdi", "mcp"]
+  "keywords": ["beads", "bdi", "mcp"],
+  "userConfig": {
+    "NPM_MIN_RELEASE_AGE": {
+      "type": "string",
+      "title": "npm release age for this plugin's server",
+      "description": "How long npm holds back a new release of the plugin's server before starting it, as npm's min-release-age measures it. It replaces your own min-release-age for this one package, which is a single file with no dependencies. Set 0 to start a new release at once. Leave it unset to keep the min-release-age your .npmrc sets, which can stop the server starting for a while after each release.",
+      "required": false
+    }
+  }
 }
