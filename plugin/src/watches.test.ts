@@ -753,7 +753,7 @@ test('a bead first heard of after it was watched is kept as what the session was
   const watcher = await aWatcherAt(place.at as string)
   const { connection } = await watcher.next()
   connection.write(said(theBead(), freshness('summit-works')))
-  while (!(await use('watching')).text?.includes(asWatched)) await Bun.sleep(5)
+  while (keptFile(place)[0]?.told === undefined) await Bun.sleep(5)
   await use.exit()
 
   const after = await aServer(place)
