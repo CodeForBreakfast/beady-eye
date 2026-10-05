@@ -228,6 +228,25 @@ of a comment.
 [docs/design.md](docs/design.md) has every line the watcher sends, under
 "Watching".
 
+A Claude Code session can be one of those consumers. The `beady-eye` plugin
+gives it `watch`, `unwatch` and `watching` tools, and wakes it when a bead it
+watches changes status, becomes ready, is commented on or goes. It needs Node
+and a watcher on the same machine. Add this repository as a marketplace pinned
+to a plugin release, and install the plugin from it:
+
+```console
+$ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.1.0
+$ claude plugin install beady-eye@beady-eye
+```
+
+Claude Code delivers a plugin's messages only to a session started with its
+channel allowed. A session started any other way still has the tools, and is
+never woken:
+
+```console
+$ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
+```
+
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
 what a bead carries, credentials, extra roots, intervals, the light theme, and
 the socket you can poke to say a tracker changed so the eye stops polling it.
