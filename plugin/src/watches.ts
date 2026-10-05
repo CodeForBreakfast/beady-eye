@@ -34,6 +34,8 @@ export interface Answer {
 export interface News {
   readonly content: string
   readonly meta: Record<string, string>
+  /** Keep what the message told, once the session has been sent it. */
+  readonly told: Effect.Effect<void>
 }
 
 const Told = Schema.Union(
@@ -61,7 +63,11 @@ type Standing =
 /** What is known of a watched bead from its connection. */
 interface Known {
   standing: Standing
-  /** What the session was last told of the bead, kept through a refusal. */
+  /** What the plugin last heard of the bead, kept through a refusal, which
+   * the next batch is compared with. */
+  heard: Told | undefined
+  /** What the session was last told of the bead, which is what is kept on
+   * disk, so a change a server never told is told by the next. */
   told: Told | undefined
   down: Down | undefined
 }
@@ -134,6 +140,9 @@ const standingIn = (batch: readonly Said[], bead: Bead): Standing | undefined =>
   }
 }
 
+const same = (one: Told | undefined, other: Told | undefined) =>
+  JSON.stringify(one) === JSON.stringify(other)
+
 const toldOf = (standing: Standing): Told | undefined =>
   standing.is === 'bead' || standing.is === 'gone' ? standing : undefined
 
@@ -192,7 +201,12 @@ const changesFrom = (before: Told, now: Told, batch: readonly Said[], bead: Bead
 
 /** The message for the session where `bead` went from `before` to `now`
  * with something a waiting session acts on. */
-const newsOf = (bead: Bead, before: Told, now: Told, batch: readonly Said[]): News | undefined => {
+const newsOf = (
+  bead: Bead,
+  before: Told,
+  now: Told,
+  batch: readonly Said[],
+): Omit<News, 'told'> | undefined => {
   const changes = changesFrom(before, now, batch, bead)
   if (changes.length === 0) return undefined
   const title = now.is === 'bead' ? now.title : before.is === 'bead' ? before.title : ''
@@ -290,22 +304,34 @@ export const makeWatches = <R>(
      * line in a batch after its bead line. */
     const takeIn = (batch: readonly Said[], bead: Bead, known: Known) =>
       Effect.gen(function* () {
-        const before = known.told
+        const before = known.heard
         known.standing = standingIn(batch, bead) ?? known.standing
         const after = toldOf(known.standing) ?? before
-        known.told = after
-        if (watches.get(keyOf(bead))?.accepted !== true) return
-        if (before !== undefined && after !== undefined) {
-          const said = newsOf(bead, before, after, batch)
-          if (said !== undefined) yield* Queue.offer(news, said)
+        known.heard = after
+        const keep = Effect.suspend(() => {
+          known.told = after
+          return Effect.exit(persist)
+        })
+        if (watches.get(keyOf(bead))?.accepted !== true) {
+          known.told = after
+          return
         }
-        if (JSON.stringify(before) !== JSON.stringify(after)) yield* Effect.exit(persist)
+        const said =
+          before === undefined || after === undefined
+            ? undefined
+            : newsOf(bead, before, after, batch)
+        if (said !== undefined) {
+          yield* Queue.offer(news, { ...said, told: keep })
+        } else if (same(known.told, before) && !same(before, after)) {
+          yield* keep
+        }
       })
 
     const start = (bead: Bead, accepted: boolean, told?: Told) =>
       Effect.gen(function* () {
         const known: Known = {
           standing: told ?? { is: 'unheard' },
+          heard: told,
           told,
           down: undefined,
         }

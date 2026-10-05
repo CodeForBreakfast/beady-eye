@@ -789,3 +789,24 @@ test('a watch goes on being told of changes where the session file cannot be wri
     `${heading}\n- Its status went from blocked to in_progress.`,
   )
 })
+
+test('a change a server saw and never told the session is told by the next server', async () => {
+  const place = aPlace()
+  const { use, watcher } = await aWatchedBead(place)
+  await use.exit()
+  const { watches, close } = await someWatches(place.directory, place.at, [], timing)
+  await Effect.runPromise(watches.learn(session))
+  const untold = await watcher.next()
+  untold.connection.write(said(startedLine, freshness('summit-works')))
+  while (!(await Effect.runPromise(watches.watching)).text.includes('in_progress')) {
+    await Bun.sleep(5)
+  }
+  await close()
+
+  const after = await aServer(place)
+  await after('watching')
+  const again = await watcher.next()
+  again.connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await after.nextMessage()).toEqual(started)
+})
