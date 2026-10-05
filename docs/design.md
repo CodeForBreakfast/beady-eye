@@ -2399,6 +2399,15 @@ Node and nothing else. The repository's root carries the
 `.claude-plugin/marketplace.json` that makes it a marketplace, so the plugin
 installs as `beady-eye@beady-eye`.
 
+**A machine chooses how long npm holds the server's releases.** npm's
+`min-release-age` refuses a release younger than it, so a session started
+where it is set cannot start the server of a plugin released since. The plugin's
+optional `NPM_MIN_RELEASE_AGE` setting reaches npm as
+`npm_config_min_release_age` for the server alone, as commy's does. Unset, it
+reaches npm empty, which npm ignores, so the age an `.npmrc` sets stands. An age
+set in the environment Claude Code started in does not: Claude Code writes the
+empty value over it, since `.mcp.json` cannot leave a key out.
+
 **A change arrives as a channel message.** The server declares Claude Code's
 `claude/channel` capability and sends `notifications/claude/channel`, which the
 session sees as a `<channel source="beady-eye" …>` block. Claude Code delivers
