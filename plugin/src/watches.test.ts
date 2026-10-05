@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -448,6 +448,27 @@ test("a server started again watches what the session watched once it learns the
 	expect(
 		await after("watch", { id: "smt-4kd3p.20", project: "summit-works" }),
 	).toEqual({ text: `Watching ${watched}: ${asWatched}.`, refused: false });
+});
+
+test("calls that arrive together all see the session's watches restored", async () => {
+	const place = { ...aPlace(), at: undefined };
+	mkdirSync(join(place.directory, "beady-eye", "watches"), { recursive: true });
+	writeFileSync(
+		join(place.directory, "beady-eye", "watches", `${session}.json`),
+		JSON.stringify([{ project: "summit-works", id: "smt-4kd3p.20" }]),
+	);
+	const use = await aServer(place);
+
+	const [listed, unwatched] = await Promise.all([
+		use("watching"),
+		use("unwatch", { id: "smt-4kd3p.20" }),
+	]);
+
+	expect(listed.text).toContain(`- ${watched}: not heard of yet`);
+	expect(unwatched).toEqual({
+		text: `Stopped watching ${watched}.`,
+		refused: false,
+	});
 });
 
 test("a server keeps the first session id it learns", async () => {

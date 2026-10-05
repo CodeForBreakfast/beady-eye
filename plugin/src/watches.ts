@@ -312,12 +312,15 @@ export const makeWatches = <R>(
 
 		return {
 			learn: (given) =>
-				Option.match(Schema.decodeUnknownOption(SessionId)(given), {
-					onNone: () => Effect.void,
-					onSome: (id) =>
-						Deferred.succeed(session, id).pipe(
-							Effect.flatMap((first) => (first ? restore(id) : Effect.void)),
-						),
+				Effect.gen(function* () {
+					const id = Schema.decodeUnknownOption(SessionId)(given);
+					if (
+						Option.isSome(id) &&
+						(yield* Deferred.succeed(session, id.value))
+					) {
+						yield* restore(id.value);
+					}
+					if (yield* Deferred.isDone(session)) yield* Deferred.await(file);
 				}),
 
 			watch: (id, project) =>
