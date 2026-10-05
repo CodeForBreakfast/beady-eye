@@ -182,24 +182,34 @@ struct Journalled {
     /// which the first read of it does and sends none of, because a consumer
     /// is sent the records from when it watches and none from before.
     ///
-    /// ponytail: that first read is the whole journal, because bd offers no
-    /// cheaper way to ask where it ends. A journal bd has pruned refuses a
-    /// read from the start, and stays unreadable. A head read from bd would
-    /// lift both.
+    /// ponytail: that first read is the whole journal, or bd's refusal of it
+    /// once bd has pruned the start, because bd offers no cheaper way to ask
+    /// where it ends. A head read from bd would lift it.
     seq: Option<u64>,
     said: Option<listener::Journal>,
 }
 
 impl Journalled {
     fn read(&mut self, journal: Result<Vec<Value>, RunFailure>) {
+        let found_the_end = self.seq.is_some();
         let records = match journal {
             Ok(records) => records,
-            Err(failure) => {
-                self.said = Some(listener::Journal::Unreadable(tracker_failure(&failure)));
-                return;
-            }
+            Err(failure) => match failure.kind {
+                FailureKind::Pruned(retained) if !found_the_end => {
+                    self.seq = Some(retained.head);
+                    Vec::new()
+                }
+                kind => {
+                    // The records bd pruned are lost to every consumer, and
+                    // the ones it kept are read on the next poll.
+                    if let FailureKind::Pruned(retained) = kind {
+                        self.seq = Some(retained.floor.saturating_sub(1));
+                    }
+                    self.said = Some(listener::Journal::Unreadable(tracker_failure(&failure)));
+                    return;
+                }
+            },
         };
-        let found_the_end = self.seq.is_some();
         self.seq = records
             .last()
             .and_then(|record| record["seq"].as_u64())
@@ -772,7 +782,8 @@ fn unlistable(kind: FailureKind) -> ProviderState {
         | FailureKind::Busy
         | FailureKind::Parse
         | FailureKind::Unsupported
-        | FailureKind::UnknownFlag => ProviderState::NotAnswering,
+        | FailureKind::UnknownFlag
+        | FailureKind::Pruned(_) => ProviderState::NotAnswering,
     }
 }
 
@@ -3237,6 +3248,62 @@ prefix = "kad"
         assert_eq!(
             after,
             Some(Journal::Read(vec![record(2, "close", "dun-7")]))
+        );
+    }
+
+    /// bd refuses a read from the start of a journal it has pruned, and its
+    /// refusal says where the journal ends.
+    #[test]
+    fn a_journal_pruned_before_its_first_read_is_read_from_where_bd_says_it_ends() {
+        let trackers = dunwich_journalling(vec![
+            record(1, "create", "dun-7"),
+            record(2, "comment", "dun-7"),
+            record(3, "update", "dun-7"),
+        ]);
+        trackers.tracker("dunwich").prunes(1);
+        let mut collection = Collection::default();
+
+        let first = journal_after_reading(&mut collection, &trackers);
+        trackers
+            .tracker("dunwich")
+            .writes(record(4, "close", "dun-7"));
+        let after = journal_after_reading(&mut collection, &trackers);
+
+        assert_eq!(first, Some(Journal::Read(Vec::new())));
+        assert_eq!(
+            after,
+            Some(Journal::Read(vec![record(4, "close", "dun-7")]))
+        );
+        assert!(trackers
+            .tracker("dunwich")
+            .asked()
+            .contains(&Asked::Events(3)));
+    }
+
+    /// The records bd pruned before they were read are gone, so the journal
+    /// is said to be unreadable once, and the records bd kept are passed on.
+    #[test]
+    fn a_journal_pruned_past_the_last_read_is_said_to_have_lost_records_and_read_on() {
+        let trackers = dunwich_journalling(vec![record(1, "create", "dun-7")]);
+        let mut collection = Collection::default();
+        journal_after_reading(&mut collection, &trackers);
+        for seq in 2..=4 {
+            trackers
+                .tracker("dunwich")
+                .writes(record(seq, "comment", "dun-7"));
+        }
+        trackers.tracker("dunwich").prunes(2);
+
+        let gap = journal_after_reading(&mut collection, &trackers);
+        let after = journal_after_reading(&mut collection, &trackers);
+
+        assert_eq!(gap, Some(Journal::Unreadable(TrackerFailure::Unavailable)));
+        assert_eq!(
+            after,
+            Some(Journal::Read(vec![
+                record(3, "comment", "dun-7"),
+                record(4, "comment", "dun-7")
+            ]))
         );
     }
 

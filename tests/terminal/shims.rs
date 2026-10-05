@@ -177,6 +177,12 @@ impl ShimmedTracker {
         std::fs::write(self.answers.join(asked), text).expect("the answer is ours to write");
     }
 
+    /// Refuse `asked` for every tracker, saying `said` on stderr and exiting 1.
+    pub fn refuses_with(&self, asked: &str, said: &str) {
+        std::fs::write(self.answers.join(format!("{asked}.refused")), said)
+            .expect("the refusal is ours to write");
+    }
+
     /// Answer `asked` with `text`, for the tracker at a directory whose last
     /// component is `tracker` and for no other.
     pub fn answers_for(&self, tracker: &str, asked: &str, text: &str) {

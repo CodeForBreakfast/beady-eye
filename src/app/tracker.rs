@@ -529,7 +529,8 @@ pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
         FailureKind::Unavailable
         | FailureKind::Gone
         | FailureKind::Busy
-        | FailureKind::Unsupported => TrackerFailure::Unavailable,
+        | FailureKind::Unsupported
+        | FailureKind::Pruned(_) => TrackerFailure::Unavailable,
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
@@ -551,7 +552,7 @@ mod tests {
 
     use crate::collect::agents::testing::{named, pane, Fake as Provider};
     use crate::collect::run::testing::Rendezvous;
-    use crate::collect::run::{Env, RealRunner, Runner};
+    use crate::collect::run::{Env, RealRunner, Retained, Runner};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
@@ -2016,6 +2017,10 @@ dunwich = ["bdi-404"]
             ),
             (FailureKind::Unsupported, TrackerFailure::Unavailable),
             (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
+            (
+                FailureKind::Pruned(Retained { floor: 5, head: 6 }),
+                TrackerFailure::Unavailable,
+            ),
         ];
 
         for (kind, expected) in kinds {

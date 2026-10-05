@@ -2298,10 +2298,13 @@ within one poll, or as soon as a producer reports the project. The listener
 keeps each project's last `seq` in memory and nowhere else, and starts from
 the journal's end as it finds it. It finds the end by reading the whole
 journal once, at its first read of the project, and sends none of it,
-because bd answers no cheaper question about where a journal ends. A journal
-bd has pruned refuses a read from its start, so the freshness line then says
-the journal is unreadable. A read that fails leaves the `seq` where it was,
-so the records are read once the journal answers again.
+because bd answers no cheaper question about where a journal ends. bd
+refuses a read from below what it has kept, and its refusal names the oldest
+and newest `seq` it holds. At the first read the newest is the end. Later,
+the refusal means records were pruned before the listener read them, so the
+freshness line says the journal is unreadable for that answer, and the next
+read starts at the oldest record bd kept. Any other failed read leaves the
+`seq` where it was, so the records are read once the journal answers again.
 
 bd can also follow a journal, with `--follow`, and a record would then arrive
 about a second after it was written with no producer involved. It was turned

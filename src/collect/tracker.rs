@@ -149,6 +149,8 @@ impl<T: Tracker + ?Sized> Tracker for &T {
 pub mod testing {
     use std::sync::Mutex;
 
+    use crate::collect::run::Retained;
+
     use super::*;
 
     /// One of the questions, as a fake records being asked it.
@@ -198,6 +200,14 @@ pub mod testing {
         pub fn journalling(mut self, records: Vec<Value>) -> Self {
             self.journal = Mutex::new(Some(Ok(records)));
             self
+        }
+
+        /// bd prunes the journal this tracker was opened with of every record
+        /// up to `seq`, and then refuses a read starting below what it kept.
+        pub fn prunes(&self, seq: u64) {
+            if let Some(Ok(records)) = self.journal.lock().unwrap().as_mut() {
+                records.retain(|record| record["seq"].as_u64() > Some(seq));
+            }
         }
 
         /// A writer adds `record` to the journal this tracker was opened
@@ -292,11 +302,17 @@ pub mod testing {
         fn events(&self, since: u64) -> Option<Result<Vec<Value>, RunFailure>> {
             let journal = self.journal.lock().unwrap().clone()?;
             self.note(Asked::Events(since));
-            Some(journal.map(|records| {
-                records
-                    .into_iter()
-                    .filter(|record| record["seq"].as_u64() > Some(since))
-                    .collect()
+            Some(journal.and_then(|records| {
+                let seq = |record: Option<&Value>| record.and_then(|record| record["seq"].as_u64());
+                match (seq(records.first()), seq(records.last())) {
+                    (Some(floor), Some(head)) if floor > since + 1 => {
+                        Err(RunFailure::pruned(Retained { floor, head }))
+                    }
+                    _ => Ok(records
+                        .into_iter()
+                        .filter(|record| record["seq"].as_u64() > Some(since))
+                        .collect()),
+                }
             }))
         }
     }

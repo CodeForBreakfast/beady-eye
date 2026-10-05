@@ -160,9 +160,9 @@ nothing reports. Without the key the listener sends no records, and tells
 each consumer `"events": "off"`.
 
 The listener reads the whole journal once when it starts, to find where it
-ends, and sends none of it. A journal bd has pruned refuses that read, and
-the listener then says the journal is unreadable rather than skip what was
-pruned.
+ends, and sends none of it. Where bd has pruned the journal past a record the
+listener had not yet read, the listener tells each consumer once that the
+journal is unreadable, and then sends the records bd kept.
 
 ## `[roots.explicit]`
 

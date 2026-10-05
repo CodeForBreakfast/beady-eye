@@ -477,9 +477,9 @@ fn a_listener_that_stops_closes_its_consumers_and_takes_no_more() {
 const THE_JOURNAL_SINCE_IT_STARTED: &str = "events tail --since 0";
 
 /// A comment on, a dependency added to and a close of `dun-0tp.7`, and an
-/// update to `dun-0tp.8`: the shape bd 1.3.0 writes, onto the described
-/// subtree's beads.
-fn the_journal_of_dun_0tp_7() -> String {
+/// update to `dun-0tp.8`, written after the record `after`: the shape bd
+/// 1.3.0 writes, onto the described subtree's beads.
+fn the_journal_of_dun_0tp_7(after: u64) -> String {
     let ids = ["dun-0tp.7", "dun-0tp.7", "dun-0tp.8", "dun-0tp.7"];
     include_str!("fixtures/bd_1.3.0_events_tail.jsonl")
         .lines()
@@ -487,7 +487,7 @@ fn the_journal_of_dun_0tp_7() -> String {
         .enumerate()
         .map(|(at, (line, id))| {
             let mut record: Value = serde_json::from_str(line).expect("the capture is bd's JSON");
-            record["seq"] = json!(at + 1);
+            record["seq"] = json!(after + at as u64 + 1);
             record["issue_id"] = json!(id);
             record["issue"]["id"] = json!(id);
             format!("{record}\n")
@@ -513,7 +513,7 @@ fn a_watch_on_a_bead_in_a_project_keeping_a_journal_is_sent_its_records_before_t
     let mut consumer = Consumer::connected_to(&listening_at(&home));
     let first = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
 
-    tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7());
+    tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7(0));
     the_tracker_now_holds(
         &home,
         &tracker,
@@ -536,10 +536,42 @@ fn a_watch_on_a_bead_in_a_project_keeping_a_journal_is_sent_its_records_before_t
     assert_eq!(kinds, ["event", "event", "event", "bead", "freshness"]);
 }
 
+/// bd's refusal of a read from the start of a journal it has pruned names
+/// the seq the journal ends at, and the listener reads on from there.
+#[test]
+fn a_journal_bd_has_pruned_is_read_on_from_where_bds_refusal_says_it_ends() {
+    let (home, tracker, listener) = a_listener_over(
+        "listen-pruned",
+        &format!("{NOT_POLLED}events_journal = true\n"),
+        |tracker| {
+            tracker.refuses_with(
+                THE_JOURNAL_SINCE_IT_STARTED,
+                "Error: events journal truncated: checkpoint 0 is below the retained window [5..8]; records 1..4 were pruned\n\
+                 Hint: resume with --since 4 to continue from the oldest retained record (accepting the gap), or re-import from scratch\n",
+            )
+        },
+    );
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    let first = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
+
+    tracker.answers_with("events tail --since 8", &the_journal_of_dun_0tp_7(8));
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
+    );
+    let answer = consumer.hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(first.last().expect("an answer ends")["events"], "ok");
+    assert_eq!(events_in(&answer), ["comment", "dep_add", "close"]);
+    assert_eq!(answer[0]["event"]["seq"], 9);
+}
+
 #[test]
 fn a_project_that_claims_no_journal_is_said_to_have_no_events_and_its_journal_is_never_read() {
     let (home, tracker, listener) = a_listener_over("listen-no-journal", NOT_POLLED, |tracker| {
-        tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7())
+        tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7(0))
     });
     let mut consumer = Consumer::connected_to(&listening_at(&home));
     consumer.sends("watch arkham").hears_an_answer();
