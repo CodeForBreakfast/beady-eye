@@ -12,6 +12,7 @@ import {
 	aWatcherAt,
 	cleanUp,
 	cleanUpAfterEach,
+	said,
 	someWatches,
 } from "./test-watcher";
 
@@ -36,12 +37,16 @@ const startedIn = (home: string, environment: Record<string, string> = {}) => ({
 	...environment,
 });
 
-/** The bundle, started as Claude Code starts it. */
+/** The bundle, started as Claude Code starts it, handing each notification
+ * it sends to `notified`. */
 const theBundle = async (
 	home: string,
 	environment: Record<string, string> = {},
+	notified: (notification: JSONRPCNotification) => void = () => {},
 ) => {
 	const client = new Client({ name: "session", version: "0" });
+	client.fallbackNotificationHandler = async (notification) =>
+		notified(notification as JSONRPCNotification);
 	await client.connect(
 		new StdioClientTransport({
 			command: "node",
@@ -107,6 +112,56 @@ test("a bundle started again under the session watches its beads before any tool
 	expect((await watcher.next()).asked).toBe(
 		"watch summit-works smt-4kd3p.20\n",
 	);
+});
+
+test("a bundle started again under the session tells it of a bead that changed while it was away", async () => {
+	const home = aPrivateDirectory();
+	mkdirSync(join(home, "run", "beady-eye"), { recursive: true });
+	const watcher = await aWatcherAt(
+		join(home, "run", "beady-eye", "watcher.sock"),
+	);
+	const bead = (status: string) => ({
+		line: "bead",
+		project: "summit-works",
+		ready: false,
+		row: { id: "smt-4kd3p.20", title: "guard the gate", status },
+	});
+	const freshness = {
+		line: "freshness",
+		project: "summit-works",
+		as_of: "2026-08-30T10:22:14Z",
+		tracker: "ok",
+		events: "off",
+		protocol: 1,
+	};
+	const first = await theBundle(home);
+	const watching = first.callTool({
+		name: "watch",
+		arguments: {
+			id: "smt-4kd3p.20",
+			project: "summit-works",
+			session_id: session,
+		},
+	});
+	(await watcher.next()).connection.write(said(bead("blocked"), freshness));
+	await watching;
+	await first.close();
+
+	const told = new Promise<JSONRPCNotification>((resolve) =>
+		theBundle(home, { CLAUDE_CODE_SESSION_ID: session }, resolve),
+	);
+	(await watcher.next()).connection.write(said(bead("closed"), freshness));
+
+	expect((await told).params).toEqual({
+		content:
+			'smt-4kd3p.20 in summit-works, "guard the gate", has changed.\n- Its status went from blocked to closed.',
+		meta: {
+			project: "summit-works",
+			id: "smt-4kd3p.20",
+			status: "closed",
+			ready: "false",
+		},
+	});
 });
 
 /** Start the bundle, close its input as a session does when it goes, and

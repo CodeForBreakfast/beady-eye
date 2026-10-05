@@ -5,7 +5,7 @@ import {
 	ListToolsRequestSchema,
 	type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Data, Effect } from "effect";
+import { Data, Effect, Stream } from "effect";
 import { version } from "../package.json";
 import type { Answer, Watches } from "./watches";
 
@@ -25,7 +25,7 @@ const tools: Tool[] = [
 	{
 		name: "watch",
 		description:
-			"Watch a bead. Answers with the bead as it stands. Without a project, the watcher is asked which project holds the id.",
+			"Watch a bead. Answers with the bead as it stands, and from then on a message arrives whenever its status, readiness or comments change, or it goes from its tracker. Without a project, the watcher is asked which project holds the id.",
 		inputSchema: aBead,
 	},
 	{
@@ -79,6 +79,12 @@ export const buildServer = (watches: Watches): Server => {
 		{ capabilities: { tools: {}, experimental: { "claude/channel": {} } } },
 	);
 	server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
+	server.oninitialized = () =>
+		Effect.runFork(
+			Stream.runForEach(watches.news, ({ content, meta }) =>
+				tellSession(server, content, meta).pipe(Effect.ignore),
+			),
+		);
 	server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
 		const args = params.arguments ?? {};
 		return Effect.runPromise(

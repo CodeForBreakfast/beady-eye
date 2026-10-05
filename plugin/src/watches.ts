@@ -11,6 +11,7 @@ import {
 	Effect,
 	Fiber,
 	Option,
+	Queue,
 	Schema,
 	type Scope,
 	Stream,
@@ -39,16 +40,32 @@ export interface Answer {
 	readonly refused: boolean;
 }
 
+/** A message for the session, and the attributes of its channel block. */
+export interface News {
+	readonly content: string;
+	readonly meta: Record<string, string>;
+}
+
+const Told = Schema.Union(
+	Schema.Struct({
+		is: Schema.Literal("bead"),
+		title: Schema.String,
+		status: Schema.String,
+		ready: Schema.Boolean,
+		comments: Schema.optional(Schema.Number),
+		closeReason: Schema.optional(Schema.String),
+	}),
+	Schema.Struct({ is: Schema.Literal("gone") }),
+);
+
+/** What the session was last told of a bead, which is what the watcher last
+ * said of it but for a refusal. */
+type Told = typeof Told.Type;
+
 /** What the watcher last said of a watched bead. */
 type Standing =
 	| { readonly is: "unheard" }
-	| {
-			readonly is: "bead";
-			readonly title: string;
-			readonly status: string;
-			readonly ready: boolean;
-	  }
-	| { readonly is: "gone" }
+	| Told
 	| { readonly is: "refused"; readonly reason: string };
 
 /** What is known of a watched bead from its connection. */
@@ -79,8 +96,22 @@ const watchesDirectory = Config.nonEmptyString("XDG_STATE_HOME").pipe(
 const FILENAME_SAFE = /[^a-zA-Z0-9._-]/g;
 
 const KeptWatches = Schema.parseJson(
-	Schema.Array(Schema.Struct({ project: Schema.String, id: Schema.String })),
+	Schema.Array(
+		Schema.Struct({
+			project: Schema.String,
+			id: Schema.String,
+			told: Schema.optional(Told),
+		}),
+	),
 );
+
+const CommentEvent = Schema.Struct({
+	event: Schema.Struct({
+		op: Schema.Literal("comment"),
+		issue_id: Schema.String,
+		comment: Schema.Struct({ author: Schema.String, text: Schema.String }),
+	}),
+});
 
 const row = (said: Said): Record<string, unknown> =>
 	typeof said.row === "object" && said.row !== null
@@ -103,11 +134,100 @@ const standingIn = (
 	const said = batch.filter((line) => isAbout(line, bead)).at(-1);
 	if (said?.line === "gone") return { is: "gone" };
 	if (said?.line !== "bead") return undefined;
+	const { title, status, comment_count, close_reason } = row(said);
 	return {
 		is: "bead",
-		title: String(row(said).title),
-		status: String(row(said).status),
+		title: String(title),
+		status: String(status),
 		ready: said.ready === true,
+		comments: typeof comment_count === "number" ? comment_count : undefined,
+		closeReason: typeof close_reason === "string" ? close_reason : undefined,
+	};
+};
+
+const toldOf = (standing: Standing): Told | undefined =>
+	standing.is === "bead" || standing.is === "gone" ? standing : undefined;
+
+/** Each comment on `bead` whose event line is in the batch. */
+const commentsIn = (batch: readonly Said[], bead: Bead) =>
+	batch.flatMap((said) => {
+		if (said.line !== "event" || said.project !== bead.project) return [];
+		return Option.match(Schema.decodeUnknownOption(CommentEvent)(said), {
+			onNone: () => [],
+			onSome: ({ event }) =>
+				event.issue_id === bead.id ? [event.comment] : [],
+		});
+	});
+
+const plural = (count: number, one: string, many: string) =>
+	count === 1 ? one : many;
+
+/** What the session is told of the change from `before` to `now`, line by
+ * line: a status, readiness, comments, and the bead going or coming back. */
+const changesFrom = (
+	before: Told,
+	now: Told,
+	batch: readonly Said[],
+	bead: Bead,
+): string[] => {
+	if (before.is === "gone" || now.is === "gone") {
+		if (before.is === now.is) return [];
+		return now.is === "gone"
+			? ["It has gone from its tracker."]
+			: [`It is back in its tracker, ${now.status}.`];
+	}
+	const changes: string[] = [];
+	if (now.status !== before.status) {
+		const reason =
+			now.status === "closed" && now.closeReason !== undefined
+				? `, with the reason "${now.closeReason}"`
+				: "";
+		changes.push(
+			`Its status went from ${before.status} to ${now.status}${reason}.`,
+		);
+	}
+	if (now.ready !== before.ready) {
+		changes.push(now.ready ? "It became ready." : "It is no longer ready.");
+	}
+	const comments = commentsIn(batch, bead);
+	for (const { author, text } of comments) {
+		changes.push(`${author} commented: ${text}`);
+	}
+	const uncarried =
+		now.comments === undefined || before.comments === undefined
+			? 0
+			: now.comments - before.comments - comments.length;
+	if (uncarried > 0) {
+		const more = comments.length > 0 ? "more " : "";
+		changes.push(
+			`${uncarried} ${more}${plural(uncarried, "comment", "comments")} arrived. Read ${plural(uncarried, "it", "them")} with bd.`,
+		);
+	}
+	return changes;
+};
+
+/** The message for the session where `bead` went from `before` to `now`
+ * with something a waiting session acts on. */
+const newsOf = (
+	bead: Bead,
+	before: Told,
+	now: Told,
+	batch: readonly Said[],
+): News | undefined => {
+	const changes = changesFrom(before, now, batch, bead);
+	if (changes.length === 0) return undefined;
+	const title = now.is === "bead" ? now.title : before.is === "bead" ? before.title : "";
+	return {
+		content: [
+			`${named(bead)}, "${title}", has changed.`,
+			...changes.map((change) => `- ${change}`),
+		].join("\n"),
+		meta: {
+			project: bead.project,
+			id: bead.id,
+			status: now.is === "bead" ? now.status : "gone",
+			ready: String(now.is === "bead" && now.ready),
+		},
 	};
 };
 
@@ -163,6 +283,8 @@ export interface Watches {
 	watch(id: string, project: string | undefined): Effect.Effect<Answer>;
 	unwatch(id: string, project: string | undefined): Effect.Effect<Answer>;
 	readonly watching: Effect.Effect<Answer>;
+	/** Each message for the session, until the watches are let go. */
+	readonly news: Stream.Stream<News>;
 }
 
 /** A session's watches, each held until `unwatch` or until the scope closes,
@@ -181,22 +303,45 @@ export const makeWatches = <R>(
 		const file = yield* Deferred.make<string>();
 		const keeping = yield* Effect.makeSemaphore(1);
 		const watches = new Map<string, Watch>();
+		const news = yield* Queue.unbounded<News>();
+		yield* Effect.addFinalizer(() => Queue.shutdown(news));
 
 		const keyOf = ({ project, id }: Bead) => `${project} ${id}`;
 
-		const start = (bead: Bead, accepted: boolean) =>
+		/** Take what a batch says of `bead`, and tell the session where it
+		 * watches the bead and something it acts on has changed since it was
+		 * last told. */
+		const takeIn = (batch: readonly Said[], bead: Bead, known: Known) =>
 			Effect.gen(function* () {
-				const known: Known = { standing: { is: "unheard" }, down: undefined };
+				const now = standingIn(batch, bead);
+				if (now === undefined) return;
+				const before = toldOf(known.standing);
+				known.standing = now;
+				const after = toldOf(now);
+				if (watches.get(keyOf(bead))?.accepted !== true) return;
+				if (before === undefined || after === undefined) return;
+				const said = newsOf(bead, before, after, batch);
+				if (said !== undefined) yield* Queue.offer(news, said);
+				if (JSON.stringify(before) !== JSON.stringify(after)) yield* persist;
+			});
+
+		const start = (bead: Bead, accepted: boolean, told?: Told) =>
+			Effect.gen(function* () {
+				const known: Known = {
+					standing: told ?? { is: "unheard" },
+					down: undefined,
+				};
 				const firstHeard = yield* Deferred.make<void>();
 				const hear = (heard: Heard) =>
-					Effect.sync(() => {
+					Effect.gen(function* () {
 						if ("down" in heard) {
 							known.down = heard.down;
-							return;
+						} else {
+							known.down = undefined;
+							yield* takeIn(heard.batch, bead, known);
 						}
-						known.down = undefined;
-						known.standing = standingIn(heard.batch, bead) ?? known.standing;
-					}).pipe(Effect.zipRight(Deferred.succeed(firstHeard, undefined)));
+						yield* Deferred.succeed(firstHeard, undefined);
+					});
 				const connection = yield* watchBead(
 					bead,
 					settings.findWatcher,
@@ -226,7 +371,11 @@ export const makeWatches = <R>(
 							Effect.flatMap(kept, (path) => {
 								const beads = [...watches.values()]
 									.filter((watch) => watch.accepted)
-									.map(({ bead: { project, id } }) => ({ project, id }));
+									.map(({ bead: { project, id }, known }) => ({
+										project,
+										id,
+										told: toldOf(known.standing),
+									}));
 								const written = `${path}.new`;
 								return fs
 									.makeDirectory(directory, { recursive: true })
@@ -250,8 +399,8 @@ export const makeWatches = <R>(
 					Effect.flatMap(Schema.decodeUnknown(KeptWatches)),
 					Effect.orElseSucceed(() => []),
 				);
-				for (const bead of kept) {
-					if (!watches.has(keyOf(bead))) yield* start(bead, true);
+				for (const { told: lastTold, ...bead } of kept) {
+					if (!watches.has(keyOf(bead))) yield* start(bead, true, lastTold);
 				}
 				yield* Deferred.succeed(file, path);
 				const unkept = [...watches.values()].some(
@@ -313,6 +462,8 @@ export const makeWatches = <R>(
 			});
 
 		return {
+			news: Stream.fromQueue(news),
+
 			learn: (given) =>
 				Effect.gen(function* () {
 					const id = Schema.decodeUnknownOption(SessionId)(given);
