@@ -1,0 +1,31 @@
+// Effect-native lint rules (Biome GritQL plugin).
+//
+// Catches mechanical "rolled our own instead of an Effect built-in" patterns that
+// the @effect/language-service rule set does not cover and that are precise enough
+// to flag deterministically. The judgment-heavy axes (structural / modelling /
+// behaviour) stay with the periodic /effect-native-audit sweep, not here.
+//
+// A Grit plugin file has a single root pattern, so the individual rules live as
+// branches of one top-level `or` — each is tried independently against every node.
+//
+// Severity is `warn` during rollout: the remaining `instanceof Error` sites
+// still trip it, and a `warn` surfaces them in
+// `bun run check` output without failing the gate for in-flight work. Bump to
+// `error` once those sites are gone so new occurrences are blocked.
+
+or {
+  `$left instanceof $type` as $match where {
+    $type <: `Error`,
+    register_diagnostic(span=$match, message="Prefer `Predicate.isError(x)` over `x instanceof Error` — isError is the named Effect predicate (`(u): u is Error => u instanceof Error`), the idiom in this codebase. [effect-native]", severity="warn")
+  },
+  // A `switch` default carrying a `const _: never = x` exhaustiveness guard is the
+  // hand-rolled stand-in for `Match.value(x).pipe(Match.discriminatorsExhaustive('kind')({…}))`.
+  // The `JsDefaultClause` node-type anchor scopes the match to a switch default (a
+  // statement-level `switch` snippet does not match in Biome's GritQL); the
+  // `: never` type annotation distinguishes the guard from an ordinary default-clause
+  // const, so an if/else `never` guard or a `const x: string` default stay silent.
+  JsDefaultClause() as $match where {
+    $match <: contains `const $name: $type = $scrutinee` where { $type <: `never` },
+    register_diagnostic(span=$match, message="Prefer `Match.value(x).pipe(Match.discriminatorsExhaustive('kind')({…}))` over a `switch` whose default holds a hand-rolled `const _: never` exhaustiveness guard — Match makes the exhaustiveness check the construct rather than a side-effect of a dead assignment. [effect-native]", severity="warn")
+  }
+}

@@ -1,14 +1,37 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
-	"files": {
-		"includes": [
-			"src/**",
-			"hooks/**",
-			"*.json",
-			".claude-plugin/**",
-			".mcp.json"
-		]
-	},
-	"linter": { "enabled": true, "rules": { "preset": "none" } },
-	"formatter": { "enabled": true }
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "files": {
+    "includes": ["src/**", "hooks/**", "*.json", ".claude-plugin/**", ".mcp.json"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "all",
+      "semicolons": "asNeeded"
+    }
+  },
+  "plugins": ["./biome-plugins/effect-native-predicates.grit"],
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "complexity": {
+        "useLiteralKeys": "off"
+      }
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
 }

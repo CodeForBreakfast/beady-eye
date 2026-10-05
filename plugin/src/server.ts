@@ -1,15 +1,15 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { Data, Effect } from "effect";
-import { version } from "../package.json";
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { Data, Effect } from 'effect'
+import { version } from '../package.json'
 
 export const buildServer = (): Server =>
-	new Server(
-		{ name: "beady-eye", version },
-		{ capabilities: { experimental: { "claude/channel": {} } } },
-	);
+  new Server(
+    { name: 'beady-eye', version },
+    { capabilities: { experimental: { 'claude/channel': {} } } },
+  )
 
-export class SessionNotTold extends Data.TaggedError("SessionNotTold")<{
-	readonly cause: unknown;
+export class SessionNotTold extends Data.TaggedError('SessionNotTold')<{
+  readonly cause: unknown
 }> {}
 
 /**
@@ -18,15 +18,15 @@ export class SessionNotTold extends Data.TaggedError("SessionNotTold")<{
  * it unless the session was started with this plugin's channel allowed.
  */
 export const tellSession = (
-	server: Server,
-	content: string,
-	meta: Record<string, string>,
+  server: Server,
+  content: string,
+  meta: Record<string, string>,
 ): Effect.Effect<void, SessionNotTold> =>
-	Effect.tryPromise({
-		try: () =>
-			server.notification({
-				method: "notifications/claude/channel",
-				params: { content, meta },
-			}),
-		catch: (cause) => new SessionNotTold({ cause }),
-	});
+  Effect.tryPromise({
+    try: () =>
+      server.notification({
+        method: 'notifications/claude/channel',
+        params: { content, meta },
+      }),
+    catch: (cause) => new SessionNotTold({ cause }),
+  })
