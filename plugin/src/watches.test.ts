@@ -942,7 +942,7 @@ test('a watcher speaking a protocol the plugin does not know is said at once', a
 
 const unreachable = {
   ...freshness('summit-works'),
-  tracker: { unreachable: 'connection refused' },
+  tracker: { unreachable: { reason: 'auth' } },
 }
 
 test('a tracker the watcher cannot reach for a minute wakes the session, and again when it can', async () => {
@@ -957,7 +957,7 @@ test('a tracker the watcher cannot reach for a minute wakes the session, and aga
 
   expect(lost).toEqual({
     content: [
-      'The watcher cannot reach the tracker of summit-works: "connection refused".',
+      'The watcher cannot reach the tracker of summit-works: auth.',
       'These beads keep their last known status until it can:',
       '- smt-4kd3p.20 in summit-works',
       'This session will be told when it can.',

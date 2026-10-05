@@ -269,7 +269,7 @@ const trackerUnreachable = (
   beads: readonly Bead[],
 ): Omit<News, 'told'> => ({
   content: [
-    `The watcher cannot reach the tracker of ${project}: ${quoted(why)}.`,
+    `The watcher cannot reach the tracker of ${project}: ${why}.`,
     'These beads keep their last known status until it can:',
     ...listed(beads),
     'This session will be told when it can.',
@@ -282,15 +282,19 @@ const trackerBack = (project: string): Omit<News, 'told'> => ({
   meta: { project, tracker: 'ok' },
 })
 
-/** Why a freshness line says its project's tracker could not be reached,
- * where it says so. */
-const unreachableIn = (freshness: Said): string | undefined => {
-  const tracker = freshness['tracker']
-  if (typeof tracker !== 'object' || tracker === null || !('unreachable' in tracker)) {
-    return undefined
-  }
-  return String(tracker.unreachable)
-}
+const UnreachableTracker = Schema.Struct({
+  tracker: Schema.Struct({ unreachable: Schema.Struct({ reason: Schema.String }) }),
+})
+
+/** The kind of failure a freshness line gives for its project's tracker,
+ * where the tracker could not be reached. */
+const unreachableIn = (freshness: Said): string | undefined =>
+  Option.getOrUndefined(
+    Option.map(
+      Schema.decodeUnknownOption(UnreachableTracker)(freshness),
+      ({ tracker }) => tracker.unreachable.reason,
+    ),
+  )
 
 const told = (text: string): Answer => ({ text, refused: false })
 const refusal = (text: string): Answer => ({ text, refused: true })
