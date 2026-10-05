@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -257,6 +257,25 @@ test("watching while the watcher is down is accepted, and the answer says so", a
 	expect((await use("watching")).text).toBe(
 		`${down} Each bead's status is the last one known.\n- ${watched}: not heard of yet`,
 	);
+});
+
+test("a session's watches are kept by replacing its file, never by writing into it", async () => {
+	const place = { ...aPlace(), at: undefined };
+	const use = await aServer(place);
+	await use("watch", { id: "smt-4kd3p.20", project: "summit-works" });
+	const file = join(place.directory, "beady-eye", "watches", `${session}.json`);
+	const before = join(place.directory, "before.json");
+	linkSync(file, before);
+
+	await use("watch", { id: "hbr-2", project: "harbour" });
+
+	expect(JSON.parse(readFileSync(before, "utf8"))).toEqual([
+		{ project: "summit-works", id: "smt-4kd3p.20" },
+	]);
+	expect(kept(place)).toEqual([
+		{ project: "summit-works", id: "smt-4kd3p.20" },
+		{ project: "harbour", id: "hbr-2" },
+	]);
 });
 
 test("watch refuses to find a bead's project where the watcher has not read a project", async () => {

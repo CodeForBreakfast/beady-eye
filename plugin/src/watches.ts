@@ -227,12 +227,14 @@ export const makeWatches = <R>(
 								const beads = [...watches.values()]
 									.filter((watch) => watch.accepted)
 									.map(({ bead: { project, id } }) => ({ project, id }));
+								const written = `${path}.new`;
 								return fs
 									.makeDirectory(directory, { recursive: true })
 									.pipe(
 										Effect.zipRight(
-											fs.writeFileString(path, JSON.stringify(beads)),
+											fs.writeFileString(written, JSON.stringify(beads)),
 										),
+										Effect.zipRight(fs.rename(written, path)),
 									);
 							}),
 					}),

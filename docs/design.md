@@ -2458,8 +2458,10 @@ the plugin keeps each session's watches in a file of its own under
 `$XDG_STATE_HOME/beady-eye/watches/`, named for the session's id, and
 watches them again as soon as it learns that id. A server started with the id
 in its environment learns it before any tool is called, which is what brings
-back the watches of a session asleep on a bead. The file is rewritten on each
-`watch` and `unwatch` and never removed, as commy keeps its subscriptions.
+back the watches of a session asleep on a bead. On each `watch` and `unwatch`
+a new file replaces the old one whole, so a server stopped while writing leaves
+the last list standing. The file is never removed, as commy keeps its
+subscriptions.
 A watch ends when the session unwatches the bead, and not when the bead
 closes, because a closed bead can reopen. The server exits when the session
 closes its input, and every watch's connection closes with it.
