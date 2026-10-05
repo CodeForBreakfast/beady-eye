@@ -3,13 +3,9 @@ import {
 	chmodSync,
 	lstatSync,
 	mkdirSync,
-	mkdtempSync,
-	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
@@ -23,15 +19,31 @@ import {
 	Stream,
 } from "effect";
 import {
+	aPrivateDirectory,
+	aWatcherAt,
+	cleanUp,
+	cleanUpAfterEach,
+	said,
+} from "./test-watcher";
+import {
+	askAbout,
 	type Heard,
 	othersMayTakeANameIn,
 	pauseAfter,
+	projectsNamedIn,
 	type Timing,
 	watchBead,
 	whereTheWatcherIs,
 } from "./watcher";
 
-const timing: Timing = { wedgedAfter: 200, firstPause: 10, longestPause: 40 };
+const timing: Timing = {
+	wedgedAfter: 200,
+	firstPause: 10,
+	longestPause: 40,
+	answeredWithin: 100,
+};
+
+afterEach(cleanUpAfterEach);
 const bead = { project: "summit-works", id: "smt-4kd3p.20" };
 const asked = "watch summit-works smt-4kd3p.20\n";
 
@@ -53,57 +65,11 @@ const freshness = {
 	reach: { path: "/home/mira/summit-works", environment_command: [] },
 };
 
-const said = (...lines: unknown[]) =>
-	lines.map((line) => `${JSON.stringify(line)}\n`).join("");
-
-const cleanUp: (() => unknown)[] = [];
-afterEach(async () => {
-	for (const clean of cleanUp.splice(0)) await clean();
-});
-
-const aPrivateDirectory = () => {
-	const directory = mkdtempSync(join(tmpdir(), "beady-eye-watcher-"));
-	cleanUp.push(() => rmSync(directory, { recursive: true, force: true }));
-	return directory;
-};
-
 const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
 	Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)));
 
 const at = (path: string | undefined) =>
 	Effect.succeed(Option.fromNullable(path));
-
-interface Connection {
-	readonly connection: Socket;
-	readonly asked: string;
-}
-
-/** A watcher of the test's own, handing over each connection with the line
- * it asked. */
-const aWatcherAt = async (at: string) => {
-	const arrived: Connection[] = [];
-	const waiting: ((connection: Connection) => void)[] = [];
-	const server: Server = createServer((connection) => {
-		connection.setEncoding("utf8");
-		connection.once("data", (asked) => {
-			const accepted = { connection, asked: String(asked) };
-			const waiter = waiting.shift();
-			if (waiter) waiter(accepted);
-			else arrived.push(accepted);
-		});
-	});
-	await new Promise<void>((listening) => server.listen(at, listening));
-	cleanUp.push(() => server.close());
-	return {
-		server,
-		next: () =>
-			new Promise<Connection>((resolve) => {
-				const accepted = arrived.shift();
-				if (accepted) resolve(accepted);
-				else waiting.push(resolve);
-			}),
-	};
-};
 
 /** A watcher killed where it stood, which leaves its socket at the path with
  * nothing listening. One that closes its server removes the socket. */
@@ -427,4 +393,111 @@ test("a watch stopped as it hears a batch closes its connection", async () => {
 
 	expect(await told).toEqual([{ batch: [beadLine, freshness] }]);
 	await closed;
+});
+
+test("the config's projects are named by their names", async () => {
+	const directory = aPrivateDirectory();
+	const config = join(directory, "config.toml");
+	writeFileSync(
+		config,
+		'[[projects]]\nname = "summit-works"\npath = "/home/mira/summit-works"\n\n[[projects]]\nname = "harbour"\npath = "/srv/harbour"\n',
+	);
+
+	expect(await run(projectsNamedIn(config))).toEqual([
+		"summit-works",
+		"harbour",
+	]);
+	expect(await run(projectsNamedIn(join(directory, "missing.toml")))).toEqual(
+		[],
+	);
+});
+
+const asking = (path: string | undefined, projects: readonly string[]) =>
+	run(askAbout("smt-4kd3p.20", projects, at(path), timing));
+
+test("asking about a bead asks each project and hangs up once each has answered", async () => {
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+
+	const answer = asking(path, ["summit-works", "harbour", "dunmore"]);
+	const { connection, asked: lines } = await watcher.next();
+	const hungUp = new Promise((resolve) => connection.on("end", resolve));
+	const gone = { line: "gone", project: "harbour", id: "smt-4kd3p.20" };
+	const harbourFreshness = { ...freshness, project: "harbour" };
+	const refused = {
+		line: "refused",
+		asked: "watch dunmore smt-4kd3p.20",
+		reason: "unknown-project",
+	};
+	connection.write(
+		said(
+			{ line: "alive" },
+			beadLine,
+			freshness,
+			gone,
+			harbourFreshness,
+			refused,
+		),
+	);
+
+	expect(lines).toBe(
+		"watch summit-works smt-4kd3p.20\nwatch harbour smt-4kd3p.20\nwatch dunmore smt-4kd3p.20\n",
+	);
+	expect(await answer).toEqual({
+		lines: [beadLine, freshness, gone, harbourFreshness, refused],
+		unanswered: [],
+	});
+	await hungUp;
+});
+
+test("asking a watcher that is down answers why", async () => {
+	expect(await asking(undefined, ["summit-works"])).toBe("nowhere");
+
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+	const answer = asking(path, ["summit-works"]);
+	(await watcher.next()).connection.end(said(beadLine));
+	expect(await answer).toBe("closed");
+});
+
+test("asking about a bead in no project asks nothing", async () => {
+	expect(await asking(undefined, [])).toEqual({ lines: [], unanswered: [] });
+});
+
+test("asking about a bead takes each project's answer and nothing it says after", async () => {
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+
+	const answer = asking(path, ["summit-works", "harbour"]);
+	const gone = { line: "gone", project: "summit-works", id: "smt-4kd3p.20" };
+	const harbourFreshness = { ...freshness, project: "harbour" };
+	(await watcher.next()).connection.write(
+		said(beadLine, freshness, gone, freshness, harbourFreshness),
+	);
+
+	expect(await answer).toEqual({
+		lines: [beadLine, freshness, harbourFreshness],
+		unanswered: [],
+	});
+});
+
+test("asking about a bead stops waiting in time, and names the projects that did not answer", async () => {
+	const path = join(aPrivateDirectory(), "watcher.sock");
+	const watcher = await aWatcherAt(path);
+
+	const answer = asking(path, ["summit-works", "harbour"]);
+	const { connection } = await watcher.next();
+	const hungUp = new Promise((resolve) => connection.on("end", resolve));
+	connection.write(said(beadLine, freshness));
+	const alive = setInterval(
+		() => connection.write(said({ line: "alive" })),
+		timing.answeredWithin / 4,
+	);
+	cleanUp.push(() => clearInterval(alive));
+
+	expect(await answer).toEqual({
+		lines: [beadLine, freshness],
+		unanswered: ["harbour"],
+	});
+	await hungUp;
 });

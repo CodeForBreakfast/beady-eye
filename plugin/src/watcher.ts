@@ -26,12 +26,15 @@ export interface Timing {
 	readonly wedgedAfter: number;
 	readonly firstPause: number;
 	readonly longestPause: number;
+	/** How long a question asked once may wait for every project's answer. */
+	readonly answeredWithin: number;
 }
 
 export const WATCHER_TIMING: Timing = {
 	wedgedAfter: 60_000,
 	firstPause: 1_000,
 	longestPause: 30_000,
+	answeredWithin: 15_000,
 };
 
 /**
@@ -68,13 +71,36 @@ const WatcherSection = Schema.Struct({
 	watcher: Schema.Struct({ socket: Schema.String }),
 });
 
-const socketNamedIn = (config: string) =>
+const ProjectsSection = Schema.Struct({
+	projects: Schema.Array(Schema.Struct({ name: Schema.String })),
+});
+
+/** What the bdi config at `config` says, as `section` reads it. */
+const readIn = <A, I>(config: string, section: Schema.Schema<A, I>) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem;
 		const text = yield* fs.readFileString(config);
 		const read = yield* Effect.try(() => parse(text));
-		return (yield* Schema.decodeUnknown(WatcherSection)(read)).watcher.socket;
+		return yield* Schema.decodeUnknown(section)(read);
 	}).pipe(Effect.option);
+
+const socketNamedIn = (config: string) =>
+	readIn(config, WatcherSection).pipe(
+		Effect.map(Option.map(({ watcher }) => watcher.socket)),
+	);
+
+/** The name of each of the bdi config's `[[projects]]`. */
+export const projectsNamedIn = (
+	config: string,
+): Effect.Effect<readonly string[], never, FileSystem.FileSystem> =>
+	readIn(config, ProjectsSection).pipe(
+		Effect.map(
+			Option.match({
+				onNone: () => [],
+				onSome: ({ projects }) => projects.map(({ name }) => name),
+			}),
+		),
+	);
 
 const runtimeDirectory = Config.option(
 	Config.nonEmptyString("XDG_RUNTIME_DIR"),
@@ -272,3 +298,53 @@ export const watchBead = <R>(
 			);
 		}),
 	);
+
+export interface Asked {
+	/** Each project's answer, up to its freshness line, and each refusal. */
+	readonly lines: readonly Said[];
+	/** The projects that had not answered when the time to answer ran out. */
+	readonly unanswered: readonly string[];
+}
+
+/**
+ * Ask the watcher once about the bead `id` in each of `projects`, reading as
+ * far as each project's freshness line or refusal, and hang up. A watcher
+ * keeps a project waiting until its first read, so the asking stops at
+ * `timing.answeredWithin` whatever has arrived.
+ */
+export const askAbout = <R>(
+	id: string,
+	projects: readonly string[],
+	findWatcher: Effect.Effect<Option.Option<string>, never, R>,
+	timing: Timing = WATCHER_TIMING,
+): Effect.Effect<Asked | Down, never, R | FileSystem.FileSystem> => {
+	const asking = new Map(
+		projects.map((project) => [watchLine({ project, id }), project]),
+	);
+	const unasked: Asked = { lines: [], unanswered: [...asking.values()] };
+	if (asking.size === 0) return Effect.succeed(unasked);
+	const take = (asked: Asked, said: Said): Asked => {
+		const project =
+			said.line === "refused"
+				? asking.get(String(said.asked))
+				: String(said.project);
+		if (said.line !== "refused" && !asked.unanswered.includes(project ?? "")) {
+			return asked;
+		}
+		const answered = said.line === "refused" || said.line === "freshness";
+		return {
+			lines: [...asked.lines, said],
+			unanswered: answered
+				? asked.unanswered.filter((waiting) => waiting !== project)
+				: asked.unanswered,
+		};
+	};
+	return talkTo(findWatcher, [...asking.keys()], timing).pipe(
+		Stream.scan(unasked, take),
+		Stream.takeUntil((asked) => asked.unanswered.length === 0),
+		Stream.interruptAfter(timing.answeredWithin),
+		Stream.runLast,
+		Effect.map(Option.getOrElse(() => unasked)),
+		Effect.catchAll(({ why }) => Effect.succeed(why)),
+	);
+};
