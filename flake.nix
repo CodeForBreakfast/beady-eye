@@ -3499,8 +3499,8 @@ and a second line"
         '';
 
         # Everything needed to build, test and lint the crate.
-        # The Claude Code plugin's TypeScript workspace. Bun, TypeScript and
-        # Biome come from nixpkgs, at the versions commy pins, because their npm
+        # The Claude Code plugin's TypeScript workspace. Bun and Biome come
+        # from nixpkgs, at the versions commy pins, because their npm
         # packages carry a binary per platform and a fixed-output hash cannot
         # be one value on all four systems. For the same reason bun leaves out
         # optional packages, which is where Effect's dependencies keep their
@@ -3526,7 +3526,41 @@ and a second line"
           outputHash = "sha256-2U6hdVkMDSpfQ+l0ptMFvyYyKUVsxkWOvKMUHIRd4Q4=";
         };
 
-        pluginTools = [ pkgs.bun pkgs.biome pkgs.typescript pkgs.nodejs ];
+        # commy type-checks with Effect's build of tsc, which adds the Effect
+        # language service's diagnostics to the compiler's own. Its npm
+        # package ships one per platform, so each system fetches its own.
+        effectTsc =
+          let
+            version = "0.46.1";
+            typescript = "7.0.2";
+            platforms = {
+              x86_64-linux = {
+                name = "linux-x64";
+                hash = "sha512-NYGBC3Scfo9yZJfs7cg0KMcHgtukJ4+xff18nqIrON9Zzc/qD6w1AwEwYKYCsbai5hTQBb3VLIWmHM8BJ54WJg==";
+              };
+              aarch64-linux = {
+                name = "linux-arm64";
+                hash = "sha512-e283BZEQC3mJpk1N7vdUhoF/aYHc4YwCE/fwz/80d11OSvG35U+c49grxS7V7+dAl2ld6QiT8D1rcL8PYu8DLQ==";
+              };
+              aarch64-darwin = {
+                name = "darwin-arm64";
+                hash = "sha512-ErehNqI9p8me4XKO8N4bzdDWgBbSNlJ3CIZGfXoAW6Fo4Oo7x4ZbZV7KNsMSn9aJSiUUOQUoXjGBdslU5OYMdw==";
+              };
+            };
+            platform = platforms.${system};
+          in
+          pkgs.stdenvNoCC.mkDerivation {
+            pname = "effect-tsc";
+            inherit version;
+            src = pkgs.fetchurl {
+              url = "https://registry.npmjs.org/@effect/tsgo-${platform.name}/-/tsgo-${platform.name}-${version}.tgz";
+              inherit (platform) hash;
+            };
+            installPhase = "install -Dm755 artifacts/typescript/${typescript}/tsc $out/bin/tsc";
+            dontFixup = true;
+          };
+
+        pluginTools = [ pkgs.bun pkgs.biome effectTsc pkgs.nodejs ];
 
         pluginCheck = name: tools: command:
           pkgs.runCommand "beady-eye-plugin-${name}" { nativeBuildInputs = tools; } ''
