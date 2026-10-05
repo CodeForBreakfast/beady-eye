@@ -34,8 +34,8 @@ const RUNTIME_DIRECTORY: &str = "XDG_RUNTIME_DIR";
 /// Where `bdi` puts its socket inside that directory.
 const SOCKET: &str = "beady-eye/changes.sock";
 
-/// Where `bdi listen` puts its socket inside that directory.
-const LISTENER_SOCKET: &str = "beady-eye/listener.sock";
+/// Where `bdi watch` puts its socket inside that directory.
+const WATCHER_SOCKET: &str = "beady-eye/watcher.sock";
 
 /// Nothing this long is a project name, so a writer still building a line at
 /// this point is broken. Reading stops here, which is what keeps a writer
@@ -249,23 +249,23 @@ impl Reported {
 /// than fatal.
 #[derive(Debug)]
 pub enum Refused {
-    /// Nothing told this run where to listen and this session owns no runtime
+    /// Nothing told this run where to watch and this session owns no runtime
     /// directory to put a socket under, so there is no path to open. A
     /// machine that has no runtime directory at all — macOS — is refused for
     /// this reason until it is told one.
     NoRuntimeDirectory,
-    /// Another `bdi` is listening there already, so this one has the channel
+    /// Another `bdi` is watching there already, so this one has the channel
     /// only when that one lets it go — or when one of them is told a
     /// different path.
-    AlreadyListening(PathBuf),
+    AlreadyWatching(PathBuf),
     /// Something that is not a socket is already at the path, so the path is
     /// not this run's to take. Reachable only where a run was told where to
-    /// listen: a derived path names a file `bdi` puts there itself.
+    /// watch: a derived path names a file `bdi` puts there itself.
     NotASocket(PathBuf),
     /// A directory on the way down to the socket is one another user may take
     /// a name in, so nothing bound beneath it stays what was bound. Carries
     /// that directory rather than the socket's own, which may be several
-    /// below it. Reachable only where a run was told where to listen: a
+    /// below it. Reachable only where a run was told where to watch: a
     /// directory `bdi` makes is [`ONLY_THIS_USER_MAY_ENTER`], and the runtime
     /// directory a derived path sits under is this session's alone.
     NameOthersMayTake(PathBuf),
@@ -314,10 +314,10 @@ impl fmt::Display for Refused {
             // on Linux. A `cfg` would also put the arm this crate never
             // compiles beyond the reach of the assertion below, which is the
             // only thing holding either command to naming a holder.
-            Refused::AlreadyListening(at) => {
+            Refused::AlreadyWatching(at) => {
                 write!(
                     f,
-                    "another bdi is listening on {}; find it with ss -lxp or lsof -U, close it, then restart bdi",
+                    "another bdi is watching {}; find it with ss -lxp or lsof -U, close it, then restart bdi",
                     at.display()
                 )
             }
@@ -389,7 +389,7 @@ impl Drop for Socket {
     /// of the run.
     ///
     /// Leaving one behind instead costs nothing: a socket of ours that
-    /// nothing is listening on is what the next run reclaims.
+    /// nothing is watching is what the next run reclaims.
     fn drop(&mut self) {
         if file_at(&self.at) == self.bound {
             let _ = fs::remove_file(&self.at);
@@ -397,7 +397,7 @@ impl Drop for Socket {
     }
 }
 
-/// Where a writer finds `bdi`: the path this run was told to listen on, or
+/// Where a writer finds `bdi`: the path this run was told to watch, or
 /// the one under the directory this session owns where it was told none.
 ///
 /// Nothing where neither, which is the one way left to have nowhere to put a
@@ -412,17 +412,17 @@ pub fn where_writers_find_bdi(told: Option<PathBuf>) -> Option<PathBuf> {
     })
 }
 
-/// Where a consumer finds `bdi listen`: the path it was told to listen on, or
+/// Where a consumer finds `bdi watch`: the path it was told to watch, or
 /// the one under the directory this session owns where it was told none.
-pub fn where_the_listener_is(told: Option<PathBuf>) -> Option<PathBuf> {
+pub fn where_the_watcher_is(told: Option<PathBuf>) -> Option<PathBuf> {
     told.or_else(|| {
-        std::env::var_os(RUNTIME_DIRECTORY).map(|dir| PathBuf::from(dir).join(LISTENER_SOCKET))
+        std::env::var_os(RUNTIME_DIRECTORY).map(|dir| PathBuf::from(dir).join(WATCHER_SOCKET))
     })
 }
 
 /// Whether the socket at `at` is one only this user could have put there,
 /// and so one a consumer may believe: a socket of this user's own, under a
-/// way down the listener would bind in.
+/// way down the watcher would bind in.
 ///
 /// The owner as well as the way down, because a sticky directory such as
 /// `/tmp` passes the way down and still lets another user bind a name first.
@@ -437,9 +437,9 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
     runtime_directory.map(|dir| dir.join(SOCKET))
 }
 
-/// Open the channel and start listening on it, reporting what stopped it
+/// Open the channel and start watching it, reporting what stopped it
 /// rather than failing: a `bdi` nothing can reach still draws, just polled.
-pub fn listen(
+pub fn watch(
     at: Option<PathBuf>,
     reported: &Reported,
     changed: Sender<Heard>,
@@ -455,15 +455,15 @@ pub fn serve(
     each: impl Fn(UnixStream) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
-    let listener = bind(&at)?;
+    let channel = bind(&at)?;
     // Read before anything else this run does, so the name has had as little
-    // time as it can to change hands. It cannot be read from the listener
+    // time as it can to change hands. It cannot be read from the channel
     // instead: a bound socket's descriptor stats as its own inode on sockfs,
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
 
     let each = Arc::new(each);
-    thread::spawn(move || accept(&listener, &each));
+    thread::spawn(move || accept(&channel, &each));
 
     Ok(Socket { at, bound })
 }
@@ -488,8 +488,8 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
     // for itself rather than not being there to answer.
     only_this_user_may_take_a_name_under(directory)?;
 
-    let listener = match UnixListener::bind(at) {
-        Ok(listener) => listener,
+    let channel = match UnixListener::bind(at) {
+        Ok(channel) => channel,
         Err(taken) if taken.kind() == ErrorKind::AddrInUse => reclaim(at)?,
         Err(why) => return Err(Refused::Unopenable(at.to_path_buf(), why)),
     };
@@ -497,7 +497,7 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
     fs::set_permissions(at, fs::Permissions::from_mode(OWNER_ONLY))
         .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
 
-    Ok(listener)
+    Ok(channel)
 }
 
 /// The directory the socket's name is in, as a directory rather than as what
@@ -631,8 +631,8 @@ fn others_may_take_a_name_in(how: u32, owner: u32, this_user: u32) -> bool {
 
 /// A socket already at the path is either a live `bdi`'s or the litter of one
 /// that crashed — a `UnixListener` leaves its file behind when its process
-/// goes. Connecting tells them apart: a live listener accepts, and a file
-/// nothing is listening on refuses.
+/// goes. Connecting tells them apart: a live `bdi` accepts, and a file
+/// nothing is watching refuses.
 ///
 /// Anything that is not a socket is neither, and removing it is how a
 /// mistyped path costs a reader a file. `bind` answers *address already in
@@ -641,7 +641,7 @@ fn others_may_take_a_name_in(how: u32, owner: u32, this_user: u32) -> bool {
 /// looked at rather than inferred from either of them.
 fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
     if UnixStream::connect(at).is_ok() {
-        return Err(Refused::AlreadyListening(at.to_path_buf()));
+        return Err(Refused::AlreadyWatching(at.to_path_buf()));
     }
 
     if !is_a_socket(at) {
@@ -667,8 +667,8 @@ fn is_a_socket(at: &Path) -> bool {
 /// An accept that fails ends the channel rather than being retried: there is
 /// no error here a retry would clear, and the poll is what the view falls
 /// back to.
-fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(listener: &UnixListener, each: &Arc<F>) {
-    for connection in listener.incoming() {
+fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(channel: &UnixListener, each: &Arc<F>) {
+    for connection in channel.incoming() {
         let Ok(connection) = connection else { return };
 
         let each = Arc::clone(each);
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn a_socket_this_user_bound_where_nobody_else_may_take_its_name_is_theirs() {
         let at = a_socket_in_a_directory_moded("held-own", ONLY_THIS_USER_MAY_ENTER);
-        let _listening = UnixListener::bind(&at).expect("the socket is ours");
+        let _taken = UnixListener::bind(&at).expect("the socket is ours");
 
         assert!(only_this_user_holds(&at));
     }
@@ -797,7 +797,7 @@ mod tests {
     #[test]
     fn a_socket_in_a_directory_others_may_take_a_name_in_is_not_this_users_alone() {
         let at = a_socket_in_a_directory_moded("held-shared", 0o777);
-        let _listening = UnixListener::bind(&at).expect("the socket is ours");
+        let _taken = UnixListener::bind(&at).expect("the socket is ours");
 
         assert!(!only_this_user_holds(&at));
     }
@@ -806,7 +806,7 @@ mod tests {
     fn a_name_holding_no_socket_of_this_users_is_not_one_it_holds() {
         let at = a_socket_in_a_directory_moded("held-nothing", ONLY_THIS_USER_MAY_ENTER);
         let elsewhere = a_socket_in_a_directory_moded("held-elsewhere", ONLY_THIS_USER_MAY_ENTER);
-        let _listening = UnixListener::bind(&elsewhere).expect("the socket is ours");
+        let _taken = UnixListener::bind(&elsewhere).expect("the socket is ours");
 
         let nothing = only_this_user_holds(&at);
         std::os::unix::fs::symlink(&elsewhere, &at).expect("a link to the socket");
@@ -821,14 +821,14 @@ mod tests {
     /// An open channel, and the end of it the loop would be reading.
     fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<Heard>) {
         let (changed, changes) = mpsc::channel();
-        let socket = listen(Some(at.to_path_buf()), reported, changed).expect("the socket opens");
+        let socket = watch(Some(at.to_path_buf()), reported, changed).expect("the socket opens");
         (socket, changes)
     }
 
     /// Both ends of one connection to bdi: what messages go down, and what
     /// its answers come back up.
     fn connect(at: &Path) -> (UnixStream, BufReader<UnixStream>) {
-        let writing = UnixStream::connect(at).expect("bdi is listening");
+        let writing = UnixStream::connect(at).expect("bdi is watching");
         let reading = BufReader::new(writing.try_clone().expect("both ends of the stream"));
         (writing, reading)
     }
@@ -877,9 +877,9 @@ mod tests {
         let at = a_socket_path("lets-the-writer-go");
         std::fs::create_dir_all(at.parent().expect("the socket is in a directory"))
             .expect("a directory to put the socket in");
-        let listener = UnixListener::bind(&at).expect("a stand-in for bdi");
+        let stand_in = UnixListener::bind(&at).expect("a stand-in for bdi");
         let stand_in = thread::spawn(move || {
-            let (stream, _) = listener.accept().expect("the writer connects");
+            let (stream, _) = stand_in.accept().expect("the writer connects");
             let mut reading = BufReader::new(stream.try_clone().expect("both ends of the stream"));
             let mut line = String::new();
             reading.read_line(&mut line).expect("the first message");
@@ -1035,7 +1035,7 @@ mod tests {
     fn without_a_runtime_directory_there_is_no_inbound_channel() {
         let (changed, _changes) = mpsc::channel();
 
-        let refused = listen(None, &watching(["arkham", "ferry"]), changed);
+        let refused = watch(None, &watching(["arkham", "ferry"]), changed);
 
         assert!(matches!(refused, Err(Refused::NoRuntimeDirectory)));
     }
@@ -1202,7 +1202,7 @@ mod tests {
     }
 
     /// A `UnixListener` leaves its file behind, so a run that crashed leaves
-    /// one nothing is listening on.
+    /// one nothing is watching.
     #[test]
     fn a_stale_socket_from_a_crashed_run_is_reclaimed() {
         let at = a_socket_path("stale-socket");
@@ -1249,7 +1249,7 @@ mod tests {
         let at = a_socket_in_a_directory_moded("open-directory", 0o777);
 
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1303,7 +1303,7 @@ mod tests {
         let at = shared.join("mine").join("changes.sock");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1335,7 +1335,7 @@ mod tests {
 
         let at = shared.join("link").join("changes.sock");
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at), &watching(["arkham"]), changed);
+        let refused = watch(Some(at), &watching(["arkham"]), changed);
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1462,7 +1462,7 @@ mod tests {
         std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = listen(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
 
         assert!(
             matches!(refused, Err(Refused::NotASocket(_))),
@@ -1478,15 +1478,15 @@ mod tests {
     /// Two `bdi`s in one session is a different thing from a crashed one, and
     /// stealing the socket would leave the live one deaf.
     #[test]
-    fn a_socket_another_bdi_is_listening_on_is_left_alone() {
+    fn a_socket_another_bdi_is_watching_is_left_alone() {
         let at = a_socket_path("two-bdis");
         let reported = watching(["arkham", "ferry"]);
         let (_first, _changes) = open(&at, &reported);
 
         let (changed, _changes) = mpsc::channel();
-        let second = listen(Some(at.clone()), &reported, changed);
+        let second = watch(Some(at.clone()), &reported, changed);
 
-        assert!(matches!(second, Err(Refused::AlreadyListening(_))));
+        assert!(matches!(second, Err(Refused::AlreadyWatching(_))));
         say(&at, &[("arkham\n", "ok arkham")]);
     }
 
@@ -1505,7 +1505,7 @@ mod tests {
     /// would go red for a command that had quietly stopped naming a holder.
     #[test]
     fn the_line_left_on_the_primary_screen_says_how_to_find_who_is_holding_it() {
-        let said = Refused::AlreadyListening(PathBuf::from("/run/user/1000/x.sock")).to_string();
+        let said = Refused::AlreadyWatching(PathBuf::from("/run/user/1000/x.sock")).to_string();
 
         assert!(said.contains("another bdi"), "{said}");
         assert!(said.contains("/run/user/1000/x.sock"), "{said}");
@@ -1513,7 +1513,7 @@ mod tests {
     }
 
     /// The remedy is two steps and the second one is the one a reader would
-    /// not guess: `listen` is called once, from `wire`, before the screen
+    /// not guess: `watch` is called once, from `wire`, before the screen
     /// opens, and nothing binds again for the life of the run. So a reader
     /// who closes the holder and waits gets a channel that is free and a
     /// `bdi` that will never take it, which looks exactly like the fault
@@ -1529,7 +1529,7 @@ mod tests {
     /// this paragraph is what says so.
     #[test]
     fn the_remedy_for_a_held_socket_says_to_restart_bdi() {
-        let said = Refused::AlreadyListening(PathBuf::from("/run/user/1000/x.sock")).to_string();
+        let said = Refused::AlreadyWatching(PathBuf::from("/run/user/1000/x.sock")).to_string();
 
         assert!(said.contains("restart bdi"), "{said}");
     }
@@ -1560,10 +1560,10 @@ mod tests {
         assert!(!at.exists(), "the next run has nothing to reclaim");
     }
 
-    /// Told nothing, `bdi` listens where it has always listened, so a run
+    /// Told nothing, `bdi` watches where it has always watched, so a run
     /// with no config keeps the path every producer already written against
     /// it uses.
-    /// Told nothing, `bdi` listens where it has always listened, so a run
+    /// Told nothing, `bdi` watches where it has always watched, so a run
     /// with no config keeps the path every producer already written against
     /// it uses.
     #[test]
@@ -1577,13 +1577,13 @@ mod tests {
         assert_eq!(under(None), None);
     }
 
-    /// Told where to listen, `bdi` listens there, and what the session owns
+    /// Told where to watch, `bdi` watches there, and what the session owns
     /// is not consulted at all — which is what makes this deterministic
     /// wherever it runs. That is what lets two `bdi`s in one session each
     /// have a channel, and it is the only way a machine with no runtime
     /// directory has one.
     #[test]
-    fn a_run_told_where_to_listen_listens_there() {
+    fn a_run_told_where_to_watch_watches_there() {
         let told = PathBuf::from("/var/folders/T/bdi/changes.sock");
 
         assert_eq!(where_writers_find_bdi(Some(told.clone())), Some(told));

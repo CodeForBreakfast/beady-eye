@@ -101,7 +101,7 @@ pub fn notice(notice: &Notice) -> String {
             "bdi cannot hear about changes · every project is polled instead".to_string()
         }
         Notice::AnotherBdiHadTheInboundChannel => {
-            "another bdi is already listening for changes · every project is polled instead"
+            "another bdi is already watching for changes · every project is polled instead"
                 .to_string()
         }
         Notice::ConfigWouldNotReload => {

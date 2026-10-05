@@ -1,8 +1,8 @@
-//! What `bdi listen` holds of every project, and the seam what it holds comes
+//! What `bdi watch` holds of every project, and the seam what it holds comes
 //! across.
 //!
 //! A change source finds out what each tracker holds, by whatever means it
-//! has, and says so one project at a time. The listener keeps what it is told
+//! has, and says so one project at a time. The watcher keeps what it is told
 //! and never asks which source told it, so a source can be replaced without
 //! anything that watches or delivers changing.
 
@@ -25,7 +25,7 @@ use crate::model::types::Printed;
 
 use super::watching::{self, Events, Interest, Refusal, Watch, ALIVE_LINE};
 
-/// One bead as the listener holds it: its tracker's row, and the readiness
+/// One bead as the watcher holds it: its tracker's row, and the readiness
 /// `bdi --beads` gives it.
 ///
 /// The readiness sits beside the row rather than in it, so nothing `bdi` adds
@@ -39,7 +39,7 @@ pub struct Held {
     /// Every bead blocking this one, in its own project or another.
     pub blocked_by: Vec<String>,
     /// What bd itself says, from this one tracker. A consumer reading some
-    /// projects through the listener and the rest itself builds its trees
+    /// projects through the watcher and the rest itself builds its trees
     /// from these, as it would from reads of its own.
     pub bd: BeadReadiness,
 }
@@ -88,14 +88,14 @@ pub enum Said {
     Unreachable(TrackerFailure),
 }
 
-/// Where the listener's answers come from.
+/// Where the watcher's answers come from.
 pub trait ChangeSource: Send {
     /// Block until the source says something of a project, and hand it over.
     /// Nothing once the source has stopped.
     fn next(&mut self) -> Option<Answer>;
 }
 
-/// One project as the listener holds it.
+/// One project as the watcher holds it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Standing {
     /// Nothing until the source has read the project, which is not the same
@@ -106,7 +106,7 @@ pub struct Standing {
     pub as_of: Option<DateTime<Utc>>,
     /// Why the last attempt to reach the tracker failed, where it did.
     pub unreachable: Option<TrackerFailure>,
-    /// How the listener's config reaches the tracker.
+    /// How the watcher's config reaches the tracker.
     pub reach: Reach,
     /// Whether the project's event records are sent.
     pub events: Events,
@@ -139,13 +139,13 @@ impl Standing {
 #[derive(Debug, Default)]
 pub struct Hold {
     projects: BTreeMap<String, Standing>,
-    watchers: BTreeMap<u64, Watcher>,
-    next_watcher: u64,
+    consumers: BTreeMap<u64, Consumer>,
+    next_consumer: u64,
 }
 
 /// One connection watching beads.
 #[derive(Debug)]
-struct Watcher {
+struct Consumer {
     /// Where its lines go, a batch at a time, to be written by the
     /// connection's own thread.
     telling: SyncSender<Vec<String>>,
@@ -154,7 +154,7 @@ struct Watcher {
     interests: BTreeMap<String, Interest>,
 }
 
-impl Watcher {
+impl Consumer {
     /// Send `lines`, or hang up where the connection is too far behind to
     /// take them. False where it is gone.
     fn tells(&self, lines: Vec<String>) -> bool {
@@ -212,8 +212,8 @@ impl Hold {
         };
 
         let project = answer.project;
-        self.watchers.retain(|_, watcher| {
-            let Some(interest) = watcher.interests.get_mut(&project) else {
+        self.consumers.retain(|_, consumer| {
+            let Some(interest) = consumer.interests.get_mut(&project) else {
                 return true;
             };
             let mut lines: Vec<String> = records
@@ -227,27 +227,27 @@ impl Hold {
                 .collect();
             standing.told(&project, interest).is_none_or(|told| {
                 lines.extend(told);
-                watcher.tells(lines)
+                consumer.tells(lines)
             })
         });
     }
 
     /// A connection that will watch beads, sent its lines on `telling`.
     pub fn connect(&mut self, telling: SyncSender<Vec<String>>, connection: UnixStream) -> u64 {
-        let id = self.next_watcher;
-        self.next_watcher += 1;
-        let watcher = Watcher {
+        let id = self.next_consumer;
+        self.next_consumer += 1;
+        let consumer = Consumer {
             telling,
             connection,
             interests: BTreeMap::new(),
         };
-        self.watchers.insert(id, watcher);
+        self.consumers.insert(id, consumer);
         id
     }
 
-    /// Have `watcher` watch what `watch` names, and send it what it was not
+    /// Have `consumer` watch what `watch` names, and send it what it was not
     /// already sent of that.
-    pub fn watch(&mut self, watcher: u64, watch: &Watch) -> Result<(), Refusal> {
+    pub fn watch(&mut self, consumer: u64, watch: &Watch) -> Result<(), Refusal> {
         let projects: Vec<&String> = match watch {
             Watch::Everything => self.projects.keys().collect(),
             Watch::Project { project, .. } | Watch::Bead { project, .. } => {
@@ -258,7 +258,7 @@ impl Hold {
                 vec![project]
             }
         };
-        let Some(connection) = self.watchers.get_mut(&watcher) else {
+        let Some(connection) = self.consumers.get_mut(&consumer) else {
             return Ok(());
         };
 
@@ -274,17 +274,17 @@ impl Hold {
             );
         }
         if !lines.is_empty() && !connection.tells(lines) {
-            self.watchers.remove(&watcher);
+            self.consumers.remove(&consumer);
         }
         Ok(())
     }
 
     /// Stop telling a connection that has gone.
-    pub fn forget(&mut self, watcher: u64) {
-        self.watchers.remove(&watcher);
+    pub fn forget(&mut self, consumer: u64) {
+        self.consumers.remove(&consumer);
     }
 
-    /// What the listener holds of `project`, where a source has said anything
+    /// What the watcher holds of `project`, where a source has said anything
     /// of it.
     #[cfg(test)]
     pub fn of(&self, project: &str) -> Option<&Standing> {
@@ -306,14 +306,14 @@ pub fn hold(source: &mut dyn ChangeSource, into: &Mutex<Hold>) {
 /// How many answers a connection may fall behind by before it is hung up
 /// on. A consumer that reconnects is sent the beads as they then stand, so
 /// hanging up loses it nothing, where queueing for it without end would cost
-/// the listener memory for as long as it does not read.
+/// the watcher memory for as long as it does not read.
 const FALLING_BEHIND: usize = 64;
 
-/// How often every connection is told the listener is alive, whatever else
+/// How often every connection is told the watcher is alive, whatever else
 /// it has been sent.
 pub const ALIVE_EVERY: Duration = Duration::from_secs(20);
 
-/// Serve one connection to the listener's socket until it goes away: its
+/// Serve one connection to the watcher's socket until it goes away: its
 /// watch lines go to `hold`, and every other line is a producer's.
 pub fn serve(
     connection: UnixStream,
@@ -326,12 +326,12 @@ pub fn serve(
     };
     let (telling, told) = mpsc::sync_channel(FALLING_BEHIND);
     thread::spawn(move || tell(writing, &told, ALIVE_EVERY));
-    let watcher = locked(hold).connect(telling.clone(), hanging_up);
+    let consumer = locked(hold).connect(telling.clone(), hanging_up);
 
     changes::each_line(connection, |message| {
         let answer = match message.map(|line| (line, watching::asked(line))) {
             Some((line, Some(asked))) => asked
-                .and_then(|watch| locked(hold).watch(watcher, &watch))
+                .and_then(|watch| locked(hold).watch(consumer, &watch))
                 .err()
                 .map(|refusal| watching::refused_line(line, refusal)),
             _ => {
@@ -343,7 +343,7 @@ pub fn serve(
         };
         answer.is_none_or(|answer| telling.send(vec![answer]).is_ok())
     });
-    locked(hold).forget(watcher);
+    locked(hold).forget(consumer);
 }
 
 /// Write each batch of lines `told` hands over to `to`, and an alive line
@@ -545,23 +545,23 @@ mod tests {
     /// A hold reading dunwich, and one connection to it, whose lines arrive
     /// on what this hands back. Room for `behind` batches before it is hung
     /// up on.
-    fn a_watcher(behind: usize) -> (Hold, u64, Receiver<Vec<String>>, UnixStream) {
+    fn a_consumer(behind: usize) -> (Hold, u64, Receiver<Vec<String>>, UnixStream) {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let Connection {
-            watcher,
+            consumer,
             told,
             theirs,
             ..
         } = connected(&mut hold, behind);
-        (hold, watcher, told, theirs)
+        (hold, consumer, told, theirs)
     }
 
     /// One connection to `hold`, and the ends of it the test holds.
     struct Connection {
-        watcher: u64,
+        consumer: u64,
         told: Receiver<Vec<String>>,
         theirs: UnixStream,
-        /// The listener's end, kept open beside the one the hold has as a
+        /// The watcher's end, kept open beside the one the hold has as a
         /// connection's reading thread keeps it, so that only a hang-up
         /// ends the connection.
         _reading: UnixStream,
@@ -571,9 +571,9 @@ mod tests {
         let (telling, told) = mpsc::sync_channel(behind);
         let (ours, theirs) = UnixStream::pair().expect("a connection");
         let reading = ours.try_clone().expect("the end is ours to share");
-        let watcher = hold.connect(telling, ours);
+        let consumer = hold.connect(telling, ours);
         Connection {
-            watcher,
+            consumer,
             told,
             theirs,
             _reading: reading,
@@ -599,9 +599,9 @@ mod tests {
     /// and then the beads it starts from.
     #[test]
     fn a_watch_on_a_project_not_yet_read_waits_for_the_read() {
-        let (mut hold, watcher, told, _theirs) = a_watcher(4);
+        let (mut hold, consumer, told, _theirs) = a_consumer(4);
 
-        hold.watch(watcher, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich())
             .expect("dunwich is read");
         let before = kinds(&told);
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -611,9 +611,9 @@ mod tests {
     }
 
     #[test]
-    fn a_watch_is_told_how_the_listener_reaches_the_tracker() {
-        let (mut hold, watcher, told, _theirs) = a_watcher(4);
-        hold.watch(watcher, &watching_dunwich())
+    fn a_watch_is_told_how_the_watcher_reaches_the_tracker() {
+        let (mut hold, consumer, told, _theirs) = a_consumer(4);
+        hold.watch(consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &[]));
@@ -630,8 +630,8 @@ mod tests {
     /// told, and the thing it most needs telling.
     #[test]
     fn a_tracker_that_cannot_be_reached_is_said_before_anything_is_read() {
-        let (mut hold, watcher, told, _theirs) = a_watcher(4);
-        hold.watch(watcher, &watching_dunwich())
+        let (mut hold, consumer, told, _theirs) = a_consumer(4);
+        hold.watch(consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(said("dunwich", Said::Unreachable(TrackerFailure::Auth)));
@@ -643,11 +643,11 @@ mod tests {
     }
 
     #[test]
-    fn a_project_the_listener_does_not_read_is_refused() {
-        let (mut hold, watcher, _told, _theirs) = a_watcher(4);
+    fn a_project_the_watcher_does_not_read_is_refused() {
+        let (mut hold, consumer, _told, _theirs) = a_consumer(4);
 
         let refused = hold.watch(
-            watcher,
+            consumer,
             &Watch::Bead {
                 project: "ferry".to_string(),
                 id: "fer-1".to_string(),
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn a_project_nobody_watches_is_sent_to_nobody() {
-        let (mut hold, _watcher, told, _theirs) = a_watcher(4);
+        let (mut hold, _consumer, told, _theirs) = a_consumer(4);
 
         hold.take(read("dunwich", now(), &["dun-1"]));
 
@@ -668,10 +668,10 @@ mod tests {
 
     #[test]
     fn a_watch_on_a_project_already_read_is_sent_its_beads_at_once() {
-        let (mut hold, watcher, told, _theirs) = a_watcher(4);
+        let (mut hold, consumer, told, _theirs) = a_consumer(4);
         hold.take(read("dunwich", now(), &["dun-1"]));
 
-        hold.watch(watcher, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich())
             .expect("dunwich is read");
         let at_once = kinds(&told);
         hold.take(read("dunwich", later(30), &["dun-1", "dun-2"]));
@@ -685,9 +685,9 @@ mod tests {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let first = connected(&mut hold, 4);
         let second = connected(&mut hold, 4);
-        hold.watch(first.watcher, &watching_dunwich())
+        hold.watch(first.consumer, &watching_dunwich())
             .expect("dunwich is read");
-        hold.watch(second.watcher, &watching_dunwich())
+        hold.watch(second.consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -700,10 +700,10 @@ mod tests {
     fn a_connection_forgotten_is_told_nothing_more() {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let gone = connected(&mut hold, 4);
-        hold.watch(gone.watcher, &watching_dunwich())
+        hold.watch(gone.consumer, &watching_dunwich())
             .expect("dunwich is read");
 
-        hold.forget(gone.watcher);
+        hold.forget(gone.consumer);
         hold.take(read("dunwich", now(), &["dun-1"]));
 
         assert_eq!(kinds(&gone.told), Vec::<Vec<String>>::new());
@@ -713,7 +713,7 @@ mod tests {
     fn a_connection_that_keeps_up_stays_open() {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let keeping_up = connected(&mut hold, 1);
-        hold.watch(keeping_up.watcher, &watching_dunwich())
+        hold.watch(keeping_up.consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -732,7 +732,7 @@ mod tests {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let mut behind = connected(&mut hold, 1);
         hold.take(read("dunwich", now(), &["dun-1"]));
-        hold.watch(behind.watcher, &watching_dunwich())
+        hold.watch(behind.consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(said("dunwich", Said::Vouched { at: later(10) }));
@@ -744,7 +744,7 @@ mod tests {
             .expect("a read is ours to give up on");
         let mut rest = Vec::new();
         std::io::Read::read_to_end(&mut behind.theirs, &mut rest).expect("the connection ends");
-        assert!(hold.watchers.is_empty());
+        assert!(hold.consumers.is_empty());
     }
 
     // ---- bd's events -------------------------------------------------------
@@ -768,7 +768,7 @@ mod tests {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), true)]);
         let connection = connected(&mut hold, 8);
         hold.take(journalled(now(), &["dun-1", "dun-2"], Vec::new()));
-        hold.watch(connection.watcher, watch)
+        hold.watch(connection.consumer, watch)
             .expect("dunwich is read");
         connection.told.try_iter().for_each(drop);
         (hold, connection)
@@ -851,7 +851,7 @@ mod tests {
             vec![record(3, "comment", "dun-1")],
         ));
 
-        hold.watch(connection.watcher, &watching_dunwich())
+        hold.watch(connection.consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         assert_eq!(heard(&connection.told), [["bead", "freshness"]]);
@@ -859,8 +859,8 @@ mod tests {
 
     #[test]
     fn a_project_that_claims_no_journal_is_said_to_have_no_events() {
-        let (mut hold, watcher, told, _theirs) = a_watcher(4);
-        hold.watch(watcher, &watching_dunwich())
+        let (mut hold, consumer, told, _theirs) = a_consumer(4);
+        hold.watch(consumer, &watching_dunwich())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -899,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn every_connection_is_told_the_listener_is_alive_on_the_interval() {
+    fn every_connection_is_told_the_watcher_is_alive_on_the_interval() {
         let (ours, theirs) = UnixStream::pair().expect("a connection");
         let (telling, told) = mpsc::sync_channel(4);
         let writing = thread::spawn(move || tell(ours, &told, Duration::from_millis(50)));

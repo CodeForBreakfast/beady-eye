@@ -167,15 +167,15 @@ trackers or credentials. No other `bd` command is passed, and no flag but
 after the project can pick another tracker, so a permission rule on
 `bdi bd <project>` holds a caller to that one project.
 
-`bdi listen` reads every configured project and holds what it read, polling as
+`bdi watch` reads every configured project and holds what it read, polling as
 the eye does and taking the same reports on a socket of its own. Run one per
 machine under whatever supervises your processes, such as a systemd user unit or
 a launchd agent. The view, `bdi --json` and `bdi --beads` then answer from what
 it holds and run no `bd` of their own, and read for themselves whenever it is
-not there. "Running the listener" in
+not there. "Running the watcher" in
 [docs/configuration.md](docs/configuration.md) has an example of each.
 
-Anything can watch beads through the listener. A consumer connects to its
+Anything can watch beads through the watcher. A consumer connects to its
 socket and says what it watches. It is sent each of those beads as one line of
 JSON, first as they stand and then each time one changes. This one watches a
 project and prints every bead it hears of:
@@ -184,15 +184,15 @@ project and prints every bead it hears of:
 import json, os, socket, sys
 
 project = sys.argv[1]
-at = os.path.join(os.environ["XDG_RUNTIME_DIR"], "beady-eye", "listener.sock")
+at = os.path.join(os.environ["XDG_RUNTIME_DIR"], "beady-eye", "watcher.sock")
 
-listener = socket.socket(socket.AF_UNIX)
-listener.connect(at)        # refused: no listener, so nothing is known
-listener.settimeout(60)     # an alive line is due every 20 seconds
-listener.sendall(f"watch {project}\n".encode())
+watcher = socket.socket(socket.AF_UNIX)
+watcher.connect(at)        # refused: no watcher, so nothing is known
+watcher.settimeout(60)     # an alive line is due every 20 seconds
+watcher.sendall(f"watch {project}\n".encode())
 
 try:
-    for line in listener.makefile():
+    for line in watcher.makefile():
         said = json.loads(line)
         if said["line"] == "bead":
             print(said["row"]["id"], said["row"]["status"], flush=True)
@@ -201,8 +201,8 @@ try:
         elif said["line"] == "freshness" and said["tracker"] != "ok":
             print(project, "unreachable, last read", said["as_of"], flush=True)
 except TimeoutError:
-    sys.exit("the listener has wedged")
-sys.exit("the listener has gone")
+    sys.exit("the watcher has wedged")
+sys.exit("the watcher has gone")
 ```
 
 It starts from the beads that are not closed. A bead filed after it connected
@@ -216,16 +216,16 @@ smt-4kd3p.21 open
 smt-4kd3p.20 closed
 ```
 
-The script tells a quiet listener from one that has gone. A listener that is up
+The script tells a quiet watcher from one that has gone. A watcher that is up
 sends an alive line every 20 seconds, however quiet its trackers are. So a
 refused connection, a closed one, or a minute of silence means nothing is
 watching, and the script stops rather than act on what it has not been told.
-A tracker the listener cannot reach is reported in that project's freshness
+A tracker the watcher cannot reach is reported in that project's freshness
 line, and the beads already sent stand as the last known. Where a project's
-entry sets `events_journal = true`, the listener also sends each of bd's event
+entry sets `events_journal = true`, the watcher also sends each of bd's event
 records as an `event` line, which says who made a change and carries the text
 of a comment.
-[docs/design.md](docs/design.md) has every line the listener sends, under
+[docs/design.md](docs/design.md) has every line the watcher sends, under
 "Watching".
 
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from

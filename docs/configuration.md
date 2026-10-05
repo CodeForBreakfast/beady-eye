@@ -57,8 +57,8 @@ pane_key = "agent_pane"
 socket = "/run/user/1000/beady-eye/changes.sock"
 covered_for_seconds = 60
 
-[listener]
-socket = "/run/user/1000/beady-eye/listener.sock"
+[watcher]
+socket = "/run/user/1000/beady-eye/watcher.sock"
 
 [anomalies]
 stale_claim_days = 30
@@ -150,18 +150,18 @@ covers for a producer that dies, so the project's mark turns to `?` once
 nothing has vouched for it for `covered_for_seconds`.
 
 **`events_journal = true`** says that every writer to this project's tracker
-keeps bd's events journal. [The listener](#running-the-listener) then reads
+keeps bd's events journal. [The watcher](#running-the-watcher) then reads
 the journal whenever the project has moved, and sends each record to the
 consumers watching the bead it names, ahead of the bead's new state. bd turns
 the journal on clone by clone, with `bd config set events-journal true`, and
 cannot tell a reader whether every other writer has done the same. So the key
 is your word for it, and a writer without the journal leaves a gap that
-nothing reports. Without the key the listener sends no records, and tells
+nothing reports. Without the key the watcher sends no records, and tells
 each consumer `"events": "off"`.
 
-The listener reads the whole journal once when it starts, to find where it
+The watcher reads the whole journal once when it starts, to find where it
 ends, and sends none of it. Where bd has pruned the journal past a record the
-listener had not yet read, the listener tells each consumer once that the
+watcher had not yet read, the watcher tells each consumer once that the
 journal is unreadable, and then sends the records bd kept.
 
 ## `[roots.explicit]`
@@ -509,11 +509,11 @@ ties an agent to its bead exactly.
 
 ## `[changes]`
 
-`socket` is where `bdi` listens for something saying a project's work has
+`socket` is where `bdi` watches for something saying a project's work has
 moved. It defaults to `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, and a machine
 with no `$XDG_RUNTIME_DIR` has no channel until this names one. `--socket`
 overrides it for one run, which is how two `bdi` runs on one machine each get
-a channel. [Telling `bdi` where to listen](#telling-bdi-where-to-listen) has
+a channel. [Telling `bdi` where to watch](#telling-bdi-where-to-watch) has
 the whole of it.
 
 `covered_for_seconds` is how long a project that does not poll is taken to be
@@ -522,14 +522,14 @@ that its mark turns to `?`. The default of 60 is three of the 20-second
 heartbeats a producer reading a Dolt event stream sends, so a late heartbeat
 does not read as a producer that has gone. A polled project never lapses.
 
-## `[listener]`
+## `[watcher]`
 
-`socket` is where `bdi listen` takes its socket. It defaults to
-`$XDG_RUNTIME_DIR/beady-eye/listener.sock`, and `bdi listen --socket` overrides
+`socket` is where `bdi watch` takes its socket. It defaults to
+`$XDG_RUNTIME_DIR/beady-eye/watcher.sock`, and `bdi watch --socket` overrides
 it. The path is checked as `[changes]`'s is. `bdi --json` and `bdi --beads`
 make the same check before they connect, and also require the socket to be
 yours. Where either fails, they read every project themselves. [Running the
-listener](#running-the-listener) has the rest.
+watcher](#running-the-watcher) has the rest.
 
 ## `[anomalies]`
 
@@ -606,7 +606,7 @@ whether anything has changed (one `bd sql` for a hash of its Dolt tables) and on
 reads in full if it has. That probe needs a Dolt server; bd's embedded store
 refuses it, and `bdi` then reads in full on every poll.
 
-Anything that already knows a tracker changed can skip the wait. `bdi` listens
+Anything that already knows a tracker changed can skip the wait. `bdi` watches
 on a stream socket, created mode `0600` and removed on exit,
 `$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless it is told otherwise. Write a
 project's name as one line; `bdi` reads that project now and answers on the
@@ -663,10 +663,10 @@ hash all work equally well; `bdi` provides the socket and cannot tell them apart
 `--poll` and `--no-poll` override every project's `poll` setting for one run,
 which is how to find out whether a suspect producer was the only thing wrong.
 
-### Telling `bdi` where to listen
+### Telling `bdi` where to watch
 
 The default path is one per login session, so two `bdi` runs on one machine
-derive the same one and the second finds the first already listening. It says
+derive the same one and the second finds the first already watching. It says
 so on stderr and polls everything for the rest of its life: the socket is asked
 for once at startup and never again. Give one of them a socket of its own and
 both have a channel:
@@ -699,40 +699,40 @@ A path already holding something that is not a socket is refused and left
 alone. A socket a crashed run left behind is cleared.
 
 If the socket still cannot be opened, because there is no path to put it at or
-another `bdi` is already listening on the one it has, `bdi` says so on stderr
+another `bdi` is already watching the one it has, `bdi` says so on stderr
 at startup, names the remedy, and polls everything.
 
-## Running the listener
+## Running the watcher
 
-`bdi listen` is a `bdi` with no view. It reads every project the config names,
+`bdi watch` is a `bdi` with no view. It reads every project the config names,
 polls and probes each one as a view does, and holds each bead as bd printed it,
 with whether it is ready and what blocks it. Its config is read once at
 startup, so an edit to the config takes effect at the next start. It runs
 nothing of herdr's.
 
-It listens on a socket of its own, apart from the one a view listens on, and
+It has a socket of its own, apart from the one a view watches, and
 takes the same producer lines: a project's name, or `covered <project>`. A
-producer that should reach the listener is pointed at
-`$XDG_RUNTIME_DIR/beady-eye/listener.sock`, or at the path `[listener]` names.
+producer that should reach the watcher is pointed at
+`$XDG_RUNTIME_DIR/beady-eye/watcher.sock`, or at the path `[watcher]` names.
 A consumer watching beads connects to the same socket. The README has a worked
-one. The view, `bdi --json` and `bdi --beads` find the listener at the same
-path and read through it, so a `[listener]` socket is named once for all
+one. The view, `bdi --json` and `bdi --beads` find the watcher at the same
+path and read through it, so a `[watcher]` socket is named once for all
 three. They read a project
-themselves where the listener's config gives it another `path` or
+themselves where the watcher's config gives it another `path` or
 `environment_command` than theirs does.
 
-Run one per machine. A second `bdi listen` finds the first by connecting to the
+Run one per machine. A second `bdi watch` finds the first by connecting to the
 socket, says on stderr which socket is taken, and exits non-zero. One that
 cannot open its socket for any other reason exits the same way.
 
-Start it under whatever supervises your processes. A systemd user unit, at `~/.config/systemd/user/bdi-listen.service`:
+Start it under whatever supervises your processes. A systemd user unit, at `~/.config/systemd/user/bdi-watch.service`:
 
 ```ini
 [Unit]
-Description=beady-eye listener
+Description=beady-eye watcher
 
 [Service]
-ExecStart=%h/.cargo/bin/bdi listen
+ExecStart=%h/.cargo/bin/bdi watch
 Restart=on-failure
 
 [Install]
@@ -740,14 +740,14 @@ WantedBy=default.target
 ```
 
 ```console
-$ systemctl --user enable --now bdi-listen
+$ systemctl --user enable --now bdi-watch
 ```
 
-The listener reaches each tracker with the environment it starts in, so a
+The watcher reaches each tracker with the environment it starts in, so a
 tracker whose credential comes from your shell wants a `credential_command` in
 its `[[projects]]` entry, or an `Environment=` line here.
 
-A launchd agent on macOS, at `~/Library/LaunchAgents/com.example.bdi-listen.plist`.
+A launchd agent on macOS, at `~/Library/LaunchAgents/com.example.bdi-watch.plist`.
 macOS has no `$XDG_RUNTIME_DIR`, so the socket is named:
 
 ```xml
@@ -756,13 +756,13 @@ macOS has no `$XDG_RUNTIME_DIR`, so the socket is named:
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.example.bdi-listen</string>
+  <string>com.example.bdi-watch</string>
   <key>ProgramArguments</key>
   <array>
     <string>/Users/you/.cargo/bin/bdi</string>
-    <string>listen</string>
+    <string>watch</string>
     <string>--socket</string>
-    <string>/Users/you/Library/Caches/beady-eye/listener.sock</string>
+    <string>/Users/you/Library/Caches/beady-eye/watcher.sock</string>
   </array>
   <key>KeepAlive</key>
   <true/>
@@ -771,7 +771,7 @@ macOS has no `$XDG_RUNTIME_DIR`, so the socket is named:
 ```
 
 ```console
-$ launchctl load ~/Library/LaunchAgents/com.example.bdi-listen.plist
+$ launchctl load ~/Library/LaunchAgents/com.example.bdi-watch.plist
 ```
 
 SIGTERM, SIGINT or SIGHUP stops it and removes its socket.

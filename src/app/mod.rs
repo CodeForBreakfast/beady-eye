@@ -4,7 +4,7 @@
 //! along them means — and one for the standing set of those reads, which is
 //! what lets a collection name one project and still draw every other. Beside
 //! them is the refresh path: when each project asks to be read again, and the
-//! queue its reads wait in, driven alike by a view and by the listener, which
+//! queue its reads wait in, driven alike by a view and by the watcher, which
 //! holds what the reads said for consumers with no view of their own. It
 //! sits between `collect/`, which runs the programs, and `model/`, which
 //! joins what they said; it names neither `view/` nor `tui/`.
@@ -12,20 +12,20 @@
 mod armed;
 mod collection;
 mod due;
-mod listener;
 mod outstanding;
 mod reading;
 mod reading_trackers;
 mod tracker;
+mod watcher;
 mod watching;
 
 pub use armed::{armed_unread, Armed, Arming};
 pub use collection::{run, Asked, Awaited, Collection, Wanted};
 pub use due::due_after;
-pub use listener::{hold, serve, Hold};
 pub use outstanding::Outstanding;
 pub use reading::Reading;
 pub use reading_trackers::{ReadingTrackers, Reads};
+pub use watcher::{hold, serve, Hold};
 
 /// The fake trackers and panes both halves read in their tests.
 ///

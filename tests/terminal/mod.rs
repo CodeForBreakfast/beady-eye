@@ -261,7 +261,7 @@ pub fn said_by(panic: &Box<dyn std::any::Any + Send>) -> String {
 /// machine's: [`a_socket_of_its_own`] gives one, and what a run without one
 /// draws is then the same wherever the suite is run rather than following
 /// whether whoever is sitting there has a runtime directory and what else is
-/// already listening in it.
+/// already watching in it.
 pub fn bdi_on(
     theirs: &std::fs::File,
     home: &Path,
@@ -481,7 +481,7 @@ fn move_to(sequence: &[u8]) -> Option<(u16, u16)> {
 ///
 /// The foot gives up the keys to make room for notices, and a notice shifts
 /// the rows of the forest a window is drawn over. A run with no runtime
-/// directory and nothing telling it where to listen has nowhere to put a
+/// directory and nothing telling it where to watch has nowhere to put a
 /// socket, so it carries that notice — and [`bdi_on`] takes the machine's
 /// runtime directory away from every run, which is what makes the two
 /// screens a test can be given the two it chooses between.
@@ -492,7 +492,7 @@ pub fn a_socket_of_its_own(home: &Path) -> (String, String) {
     ("XDG_RUNTIME_DIR".to_string(), home.display().to_string())
 }
 
-/// Where a run given [`a_socket_of_its_own`] listens, for a test that wants
+/// Where a run given [`a_socket_of_its_own`] watches, for a test that wants
 /// to speak to it.
 pub fn the_socket_under(runtime_directory: &Path) -> PathBuf {
     runtime_directory.join("beady-eye/changes.sock")
@@ -511,23 +511,23 @@ const AN_ANSWER: Duration = Duration::from_secs(10);
 /// anything — a test that reconnected would ask the weaker question.
 pub struct Producer {
     speaking: UnixStream,
-    listening: BufReader<UnixStream>,
+    watching: BufReader<UnixStream>,
 }
 
 impl Producer {
-    /// Connected to whichever run is listening on this socket.
+    /// Connected to whichever run is watching this socket.
     pub fn connected_to(at: &Path) -> Self {
         let speaking = UnixStream::connect(at)
-            .unwrap_or_else(|why| panic!("bdi is listening on {} ({why})", at.display()));
-        let listening = speaking
+            .unwrap_or_else(|why| panic!("bdi is watching {} ({why})", at.display()));
+        let watching = speaking
             .try_clone()
             .expect("the connection is ours to read");
-        listening
+        watching
             .set_read_timeout(Some(AN_ANSWER))
             .expect("a read that is not answered is ours to give up on");
         Self {
             speaking,
-            listening: BufReader::new(listening),
+            watching: BufReader::new(watching),
         }
     }
 
@@ -535,7 +535,7 @@ impl Producer {
     pub fn says(&mut self, project: &str) -> String {
         writeln!(self.speaking, "{project}").expect("the message is ours to send");
         let mut answer = String::new();
-        self.listening
+        self.watching
             .read_line(&mut answer)
             .expect("bdi answers every line");
         answer.trim_end().to_string()

@@ -2,7 +2,7 @@
 //!
 //! One list settles which projects ask to be read again and which names a
 //! producer is answered `ok` for, so the two cannot come apart. Whatever
-//! drives it, a view or a listener with no view, hands it what came back and
+//! drives it, a view or a watcher with no view, hands it what came back and
 //! asks it what is due.
 
 use std::collections::BTreeMap;

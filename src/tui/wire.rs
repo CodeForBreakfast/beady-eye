@@ -54,7 +54,7 @@ fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<
 /// same sentence about being polled.
 fn said_at_the_foot(refused: &changes::Refused) -> Notice {
     match refused {
-        changes::Refused::AlreadyListening(_) => Notice::AnotherBdiHadTheInboundChannel,
+        changes::Refused::AlreadyWatching(_) => Notice::AnotherBdiHadTheInboundChannel,
         changes::Refused::NoRuntimeDirectory
         | changes::Refused::NotASocket(_)
         | changes::Refused::NameOthersMayTake(_)
@@ -83,8 +83,8 @@ pub(super) fn wire(
     asked_to_stop: Signals,
 ) -> Wired {
     let Hearing {
-        listening_on,
-        from_the_listener,
+        watching_at,
+        from_the_watcher,
         passing_on,
     } = hearing;
     let (to_the_loop, events) = mpsc::channel();
@@ -116,10 +116,10 @@ pub(super) fn wire(
     // being settled at startup: a channel arriving later has to retract it,
     // and its `Socket` has to reach the loop, or nothing takes the socket off
     // the filesystem when the run ends.
-    let (socket, refused) = inbound(changes::listen(listening_on, &reported, changed.clone()));
+    let (socket, refused) = inbound(changes::watch(watching_at, &reported, changed.clone()));
 
-    let listened_to = to_the_loop.clone();
-    thread::spawn(move || report(&mut Listened(from_the_listener), &listened_to));
+    let watched_to = to_the_loop.clone();
+    thread::spawn(move || report(&mut Watched(from_the_watcher), &watched_to));
 
     thread::spawn(move || {
         report(
@@ -170,18 +170,18 @@ impl Changes for Inbound {
     }
 }
 
-/// The source for the projects read through the listener: each is read
-/// again once the listener has answered for it, and once the listener has
+/// The source for the projects read through the watcher: each is read
+/// again once the watcher has answered for it, and once the watcher has
 /// gone, after which it is read some other way.
-struct Listened(Receiver<Heard>);
+struct Watched(Receiver<Heard>);
 
-impl Changes for Listened {
+impl Changes for Watched {
     fn next(&mut self) -> Option<Event> {
         self.0.recv().ok().map(Event::from)
     }
 }
 
-/// Report one project's changes until the loop stops listening.
+/// Report one project's changes until the loop stops watching.
 fn report(source: &mut dyn Changes, to: &Sender<Event>) {
     while let Some(event) = source.next() {
         if to.send(event).is_err() {
@@ -302,7 +302,7 @@ mod tests {
             "nothing was reported until the source said so"
         );
 
-        cue.send(arkham()).expect("the source is listening");
+        cue.send(arkham()).expect("the source is watching");
 
         assert_eq!(
             events.recv_timeout(A_MOMENT).ok(),
@@ -354,10 +354,10 @@ mod tests {
 
         changed
             .send(Heard::Changed("arkham".to_string()))
-            .expect("the source is listening");
+            .expect("the source is watching");
         changed
             .send(Heard::Covered("ferry".to_string()))
-            .expect("the source is listening");
+            .expect("the source is watching");
 
         assert_eq!(
             events.recv_timeout(A_MOMENT).ok(),
@@ -371,8 +371,8 @@ mod tests {
         );
     }
 
-    /// A view reading through the listener collects from what the listener
-    /// holds, so a report that reached the view has to reach the listener
+    /// A view reading through the watcher collects from what the watcher
+    /// holds, so a report that reached the view has to reach the watcher
     /// too, or the change it names never reaches the screen.
     #[test]
     fn what_a_writer_says_on_the_inbound_channel_is_passed_on() {
@@ -395,7 +395,7 @@ mod tests {
 
         changed
             .send(Heard::Covered("ferry".to_string()))
-            .expect("the source is listening");
+            .expect("the source is watching");
 
         assert_eq!(
             passed_on.recv_timeout(A_MOMENT).ok(),
@@ -404,9 +404,9 @@ mod tests {
     }
 
     /// The loop's threads are the loop's: each ends when the loop stops
-    /// listening, rather than outliving the screen it was drawing for.
+    /// watching, rather than outliving the screen it was drawing for.
     #[test]
-    fn a_reporter_ends_when_the_loop_stops_listening() {
+    fn a_reporter_ends_when_the_loop_stops_watching() {
         let (to_the_loop, events) = mpsc::channel();
         let (cue, cued) = mpsc::channel();
         let reporter = thread::spawn(move || report(&mut OnCue(cued), &to_the_loop));
@@ -575,7 +575,7 @@ mod tests {
     /// finding the holder is the whole of the remedy.
     #[test]
     fn a_socket_another_bdi_holds_is_said_to_be_that_rather_than_just_lost() {
-        let (socket, notice) = inbound(Err(changes::Refused::AlreadyListening(
+        let (socket, notice) = inbound(Err(changes::Refused::AlreadyWatching(
             std::path::PathBuf::from("/run/user/1000/beady-eye/changes.sock"),
         )));
 
@@ -609,7 +609,7 @@ mod tests {
         let (changed, _changes) = mpsc::channel();
         let at = a_socket_path("inbound");
 
-        let (socket, notice) = inbound(changes::listen(
+        let (socket, notice) = inbound(changes::watch(
             Some(at),
             &Reported::watching(["arkham".to_string()]),
             changed,
@@ -632,7 +632,7 @@ mod tests {
         let (changed, changes) = mpsc::channel();
         let at = a_socket_path("reported");
 
-        let _socket = changes::listen(
+        let _socket = changes::watch(
             Some(at.clone()),
             &Reported::watching(["arkham".to_string()]),
             changed.clone(),
@@ -650,7 +650,7 @@ mod tests {
             );
         });
 
-        let mut writer = UnixStream::connect(&at).expect("bdi is listening");
+        let mut writer = UnixStream::connect(&at).expect("bdi is watching");
         writeln!(writer, "arkham").expect("the channel takes a line");
 
         assert_eq!(

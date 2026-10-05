@@ -3,7 +3,7 @@
 //! A read waits out a short window before it goes, so a burst of asks about
 //! one project costs one read, and waits behind the read in flight, so a
 //! tracker is asked one thing at a time. Whatever drives this, a view or a
-//! listener with no view, decides nothing about either.
+//! watcher with no view, decides nothing about either.
 
 use std::sync::mpsc::Sender;
 use std::time::Duration;

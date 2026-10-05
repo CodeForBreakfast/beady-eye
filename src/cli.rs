@@ -21,9 +21,9 @@ use crate::collect::changes;
 use crate::collect::discovery;
 use crate::collect::environment::{self, EnvironmentCache};
 use crate::collect::herdr;
-use crate::collect::listened::Through;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::{OpenFailure, Trackers};
+use crate::collect::watched::Through;
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Listing, Snapshot};
 use crate::tui::{Hearing, Reload, CHECKED_EVERY};
@@ -100,7 +100,7 @@ struct Cli {
     #[arg(long = "no-poll")]
     no_poll: bool,
 
-    /// Listen for reports that a project's work has moved on this socket,
+    /// Watch for reports that a project's work has moved on this socket,
     /// rather than the one the config names or the one under
     /// $XDG_RUNTIME_DIR. A second bdi on one machine needs this to have a
     /// channel of its own.
@@ -129,8 +129,8 @@ enum Passing {
     /// Hold every configured project's beads as last read, reading each
     /// tracker as a view does, and take producers' reports on a socket of its
     /// own. One per machine, run under whatever supervises your processes.
-    Listen {
-        /// Listen on this socket, rather than the one the config names or
+    Watch {
+        /// Take connections on this socket, rather than the one the config names or
         /// the one under $XDG_RUNTIME_DIR.
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
@@ -141,7 +141,7 @@ enum Passing {
     },
 }
 
-/// What this run was told about where to listen, over what its config says.
+/// What this run was told about where to watch, over what its config says.
 /// Nothing where neither said, which leaves the path to be derived.
 ///
 /// A run-level override as well as a config key for the reason `--poll` has
@@ -149,7 +149,7 @@ enum Passing {
 /// it are told one path and the second is refused the channel. That is the
 /// normal case here rather than an edge — a run in a worktree beside a run in
 /// the checkout — and it is the whole of why a key alone would not do.
-fn told_to_listen_on(cli: &Cli, cfg: &Config) -> Option<PathBuf> {
+fn told_where_to_watch(cli: &Cli, cfg: &Config) -> Option<PathBuf> {
     cli.socket.clone().or_else(|| cfg.changes.socket.clone())
 }
 
@@ -245,9 +245,9 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Some(Passing::Bd { project, asked }) => {
             return passed_to_bd(&expand_tilde(DEFAULT_CONFIG, home), project, asked);
         }
-        Some(Passing::Listen { socket, config }) => {
+        Some(Passing::Watch { socket, config }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return listen(socket.clone(), &config);
+            return watch(socket.clone(), &config);
         }
         None => {}
     }
@@ -278,7 +278,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         let mut snapshot = crate::app::run(
             &cfg,
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
-            &through_the_listener(
+            &through_the_watcher(
                 &cfg,
                 &bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
             ),
@@ -308,7 +308,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // Settled here, where the command line and the config are both in hand.
     // The socket is asked for once, so a config the reader writes later
     // cannot move it, and nothing below this line reads the path again.
-    let listening_on = changes::where_writers_find_bdi(told_to_listen_on(&cli, &cfg));
+    let watching_at = changes::where_writers_find_bdi(told_where_to_watch(&cli, &cfg));
     // Asked again whenever the reader writes a config, so the set of
     // projects that poll is the set the file names. The command line is what
     // it carries that a config cannot: `--poll` and `--no-poll` overrule
@@ -344,15 +344,15 @@ pub fn run() -> anyhow::Result<ExitCode> {
         )
     });
     let mut collection = crate::app::Collection::default();
-    // Each project read through the listener while one answers for it, and
+    // Each project read through the watcher while one answers for it, and
     // read here while none does. Looked for again at the refresh interval,
     // which is as long as a project read here waits for its next poll.
-    let (heard_from_the_listener, from_the_listener) = mpsc::channel();
+    let (heard_from_the_watcher, from_the_watcher) = mpsc::channel();
     let trackers = Arc::new(Through::staying(
-        changes::where_the_listener_is(cfg.listener.socket.clone()).as_deref(),
+        changes::where_the_watcher_is(cfg.watcher.socket.clone()).as_deref(),
         cfg.read().map(|project| project.name.as_str()),
         bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
-        heard_from_the_listener,
+        heard_from_the_watcher,
         cfg.tui.refresh(),
     ));
     let passing_on = Arc::clone(&trackers);
@@ -367,8 +367,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
         arms,
         agents,
         Hearing {
-            listening_on,
-            from_the_listener,
+            watching_at,
+            from_the_watcher,
             passing_on: Box::new(move |heard| passing_on.passes_on(heard.clone())),
         },
         Box::new(move |asked| match asked {
@@ -381,8 +381,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
             }
             Asked::Read(wanted) => {
                 // A read of every project after the first is the reader
-                // asking for one, and the listener is the one to read. The
-                // first is the run starting, which the listener has already
+                // asking for one, and the watcher is the one to read. The
+                // first is the run starting, which the watcher has already
                 // read for.
                 if wanted == Wanted::Everything && std::mem::replace(&mut started, true) {
                     trackers.asks_again();
@@ -407,7 +407,7 @@ fn read_for_each_bead(
     crate::app::run(
         cfg,
         &herdr::Herdr::new(runner),
-        &through_the_listener(
+        &through_the_watcher(
             cfg,
             &bd::Cli::new(runner)
                 .for_unfinished_work()
@@ -418,11 +418,11 @@ fn read_for_each_bead(
     )
 }
 
-/// The trackers a run that reads once is read through: the listener's
+/// The trackers a run that reads once is read through: the watcher's
 /// answers where one is running and answers, and `own` where it does not.
-fn through_the_listener<O: Trackers>(cfg: &Config, own: O) -> Through<O> {
-    Through::listener_at(
-        changes::where_the_listener_is(cfg.listener.socket.clone()).as_deref(),
+fn through_the_watcher<O: Trackers>(cfg: &Config, own: O) -> Through<O> {
+    Through::watcher_at(
+        changes::where_the_watcher_is(cfg.watcher.socket.clone()).as_deref(),
         cfg.read().map(|project| project.name.as_str()),
         own,
     )
@@ -443,11 +443,11 @@ fn arming(polling: Polling) -> Arming {
     })
 }
 
-/// `bdi listen`: every configured project read and held until a signal says
-/// stop, with producers' reports taken on the listener's own socket.
+/// `bdi watch`: every configured project read and held until a signal says
+/// stop, with producers' reports taken on the watcher's own socket.
 ///
-/// The config is read once. Replacing what the listener reads is a restart.
-fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
+/// The config is read once. Replacing what the watcher reads is a restart.
+fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,
@@ -477,7 +477,7 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         )
     }))));
     let (heard_by, heard) = mpsc::channel();
-    let at = changes::where_the_listener_is(socket.or_else(|| cfg.listener.socket.clone()));
+    let at = changes::where_the_watcher_is(socket.or_else(|| cfg.watcher.socket.clone()));
     let serving = (Arc::clone(&held), reported.clone());
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
@@ -487,7 +487,7 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     }) {
         Ok(socket) => socket,
         Err(refused) => {
-            eprintln!("bdi listen cannot start: {}", listener_refused(&refused));
+            eprintln!("bdi watch cannot start: {}", watcher_refused(&refused));
             return Ok(ExitCode::FAILURE);
         }
     };
@@ -511,21 +511,21 @@ fn listen(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Why the listener's socket could not be opened, and what to do about it.
-fn listener_refused(refused: &changes::Refused) -> String {
+/// Why the watcher's socket could not be opened, and what to do about it.
+fn watcher_refused(refused: &changes::Refused) -> String {
     use changes::Refused;
     match refused {
-        Refused::NoRuntimeDirectory => "this session has no XDG_RUNTIME_DIR to put the socket in; choose a path with --socket, or with socket under [listener] in the config".to_string(),
-        Refused::AlreadyListening(at) => format!(
-            "another bdi listen is running on {}",
+        Refused::NoRuntimeDirectory => "this session has no XDG_RUNTIME_DIR to put the socket in; choose a path with --socket, or with socket under [watcher] in the config".to_string(),
+        Refused::AlreadyWatching(at) => format!(
+            "another bdi watch is running on {}",
             at.display()
         ),
         Refused::NotASocket(at) => format!(
-            "{} is not a socket, so bdi will not use it; choose another path with --socket, or with socket under [listener] in the config",
+            "{} is not a socket, so bdi will not use it; choose another path with --socket, or with socket under [watcher] in the config",
             at.display()
         ),
         Refused::NameOthersMayTake(directory) => format!(
-            "other users may take a name in {}, so a socket under it is not bdi's alone; choose a path outside it with --socket, or with socket under [listener] in the config",
+            "other users may take a name in {}, so a socket under it is not bdi's alone; choose a path outside it with --socket, or with socket under [watcher] in the config",
             directory.display()
         ),
         Refused::Unopenable(at, error) => format!("{} could not be opened: {error}", at.display()),
@@ -1366,10 +1366,10 @@ detached
     /// to win outright for that to be worth anything.
     #[test]
     fn the_socket_this_run_was_told_outranks_the_one_its_config_names() {
-        let configured = a_config_listening_on(Some("/run/user/1000/first.sock"));
+        let configured = a_config_watching(Some("/run/user/1000/first.sock"));
 
         assert_eq!(
-            told_to_listen_on(
+            told_where_to_watch(
                 &Cli::parse_from(["bdi", "--socket", "/run/user/1000/second.sock"]),
                 &configured
             ),
@@ -1381,11 +1381,11 @@ detached
     /// directory to derive from — says so once in the file rather than in
     /// every invocation.
     #[test]
-    fn a_run_that_says_nothing_listens_where_its_config_says() {
-        let configured = a_config_listening_on(Some("/var/folders/T/bdi.sock"));
+    fn a_run_that_says_nothing_watches_where_its_config_says() {
+        let configured = a_config_watching(Some("/var/folders/T/bdi.sock"));
 
         assert_eq!(
-            told_to_listen_on(&Cli::parse_from(["bdi"]), &configured),
+            told_where_to_watch(&Cli::parse_from(["bdi"]), &configured),
             Some(PathBuf::from("/var/folders/T/bdi.sock"))
         );
     }
@@ -1395,12 +1395,12 @@ detached
     #[test]
     fn a_run_neither_told_nor_configured_is_told_nothing() {
         assert_eq!(
-            told_to_listen_on(&Cli::parse_from(["bdi"]), &a_config_listening_on(None)),
+            told_where_to_watch(&Cli::parse_from(["bdi"]), &a_config_watching(None)),
             None
         );
     }
 
-    fn a_config_listening_on(socket: Option<&str>) -> Config {
+    fn a_config_watching(socket: Option<&str>) -> Config {
         let mut cfg = Config::naming(Vec::new());
         cfg.changes.socket = socket.map(PathBuf::from);
         cfg
