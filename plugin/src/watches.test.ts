@@ -852,6 +852,27 @@ test('a watcher restarting inside the minute sends nothing', async () => {
   expect(await use.nextMessage()).toEqual(started)
 })
 
+test('a watcher down again soon after a restart is given a minute of its own', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const quietFor = 1_000
+  const use = await aServer(place, ['summit-works'], { ...timing, quietFor })
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const { connection } = await watcher.next()
+  connection.write(said(theBead(), freshness('summit-works')))
+  await answer
+
+  connection.end()
+  ;(await watcher.next()).connection.write(said(theBead(), freshness('summit-works')))
+  await Bun.sleep(quietFor * 0.6)
+  watcher.stop()
+  await Bun.sleep(quietFor * 0.6)
+  const back = await aWatcherAt(place.at as string)
+  ;(await back.next()).connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await use.nextMessage()).toEqual(started)
+})
+
 test('a watcher down for a minute wakes the session once, naming the beads it cannot watch', async () => {
   const place = aPlace()
   const { use, watcher } = await twoWatchedBeads(place)
