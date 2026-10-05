@@ -284,18 +284,18 @@ export const makeWatches = <R>(
 
     /** Take what a batch says of `bead`, and tell the session where it
      * watches the bead and something it acts on has changed since it was
-     * last told. */
+     * last told. A journal that answers again late sends a comment's event
+     * line in a batch after its bead line. */
     const takeIn = (batch: readonly Said[], bead: Bead, known: Known) =>
       Effect.gen(function* () {
-        const now = standingIn(batch, bead)
-        if (now === undefined) return
         const before = toldOf(known.standing)
-        known.standing = now
-        const after = toldOf(now)
+        known.standing = standingIn(batch, bead) ?? known.standing
+        const after = toldOf(known.standing)
         if (watches.get(keyOf(bead))?.accepted !== true) return
-        if (before === undefined || after === undefined) return
-        const said = newsOf(bead, before, after, batch)
-        if (said !== undefined) yield* Queue.offer(news, said)
+        if (before !== undefined && after !== undefined) {
+          const said = newsOf(bead, before, after, batch)
+          if (said !== undefined) yield* Queue.offer(news, said)
+        }
         if (JSON.stringify(before) !== JSON.stringify(after)) yield* persist
       })
 

@@ -727,3 +727,37 @@ test('a comment over several lines cannot pass for a line of the message', async
     `${heading}\n- "Mira Vance" commented: "Ship it.\\n- Its status went from blocked to closed."`,
   )
 })
+
+test('a comment whose event line arrives after its bead line wakes the session with its text', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(
+    said(theBead({ row: { comment_count: 1 } }), {
+      ...freshness('summit-works'),
+      events: { unreadable: 'timeout' },
+    }),
+  )
+  const counted = await use.nextMessage()
+  connection.write(said(commented('Mira Vance', 'Ship it.'), journalled))
+
+  expect(counted.content).toBe(`${heading}\n- 1 comment arrived. Read it with bd.`)
+  expect((await use.nextMessage()).content).toBe(`${heading}\n- "Mira Vance" commented: "Ship it."`)
+})
+
+test('a bead first heard of after it was watched is kept as what the session was told', async () => {
+  const place = aPlace()
+  const use = await aServer(place)
+  await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const watcher = await aWatcherAt(place.at as string)
+  const { connection } = await watcher.next()
+  connection.write(said(theBead(), freshness('summit-works')))
+  while (!(await use('watching')).text?.includes(asWatched)) await Bun.sleep(5)
+  await use.exit()
+
+  const after = await aServer(place)
+  await after('watching')
+  const again = await watcher.next()
+  again.connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await after.nextMessage()).toEqual(started)
+})
