@@ -25,7 +25,7 @@ const tools: Tool[] = [
 	{
 		name: "watch",
 		description:
-			"Watch a bead, so that its changes arrive in this session as messages. Answers with the bead as it stands. Without a project, the watcher is asked which project holds the id.",
+			"Watch a bead. Answers with the bead as it stands. Without a project, the watcher is asked which project holds the id.",
 		inputSchema: aBead,
 	},
 	{
