@@ -7,10 +7,6 @@ to work on it.
 
 Open a [GitHub issue](https://github.com/CodeForBreakfast/beady-eye/issues).
 
-The maintainers track their own work in a beads tracker that is not part of this
-repository and that you do not need. `.beads/` is gitignored and nothing here
-names that tracker; GitHub issues are the channel for everyone else.
-
 A security bug is the exception. Those go through [SECURITY.md](SECURITY.md),
 because an issue publishes the flaw before there is a fix.
 

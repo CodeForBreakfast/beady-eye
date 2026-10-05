@@ -2,10 +2,10 @@
 # The invented ground the README's frame is drawn from: a `bd` and a `herdr`
 # that answer for the arkham project and nothing else.
 #
-# Everything here is invented, and has to be — CLAUDE.local.md's *Only
-# invented examples go in the repo*. The frame this produces ships inside the
-# published crate, so a real pane id or cwd that reached it could not be
-# withdrawn afterwards.
+# Everything here is invented, and has to be — CONTRIBUTING.md's *Only
+# invented examples go in this repository*. The frame this produces ships
+# inside the published crate, so a real pane id or cwd that reached it could
+# not be withdrawn afterwards.
 #
 # It answers through `tests/shims/`, which `bdi` finds by a PATH lookup, so
 # no tracker is opened and no herdr session is reached. The same scripts the

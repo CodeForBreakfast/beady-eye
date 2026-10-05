@@ -871,7 +871,7 @@ already on those rows the whole time. A redundancy gate would have been
 **green** through `bdi-sw4` and green through `bdi-kbd2`, because in both of
 them the meaning was intact and only the tone had collapsed. Two readers
 objected to that sentence independently — an adversarial review with none of
-this context, and the orchestrator — and they were both right.
+this context, and a second reader — and they were both right.
 
 **So redundancy is a floor on the harm, not a detector of the fault.** What it
 guarantees is that a collapsed interval costs the reader a distinction they can
@@ -1019,7 +1019,7 @@ this price:
   But that rests on the terminal preserving reply order, and a multiplexer is
   the documented exception: tmux did not preserve it until a November 2025 fix,
   and colorsaurus excludes `screen*` because screen replies out of order. `bdi`
-  is read inside a multiplexer as its normal case — this seat's own pane reads
+  is read inside a multiplexer as its normal case — the author's own pane reads
   `TERM=xterm-256color`, so the `screen*` heuristic would not even fire.
 
 **And `bdi` has the shape of this hazard on file already, from the other
@@ -1105,7 +1105,7 @@ visibly, in one direction, with the remedy in the same paragraph as the
 symptom.
 
 `COLORFGBG` is the free half-measure — some terminals and multiplexers set it,
-vim reads it, and it needs no query at all — but it is unset in this seat's own
+vim reads it, and it needs no query at all — but it is unset in the author's own
 environment, which is a fair sample of where `bdi` runs, so it is worth reading
 where present and worth nothing to rely on.
 
