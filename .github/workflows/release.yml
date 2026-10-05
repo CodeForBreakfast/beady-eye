@@ -35,6 +35,13 @@ on:
         options:
           - publish
           - announce
+      of:
+        description: what to release, bdi or the Claude Code plugin
+        type: choice
+        default: bdi
+        options:
+          - bdi
+          - plugin
 
 permissions:
   contents: write
@@ -72,6 +79,8 @@ jobs:
     outputs:
       version: ${{ steps.decide.outputs.version }}
       release: ${{ steps.decide.outputs.release }}
+      plugin_version: ${{ steps.decide-plugin.outputs.version }}
+      plugin_release: ${{ steps.decide-plugin.outputs.release }}
       # The commit CI tested, which every job below checks out and the tag is
       # cut from. `GITHUB_SHA` is main's head under `workflow_run` rather than
       # the sha of the run that concluded, and the two differ whenever another
@@ -101,7 +110,8 @@ jobs:
           echo "Cargo.toml declares $version"
 
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            [ "$OF" = bdi ] && release=true || release=false
+            echo "release=$release" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -134,6 +144,51 @@ jobs:
           fi
 
           echo "release=true" >> "$GITHUB_OUTPUT"
+        env:
+          OF: ${{ github.event.inputs.of }}
+
+      # The Claude Code plugin asks the same two questions of its own version,
+      # its own notes under RELEASE-NOTES/plugin/ and its own plugin-v tag.
+      # One answer differs: until the plugin's first release, a version with
+      # no notes is a plugin nobody has released yet rather than a bump
+      # somebody forgot to write up.
+      - name: decide for the plugin
+        id: decide-plugin
+        run: |
+          version=$(jq -r .version plugin/.claude-plugin/plugin.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "plugin.json declares $version"
+
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [ "$OF" = plugin ] && release=true || release=false
+            echo "release=$release" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Assigned rather than tested in place, so a failed lookup fails the
+          # step instead of reading as no tag.
+          this_tag=$(git ls-remote --tags origin "refs/tags/plugin-v$version")
+          any_tag=$(git ls-remote --tags origin 'refs/tags/plugin-v*')
+
+          if [ -n "$this_tag" ]; then
+            echo "plugin-v$version is already tagged, so this merge releases no plugin"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ ! -f "RELEASE-NOTES/plugin/$version.md" ]; then
+            [ -z "$any_tag" ] || {
+              echo "::error::plugin.json declares $version, RELEASE-NOTES/plugin/$version.md is missing and plugin-v$version is not tagged, so main declares a plugin version nobody released and no release can be cut for it. See RELEASE-NOTES/README.md."
+              exit 1
+            }
+            echo "The plugin has never been released and $version has no notes, so this merge releases no plugin"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "release=true" >> "$GITHUB_OUTPUT"
+        env:
+          OF: ${{ github.event.inputs.of }}
 
   # A Linux runner cannot produce a Mach-O binary, so the Darwin builds are
   # their own job and the release job waits on them. They run first on purpose:
@@ -571,3 +626,100 @@ jobs:
           exit 1
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  # The Claude Code plugin releases on a version of its own, so a fix to the
+  # plugin alone publishes no unchanged bdi. It takes nothing from bdi's jobs
+  # but the decision above, and what it publishes is the server the plugin's
+  # .mcp.json starts with npx.
+  plugin:
+    name: publish plugin-v${{ needs.detect.outputs.plugin_version }}
+    needs: detect
+    if: needs.detect.outputs.plugin_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # `id-token` is what npm's trusted publishing exchanges for the right to
+    # publish, so no npm token is stored anywhere. npm trusts this workflow by
+    # its filename, so the publish has to stay in release.yml.
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    concurrency:
+      group: release-plugin-${{ needs.detect.outputs.plugin_version }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.detect.outputs.plugin_version }}
+      TAG: plugin-v${{ needs.detect.outputs.plugin_version }}
+      SHA: ${{ needs.detect.outputs.sha }}
+      NOTES: RELEASE-NOTES/plugin/${{ needs.detect.outputs.plugin_version }}.md
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.detect.outputs.sha }}
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      # bdi's version gate, for the plugin's tag and notes. `nix flake check`
+      # holds the plugin's version sites together, so CI's verdict below is
+      # what vouches for them.
+      - name: the version gate
+        run: |
+          existing=$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1)
+          if [ "$FROM" = announce ] && [ -z "$existing" ]; then
+            echo "::error::$TAG does not exist, so there is no release for from=announce to finish"
+            exit 1
+          fi
+          if [ -n "$existing" ] && [ "$existing" != "$SHA" ]; then
+            echo "::error::$TAG already names $existing, not the commit this run is on"
+            exit 1
+          fi
+
+          test -f "$NOTES" || {
+            echo "::error::$NOTES is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
+            exit 1
+          }
+        env:
+          FROM: ${{ github.event.inputs.from }}
+
+      - name: CI's verdict for this commit
+        if: github.event.inputs.from != 'announce'
+        run: nix run .#await-ci-verdict -- "$SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: tag the commit this release is cut from
+        run: |
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null || {
+            git tag "$TAG"
+            git push origin "$TAG"
+          }
+
+      # npm refuses a version a second time, as crates.io does. A version that
+      # is already up is therefore left alone, so a from=publish resume after
+      # a publish that went through carries on to the announcement.
+      #
+      # The dev shell's npm is new enough for trusted publishing, which needs
+      # 11.5.1 or later, and npm attaches provenance on its own when it
+      # publishes that way.
+      - name: npm publish
+        if: github.event.inputs.from != 'announce'
+        run: |
+          nix develop -c sh -c 'cd plugin && bun install --frozen-lockfile && bun run build'
+          package=$(jq -r .name plugin/package.json)
+          if [ -n "$(nix develop -c npm view "$package@$VERSION" version 2> /dev/null)" ]; then
+            echo "$package@$VERSION is already on npm"
+          else
+            nix develop -c npm publish ./plugin --access public
+          fi
+
+      # Not marked latest, so bdi's release stays the one a reader lands on.
+      - name: announce the release
+        run: |
+          gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "$NOTES" \
+              --latest=false
+        env:
+          GH_TOKEN: ${{ github.token }}
