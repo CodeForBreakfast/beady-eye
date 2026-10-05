@@ -72,9 +72,10 @@ interface Known {
   down: Down | undefined
   /** Which outage the bead's connection is down in, until it is answered. */
   outage: number | undefined
-  /** Whether the session has been told the watcher cannot watch the bead,
-   * and not yet told it is back. */
-  toldDown: boolean
+  /** Where the session has been told the watcher cannot watch the bead, and
+   * not yet that it is back: whether the bead is still down, or back and
+   * waiting for the others the session was told of. */
+  toldOutage: 'down' | 'back' | undefined
 }
 
 interface Watch {
@@ -353,6 +354,12 @@ export const makeWatches = <R>(
 
     const keyOf = ({ project, id }: Bead) => `${project} ${id}`
 
+    const keepTold = (known: Known, told: Told | undefined) =>
+      Effect.suspend(() => {
+        known.told = told
+        return Effect.exit(persist)
+      })
+
     /** Take what a batch says of `bead`, and the message for the session
      * where it watches the bead and something it acts on has changed since it
      * was last told. A journal that answers again late sends a comment's
@@ -367,10 +374,7 @@ export const makeWatches = <R>(
         known.standing = standingIn(batch, bead) ?? known.standing
         const after = toldOf(known.standing) ?? before
         known.heard = after
-        const keep = Effect.suspend(() => {
-          known.told = after
-          return Effect.exit(persist)
-        })
+        const keep = keepTold(known, after)
         if (watches.get(keyOf(bead))?.accepted !== true) {
           known.told = after
           return
@@ -397,12 +401,13 @@ export const makeWatches = <R>(
      * the session has not been told of, in one message. */
     const tellDown = Effect.suspend(() => {
       const untold = [...watches.values()].filter(
-        ({ accepted, known }) => accepted && known.down !== undefined && !known.toldDown,
+        ({ accepted, known }) =>
+          accepted && known.down !== undefined && known.toldOutage === undefined,
       )
       const why =
         untold.find(({ known }) => known.down === 'protocol')?.known.down ?? untold[0]?.known.down
       if (why === undefined) return Effect.void
-      for (const { known } of untold) known.toldDown = true
+      for (const { known } of untold) known.toldOutage = 'down'
       return tell(
         watcherDown(
           why,
@@ -411,20 +416,24 @@ export const makeWatches = <R>(
       )
     })
 
-    /** The news of each bead the session was told is down, held from when
-     * the first of them is back until all of them are, so the session is told
-     * once. */
-    const heldBack: News[] = []
-    let someAreBack = false
-
+    /** Once every bead the session was told is down is back, tell the session
+     * so in one message, with what changed in each since it was last told. */
     const tellBackOnceAllAre = Effect.suspend(() => {
-      const stillDown = [...watches.values()].some(({ known }) => known.toldDown)
-      if (stillDown || !someAreBack) return Effect.void
-      someAreBack = false
-      const changed = heldBack.splice(0)
+      const all = [...watches.values()]
+      if (all.some(({ known }) => known.toldOutage === 'down')) return Effect.void
+      const back = all.filter(({ known }) => known.toldOutage === 'back')
+      if (back.length === 0) return Effect.void
+      const changed = back.flatMap(({ bead, known }) => {
+        known.toldOutage = undefined
+        const { told, heard } = known
+        const said =
+          told === undefined || heard === undefined ? undefined : newsOf(bead, told, heard, [])
+        return said === undefined ? [] : [said]
+      })
+      const heard = back.map(({ known }) => [known, known.heard] as const)
       return Queue.offer(news, {
         ...watcherBack(changed),
-        told: Effect.forEach(changed, ({ told }) => told, { discard: true }),
+        told: Effect.forEach(heard, ([known, now]) => keepTold(known, now), { discard: true }),
       })
     })
 
@@ -451,7 +460,11 @@ export const makeWatches = <R>(
             const beads = [...watches.values()]
               .filter((watch) => watch.accepted && watch.bead.project === project)
               .map(({ bead }) => bead)
-            if (unreachable.get(project) !== outage || beads.length === 0) return Effect.void
+            if (unreachable.get(project) !== outage) return Effect.void
+            if (beads.length === 0) {
+              unreachable.delete(project)
+              return Effect.void
+            }
             outage.told = true
             return tell(trackerUnreachable(project, why, beads))
           }),
@@ -466,7 +479,7 @@ export const makeWatches = <R>(
           told,
           down: undefined,
           outage: undefined,
-          toldDown: false,
+          toldOutage: undefined,
         }
         const firstHeard = yield* Deferred.make<void>()
         const goDown = (why: Down) =>
@@ -487,14 +500,12 @@ export const makeWatches = <R>(
             known.outage = undefined
             yield* trackerIn(batch, bead.project)
             const said = yield* takeIn(batch, bead, known)
-            if (known.toldDown) {
-              known.toldDown = false
-              someAreBack = true
-              if (said !== undefined) heldBack.push(said)
-              yield* tellBackOnceAllAre
-            } else if (said !== undefined) {
-              yield* Queue.offer(news, said)
+            if (known.toldOutage === undefined) {
+              if (said !== undefined) yield* Queue.offer(news, said)
+              return
             }
+            known.toldOutage = 'back'
+            yield* tellBackOnceAllAre
           })
         const hear = (heard: Heard) =>
           ('down' in heard ? goDown(heard.down) : hearBatch(heard.batch)).pipe(

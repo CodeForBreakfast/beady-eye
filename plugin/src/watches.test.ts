@@ -981,3 +981,47 @@ test('a tracker unreachable for less than a minute sends nothing', async () => {
 
   expect(await use.nextMessage()).toEqual(started)
 })
+
+test('a bead back before the others is told of as it stands once they are all back', async () => {
+  const place = aPlace()
+  const { use, watcher } = await twoWatchedBeads(place)
+  watcher.stop()
+  await use.nextMessage()
+
+  const back = await aWatcherAt(place.at as string)
+  const connections = [await back.next(), await back.next()]
+  const summitWorks = connections.find(({ asked }) => asked.includes('summit-works'))
+  const harbour = connections.find(({ asked }) => asked.includes('harbour'))
+  summitWorks?.connection.write(said(startedLine, freshness('summit-works')))
+  summitWorks?.connection.write(said(theBead(), freshness('summit-works')))
+  await Bun.sleep(50)
+  harbour?.connection.write(said(inHarbour, freshness('harbour')))
+  const answering = await use.nextMessage()
+  summitWorks?.connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(answering.content).toBe(
+    [
+      'The watcher is back, and watches every bead again.',
+      'A comment made while it was down arrives as a count, without its text.',
+    ].join('\n'),
+  )
+  expect(await use.nextMessage()).toEqual(started)
+})
+
+test('a tracker still unreachable when a bead in it is watched again wakes the session in a minute', async () => {
+  const { use, watcher, connection } = await aWatchedBead()
+  connection.write(said(unreachable))
+  await Bun.sleep(50)
+  await use('unwatch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  await Bun.sleep(timing.quietFor * 2)
+
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const again = await watcher.next()
+  again.connection.write(said(unreachable))
+  await answer
+
+  expect((await use.nextMessage()).meta).toEqual({
+    project: 'summit-works',
+    tracker: 'unreachable',
+  })
+})
