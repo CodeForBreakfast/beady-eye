@@ -2296,7 +2296,12 @@ project's probe moves, the source runs `bd events tail --since` with the last
 than its probe, and a record reaches a consumer as fast as a bead line does:
 within one poll, or as soon as a producer reports the project. The listener
 keeps each project's last `seq` in memory and nowhere else, and starts from
-the journal's end as it finds it.
+the journal's end as it finds it. It finds the end by reading the whole
+journal once, at its first read of the project, and sends none of it,
+because bd answers no cheaper question about where a journal ends. A journal
+bd has pruned refuses a read from its start, so the freshness line then says
+the journal is unreadable. A read that fails leaves the `seq` where it was,
+so the records are read once the journal answers again.
 
 bd can also follow a journal, with `--follow`, and a record would then arrive
 about a second after it was written with no producer involved. It was turned

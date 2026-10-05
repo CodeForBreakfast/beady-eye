@@ -91,9 +91,20 @@ impl Drop for Listener {
 /// A listener started over a tracker holding the described subtree, once its
 /// first read of the tracker is in.
 fn a_listener(named: &str) -> (PathBuf, ShimmedTracker, Listener) {
-    let home = a_home_naming_one_project_settled(named, NOT_POLLED);
+    a_listener_over(named, NOT_POLLED, |_| {})
+}
+
+/// The same, with `settings` on the project's entry and the tracker staged by
+/// `staging` before the listener starts.
+fn a_listener_over(
+    named: &str,
+    settings: &str,
+    staging: impl FnOnce(&ShimmedTracker),
+) -> (PathBuf, ShimmedTracker, Listener) {
+    let home = a_home_naming_one_project_settled(named, settings);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
+    staging(&tracker);
     let listener = Listener(Some(
         bdi_listen(&home, &tracker)
             .spawn()
@@ -460,6 +471,97 @@ fn a_listener_that_stops_closes_its_consumers_and_takes_no_more() {
 
     assert_eq!(consumer.hears(), None);
     assert!(UnixStream::connect(listening_at(&home)).is_err());
+}
+
+/// The journal's read past where it ended when the listener first read it.
+const THE_JOURNAL_SINCE_IT_STARTED: &str = "events tail --since 0";
+
+/// A comment on, a dependency added to and a close of `dun-0tp.7`, and an
+/// update to `dun-0tp.8`: the shape bd 1.3.0 writes, onto the described
+/// subtree's beads.
+fn the_journal_of_dun_0tp_7() -> String {
+    let ids = ["dun-0tp.7", "dun-0tp.7", "dun-0tp.8", "dun-0tp.7"];
+    include_str!("fixtures/bd_1.3.0_events_tail.jsonl")
+        .lines()
+        .zip(ids)
+        .enumerate()
+        .map(|(at, (line, id))| {
+            let mut record: Value = serde_json::from_str(line).expect("the capture is bd's JSON");
+            record["seq"] = json!(at + 1);
+            record["issue_id"] = json!(id);
+            record["issue"]["id"] = json!(id);
+            format!("{record}\n")
+        })
+        .collect()
+}
+
+fn events_in(answer: &[Value]) -> Vec<&str> {
+    answer
+        .iter()
+        .filter(|line| line["line"] == "event")
+        .map(|line| line["event"]["op"].as_str().expect("a record names its op"))
+        .collect()
+}
+
+#[test]
+fn a_watch_on_a_bead_in_a_project_keeping_a_journal_is_sent_its_records_before_the_answer_closes() {
+    let (home, tracker, listener) = a_listener_over(
+        "listen-journal",
+        &format!("{NOT_POLLED}events_journal = true\n"),
+        |tracker| tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, ""),
+    );
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    let first = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
+
+    tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7());
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
+    );
+    let answer = consumer.hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(first.last().expect("an answer ends")["events"], "ok");
+    assert_eq!(events_in(&answer), ["comment", "dep_add", "close"]);
+    assert_eq!(answer[0]["project"], "arkham");
+    assert_eq!(
+        answer[0]["event"]["comment"]["text"],
+        "Guard it in the parser."
+    );
+    let kinds: Vec<&str> = answer
+        .iter()
+        .map(|line| line["line"].as_str().expect("every line says its kind"))
+        .collect();
+    assert_eq!(kinds, ["event", "event", "event", "bead", "freshness"]);
+}
+
+#[test]
+fn a_project_that_claims_no_journal_is_said_to_have_no_events_and_its_journal_is_never_read() {
+    let (home, tracker, listener) = a_listener_over("listen-no-journal", NOT_POLLED, |tracker| {
+        tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7())
+    });
+    let mut consumer = Consumer::connected_to(&listening_at(&home));
+    consumer.sends("watch arkham").hears_an_answer();
+
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
+    );
+    let answer = consumer.hears_an_answer();
+
+    stopped(listener);
+    assert_eq!(events_in(&answer), Vec::<&str>::new());
+    assert_eq!(answer.last().expect("an answer ends")["events"], "off");
+    assert!(
+        !tracker
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("events")),
+        "{:?}",
+        tracker.calls()
+    );
 }
 
 /// A home whose config tells every run where the listener is, as a setup

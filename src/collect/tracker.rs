@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 use crate::collect::run::RunFailure;
 use crate::config::Project;
@@ -39,6 +40,12 @@ pub trait Tracker: Sync {
     /// the instant they are asked: a tracker answering from what another
     /// process read. `None` from one that is read as it is asked.
     fn as_of(&self) -> Option<DateTime<Utc>> {
+        None
+    }
+
+    /// bd's event records with a `seq` above `since`, oldest first, each as
+    /// bd printed it. `None` from a tracker opened without its journal.
+    fn events(&self, _since: u64) -> Option<Result<Vec<Value>, RunFailure>> {
         None
     }
 }
@@ -128,6 +135,10 @@ impl<T: Tracker + ?Sized> Tracker for &T {
     fn as_of(&self) -> Option<DateTime<Utc>> {
         (**self).as_of()
     }
+
+    fn events(&self, since: u64) -> Option<Result<Vec<Value>, RunFailure>> {
+        (**self).events(since)
+    }
 }
 
 /// Trackers that answer from what a test staged, in the model's own types,
@@ -140,13 +151,15 @@ pub mod testing {
 
     use super::*;
 
-    /// One of the four questions, as a fake records being asked it.
+    /// One of the questions, as a fake records being asked it.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum Asked {
         Fingerprint,
         All,
         Ready,
         Blocked,
+        /// The journal, after the `seq` given.
+        Events(u64),
     }
 
     /// One project's tracker, answering each question from what was staged.
@@ -158,6 +171,9 @@ pub mod testing {
         all: Result<Vec<Bead>, RunFailure>,
         ready: Result<BTreeSet<String>, RunFailure>,
         blocked: Result<BTreeMap<String, Vec<String>>, RunFailure>,
+        /// Every record the journal holds, where the tracker was opened with
+        /// one.
+        journal: Mutex<Option<Result<Vec<Value>, RunFailure>>>,
         asked: Mutex<Vec<Asked>>,
     }
 
@@ -173,7 +189,22 @@ pub mod testing {
                 all: Ok(beads),
                 ready: Ok(BTreeSet::new()),
                 blocked: Ok(BTreeMap::new()),
+                journal: Mutex::new(None),
                 asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// The same tracker, opened with a journal holding `records`.
+        pub fn journalling(mut self, records: Vec<Value>) -> Self {
+            self.journal = Mutex::new(Some(Ok(records)));
+            self
+        }
+
+        /// A writer adds `record` to the journal this tracker was opened
+        /// with.
+        pub fn writes(&self, record: Value) {
+            if let Some(Ok(records)) = self.journal.lock().unwrap().as_mut() {
+                records.push(record);
             }
         }
 
@@ -222,6 +253,7 @@ pub mod testing {
                 Asked::All => self.all = Err(failure),
                 Asked::Ready => self.ready = Err(failure),
                 Asked::Blocked => self.blocked = Err(failure),
+                Asked::Events(_) => self.journal = Mutex::new(Some(Err(failure))),
             }
             self
         }
@@ -255,6 +287,17 @@ pub mod testing {
         fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
             self.note(Asked::Blocked);
             self.blocked.clone()
+        }
+
+        fn events(&self, since: u64) -> Option<Result<Vec<Value>, RunFailure>> {
+            let journal = self.journal.lock().unwrap().clone()?;
+            self.note(Asked::Events(since));
+            Some(journal.map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| record["seq"].as_u64() > Some(since))
+                    .collect()
+            }))
         }
     }
 

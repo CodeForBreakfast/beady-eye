@@ -15,6 +15,7 @@ use serde::Deserialize;
 
 use chrono::{DateTime, Utc};
 use serde::Deserializer;
+use serde_json::Value;
 
 use crate::collect::environment;
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
@@ -330,6 +331,9 @@ pub struct Cli<'r> {
     /// a listener asks: a view draws what it parsed, and a row held beside
     /// every bead would hold the tracker's text twice.
     keeping_rows: bool,
+    /// Whether a project claiming an events journal has it read. Only a
+    /// listener asks, because only a listener passes the records on.
+    reading_journals: bool,
     /// Whether a finished bead is read without its free text, for a run that
     /// shows unfinished work alone.
     unfinished_work: bool,
@@ -345,8 +349,18 @@ impl<'r> Cli<'r> {
             ambient: environment::ambient_credential(),
             without_a_probe: Mutex::default(),
             keeping_rows: false,
+            reading_journals: false,
             unfinished_work: false,
             cache: None,
+        }
+    }
+
+    /// The same CLI, reading the events journal of each project whose config
+    /// claims one.
+    pub fn reading_journals(self) -> Self {
+        Self {
+            reading_journals: true,
+            ..self
         }
     }
 
@@ -391,6 +405,7 @@ impl Trackers for Cli<'_> {
             env,
             without_a_probe: &self.without_a_probe,
             keeping_rows: self.keeping_rows,
+            journal: self.reading_journals && project.events_journal,
             unfinished_work: self.unfinished_work,
         }))
     }
@@ -407,6 +422,8 @@ struct Reader<'r> {
     /// shared with every reader the run opens.
     without_a_probe: &'r Mutex<BTreeSet<String>>,
     keeping_rows: bool,
+    /// Whether this tracker's events journal is read.
+    journal: bool,
     unfinished_work: bool,
 }
 
@@ -608,6 +625,36 @@ impl Tracker for Reader<'_> {
             .map(|row| (row.id, row.blocked_by))
             .collect())
     }
+
+    /// `bd events tail` prints its records as JSON lines whether or not it
+    /// is given `--json`, and is not given it so that a failure reaches
+    /// stderr, where a failure is classified, rather than stdout.
+    fn events(&self, since: u64) -> Option<Result<Vec<Value>, RunFailure>> {
+        self.journal.then(|| {
+            let since = since.to_string();
+            let out = self.asked(&["events", "tail", "--since", &since])?;
+            records(&out)
+        })
+    }
+}
+
+/// Each line of `bd events tail`, which must carry the `seq` it is read
+/// after and the `issue_id` it is routed by.
+fn records(out: &str) -> Result<Vec<Value>, RunFailure> {
+    out.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let record: Value = serde_json::from_str(line)
+                .map_err(|e| RunFailure::parse("bd", e).reading("events"))?;
+            if record["seq"].as_u64().is_none() || record["issue_id"].as_str().is_none() {
+                return Err(
+                    RunFailure::parse("bd", "a record without its seq or issue_id")
+                        .reading("events"),
+                );
+            }
+            Ok(record)
+        })
+        .collect()
 }
 
 /// The whole of the SQL `bdi` writes.
@@ -1238,6 +1285,7 @@ mod tests {
             env: credentialled(),
             without_a_probe: Box::leak(Box::default()),
             keeping_rows: false,
+            journal: false,
             unfinished_work: false,
         }
     }
@@ -1252,6 +1300,7 @@ mod tests {
             credential_command: None,
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }
@@ -1265,6 +1314,7 @@ mod tests {
             ambient: ambient.map(str::to_string),
             without_a_probe: Mutex::default(),
             keeping_rows: false,
+            reading_journals: false,
             unfinished_work: false,
             cache: None,
         }
@@ -1616,6 +1666,81 @@ mod tests {
             .map(|bead| bead.row.as_deref().cloned().expect("the row is kept"))
             .collect();
         assert_eq!(rows, printed);
+    }
+
+    /// A comment, a dependency added, the update bd writes for the bead that
+    /// dependency blocks, and a close, from a throwaway bd 1.3.0 tracker.
+    const JOURNAL: &str = include_str!("../../tests/fixtures/bd_1.3.0_events_tail.jsonl");
+
+    #[test]
+    fn a_journal_is_read_after_the_seq_given_and_each_record_kept_as_bd_printed_it() {
+        let runner = FakeRunner::default().with(&spelled("events tail --since 2"), JOURNAL);
+        let printed: Vec<Value> = JOURNAL
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("the capture parses"))
+            .collect();
+
+        let records = Reader {
+            journal: true,
+            ..opened(&runner)
+        }
+        .events(2)
+        .expect("the journal is read")
+        .expect("bd answers");
+
+        assert_eq!(records, printed);
+        assert_eq!(
+            records.iter().map(|r| r["op"].as_str()).collect::<Vec<_>>(),
+            [
+                Some("comment"),
+                Some("dep_add"),
+                Some("update"),
+                Some("close")
+            ]
+        );
+    }
+
+    /// The fake runner panics on any call nobody staged.
+    #[test]
+    fn a_tracker_opened_without_its_journal_asks_bd_nothing_of_it() {
+        assert_eq!(opened(&FakeRunner::default()).events(0), None);
+    }
+
+    #[test]
+    fn only_a_project_claiming_a_journal_has_it_read() {
+        let runner = FakeRunner::default().with(&spelled("events tail --since 0"), JOURNAL);
+        let claiming = Project {
+            events_journal: true,
+            ..ambient_project()
+        };
+        let reading = launched_with(&runner, Some("hunter2")).reading_journals();
+        let not_reading = launched_with(&runner, Some("hunter2"));
+
+        let events =
+            |cli: &Cli, project: &Project| cli.of(project).expect("the tracker opens").events(0);
+
+        assert!(matches!(events(&reading, &claiming), Some(Ok(_))));
+        assert_eq!(events(&reading, &ambient_project()), None);
+        assert_eq!(events(&not_reading, &claiming), None);
+    }
+
+    #[test]
+    fn a_record_without_its_seq_is_a_journal_bdi_cannot_read() {
+        let runner = FakeRunner::default().with(
+            &spelled("events tail --since 0"),
+            r#"{"op":"close","issue_id":"dun-1"}"#,
+        );
+
+        let failure = Reader {
+            journal: true,
+            ..opened(&runner)
+        }
+        .events(0)
+        .expect("the journal is read")
+        .expect_err("a record without its seq cannot be read after");
+
+        assert_eq!(failure.kind, FailureKind::Parse);
+        assert_eq!(failure.unreadable.expect("a parse failure").read, "events");
     }
 
     #[test]

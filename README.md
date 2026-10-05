@@ -221,7 +221,10 @@ sends an alive line every 20 seconds, however quiet its trackers are. So a
 refused connection, a closed one, or a minute of silence means nothing is
 watching, and the script stops rather than act on what it has not been told.
 A tracker the listener cannot reach is reported in that project's freshness
-line, and the beads already sent stand as the last known.
+line, and the beads already sent stand as the last known. Where a project's
+entry sets `events_journal = true`, the listener also sends each of bd's event
+records as an `event` line, which says who made a change and carries the text
+of a comment.
 [docs/design.md](docs/design.md) has every line the listener sends, under
 "Watching".
 

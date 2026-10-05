@@ -454,6 +454,7 @@ mod tests {
             credential_command: None,
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 use crate::collect::run::{together, FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
@@ -140,6 +141,9 @@ pub(super) enum Refresh {
         at: Option<Box<ReadAt>>,
         work: Box<ProjectWork>,
         as_of: DateTime<Utc>,
+        /// bd's event records read just before `work`, where the tracker was
+        /// opened with its journal.
+        journal: Option<Result<Vec<Value>, RunFailure>>,
     },
 }
 
@@ -156,6 +160,10 @@ pub(super) enum Refresh {
 /// tracker with no fingerprint to offer says so with `None` and is read the
 /// slow way every time. A refresh nothing will be compared with later does
 /// not ask for one at all.
+///
+/// The journal is read after `since` before the beads are, so every record
+/// read has a bead read at least as new as it.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn refresh_project(
     trackers: &dyn Trackers,
     project: &Project,
@@ -163,6 +171,7 @@ pub(super) fn refresh_project(
     panes: &[Pane],
     standing: Option<&ReadAt>,
     probing: bool,
+    since: u64,
     now: DateTime<Utc>,
 ) -> Result<Refresh, OpenFailure> {
     let tracker = trackers.of(project)?;
@@ -182,6 +191,7 @@ pub(super) fn refresh_project(
         }
     }
 
+    let journal = tracker.events(since);
     let work = read_project(tracker.as_ref(), project, cfg, panes, now)?;
     let at = probed.map(|fingerprint| {
         Box::new(ReadAt {
@@ -196,6 +206,7 @@ pub(super) fn refresh_project(
         at,
         work: Box::new(work),
         as_of,
+        journal,
     })
 }
 
@@ -975,6 +986,7 @@ dunwich = ["dun-4"]
             &[],
             None,
             true,
+            0,
             now(),
         )
         .expect("the tracker answers every call");
@@ -989,6 +1001,7 @@ dunwich = ["dun-4"]
             &[],
             at.as_deref(),
             true,
+            0,
             now(),
         )
         .expect("the tracker answers every call");

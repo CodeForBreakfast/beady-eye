@@ -77,6 +77,7 @@ pub fn from_the_current_directory(
             credential_command: None,
             prefix: None,
             poll: true,
+            events_journal: false,
             badges: Vec::new(),
             worktrees,
         }])
@@ -345,6 +346,7 @@ detached
                 credential_command: None,
                 prefix: None,
                 poll: true,
+                events_journal: false,
                 badges: Vec::new(),
                 worktrees: vec![PathBuf::from("/srv/work/dunwich")],
             }]
@@ -1176,6 +1178,7 @@ path = "/tmp/seat-b/wt/crates/dish"
                 credential_command: None,
                 prefix: None,
                 poll: true,
+                events_journal: false,
                 badges: Vec::new(),
                 worktrees: Vec::new(),
             }]

@@ -86,7 +86,7 @@ impl ReadingTrackers {
                 self.told.push_back(Answer {
                     project,
                     said: Said::Vouched { at: now },
-                    events: Vec::new(),
+                    journal: None,
                 });
             }
         }

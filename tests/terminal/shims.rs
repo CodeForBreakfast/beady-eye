@@ -172,7 +172,8 @@ impl ShimmedTracker {
         );
     }
 
-    fn answers_with(&self, asked: &str, text: &str) {
+    /// Answer `asked` with `text`, for every tracker.
+    pub fn answers_with(&self, asked: &str, text: &str) {
         std::fs::write(self.answers.join(asked), text).expect("the answer is ours to write");
     }
 
