@@ -3,7 +3,7 @@
 #
 # The runtime directory is this capture's own and is made fresh. `bdi` binds
 # $XDG_RUNTIME_DIR/beady-eye/changes.sock, so a directory holding a socket
-# from any earlier run — this one's or another seat's — draws a notice about
+# from any earlier run — this one's or another's — draws a notice about
 # another bdi having the inbound channel. A notice is not a line added to the
 # frame: `status_bar` yields notices last, so at these widths one silently
 # takes the key row off the screen instead.

@@ -34,9 +34,6 @@ not leaving it alone* has the measurements.
 - **A user's deployment.** Their tracker, its server, their config and their
   data live with whoever runs `bdi`.
 
-A seat or contributor may decline an ask outside this remit, and says where it
-belongs.
-
 ## Building and testing
 
 `nix develop` gives you the toolchain: `cargo`, `clippy`, `rustfmt` and
@@ -151,11 +148,3 @@ what a metadata key *means*, it belongs in config, not in the model.
 
 **Degrade, never disappear.** An unreachable tracker, a filtered tree, an
 orphaned dependency — each is reported, never silently dropped.
-
-## The tracker
-
-The maintainers track work in a [bd (beads)](https://github.com/gastownhall/beads)
-tracker that is not part of this repository — external contributors don't need
-it and should use GitHub issues instead. `.beads/` is gitignored, and nothing
-tracked here names the tracker, its server or its credentials. What a maintainer
-needs to reach it lives in `CLAUDE.local.md`, untracked alongside them.

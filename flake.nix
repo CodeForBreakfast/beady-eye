@@ -7,13 +7,11 @@
     # Beads ships its own flake. Do not add inputs.nixpkgs.follows here — beads
     # needs Go 1.26 and this flake's nixpkgs carries an older toolchain.
     #
-    # Every check builds bd, so this pin is not maintainer-only the way it is in
-    # a repository that keeps bd out of its contributor path. It is also the bd
-    # the maintainers' shell reads their tracker with, and a bd on a schema other
-    # than the tracker's cannot read it: an older one refuses a newer schema, and
-    # 1.3.0 fails every issue read on a v53 server for want of its `leases` table.
-    # So the pin and the tracker's schema move together — treat it as a schema
-    # decision, not a version bump.
+    # Every check builds bd, so this pin reaches every shell. A bd on a schema
+    # other than the tracker's cannot read it: an older one refuses a newer
+    # schema, and 1.3.0 fails every issue read on a v53 server for want of its
+    # `leases` table. So the pin and the tracker's schema move together — treat
+    # it as a schema decision, not a version bump.
     beads.url = "github:gastownhall/beads/v1.3.0";
     # The dependency build is its own derivation here, and crane is what makes
     # one. It declares no inputs of its own, so it costs a lock entry and
@@ -879,8 +877,8 @@
         #
         # So the name carries what tells runs apart, and minting says it
         # aloud. cargo-mutants already names its build tree after the working
-        # tree it copied, which under this fleet's worktrees is the seat — the
-        # seat was in hand at the moment the run directory was minted and went
+        # tree it copied, which under a linked worktree is the worktree's name
+        # — the name was in hand at the moment the run directory was minted and went
         # unused. The head sha is the other half, and it is the half a seat
         # cannot recover by reading the run: your own successive runs share a
         # tree, and after a merge that adds no new file two of them hold
@@ -3387,9 +3385,7 @@ and a second line"
           touch $out
         '';
 
-        # Everything needed to build, test and lint the crate. The tracker
-        # client is not here — that is a maintainer's tool, not a
-        # contributor's.
+        # Everything needed to build, test and lint the crate.
         # The Claude Code plugin's TypeScript workspace. Bun, TypeScript and
         # Biome come from nixpkgs, at the versions commy pins, because their npm
         # packages carry a binary per platform and a fixed-output hash cannot
@@ -3494,12 +3490,9 @@ and a second line"
           '';
         };
 
-        # The default shell plus `bd`, the client for the maintainers' issue
-        # tracker. That tracker is not part of this repository — contributors
-        # file GitHub issues instead, see CLAUDE.md — so `bd` and everything
-        # that points it at a tracker live here rather than in `default`, and
-        # entering this shell is opt-in. Select it locally with an untracked
-        # `.envrc.local` containing `devshell=maintainer`.
+        # The default shell plus `bd`, and everything that points it at a
+        # tracker. Entering this shell is opt-in: select it locally with an
+        # untracked `.envrc.local` containing `devshell=maintainer`.
         devShells.maintainer = pkgs.mkShell {
           buildInputs = rustTools ++ pluginTools ++ [ beads.packages.${system}.bd ];
 
