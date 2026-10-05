@@ -88,6 +88,18 @@ test('the bundle runs under node and declares the channel', async () => {
   })
 })
 
+test('the bundle tells a session what its tools are for, how a change reads and when to unwatch', async () => {
+  const client = await theBundle(aPrivateDirectory())
+  const instructions = client.getInstructions() ?? ''
+
+  for (const tool of ['`watch`', '`unwatch`', '`watching`']) {
+    expect(instructions).toContain(tool)
+  }
+  expect(instructions).toContain('<channel source="beady-eye"')
+  expect(instructions).toMatch(/lasts until `unwatch`/)
+  expect(instructions).toMatch(/restart/)
+})
+
 test('a bundle started again under the session watches its beads before any tool is called', async () => {
   const home = aPrivateDirectory()
   mkdirSync(join(home, 'run', 'beady-eye'), { recursive: true })
