@@ -1068,3 +1068,30 @@ test('a tracker outage the session was told of goes with its last watch', async 
     tracker: 'unreachable',
   })
 })
+
+test('an unwatched bead takes its minute with it', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const quietFor = 1_000
+  const use = await aServer(place, ['summit-works', 'harbour'], { ...timing, quietFor })
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  ;(await watcher.next()).connection.write(said(theBead(), freshness('summit-works')))
+  await answer
+
+  watcher.stop()
+  await Bun.sleep(quietFor * 0.6)
+  await use('unwatch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  await use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
+  await Bun.sleep(quietFor * 0.6)
+  const back = await aWatcherAt(place.at as string)
+  const { connection } = await back.next()
+  connection.write(said(inHarbour, freshness('harbour')))
+  connection.write(said({ ...startedLine, project: 'harbour' }, freshness('harbour')))
+
+  expect((await use.nextMessage()).meta).toEqual({
+    project: 'harbour',
+    id: 'smt-4kd3p.20',
+    status: 'in_progress',
+    ready: 'false',
+  })
+})

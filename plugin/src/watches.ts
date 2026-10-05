@@ -521,6 +521,7 @@ export const makeWatches = <R>(
     const stop = (watch: Watch) =>
       Effect.sync(() => {
         watches.delete(keyOf(watch.bead))
+        watch.known.outage = undefined
         const { project } = watch.bead
         if (![...watches.values()].some(({ bead }) => bead.project === project)) {
           unreachable.delete(project)
