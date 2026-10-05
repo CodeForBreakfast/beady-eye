@@ -12,7 +12,9 @@
 	"bin": {
 		"beady-eye-mcp": "dist/server.js"
 	},
-	"files": ["dist/server.js"],
+	"files": [
+		"dist/server.js"
+	],
 	"scripts": {
 		"build": "bun build src/main.ts --target node --outfile dist/server.js"
 	},
