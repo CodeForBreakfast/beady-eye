@@ -69,34 +69,53 @@ pub(crate) fn bead_of(written: Printed, keeping_rows: bool) -> serde_json::Resul
 
 /// Every value this row holds that no text field of `Bead` holds, under the
 /// key that names it: a field by its own name, and a member of a field's
-/// object by the two joined with a dot.
+/// object by the two joined with a dot. Beside them, every list of values it
+/// holds under a key named the same way.
 ///
-/// A badge reads these through `Bead::value`, so what a row holds is what a
-/// badge can draw. A field bd grows is drawable the day bd writes it, and an
-/// object-valued one is drawable a member at a time, without `bdi` learning a
-/// thing about either.
+/// A badge reads these through `Bead::value` and `Bead::members`, so what a
+/// row holds is what a badge can draw or test. A field bd grows is drawable
+/// the day bd writes it, and an object-valued one is drawable a member at a
+/// time, without `bdi` learning a thing about either.
 ///
 /// `text_of` decides what is one value, and it decides it the same way for a
-/// field and for a member. The rule is about kinds of value rather than names
-/// of fields, so nothing here moves when bd's schema does.
-fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> BTreeMap<String, String> {
-    let mut values = BTreeMap::new();
+/// field, for a member and for a member of a list. The rule is about kinds of
+/// value rather than names of fields, so nothing here moves when bd's schema
+/// does.
+fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> Values {
+    let mut values = Values::default();
     for (field, value) in row {
         match object_written_either_way(value) {
-            Some(members) => values.extend(
-                members
-                    .iter()
-                    .filter_map(|(key, member)| Some((format!("{field}.{key}"), text_of(member)?))),
-            ),
-            None if Bead::TEXT_FIELDS.contains(&field.as_str()) => {}
-            None => {
-                if let Some(text) = text_of(value) {
-                    values.insert(field.clone(), text);
+            Some(members) => {
+                for (key, member) in members.iter() {
+                    values.read(format!("{field}.{key}"), member);
                 }
             }
+            None if Bead::TEXT_FIELDS.contains(&field.as_str()) => {}
+            None => values.read(field.clone(), value),
         }
     }
     values
+}
+
+/// What `values_of` read out of one row: the values, and the lists of them.
+#[derive(Default)]
+struct Values {
+    single: BTreeMap<String, String>,
+    lists: BTreeMap<String, Vec<String>>,
+}
+
+impl Values {
+    /// `value` under `key`, wherever it is one value or a list of some.
+    fn read(&mut self, key: String, value: &serde_json::Value) {
+        if let serde_json::Value::Array(members) = value {
+            let list: Vec<String> = members.iter().filter_map(text_of).collect();
+            if !list.is_empty() {
+                self.lists.insert(key, list);
+            }
+        } else if let Some(text) = text_of(value) {
+            self.single.insert(key, text);
+        }
+    }
 }
 
 /// One value as the text it prints as, or nothing where it is not one value.
@@ -179,10 +198,11 @@ struct RowDependency {
 
 impl Row {
     /// This row as a bead, beside every value a badge could name in it.
-    fn into_bead(self, values: BTreeMap<String, String>, printed: Option<Arc<Printed>>) -> Bead {
+    fn into_bead(self, values: Values, printed: Option<Arc<Printed>>) -> Bead {
         let row = self;
         Bead {
-            values,
+            values: values.single,
+            lists: values.lists,
             row: printed,
             id: row.id,
             title: row.title,
@@ -1189,6 +1209,28 @@ mod tests {
         ] {
             assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
         }
+    }
+
+    /// A list is no one value to draw, but a badge's condition can still ask
+    /// whether any of its members is the one it wants, so a list of values
+    /// is kept a member at a time, a field's and an object member's alike.
+    #[test]
+    fn a_list_is_read_a_member_at_a_time() {
+        let rows = r#"[
+            {"id":"a","title":"t","status":"open","labels":["human","rigging"],
+             "dependencies":[{"depends_on_id":"b","type":"blocks"}],
+             "metadata":{"seats":["ada",3,null,"",{"x":1}],"none":[]}}
+        ]"#;
+
+        let bead = &parse_beads(rows).expect("the row parses")[0];
+
+        assert_eq!(bead.members("labels"), vec!["human", "rigging"]);
+        assert_eq!(bead.members("metadata.seats"), vec!["ada", "3"]);
+        assert_eq!(bead.members("title"), vec!["t"]);
+        for nothing in ["dependencies", "metadata.none", "assignee"] {
+            assert_eq!(bead.members(nothing), Vec::<&str>::new(), "{nothing}");
+        }
+        assert_eq!(bead.value("labels"), None, "a list is still no one value");
     }
 
     /// A tracker's metadata is arbitrary JSON, and bdi draws it as text. A

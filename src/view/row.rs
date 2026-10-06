@@ -9,7 +9,6 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::model::badges::Badged;
-use crate::model::gate::PullRequest;
 use crate::model::join::AgentRef;
 use crate::model::snapshot::{Counts, Node};
 use crate::model::types::Status;
@@ -271,18 +270,7 @@ pub fn cells(
     );
     notes.extend(phrase::unrecognised_status(&node.status));
     notes.extend(node.undrawn.iter().map(phrase::undrawn));
-    notes.extend(
-        node.pull_request
-            .as_ref()
-            .and_then(phrase::unlinked_pull_request),
-    );
-    let badges: Vec<Badged> = node
-        .pull_request
-        .as_ref()
-        .map(awaited_badge)
-        .into_iter()
-        .chain(node.badges.iter().cloned())
-        .collect();
+    let badges = node.badges.clone();
     // The model reports a link its config could not build; this reports one
     // built and then refused, which only the thing that writes the sequence
     // is in a position to know.
@@ -324,19 +312,6 @@ pub fn cells(
         anomalies: node.anomalies.iter().map(phrase::anomaly).collect(),
         shut_over,
         notes,
-    }
-}
-
-/// The pull request a `gh:pr` gate waits on, drawn as a badge would be:
-/// `gh:pr` is beads' own await type, so no config has to name it.
-fn awaited_badge(awaited: &PullRequest) -> Badged {
-    let (text, short) = phrase::awaited_pull_request(awaited);
-    Badged {
-        key: "await_id".to_string(),
-        text,
-        short,
-        link: awaited.url.clone(),
-        colour: None,
     }
 }
 
@@ -436,10 +411,8 @@ pub fn anomaly_alone(said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::bd::parse_beads;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::{Badged, Undrawn};
-    use crate::model::gate;
     use crate::model::join::JoinSource;
     use crate::model::types::testing::key;
     use crate::model::types::PaneStatus;
@@ -464,7 +437,6 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            pull_request: None,
             description: "".into(),
             notes: "".into(),
             created_by: None,
@@ -881,139 +853,6 @@ mod tests {
             !row.badges[0].text.contains("forge.invalid"),
             "the URL is in the text the row draws: {:?}",
             row.badges[0].text
-        );
-    }
-
-    // ---- a gh:pr gate ----------------------------------------------------
-
-    fn gate(repo: Option<&str>, await_id: Option<&str>) -> Node {
-        let mut gate = node("smt-4kd3p.21", Status::Open);
-        gate.issue_type = "gate".into();
-        gate.badges = vec![Badged {
-            key: "blocked_on".into(),
-            text: "⏸ waiting".into(),
-            link: None,
-            short: None,
-            colour: None,
-        }];
-        let mut row = serde_json::json!({
-            "id": "smt-4kd3p.21",
-            "title": "Gate: gh:pr",
-            "status": "open",
-            "issue_type": "gate",
-            "await_type": gate::PULL_REQUEST,
-        });
-        if let Some(id) = await_id {
-            row["await_id"] = id.into();
-        }
-        if let Some(repo) = repo {
-            row["metadata"] = serde_json::json!({ "repo": repo });
-        }
-        let bead = parse_beads(&serde_json::json!([row]).to_string())
-            .expect("the row parses")
-            .remove(0);
-        gate.pull_request = gate::pull_request(&bead);
-        gate
-    }
-
-    #[test]
-    fn a_gh_pr_gate_draws_its_pull_request_ahead_of_its_badges_and_links_to_it() {
-        let row = cells(
-            &gate(Some("dunwich/arkham"), Some("12")),
-            Some(ROOT),
-            None,
-            None,
-        );
-
-        assert_eq!(
-            row.badges[0],
-            Badged {
-                key: "await_id".into(),
-                text: "⇢ arkham #12".into(),
-                short: Some("⇢ #12".into()),
-                link: Some("https://github.com/dunwich/arkham/pull/12".into()),
-                colour: None,
-            }
-        );
-        assert_eq!(row.badges[1].text, "⏸ waiting");
-        assert_eq!(row.notes, Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_gh_pr_gate_naming_no_repo_draws_its_number_and_says_why_it_has_no_link() {
-        let row = cells(&gate(None, Some("30")), Some(ROOT), None, None);
-
-        assert_eq!(
-            (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
-            ("⇢ #30", None)
-        );
-        assert_eq!(
-            row.notes,
-            vec!["no link to pull request #30: its gate names no repo"]
-        );
-    }
-
-    #[test]
-    fn a_gh_pr_gate_naming_a_repo_that_is_no_address_says_so() {
-        let row = cells(&gate(Some("arkham"), Some("30")), Some(ROOT), None, None);
-
-        assert_eq!(
-            (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
-            ("⇢ arkham #30", None)
-        );
-        assert_eq!(
-            row.notes,
-            vec!["no link to pull request #30: its gate's repo “arkham” is not owner/repo"]
-        );
-    }
-
-    #[test]
-    fn a_gh_pr_gate_awaiting_no_number_draws_what_it_awaits_and_says_why_it_has_no_link() {
-        let row = cells(
-            &gate(Some("dunwich/arkham"), Some("the-wire")),
-            Some(ROOT),
-            None,
-            None,
-        );
-
-        assert_eq!(
-            (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
-            ("⇢ arkham “the-wire”", None)
-        );
-        assert_eq!(
-            row.notes,
-            vec!["no link to the pull request: its gate's await id “the-wire” is not a number"]
-        );
-    }
-
-    #[test]
-    fn a_gh_pr_gate_awaiting_nothing_draws_its_repo_and_says_why_it_has_no_link() {
-        let row = cells(&gate(Some("dunwich/arkham"), None), Some(ROOT), None, None);
-
-        assert_eq!(
-            (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
-            ("⇢ arkham", None)
-        );
-        assert_eq!(
-            row.notes,
-            vec!["no link to the pull request: its gate has no await id"]
-        );
-    }
-
-    /// The gate's repo and await id reach the terminal the way a configured
-    /// badge's value does, so they meet the same refusal.
-    #[test]
-    fn a_gh_pr_gate_whose_link_holds_a_control_character_says_so() {
-        let mut hostile = gate(Some("dunwich/arkham"), Some("12"));
-        hostile.pull_request.as_mut().unwrap().url = Some(format!(
-            "https://github.com/dunwich/arkham/pull/12{HOSTILE}"
-        ));
-
-        let row = cells(&hostile, Some(ROOT), None, None);
-
-        assert_eq!(
-            row.notes,
-            vec!["no link for await_id: it holds a control character"]
         );
     }
 

@@ -181,13 +181,26 @@ fn a_run_recorded_as_wisps_is_drawn_beside_the_permanent_work() {
 /// Three beads each blocked by a `gh:pr` gate, as bd 1.3.0 wrote them.
 const GH_PR_GATES: &str = include_str!("fixtures/bd_1.3.0_gh_pr_gates.json");
 
-/// A gate hangs under the bead it blocks and names the pull request it waits
-/// on, with no config naming either: `gh:pr` is beads' own await type.
+/// A badge on a `gh:pr` gate's pull request, as the README gives it.
+const A_BADGE_ON_THE_PULL_REQUEST: &str = r#"
+[[badges]]
+key    = "metadata.repo"
+when   = { await_type = "gh:pr", await_id = "[0-9]+" }
+match  = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render = "⇢ {name} #{await_id}"
+short  = "⇢ #{await_id}"
+link   = "https://github.com/{owner}/{name}/pull/{await_id}"
+"#;
+
+/// A gate hangs under the bead it blocks, and a badge configured on its pull
+/// request draws on the gate whose fields it can fill and on no other bead.
 #[test]
-fn a_gh_pr_gate_hangs_under_the_bead_it_blocks_and_names_its_pull_request() {
+fn a_gh_pr_gate_hangs_under_the_bead_it_blocks_and_a_badge_names_its_pull_request() {
+    let cfg = Config::from_toml(&format!("{CONFIG}{A_BADGE_ON_THE_PULL_REQUEST}"))
+        .expect("the config parses");
     let trackers = dunwich_with(Fake::holding(beads(GH_PR_GATES)));
 
-    let emitted = emit(&panes(), &trackers, Filter::All);
+    let emitted = emit_over(&cfg, &panes(), &trackers, Filter::All);
 
     let trees = emitted["trees"].as_array().expect("trees is an array");
     let dish = trees
@@ -200,17 +213,16 @@ fn a_gh_pr_gate_hangs_under_the_bead_it_blocks_and_names_its_pull_request() {
         (&json!("gate"), &json!(1), &json!("blocks"))
     );
     assert_eq!(
-        gate["pull_request"],
-        json!({
-            "repo": "dunwich/arkham",
-            "await_id": "12",
-            "url": "https://github.com/dunwich/arkham/pull/12",
-        })
+        (&gate["badges"][0]["text"], &gate["badges"][0]["link"]),
+        (
+            &json!("⇢ arkham #12"),
+            &json!("https://github.com/dunwich/arkham/pull/12")
+        )
     );
-    assert!(
-        dish["nodes"][0].get("pull_request").is_none(),
-        "the waiting bead is no gate: {}",
-        dish["nodes"][0]
+    assert_eq!(
+        dish["nodes"][0]["badges"],
+        json!([]),
+        "the waiting bead is no gate"
     );
 
     let wire = trees
@@ -218,10 +230,10 @@ fn a_gh_pr_gate_hangs_under_the_bead_it_blocks_and_names_its_pull_request() {
         .find(|tree| tree["title"] == "string the wire")
         .expect("the waiting bead is a root");
     assert_eq!(
-        wire["nodes"][1]["pull_request"],
-        json!({"repo": null, "await_id": "the-wire", "url": null}),
-        "a gate whose pull request has no address is drawn, not dropped"
+        wire["nodes"][1]["issue_type"], "gate",
+        "a gate the badge cannot name a pull request for is still drawn"
     );
+    assert_eq!(wire["nodes"][1]["badges"], json!([]));
 }
 
 fn cfg() -> Config {

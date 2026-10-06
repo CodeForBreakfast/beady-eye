@@ -81,23 +81,23 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
         // below the one that read this value are what the reader wrote for the
         // values it does not read. They are not tried at all, and neither is
         // what their config promised about a value they were never given.
-        if read.contains(badge.key.as_str()) {
+        if read.contains(badge.key.as_str()) || !badge.draws_on(bead) {
             continue;
         }
 
-        let Some(text) = badge.apply(value) else {
+        let Some(text) = badge.apply(value, bead) else {
             continue;
         };
         read.insert(badge.key.as_str());
 
-        let link = badge.link_for(value);
+        let link = badge.link_for(value, bead);
         if badge.link.is_some() && link.is_none() {
             undrawn.push(Undrawn::Link {
                 key: badge.key.clone(),
             });
         }
 
-        let short = badge.short_for(value);
+        let short = badge.short_for(value, bead);
         if badge.short.is_some() && short.is_none() {
             undrawn.push(Undrawn::Short {
                 key: badge.key.clone(),
@@ -139,6 +139,8 @@ mod tests {
         let bead = bead_with(r#"{"blocked_on":"human","delivery_pr":"owner/repo#7"}"#);
         let cfg = vec![
             Badge {
+                when: Default::default(),
+                unless: Default::default(),
                 key: "metadata.blocked_on".into(),
                 match_value: Some(matching("human")),
                 render: "waiting".into(),
@@ -147,6 +149,8 @@ mod tests {
                 colour: None,
             },
             Badge {
+                when: Default::default(),
+                unless: Default::default(),
                 key: "metadata.blocked_on".into(),
                 match_value: Some(matching("dependency")),
                 render: "dep".into(),
@@ -155,6 +159,8 @@ mod tests {
                 colour: None,
             },
             Badge {
+                when: Default::default(),
+                unless: Default::default(),
                 key: "metadata.absent_key".into(),
                 match_value: None,
                 render: "never".into(),
@@ -184,6 +190,8 @@ mod tests {
     fn badges_render_a_configured_key_without_interpreting_it() {
         let bead = bead_with(r#"{"xyzzy":"plugh"}"#);
         let cfg = vec![Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.xyzzy".into(),
             match_value: None,
             render: "→ {}".into(),
@@ -213,6 +221,8 @@ mod tests {
     fn a_badges_colour_travels_with_its_text() {
         let bead = bead_with(r#"{"jira":"ARKHAM-19"}"#);
         let cfg = vec![Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.jira".into(),
             match_value: None,
             render: "{}".into(),
@@ -260,6 +270,8 @@ mod tests {
         let bead = bead_referencing(r#""https://jira.invalid/browse/HELIO-412""#);
         let cfg = vec![
             Badge {
+                when: Default::default(),
+                unless: Default::default(),
                 key: "external_ref".into(),
                 match_value: Some(matching(r".*/(?<ticket>[A-Z]+-[0-9]+)")),
                 render: "{ticket}".into(),
@@ -268,6 +280,8 @@ mod tests {
                 colour: None,
             },
             Badge {
+                when: Default::default(),
+                unless: Default::default(),
                 key: "metadata.jira".into(),
                 match_value: None,
                 render: "{}".into(),
@@ -313,6 +327,8 @@ mod tests {
     #[test]
     fn a_value_a_bead_does_not_hold_draws_no_badge_and_reports_nothing() {
         let promising = |key: &str| Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: key.to_string(),
             match_value: None,
             render: "{}".into(),
@@ -351,6 +367,8 @@ mod tests {
     fn two_badges_on_one_key_that_both_read_a_value_draw_the_first_alone() {
         let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
         let permissive = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             match_value: Some(matching(".*")),
             render: "⇢ {}".into(),
             short: Some("⇢ {repo}".into()),
@@ -381,6 +399,8 @@ mod tests {
     fn a_value_no_badge_on_its_key_reads_draws_nothing_and_reports_nothing() {
         let bead = bead_with(r#"{"delivery_pr":"30"}"#);
         let url_only = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             match_value: Some(matching(
                 r"https://forge\.invalid/[^/]+/(?<repo>[^/]+)/pull/(?<number>[0-9]+)",
             )),
@@ -401,6 +421,8 @@ mod tests {
     /// reader asks to see them.
     fn qualified_only() -> Badge {
         Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".into(),
             match_value: Some(matching(
                 r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)",
@@ -420,6 +442,8 @@ mod tests {
     fn a_badge_configured_to_decline_stays_silent() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
         let filter = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.blocked_on".into(),
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
@@ -453,6 +477,8 @@ mod tests {
     fn a_badge_reports_a_link_its_value_could_not_fill() {
         let bead = bead_with(r#"{"delivery_pr":"30"}"#);
         let either_form = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             match_value: Some(matching(
                 r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
             )),
@@ -505,6 +531,8 @@ mod tests {
     fn a_badge_carries_the_short_form_its_config_named() {
         let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
         let both_forms = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             render: "⇢ {repo} #{number}".into(),
             short: Some("⇢ #{number}".into()),
             ..qualified_only()
@@ -549,6 +577,8 @@ mod tests {
     fn a_badge_reports_a_short_form_its_value_could_not_fill() {
         let bead = bead_with(r#"{"delivery_pr":"30"}"#);
         let unlinked_either_form = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             match_value: Some(matching(
                 r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
             )),
@@ -578,12 +608,167 @@ mod tests {
         );
     }
 
+    // ---- conditions on the bead's fields --------------------------------
+
+    fn configured(badges: &str) -> Vec<Badge> {
+        let project = "[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\n";
+        crate::config::Config::from_toml(&format!("{project}{badges}"))
+            .expect("the config parses")
+            .badges
+    }
+
+    fn bead(row: &str) -> Bead {
+        let json = format!(r#"[{{"id":"p-1","title":"root","status":"open",{row}}}]"#);
+        parse_beads(&json).expect("the bead parses").remove(0)
+    }
+
+    fn texts(bead: &Bead, badges: &[Badge]) -> Vec<String> {
+        badges_for(bead, badges)
+            .drawn
+            .into_iter()
+            .map(|drawn| drawn.text)
+            .collect()
+    }
+
+    #[test]
+    fn a_badge_with_a_condition_on_a_label_draws_only_where_one_label_matches() {
+        let badges = configured(
+            r#"
+            [[badges]]
+            key    = "status"
+            when   = { labels = "human" }
+            render = "? asks"
+            "#,
+        );
+
+        let asking = bead(r#""labels":["rigging","human"]"#);
+        let not_asking = bead(r#""labels":["rigging","humane"]"#);
+        let unlabelled = bead(r#""labels":[]"#);
+
+        assert_eq!(texts(&asking, &badges), vec!["? asks"]);
+        assert_eq!(texts(&not_asking, &badges), Vec::<String>::new());
+        assert_eq!(texts(&unlabelled, &badges), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_badge_does_not_draw_where_an_exclusion_matches() {
+        let badges = configured(
+            r#"
+            [[badges]]
+            key    = "metadata.repo"
+            unless = { "metadata.outside_effort" = "true", labels = "quiet" }
+            render = "{}"
+            "#,
+        );
+
+        let ours = bead(r#""metadata":{"repo":"dunwich/arkham"}"#);
+        let theirs = bead(r#""metadata":{"repo":"dunwich/arkham","outside_effort":true}"#);
+        let quiet = bead(r#""metadata":{"repo":"dunwich/arkham"},"labels":["quiet"]"#);
+
+        assert_eq!(texts(&ours, &badges), vec!["dunwich/arkham"]);
+        assert_eq!(texts(&theirs, &badges), Vec::<String>::new());
+        assert_eq!(texts(&quiet, &badges), Vec::<String>::new());
+    }
+
+    /// A field the bead does not hold reads as empty, so one condition can ask
+    /// for a field's presence and another for its absence.
+    #[test]
+    fn a_field_the_bead_does_not_hold_reads_as_empty() {
+        let badges = configured(
+            r#"
+            [[badges]]
+            key    = "assignee"
+            when   = { "metadata.agent_pane" = "" }
+            render = "{}"
+
+            [[badges]]
+            key    = "status"
+            when   = { "metadata.agent_pane" = ".+" }
+            render = "staffed"
+            "#,
+        );
+
+        let unstaffed = bead(r#""assignee":"ada""#);
+        let staffed = bead(r#""assignee":"ada","metadata":{"agent_pane":"w:p1"}"#);
+
+        assert_eq!(texts(&unstaffed, &badges), vec!["ada"]);
+        assert_eq!(texts(&staffed, &badges), vec!["staffed"]);
+    }
+
+    /// The conditions a badge names are no part of the chain on its key: a
+    /// badge whose conditions do not hold leaves the value to the next badge
+    /// on the key, as a `match` that does not read it does.
+    #[test]
+    fn a_badge_whose_conditions_do_not_hold_leaves_the_value_to_the_next() {
+        let badges = configured(
+            r#"
+            [[badges]]
+            key    = "status"
+            when   = { labels = "human" }
+            render = "? {}"
+
+            [[badges]]
+            key    = "status"
+            render = "{}"
+            "#,
+        );
+
+        assert_eq!(
+            texts(&bead(r#""labels":["human"]"#), &badges),
+            vec!["? open"]
+        );
+        assert_eq!(texts(&bead(r#""labels":[]"#), &badges), vec!["open"]);
+    }
+
+    /// A template names any field of the bead, and a capture of the same name
+    /// is the one it means, because the capture is what the config wrote for
+    /// this badge. A field the bead does not hold is a part that was never
+    /// there, so the link goes as it goes for a capture that took nothing.
+    #[test]
+    fn a_template_fills_from_any_field_of_the_bead() {
+        let badges = configured(
+            r#"
+            [[badges]]
+            key    = "await_id"
+            match  = "(?<title>[0-9]+)"
+            render = "{metadata.repo} {title} {issue_type}"
+            link   = "https://forge.invalid/{metadata.repo}/pull/{}"
+            "#,
+        );
+
+        let gate =
+            bead(r#""issue_type":"gate","await_id":"12","metadata":{"repo":"dunwich/arkham"}"#);
+        let repoless = bead(r#""issue_type":"gate","await_id":"30""#);
+
+        let got = badges_for(&gate, &badges);
+        assert_eq!(
+            (got.drawn[0].text.as_str(), got.drawn[0].link.as_deref()),
+            (
+                "dunwich/arkham 12 gate",
+                Some("https://forge.invalid/dunwich/arkham/pull/12")
+            )
+        );
+        let got = badges_for(&repoless, &badges);
+        assert_eq!(
+            (got.drawn[0].text.as_str(), got.drawn[0].link.as_deref()),
+            ("{metadata.repo} 30 gate", None)
+        );
+        assert_eq!(
+            got.undrawn,
+            vec![Undrawn::Link {
+                key: "await_id".to_string()
+            }]
+        );
+    }
+
     /// A badge that declines the value says nothing at either length, so the
     /// short form it names is nothing to report.
     #[test]
     fn a_badge_configured_to_decline_reports_no_short_form() {
         let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
         let filter = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.blocked_on".into(),
             match_value: Some(matching("human")),
             render: "⏸ waiting".into(),
