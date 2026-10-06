@@ -7,46 +7,78 @@ use serde::Serialize;
 
 use crate::model::types::Bead;
 
-/// The pull request a `gh:pr` gate names: the gate's `repo` metadata and its
-/// await id, as written, and where both are usable, the page they point at.
+/// The `await_type` bd gives a gate that waits on a pull request.
+pub const PULL_REQUEST: &str = "gh:pr";
+
+/// Why a gate cannot name the pull request it waits on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fault {
+    /// The gate's metadata holds no `repo`.
+    NoRepo,
+    /// The gate holds no await id.
+    NoAwaitId,
+    /// The gate's await id is not a pull request's number.
+    AwaitIdNotANumber(String),
+}
+
+/// Whether `gate` waits on a pull request, whichever one that is.
+pub fn awaits_a_pull_request(gate: &Bead) -> bool {
+    gate.value("await_type") == Some(PULL_REQUEST)
+}
+
+/// The repository `gate` names, where it names one.
+pub fn repo(gate: &Bead) -> Option<&str> {
+    gate.metadata
+        .get("repo")
+        .map(String::as_str)
+        .filter(|repo| !repo.is_empty())
+}
+
+/// The number of the pull request `gate` waits on.
+pub fn number(gate: &Bead) -> Result<u64, Fault> {
+    let id = gate.value("await_id").ok_or(Fault::NoAwaitId)?;
+    id.parse()
+        .map_err(|_| Fault::AwaitIdNotANumber(id.to_string()))
+}
+
+/// The pull request a `gh:pr` gate names, as the tree draws it: the gate's
+/// `repo` metadata and its await id, as written, and where both are usable,
+/// the page they point at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PullRequest {
     /// `OWNER/REPO` or `HOST/OWNER/REPO`, as `bd gate create` writes it.
     pub repo: Option<String>,
-    /// The pull request's number, where the gate wrote a number here.
-    pub await_id: String,
+    /// The await id as the gate wrote it, which should be the pull request's
+    /// number.
+    pub await_id: Option<String>,
     pub url: Option<String>,
+    #[serde(skip)]
+    pub number: Result<u64, Fault>,
 }
 
 /// Why a gate's pull request has no address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unlinked {
-    AwaitIdNotANumber,
-    NoRepo,
+    Fault(Fault),
     RepoNotAnAddress,
 }
 
 /// The pull request this bead waits on, where it is a `gh:pr` gate.
 pub fn pull_request(bead: &Bead) -> Option<PullRequest> {
-    if bead.issue_type != "gate" || bead.value("await_type") != Some("gh:pr") {
+    if bead.issue_type != "gate" || !awaits_a_pull_request(bead) {
         return None;
     }
     let mut awaited = PullRequest {
-        repo: bead.value("metadata.repo").map(str::to_string),
-        await_id: bead.value("await_id").unwrap_or_default().to_string(),
+        repo: repo(bead).map(str::to_string),
+        await_id: bead.value("await_id").map(str::to_string),
         url: None,
+        number: number(bead),
     };
     awaited.url = awaited.address().ok();
     Some(awaited)
 }
 
 impl PullRequest {
-    /// The number the gate waits on, where its await id is one.
-    pub fn number(&self) -> Option<&str> {
-        let id = self.await_id.as_str();
-        (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
-    }
-
     /// The repository's own name, without its owner or host.
     pub fn name(&self) -> Option<&str> {
         self.repo.as_deref()?.rsplit('/').next()
@@ -60,8 +92,8 @@ impl PullRequest {
     /// The pull request's page. A repo with no host is on GitHub, as `gh`
     /// takes one.
     fn address(&self) -> Result<String, Unlinked> {
-        let number = self.number().ok_or(Unlinked::AwaitIdNotANumber)?;
-        let repo = self.repo.as_deref().ok_or(Unlinked::NoRepo)?;
+        let number = self.number.clone().map_err(Unlinked::Fault)?;
+        let repo = self.repo.as_deref().ok_or(Unlinked::Fault(Fault::NoRepo))?;
         let parts: Vec<&str> = repo.split('/').collect();
         if !parts.iter().all(|part| is_a_repo_part(part)) {
             return Err(Unlinked::RepoNotAnAddress);
@@ -107,8 +139,9 @@ mod tests {
             pull_request(&gate("12")),
             Some(PullRequest {
                 repo: Some("dunwich/arkham".to_string()),
-                await_id: "12".to_string(),
+                await_id: Some("12".to_string()),
                 url: Some("https://github.com/dunwich/arkham/pull/12".to_string()),
+                number: Ok(12),
             })
         );
     }
@@ -117,19 +150,32 @@ mod tests {
     fn a_gate_without_a_repo_names_its_pull_request_and_has_no_link() {
         let awaited = pull_request(&gate("30")).expect("a gh:pr gate");
 
-        assert_eq!(
-            (awaited.number(), awaited.url.as_deref()),
-            (Some("30"), None)
-        );
-        assert_eq!(awaited.unlinked(), Some(Unlinked::NoRepo));
+        assert_eq!((&awaited.number, awaited.url.as_deref()), (&Ok(30), None));
+        assert_eq!(awaited.unlinked(), Some(Unlinked::Fault(Fault::NoRepo)));
     }
 
     #[test]
     fn a_gate_awaiting_no_number_has_no_link() {
         let awaited = pull_request(&gate("the-wire")).expect("a gh:pr gate");
 
-        assert_eq!((awaited.number(), awaited.url.as_deref()), (None, None));
-        assert_eq!(awaited.unlinked(), Some(Unlinked::AwaitIdNotANumber));
+        assert_eq!(awaited.url, None);
+        assert_eq!(
+            awaited.unlinked(),
+            Some(Unlinked::Fault(Fault::AwaitIdNotANumber(
+                "the-wire".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn a_gate_awaiting_nothing_has_no_link() {
+        let mut bead = gate("12");
+        bead.values.remove("await_id");
+
+        let awaited = pull_request(&bead).expect("a gh:pr gate");
+
+        assert_eq!((awaited.await_id, awaited.url), (None, None));
+        assert_eq!(awaited.number, Err(Fault::NoAwaitId));
     }
 
     #[test]
@@ -150,8 +196,7 @@ mod tests {
 
     fn with_repo(repo: &str) -> PullRequest {
         let mut bead = gate("12");
-        bead.values
-            .insert("metadata.repo".to_string(), repo.to_string());
+        bead.metadata.insert("repo".to_string(), repo.to_string());
         pull_request(&bead).expect("a gh:pr gate")
     }
 
@@ -183,14 +228,10 @@ mod tests {
     }
 
     #[test]
-    fn an_await_id_with_a_sign_is_not_a_number() {
-        let mut bead = gate("12");
-        bead.values
-            .insert("await_id".to_string(), "+12".to_string());
+    fn an_empty_repo_is_no_repo() {
+        let awaited = with_repo("");
 
-        assert_eq!(
-            pull_request(&bead).unwrap().unlinked(),
-            Some(Unlinked::AwaitIdNotANumber)
-        );
+        assert_eq!(awaited.repo, None);
+        assert_eq!(awaited.unlinked(), Some(Unlinked::Fault(Fault::NoRepo)));
     }
 }

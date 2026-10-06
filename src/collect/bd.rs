@@ -18,10 +18,11 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
-use crate::collect::gates::{self, PrGate};
+use crate::collect::gates::PrGate;
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
+use crate::model::gate;
 use crate::model::types::{Bead, Dependency, Edge, Printed, Status};
 
 /// Parse a flat array of bd rows, however the answer that carried them was
@@ -600,7 +601,7 @@ impl Reader<'_> {
         let listed = self.asked(&["gate", "list", "--limit", "0", "--json"])?;
         rows(&listed, "gate", false)?
             .into_iter()
-            .filter(gates::awaits_a_pull_request)
+            .filter(gate::awaits_a_pull_request)
             .map(|gate| {
                 let held = self.asked(&[
                     "dep",

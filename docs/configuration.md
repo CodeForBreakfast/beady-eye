@@ -410,6 +410,7 @@ note saying why:
 | has no `repo` | `no link to pull request #12: its gate names no repo` |
 | has a `repo` that is not `OWNER/REPO` | `no link to pull request #12: its gate's repo “arkham” is not owner/repo` |
 | has an await id that is not a number | `no link to the pull request: its gate's await id “the-wire” is not a number` |
+| has no await id | `no link to the pull request: its gate has no await id` |
 
 `bdi --json` carries the gate's `repo`, its `await_id` and the `url` it links
 to under the gate's `pull_request`.

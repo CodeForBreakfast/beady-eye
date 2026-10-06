@@ -436,8 +436,10 @@ pub fn anomaly_alone(said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::bd::parse_beads;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::{Badged, Undrawn};
+    use crate::model::gate;
     use crate::model::join::JoinSource;
     use crate::model::types::testing::key;
     use crate::model::types::PaneStatus;
@@ -883,7 +885,7 @@ mod tests {
 
     // ---- a gh:pr gate ----------------------------------------------------
 
-    fn gate(repo: Option<&str>, await_id: &str) -> Node {
+    fn gate(repo: Option<&str>, await_id: Option<&str>) -> Node {
         let mut gate = node("smt-4kd3p.21", Status::Open);
         gate.issue_type = "gate".into();
         gate.badges = vec![Badged {
@@ -893,20 +895,34 @@ mod tests {
             short: None,
             colour: None,
         }];
-        let url = repo
-            .filter(|repo| repo.contains('/') && await_id.parse::<u32>().is_ok())
-            .map(|repo| format!("https://github.com/{repo}/pull/{await_id}"));
-        gate.pull_request = Some(PullRequest {
-            repo: repo.map(str::to_string),
-            await_id: await_id.into(),
-            url,
+        let mut row = serde_json::json!({
+            "id": "smt-4kd3p.21",
+            "title": "Gate: gh:pr",
+            "status": "open",
+            "issue_type": "gate",
+            "await_type": gate::PULL_REQUEST,
         });
+        if let Some(id) = await_id {
+            row["await_id"] = id.into();
+        }
+        if let Some(repo) = repo {
+            row["metadata"] = serde_json::json!({ "repo": repo });
+        }
+        let bead = parse_beads(&serde_json::json!([row]).to_string())
+            .expect("the row parses")
+            .remove(0);
+        gate.pull_request = gate::pull_request(&bead);
         gate
     }
 
     #[test]
     fn a_gh_pr_gate_draws_its_pull_request_ahead_of_its_badges_and_links_to_it() {
-        let row = cells(&gate(Some("dunwich/arkham"), "12"), Some(ROOT), None, None);
+        let row = cells(
+            &gate(Some("dunwich/arkham"), Some("12")),
+            Some(ROOT),
+            None,
+            None,
+        );
 
         assert_eq!(
             row.badges[0],
@@ -924,7 +940,7 @@ mod tests {
 
     #[test]
     fn a_gh_pr_gate_naming_no_repo_draws_its_number_and_says_why_it_has_no_link() {
-        let row = cells(&gate(None, "30"), Some(ROOT), None, None);
+        let row = cells(&gate(None, Some("30")), Some(ROOT), None, None);
 
         assert_eq!(
             (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
@@ -938,7 +954,7 @@ mod tests {
 
     #[test]
     fn a_gh_pr_gate_naming_a_repo_that_is_no_address_says_so() {
-        let row = cells(&gate(Some("arkham"), "30"), Some(ROOT), None, None);
+        let row = cells(&gate(Some("arkham"), Some("30")), Some(ROOT), None, None);
 
         assert_eq!(
             (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
@@ -953,7 +969,7 @@ mod tests {
     #[test]
     fn a_gh_pr_gate_awaiting_no_number_draws_what_it_awaits_and_says_why_it_has_no_link() {
         let row = cells(
-            &gate(Some("dunwich/arkham"), "the-wire"),
+            &gate(Some("dunwich/arkham"), Some("the-wire")),
             Some(ROOT),
             None,
             None,
@@ -969,11 +985,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_gh_pr_gate_awaiting_nothing_draws_its_repo_and_says_why_it_has_no_link() {
+        let row = cells(&gate(Some("dunwich/arkham"), None), Some(ROOT), None, None);
+
+        assert_eq!(
+            (row.badges[0].text.as_str(), row.badges[0].link.as_deref()),
+            ("⇢ arkham", None)
+        );
+        assert_eq!(
+            row.notes,
+            vec!["no link to the pull request: its gate has no await id"]
+        );
+    }
+
     /// The gate's repo and await id reach the terminal the way a configured
     /// badge's value does, so they meet the same refusal.
     #[test]
     fn a_gh_pr_gate_whose_link_holds_a_control_character_says_so() {
-        let mut hostile = gate(Some("dunwich/arkham"), "12");
+        let mut hostile = gate(Some("dunwich/arkham"), Some("12"));
         hostile.pull_request.as_mut().unwrap().url = Some(format!(
             "https://github.com/dunwich/arkham/pull/12{HOSTILE}"
         ));

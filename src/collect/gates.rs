@@ -8,10 +8,8 @@
 use crate::collect::bd::Cli;
 use crate::collect::tracker::OpenFailure;
 use crate::config::Project;
+use crate::model::gate::{self, Fault};
 use crate::model::types::Bead;
-
-/// The `await_type` bd gives a gate that waits on a pull request.
-const PULL_REQUEST: &str = "gh:pr";
 
 /// One open gh:pr gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,17 +28,6 @@ pub struct PullRequest {
     /// `OWNER/REPO`, or `HOST/OWNER/REPO`, as the gate's metadata holds it.
     pub repo: String,
     pub number: u64,
-}
-
-/// Why a gate cannot name the pull request it waits on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fault {
-    /// The gate's metadata holds no `repo`.
-    NoRepo,
-    /// The gate holds no await id.
-    NoAwaitId,
-    /// The gate's await id is not a pull request's number.
-    AwaitIdNotANumber(String),
 }
 
 /// One configured project's open gh:pr gates, or why its tracker did not
@@ -70,24 +57,14 @@ pub fn across(cli: &Cli, projects: &[Project]) -> Vec<ProjectGates> {
         .collect()
 }
 
-/// Whether `gate` waits on a pull request, whichever one that is.
-pub(crate) fn awaits_a_pull_request(gate: &Bead) -> bool {
-    gate.value("await_type") == Some(PULL_REQUEST)
-}
-
 impl PrGate {
     /// `gate` as the pull request it waits on, holding back `blocks`.
     pub(crate) fn of(gate: &Bead, blocks: Vec<String>) -> Self {
-        let repo = gate.metadata.get("repo").filter(|repo| !repo.is_empty());
-        let number = match gate.value("await_id") {
-            None => Err(Fault::NoAwaitId),
-            Some(id) => id
-                .parse::<u64>()
-                .map_err(|_| Fault::AwaitIdNotANumber(id.to_string())),
-        };
+        let repo = gate::repo(gate);
+        let number = gate::number(gate);
         let awaits = match (repo, number) {
             (Some(repo), Ok(number)) => Ok(PullRequest {
-                repo: repo.clone(),
+                repo: repo.to_string(),
                 number,
             }),
             (repo, number) => Err(repo
@@ -266,7 +243,7 @@ mod tests {
             "title": "Gate: gh:pr",
             "status": "open",
             "issue_type": "gate",
-            "await_type": PULL_REQUEST,
+            "await_type": gate::PULL_REQUEST,
         });
         if let Some(id) = await_id {
             row["await_id"] = id.into();
