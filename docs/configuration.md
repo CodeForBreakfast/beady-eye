@@ -855,10 +855,12 @@ as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
 Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is
 stopped. Its config is read once at startup.
 
-It asks GitHub through `gh pr view`, so it settles what the account `gh` is
-signed in to can see. To settle repositories that need different accounts, run
-one `bdi gates` per account, each with its own config naming its
-[`[gates] owners`](#gates).
+It asks GitHub through `gh`, so it settles what the account `gh` is signed in
+to can see. A look asks about a repository's pull requests together, up to a
+hundred in one query, so what it spends of that account's rate limit grows with
+the repositories rather than the pull requests. To settle repositories that
+need different accounts, run one `bdi gates` per account, each with its own
+config naming its [`[gates] owners`](#gates).
 
 Each look reports on stdout one line for each gate closed, each bead told, and
 each failure:

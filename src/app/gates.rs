@@ -73,12 +73,13 @@ pub struct Settling {
 }
 
 /// Read every open gh:pr gate across `projects`, then settle each pull
-/// request one of them waits on, once however many gates wait on it, until
-/// GitHub refuses one for its rate limit. A gate whose repository `settles`
-/// leaves to another `bdi gates` is passed over without a word.
+/// request one of them waits on, once however many gates wait on it, asking
+/// GitHub about each repository's together, until GitHub refuses one for its
+/// rate limit. A gate whose repository `settles` leaves to another
+/// `bdi gates` is passed over without a word.
 pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Settling {
     let mut found = Vec::new();
-    let mut awaited: Vec<PullRequest> = Vec::new();
+    let mut awaited: Vec<Vec<PullRequest>> = Vec::new();
     let settled_here = |gate: &PrGate| settles.settles(gate.repo.as_deref().and_then(gate::owner));
     for read in gates::across(cli, projects, settled_here) {
         let open = match read.gates {
@@ -98,24 +99,37 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
                     gate: gate.id,
                     faults,
                 }),
-                Ok(pull_request) => {
-                    if !awaited.iter().any(|seen| seen.is(&pull_request)) {
-                        awaited.push(pull_request);
-                    }
-                }
+                Ok(pull_request) => awaiting(&mut awaited, pull_request),
             }
         }
     }
     let mut github = Read::Unasked;
-    for pull_request in awaited {
-        let each = settled(cli, gh, projects, pull_request);
-        found.extend(each.found);
-        github = github.max(each.github);
-        if matches!(found.last(), Some(Found::RateLimited { .. })) {
-            break;
+    for repository in &awaited {
+        let settled = gates::settle_together(cli, gh, projects, repository);
+        for (pull_request, settled) in repository.iter().zip(settled) {
+            let each = findings(gh, pull_request.clone(), settled);
+            found.extend(each.found);
+            github = github.max(each.github);
+            if matches!(found.last(), Some(Found::RateLimited { .. })) {
+                return Settling { found, github };
+            }
         }
     }
     Settling { found, github }
+}
+
+/// Add `pull_request` to the ones awaited in its repository, unless it is
+/// there already. GitHub reads a repository's name in any case, so neither
+/// comparison heeds it.
+fn awaiting(awaited: &mut Vec<Vec<PullRequest>>, pull_request: PullRequest) {
+    match awaited
+        .iter_mut()
+        .find(|repository| repository[0].repo.eq_ignore_ascii_case(&pull_request.repo))
+    {
+        Some(repository) if repository.iter().any(|seen| seen.is(&pull_request)) => {}
+        Some(repository) => repository.push(pull_request),
+        None => awaited.push(vec![pull_request]),
+    }
 }
 
 /// Settle the one pull request a delivery named, as a look settles each one
@@ -131,17 +145,12 @@ pub fn delivered(
     if !settles.settles(gate::owner(&pull_request.repo)) {
         return Settling::default();
     }
-    settled(cli, gh, projects, pull_request)
+    let settled = gates::settle(cli, gh, projects, &pull_request);
+    findings(gh, pull_request, settled)
 }
 
-/// What settling `pull_request` across `projects` found to report.
-fn settled(
-    cli: &Cli,
-    gh: &dyn Runner,
-    projects: &[Project],
-    pull_request: PullRequest,
-) -> Settling {
-    let settled = gates::settle(cli, gh, projects, &pull_request);
+/// What settling `pull_request` found to report, and whether GitHub answered.
+fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Settling {
     let github = match settled {
         Settled::Unread(_) => Read::Refused,
         Settled::Open | Settled::Finished(_) => Read::Answered,
@@ -189,7 +198,9 @@ mod tests {
 
     const GATE_LIST: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list.json");
     const MERGED: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_merged.json");
-    const OPEN: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_open.json");
+    /// #7 open and #42 merged, as the one query a look asks reads them.
+    const QUERIED: &str =
+        include_str!("../../tests/fixtures/gh_2.102.0_api_graphql_ark_42_merged.json");
 
     /// Each gh:pr gate in `GATE_LIST`, beside what `bd dep list` answers for
     /// the beads it holds back. ark-0i5 waits on example/ark#42, ark-eb1 on
@@ -237,8 +248,15 @@ mod tests {
 
     /// A runner answering for `project` with the captured tracker.
     fn captured(runner: FakeRunner, project: &str) -> FakeRunner {
+        captured_in(runner, project, "ark")
+    }
+
+    /// A runner answering for `project` with the captured tracker, its gates
+    /// naming the repository `example/<name>`.
+    fn captured_in(runner: FakeRunner, project: &str, name: &str) -> FakeRunner {
+        let gates = GATE_LIST.replace("\"example/ark\"", &format!("\"example/{name}\""));
         HELD_BACK.iter().fold(
-            runner.with(&gate_list(project), GATE_LIST),
+            runner.with(&gate_list(project), &gates),
             |runner, (gate, held)| {
                 runner.with(
                     &read(
@@ -253,6 +271,15 @@ mod tests {
 
     fn viewed(number: u64) -> String {
         format!("gh pr view {number} --repo example/ark --json state,mergeCommit")
+    }
+
+    /// The one query a look asks about #7 and #42 in `example/<name>`.
+    fn queried(name: &str) -> String {
+        format!(
+            "gh api graphql -f owner=example -f name={name} -f query=query($owner:String!,\
+             $name:String!){{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7)\
+             {{state mergeCommit{{oid}}}} pr42:pullRequest(number:42){{state mergeCommit{{oid}}}}}}}}"
+        )
     }
 
     fn resolving_42(project: &str) -> String {
@@ -317,8 +344,7 @@ mod tests {
     #[test]
     fn a_pull_request_gates_in_two_projects_wait_on_is_asked_of_github_once_and_settled_in_both() {
         let runner = captured(captured(FakeRunner::default(), "arkham"), "dunwich")
-            .with(&viewed(42), MERGED)
-            .with(&viewed(7), OPEN)
+            .with(&queried("ark"), QUERIED)
             .with(&resolving_42("arkham"), "")
             .with(&resolving_42("dunwich"), "");
 
@@ -329,7 +355,7 @@ mod tests {
         )
         .found;
 
-        assert_eq!(asked_github(&runner), [viewed(7), viewed(42)]);
+        assert_eq!(asked_github(&runner), [queried("ark")]);
         assert_eq!(
             found,
             [
@@ -360,8 +386,7 @@ mod tests {
     #[test]
     fn an_owner_is_matched_in_any_case() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(42), MERGED)
-            .with(&viewed(7), OPEN)
+            .with(&queried("ark"), QUERIED)
             .with(&resolving_42("arkham"), "");
 
         let found = looked(&runner, &[project("arkham")], &owners(&["Example"])).found;
@@ -430,9 +455,70 @@ mod tests {
     }
 
     #[test]
-    fn a_pull_request_github_does_not_answer_for_is_reported_and_the_rest_are_settled() {
+    fn each_repository_is_asked_of_github_once_and_each_one_settled() {
+        let runner = captured_in(
+            captured(FakeRunner::default(), "arkham"),
+            "dunwich",
+            "vault",
+        )
+        .with(&queried("ark"), QUERIED)
+        .with(
+            &queried("vault"),
+            &QUERIED.replace("\"MERGED\"", "\"OPEN\""),
+        )
+        .with(&resolving_42("arkham"), "");
+
+        let found = looked(
+            &runner,
+            &[project("arkham"), project("dunwich")],
+            &owners(&["example"]),
+        )
+        .found;
+
+        assert_eq!(asked_github(&runner), [queried("ark"), queried("vault")]);
+        assert_eq!(
+            found,
+            [
+                no_number("arkham"),
+                no_number("dunwich"),
+                settling("arkham")
+            ]
+        );
+    }
+
+    /// A failure that is not about a missing pull request would come back the
+    /// same for each one asked alone, so none is asked again.
+    #[test]
+    fn a_repository_github_does_not_answer_for_is_reported_for_each_of_its_pull_requests() {
+        let runner =
+            captured(FakeRunner::default(), "arkham").failing(&queried("ark"), unavailable("gh"));
+
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &owners(&["example"]));
+
+        let unread = |number| Found::GitHubUnread {
+            pull_request: pr(number),
+            failure: unavailable("gh"),
+        };
+        assert_eq!(found, [no_number("arkham"), unread(7), unread(42)]);
+        assert_eq!(asked_github(&runner), [queried("ark")]);
+        assert_eq!(github, Read::Refused);
+    }
+
+    fn gone() -> RunFailure {
+        RunFailure {
+            kind: FailureKind::Gone,
+            program: "gh".to_string(),
+            detail: "gh found no such repository or pull request on GitHub".to_string(),
+            unreadable: None,
+        }
+    }
+
+    #[test]
+    fn a_pull_request_github_does_not_have_is_reported_and_the_rest_of_its_repository_settled() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .failing(&viewed(7), unavailable("gh"))
+            .failing(&queried("ark"), gone())
+            .failing(&viewed(7), gone())
             .with(&viewed(42), MERGED)
             .with(&resolving_42("arkham"), "");
 
@@ -445,28 +531,20 @@ mod tests {
                 no_number("arkham"),
                 Found::GitHubUnread {
                     pull_request: pr(7),
-                    failure: unavailable("gh"),
+                    failure: gone(),
                 },
                 settling("arkham"),
             ]
+        );
+        assert_eq!(
+            asked_github(&runner),
+            [queried("ark"), viewed(7), viewed(42)]
         );
         assert_eq!(
             github,
             Read::Answered,
             "one read answered outweighs one refused"
         );
-    }
-
-    #[test]
-    fn a_look_github_refuses_every_read_of_is_refused() {
-        let runner = captured(FakeRunner::default(), "arkham")
-            .failing(&viewed(7), unavailable("gh"))
-            .failing(&viewed(42), unavailable("gh"));
-
-        let github = looked(&runner, &[project("arkham")], &owners(&["example"])).github;
-
-        assert_eq!(asked_github(&runner), [viewed(7), viewed(42)]);
-        assert_eq!(github, Read::Refused);
     }
 
     fn rate_limited() -> RunFailure {
@@ -483,27 +561,38 @@ mod tests {
         include_str!("../../tests/fixtures/gh_2.102.0_api_rate_limit_graphql_spent.json");
 
     /// The runner panics on any call it was not given, so asking GitHub about
-    /// #42 after #7 was refused would fail the test.
+    /// example/vault after example/ark was refused would fail the test.
     #[test]
     fn a_look_refused_for_a_rate_limit_asks_github_nothing_more_and_says_when_it_resets() {
-        let runner = captured(FakeRunner::default(), "arkham")
-            .failing(&viewed(7), rate_limited())
-            .with(RATE_LIMIT, GRAPHQL_SPENT);
+        let runner = captured_in(
+            captured(FakeRunner::default(), "arkham"),
+            "dunwich",
+            "vault",
+        )
+        .failing(&queried("ark"), rate_limited())
+        .with(RATE_LIMIT, GRAPHQL_SPENT);
 
-        let Settling { found, github } =
-            looked(&runner, &[project("arkham")], &owners(&["example"]));
+        let Settling { found, github } = looked(
+            &runner,
+            &[project("arkham"), project("dunwich")],
+            &owners(&["example"]),
+        );
 
         assert_eq!(
             found,
             [
                 no_number("arkham"),
+                no_number("dunwich"),
                 Found::RateLimited {
                     pull_request: pr(7),
                     resets: DateTime::from_timestamp(1767227400, 0),
                 },
             ]
         );
-        assert_eq!(asked_github(&runner), [viewed(7), RATE_LIMIT.to_string()]);
+        assert_eq!(
+            asked_github(&runner),
+            [queried("ark"), RATE_LIMIT.to_string()]
+        );
         assert_eq!(github, Read::Refused);
     }
 
@@ -528,8 +617,7 @@ mod tests {
     fn a_tracker_that_does_not_say_which_gates_it_holds_is_reported_and_the_rest_are_settled() {
         let runner = captured(FakeRunner::default(), "dunwich")
             .failing(&gate_list("arkham"), unavailable("bd"))
-            .with(&viewed(42), MERGED)
-            .with(&viewed(7), OPEN)
+            .with(&queried("ark"), QUERIED)
             .with(&resolving_42("dunwich"), "");
 
         let found = looked(
