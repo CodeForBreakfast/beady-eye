@@ -416,6 +416,8 @@ const SYNTH_SCHEMA = {
 
 // Deterministic dedup of findings proposing the same remedy at one file:line, whichever axis found
 // them: the highest confidence wins and foundBy names every finder. A different remedy is kept.
+// Matching is on the exact wording of native. Merging two wordings of one fix takes judgment, which
+// stays in the report so that these lists can never lose a finding.
 function splitSurvivors(survivors) {
   const bySite = new Map()
   for (const finding of survivors) {
