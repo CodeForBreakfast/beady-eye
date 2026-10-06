@@ -44,6 +44,8 @@ struct Listed<'a> {
     badges: &'a [Badged],
     labels: &'a [String],
     description: Option<&'a str>,
+    created_at: Option<DateTime<Utc>>,
+    metadata: &'a BTreeMap<String, String>,
 }
 
 impl<'a> From<&'a Node> for Listed<'a> {
@@ -61,6 +63,8 @@ impl<'a> From<&'a Node> for Listed<'a> {
             badges: &node.badges,
             labels: &node.labels,
             description: Some(&*node.description).filter(|said| !said.is_empty()),
+            created_at: node.created_at,
+            metadata: &node.metadata,
         }
     }
 }

@@ -472,6 +472,7 @@ mod tests {
             labels: Vec::new(),
             created_at: None,
             updated_at: None,
+            metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
             blocks: Vec::new(),

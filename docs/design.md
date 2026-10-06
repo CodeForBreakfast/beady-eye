@@ -2771,7 +2771,10 @@ dependency on another project's bead, the beads with `ready` true are what
 what says which work is next. `labels` and `description` are as bd reported
 them: a bead with no labels has an empty array, and one with no description
 has `null`. bdi gives no label a meaning, so a reader wanting the beads
-labelled `human` filters for them.
+labelled `human` filters for them. `created_at` is the bead's created
+date, `null` where the row has none. `metadata` is the bead's whole metadata
+object, empty where it has none, each value as the text it prints as. bdi reads
+no key's meaning, so a reader wanting one key picks it out of the object.
 
 A list that is short says so. `failed_projects` is the forest's, and
 `unread_trees` names each root whose tracker gave no rows, with the `tracker`
