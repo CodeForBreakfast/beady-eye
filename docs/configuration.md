@@ -60,6 +60,10 @@ covered_for_seconds = 60
 [watcher]
 socket = "/run/user/1000/beady-eye/watcher.sock"
 
+[gates]
+poll_seconds = 60
+owners = ["dunwich"]
+
 [anomalies]
 stale_claim_days = 30
 
@@ -415,6 +419,9 @@ note saying why:
 `bdi --json` carries the gate's `repo`, its `await_id` and the `url` it links
 to under the gate's `pull_request`.
 
+[`bdi gates`](#settling-pull-request-gates) closes the gate once the pull
+request merges, so the bead it blocks becomes ready.
+
 ### An issue tracker key
 
 A bead carrying `jira = "HELIO-412"`:
@@ -566,6 +573,19 @@ it. The path is checked as `[changes]`'s is. `bdi --json` and `bdi --beads`
 make the same check before they connect, and also require the socket to be
 yours. Where either fails, they read every project themselves. [Running the
 watcher](#running-the-watcher) has the rest.
+
+## `[gates]`
+
+What `bdi gates` settles, and how often.
+[Settling pull-request gates](#settling-pull-request-gates) has the rest.
+
+`poll_seconds` is how long `bdi gates` waits after one look at the gates before
+the next. The default is 60.
+
+`owners` names the repository owners whose pull requests this `bdi gates`
+settles, matched in any case. A gate on a repository of any other owner is left
+alone and not reported. Where `owners` is empty, which is the default, every
+gate is settled. A gate whose `repo` names no owner is settled only then.
 
 ## `[anomalies]`
 
@@ -811,6 +831,65 @@ $ launchctl load ~/Library/LaunchAgents/com.example.bdi-watch.plist
 ```
 
 SIGTERM, SIGINT or SIGHUP stops it and removes its socket.
+
+## Settling pull-request gates
+
+`bdi gates` settles every configured project's gh:pr gates. It looks at every
+open gh:pr gate, asks GitHub once about each pull request one of them waits
+on, and acts on what GitHub says:
+
+| the pull request | what `bdi gates` does |
+|---|---|
+| merged | closes each gate waiting on it with `bd gate resolve`, naming the merge commit, so the beads it blocked become ready |
+| closed without being merged | leaves each gate open, and comments once on each bead a gate holds back |
+| open | nothing |
+
+It never creates a gate. Whoever opens the pull request creates one with `bd`,
+as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
+Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is
+stopped. Its config is read once at startup.
+
+It asks GitHub through `gh pr view`, so it settles what the account `gh` is
+signed in to can see. To settle repositories that need different accounts, run
+one `bdi gates` per account, each with its own config naming its
+[`[gates] owners`](#gates).
+
+Each look reports on stdout one line for each gate closed, each bead told, and
+each failure:
+
+```
+dunwich/arkham#12 merged: arkham closed gate ark-0i5
+dunwich/arkham#7 closed unmerged: arkham told ark-2ud
+kadath: its gh:pr gates could not be read: the tracker did not answer
+dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
+arkham: gate ark-6pp names no pull request to settle: it names no repo
+```
+
+A failure stops nothing. The next look tries again. A `gh` that GitHub refuses
+leaves every gate waiting on that pull request as it was. On an organisation
+that enforces single sign-on, a lapsed authorisation is the usual cause, and
+`gh auth refresh` is the cure.
+
+A systemd user unit, at `~/.config/systemd/user/bdi-gates.service`:
+
+```ini
+[Unit]
+Description=beady-eye gate settling
+
+[Service]
+ExecStart=%h/.cargo/bin/bdi gates
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```console
+$ systemctl --user enable --now bdi-gates
+```
+
+As with the watcher, each tracker is reached with the environment the unit
+starts in, and so is `gh`.
 
 ## Server and embedded trackers
 

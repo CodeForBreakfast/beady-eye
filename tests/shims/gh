@@ -1,0 +1,40 @@
+#!/bin/sh
+# A `gh` a test can answer for: it says what a file tells it to say.
+#
+# `bdi gates` reaches gh by a PATH lookup, as it reaches bd, so this directory
+# first on PATH puts a pull request in whatever state a test needs without a
+# GitHub to ask.
+#
+#   BDI_SHIM_GH_ANSWERS  directory holding one file per call, named by the
+#                        call as bdi asks it: `pr view 42 --repo example/ark
+#                        --json state,mergeCommit`, where the `/` makes
+#                        `pr view 42 --repo example` a directory. A call with
+#                        a file there is answered with it. A file named for the
+#                        call with `.refused` after it refuses the call
+#                        instead: it goes to stderr and the shim exits 1, as
+#                        gh does.
+#   BDI_SHIM_GH_CALLED   file this appends every call to, answered or not.
+#
+# Unset, it has no answer to give and refuses every call. Plain `sh`, for the
+# reason the `bd` shim beside this one gives.
+set -u
+
+asked="$*"
+
+if [ -n "${BDI_SHIM_GH_CALLED:-}" ]; then
+  printf '%s\n' "$asked" >>"$BDI_SHIM_GH_CALLED"
+fi
+
+if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$BDI_SHIM_GH_ANSWERS/$asked.refused" ]; then
+  cat "$BDI_SHIM_GH_ANSWERS/$asked.refused" >&2
+  exit 1
+fi
+
+if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$BDI_SHIM_GH_ANSWERS/$asked" ]; then
+  exec cat "$BDI_SHIM_GH_ANSWERS/$asked"
+fi
+
+# Refused rather than handed on: the gh this shadows is signed in to
+# whoever runs the suite.
+printf 'gh: the shim was asked "%s", which nothing wrote an answer for and which it will not hand on to the gh it shadows.\n' "$asked" >&2
+exit 127

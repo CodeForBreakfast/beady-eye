@@ -32,6 +32,8 @@ pub struct Config {
     #[serde(default)]
     pub watcher: Watcher,
     #[serde(default)]
+    pub gates: Gates,
+    #[serde(default)]
     pub tui: Tui,
     #[serde(default)]
     pub theme: Theme,
@@ -584,6 +586,47 @@ pub struct Watcher {
     pub socket: Option<PathBuf>,
 }
 
+/// Which gh:pr gates `bdi gates` settles, and how often it looks.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Gates {
+    /// How long `bdi gates` waits after one look at the gates before the
+    /// next.
+    pub poll_seconds: u64,
+    /// The repository owners whose pull requests this `bdi gates` settles,
+    /// in any case. Empty settles every owner's. Two instances signed in to
+    /// GitHub as different accounts each name their own owners, and each
+    /// leaves the other's gates alone.
+    pub owners: Vec<String>,
+}
+
+impl Default for Gates {
+    fn default() -> Self {
+        Self {
+            poll_seconds: 60,
+            owners: Vec::new(),
+        }
+    }
+}
+
+impl Gates {
+    pub fn poll(&self) -> Duration {
+        Duration::from_secs(self.poll_seconds)
+    }
+
+    /// Whether this `bdi gates` settles the pull requests `owner` holds. A
+    /// repository whose owner cannot be read is settled only where every
+    /// owner's is.
+    pub fn settles(&self, owner: Option<&str>) -> bool {
+        self.owners.is_empty()
+            || owner.is_some_and(|owner| {
+                self.owners
+                    .iter()
+                    .any(|settled| settled.eq_ignore_ascii_case(owner))
+            })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tui {
@@ -767,6 +810,7 @@ impl Config {
             join: Join::default(),
             changes: Changes::default(),
             watcher: Watcher::default(),
+            gates: Gates::default(),
             tui: Tui::default(),
             theme: Theme::default(),
             row: Layout::default(),
@@ -1174,6 +1218,10 @@ covered_for_seconds = 90
 [watcher]
 socket = "/var/folders/T/beady-eye/watcher.sock"
 
+[gates]
+poll_seconds = 300
+owners = ["example", "miskatonic"]
+
 [tui]
 refresh_seconds = 5
 unanswered_after_seconds = 90
@@ -1305,6 +1353,8 @@ path = "/home/user/dev/cinder"
             cfg.watcher.socket,
             Some(PathBuf::from("/var/folders/T/beady-eye/watcher.sock"))
         );
+        assert_eq!(cfg.gates.poll(), Duration::from_secs(300));
+        assert_eq!(cfg.gates.owners, ["example", "miskatonic"]);
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
@@ -1654,6 +1704,8 @@ path = "/home/user/dev/kadath"
         assert_eq!(cfg.changes.socket, None);
         assert_eq!(cfg.watcher.socket, None);
         assert_eq!(cfg.changes.covered_for_seconds, 60);
+        assert_eq!(cfg.gates.poll_seconds, 60);
+        assert!(cfg.gates.owners.is_empty());
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);

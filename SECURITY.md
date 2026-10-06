@@ -24,9 +24,9 @@ carry fixes.
 
 ## What is worth reporting
 
-`bdi` issues reads, with one exception: `bdi bd <project> human respond` runs
-that write against the named project's tracker. Every other `bd` command line
-it spells is a read, and the pane tail it draws is output it was handed rather
+`bdi` issues reads, with two exceptions. `bdi bd <project> human respond` runs
+that write against the named project's tracker, and `bdi gates` settles gh:pr
+gates. Every other `bd` command line it spells is a read, and the pane tail it draws is output it was handed rather
 than a shell it runs. That is a property of those command lines rather than a
 guarantee about your tracker —
 a `bd` older than 1.3.0 writes on its own account when it opens one, rewriting
@@ -58,6 +58,17 @@ a project the config already names belongs here.
 tracker of the project it names, with that project's credential. A command line
 that gets it to run anything else, or to reach another project's tracker, is
 worth a report.
+
+**It settles pull-request gates.** `bdi gates` runs `gh pr view` on the
+repository and number a gh:pr gate names, as whoever `gh` is signed in as. On
+GitHub's word that the pull request merged, it runs `bd gate resolve` on that
+gate. On its word that the pull request closed unmerged, it runs `bd comments
+add` on each bead the gate holds back. Each runs against a configured project's
+tracker, with that project's credential. A gate's `repo` and await id come from
+the tracker, so anyone who can write to a tracker can point `bdi gates` at a
+pull request. Anything that gets it to close a gate whose pull request did not
+merge, to write to any other bead, to run any other command, or to reach a
+tracker the config does not name is worth a report.
 
 **It draws what other programs say.** Bead titles, bead metadata and pane output
 all come from outside `bdi` and end up on a terminal. Content that escapes the

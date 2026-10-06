@@ -30,6 +30,8 @@ use crate::tui::{Hearing, Reload, CHECKED_EVERY};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
+mod gates;
+
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
 
@@ -134,6 +136,17 @@ enum Passing {
         /// the one under $XDG_RUNTIME_DIR.
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
+        /// Read the configuration from this file, rather than
+        /// ~/.config/beady-eye/config.toml.
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Settle every configured project's gh:pr gates, looking again every
+    /// [gates] poll_seconds: close a gate whose pull request merged, and
+    /// comment on the beads behind one whose pull request closed unmerged.
+    /// Each look is reported on stdout. Run one per GitHub login, under
+    /// whatever supervises your processes.
+    Gates {
         /// Read the configuration from this file, rather than
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
@@ -248,6 +261,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Some(Passing::Watch { socket, config }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return watch(socket.clone(), &config);
+        }
+        Some(Passing::Gates { config }) => {
+            let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
+            return gates::settle_on_a_poll(&config);
         }
         None => {}
     }
