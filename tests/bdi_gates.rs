@@ -230,11 +230,21 @@ fn a_github_refusing_for_lapsed_single_sign_on_is_reported_closes_nothing_and_is
          touched: gh exited 1 for a reason bdi cannot place",
     );
     until(
-        || github.calls().iter().filter(|call| **call == viewed(42)).count() >= 2,
+        || {
+            github
+                .calls()
+                .iter()
+                .filter(|call| **call == viewed(42))
+                .count()
+                >= 2
+        },
         "a second look at example/ark#42",
     );
     assert!(
-        tracker.calls().iter().all(|call| !call.starts_with("gate resolve")),
+        tracker
+            .calls()
+            .iter()
+            .all(|call| !call.starts_with("gate resolve")),
         "{:?}",
         tracker.calls()
     );
