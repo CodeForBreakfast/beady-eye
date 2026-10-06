@@ -585,7 +585,13 @@ the next. The default is 60.
 `owners` names the repository owners whose pull requests this `bdi gates`
 settles, matched in any case. A gate on a repository of any other owner is left
 alone and not reported. Where `owners` is empty, which is the default, every
-gate is settled. A gate whose `repo` names no owner is settled only then.
+gate is settled. A gate whose `repo` names no owner is settled only then. A
+delivery from GitHub is held to the same rule.
+
+The address deliveries are taken on and the secret they are signed with are
+not here. They are given on the command line and in the environment, as
+[Taking GitHub's deliveries](#taking-githubs-deliveries) says, so the secret
+never sits in a config file.
 
 ## `[anomalies]`
 
@@ -890,6 +896,53 @@ $ systemctl --user enable --now bdi-gates
 
 As with the watcher, each tracker is reached with the environment the unit
 starts in, and so is `gh`.
+
+### Taking GitHub's deliveries
+
+A repository that can send GitHub webhooks need not wait for the next look.
+Given `--listen`, `bdi gates` also takes deliveries over HTTP on that address,
+and settles the pull request each one names as it arrives:
+
+```console
+$ BDI_GATES_WEBHOOK_SECRET=… bdi gates --listen 0.0.0.0:8080
+```
+
+| setting | what it is |
+|---|---|
+| `--listen <address>` | the address and port to take deliveries on, such as `0.0.0.0:8080`. Port `0` takes one the system picks, and the line `bdi gates` starts with names it |
+| `--webhook-secret-file <path>` | a file holding the secret the webhook was given on GitHub |
+| `BDI_GATES_WEBHOOK_SECRET` | the secret, where no file is named. `bdi gates` takes it out of its environment once read, so no `bd` or `gh` it starts is handed it |
+
+Whitespace around the secret is dropped, and `--listen` with no secret, or an
+empty one, refuses to start.
+
+On GitHub, give the webhook the address `bdi gates` is reached at, the content
+type `application/json`, the same secret, and the *Pull requests* event. A
+delivery is a trigger only. `bdi gates` reads the repository and number out of
+it and settles that pull request exactly as a look would, asking GitHub where
+it stands, and passes it over without a word where
+[`[gates] owners`](#gates) leaves its owner to another `bdi gates`. Each
+delivery is answered before it is settled:
+
+| the request | the answer |
+|---|---|
+| a `pull_request` delivery signed with the secret | `202`, then the pull request is settled |
+| any other event signed with the secret, GitHub's `ping` among them | `202`, and nothing else |
+| a delivery with no `X-Hub-Signature-256`, or one the secret did not make | `401`, and a line on stdout |
+| a signed `pull_request` delivery naming no repository and number | `400`, and a line on stdout |
+| a body over 1 MiB, far more than any `pull_request` delivery | `413`, and a line on stdout |
+| a delivery with no `Content-Length`, such as a chunked one | `411`, and a line on stdout |
+| any request while eight are already being answered | `503`. GitHub does not send it again, so the next look settles it |
+| a request that has not arrived in full within ten seconds | the connection is closed unanswered |
+| `GET /healthz` | `200`, for a readiness probe |
+
+Deliveries and looks are settled one at a time, on one thread, so a delivery
+arriving during a look waits for it, and the two never act on one gate
+together. Looks go on at `[gates] poll_seconds` whatever arrives, which is what
+settles a pull request whose delivery was lost.
+
+`bdi gates` speaks plain HTTP. Where it is reached from the internet, put it
+behind something that terminates TLS.
 
 ## Server and embedded trackers
 

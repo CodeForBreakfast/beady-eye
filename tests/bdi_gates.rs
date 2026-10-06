@@ -459,6 +459,67 @@ fn a_listening_bdi_gates_answers_a_readiness_probe() {
     );
 }
 
+/// A body at the limit is read and its signature checked. One byte over is
+/// refused for its size.
+#[test]
+fn a_body_over_a_mebibyte_is_refused_unread() {
+    let home = a_home_looking_every("large", &["arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&viewed(42), OPEN);
+    github.answers_with(&viewed(7), OPEN);
+
+    let settling = Settling::listening(&home, &tracker, &github);
+    let address = settling.address();
+
+    let at_the_limit = " ".repeat(1024 * 1024);
+    assert_eq!(delivered(address, "pull_request", None, &at_the_limit), 401);
+    assert_eq!(
+        delivered(address, "pull_request", None, &format!("{at_the_limit} ")),
+        413
+    );
+    settling.says("a delivery was refused: it is larger than any pull_request delivery");
+}
+
+/// Eight senders that give their headers and never their body hold every
+/// answer there is, and the ninth request is turned away. Once they go,
+/// requests are answered again.
+#[test]
+fn a_request_beyond_eight_at_once_is_turned_away_until_one_finishes() {
+    let home = a_home_looking_every("busy", &["arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&viewed(42), OPEN);
+    github.answers_with(&viewed(7), OPEN);
+
+    let settling = Settling::listening(&home, &tracker, &github);
+    let address = settling.address();
+    let stalled: Vec<TcpStream> = (0..8)
+        .map(|_| {
+            let mut stream = TcpStream::connect(address).expect("bdi gates takes it");
+            stream
+                .write_all(
+                    b"POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: 2048\r\nX-GitHub-Event: \
+                      pull_request\r\n\r\n",
+                )
+                .expect("the headers are sent");
+            stream
+        })
+        .collect();
+
+    until(
+        || delivered(address, "pull_request", None, DELIVERED_42) == 503,
+        "a ninth request turned away",
+    );
+    drop(stalled);
+    until(
+        || delivered(address, "pull_request", None, DELIVERED_42) == 401,
+        "a request answered once the eight have gone",
+    );
+}
+
 #[test]
 fn listening_with_no_secret_refuses_to_start() {
     let home = a_home_naming("secretless", &["arkham"]);

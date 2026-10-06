@@ -70,6 +70,22 @@ pull request. Anything that gets it to close a gate whose pull request did not
 merge, to write to any other bead, to run any other command, or to reach a
 tracker the config does not name is worth a report.
 
+**It takes GitHub's deliveries over HTTP.** `bdi gates --listen` answers on a
+network address, which may face the internet, and it is the one part of `bdi`
+that does. It speaks plain HTTP and expects TLS to be ended in front of it. It
+reads at most 1 MiB of a body before checking its signature, gives each request
+ten seconds to arrive, and answers at most eight at once. A delivery is taken
+only where its `X-Hub-Signature-256` is the HMAC-SHA256 of its body under the
+configured secret, compared in constant time, and only a `pull_request`
+delivery is acted on. All it reads from one is a repository and
+a number, which it settles exactly as a gate naming them would be settled:
+GitHub is asked where that pull request stands, and only the gates a
+configured tracker already holds for it are touched. The secret is read from a
+file or the environment, and taken out of the environment before any `bd` or
+`gh` starts. Anything that gets an unsigned or wrongly signed request past the
+check, gets a delivery to do more than settle the pull request it names, or
+gets the secret out of the process is worth a report.
+
 **It draws what other programs say.** Bead titles, bead metadata and pane output
 all come from outside `bdi` and end up on a terminal. Content that escapes the
 region it is drawn in, or that reaches the terminal as control sequences rather

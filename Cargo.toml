@@ -51,6 +51,13 @@ clap = { version = "4.6.6", features = ["derive"] }
 # line because sha2 0.10 is already in the tree, and `verify_slice` compares in
 # constant time.
 hmac = "0.12.1"
+# `bdi gates --listen` takes GitHub's webhook deliveries over HTTP. The request
+# head is parsed by this, a parser with no dependencies of its own, and
+# everything else is std's `TcpListener`, so every limit on what a request may
+# cost before its signature is checked is one this code sets. tiny_http 0.12
+# cannot be used here: dropping a request whose body is unread drains it, with a
+# buffer as large as the length the sender declared.
+httparse = "1.10.1"
 # Which user this run is, which nothing in `std` will say and the socket's way
 # down has to be judged against. It is also the pty a test drives bdi through,
 # which is what it was here for while it was a dev-dependency. Named for the
@@ -72,10 +79,6 @@ sha2 = "0.10.9"
 # plumbing: a crate reached only through another crate's tree is not one
 # this code may `use`, and would go the day crossterm changed its mind.
 signal-hook = "0.4.4"
-# `bdi gates --listen` takes GitHub's webhook deliveries over HTTP. The
-# smallest server that does: blocking, so no async runtime comes with it, and
-# four small crates under it.
-tiny_http = "0.12.0"
 toml = "1.1.5"
 
 [features]

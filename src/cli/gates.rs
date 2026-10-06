@@ -141,7 +141,12 @@ fn refused(heard: &Heard) -> Option<&'static str> {
         Heard::NamesNoPullRequest => {
             Some("a signed pull_request delivery was passed over: it names no pull request")
         }
-        Heard::TooLarge => Some("a delivery was refused: it is larger than GitHub sends"),
+        Heard::TooLarge => {
+            Some("a delivery was refused: it is larger than any pull_request delivery")
+        }
+        Heard::Unmeasured => {
+            Some("a delivery was refused: it does not give its Content-Length up front")
+        }
         Heard::Healthy | Heard::Settle(_) | Heard::Ignored | Heard::Unknown => None,
     }
 }
