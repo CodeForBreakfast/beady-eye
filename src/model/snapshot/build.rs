@@ -133,6 +133,7 @@ pub fn build_tree(
                 labels: bead.labels.clone(),
                 created_at: bead.created_at,
                 updated_at: bead.updated_at,
+                metadata: bead.metadata.clone(),
                 parent: tied.parent,
                 depends_on: tied.depends_on,
                 blocks: tied.blocks,

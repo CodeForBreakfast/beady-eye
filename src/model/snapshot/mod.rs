@@ -320,6 +320,8 @@ pub struct Node {
     #[serde(skip)]
     pub updated_at: Option<DateTime<Utc>>,
     #[serde(skip)]
+    pub metadata: BTreeMap<String, String>,
+    #[serde(skip)]
     pub parent: Option<Related>,
     #[serde(skip)]
     pub depends_on: Vec<Related>,
