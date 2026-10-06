@@ -34,6 +34,15 @@ pub fn repo(gate: &Bead) -> Option<&str> {
         .filter(|repo| !repo.is_empty())
 }
 
+/// The account holding `repo`, where it is `OWNER/REPO` or
+/// `HOST/OWNER/REPO`.
+pub fn owner(repo: &str) -> Option<&str> {
+    match repo.split('/').collect::<Vec<_>>()[..] {
+        [owner, _] | [_, owner, _] => Some(owner),
+        _ => None,
+    }
+}
+
 /// The number of the pull request `gate` waits on.
 pub fn number(gate: &Bead) -> Result<u64, Fault> {
     let id = gate.value("await_id").ok_or(Fault::NoAwaitId)?;
@@ -233,5 +242,18 @@ mod tests {
 
         assert_eq!(awaited.repo, None);
         assert_eq!(awaited.unlinked(), Some(Unlinked::Fault(Fault::NoRepo)));
+    }
+
+    #[test]
+    fn a_repo_is_owned_by_the_account_before_its_name_whether_or_not_it_names_a_host() {
+        assert_eq!(owner("dunwich/arkham"), Some("dunwich"));
+        assert_eq!(owner("forge.invalid/dunwich/arkham"), Some("dunwich"));
+    }
+
+    #[test]
+    fn a_repo_of_any_other_shape_has_no_owner() {
+        for repo in ["arkham", "a/b/c/d"] {
+            assert_eq!(owner(repo), None, "{repo:?}");
+        }
     }
 }

@@ -21,6 +21,9 @@ use crate::model::types::Bead;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrGate {
     pub id: String,
+    /// The repository the gate names, whether or not it names a pull request
+    /// in it.
+    pub repo: Option<String>,
     /// The pull request the gate waits on, or every reason the gate cannot
     /// name one.
     pub awaits: Result<PullRequest, Vec<Fault>>,
@@ -38,10 +41,7 @@ pub struct PullRequest {
 
 /// One configured project's open gh:pr gates, or why its tracker did not
 /// give them.
-///
-/// Expected dead for the reason `across` is.
 #[derive(Debug)]
-#[cfg_attr(not(feature = "testing"), expect(dead_code))]
 pub struct ProjectGates {
     pub project: String,
     pub gates: Result<Vec<PrGate>, OpenFailure>,
@@ -49,10 +49,6 @@ pub struct ProjectGates {
 
 /// Every configured project's open gh:pr gates. A project whose tracker
 /// does not answer is reported with its failure, and the rest are read.
-///
-/// Nothing `bdi` runs reads the gates yet. The expectation stands in for the
-/// first caller and fails the build on the change that adds one.
-#[cfg_attr(not(feature = "testing"), expect(dead_code))]
 pub fn across(cli: &Cli, projects: &[Project]) -> Vec<ProjectGates> {
     projects
         .iter()
@@ -65,7 +61,6 @@ pub fn across(cli: &Cli, projects: &[Project]) -> Vec<ProjectGates> {
 
 /// What settling the gates waiting on one pull request came to.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(feature = "testing"), expect(dead_code))]
 pub enum Settled {
     /// GitHub did not say where the pull request stands, so no tracker was
     /// asked anything.
@@ -80,7 +75,6 @@ pub enum Settled {
 /// What one configured project did about a finished pull request, or why
 /// its tracker did not say which gates wait on it.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(feature = "testing"), expect(dead_code))]
 pub struct ProjectSettled {
     pub project: String,
     pub acts: Result<Vec<Act>, OpenFailure>,
@@ -88,7 +82,6 @@ pub struct ProjectSettled {
 
 /// One write settling asked for, on the bead it was asked of.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(feature = "testing"), expect(dead_code))]
 pub struct Act {
     pub bead: String,
     /// What was done, or the failed call that left the bead as it was.
@@ -112,9 +105,6 @@ pub enum Done {
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. GitHub is read before any tracker,
 /// so a pull request GitHub cannot answer for leaves every tracker untouched.
-///
-/// Expected dead for the reason `across` is.
-#[cfg_attr(not(feature = "testing"), expect(dead_code))]
 pub fn settle(cli: &Cli, gh: &dyn Runner, projects: &[Project], pr: &PullRequest) -> Settled {
     match github::state(gh, pr) {
         Err(failure) => Settled::Unread(failure),
@@ -197,7 +187,7 @@ fn tell(tracker: &Settling, bead: &str, told: &str) -> Result<Done, RunFailure> 
 impl PullRequest {
     /// Whether this is `other`. GitHub reads a repository's name in any
     /// case, so a gate can spell it differently from GitHub and still mean it.
-    fn is(&self, other: &PullRequest) -> bool {
+    pub fn is(&self, other: &PullRequest) -> bool {
         self.number == other.number && self.repo.eq_ignore_ascii_case(&other.repo)
     }
 }
@@ -227,6 +217,7 @@ impl PrGate {
         };
         PrGate {
             id: gate.id.clone(),
+            repo: repo.map(str::to_string),
             awaits,
             blocks,
         }
@@ -326,6 +317,7 @@ mod tests {
             the_gate(gates, "ark-0i5"),
             &PrGate {
                 id: "ark-0i5".to_string(),
+                repo: Some("example/ark".to_string()),
                 awaits: Ok(PullRequest {
                     repo: "example/ark".to_string(),
                     number: 42,
@@ -367,6 +359,7 @@ mod tests {
             the_gate(gates, "ark-6pp"),
             &PrGate {
                 id: "ark-6pp".to_string(),
+                repo: None,
                 awaits: Err(vec![Fault::NoRepo]),
                 blocks: vec!["ark-92q".to_string()],
             }

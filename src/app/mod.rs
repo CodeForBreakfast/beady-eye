@@ -5,13 +5,15 @@
 //! what lets a collection name one project and still draw every other. Beside
 //! them is the refresh path: when each project asks to be read again, and the
 //! queue its reads wait in, driven alike by a view and by the watcher, which
-//! holds what the reads said for consumers with no view of their own. It
+//! holds what the reads said for consumers with no view of their own. Apart
+//! from both is the look `bdi gates` takes at each tracker's gh:pr gates. It
 //! sits between `collect/`, which runs the programs, and `model/`, which
 //! joins what they said; it names neither `view/` nor `tui/`.
 
 mod armed;
 mod collection;
 mod due;
+pub mod gates;
 mod outstanding;
 mod reading;
 mod reading_trackers;
