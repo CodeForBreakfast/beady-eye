@@ -1,7 +1,7 @@
 {
   "name": "beady-eye",
   "description": "Wakes a Claude Code session when a bead it watches changes.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "Code For Breakfast",
     "email": "info@codeforbreakfast.co"
