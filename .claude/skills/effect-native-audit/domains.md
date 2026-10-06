@@ -158,7 +158,7 @@ flagging.
 |---|---|---|---|
 | `sequential-not-concurrent` | independent effects run one-after-another (latency = sum, not max) | `Effect.all`/`forEach` with `{ concurrency }` — *only* when genuinely independent | concurrency/basic-concurrency |
 | `unbounded-fanout` | `concurrency:"unbounded"` / fork-per-item over an externally-sized collection on a shared resource | a **bounded** `{ concurrency: n }` / `Effect.makeSemaphore` | concurrency/basic-concurrency |
-| `unsupervised-fork` | bare `Effect.fork` — fiber not scoped/joined, failures + interruption lost | `forkScoped` / `forkDaemon` with failures observed; often `Effect.all`/`race` | concurrency/fibers |
+| `unsupervised-fork` | a fork whose failure nothing observes, or whose lifetime is wrong for its job (bare `fork` ends with its parent fiber, `forkDaemon` never does) | `Fiber.join`/`await` or `forkWithErrorHandler`; `fork` / `forkScoped` / `forkIn` / `forkDaemon` matched to the owner; often `Effect.all`/`race` | concurrency/fibers |
 | `unvalidated-boundary` | untrusted external data via `as`/`JSON.parse` with **no** decode | `Schema.decodeUnknown` at the edge | schema/getting-started |
 | `untyped-error-channel` | `E` is `unknown`/string, or `catchAll`/`orDie`/`ignore` swallows a recoverable typed failure | tagged `Data.TaggedError` union + `catchTag`/`Match`; handle, don't downgrade | error-management/two-error-types |
 

@@ -278,13 +278,13 @@ const BEHAVIOUR_SMELLS = [
   },
   {
     key: 'unsupervised-fork',
-    grep: "Effect.fork / Effect.forkDaemon-less background work: a bare Effect.fork whose Fiber is neither joined, awaited, nor scoped, so its lifetime is not bound to anything and its failures/interruption go nowhere",
+    grep: "Effect.fork / forkDaemon / forkScoped / forkIn / runFork whose Fiber is never joined or awaited and has no error handler, or whose lifetime does not match the work it serves",
     smell:
-      'A fiber started with bare `Effect.fork` that is not bound to a scope and whose result is never joined/awaited — its lifetime is unmanaged, its failure is silently dropped, and it may outlive or leak past the work that spawned it (or be interrupted without its cleanup running).',
+      'A forked fiber whose failure nothing observes (never joined or awaited, no forkWithErrorHandler), so it fails silently; or a fork whose lifetime does not match its job. A bare `Effect.fork` is auto-supervised: it is interrupted, finalizers included, when its PARENT FIBER ends. That is a bug only when the work must outlive the parent, such as a listener forked from a short-lived handler. forkDaemon is the opposite bug when the work should end with its owner.',
     nativeShape:
-      'Bind the fiber\'s lifetime: Effect.forkScoped (tied to the enclosing Scope, interrupted on scope close) or Effect.forkDaemon for a deliberate long-lived background fiber, with its failures observed (Fiber.join / Fiber.await, or a supervised pattern). Often the real intent is Effect.all/race, not a manual fork at all. NOTE: a fork that IS already scoped/daemon with handled failures is fine.',
+      'Observe the failure: Fiber.join / Fiber.await, Effect.forkWithErrorHandler, or Effect.all/race when the fork was only ever concurrency. Match the lifetime: keep bare Effect.fork when the parent fiber is the right owner, Effect.forkScoped / Effect.forkIn when a Scope owns it, Effect.forkDaemon only for genuinely global work. NOTE: a fork whose lifetime matches its job and whose failures are observed is fine, whichever variant it uses.',
     docs: 'concurrency/fibers',
-    nativeRef: 'Effect.forkScoped, Effect.forkDaemon, Fiber.join/await, Effect.all/race',
+    nativeRef: 'Effect.fork, Effect.forkScoped, Effect.forkIn, Effect.forkDaemon, Effect.forkWithErrorHandler, Fiber.join/await, Effect.all/race',
   },
   {
     key: 'unvalidated-boundary',
@@ -412,12 +412,12 @@ const SYNTH_SCHEMA = {
   required: ['reportMarkdown'],
 }
 
-// Deterministic dedup of one axis's sightings of one smell at one file:line (highest confidence
-// wins), then the confidence split. Different axes or smells at one line are different work.
+// Deterministic dedup of findings proposing the same remedy at one file:line (highest confidence
+// wins), then the confidence split. A different axis, smell or replacement is different work.
 function splitSurvivors(survivors) {
   const bySite = new Map()
   for (const finding of survivors) {
-    const site = `${finding.file}:${finding.line}:${finding.axis}:${finding.smell ?? ''}`
+    const site = JSON.stringify([finding.file, finding.line, finding.axis, finding.smell ?? '', finding.native])
     const existing = bySite.get(site)
     if (!existing || (finding.confidence === 'high' && existing.confidence !== 'high')) {
       bySite.set(site, finding)
@@ -748,8 +748,9 @@ REFUTE (refuted=true) only when one of these holds — the smell is not real. Th
   This is THE common false positive — verify the dependency before confirming.
 - unbounded-fanout: refute if the collection is provably small/fixed, or the concurrent work touches
   no shared/contended resource (no rate-limit hazard).
-- unsupervised-fork: refute if the fork is ALREADY forkScoped/forkDaemon with its failures observed,
-  or the result IS joined/awaited.
+- unsupervised-fork: refute if the fiber's failure IS observed (joined, awaited, or an error handler)
+  AND its lifetime matches its job. A bare Effect.fork is bound to its parent fiber and interrupted
+  with it, so do not accept "unmanaged lifetime" for one unless the work must outlive that parent.
 - unvalidated-boundary: refute if the data source is genuinely trusted/internal (already decoded
   upstream), the cast is to a type the program owns end-to-end, OR a *Sync decode actually exists
   (then it is the STRUCTURAL internal-bridge smell — note the reclassification, still real).
