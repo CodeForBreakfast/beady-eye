@@ -1,27 +1,51 @@
-//! `bdi gates`: every configured project's gh:pr gates, settled on a poll,
-//! with what each look found said on stdout.
+//! `bdi gates`: every configured project's gh:pr gates, settled on a poll
+//! and, where it listens, on each of GitHub's deliveries, with what each
+//! settling found said on stdout.
 
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::mpsc;
+use std::time::Instant;
 
 use anyhow::Context;
 
-use crate::app::gates::{look, Found};
+use crate::app::gates::{delivered, look, Found};
 use crate::collect::bd;
 use crate::collect::environment::EnvironmentCache;
 use crate::collect::gates::Done;
 use crate::collect::run::RealRunner;
+use crate::collect::webhook::{self, Heard, Secret};
 use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
 use crate::view::phrase;
 
 use super::{read_config, Launch, Reading};
 
-/// Look at the gates, report, wait `[gates] poll_seconds`, and look again,
-/// until a signal ends the process. Nothing a look finds stops the next one.
+/// Where the secret GitHub signs deliveries with is read from, where no file
+/// is named for it.
+const SECRET_VARIABLE: &str = "BDI_GATES_WEBHOOK_SECRET";
+
+/// Look at the gates, report, and look again `[gates] poll_seconds` later,
+/// until a signal ends the process. Listening on `listen`, settle the pull
+/// request each delivery names in between. Nothing a settling finds stops the
+/// next one.
+///
+/// Every settling runs on this one thread, one after another, which is what
+/// keeps a delivery and a look arriving together from closing a gate twice
+/// or telling a bead twice.
 ///
 /// The config is read once. Replacing what it settles is a restart.
-pub(super) fn settle_on_a_poll(config: &Path) -> anyhow::Result<ExitCode> {
+pub(super) fn settle(
+    config: &Path,
+    listen: Option<&str>,
+    secret_file: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
+    let from_environment = std::env::var(SECRET_VARIABLE).ok();
+    std::env::remove_var(SECRET_VARIABLE);
+    let secret = listen
+        .map(|_| secret(secret_file, from_environment))
+        .transpose()?;
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,
@@ -35,29 +59,100 @@ pub(super) fn settle_on_a_poll(config: &Path) -> anyhow::Result<ExitCode> {
     .config;
     let projects: Vec<Project> = cfg.read().cloned().collect();
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
-    println!("{}", started(&cfg.gates, projects.len()));
+    let (to_settle, delivered_for) = mpsc::sync_channel(webhook::MOST_WAITING);
+    let listening = match (listen, secret) {
+        (Some(address), Some(secret)) => Some(webhook::listen(
+            address,
+            secret,
+            to_settle.clone(),
+            |heard| {
+                if let Some(said) = refused(heard) {
+                    println!("{said}");
+                }
+            },
+        )?),
+        _ => None,
+    };
+    println!("{}", started(&cfg.gates, projects.len(), listening));
+    let mut next_look = Instant::now();
     loop {
-        for found in look(&trackers, &RealRunner, &projects, &cfg.gates) {
+        let now = Instant::now();
+        let found = if now >= next_look {
+            let found = look(&trackers, &RealRunner, &projects, &cfg.gates);
+            next_look = Instant::now() + cfg.gates.poll();
+            found
+        } else {
+            match delivered_for.recv_timeout(next_look - now) {
+                Ok(pull_request) => {
+                    delivered(&trackers, &RealRunner, &projects, &cfg.gates, pull_request)
+                }
+                Err(_) => continue,
+            }
+        };
+        for found in found {
             if let Some(said) = reported(&found) {
                 println!("{said}");
             }
         }
-        std::thread::sleep(cfg.gates.poll());
     }
 }
 
-fn started(gates: &Gates, projects: usize) -> String {
+/// The secret, from `file` where one is named and from what
+/// [`SECRET_VARIABLE`] held otherwise.
+///
+/// The caller takes the variable out of the environment before any thread
+/// starts, which is when changing the environment is sound, and whether or
+/// not it is used, so no `bd` or `gh` this run starts is handed it.
+fn secret(file: Option<&Path>, from_environment: Option<String>) -> anyhow::Result<Secret> {
+    let text = match (file, from_environment) {
+        (Some(file), _) => std::fs::read_to_string(file)
+            .with_context(|| format!("reading the webhook secret from {}", file.display()))?,
+        (None, Some(text)) => text,
+        (None, None) => anyhow::bail!(
+            "--listen needs the secret GitHub signs deliveries with, from \
+             --webhook-secret-file or {SECRET_VARIABLE}"
+        ),
+    };
+    Secret::new(&text).context("the webhook secret is empty")
+}
+
+fn started(gates: &Gates, projects: usize, listening: Option<SocketAddr>) -> String {
     let owners = if gates.owners.is_empty() {
         "every owner's repositories".to_string()
     } else {
         format!("repositories owned by {}", gates.owners.join(", "))
     };
     let plural = if projects == 1 { "" } else { "s" };
+    let deliveries = match listening {
+        Some(address) => format!(", and on GitHub's deliveries to {address}"),
+        None => String::new(),
+    };
     format!(
         "bdi gates: settling the gh:pr gates of {projects} project{plural}, for {owners}, every \
-         {}s",
+         {}s{deliveries}",
         gates.poll_seconds
     )
+}
+
+/// A delivery refused or passed over, as one line, or nothing for one there
+/// is nothing to say about.
+fn refused(heard: &Heard) -> Option<&'static str> {
+    match heard {
+        Heard::Unsigned => Some("a delivery was refused: it carries no X-Hub-Signature-256"),
+        Heard::Forged => {
+            Some("a delivery was refused: its X-Hub-Signature-256 is not the secret's")
+        }
+        Heard::NamesNoPullRequest => {
+            Some("a signed pull_request delivery was passed over: it names no pull request")
+        }
+        Heard::TooLarge => {
+            Some("a delivery was refused: it is larger than any pull_request delivery")
+        }
+        Heard::Unmeasured => {
+            Some("a delivery was refused: it does not give its Content-Length up front")
+        }
+        Heard::Healthy | Heard::Settle(_) | Heard::Ignored | Heard::Unknown => None,
+    }
 }
 
 /// What a look found, as one line, or nothing for a bead told on an earlier
@@ -207,9 +302,29 @@ mod tests {
     }
 
     #[test]
+    fn a_delivery_passed_over_or_refused_says_why_and_one_taken_says_nothing() {
+        assert_eq!(
+            refused(&Heard::NamesNoPullRequest),
+            Some("a signed pull_request delivery was passed over: it names no pull request")
+        );
+        assert_eq!(
+            refused(&Heard::Unmeasured),
+            Some("a delivery was refused: it does not give its Content-Length up front")
+        );
+        assert_eq!(
+            refused(&Heard::Settle(PullRequest {
+                repo: "example/ark".to_string(),
+                number: 7,
+            })),
+            None
+        );
+        assert_eq!(refused(&Heard::Ignored), None);
+    }
+
+    #[test]
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
-            started(&Gates::default(), 1),
+            started(&Gates::default(), 1, None),
             "bdi gates: settling the gh:pr gates of 1 project, for every owner's repositories, \
              every 60s"
         );
@@ -219,7 +334,8 @@ mod tests {
                     poll_seconds: 300,
                     owners: vec!["example".to_string(), "miskatonic".to_string()],
                 },
-                2
+                2,
+                None
             ),
             "bdi gates: settling the gh:pr gates of 2 projects, for repositories owned by \
              example, miskatonic, every 300s"
