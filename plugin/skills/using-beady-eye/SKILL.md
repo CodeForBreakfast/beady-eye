@@ -1,6 +1,6 @@
 ---
 name: using-beady-eye
-description: Use when a session waits on a bead it cannot move itself, such as a question it asked or another agent's work, and when a `<channel source="beady-eye">` block arrives. Covers what to watch, how to read a change, what to do when the watcher is down, and unwatching a bead once the session is done waiting on it.
+description: Use when a session waits on a bead it cannot move itself, such as a question it asked, another agent's work or a pull request merging, and when a `<channel source="beady-eye">` block arrives. Covers what to watch, how to read a change, what to do when the watcher is down, and unwatching a bead once the session is done waiting on it.
 ---
 
 # Using beady-eye
@@ -12,7 +12,15 @@ else makes:
 
 - a question the session put on a bead, waiting for its answer;
 - a bead the session's work depends on, waiting for it to close;
-- a bead the session handed on, waiting for a comment or a close.
+- a bead the session handed on, waiting for a comment or a close;
+- a pull request the session waits on, by watching its gh:pr gate.
+
+A gh:pr gate is the bead that closes when its pull request merges. Where the
+waiting bead depends on a molecule with the gate as one of its steps, the
+waiting bead turns ready only when the molecule's last step closes, so watching
+it misses the merge. Watch the gate itself. A pull request closed without
+merging leaves its gate open and comments on the bead the gate blocks, so
+watch that bead as well.
 
 Do not poll a watched bead with `bd`, and do not schedule a check on it.
 
