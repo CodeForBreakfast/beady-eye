@@ -120,9 +120,10 @@ fn settled(
     match gates::settle(cli, gh, projects, &pull_request) {
         Settled::Open => Vec::new(),
         Settled::Unread(failure) if failure.kind == FailureKind::RateLimited => {
+            let resets = github::spent_until(gh, gate::host(&pull_request.repo));
             vec![Found::RateLimited {
                 pull_request,
-                resets: github::spent_until(gh).ok().flatten(),
+                resets: resets.ok().flatten(),
             }]
         }
         Settled::Unread(failure) => vec![Found::GitHubUnread {

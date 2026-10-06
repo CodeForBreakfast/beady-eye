@@ -82,6 +82,8 @@ pub(super) fn settle(
     };
     println!("{}", started(&cfg.gates, projects.len(), listening));
     let mut next_look = Instant::now();
+    // ponytail: one wait for every host. Wait per host if one `bdi gates`
+    // ever settles for logins on two hosts at once.
     let mut rate_limited_until = Instant::now();
     loop {
         let now = Instant::now();

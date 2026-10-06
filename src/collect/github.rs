@@ -87,12 +87,20 @@ struct RateLimit {
     reset: i64,
 }
 
-/// When the login gh runs as can ask GitHub again: the latest reset among
-/// the limits `bdi gates` spends that are used up, or `None` where neither
-/// is, which is GitHub's secondary limit, whose end it does not say. Asking
-/// costs nothing against any limit.
-pub fn spent_until(runner: &dyn Runner) -> Result<Option<DateTime<Utc>>, RunFailure> {
-    let out = runner.run("gh", &["api", "rate_limit"], None, &Env::new())?;
+/// When the login gh runs as on `host`, or on the host gh picks where none
+/// is named, can ask GitHub again: the latest reset among the limits
+/// `bdi gates` spends that are used up, or `None` where neither is, which is
+/// GitHub's secondary limit, whose end it does not say. Asking costs nothing
+/// against any limit.
+pub fn spent_until(
+    runner: &dyn Runner,
+    host: Option<&str>,
+) -> Result<Option<DateTime<Utc>>, RunFailure> {
+    let mut args = vec!["api", "rate_limit"];
+    if let Some(host) = host {
+        args.extend(["--hostname", host]);
+    }
+    let out = runner.run("gh", &args, None, &Env::new())?;
     let limits: RateLimits = serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
     Ok(SPENT_BY_GATES
         .iter()
@@ -119,7 +127,20 @@ mod tests {
         );
 
         assert_eq!(
-            spent_until(&runner),
+            spent_until(&runner, None),
+            Ok(DateTime::from_timestamp(1767227400, 0))
+        );
+    }
+
+    #[test]
+    fn the_limit_read_is_the_one_on_the_host_the_pull_request_is_on() {
+        let runner = FakeRunner::default().with(
+            "gh api rate_limit --hostname forge.invalid",
+            include_str!("../../tests/fixtures/gh_2.102.0_api_rate_limit_graphql_spent.json"),
+        );
+
+        assert_eq!(
+            spent_until(&runner, Some("forge.invalid")),
             Ok(DateTime::from_timestamp(1767227400, 0))
         );
     }
@@ -133,7 +154,7 @@ mod tests {
             include_str!("../../tests/fixtures/gh_2.102.0_api_rate_limit_unspent.json"),
         );
 
-        assert_eq!(spent_until(&runner), Ok(None));
+        assert_eq!(spent_until(&runner, None), Ok(None));
     }
 
     const VIEW: &str = "gh pr view 42 --repo example/ark --json state,mergeCommit";

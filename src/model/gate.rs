@@ -43,6 +43,15 @@ pub fn owner(repo: &str) -> Option<&str> {
     }
 }
 
+/// The host holding `repo`, where it is `HOST/OWNER/REPO`. One that names
+/// none is on whichever host `gh` picks.
+pub fn host(repo: &str) -> Option<&str> {
+    match repo.split('/').collect::<Vec<_>>()[..] {
+        [host, _, _] => Some(host),
+        _ => None,
+    }
+}
+
 /// The number of the pull request `gate` waits on.
 pub fn number(gate: &Bead) -> Result<u64, Fault> {
     let id = gate.value("await_id").ok_or(Fault::NoAwaitId)?;
@@ -248,6 +257,14 @@ mod tests {
     fn a_repo_is_owned_by_the_account_before_its_name_whether_or_not_it_names_a_host() {
         assert_eq!(owner("dunwich/arkham"), Some("dunwich"));
         assert_eq!(owner("forge.invalid/dunwich/arkham"), Some("dunwich"));
+    }
+
+    #[test]
+    fn only_a_repo_naming_its_host_has_one() {
+        assert_eq!(host("forge.invalid/dunwich/arkham"), Some("forge.invalid"));
+        for repo in ["dunwich/arkham", "arkham", "a/b/c/d"] {
+            assert_eq!(host(repo), None, "{repo:?}");
+        }
     }
 
     #[test]
