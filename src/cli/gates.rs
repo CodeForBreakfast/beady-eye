@@ -64,7 +64,7 @@ fn started(gates: &Gates, projects: usize) -> String {
 /// look. A pull request closed unmerged leaves its gate open, so it is
 /// settled again on every look and would otherwise say so every time.
 fn reported(found: &Found) -> Option<String> {
-    Some(match found {
+    let line = match found {
         Found::TrackerUnread { project, failure } => format!(
             "{project}: its gh:pr gates could not be read: {}",
             phrase::tracker_failure(failure)
@@ -100,7 +100,23 @@ fn reported(found: &Found) -> Option<String> {
                 phrase::tracker_failure(failure)
             ),
         },
-    })
+    };
+    Some(spelled_out(&line))
+}
+
+/// `line` with each control character written as its escape. Ids, repos and
+/// await ids are whatever a tracker's writers put there, and printed raw they
+/// could move the terminal or start a report line of their own.
+fn spelled_out(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for glyph in line.chars() {
+        if glyph.is_control() {
+            out.extend(glyph.escape_default());
+        } else {
+            out.push(glyph);
+        }
+    }
+    out
 }
 
 fn fault(fault: &Fault) -> String {
@@ -171,6 +187,22 @@ mod tests {
             })
             .as_deref(),
             Some("arkham: gate ark-g1 names no pull request to settle: it has no await id")
+        );
+    }
+
+    #[test]
+    fn a_control_character_the_tracker_wrote_is_spelled_out_on_the_line() {
+        assert_eq!(
+            reported(&Found::NoPullRequest {
+                project: "arkham".to_string(),
+                gate: "ark-tg0".to_string(),
+                faults: vec![Fault::AwaitIdNotANumber("\u{1b}[2J\nforged".to_string())],
+            })
+            .as_deref(),
+            Some(
+                "arkham: gate ark-tg0 names no pull request to settle: its await id \
+                 “\\u{1b}[2J\\nforged” is not a number"
+            )
         );
     }
 
