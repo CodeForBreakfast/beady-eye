@@ -414,9 +414,13 @@ impl Cli<'_> {
         })
     }
 
-    /// Every open gh:pr gate `project`'s tracker holds.
-    pub fn pr_gates(&self, project: &Project) -> Result<Vec<PrGate>, OpenFailure> {
-        Ok(self.reader(project)?.pr_gates(|_| true)?)
+    /// Every open gh:pr gate `project`'s tracker holds that is `wanted`.
+    pub fn pr_gates(
+        &self,
+        project: &Project,
+        wanted: impl Fn(&PrGate) -> bool,
+    ) -> Result<Vec<PrGate>, OpenFailure> {
+        Ok(self.reader(project)?.pr_gates(wanted)?)
     }
 
     /// `project`'s tracker, opened once to settle the gh:pr gates waiting on

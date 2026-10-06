@@ -4,7 +4,7 @@
 
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
-use crate::collect::gates::{self, Done, PullRequest, Settled};
+use crate::collect::gates::{self, Done, PrGate, PullRequest, Settled};
 use crate::collect::run::{RunFailure, Runner};
 use crate::config::{Gates, Project};
 use crate::model::gate::{self, Fault};
@@ -47,7 +47,8 @@ pub enum Found {
 pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Vec<Found> {
     let mut found = Vec::new();
     let mut awaited: Vec<PullRequest> = Vec::new();
-    for read in gates::across(cli, projects) {
+    let settled_here = |gate: &PrGate| settles.settles(gate.repo.as_deref().and_then(gate::owner));
+    for read in gates::across(cli, projects, settled_here) {
         let open = match read.gates {
             Ok(open) => open,
             Err(failure) => {
@@ -59,9 +60,6 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
             }
         };
         for gate in open {
-            if !settles.settles(gate.repo.as_deref().and_then(gate::owner)) {
-                continue;
-            }
             match gate.awaits {
                 Err(faults) => found.push(Found::NoPullRequest {
                     project: read.project.clone(),
@@ -266,11 +264,11 @@ mod tests {
         );
     }
 
-    /// The runner panics on any call it was not given, so a gate settled
-    /// here would fail the test on its `gh pr view`.
+    /// The runner panics on any call it was not given, so a gate whose held
+    /// back beads were asked after, or that was settled, would fail the test.
     #[test]
     fn a_gate_whose_owner_this_bdi_gates_does_not_settle_for_is_passed_over_without_a_word() {
-        let runner = captured(FakeRunner::default(), "arkham");
+        let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST);
 
         let found = looked(&runner, &[project("arkham")], &owners(&["miskatonic"]));
 

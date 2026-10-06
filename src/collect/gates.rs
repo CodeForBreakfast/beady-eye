@@ -47,14 +47,19 @@ pub struct ProjectGates {
     pub gates: Result<Vec<PrGate>, OpenFailure>,
 }
 
-/// Every configured project's open gh:pr gates. A project whose tracker
-/// does not answer is reported with its failure, and the rest are read.
-pub fn across(cli: &Cli, projects: &[Project]) -> Vec<ProjectGates> {
+/// Every configured project's open gh:pr gates that are `wanted`. A project
+/// whose tracker does not answer is reported with its failure, and the rest
+/// are read.
+pub fn across(
+    cli: &Cli,
+    projects: &[Project],
+    wanted: impl Fn(&PrGate) -> bool,
+) -> Vec<ProjectGates> {
     projects
         .iter()
         .map(|project| ProjectGates {
             project: project.name.clone(),
-            gates: cli.pr_gates(project),
+            gates: cli.pr_gates(project, &wanted),
         })
         .collect()
 }
@@ -290,7 +295,7 @@ mod tests {
     }
 
     fn read(runner: &FakeRunner, projects: &[Project]) -> Vec<ProjectGates> {
-        across(&Cli::new(runner), projects)
+        across(&Cli::new(runner), projects, |_| true)
     }
 
     fn the_gate<'g>(gates: &'g [PrGate], id: &str) -> &'g PrGate {
