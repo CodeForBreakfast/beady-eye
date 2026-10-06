@@ -503,6 +503,8 @@ mod tests {
     /// ark-2ud's comments once it has been told example/ark#7 closed
     /// unmerged, beside a comment of its own.
     const TOLD: &str = include_str!("../../tests/fixtures/bd_1.3.0_comments_told_ark-2ud.json");
+    /// ark-2ud's comments before it is told, with a comment of its own.
+    const OWN: &str = include_str!("../../tests/fixtures/bd_1.3.0_comments_own_ark-2ud.json");
 
     /// In the captured tracker, ark-0i5 waits on #42 and holds back ark-qca,
     /// and ark-eb1 waits on #7 and holds back ark-2ud and ark-45c.
@@ -629,7 +631,7 @@ mod tests {
     fn a_close_without_a_merge_comments_on_each_held_back_bead_and_leaves_the_gate_open() {
         let runner = captured(FakeRunner::default(), "arkham")
             .with(&viewed(7), CLOSED)
-            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-2ud"), OWN)
             .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
             .with(&telling("arkham", "ark-2ud"), "Comment added to ark-2ud\n")
             .with(&telling("arkham", "ark-45c"), "Comment added to ark-45c\n");
