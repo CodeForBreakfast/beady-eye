@@ -109,7 +109,9 @@ verdicts**, because their failure modes are opposite:
 A synthesis agent writes the report, deduping cross-axis sightings as it writes.
 The confirmed / low-confidence partition is NOT trusted to that agent. The
 workflow derives it deterministically from each survivor's own confidence: dedup
-by `file:line`, highest confidence wins, then split.
+sightings of one smell on one axis at one `file:line`, highest confidence wins,
+then split. A finding whose refuter died is returned as unverified, never as
+refuted.
 
 ## Running it
 
@@ -143,8 +145,9 @@ by `file:line`, highest confidence wins, then split.
    overrides where the report goes.
 
 4. The workflow writes the report to `docs/effect-native-audit-<date>.md` and
-   returns `{ confirmed[], lowConfidence[], refutedCount, coverage }`.
-   `coverage` names any finder that failed and any that fell back to fetching.
+   returns `{ confirmed[], lowConfidence[], unverified[], refutedCount, coverage }`.
+   `coverage` names any finder that failed, any group with unverified findings,
+   and any that fell back to fetching. Re-run an incomplete group on resume.
 
 ## What comes back
 

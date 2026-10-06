@@ -412,11 +412,12 @@ const SYNTH_SCHEMA = {
   required: ['reportMarkdown'],
 }
 
-// Deterministic dedup by file:line (highest confidence wins), then the confidence split.
+// Deterministic dedup of one axis's sightings of one smell at one file:line (highest confidence
+// wins), then the confidence split. Different axes or smells at one line are different work.
 function splitSurvivors(survivors) {
   const bySite = new Map()
   for (const finding of survivors) {
-    const site = `${finding.file}:${finding.line}`
+    const site = `${finding.file}:${finding.line}:${finding.axis}:${finding.smell ?? ''}`
     const existing = bySite.get(site)
     if (!existing || (finding.confidence === 'high' && existing.confidence !== 'high')) {
       bySite.set(site, finding)
@@ -786,9 +787,11 @@ const verifyStage = (axis) => (result, item) => {
             : f.kind === 'structural'
               ? refuteStructuralPrompt(f)
               : refutePrompt(f)
+      // A verifier that dies is no evidence either way, so its finding is unverified, not refuted.
+      const unverified = (why) => ({ ...f, domain: item.key, axis, refuted: false, unverified: true, refuteReason: why })
       return agent(prompt, { label: `verify:${item.key}:${f.file}:${f.line}`, phase: 'Verify', schema: VERDICT_SCHEMA })
-        .then((v) => ({ ...f, domain: item.key, refuted: v ? v.refuted : true, refuteReason: v ? v.reason : 'verifier returned no verdict — treated as refuted' }))
-        .catch(() => ({ ...f, domain: item.key, refuted: true, refuteReason: 'verifier errored (rate-limit / StructuredOutput miss) — treated as refuted' }))
+        .then((v) => (v ? { ...f, domain: item.key, axis, refuted: v.refuted, refuteReason: v.reason } : unverified('verifier returned no verdict')))
+        .catch(() => unverified('verifier errored (rate-limit / StructuredOutput miss)'))
     }),
   ).then((verified) => ({ domain: item.key, axis, inventorySize, fellBackToFetch, failed: false, verified }))
 }
@@ -830,12 +833,13 @@ const [sweptDomains, sweptStructural, sweptModelling, sweptBehaviour] = await Pr
 
 const domains = [...sweptDomains, ...sweptStructural, ...sweptModelling, ...sweptBehaviour].filter(Boolean)
 const allVerified = domains.flatMap((d) => d.verified).filter(Boolean)
-const survivors = allVerified.filter((f) => !f.refuted)
+const survivors = allVerified.filter((f) => !f.refuted && !f.unverified)
+const unverified = allVerified.filter((f) => f.unverified)
 const refutedCount = allVerified.filter((f) => f.refuted).length
-const coverage = domains.map((d) => ({ domain: d.domain, axis: d.axis, inventorySize: d.inventorySize, fellBackToFetch: d.fellBackToFetch, failed: !!d.failed, findings: d.verified.length }))
-const missedDomains = coverage.filter((c) => c.failed).map((c) => c.domain)
+const coverage = domains.map((d) => ({ domain: d.domain, axis: d.axis, inventorySize: d.inventorySize, fellBackToFetch: d.fellBackToFetch, failed: !!d.failed, findings: d.verified.length, unverified: d.verified.filter((f) => f.unverified).length }))
+const missedDomains = coverage.filter((c) => c.failed || c.unverified > 0).map((c) => c.domain)
 
-log(`Verified: ${survivors.length} survivors, ${refutedCount} refuted across ${domains.length} groups${missedDomains.length ? `; ${missedDomains.length} finders failed (${missedDomains.join(', ')}) — re-run on resume` : ''}`)
+log(`Verified: ${survivors.length} survivors, ${refutedCount} refuted, ${unverified.length} unverified across ${domains.length} groups${missedDomains.length ? `; ${missedDomains.length} groups incomplete (${missedDomains.join(', ')}) — re-run on resume` : ''}`)
 
 phase('Synthesise')
 let synthesis = null
@@ -876,12 +880,16 @@ and are larger refactors than a swap.
      ### Confirmed — modelling      <- table: file:line | smell | currentRepr -> nativeRepr | blastRadius | why
      ### Confirmed — behaviour      <- table: file:line | smell | currentBehaviour -> nativeBehaviour | blastRadius | why
      ### Low-confidence (report only)   <- all axes, noting which
-     ### Coverage                   <- finders run per axis, per-module inventorySize, any fellBackToFetch
+     ### Unverified                 <- findings whose verifier died: file:line | axis | smell | rolled -> native
+     ### Coverage                   <- finders run per axis, per-module inventorySize, any fellBackToFetch, any failed finder
 4. Return reportMarkdown (identical to the file). That is all — the gate derives the
    confirmed/low-confidence lists from the survivors itself.
 
 SURVIVORS (JSON):
 ${JSON.stringify(survivors, null, 2)}
+
+UNVERIFIED (JSON) — no verifier ruled on these; list them, never fold them into Confirmed:
+${JSON.stringify(unverified, null, 2)}
 
 COVERAGE (JSON):
 ${JSON.stringify(coverage, null, 2)}`,
@@ -911,6 +919,7 @@ return {
   confirmed,
   lowConfidence,
   survivors,
+  unverified,
   refutedCount,
   coverage,
   missedDomains,
