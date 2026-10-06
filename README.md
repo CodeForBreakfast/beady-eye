@@ -162,6 +162,18 @@ Each project is read with its own `bd`, entered the way you would enter it
 yourself. An `.envrc` and direnv need nothing said. Anything else, say it with
 `environment_command`.
 
+A bead can wait on a bead in another project. Write the edge in the waiting
+bead's own tracker, with the other bead's bare id:
+
+```console
+$ bd dep add ark-5 dun-7
+```
+
+`bdi` places `dun-7` in the project whose beads carry the `dun` prefix, or in
+the project whose entry states `prefix = "dun"`, and draws it beneath `ark-5`.
+A qualified form such as `dunwich:dun-7` is not a bead id, so `bdi` cannot
+place it and draws it as not in any configured project.
+
 `bdi watch` reads every configured project and holds what it read, polling as
 the eye does and taking the same reports on a socket of its own. Run one per
 machine under whatever supervises your processes, such as a systemd user unit or
