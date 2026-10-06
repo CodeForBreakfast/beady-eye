@@ -1,7 +1,8 @@
 //! bd's command line as the way to a project's tracker.
 //!
-//! The one module that spells `bd -C <path> --readonly …`, and the one write
-//! `bdi bd` passes through, `bd -C <path> human respond …`. Each question the
+//! The one module that spells `bd -C <path> --readonly …`, and the two ways
+//! `bdi` writes: the `bd -C <path> human respond …` that `bdi bd` passes
+//! through, and the gate resolve and comment that settle a gh:pr gate. Each question the
 //! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
 //! here and nowhere else. The roots to draw the rows under are read off the
 //! rows themselves, in `app::tracker`.
@@ -417,6 +418,53 @@ impl Cli<'_> {
     pub fn pr_gates(&self, project: &Project) -> Result<Vec<PrGate>, OpenFailure> {
         Ok(self.reader(project)?.pr_gates()?)
     }
+
+    /// `project`'s tracker, opened once to settle the gh:pr gates waiting on
+    /// a pull request.
+    pub fn settling(&self, project: &Project) -> Result<Settling<'_>, OpenFailure> {
+        Ok(Settling(self.reader(project)?))
+    }
+}
+
+/// One project's tracker opened to settle its gh:pr gates.
+///
+/// Settling a gate is the second of the two ways `bdi` writes to a tracker,
+/// beside the `human respond` that `bdi bd` passes through. `resolve` and
+/// `comment` are those writes, and everything else here is a read.
+pub struct Settling<'r>(Reader<'r>);
+
+impl Settling<'_> {
+    /// Every open gh:pr gate the tracker holds.
+    pub fn pr_gates(&self) -> Result<Vec<PrGate>, RunFailure> {
+        self.0.pr_gates()
+    }
+
+    /// The text of every comment on `bead`, oldest first.
+    pub fn comments(&self, bead: &str) -> Result<Vec<String>, RunFailure> {
+        let out = self.0.asked(&["comments", bead, "--json"])?;
+        let comments: Vec<Comment> = serde_json::from_str(&out)
+            .map_err(|e| RunFailure::parse("bd", e).reading("comments"))?;
+        Ok(comments.into_iter().map(|comment| comment.text).collect())
+    }
+
+    /// Close `gate`. `gate resolve` refuses a bead that is not a gate, so a
+    /// wrong id cannot close the work itself.
+    pub fn resolve(&self, gate: &str, reason: &str) -> Result<(), RunFailure> {
+        self.0
+            .written(&["gate", "resolve", gate, "--reason", reason])
+            .map(drop)
+    }
+
+    /// Add `text` to `bead` as a comment.
+    pub fn comment(&self, bead: &str, text: &str) -> Result<(), RunFailure> {
+        self.0.written(&["comments", "add", bead, text]).map(drop)
+    }
+}
+
+/// One comment as `bd comments --json` writes it, holding only its text.
+#[derive(Deserialize)]
+struct Comment {
+    text: String,
 }
 
 impl Trackers for Cli<'_> {
@@ -470,12 +518,24 @@ impl Reader<'_> {
     /// there instead is `TABLE_HASHES`, a constant nothing composes, reached
     /// from one method that takes no argument.
     fn asked(&self, subcommand: &[&str]) -> Result<String, RunFailure> {
-        let named = self.path.to_string_lossy();
-        let mut argv = vec!["-C", named.as_ref(), "--readonly"];
-        argv.extend_from_slice(subcommand);
-        self.runner
-            .run("bd", &argv, Some(&self.path), &self.env)
+        self.run(&["--readonly"], subcommand)
             .map_err(|failure| failure.reading(subcommand[0]))
+    }
+
+    /// One write to the tracker, which only `Settling` makes. It is `asked`
+    /// without `--readonly`, so bd's veto on mutating subcommands is lifted
+    /// for this call alone.
+    fn written(&self, subcommand: &[&str]) -> Result<String, RunFailure> {
+        self.run(&[], subcommand)
+    }
+
+    /// `subcommand` run against this tracker and no other, under `flags`.
+    fn run(&self, flags: &[&str], subcommand: &[&str]) -> Result<String, RunFailure> {
+        let named = self.path.to_string_lossy();
+        let mut argv = vec!["-C", named.as_ref()];
+        argv.extend_from_slice(flags);
+        argv.extend_from_slice(subcommand);
+        self.runner.run("bd", &argv, Some(&self.path), &self.env)
     }
 
     /// Every table's hash in the Dolt working set bar `leases`, folded into
@@ -746,7 +806,8 @@ fn rows(out: &str, read: &str, keeping_rows: bool) -> Result<Vec<Bead>, RunFailu
     parsed(out, keeping_rows).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
 }
 
-/// The one bd command `bdi bd` passes through, and the one write `bdi` makes.
+/// The one bd command `bdi bd` passes through, and the first of the two ways
+/// `bdi` writes. `Settling` is the second.
 const PASSED_THROUGH: [&str; 2] = ["human", "respond"];
 
 /// The flags `bd human respond` takes its response by. Each takes the word

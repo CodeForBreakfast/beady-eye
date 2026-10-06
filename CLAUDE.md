@@ -2,15 +2,19 @@
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
 root, annotated with the live agent on each node. Every bd command line it
-spells is a read but one, the `bd human respond` that `bdi bd` passes through,
-and `collect/` spells all of them. `docs/design.md`'s *Reading a tracker is
-not leaving it alone* has the measurements.
+spells is a read except in the two ways it writes: the `bd human respond` that
+`bdi bd` passes through, and settling a gh:pr gate once GitHub says its pull
+request has merged or closed. `collect/` spells all of them.
+`docs/design.md`'s *Reading a tracker is not leaving it alone* has the
+measurements.
 
 ## What beady-eye owns
 
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
-- The reading side: which `bd` and `herdr` command lines it spells, and how it
-  parses what they print.
+- The reading side: which `bd`, `herdr` and `gh` command lines it spells, and
+  how it parses what they print.
+- Settling a gh:pr gate: re-reading its pull request from GitHub, closing the
+  gate on a merge, and on a close without one telling the beads it holds back.
 - The model that joins the two sources, including the anomalies where they
   disagree, and the words and colours `bdi` draws.
 - The `bdi` configuration format: `[[badges]]`, `join.pane_key` and the rest.
@@ -24,10 +28,11 @@ not leaving it alone* has the measurements.
   beads.
 - **herdr.** Panes, agent detection and agent status belong to the herdr
   project. `bdi` draws what herdr reports.
-- **Writing to a tracker.** `bdi` never creates or updates a bead. The one
-  write it makes is `bdi bd`'s `human respond`, which records a person's answer
-  and closes the bead that asked. Whoever runs it does everything else with
-  `bd`.
+- **Every other write to a tracker.** `bdi` never creates a bead, and it
+  writes in two ways only. `bdi bd`'s `human respond` records a person's answer and
+  closes the bead that asked. Settling a gh:pr gate closes the gate or comments
+  on the beads it holds back. Whoever runs `bdi` does everything else with
+  `bd`, creating the gate included.
 - **How agents are organised.** `bdi` knows no roles, orchestration model or
   skill names. A convention a setup keeps in bead metadata is named in the
   user's config and drawn without interpretation.

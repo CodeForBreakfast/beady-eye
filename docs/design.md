@@ -1363,10 +1363,13 @@ environment_command = "nix develop -c"
   does not rest on it, and reaches the same answer for less: it looks for the
   `.envrc` and runs nothing where there is none, so the pass-through is a
   property `bdi` no longer needs rather than one it relies on.
-- **Every command line `bdi` spells is a read but one, and that is a property
-  of the subcommands `collect/` composes and of nothing beside them.** The one
-  is `bdi bd`'s `bd human respond`, which records a person's answer in the
-  tracker of the project it names, without `--readonly`. That the rest are
+- **Every command line `bdi` spells is a read except in two ways it writes,
+  and that is a property of the subcommands `collect/` composes and of nothing
+  beside them.** The first is `bdi bd`'s `bd human respond`, which records a
+  person's answer in the tracker of the project it names, without
+  `--readonly`. The second is settling a gh:pr gate: `bd gate resolve` on a
+  merge, and `bd comments add` on the beads it holds back on a close without
+  one. That the rest are
   reads is not a no-writes rule. bd writes on its own account on the way to
   answering, so no property of the command line can exclude it, and *Reading a tracker is not
   leaving it alone* below says what it does. `--readonly` still earns its place
@@ -1661,7 +1664,8 @@ measurements above were taken against throwaway embedded stores, and this one
 cannot be taken against a live tracker.
 
 So `bdi` claims what it can hold: every command line it spells is a read, bar
-the one write `bdi bd` passes through. It does not claim a tracker comes back
+the write `bdi bd` passes through and the writes that settle a gh:pr gate. It
+does not claim a tracker comes back
 unchanged. The pinned bd leaves its lock
 files behind even on a read it answers, and a bd older than 1.3.0 migrates
 whatever the command line says. Nothing holds a tracker still, either: the
