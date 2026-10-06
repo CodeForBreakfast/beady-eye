@@ -438,7 +438,13 @@ const allVerified = cellResults.flatMap((c) => c.verified).filter(Boolean)
 const survivors = allVerified.filter((f) => !f.refuted)
 const refutedCount = allVerified.filter((f) => f.refuted).length
 const failedCells = cellResults.filter((c) => c.failed).map((c) => `${c.unit}:${c.lens}`)
-const coverage = cellResults.map((c) => ({ unit: c.unit, lens: c.lens, failed: !!c.failed, findings: c.verified.length }))
+const coverage = cellResults.map((c) => ({
+  unit: c.unit,
+  lens: c.lens,
+  failed: !!c.failed,
+  kept: c.verified.filter((f) => !f.refuted).length,
+  refuted: c.verified.filter((f) => f.refuted).length,
+}))
 
 log(`Verified: ${survivors.length} kept, ${refutedCount} refuted across ${cellResults.length} cells${failedCells.length ? `; ${failedCells.length} cells failed (${failedCells.join(', ')}), so re-run them on resume` : ''}`)
 
@@ -466,7 +472,7 @@ coherence, L4 boundary honesty), file:line, the evidence, a proposed remodelling
      ## Effect-model audit — ${date}
      ### Confirmed findings   <- table: file:line | unit | lens | evidence | remodelling | blastRadius | why
      ### Low-confidence
-     ### Coverage             <- families × lenses run, any failed cells, the number of types partitioned
+     ### Coverage             <- families × lenses run with each cell's kept and refuted counts, any failed cells, the number of types partitioned
 4. Return reportMarkdown, identical to the file.
 
 SURVIVORS (JSON):
