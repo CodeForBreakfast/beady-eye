@@ -1,6 +1,6 @@
 //! Everything `bdi` learns by running another program.
 //!
-//! One module for the running itself, one for each of the two programs it
+//! One module for the running itself, one for each of the three programs it
 //! asks, one each for what a tracker and an agent provider answer whichever
 //! program it is, one for the environment each project's tracker is asked in,
 //! one for what it works out where nothing configured it, one for the pane
@@ -14,6 +14,7 @@ pub mod changes;
 pub mod discovery;
 pub mod environment;
 pub mod gates;
+pub mod github;
 pub mod herdr;
 pub mod panes;
 pub mod run;
