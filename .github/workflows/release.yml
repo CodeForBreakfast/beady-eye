@@ -322,12 +322,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     # `contents` is the tag push and the Release; `actions` is CI's verdict,
-    # which this job now waits for rather than re-deriving. The workflow-level
-    # block grants `contents` alone and a permissions map grants nothing it
-    # does not name, so both are stated here.
+    # which this job now waits for rather than re-deriving; `packages` is the
+    # image push. The workflow-level block grants `contents` alone and a
+    # permissions map grants nothing it does not name, so all three are stated
+    # here.
     permissions:
       contents: write
       actions: read
+      packages: write
     # The tag push, the publish and the announcement are one sequence against
     # state nothing can take back, so only one run may be inside it for a
     # version. Per version rather than global: GitHub cancels a pending run
@@ -558,6 +560,21 @@ jobs:
             dist/bdi-x86_64-unknown-linux-musl \
             dist/bdi-x86_64-unknown-linux-musl.sha256 \
             --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Homelab runs bdi from this image, and Renovate there bumps it by its
+      # version tag, so no `latest` is pushed. Without one, a repair dispatched
+      # on an older tag changes no other tag, which is why this step is
+      # unguarded by `from`.
+      - name: push the image
+        run: |
+          image="ghcr.io/codeforbreakfast/beady-eye:$VERSION"
+          docker load < "$(nix build --no-link --print-out-paths .#image)"
+          docker run --rm "$image" --version
+          printf '%s' "$GH_TOKEN" |
+            docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
         env:
           GH_TOKEN: ${{ github.token }}
 
