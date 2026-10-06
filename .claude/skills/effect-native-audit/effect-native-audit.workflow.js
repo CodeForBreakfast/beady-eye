@@ -395,6 +395,8 @@ const VERDICT_SCHEMA = {
   properties: {
     refuted: { type: 'boolean', description: 'true if the proposed native swap is wrong, a false twin, or changes behaviour' },
     reason: { type: 'string', description: 'docs/source-grounded justification for the verdict' },
+    native: { type: 'string', description: 'ONLY when the smell stands but the proposed Effect form is wrong: the corrected one' },
+    blastRadius: { type: 'string', description: 'ONLY when the smell stands but the blast radius is wrong: the corrected one' },
   },
   required: ['refuted', 'reason'],
 }
@@ -590,7 +592,8 @@ Do NOT refute for any of these — they are concerns for the HUMAN GATE that rev
 findings, NOT grounds to discard a real smell:
 - "Possible but maybe not worth it" / "adds ceremony" / "the wrapped construction is pure sync".
 - "The blast radius is large" or "understated" — if the blast radius is wrong, say so in the
-  reason and set blastRadius straight, but CONFIRM (refuted=false). The gate weighs cost.
+  reason and return the corrected blastRadius, but CONFIRM (refuted=false). The gate weighs cost.
+- A real smell with the wrong proposed rewrite — return the corrected native and CONFIRM.
 - "I cannot be certain the whole multi-site refactor is correct" — you are not verifying a finished
   refactor; the exact target shape is the implementer's job. You are only judging
   whether the SMELL is real.
@@ -672,8 +675,9 @@ REFUTE (refuted=true) only when one of these holds — the smell is not real:
 
 Do NOT refute for any of these — they are HUMAN-GATE concerns, NOT grounds to discard a real smell:
 - "Possible but maybe not worth it" / "adds ceremony" / "only one call site today".
-- "The blast radius is large / understated" — if wrong, correct it in the reason and set blastRadius
-  straight, but CONFIRM (refuted=false). The gate weighs cost.
+- "The blast radius is large / understated" — if wrong, correct it in the reason and return the
+  corrected blastRadius, but CONFIRM (refuted=false). The gate weighs cost.
+- A real smell with the wrong proposed rewrite — return the corrected native and CONFIRM.
 - "I cannot be certain the whole type migration is correct" — the exact target type is the
   implementer's job; you only judge whether the SMELL is real.
 - The proposed nativeShape is imperfect but the smell and its direction are right — CONFIRM and note
@@ -759,8 +763,9 @@ REFUTE (refuted=true) only when one of these holds — the smell is not real. Th
 
 Do NOT refute for any of these — they are HUMAN-GATE concerns, NOT grounds to discard a real smell:
 - "Possible but maybe not worth it" / "adds ceremony" / "the input is usually small in practice".
-- "The blast radius is large / understated" — if wrong, correct it in the reason and set blastRadius
-  straight, but CONFIRM (refuted=false). The gate weighs cost.
+- "The blast radius is large / understated" — if wrong, correct it in the reason and return the
+  corrected blastRadius, but CONFIRM (refuted=false). The gate weighs cost.
+- A real smell with the wrong proposed rewrite — return the corrected native and CONFIRM.
 - "I cannot be certain the whole concurrency/error refactor is correct" — the exact target is the
   implementer's job; you only judge whether the SMELL is real.
 - The proposed nativeShape is imperfect but the smell and its direction are right — CONFIRM and note
@@ -804,7 +809,11 @@ const verifyStage = (axis) => (result, item) => {
       // A verifier that dies is no evidence either way, so its finding is unverified, not refuted.
       const unverified = (why) => ({ ...f, domain: item.key, axis, refuted: false, unverified: true, refuteReason: why })
       return agent(prompt, { label: `verify:${item.key}:${f.file}:${f.line}`, phase: 'Verify', schema: VERDICT_SCHEMA })
-        .then((v) => (v ? { ...f, domain: item.key, axis, refuted: v.refuted, refuteReason: v.reason } : unverified('verifier returned no verdict')))
+        .then((v) => {
+          if (!v) return unverified('verifier returned no verdict')
+          const corrected = { native: v.native || f.native, blastRadius: v.blastRadius || f.blastRadius }
+          return { ...f, ...corrected, domain: item.key, axis, refuted: v.refuted, refuteReason: v.reason }
+        })
         .catch(() => unverified('verifier errored (rate-limit / StructuredOutput miss)'))
     }),
   ).then((verified) => ({ domain: item.key, axis, inventorySize, fellBackToFetch, failed: false, verified }))
