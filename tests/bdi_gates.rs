@@ -58,6 +58,18 @@ fn viewed(number: u64) -> String {
     format!("pr view {number} --repo example/ark --json state,mergeCommit")
 }
 
+/// #7 open and #42 merged, as the one query a look asks reads them.
+const QUERIED: &str = include_str!("fixtures/gh_2.102.0_api_graphql_ark_42_merged.json");
+const QUERIED_OPEN: &str = include_str!("fixtures/gh_2.102.0_api_graphql_ark_open.json");
+
+/// The one query a look asks about #7 and #42 in example/ark.
+fn queried() -> String {
+    "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
+     {repository(owner:$owner,name:$name){pr7:pullRequest(number:7){state mergeCommit{oid}} \
+     pr42:pullRequest(number:42){state mergeCommit{oid}}}}"
+        .to_string()
+}
+
 /// A home holding a config that names `projects`, each a directory of its
 /// own under it, settling every owner's gates once a second.
 fn a_home_naming(named: &str, projects: &[&str]) -> PathBuf {
@@ -115,11 +127,6 @@ impl ShimmedGitHub {
 
     fn refuses_with(&self, asked: &str, said: &str) {
         self.answers_with(&format!("{asked}.refused"), said);
-    }
-
-    fn stops_refusing(&self, asked: &str) {
-        std::fs::remove_file(self.answers.join(format!("{asked}.refused")))
-            .expect("the refusal was ours to write");
     }
 
     fn calls(&self) -> Vec<String> {
@@ -289,15 +296,16 @@ fn until(holds: impl Fn() -> bool, awaited: &str) {
     }
 }
 
+/// The look asks GitHub about both pull requests the captured gates wait on
+/// in the one call.
 #[test]
 fn a_merged_pull_request_closes_the_gate_waiting_on_it() {
-    let home = a_home_naming("merged", &["arkham"]);
+    let home = a_home_looking_every("merged", &["arkham"], 3600);
     let tracker = ShimmedTracker::beside(&home);
     holds_the_captured_gates(&tracker, "arkham");
     tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
     let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&viewed(42), MERGED);
-    github.answers_with(&viewed(7), OPEN);
+    github.answers_with(&queried(), QUERIED);
 
     let settling = Settling::started(&home, &tracker, &github);
 
@@ -307,6 +315,7 @@ fn a_merged_pull_request_closes_the_gate_waiting_on_it() {
         "{:?}",
         tracker.calls()
     );
+    assert_eq!(github.calls(), [queried()]);
 }
 
 /// GitHub answers a pull request in an organisation whose single sign-on
@@ -320,11 +329,10 @@ fn a_github_refusing_for_lapsed_single_sign_on_is_reported_closes_nothing_and_is
     holds_the_captured_gates(&tracker, "arkham");
     let github = ShimmedGitHub::beside(&home);
     github.refuses_with(
-        &viewed(42),
+        &queried(),
         "GraphQL: Resource protected by organization SAML enforcement. You must grant your \
          OAuth token access to this organization. (repository)\n",
     );
-    github.answers_with(&viewed(7), OPEN);
 
     let settling = Settling::started(&home, &tracker, &github);
 
@@ -337,11 +345,11 @@ fn a_github_refusing_for_lapsed_single_sign_on_is_reported_closes_nothing_and_is
             github
                 .calls()
                 .iter()
-                .filter(|call| **call == viewed(42))
+                .filter(|call| **call == queried())
                 .count()
                 >= 2
         },
-        "a second look at example/ark#42",
+        "a second look at example/ark",
     );
     assert!(
         tracker
@@ -362,8 +370,7 @@ fn a_tracker_that_does_not_answer_is_reported_and_the_others_are_settled() {
     holds_the_captured_gates(&tracker, "arkham");
     tracker.answers_for("arkham", RESOLVING_42, "");
     let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&viewed(42), MERGED);
-    github.answers_with(&viewed(7), OPEN);
+    github.answers_with(&queried(), QUERIED);
 
     let settling = Settling::started(&home, &tracker, &github);
 
@@ -378,9 +385,8 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
     holds_the_captured_gates(&tracker, "arkham");
     tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
     let github = ShimmedGitHub::beside(&home);
+    github.refuses_with(&queried(), "HTTP 502\n");
     github.answers_with(&viewed(42), MERGED);
-    github.refuses_with(&viewed(42), "HTTP 502\n");
-    github.answers_with(&viewed(7), OPEN);
 
     let settling = Settling::listening(&home, &tracker, &github);
     let address = settling.address();
@@ -388,7 +394,6 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
         "example/ark#42: GitHub did not say where it stands, so no gate waiting on it was \
          touched: gh exited 1 for a reason bdi cannot place",
     );
-    github.stops_refusing(&viewed(42));
 
     assert_eq!(
         delivered(
@@ -400,7 +405,7 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
         202
     );
     settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
-    assert_eq!(github.calls(), [viewed(7), viewed(42), viewed(42)]);
+    assert_eq!(github.calls(), [queried(), viewed(42)]);
 }
 
 /// A delivery that is refused, or about anything but a pull request, never
@@ -432,7 +437,7 @@ fn only_a_delivery_signed_with_the_secret_is_taken_and_only_a_pull_request_one_i
         .settling
         .says("a delivery was refused: it carries no X-Hub-Signature-256");
     listening.caught_up();
-    assert_eq!(listening.github.calls(), [viewed(7), viewed(42), viewed(7)]);
+    assert_eq!(listening.github.calls(), [queried(), viewed(7)]);
 }
 
 #[test]
@@ -441,8 +446,7 @@ fn a_listening_bdi_gates_answers_a_readiness_probe() {
     let tracker = ShimmedTracker::beside(&home);
     holds_the_captured_gates(&tracker, "arkham");
     let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&viewed(42), OPEN);
-    github.answers_with(&viewed(7), OPEN);
+    github.answers_with(&queried(), QUERIED_OPEN);
 
     let settling = Settling::listening(&home, &tracker, &github);
 
@@ -470,11 +474,12 @@ impl Listening {
         let tracker = ShimmedTracker::beside(&home);
         holds_the_captured_gates(&tracker, "arkham");
         let github = ShimmedGitHub::beside(&home);
+        github.answers_with(&queried(), QUERIED_OPEN);
         github.answers_with(&viewed(42), OPEN);
         github.answers_with(&viewed(7), OPEN);
         let settling = Settling::listening(&home, &tracker, &github);
         let address = settling.address();
-        until(|| github.calls().len() == 2, "the first look");
+        until(|| github.calls().len() == 1, "the first look");
         Self {
             github,
             settling,
@@ -538,10 +543,7 @@ fn a_signed_delivery_over_a_mebibyte_is_refused_and_settles_nothing() {
         202
     );
     listening.caught_up();
-    assert_eq!(
-        listening.github.calls(),
-        [viewed(7), viewed(42), viewed(42), viewed(7)]
-    );
+    assert_eq!(listening.github.calls(), [queried(), viewed(42), viewed(7)]);
 
     assert_eq!(
         delivered(
@@ -558,7 +560,7 @@ fn a_signed_delivery_over_a_mebibyte_is_refused_and_settles_nothing() {
     listening.caught_up();
     assert_eq!(
         listening.github.calls(),
-        [viewed(7), viewed(42), viewed(42), viewed(7), viewed(7)]
+        [queried(), viewed(42), viewed(7), viewed(7)]
     );
 }
 
@@ -592,7 +594,7 @@ fn a_signed_delivery_ending_before_its_length_is_closed_unanswered_and_settles_n
         .expect("bdi gates closes the connection");
     assert_eq!(answer, "");
     listening.caught_up();
-    assert_eq!(listening.github.calls(), [viewed(7), viewed(42), viewed(7)]);
+    assert_eq!(listening.github.calls(), [queried(), viewed(7)]);
 }
 
 /// Eight senders that give their headers and never their body hold every
@@ -632,13 +634,13 @@ fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
         "a request answered once the eight have gone",
     );
     listening.caught_up();
-    assert_eq!(listening.github.calls(), [viewed(7), viewed(42), viewed(7)]);
+    assert_eq!(listening.github.calls(), [queried(), viewed(7)]);
 
     assert_eq!(ninth(), 202);
     listening.caught_up();
     assert_eq!(
         listening.github.calls(),
-        [viewed(7), viewed(42), viewed(7), viewed(42), viewed(7)]
+        [queried(), viewed(7), viewed(42), viewed(7)]
     );
 }
 
@@ -651,8 +653,8 @@ fn the_secret_reaches_no_program_bdi_gates_starts_even_where_a_file_gives_it() {
     holds_the_captured_gates(&tracker, "arkham");
     tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
     let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED);
     github.answers_with(&viewed(42), MERGED);
-    github.answers_with(&viewed(7), OPEN);
     let file = home.join("secret");
     std::fs::write(&file, format!("{SECRET}\n")).expect("the file is ours to write");
 

@@ -34,13 +34,36 @@ pub fn repo(gate: &Bead) -> Option<&str> {
         .filter(|repo| !repo.is_empty())
 }
 
+/// A repository a gate names, taken apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Repository<'a> {
+    /// The host, where the gate names one.
+    pub host: Option<&'a str>,
+    pub owner: &'a str,
+    pub name: &'a str,
+}
+
+/// `repo` taken apart, where it is `OWNER/REPO` or `HOST/OWNER/REPO`.
+pub fn repository(repo: &str) -> Option<Repository<'_>> {
+    match repo.split('/').collect::<Vec<_>>()[..] {
+        [owner, name] => Some(Repository {
+            host: None,
+            owner,
+            name,
+        }),
+        [host, owner, name] => Some(Repository {
+            host: Some(host),
+            owner,
+            name,
+        }),
+        _ => None,
+    }
+}
+
 /// The account holding `repo`, where it is `OWNER/REPO` or
 /// `HOST/OWNER/REPO`.
 pub fn owner(repo: &str) -> Option<&str> {
-    match repo.split('/').collect::<Vec<_>>()[..] {
-        [owner, _] | [_, owner, _] => Some(owner),
-        _ => None,
-    }
+    repository(repo).map(|repository| repository.owner)
 }
 
 /// The number of the pull request `gate` waits on.

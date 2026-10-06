@@ -323,6 +323,13 @@ pub const PATH: &str = "PATH";
 const NO_SUCH_PANE: &str = "agent_not_found";
 const PANE_BUSY: &str = "agent_not_idle";
 
+/// What gh says when GitHub has no repository or pull request by the name
+/// asked. Measured against gh 2.102.0 on 2026-10-06: `GraphQL: Could not
+/// resolve to a PullRequest with the number of <n>.` from `gh pr view`, and
+/// `gh: Could not resolve to a Repository with the name '<repo>'.` from `gh
+/// api graphql`.
+const NOT_ON_GITHUB: &str = "could not resolve to a";
+
 impl RunFailure {
     pub fn not_installed(program: &str, cause: impl fmt::Display) -> Self {
         Self {
@@ -486,6 +493,11 @@ impl RunFailure {
             (
                 FailureKind::Busy,
                 format!("{program} cannot read that pane while it is busy"),
+            )
+        } else if said.contains(NOT_ON_GITHUB) {
+            (
+                FailureKind::Gone,
+                format!("{program} found no such repository or pull request on GitHub"),
             )
         } else {
             let detail = match code {
@@ -1065,6 +1077,19 @@ mod tests {
         assert_eq!(failing_command(NO_SUCH_PANE).kind, FailureKind::Gone);
         assert_eq!(failing_command(PANE_BUSY).kind, FailureKind::Busy);
         assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
+    }
+
+    #[test]
+    fn a_pull_request_or_repository_github_does_not_have_is_gone() {
+        for said in [
+            "GraphQL: Could not resolve to a PullRequest with the number of 99. \
+             (repository.pullRequest)",
+            "gh: Could not resolve to a Repository with the name 'example/arc'.",
+        ] {
+            let failure = failing_command(said);
+            assert_eq!(failure.kind, FailureKind::Gone, "{said}");
+            assert!(!failure.detail.contains("arc"), "{}", failure.detail);
+        }
     }
 
     /// herdr's failures name the pane, its workspace and the command asked of

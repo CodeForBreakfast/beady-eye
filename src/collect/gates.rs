@@ -11,7 +11,7 @@ use std::fmt;
 
 use crate::collect::bd::{Cli, Settling};
 use crate::collect::github::{self, State};
-use crate::collect::run::{RunFailure, Runner};
+use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::config::Project;
 use crate::model::gate::{self, Fault};
@@ -103,15 +103,56 @@ pub enum Done {
     AlreadyCommented,
 }
 
-/// Re-read `pr` from GitHub, then settle every open gh:pr gate waiting on it
-/// in each of `projects`. A merge closes each gate, and a close without one
+/// Re-read `pr` from GitHub, then settle it as [`settled`] does.
+pub fn settle(cli: &Cli, gh: &dyn Runner, projects: &[Project], pr: &PullRequest) -> Settled {
+    settled(cli, projects, pr, github::state(gh, pr))
+}
+
+/// Re-read every one of `prs`, which share a repository, from GitHub in one
+/// query, then settle each as [`settled`] does, in the order given.
+///
+/// A query naming one pull request or repository GitHub does not have fails
+/// as a whole, so then each is read on its own and the rest are still
+/// settled. Each pull request in a repository the query cannot name is read
+/// on its own too.
+pub fn settle_together(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    prs: &[PullRequest],
+) -> Vec<Settled> {
+    let numbers: Vec<u64> = prs.iter().map(|pr| pr.number).collect();
+    let together = prs
+        .first()
+        .and_then(|pr| gate::repository(&pr.repo))
+        .map(|repo| github::states(gh, &repo, &numbers));
+    let states: Vec<Result<State, RunFailure>> = match together {
+        Some(Ok(states)) => states.into_iter().map(Ok).collect(),
+        Some(Err(failure)) if failure.kind != FailureKind::Gone || prs.len() == 1 => {
+            prs.iter().map(|_| Err(failure.clone())).collect()
+        }
+        _ => prs.iter().map(|pr| github::state(gh, pr)).collect(),
+    };
+    prs.iter()
+        .zip(states)
+        .map(|(pr, state)| settled(cli, projects, pr, state))
+        .collect()
+}
+
+/// Settle every open gh:pr gate waiting on `pr` in each of `projects`, as
+/// GitHub said it stands. A merge closes each gate, and a close without one
 /// leaves each open and comments once on every bead it holds back.
 ///
 /// Correct however many times it runs: a closed gate is no longer read, and
-/// a bead already told is not told again. GitHub is read before any tracker,
-/// so a pull request GitHub cannot answer for leaves every tracker untouched.
-pub fn settle(cli: &Cli, gh: &dyn Runner, projects: &[Project], pr: &PullRequest) -> Settled {
-    match github::state(gh, pr) {
+/// a bead already told is not told again. A pull request GitHub did not
+/// answer for leaves every tracker untouched.
+fn settled(
+    cli: &Cli,
+    projects: &[Project],
+    pr: &PullRequest,
+    state: Result<State, RunFailure>,
+) -> Settled {
+    match state {
         Err(failure) => Settled::Unread(failure),
         Ok(State::Open) => Settled::Open,
         Ok(State::Merged { commit }) => {
@@ -838,5 +879,48 @@ mod tests {
             ])
         );
         assert_eq!(writes(&runner), [resolving_42("dunwich")]);
+    }
+
+    fn settled_together(runner: &FakeRunner, prs: &[PullRequest]) -> Vec<Settled> {
+        settle_together(&Cli::new(runner), runner, &[project("arkham")], prs)
+    }
+
+    /// The runner panics on any call it was not given, so asking again would
+    /// fail the test.
+    #[test]
+    fn a_lone_pull_request_github_does_not_have_is_asked_about_once() {
+        let gone = RunFailure {
+            kind: FailureKind::Gone,
+            program: "gh".to_string(),
+            detail: "gh found no such repository or pull request on GitHub".to_string(),
+            unreadable: None,
+        };
+        let runner = FakeRunner::default().failing(
+            "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
+             $name:String!){repository(owner:$owner,name:$name){pr7:pullRequest(number:7)\
+             {state mergeCommit{oid}}}}",
+            gone.clone(),
+        );
+
+        assert_eq!(settled_together(&runner, &[pr(7)]), [Settled::Unread(gone)]);
+    }
+
+    #[test]
+    fn a_repository_the_query_cannot_name_is_asked_about_a_pull_request_at_a_time() {
+        let unnamed = |number| PullRequest {
+            repo: "ark".to_string(),
+            number,
+        };
+        let viewed_in_ark =
+            |number| format!("gh pr view {number} --repo ark --json state,mergeCommit");
+        let runner = FakeRunner::default()
+            .with(&viewed_in_ark(7), OPEN)
+            .with(&viewed_in_ark(42), OPEN);
+
+        assert_eq!(
+            settled_together(&runner, &[unnamed(7), unnamed(42)]),
+            [Settled::Open, Settled::Open]
+        );
+        assert_eq!(runner.calls().len(), 2);
     }
 }

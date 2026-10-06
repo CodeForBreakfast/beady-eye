@@ -1,9 +1,12 @@
 //! What GitHub says of a pull request now, read through `gh`.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use crate::collect::gates::PullRequest;
 use crate::collect::run::{Env, RunFailure, Runner};
+use crate::model::gate::Repository;
 
 /// Where a pull request stands on GitHub.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,9 +20,9 @@ pub enum State {
     Closed,
 }
 
-/// What `gh pr view --json state,mergeCommit` prints. Measured on gh
-/// 2.102.0: `state` is `OPEN`, `CLOSED` or `MERGED`, and `mergeCommit` is
-/// null until a merge.
+/// What `gh pr view --json state,mergeCommit` prints, and what [`states`]'
+/// query asks of each pull request. Measured on gh 2.102.0: `state` is
+/// `OPEN`, `CLOSED` or `MERGED`, and `mergeCommit` is null until a merge.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Viewed {
@@ -30,6 +33,20 @@ struct Viewed {
 #[derive(Deserialize)]
 struct MergeCommit {
     oid: String,
+}
+
+/// What `gh api graphql` prints for [`states`]' query: the repository, with
+/// each pull request asked about under the alias `pr<number>`. Measured on
+/// gh 2.102.0, which exits 1 where the repository or any one of the pull
+/// requests is not there.
+#[derive(Deserialize)]
+struct Queried {
+    data: Data,
+}
+
+#[derive(Deserialize)]
+struct Data {
+    repository: Option<BTreeMap<String, Option<Viewed>>>,
 }
 
 /// `pr` as GitHub has it now. The repository is always named, so the answer
@@ -53,16 +70,68 @@ pub fn state(runner: &dyn Runner, pr: &PullRequest) -> Result<State, RunFailure>
         &Env::new(),
     )?;
     let viewed: Viewed = serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
-    match viewed.state.as_str() {
-        "OPEN" => Ok(State::Open),
-        "MERGED" => Ok(State::Merged {
-            commit: viewed.merge_commit.map(|commit| commit.oid),
-        }),
-        "CLOSED" => Ok(State::Closed),
-        unknown => Err(RunFailure::parse(
-            "gh",
-            format!("a pull request state bdi does not know: {unknown}"),
-        )),
+    viewed.state()
+}
+
+/// Each of `numbers` in `repo` as GitHub has it now, in the order asked, read
+/// in one query however many there are. The owner and name go to `gh` as
+/// variables rather than into the query, since a gate's writer chose them.
+/// `gh` picks the host for a `repo` that names none, as [`state`] has it.
+pub fn states(
+    runner: &dyn Runner,
+    repo: &Repository,
+    numbers: &[u64],
+) -> Result<Vec<State>, RunFailure> {
+    let asked: Vec<String> = numbers
+        .iter()
+        .map(|number| {
+            format!("pr{number}:pullRequest(number:{number}){{state mergeCommit{{oid}}}}")
+        })
+        .collect();
+    let query = format!(
+        "query=query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{{}}}}}",
+        asked.join(" ")
+    );
+    let owner = format!("owner={}", repo.owner);
+    let name = format!("name={}", repo.name);
+    let mut args = vec!["api", "graphql"];
+    if let Some(host) = repo.host {
+        args.extend(["--hostname", host]);
+    }
+    args.extend(["-f", &owner, "-f", &name, "-f", &query]);
+    let out = runner.run("gh", &args, None, &Env::new())?;
+    let queried: Queried = serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
+    let mut answered = queried
+        .data
+        .repository
+        .ok_or_else(|| RunFailure::parse("gh", "the answer names no repository"))?;
+    numbers
+        .iter()
+        .map(|number| {
+            answered
+                .remove(&format!("pr{number}"))
+                .flatten()
+                .ok_or_else(|| {
+                    RunFailure::parse("gh", format!("the answer has no pull request #{number}"))
+                })?
+                .state()
+        })
+        .collect()
+}
+
+impl Viewed {
+    fn state(self) -> Result<State, RunFailure> {
+        match self.state.as_str() {
+            "OPEN" => Ok(State::Open),
+            "MERGED" => Ok(State::Merged {
+                commit: self.merge_commit.map(|commit| commit.oid),
+            }),
+            "CLOSED" => Ok(State::Closed),
+            unknown => Err(RunFailure::parse(
+                "gh",
+                format!("a pull request state bdi does not know: {unknown}"),
+            )),
+        }
     }
 }
 
@@ -115,6 +184,68 @@ mod tests {
             )),
             Ok(State::Open)
         );
+    }
+
+    const QUERY: &str = "query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                         name:$name){pr7:pullRequest(number:7){state mergeCommit{oid}} \
+                         pr42:pullRequest(number:42){state mergeCommit{oid}}}}";
+
+    fn ark(host: Option<&'static str>) -> Repository<'static> {
+        Repository {
+            host,
+            owner: "example",
+            name: "ark",
+        }
+    }
+
+    fn queried(runner: &FakeRunner, host: Option<&'static str>) -> Result<Vec<State>, RunFailure> {
+        states(runner, &ark(host), &[7, 42])
+    }
+
+    #[test]
+    fn a_repositorys_pull_requests_are_read_in_one_query_in_the_order_asked() {
+        let runner = FakeRunner::default().with(
+            &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+            include_str!("../../tests/fixtures/gh_2.102.0_api_graphql_ark_42_merged.json"),
+        );
+
+        assert_eq!(
+            queried(&runner, None),
+            Ok(vec![
+                State::Open,
+                State::Merged {
+                    commit: Some("5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff".to_string())
+                }
+            ])
+        );
+        assert_eq!(runner.calls().len(), 1);
+    }
+
+    #[test]
+    fn a_repository_naming_its_host_is_asked_of_that_host() {
+        let runner = FakeRunner::default().with(
+            &format!(
+                "gh api graphql --hostname git.example.com -f owner=example -f name=ark -f {QUERY}"
+            ),
+            r#"{"data":{"repository":{"pr7":{"state":"CLOSED","mergeCommit":null},"pr42":{"state":"OPEN","mergeCommit":null}}}}"#,
+        );
+
+        assert_eq!(
+            queried(&runner, Some("git.example.com")),
+            Ok(vec![State::Closed, State::Open])
+        );
+    }
+
+    #[test]
+    fn an_answer_missing_a_pull_request_asked_about_is_a_failure_to_read() {
+        let runner = FakeRunner::default().with(
+            &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+            r#"{"data":{"repository":{"pr7":{"state":"OPEN","mergeCommit":null},"pr42":null}}}"#,
+        );
+
+        let failure = queried(&runner, None).expect_err("#42 is not in the answer");
+        assert_eq!(failure.kind, FailureKind::Parse);
+        assert!(failure.detail.contains("#42"), "{}", failure.detail);
     }
 
     #[test]
