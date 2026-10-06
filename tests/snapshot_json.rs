@@ -1670,6 +1670,31 @@ fn a_listed_bead_carries_its_labels_and_its_description() {
     assert_eq!(silent["description"], Value::Null);
 }
 
+/// Each bead carries the date it was created and its whole metadata, as the
+/// tracker holds them, so a reader can age a bead and read any key it keeps.
+#[test]
+fn a_listed_bead_carries_its_created_date_and_its_metadata() {
+    let rows = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"open","issue_type":"epic",
+       "created_at":"2026-03-14T09:00:00Z",
+       "metadata":{"source_project":"innsmouth","severity":"high"}},
+      {"id":"dun-7.1","title":"re-point the dish","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}
+    ]"#;
+
+    let listed = listing(&dunwich_with(Fake::holding(beads(rows))));
+
+    let kept = listed_once(&listed, "dunwich", "dun-7");
+    assert_eq!(kept["created_at"], json!("2026-03-14T09:00:00Z"));
+    assert_eq!(
+        kept["metadata"],
+        json!({"source_project": "innsmouth", "severity": "high"})
+    );
+    let bare = listed_once(&listed, "dunwich", "dun-7.1");
+    assert_eq!(bare["created_at"], Value::Null);
+    assert_eq!(bare["metadata"], json!({}));
+}
+
 /// `dun-7.1` is drawn under its parent in one tree and under the bead it
 /// blocks in another, and is one bead to pick up.
 #[test]
