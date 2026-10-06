@@ -3400,6 +3400,54 @@ and a second line"
           EOF
         '';
 
+        # bdi as homelab runs it, with what it shells out to: gh and bd, git for
+        # finding a project's worktrees, and a shell with coreutils for a
+        # `credential_command`. The bd is the flake's own pin, so the image
+        # moves with that pin and with nothing else. It is built for Linux
+        # hosts only, because the cluster that runs it is amd64.
+        imageRoot = pkgs.buildEnv {
+          name = "beady-eye-image-root";
+          paths = [
+            beady-eye
+            pkgs.gh
+            beads.packages.${system}.bd
+            pkgs.gitMinimal
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.cacert
+          ];
+        };
+
+        image = pkgs.dockerTools.buildLayeredImage {
+          name = "ghcr.io/codeforbreakfast/beady-eye";
+          tag = common.version;
+          contents = [ imageRoot ];
+          config = {
+            Entrypoint = [ "/bin/bdi" ];
+            Env = [ "PATH=/bin" ];
+            # What links the package on ghcr.io to this repository, and so
+            # lets this repository's workflow token push to it.
+            Labels."org.opencontainers.image.source" =
+              "https://github.com/CodeForBreakfast/beady-eye";
+          };
+        };
+
+        # Building the image proves only that it has layers. What a pod needs
+        # is every command bdi spawns on the PATH the image sets, so each is
+        # run from the root the image is made of, with nothing else on PATH.
+        imageTest = pkgs.runCommand "image-test" { } ''
+          set -eu
+          export HOME="$TMPDIR"
+          export PATH=${imageRoot}/bin
+          bdi --version
+          gh --version
+          bd --version
+          git --version
+          sh -c 'cat /dev/null'
+          test -e ${image}
+          touch $out
+        '';
+
         # Nothing in this repository installs from the tap, and the formula is
         # read by brew rather than by anything here, so what a wrong one costs
         # is a reader's install rather than a red branch. This is what stands in
@@ -3679,12 +3727,14 @@ and a second line"
           '';
         };
 
-        packages.default = beady-eye;
-        packages.beady-eye = beady-eye;
-        packages.await-ci-verdict = awaitCiVerdict;
-        packages.conventional-subject = conventionalSubject;
-        packages.tap-formula = tapFormula;
-        packages.unbuilt-checks = unbuiltChecks;
+        packages = {
+          default = beady-eye;
+          beady-eye = beady-eye;
+          await-ci-verdict = awaitCiVerdict;
+          conventional-subject = conventionalSubject;
+          tap-formula = tapFormula;
+          unbuilt-checks = unbuiltChecks;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit image; };
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
@@ -3782,7 +3832,7 @@ and a second line"
             cargo package --offline --locked 2>&1 | tee package.log
             ! grep -qE "ignoring (library|binary) .* is not included" package.log
           '').overrideAttrs (_: { src = publishedSource; });
-        };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { image = imageTest; };
       }
     ) // {
       # Overlays carry no system, so this sits outside eachSystem. A
