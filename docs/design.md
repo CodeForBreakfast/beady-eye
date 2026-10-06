@@ -506,7 +506,8 @@ this section described a per-root `bd dep tree <root> --direction=up --json`
 walk as the tree source; that call was replaced and its row shape survives
 nowhere in `bdi` (`bdi-r95`, `bdi-7ao.12`).
 
-**The tree source is one `bd list --all --limit 0 --json` per project.** It
+**The tree source is one `bd list --all --include-gates --limit 0 --json` per
+project.** It
 carries every bead the tracker holds, and each row names every bead it depends
 on in a `dependencies` array of `depends_on_id` and `type` — the whole graph,
 complete, in one call. Timed three times each against this project's own
@@ -515,10 +516,12 @@ dep tree` over the largest root. One call per *project* rather than one per
 root, and it is what makes drawing a blocker under every bead it blocks
 possible at all: `bd dep tree` is a spanning tree, not an edge set — bd dedups,
 so each bead comes back carrying only the one edge the walk first reached it
-by (93 of 176 edges for this tracker's largest epic, same date, same bd). Both
-flags are load-bearing. `--limit 0` lifts a default of 50 that truncates
+by (93 of 176 edges for this tracker's largest epic, same date, same bd). All
+three flags are load-bearing. `--limit 0` lifts a default of 50 that truncates
 visibly; `--all` lifts a default of open-only that returns a smaller,
-correct-looking answer about a different population.
+correct-looking answer about a different population; `--include-gates` lifts a
+default that leaves out every gate, so a bead blocked by one would be drawn
+waiting on nothing.
 
 A row carries:
 
@@ -565,8 +568,8 @@ throwing away a distinction beads makes. One call each per project, intersected
 with the tree's ids. bd reads no edge to another project's bead, and that is
 the one place `bdi` adds to its answer: see *Across projects*.
 
-**`bd list --all --limit 0 --json` and `bd query ephemeral=true --all --limit
-0 --json` supply discovery**: every unfinished row of either is a root
+**`bd list --all --include-gates --limit 0 --json` and `bd query
+ephemeral=true --all --limit 0 --json` supply discovery**: every unfinished row of either is a root
 candidate. **The climb to a root is answered from the rows already read**:
 every `bd list` row carries the bead's own `parent`, so a closed bead above
 open work — the shape discovery never names — costs no further call.
@@ -818,8 +821,9 @@ sentence a reader needs there is about the configuration rather than the pane.
 ## Tree construction
 
 1. Discovery yields the roots.
-2. Per project, one `bd list --all --limit 0 --json` plus the wisps, and the
-   tree under each root is built from the edges those rows carry.
+2. Per project, one `bd list --all --include-gates --limit 0 --json` plus the
+   wisps, and the tree under each root is built from the edges those rows
+   carry.
 3. `herdr agent list`, if reachable, is joined onto the nodes.
 4. The default filter collapses trees with no live agent to a count under
    their project's line.
@@ -2654,7 +2658,9 @@ the `projects` whose beads carry its prefix, `held-by-several` with the
 `projects` that each hold a bead by it, `held-by-unread` with the one
 configured `project` that gave no answer and whose config states its prefix,
 `not-read` with the configured `projects` that gave no answer and may hold it,
-or `unconfigured` with none. `agents`
+or `unconfigured` with none. `pull_request` is on a `gh:pr` gate and on no
+other node: the gate's `repo` and `await_id`, `null` where it wrote none, and
+the `url` its row links to, `null` where the pull request has no address. `agents`
 says which agent provider was asked and how that went, so a consumer knows
 which tier it is reading and which program answered for it: `state` is
 `answering`, `not-answering` where the provider is there and did not — which

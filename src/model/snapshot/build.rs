@@ -10,6 +10,7 @@ use crate::config::{Badge, Config};
 use crate::model::anomaly;
 use crate::model::badges;
 use crate::model::edges::{Related, Relations};
+use crate::model::gate;
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
@@ -124,6 +125,7 @@ pub fn build_tree(
                 ),
                 agent,
                 orphaned_dependencies: assembled.orphaned.get(&at).cloned().unwrap_or_default(),
+                pull_request: gate::pull_request(bead),
                 description: bead.description.clone().unwrap_or_default(),
                 notes: bead.notes.clone().unwrap_or_default(),
                 created_by: bead.created_by.clone(),

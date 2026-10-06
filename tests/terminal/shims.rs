@@ -130,7 +130,7 @@ impl ShimmedTracker {
             .expect("the answer is ours to write");
         };
 
-        answer("list --all --limit 0 --json", &rows);
+        answer("list --all --include-gates --limit 0 --json", &rows);
         let unfinished: Vec<serde_json::Value> = rows
             .iter()
             .filter(|row| row["status"] != "closed")
@@ -143,8 +143,8 @@ impl ShimmedTracker {
         // The two listings `bdi --beads` reads beads through. The brief one
         // is answered whole, which says more than bd would of a finished
         // bead and nothing a listing of unfinished work draws.
-        answer("list --limit 0 --json", &unfinished);
-        answer("list --all --brief --limit 0 --json", &rows);
+        answer("list --include-gates --limit 0 --json", &unfinished);
+        answer("list --all --include-gates --brief --limit 0 --json", &rows);
         for row in &rows {
             let id = row["id"].as_str().expect("a bd row names its bead");
             answer(&format!("show {id} --json"), std::slice::from_ref(row));

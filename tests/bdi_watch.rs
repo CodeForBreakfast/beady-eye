@@ -30,7 +30,7 @@ use terminal::{
 const SHOW_EVERY_TREE: &[u8] = b"a";
 
 /// The call that reads a tracker in full.
-const READ_IN_FULL: &str = "list --all --limit 0 --json";
+const READ_IN_FULL: &str = "list --all --include-gates --limit 0 --json";
 
 /// Long enough for a read that is coming to have come, and short enough
 /// that one that is not is a failure rather than a hang.

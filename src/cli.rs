@@ -1507,13 +1507,13 @@ detached
                 ("bd", ["-C", _, "--readonly", asked @ ..]) => {
                     self.asked.lock().unwrap().push(asked.join(" "));
                     Ok(match asked {
-                        ["list", "--all", "--limit", "0", "--json"] => {
+                        ["list", "--all", "--include-gates", "--limit", "0", "--json"] => {
                             self.answer(self.rows.iter().cloned())
                         }
-                        ["list", "--limit", "0", "--json"] => {
+                        ["list", "--include-gates", "--limit", "0", "--json"] => {
                             self.answer(self.rows.iter().filter(|r| unfinished(r)).cloned())
                         }
-                        ["list", "--all", "--brief", "--limit", "0", "--json"] => {
+                        ["list", "--all", "--include-gates", "--brief", "--limit", "0", "--json"] => {
                             self.answer(self.rows.iter().cloned().map(briefly))
                         }
                         ["query", "ephemeral=true", ..] => self.answer(self.wisps.iter().cloned()),
@@ -1630,7 +1630,7 @@ kadath = ["kad-11"]
             );
             let asked = without_text.asked.lock().unwrap().clone();
             assert!(
-                !asked.contains(&"list --all --limit 0 --json".to_string()),
+                !asked.contains(&"list --all --include-gates --limit 0 --json".to_string()),
                 "{asked:?}"
             );
         }
