@@ -18,9 +18,8 @@ unless you ask us not to.
 
 ## Which versions get fixes
 
-`bdi` is unreleased. There is no tag and nothing on crates.io, so report against
-`main` and name the commit. Once there are releases, only the latest tag will
-carry fixes.
+Only the latest release carries fixes. Report against it or against `main`, and
+name the version or the commit.
 
 ## What is worth reporting
 

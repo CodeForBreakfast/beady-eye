@@ -33,7 +33,7 @@ pub trait Agents: Send + Sync {
     /// The last `lines` rows one pane drew, in the styling it drew them in.
     fn read(&self, pane: &PaneKey, lines: u16) -> Result<Vec<String>, RunFailure>;
 
-    /// Bring a pane to the front. The only write `bdi` performs.
+    /// Bring a pane to the front. The only write `bdi` makes to an agent provider.
     fn focus(&self, pane: &PaneKey) -> Result<(), RunFailure>;
 }
 

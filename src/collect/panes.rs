@@ -32,7 +32,7 @@ const PATIENCE: Duration = Duration::from_secs(2);
 pub trait Panes {
     fn read(&self, pane: &PaneKey, lines: u16);
 
-    /// Bring a pane to the front. The only write `bdi` performs.
+    /// Bring a pane to the front. The only write `bdi` makes to an agent provider.
     fn focus(&self, pane: &PaneKey);
 }
 

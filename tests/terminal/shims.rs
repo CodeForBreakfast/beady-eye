@@ -524,7 +524,7 @@ impl ShimmedHerdr {
     }
 
     /// Every pane the reader has asked herdr to focus, as `<session> <pane>`,
-    /// in the order it asked. A focus is the only write `bdi` performs, and
+    /// in the order it asked. A focus is the only write `bdi` makes to herdr, and
     /// one sent to the wrong session moves somebody else's terminal — which
     /// is a fact only the shim can report, since both sessions answer to the
     /// same pane id.

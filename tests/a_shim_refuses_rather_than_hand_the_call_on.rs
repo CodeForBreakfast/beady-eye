@@ -173,7 +173,7 @@ fn a_subcommand_the_shim_has_not_learned_is_refused_and_not_handed_on() {
 /// The write, which needs no new subcommand to reach. `agent focus` is
 /// learned, but the shim answers it only where a test named the file to
 /// record it in — and every other test on this machine leaves that unset. So
-/// the one write `bdi` performs was a hand-on away from a real pane in a real
+/// the one write `bdi` makes to herdr was a hand-on away from a real pane in a real
 /// workspace, and this is the row that says it no longer is.
 #[test]
 fn a_learned_subcommand_with_nothing_to_answer_from_is_refused_too() {
