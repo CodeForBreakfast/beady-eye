@@ -9,9 +9,7 @@ This skill sweeps the domain types of the plugin under `plugin/` for
 model-level dishonesty. A type is dishonest when its shape lets a caller build
 a value the domain does not mean, or forces a caller to fake one. The question
 is whether the type's value space matches the domain's, and whether all its
-producers and consumers mean the same thing by it. Whether a helper was
-hand-rolled is effect-native-audit's question, and whether a line is idiomatic
-is the language service's.
+producers and consumers mean the same thing by it.
 
 Four lenses ask about the value space, each against each family of types:
 
@@ -40,27 +38,9 @@ findings:
 
 | Check | Driven by | Cost | Catches |
 |---|---|---|---|
-| Effect language service | a rule per line, run by Effect's `tsc` in the plugin typecheck | free, every `nix flake check` | floating Effects, needless `Effect.gen`, global `fetch` or `Date` |
+| Effect language service and the Biome rules in `plugin/biome-plugins/` | a rule per line, in the plugin typecheck and lint | free, every `nix flake check` | what one line shows, such as a floating Effect or `instanceof Error` |
 | `effect-native-audit` | a `grep` pattern per finder | cheap, frequent | hand-rolled helpers, imperative spines, representation smells a pattern can find |
-| `effect-model-audit` | a type family and its census, reasoned about | expensive, periodic | dishonesty with no lexical anchor |
-
-Every effect-native-audit finder starts from a pattern and confirms a shape at
-each hit. That makes it cheap and repeatable, and it also means it can only
-find a defect that has a lexical anchor. A type serving two roles has none.
-Each field can be honest on its own while the type is dishonest across its
-producers and consumers, and no pattern finds a concept.
-
-This audit keeps the anchored audit's coverage by decomposition: one bounded
-agent per enumerated cell, with coverage checked rather than trusted. The cell
-is a family of types crossed with a lens, not a pattern. The agent holds one
-family with its full producer and consumer census, and one lens, and reasons.
-
-L4 borders two of effect-native-audit's smells. `unvalidated-boundary` is a
-decode call missing at a trust edge, and `internal-bridge` is a
-`decodeUnknownSync` bridge that exists at a seam. L4 is about what the type's
-role demands, whatever decode calls exist. A finding that is really "a decode
-call is missing here" or "there is a `*Sync` bridge here" belongs to
-effect-native-audit.
+| `effect-model-audit` | a type family and its census, reasoned about | expensive, periodic | dishonesty with no lexical anchor, such as one type serving two roles |
 
 ## How it works
 
@@ -72,17 +52,13 @@ effect-native-audit.
    left out. A Schema constant counts as the type it decodes to. A second agent
    groups those names into families and gives each family its census: every
    site that builds or decodes a member, and every site that reads one.
-   Reasoning about a type without its usage is what hides a relational defect,
-   so the census is the heart of the pass.
 
    The families must partition the enumerated names exactly, and
-   `assertPartition` checks that. It reports a name in no family, a name in
-   more than one, and a member that was never enumerated. Because the list
-   comes from one agent and the grouping from another, the check compares the
-   grouping with a list its author did not write. If the check fails, the
-   workflow repairs the partition. It drops members that were never
-   enumerated, keeps each name in its first family, and puts anything left
-   over into an `unassigned` family, so no type escapes the audit.
+   `assertPartition` checks that. Because the list comes from one agent and
+   the grouping from another, the check compares the grouping with a list its
+   author did not write. If the check fails, the workflow repairs the
+   partition and puts anything left over into an `unassigned` family, so no
+   type escapes the audit.
 2. **Reason.** One agent per family and lens reads the type definitions and the
    census sites and reasons about the value space. No findings is a valid
    result.
@@ -94,9 +70,8 @@ effect-native-audit.
    - L3 needs a disagreeing producer and consumer, both sites named.
    - L4 needs the specific boundary.
 
-   "I'd model this differently" is taste, and it is cut. Whether a
-   remodelling is worth its blast radius is never grounds for refuting it. A
-   verifier that errors keeps the finding, marked unverified.
+   Whether a remodelling is worth its blast radius is never grounds for
+   refuting it. A verifier that errors keeps the finding, marked unverified.
 4. **Synthesise.** An agent writes the report, merging findings that two lenses
    reached at the same `file:line`. L1 and L3 overlap by design. The
    confirmed and low-confidence lists the workflow returns come from
@@ -132,16 +107,12 @@ blast radius: every producer and consumer the remodelling would touch.
    which git ignores, and returns `{ confirmed[], lowConfidence[], survivors[],
    refutedCount, coverage, partitionOk }`.
 
-The workflow reports findings and changes no code. Each finding is a type
-remodelling that ripples through its whole census, so make each one as its own
-change, test-first.
+The workflow reports findings and changes no code.
 
 ## Notes
 
-- **Modelling principles are the ground.** The lenses rest on why a
-  representation is honest, not on a list of exports to match. Effect's data
-  types are the vocabulary for the fix. `domains.md` lists the principles and
-  the Effect pages behind them.
+- **`domains.md` holds the lens catalogue,** the modelling principles the
+  lenses rest on, and where L4 ends and effect-native-audit begins.
 - **The pinned Effect is the authority on its API.** `plugin/package.json` pins
   Effect 3. An agent names only an API that the installed copy under
   `plugin/node_modules/effect` exports.
