@@ -59,9 +59,18 @@ pub(super) fn settle(
     .config;
     let projects: Vec<Project> = cfg.read().cloned().collect();
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
-    let (hearing, heard) = mpsc::sync_channel(webhook::MOST_WAITING);
+    let (to_settle, delivered_for) = mpsc::sync_channel(webhook::MOST_WAITING);
     let listening = match (listen, secret) {
-        (Some(address), Some(secret)) => Some(webhook::listen(address, secret, hearing.clone())?),
+        (Some(address), Some(secret)) => Some(webhook::listen(
+            address,
+            secret,
+            to_settle.clone(),
+            |heard| {
+                if let Some(said) = refused(heard) {
+                    println!("{said}");
+                }
+            },
+        )?),
         _ => None,
     };
     println!("{}", started(&cfg.gates, projects.len(), listening));
@@ -73,15 +82,9 @@ pub(super) fn settle(
             next_look = Instant::now() + cfg.gates.poll();
             found
         } else {
-            match heard.recv_timeout(next_look - now) {
-                Ok(Heard::Settle(pull_request)) => {
+            match delivered_for.recv_timeout(next_look - now) {
+                Ok(pull_request) => {
                     delivered(&trackers, &RealRunner, &projects, &cfg.gates, pull_request)
-                }
-                Ok(other) => {
-                    if let Some(said) = refused(&other) {
-                        println!("{said}");
-                    }
-                    continue;
                 }
                 Err(_) => continue,
             }

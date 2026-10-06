@@ -37,10 +37,9 @@ const MOST_HEADERS: usize = 64;
 /// bounds the memory every request in flight can hold between them.
 const MOST_AT_ONCE: usize = 8;
 
-/// The most of what was heard that waits to be settled or reported, which
-/// bounds what requests can leave behind them while settling is slow. Where
-/// it is full, a delivery to settle is told to come back later, and a refusal
-/// goes unreported.
+/// The most signed deliveries waiting to be settled. A delivery that finds no
+/// room is told to come back later. Only a delivery signed with the secret
+/// takes a place, so no sender without it can fill them.
 pub const MOST_WAITING: usize = 64;
 
 /// How a request is told to come back later.
@@ -95,13 +94,8 @@ pub enum Heard {
 }
 
 impl Heard {
-    /// Whether what was heard goes on to be settled or reported.
-    fn handed_on(&self) -> bool {
-        !matches!(self, Heard::Healthy | Heard::Unknown)
-    }
-
     /// The status line and text the request is answered with, given whether
-    /// what was heard found room to be handed on.
+    /// a delivery to settle found room to wait.
     fn answer(&self, room: bool) -> (&'static str, &'static str) {
         match self {
             Heard::Healthy => ("200 OK", "ok\n"),
@@ -137,7 +131,7 @@ pub fn delivery(
     }
     match serde_json::from_slice::<PullRequestEvent>(body) {
         Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.full_name,
+            repo: event.repository.named(),
             number: event.number,
         }),
         Err(_) => Heard::NamesNoPullRequest,
@@ -154,6 +148,27 @@ struct PullRequestEvent {
 #[derive(Deserialize)]
 struct Repository {
     full_name: String,
+    html_url: Option<String>,
+}
+
+impl Repository {
+    /// The repository as a gate names it: `OWNER/REPO` on github.com, and
+    /// `HOST/OWNER/REPO` on any other host, which only the repository's own
+    /// address in the delivery names.
+    fn named(self) -> String {
+        match self.html_url.as_deref().and_then(host) {
+            Some(host) if !host.eq_ignore_ascii_case("github.com") => {
+                format!("{host}/{}", self.full_name)
+            }
+            _ => self.full_name,
+        }
+    }
+}
+
+/// The host `url` names.
+fn host(url: &str) -> Option<&str> {
+    let (_, rest) = url.split_once("://")?;
+    rest.split('/').next().filter(|host| !host.is_empty())
 }
 
 /// Whether `signature`, as GitHub writes it, is `secret`'s over `body`.
@@ -178,22 +193,24 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Take requests on `address`, each on a thread of its own, hand `heard` what
-/// each was, unless it was a health check or nothing the listener answers,
-/// and answer it at once. A request arriving while
+/// Take requests on `address`, each on a thread of its own, and answer each
+/// at once. The pull request a signed delivery names goes to `settle`, and
+/// `told` is then given what every request came to. A request arriving while
 /// [`MOST_AT_ONCE`] are being answered is told to come back later. Gives back
 /// the address taken, which names the port where `address` left it to the
 /// system.
 pub fn listen(
     address: &str,
     secret: Secret,
-    heard: SyncSender<Heard>,
+    settle: SyncSender<PullRequest>,
+    told: impl Fn(&Heard) + Send + Sync + 'static,
 ) -> anyhow::Result<SocketAddr> {
     let listener = TcpListener::bind(address).with_context(|| format!("listening on {address}"))?;
     let taken = listener
         .local_addr()
         .with_context(|| format!("reading the address {address} gave"))?;
     let secret = Arc::new(secret);
+    let told = Arc::new(told);
     let answering = Arc::new(AtomicUsize::new(0));
     thread::spawn(move || {
         for stream in listener.incoming() {
@@ -206,9 +223,10 @@ pub fn listen(
             }
             let answered = Answering(Arc::clone(&answering));
             let secret = Arc::clone(&secret);
-            let heard = heard.clone();
+            let settle = settle.clone();
+            let told = Arc::clone(&told);
             thread::spawn(move || {
-                answer(stream, &secret, &heard);
+                answer(stream, &secret, &settle, told.as_ref());
                 drop(answered);
             });
         }
@@ -227,7 +245,12 @@ impl Drop for Answering {
 
 /// Read one request from `stream` and answer it, or close it unanswered
 /// where it never arrives in full or is not HTTP.
-fn answer(stream: TcpStream, secret: &Secret, heard: &SyncSender<Heard>) {
+fn answer(
+    stream: TcpStream,
+    secret: &Secret,
+    settle: &SyncSender<PullRequest>,
+    told: &dyn Fn(&Heard),
+) {
     let mut stream = Patient {
         stream,
         deadline: Instant::now() + PATIENCE,
@@ -235,8 +258,12 @@ fn answer(stream: TcpStream, secret: &Secret, heard: &SyncSender<Heard>) {
     let Some(said) = read(&mut stream, secret) else {
         return;
     };
-    let room = said.handed_on() && heard.try_send(said.clone()).is_ok();
+    let room = match &said {
+        Heard::Settle(pull_request) => settle.try_send(pull_request.clone()).is_ok(),
+        _ => true,
+    };
     reply(&stream.stream, said.answer(room));
+    told(&said);
     close(stream.stream, stream.deadline);
 }
 
@@ -416,6 +443,34 @@ mod tests {
                 number: 42,
             })
         );
+    }
+
+    #[test]
+    fn a_delivery_from_a_host_other_than_github_com_names_its_repository_with_the_host() {
+        let named = |html_url: &str| {
+            let body = format!(
+                r#"{{"number":42,"repository":{{"full_name":"example/ark","html_url":"{html_url}"}}}}"#
+            );
+            delivery(
+                &secret(),
+                Some("pull_request"),
+                Some(&signature(body.as_bytes())),
+                body.as_bytes(),
+            )
+        };
+        let repo = |repo: &str| {
+            Heard::Settle(PullRequest {
+                repo: repo.to_string(),
+                number: 42,
+            })
+        };
+        assert_eq!(
+            named("https://forge.invalid/example/ark"),
+            repo("forge.invalid/example/ark")
+        );
+        assert_eq!(named("https://github.com/example/ark"), repo("example/ark"));
+        assert_eq!(named("https://GitHub.com/example/ark"), repo("example/ark"));
+        assert_eq!(named("not an address"), repo("example/ark"));
     }
 
     #[test]
@@ -662,8 +717,5 @@ mod tests {
         assert_eq!(settle.answer(true).0, "202 Accepted");
         assert_eq!(settle.answer(false), BUSY);
         assert_eq!(Heard::Forged.answer(false).0, "401 Unauthorized");
-        assert!(!Heard::Healthy.handed_on());
-        assert!(!Heard::Unknown.handed_on());
-        assert!(Heard::Unsigned.handed_on());
     }
 }

@@ -404,20 +404,11 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
 }
 
 /// A delivery that is refused, or about anything but a pull request, never
-/// reaches GitHub. Each refusal is said after the ones before it, so once
-/// the last is said the rest have been dealt with.
+/// reaches GitHub.
 #[test]
 fn only_a_delivery_signed_with_the_secret_is_taken_and_only_a_pull_request_one_is_acted_on() {
-    let home = a_home_looking_every("refusing", &["arkham"], 3600);
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&viewed(42), OPEN);
-    github.answers_with(&viewed(7), OPEN);
-
-    let settling = Settling::listening(&home, &tracker, &github);
-    let address = settling.address();
-    until(|| github.calls().len() == 2, "the first look");
+    let listening = Listening::after_its_first_look("refusing");
+    let address = listening.address;
 
     let ping = r#"{"zen":"Keep it logically awesome.","hook_id":1}"#;
     assert_eq!(
@@ -434,9 +425,14 @@ fn only_a_delivery_signed_with_the_secret_is_taken_and_only_a_pull_request_one_i
         401
     );
     assert_eq!(delivered(address, "pull_request", None, DELIVERED_42), 401);
-    settling.says("a delivery was refused: its X-Hub-Signature-256 is not the secret's");
-    settling.says("a delivery was refused: it carries no X-Hub-Signature-256");
-    assert_eq!(github.calls(), [viewed(7), viewed(42)]);
+    listening
+        .settling
+        .says("a delivery was refused: its X-Hub-Signature-256 is not the secret's");
+    listening
+        .settling
+        .says("a delivery was refused: it carries no X-Hub-Signature-256");
+    listening.caught_up();
+    assert_eq!(listening.github.calls(), [viewed(7), viewed(42), viewed(7)]);
 }
 
 #[test]
@@ -487,32 +483,36 @@ impl Listening {
         }
     }
 
-    /// Wait until all that was heard before now has been dealt with. What
-    /// was heard is dealt with in turn, so a forged delivery being reported
-    /// means everything handed on before it has been too.
+    /// Wait until every delivery taken before now has been settled. They are
+    /// settled one at a time in the order they came, so GitHub being asked
+    /// about a delivery for #7 means all those before it have been, and #7
+    /// joins [`ShimmedGitHub::calls`].
     fn caught_up(&self) {
-        let reported = || {
-            self.settling
-                .said()
-                .lines()
-                .filter(|line| *line == FORGED)
+        let asked = || {
+            self.github
+                .calls()
+                .iter()
+                .filter(|call| **call == viewed(7))
                 .count()
         };
-        let before = reported();
+        let before = asked();
         assert_eq!(
             delivered(
                 self.address,
                 "pull_request",
-                Some(&signed("hunter2", DELIVERED_42)),
-                DELIVERED_42
+                Some(&signed(SECRET, DELIVERED_7)),
+                DELIVERED_7
             ),
-            401
+            202
         );
-        until(|| reported() > before, "the forged delivery reported");
+        until(|| asked() > before, "GitHub asked about #7");
     }
 }
 
-const FORGED: &str = "a delivery was refused: its X-Hub-Signature-256 is not the secret's";
+/// A pull_request delivery for example/ark#7, which the captured gates wait
+/// on and which is open.
+const DELIVERED_7: &str =
+    r#"{"action":"edited","number":7,"repository":{"full_name":"example/ark"}}"#;
 
 /// [`DELIVERED_42`] with spaces after it to make `size` bytes, which JSON
 /// reads as the same delivery.
@@ -540,7 +540,7 @@ fn a_signed_delivery_over_a_mebibyte_is_refused_and_settles_nothing() {
     listening.caught_up();
     assert_eq!(
         listening.github.calls(),
-        [viewed(7), viewed(42), viewed(42)]
+        [viewed(7), viewed(42), viewed(42), viewed(7)]
     );
 
     assert_eq!(
@@ -558,7 +558,7 @@ fn a_signed_delivery_over_a_mebibyte_is_refused_and_settles_nothing() {
     listening.caught_up();
     assert_eq!(
         listening.github.calls(),
-        [viewed(7), viewed(42), viewed(42)]
+        [viewed(7), viewed(42), viewed(42), viewed(7), viewed(7)]
     );
 }
 
@@ -592,7 +592,7 @@ fn a_signed_delivery_ending_before_its_length_is_closed_unanswered_and_settles_n
         .expect("bdi gates closes the connection");
     assert_eq!(answer, "");
     listening.caught_up();
-    assert_eq!(listening.github.calls(), [viewed(7), viewed(42)]);
+    assert_eq!(listening.github.calls(), [viewed(7), viewed(42), viewed(7)]);
 }
 
 /// Eight senders that give their headers and never their body hold every
@@ -629,13 +629,13 @@ fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
         "a request answered once the eight have gone",
     );
     listening.caught_up();
-    assert_eq!(listening.github.calls(), [viewed(7), viewed(42)]);
+    assert_eq!(listening.github.calls(), [viewed(7), viewed(42), viewed(7)]);
 
     assert_eq!(ninth(), 202);
     listening.caught_up();
     assert_eq!(
         listening.github.calls(),
-        [viewed(7), viewed(42), viewed(42)]
+        [viewed(7), viewed(42), viewed(7), viewed(42), viewed(7)]
     );
 }
 

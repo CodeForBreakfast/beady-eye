@@ -75,9 +75,10 @@ network address, which may face the internet, and it is the one part of `bdi`
 that does. It speaks plain HTTP and expects TLS to be ended in front of it. It
 reads at most 1 MiB of a body before checking its signature, gives each request
 ten seconds to arrive, answers at most eight at once, and keeps at most 64
-waiting to be settled or reported. A sender that keeps it at those limits
-delays deliveries until the next look, which settles them anyway, so that alone
-is not a vulnerability. A delivery is taken only where its
+signed deliveries waiting to be settled. A sender that holds it at the limit of
+eight delays deliveries until the next look, which settles them anyway, so that
+alone is not a vulnerability. Anything that lets a sender without the secret
+take one of the 64 places is. A delivery is taken only where its
 `X-Hub-Signature-256` is the HMAC-SHA256 of its body under the configured
 secret, compared in constant time, and only a `pull_request` delivery is acted
 on. All it reads from one is a repository and a number, which it settles
