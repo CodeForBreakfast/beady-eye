@@ -72,11 +72,11 @@ findings:
 
    Whether a remodelling is worth its blast radius is never grounds for
    refuting it. A verifier that errors keeps the finding, marked unverified.
-4. **Synthesise.** An agent writes the report, merging findings that two lenses
-   reached at the same `file:line`. L1 and L3 overlap by design. The
-   confirmed and low-confidence lists the workflow returns come from
-   `splitSurvivors`, which works from each finding's own confidence, not from
-   the agent.
+4. **Synthesise.** An agent writes the report, merging findings that describe
+   the same defect. L1 and L3 overlap by design. The confirmed and
+   low-confidence lists the workflow returns come from `splitSurvivors`, not
+   from the agent. It groups the findings at each `file:line` without dropping
+   any, and confirms a site when any finding there is high-confidence.
 
 Each surviving finding carries its evidence, a proposed remodelling, and its
 blast radius: every producer and consumer the remodelling would touch.

@@ -87,7 +87,7 @@ a finding. A real illegal state stays a finding however far it ripples.
 - **L1 and L3 overlap by design.** The same defect can be reached by reasoning
   about one type alone, which is L1, or by walking its census, which is L3.
   Neither suppresses a finding because the other might see it. Synthesis merges
-  them by `file:line`. L3 runs even when L1 found nothing, because a type can be
+  findings of the same defect. L3 runs even when L1 found nothing, because a type can be
   honest field by field and dishonest across its census.
 - **L4 borders two other checks.** effect-native-audit's
   `unvalidated-boundary` smell is a missing `Schema.decodeUnknown` at a trust

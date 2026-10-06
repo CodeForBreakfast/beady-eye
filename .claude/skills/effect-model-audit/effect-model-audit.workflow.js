@@ -6,7 +6,7 @@ export const meta = {
     { title: 'Discover', detail: 'enumerate the domain types, group them into families with their census, check the partition' },
     { title: 'Reason', detail: 'one agent per family × lens: L1 illegal-representable, L2 under-expressive, L3 role coherence, L4 boundary honesty' },
     { title: 'Verify', detail: 'one refuter per finding, cutting any finding without the evidence its lens demands' },
-    { title: 'Synthesise', detail: 'dedup by file:line, split by confidence, write the report' },
+    { title: 'Synthesise', detail: 'merge findings of one defect, group by site, split by confidence, write the report' },
   ],
 }
 
@@ -89,7 +89,7 @@ L1 found nothing. EVIDENCE REQUIRED: a specific disagreeing producer/consumer pa
 and the concrete value one makes that the other cannot accept.`,
     boundary: `Overlaps L1 by design: the same defect can be reached by reasoning about the type alone
 (L1) or by walking its census (L3). Do not suppress an L3 finding because L1 might also see it, nor an
-L1 finding because L3 is the census lens. Surface both; synthesis dedups by file:line.`,
+L1 finding because L3 is the census lens. Surface both; synthesis merges findings of the same defect.`,
   },
   {
     id: 'L4',
@@ -142,21 +142,22 @@ function assertPartition(types, units) {
 
 // The confirmed/low-confidence split is computed here rather than asked of an
 // agent, which drops and misfiles findings when asked to reproduce a split.
-// L1 and L3 can hit the same site, so dedup by file:line and keep the
-// highest-confidence copy.
+// Findings at one file:line are grouped, not deduplicated: L1 and L3 can reach
+// the same defect there, but two different defects can share a line too, and
+// only a reader can tell which. A site is confirmed when any finding there is high.
 function splitSurvivors(survivors) {
   const bySite = new Map()
   for (const finding of survivors) {
     const site = `${finding.file}:${finding.line}`
-    const existing = bySite.get(site)
-    if (!existing || (finding.confidence === 'high' && existing.confidence !== 'high')) {
-      bySite.set(site, finding)
-    }
+    const group = bySite.get(site) ?? { file: finding.file, line: finding.line, confidence: 'low', findings: [] }
+    group.findings.push(finding)
+    if (finding.confidence === 'high') group.confidence = 'high'
+    bySite.set(site, group)
   }
-  const deduped = [...bySite.values()]
+  const sites = [...bySite.values()]
   return {
-    confirmed: deduped.filter((f) => f.confidence === 'high'),
-    lowConfidence: deduped.filter((f) => f.confidence !== 'high'),
+    confirmed: sites.filter((s) => s.confidence === 'high'),
+    lowConfidence: sites.filter((s) => s.confidence !== 'high'),
   }
 }
 
@@ -203,7 +204,7 @@ const LENS_FINDING_FIELDS = {
   unit: { type: 'string', description: 'the family key this finding belongs to' },
   lens: { type: 'string', enum: ['L1', 'L2', 'L3', 'L4'], description: 'the lens that surfaced it' },
   file: { type: 'string', description: 'repo-relative path of the type definition, e.g. plugin/src/watches.ts' },
-  line: { type: 'number', description: 'first line of the type at fault' },
+  line: { type: 'number', description: 'the line of the field or member at fault, or the first line of the type when the fault is its whole shape' },
   evidence: {
     type: 'string',
     description: 'the concrete evidence — L1: a named illegal value the type admits; L2: a named missing legal state and the workaround it forces; L3: a disagreeing producer/consumer pair (both sites) and the value one makes the other cannot accept; L4: the specific boundary and why its role demands the stronger type',
@@ -311,7 +312,7 @@ ${VOCABULARY}
 READ the actual type definitions and the census sites.
 ${AUDIT_SCOPE}
 
-For each finding give unit="${unit.key}", lens="${lens.id}", the file:line of the type at fault, the
+For each finding give unit="${unit.key}", lens="${lens.id}", the file:line of the field or type at fault, the
 evidence this lens demands (a finding without it will be refuted), the remodelling, the blast radius
 (every producer and consumer from the census), a confidence, and the principle it rests on.
 
@@ -456,10 +457,11 @@ adversarial verification and the family × lens coverage.
 Each finding carries: unit (type family), lens (L1 illegal-representable, L2 under-expressive, L3 role
 coherence, L4 boundary honesty), file:line, the evidence, a proposed remodelling, and the blast radius.
 
-1. DEDUP: L1 and L3 can surface the same file:line. Merge duplicates at one file:line, keeping the
-   clearest evidence and citing every lens that found it. Do not merge findings at different lines.
-2. SPLIT: confidence "high" goes under Confirmed, anything else under Low-confidence. After the merge, a
-   site that is high in any lens is high.
+1. MERGE: findings at one file:line may describe the same defect, since L1 and L3 overlap by design.
+   Merge only findings that describe the same defect, keeping the clearest evidence and citing every
+   lens that found it. Findings at one line that describe different defects stay separate rows, and
+   findings at different lines that describe one defect may be merged.
+2. SPLIT: a row with any "high" finding goes under Confirmed, anything else under Low-confidence.
 3. Write the report to ${reportPath} with the Write tool, creating the directory if needed:
      ## Effect-model audit — ${date}
      ### Confirmed findings   <- table: file:line | unit | lens | evidence | remodelling | blastRadius | why
