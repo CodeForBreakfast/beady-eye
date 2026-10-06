@@ -335,6 +335,13 @@ pub const PATH: &str = "PATH";
 const NO_SUCH_PANE: &str = "agent_not_found";
 const PANE_BUSY: &str = "agent_not_idle";
 
+/// What gh says when GitHub has no repository or pull request by the name
+/// asked. Measured against gh 2.102.0 on 2026-10-06: `GraphQL: Could not
+/// resolve to a PullRequest with the number of <n>.` from `gh pr view`, and
+/// `gh: Could not resolve to a Repository with the name '<repo>'.` from `gh
+/// api graphql`.
+const NOT_ON_GITHUB: &str = "could not resolve to a";
+
 impl RunFailure {
     pub fn not_installed(program: &str, cause: impl fmt::Display) -> Self {
         Self {
@@ -489,6 +496,11 @@ impl RunFailure {
             .flatten()
         {
             return Self::pruned(window);
+        } else if program == GH && said.contains(NOT_ON_GITHUB) {
+            (
+                FailureKind::Gone,
+                format!("{program} found no such repository or pull request on GitHub"),
+            )
         } else if program == GH && said.contains(RATE_LIMIT) {
             (
                 FailureKind::RateLimited,
@@ -1119,6 +1131,37 @@ mod tests {
         assert_eq!(failing_command(NO_SUCH_PANE).kind, FailureKind::Gone);
         assert_eq!(failing_command(PANE_BUSY).kind, FailureKind::Busy);
         assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
+    }
+
+    #[test]
+    fn a_pull_request_or_repository_github_does_not_have_is_gone() {
+        for said in [
+            "GraphQL: Could not resolve to a PullRequest with the number of 99. \
+             (repository.pullRequest)",
+            "gh: Could not resolve to a Repository with the name 'example/arc'.",
+        ] {
+            let failure = RunFailure::from_exit("gh", Some(1), said);
+            assert_eq!(failure.kind, FailureKind::Gone, "{said}");
+            assert!(!failure.detail.contains("arc"), "{}", failure.detail);
+        }
+    }
+
+    /// GitHub echoes the name it could not find, and a gate's writer chose
+    /// that name, so its words are not GitHub's own: read as a rate limit,
+    /// they would stop every look at that gate.
+    #[test]
+    fn a_name_github_does_not_have_is_gone_whatever_it_says() {
+        let said = "gh: Could not resolve to a Repository with the name 'example/rate limit'.\n";
+
+        assert_eq!(
+            RunFailure::from_exit("gh", Some(1), said).kind,
+            FailureKind::Gone
+        );
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), said).kind,
+            FailureKind::Unavailable,
+            "only GitHub's answer is gh's to report"
+        );
     }
 
     /// herdr's failures name the pane, its workspace and the command asked of
