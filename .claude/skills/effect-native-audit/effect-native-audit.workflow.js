@@ -412,16 +412,16 @@ const SYNTH_SCHEMA = {
   required: ['reportMarkdown'],
 }
 
-// Deterministic dedup of findings proposing the same remedy at one file:line (highest confidence
-// wins), then the confidence split. A different axis, smell or replacement is different work.
+// Deterministic dedup of findings proposing the same remedy at one file:line, whichever axis found
+// them: the highest confidence wins and foundBy names every finder. A different remedy is kept.
 function splitSurvivors(survivors) {
   const bySite = new Map()
   for (const finding of survivors) {
-    const site = JSON.stringify([finding.file, finding.line, finding.axis, finding.smell ?? '', finding.native])
+    const site = JSON.stringify([finding.file, finding.line, finding.native])
     const existing = bySite.get(site)
-    if (!existing || (finding.confidence === 'high' && existing.confidence !== 'high')) {
-      bySite.set(site, finding)
-    }
+    const foundBy = [...(existing?.foundBy ?? []), `${finding.axis}:${finding.smell ?? finding.domain}`]
+    const kept = !existing || (finding.confidence === 'high' && existing.confidence !== 'high') ? finding : existing
+    bySite.set(site, { ...kept, foundBy })
   }
   const deduped = [...bySite.values()]
   return {

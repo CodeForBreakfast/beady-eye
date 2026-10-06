@@ -109,8 +109,8 @@ verdicts**, because their failure modes are opposite:
 A synthesis agent writes the report, deduping cross-axis sightings as it writes.
 The confirmed / low-confidence partition is NOT trusted to that agent. The
 workflow derives it deterministically from each survivor's own confidence: dedup
-findings that propose the same remedy at one `file:line`, highest confidence
-wins, then split. A finding whose refuter died is returned as unverified, never as
+findings that propose the same remedy at one `file:line` on any axis, highest
+confidence wins and `foundBy` names every finder, then split. A finding whose refuter died is returned as unverified, never as
 refuted.
 
 ## Running it
