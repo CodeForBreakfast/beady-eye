@@ -328,21 +328,21 @@ pub struct Badge {
     pub unless: BTreeMap<String, Pattern>,
     pub render: String,
     /// What the badge says on a row too narrow for its `render`, as a template
-    /// over the same captures.
+    /// over the same captures and fields.
     ///
     /// A template rather than a character, because a badge's length is not
     /// `bdi`'s to choose at either end: a setup that wants a bare glyph writes
     /// one, and one that wants a number keeps the number.
     ///
-    /// A brace pair naming nothing the value supplied leaves the badge with no
+    /// A brace pair naming nothing the bead supplied leaves the badge with no
     /// short form, as it leaves it with no `link`: a row that fell back to a
     /// half-substituted template would put the template in front of the reader
     /// at exactly the widths where it had least room to explain itself.
     pub short: Option<String>,
-    /// Where the badge points, as a template over the same captures `render`
-    /// reads.
+    /// Where the badge points, as a template over the same captures and fields
+    /// `render` reads.
     ///
-    /// A brace pair naming nothing the value supplied leaves the badge with
+    /// A brace pair naming nothing the bead supplied leaves the badge with
     /// no link at all: a destination built out of a part that was never
     /// there points somewhere else.
     pub link: Option<String>,
@@ -1142,16 +1142,16 @@ impl Badge {
     /// What this badge says where the row cannot afford its `render`: its
     /// `short` filled in from the captures `render` reads, or `None` where the
     /// config names no short form, the badge does not apply, or a brace pair
-    /// in the template named nothing the value supplied.
+    /// in the template named nothing the value or the bead supplied.
     pub fn short_for(&self, value: &str, bead: &Bead) -> Option<String> {
         let filled = self.fill(self.short.as_ref()?, value, bead)?;
         filled.whole.then_some(filled.text)
     }
 
-    /// Where this badge points for a metadata value: its `link` filled in
-    /// from the captures `render` reads, or `None` where the config names no
+    /// Where this badge points for a value: its `link` filled in from the
+    /// captures and fields `render` reads, or `None` where the config names no
     /// link, the badge does not apply, or a brace pair in the template named
-    /// nothing the value supplied.
+    /// nothing the value or the bead supplied.
     pub fn link_for(&self, value: &str, bead: &Bead) -> Option<String> {
         let filled = self.fill(self.link.as_ref()?, value, bead)?;
         filled.whole.then_some(filled.text)

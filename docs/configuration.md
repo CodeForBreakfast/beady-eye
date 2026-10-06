@@ -184,6 +184,8 @@ says what the row carries for it:
 | `key` | which value of the bead this badge draws | yes |
 | `render` | the text the row carries | yes |
 | `match` | which values this badge draws on, and how the value comes apart | no |
+| `when` | fields of the bead that must each match a pattern for the badge to draw | no |
+| `unless` | fields of the bead that stop the badge drawing where any one matches | no |
 | `short` | what the row carries instead where `render` will not fit | no |
 | `link` | where the badge points | no |
 | `colour` | what it is drawn in | no |
@@ -216,7 +218,7 @@ to the values a pattern matches, and the pattern is anchored against the whole
 value: `human` draws on `human` and not on `inhumane`.
 
 **Several entries may name one key, and they are tried in the order you wrote
-them.** The first whose `match` reads the value is the badge the row draws, and
+them.** The first whose `match` and conditions read the value is the badge the row draws, and
 the ones below it are never tried. So write the shape you expect first and the
 shapes you will settle for under it. A value none of them reads draws nothing,
 and [What a badge says when it cannot do what you asked](#what-a-badge-says-when-it-cannot-do-what-you-asked)
@@ -231,7 +233,26 @@ match  = "[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 ```
 
-`link` is where the badge points, written as a template over the same captures
+So is any field of the bead, named as `key` names one. Where a capture and a
+field share a name, the capture is placed.
+
+`when` and `unless` look at the rest of the bead. Each is a table from a field,
+named as `key` names one, to a pattern anchored as `match` is. The badge draws
+only where every pattern in `when` matches, and not where any pattern in
+`unless` does. A field the bead does not hold reads as empty, so `""` asks for
+its absence and `".+"` for its presence. A list, such as `labels`, matches
+where any one of its members does. Where you want either of two conditions,
+write two badges.
+
+```toml
+[[badges]]
+key    = "assignee"
+when   = { "metadata.agent_pane" = "", labels = "human" }
+unless = { status = "closed" }
+render = "? {}"
+```
+
+`link` is where the badge points, written as a template over the same captures and fields
 `render` reads. A badge that has one is drawn underlined, and the underline is
 the whole of what a reader sees about it — the URL is nowhere in the text on the
 row. The badge is also emitted as a terminal hyperlink, so a terminal that
@@ -386,38 +407,48 @@ a setup referencing several systems badges all but one of them from metadata.
 
 ### A pull request a bead waits on
 
-A bead waiting on a pull request needs no badge. Record the wait as a beads
-gate on the pull request's number:
+Record the wait as a beads gate on the pull request's number:
 
 ```console
 $ bd gate create --type=gh:pr --blocks dun-7 --await-id=12
 ```
 
-The gate hangs under the bead it blocks, and its row draws `⇢ arkham #12`,
-linked to `https://github.com/dunwich/arkham/pull/12`. A narrow row draws
-`⇢ #12`.
-
-The repository comes from the gate's `repo` metadata, written as `OWNER/REPO`,
-or as `HOST/OWNER/REPO` for a pull request on a host other than GitHub.
-`bd gate create` copies `repo` from the bead the gate blocks. Where that bead
-has none, set it on the gate:
+The gate hangs under the bead it blocks. Its repository is its `repo`
+metadata, written as `OWNER/REPO`, or as `HOST/OWNER/REPO` for a pull request
+on a host other than GitHub. `bd gate create` copies `repo` from the bead the
+gate blocks. Where that bead has none, set it on the gate:
 
 ```console
 $ bd update dun-9 --set-metadata repo=dunwich/arkham
 ```
 
-A gate whose pull request has no address is still drawn, with no link and a
-note saying why:
+This badge draws `⇢ arkham #12` on the gate, linked to
+`https://github.com/dunwich/arkham/pull/12`. A narrow row draws `⇢ #12`.
 
-| the gate | the note |
-|---|---|
-| has no `repo` | `no link to pull request #12: its gate names no repo` |
-| has a `repo` that is not `OWNER/REPO` | `no link to pull request #12: its gate's repo “arkham” is not owner/repo` |
-| has an await id that is not a number | `no link to the pull request: its gate's await id “the-wire” is not a number` |
-| has no await id | `no link to the pull request: its gate has no await id` |
+```toml
+[[badges]]
+key    = "metadata.repo"
+when   = { await_type = "gh:pr", await_id = "[0-9]+" }
+match  = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render = "⇢ {name} #{await_id}"
+short  = "⇢ #{await_id}"
+link   = "https://github.com/{owner}/{name}/pull/{await_id}"
+```
 
-`bdi --json` carries the gate's `repo`, its `await_id` and the `url` it links
-to under the gate's `pull_request`.
+A repository on another host takes a second entry under it, which reads the
+values the first one does not:
+
+```toml
+[[badges]]
+key    = "metadata.repo"
+when   = { await_type = "gh:pr", await_id = "[0-9]+" }
+match  = "(?<host>[A-Za-z0-9_.-]+)/(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render = "⇢ {name} #{await_id}"
+short  = "⇢ #{await_id}"
+link   = "https://{host}/{owner}/{name}/pull/{await_id}"
+```
+
+A gate with no `repo`, or one whose await id is not a number, draws neither.
 
 [`bdi gates`](#settling-pull-request-gates) closes the gate once the pull
 request merges, so the bead it blocks becomes ready.
