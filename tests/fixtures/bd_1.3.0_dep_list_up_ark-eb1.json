@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ark-2ud",
+    "title": "chart the harbour",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-06T08:24:46Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-06T08:24:46Z",
+    "dependency_type": "blocks"
+  },
+  {
+    "id": "ark-45c",
+    "title": "moor the barge",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-06T08:24:47Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-06T08:24:47Z",
+    "dependency_type": "blocks"
+  }
+]

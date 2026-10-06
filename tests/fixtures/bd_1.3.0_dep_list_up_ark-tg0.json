@@ -1,0 +1,14 @@
+[
+  {
+    "id": "ark-4g4",
+    "title": "answer the signal",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-06T08:24:48Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-06T08:24:48Z",
+    "dependency_type": "blocks"
+  }
+]
