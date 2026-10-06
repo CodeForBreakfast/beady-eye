@@ -73,16 +73,19 @@ export const someWatches = async (
   projects: readonly string[],
   timing?: Timing,
 ) => {
-  const scope = Effect.runSync(Scope.make())
+  const scope = Scope.makeUnsafe()
   const watches = await Effect.runPromise(
     makeWatches({
-      findWatcher: Effect.succeed(Option.fromNullable(at)),
+      findWatcher: Effect.succeed(Option.fromNullishOr(at)),
       projects: Effect.succeed(projects),
       ...(timing === undefined ? {} : { timing }),
     }).pipe(
-      Scope.extend(scope),
+      Scope.provide(scope),
       Effect.provide(NodeFileSystem.layer),
-      Effect.withConfigProvider(ConfigProvider.fromMap(new Map([['XDG_STATE_HOME', state]]))),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({ env: { XDG_STATE_HOME: state } }),
+      ),
     ),
   )
   const close = () => Effect.runPromise(Scope.close(scope, Exit.void))
