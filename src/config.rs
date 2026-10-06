@@ -1353,7 +1353,7 @@ path = "/home/user/dev/cinder"
             cfg.watcher.socket,
             Some(PathBuf::from("/var/folders/T/beady-eye/watcher.sock"))
         );
-        assert_eq!(cfg.gates.poll_seconds, 300);
+        assert_eq!(cfg.gates.poll(), Duration::from_secs(300));
         assert_eq!(cfg.gates.owners, ["example", "miskatonic"]);
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
