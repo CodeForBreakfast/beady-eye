@@ -685,10 +685,12 @@ A list left out is the default's. A list written is read as written, so
 | `progress` | the fraction, on a line that stands for more than itself |
 | `agent` | the live agent on the bead |
 | `anomalies` | what the join found wrong |
-| `badge.<key>` | one badge, by the `key` its `[[badges]]` entry names |
+| `badge.<key>` | the badges on one `key`, as their `[[badges]]` entries name it |
 
-`badge.<key>` takes that badge out of `badges` and puts it where you wrote it,
-so a badge can sit beside the id while the rest stay after the title. Adding
+`badge.<key>` takes those badges out of `badges` and puts them where you wrote
+it, so a badge can sit beside the id while the rest stay after the title. A
+row holds one badge on a key, and more only where a shut line draws its
+blockers' badges after its own. Adding
 a badge to the config needs no edit here: `badges` draws it.
 
 The file is refused for a cell `bdi` cannot draw: a name that is none of the

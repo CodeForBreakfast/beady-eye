@@ -205,7 +205,7 @@ impl Walk<'_> {
                 }
             }
             Cell::Badge(key) => {
-                if let Some(badge) = row.badges.iter().find(|badge| badge.key == *key) {
+                for badge in row.badges.iter().filter(|badge| badge.key == *key) {
                     walked.badge(badge, &row.status);
                 }
             }
@@ -752,6 +752,46 @@ mod tests {
                 &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
             ),
             "the badge lost its link when the agent was said briefly: {said:?}"
+        );
+    }
+
+    /// A shut line draws its blockers' badges after its own, so a row can hold
+    /// several badges on one key, and the cell the layout names for that key
+    /// draws each of them with where it points.
+    #[test]
+    fn a_badge_cell_draws_every_badge_on_its_key() {
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
+        let mut held = captioned("teach the elided run to fold back open on a keypress");
+        held.badges = vec![
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #11".into(),
+                link: None,
+                short: None,
+                colour: None,
+            },
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #12".into(),
+                link: Some(somewhere.into()),
+                short: None,
+                colour: None,
+            },
+        ];
+        let layout = Layout {
+            state: vec![Cell::Badge("delivery_pr".into()), Cell::Agent],
+            ..Layout::default()
+        };
+
+        let drawn = Painted::of(bead_line(&row(&held), LAST, &ids(4), &layout), 120, 1).rows();
+        let said = symbols(bead_line(&row(&held), LAST, &ids(4), &layout), 120);
+
+        assert!(drawn[0].contains("⇢ #11  ⇢ #12  ◍"), "{drawn:?}");
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
+            ),
+            "the second badge on the key lost its link: {said:?}"
         );
     }
 
