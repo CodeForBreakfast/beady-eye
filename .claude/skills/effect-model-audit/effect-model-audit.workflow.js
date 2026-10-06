@@ -433,7 +433,8 @@ const verified = await pipeline(
   },
 )
 
-const cellResults = verified.filter(Boolean)
+// A cell whose chain threw or came back empty is a failed cell, not a missing one.
+const cellResults = verified.map((r, i) => r ?? { unit: cells[i].u.key, lens: cells[i].l.id, failed: true, verified: [] })
 const allVerified = cellResults.flatMap((c) => c.verified).filter(Boolean)
 const survivors = allVerified.filter((f) => !f.refuted)
 const refutedCount = allVerified.filter((f) => f.refuted).length
